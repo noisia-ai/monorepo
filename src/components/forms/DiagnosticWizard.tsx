@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { clearDiagContext, readDiagContext } from "@/lib/diagContext";
 
 const situations = [
@@ -545,9 +546,9 @@ function SuccessScreen({ name }: { name: string }) {
         No hay demo, no hay pitch. Solo una conversación para entender si la pregunta que tienes
         es la pregunta que debería guiar el protocolo.
       </p>
-      <a className="diag-btn diag-btn--primary" href="/">
+      <Link className="diag-btn diag-btn--primary" href="/">
         Volver al inicio
-      </a>
+      </Link>
     </motion.div>
   );
 }
