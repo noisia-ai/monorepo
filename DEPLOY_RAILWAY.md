@@ -10,9 +10,10 @@ No recomiendo **GitHub Pages** para este proyecto porque hoy corre sobre Next.js
 
 El proyecto ya quedó preparado para Railway:
 
-- `next.config.mjs` usa `output: "standalone"`
-- `package.json` usa `node .next/standalone/server.js` como `start`
-- `railway.json` está agregado
+- `package.json` declara `packageManager: "pnpm@10.33.2"`
+- `pnpm-lock.yaml` es el lockfile activo
+- `railway.json` usa Nixpacks y arranca con `pnpm run start`
+- `next.config.mjs` usa Next.js estándar, sin `output: "standalone"`
 - `.gitignore` está listo
 
 ## GitHub
@@ -48,8 +49,10 @@ git push -u origin main
 3. Selecciona `noisia-ai/website`.
 4. Railway debería detectar Next.js automáticamente.
 5. Verifica:
-   - Build command: `npm run build`
-   - Start command: `npm run start`
+   - Package manager: `pnpm`
+   - Install command: `pnpm install --frozen-lockfile`
+   - Build command: `pnpm run build`
+   - Start command: `pnpm run start`
 6. En `Networking`, haz clic en **Generate Domain** para obtener el dominio `*.up.railway.app`.
 
 ## Dominio `noisia.ai`
@@ -68,8 +71,14 @@ Si tu proveedor no soporta apex flattening:
 ## Validación local antes de deploy
 
 ```bash
-NEXT_TEST_WASM_DIR=$PWD/node_modules/@next/swc-wasm-nodejs ./node_modules/.bin/next build
-./node_modules/.bin/tsc --noEmit
+/Users/brandhon_o/.local/share/pnpm/pnpm install --frozen-lockfile
+NEXT_TEST_WASM_DIR=$PWD/node_modules/@next/swc-wasm-nodejs /Users/brandhon_o/.local/share/pnpm/pnpm exec next build
+/Users/brandhon_o/.local/share/pnpm/pnpm exec tsc --noEmit
 ```
 
-Ambas validaciones ya pasaron en esta máquina.
+Antes de revisar visualmente, reinicia el server local y limpia `.next` si aparece un `ChunkLoadError`:
+
+```bash
+rm -rf .next
+NEXT_TEST_WASM_DIR=$PWD/node_modules/@next/swc-wasm-nodejs /Users/brandhon_o/.local/share/pnpm/pnpm exec next dev -p 3002
+```

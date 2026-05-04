@@ -87,7 +87,7 @@ export function UseCaseSelector() {
             </button>
           ))}
         </div>
-        <div className="use-case-selector__panel solid-panel" role="tabpanel">
+        <div key={selectedIndex} className="use-case-selector__panel solid-panel" role="tabpanel">
           <span className="eyebrow">Lectura activa</span>
           <h3>{selected.title}</h3>
           <p>{selected.reading}</p>

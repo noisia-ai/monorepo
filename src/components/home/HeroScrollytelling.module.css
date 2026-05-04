@@ -1,0 +1,1214 @@
+.loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 600ms ease 80ms,
+    visibility 600ms ease 80ms;
+  pointer-events: none;
+}
+
+.loaderHidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.loaderMark {
+  position: relative;
+  width: 169px;
+  height: 47px;
+}
+
+.loaderBlue,
+.loaderRed {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 169px;
+  height: 47px;
+  mix-blend-mode: multiply;
+  animation-fill-mode: both;
+  animation-duration: 620ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-delay: 60ms;
+}
+
+.loaderBlue {
+  animation-name: loader-from-left;
+}
+
+.loaderRed {
+  animation-name: loader-from-right;
+}
+
+.loaderBar {
+  position: absolute;
+  bottom: -12px;
+  left: 0;
+  height: 2px;
+  width: 0;
+  border-radius: 999px;
+  background: var(--signal-dark);
+  animation: loader-bar 780ms cubic-bezier(0.22, 1, 0.36, 1) 60ms forwards;
+}
+
+@keyframes loader-from-left {
+  0% {
+    opacity: 0;
+    transform: translateX(-16px);
+    filter: blur(8px);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes loader-from-right {
+  0% {
+    opacity: 0;
+    transform: translateX(16px);
+    filter: blur(8px);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0px);
+  }
+}
+
+@keyframes loader-bar {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.heroSection {
+  position: relative;
+  padding: 112px 20px 0;
+  overflow: visible;
+}
+
+.stage {
+  position: relative;
+  z-index: 2;
+  width: min(100%, 1440px);
+  min-height: calc(100svh - 112px);
+  margin: 0 auto;
+  overflow: visible;
+}
+
+.scene {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(18px, 2.6vw, 30px);
+  padding-block: clamp(30px, 5vw, 72px);
+  pointer-events: none;
+}
+
+.pipelineScene,
+.methodScene,
+.decisionScene {
+  opacity: 0;
+  transform: translate3d(0, 42vh, 0) scale(0.96);
+  filter: blur(22px);
+}
+
+.scene :is(a, button) {
+  pointer-events: auto;
+}
+
+.introScene {
+  z-index: 2;
+}
+
+.pipelineScene,
+.methodScene,
+.decisionScene {
+  z-index: 3;
+}
+
+.noiseField {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.noiseCard {
+  --card-x: 0px;
+  --card-y: 0px;
+  --card-r: 0deg;
+  --mobile-card-x: 0px;
+  --mobile-card-y: 0px;
+  --mobile-card-r: 0deg;
+  --channel-accent: rgba(0, 171, 181, 0.86);
+  --channel-accent-2: rgba(75, 207, 222, 0.68);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: clamp(190px, 17vw, 250px);
+  min-height: 126px;
+  padding: 14px 16px;
+  border-radius: 24px;
+  transform: translate3d(calc(-50% + var(--card-x)), calc(-50% + var(--card-y)), 0) rotate(var(--card-r));
+  background: rgba(255, 255, 255, 0.64);
+  box-shadow: 0 24px 90px rgba(47, 56, 72, 0.12);
+  isolation: isolate;
+  will-change: transform, opacity, filter;
+}
+
+.noiseCard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  padding: 1.25px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--channel-accent), var(--channel-accent-2), rgba(255, 255, 255, 0.54));
+  opacity: 0.72;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.noiseCardInner {
+  display: block;
+  animation: noise-card-breathe 6.8s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+  will-change: transform;
+}
+
+.noiseCard:nth-child(2n) .noiseCardInner {
+  animation-duration: 7.6s;
+  animation-delay: -2.2s;
+}
+
+.noiseCard:nth-child(3n) .noiseCardInner {
+  animation-duration: 8.2s;
+  animation-delay: -3.8s;
+}
+
+@keyframes noise-card-breathe {
+  0% {
+    transform: translate3d(0, -6px, 0);
+  }
+
+  100% {
+    transform: translate3d(0, 8px, 0);
+  }
+}
+
+.voiceMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: var(--neutral-10);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.voicePlatform {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+}
+
+.voiceIcon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: var(--channel-accent);
+}
+
+.noiseCard p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.42;
+  text-wrap: balance;
+}
+
+.introContent {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  width: min(100%, 940px);
+  text-align: center;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+  color: var(--neutral-10);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.heroTitle {
+  max-width: 10.5ch;
+  text-wrap: balance;
+}
+
+.heroLead {
+  max-width: 720px;
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.scrollPrompt {
+  color: var(--neutral-10);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.storyHeading,
+.decisionTop {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 880px);
+  text-align: center;
+}
+
+.storyHeading h2,
+.decisionTop h2 {
+  text-wrap: balance;
+}
+
+.storyHeading p,
+.decisionTop p {
+  max-width: 720px;
+}
+
+.pipelinePanel,
+.methodologyShell {
+  width: min(100%, 1220px);
+  padding: 26px;
+  border-radius: 34px;
+  box-shadow: 0 28px 110px rgba(47, 56, 72, 0.12);
+  overflow: visible;
+}
+
+.pipelinePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(35, 35, 39, 0.08);
+  color: var(--neutral-10);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.pipelinePanelHeader strong {
+  color: var(--ink);
+}
+
+.pipelineNarrative {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.55fr) minmax(190px, 0.52fr);
+  gap: 22px;
+  align-items: stretch;
+  margin-top: 20px;
+}
+
+.signalStack,
+.pipelineOutcome {
+  display: grid;
+  align-content: space-between;
+  gap: 18px;
+  min-height: 100%;
+  padding: 18px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+}
+
+.signalStackHeader,
+.pipelineOutcome {
+  color: var(--neutral-10);
+}
+
+.signalStackHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.signalStackHeader strong,
+.pipelineOutcome strong {
+  color: var(--ink);
+}
+
+.signalCloud {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-content: end;
+}
+
+.signalChip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+  color: var(--neutral-10);
+  font-size: 0.66rem;
+  font-weight: 700;
+  box-shadow: 0 16px 46px rgba(47, 56, 72, 0.08);
+  will-change: transform, opacity, filter;
+}
+
+.signalIcon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  fill: var(--channel-accent);
+}
+
+.signalChip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipelineFlow {
+  position: relative;
+  min-width: 0;
+  padding-left: 26px;
+}
+
+.pipelineRail {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 12px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(0, 171, 181, 0.12);
+}
+
+.pipelineRailFill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(0, 171, 181, 0.96), rgba(238, 108, 95, 0.58));
+}
+
+.pipelineList {
+  display: grid;
+  gap: 12px;
+}
+
+.pipelineRow {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 14px 14px 14px 10px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+  box-shadow: 0 18px 54px rgba(47, 56, 72, 0.06);
+  will-change: transform, opacity;
+}
+
+.pipelineIndex {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: rgba(0, 171, 181, 0.08);
+  color: var(--signal-dark);
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.pipelineBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.9fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.pipelineLabels {
+  display: grid;
+  gap: 4px;
+}
+
+.pipelineLabels strong,
+.stateHeader strong,
+.stateRow strong,
+.matrixCard strong,
+.recommendationCard h3,
+.decisionStat strong {
+  color: var(--ink);
+}
+
+.pipelineLabels strong {
+  font-size: 1.02rem;
+}
+
+.pipelineLabels span,
+.pipelineMetric em,
+.stateHeader span,
+.stateRow span,
+.matrixCard span,
+.recommendationCard p,
+.decisionStat span,
+.decisionCopy {
+  color: var(--neutral-10);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.pipelineMetric {
+  display: grid;
+  gap: 8px;
+}
+
+.pipelineBarTrack,
+.stateBarTrack,
+.metricTrack {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(35, 35, 39, 0.07);
+}
+
+.pipelineFill,
+.stateBar,
+.metricFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(0, 171, 181, 0.92), rgba(75, 207, 222, 0.7));
+}
+
+.pipelineOutcome {
+  align-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.pipelineOutcome span {
+  width: fit-content;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 171, 181, 0.13);
+  color: var(--signal-dark);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.pipelineOutcome strong {
+  font-size: clamp(1.55rem, 2vw, 2rem);
+  line-height: 1.02;
+}
+
+.pipelineOutcome p {
+  margin: 0;
+  color: var(--neutral-10);
+  line-height: 1.45;
+}
+
+.pipelineOutcome::after {
+  content: "";
+  position: absolute;
+  inset: auto 18px 18px 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(0, 171, 181, 0.82), rgba(238, 108, 95, 0.42));
+  opacity: 0.72;
+}
+
+.methodologyShell {
+  display: grid;
+  gap: 26px;
+}
+
+.methodologyTop {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.7fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.methodologyKicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(35, 35, 39, 0.05);
+  color: var(--neutral-10);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.methodologyTitle {
+  margin-top: 14px;
+  max-width: 14ch;
+}
+
+.methodologyLead {
+  max-width: 62ch;
+}
+
+.methodologyChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-content: start;
+  justify-content: flex-end;
+}
+
+.methodologyGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.85fr);
+  gap: 18px;
+}
+
+.matrixGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.matrixCard {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.48);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+}
+
+.matrixCard strong {
+  font-size: clamp(1.6rem, 2.1vw, 2rem);
+  line-height: 1;
+}
+
+.metricFillSignal {
+  background: linear-gradient(90deg, rgba(18, 167, 122, 0.92), rgba(78, 206, 167, 0.72));
+}
+
+.metricFillTension {
+  background: linear-gradient(90deg, rgba(238, 72, 72, 0.95), rgba(255, 152, 118, 0.76));
+}
+
+.statePanel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px solid rgba(35, 35, 39, 0.08);
+}
+
+.stateHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.stateList {
+  display: grid;
+  gap: 12px;
+}
+
+.stateRow {
+  display: grid;
+  gap: 8px;
+}
+
+.decisionTop h2 {
+  max-width: 12ch;
+}
+
+.recommendationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  width: min(100%, 1180px);
+}
+
+.recommendationCard {
+  display: grid;
+  gap: 14px;
+  padding: 24px;
+  border-radius: 30px;
+  box-shadow: 0 24px 90px rgba(47, 56, 72, 0.1);
+}
+
+.recommendationCard h3 {
+  margin: 0;
+  font-size: clamp(1.4rem, 1.85vw, 1.8rem);
+  line-height: 1.06;
+}
+
+.recommendationMove {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  width: fit-content;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(0, 171, 181, 0.08);
+  color: var(--signal-dark);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.decisionFooter {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 1180px);
+}
+
+.signatureStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.decisionStat {
+  display: grid;
+  gap: 8px;
+  min-height: 108px;
+  padding: 18px;
+  border-radius: 24px;
+}
+
+.decisionStat strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.decisionActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+@media (max-width: 1220px) {
+  .noiseCard {
+    width: clamp(170px, 18vw, 218px);
+  }
+
+  .noiseCard p {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 1023px) {
+  .heroSection {
+    padding-top: 104px;
+    overflow: visible;
+  }
+
+  .stage {
+    width: min(100%, 760px);
+    display: grid;
+    gap: clamp(58px, 12vw, 104px);
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .scene {
+    position: relative;
+    inset: auto;
+    gap: 18px;
+    min-height: auto;
+    padding-block: clamp(46px, 12vw, 72px);
+    transform: none;
+    filter: none;
+  }
+
+  .introScene {
+    min-height: calc(100svh - 104px);
+    align-content: center;
+    padding-block: clamp(32px, 8vw, 54px);
+  }
+
+  .pipelineScene,
+  .methodScene,
+  .decisionScene {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+
+  .noiseCard {
+    width: clamp(124px, 33vw, 168px);
+    min-height: 88px;
+    padding: 10px 11px;
+    border-radius: 18px;
+    box-shadow: 0 18px 58px rgba(47, 56, 72, 0.11);
+    transform: translate3d(calc(-50% + var(--mobile-card-x)), calc(-50% + var(--mobile-card-y)), 0) rotate(var(--mobile-card-r));
+  }
+
+  .noiseCard:nth-child(n + 5) {
+    display: none;
+  }
+
+  .voiceMeta {
+    gap: 7px;
+    margin-bottom: 8px;
+    font-size: 0.56rem;
+  }
+
+  .voicePlatform {
+    gap: 5px;
+  }
+
+  .voiceIcon {
+    width: 10px;
+    height: 10px;
+  }
+
+  .noiseCard p {
+    font-size: 0.76rem;
+    line-height: 1.28;
+  }
+
+  .introContent,
+  .storyHeading,
+  .decisionTop {
+    width: min(100%, 620px);
+  }
+
+  .heroTitle {
+    max-width: 9ch;
+  }
+
+  .heroActions :global(.button),
+  .decisionActions :global(.button) {
+    flex: 1 1 190px;
+    justify-content: center;
+  }
+
+  .pipelinePanel,
+  .methodologyShell {
+    width: min(100%, 660px);
+    padding: 18px;
+    border-radius: 28px;
+    box-shadow: 0 28px 92px rgba(47, 56, 72, 0.1);
+  }
+
+  .pipelineScene,
+  .methodScene,
+  .decisionScene {
+    align-content: center;
+    justify-items: center;
+  }
+
+  .pipelineList {
+    gap: 8px;
+  }
+
+  .pipelineNarrative {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .signalStack,
+  .pipelineOutcome {
+    min-height: auto;
+    padding: 16px 16px 20px;
+    border-radius: 22px;
+  }
+
+  .signalCloud {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .signalChip {
+    justify-content: center;
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 0.6rem;
+  }
+
+  .signalChip:nth-child(n + 13) {
+    display: none;
+  }
+
+  .pipelineFlow {
+    padding-left: 22px;
+  }
+
+  .pipelineRail {
+    left: 8px;
+  }
+
+  .pipelineRow {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    border-radius: 18px;
+  }
+
+  .pipelineIndex {
+    width: 32px;
+    height: 32px;
+    font-size: 0.82rem;
+  }
+
+  .pipelineBody {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .pipelineMetric {
+    gap: 5px;
+  }
+
+  .pipelineBarTrack,
+  .stateBarTrack,
+  .metricTrack {
+    height: 7px;
+  }
+
+  .pipelineOutcome {
+    align-content: start;
+  }
+
+  .pipelineOutcome strong {
+    font-size: 1.24rem;
+  }
+
+  .methodologyTop,
+  .methodologyGrid,
+  .matrixGrid,
+  .recommendationGrid,
+  .signatureStrip {
+    grid-template-columns: 1fr;
+  }
+
+  .methodologyChips {
+    justify-content: flex-start;
+  }
+
+  .methodologyTitle,
+  .decisionTop h2 {
+    max-width: none;
+  }
+
+  .statePanel {
+    display: none;
+  }
+
+  .recommendationGrid {
+    width: min(100%, 620px);
+  }
+}
+
+@media (max-width: 760px) {
+  .heroSection {
+    padding-top: 86px;
+    padding-inline: 12px;
+  }
+
+  .stage {
+    width: 100%;
+    min-height: calc(100svh - 86px);
+    gap: 64px;
+  }
+
+  .introScene {
+    min-height: calc(100svh - 86px);
+    align-content: end;
+    padding-top: 20px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+
+  .introContent,
+  .storyHeading,
+  .decisionTop {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .introContent {
+    width: min(100%, 360px);
+    gap: 14px;
+    align-self: end;
+  }
+
+  .noiseCard {
+    width: clamp(118px, 37vw, 150px);
+    min-height: 80px;
+    border-radius: 17px;
+  }
+
+  .heroTitle {
+    max-width: 8.6ch;
+  }
+
+  .heroLead,
+  .storyHeading p,
+  .decisionTop p {
+    max-width: 32ch;
+    font-size: 1rem;
+  }
+
+  .scrollPrompt {
+    font-size: 0.78rem;
+  }
+
+  .heroActions {
+    display: grid;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .heroActions :global(.button) {
+    width: 100%;
+    min-height: 54px;
+  }
+
+  .pipelinePanelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 10px;
+    font-size: 0.72rem;
+  }
+
+  .pipelineScene {
+    padding-block: 28px 38px;
+  }
+
+  .pipelineScene .storyHeading {
+    gap: 10px;
+  }
+
+  .pipelineScene .storyHeading h2 {
+    max-width: 10.7ch;
+    font-size: clamp(1.9rem, 8.5vw, 3rem);
+    line-height: 0.96;
+  }
+
+  .pipelineScene .storyHeading p {
+    max-width: 31ch;
+  }
+
+  .pipelinePanel {
+    padding: 14px;
+    border-radius: 24px;
+  }
+
+  .pipelineNarrative {
+    gap: 10px;
+  }
+
+  .signalStack {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 13px;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.76), rgba(236, 253, 255, 0.5)),
+      radial-gradient(circle at 82% 18%, rgba(0, 171, 181, 0.16), transparent 42%);
+  }
+
+  .signalStackHeader {
+    display: grid;
+    align-content: center;
+    justify-content: start;
+    font-size: 0.7rem;
+  }
+
+  .signalCloud {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    width: 92px;
+    gap: 5px;
+  }
+
+  .signalChip {
+    min-height: 28px;
+    width: 28px;
+    padding: 0;
+    border-color: rgba(0, 171, 181, 0.16);
+  }
+
+  .signalChip:nth-child(n + 7) {
+    display: none;
+  }
+
+  .signalChip span {
+    display: none;
+  }
+
+  .signalIcon {
+    width: 13px;
+    height: 13px;
+  }
+
+  .pipelineRow {
+    padding: 12px 11px;
+  }
+
+  .pipelineOutcome {
+    gap: 7px;
+    padding: 14px;
+    background:
+      linear-gradient(135deg, rgba(18, 19, 20, 0.95), rgba(18, 19, 20, 0.86)),
+      radial-gradient(circle at 20% 15%, rgba(0, 171, 181, 0.22), transparent 42%);
+    border-color: rgba(18, 19, 20, 0.12);
+  }
+
+  .pipelineOutcome span {
+    min-height: 24px;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.58rem;
+  }
+
+  .pipelineOutcome strong {
+    color: #fff;
+  }
+
+  .pipelineOutcome p {
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.78rem;
+  }
+
+  .pipelineLabels strong {
+    font-size: 0.88rem;
+  }
+
+  .pipelineLabels span,
+  .pipelineMetric em,
+  .stateHeader span,
+  .stateRow span,
+  .matrixCard span,
+  .recommendationCard p,
+  .decisionStat span,
+  .decisionCopy {
+    font-size: 0.8rem;
+  }
+
+  .methodologyKicker {
+    min-height: 30px;
+    font-size: 0.76rem;
+  }
+
+  .methodologyLead {
+    font-size: 0.95rem;
+  }
+
+  .matrixCard {
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .matrixCard strong {
+    font-size: 1.42rem;
+  }
+
+  .recommendationGrid {
+    gap: 10px;
+  }
+
+  .recommendationCard {
+    gap: 8px;
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .recommendationCard h3 {
+    font-size: 1.18rem;
+  }
+
+  .recommendationMove {
+    min-height: 26px;
+    font-size: 0.62rem;
+  }
+
+  .decisionStat {
+    min-height: 74px;
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .decisionStat strong {
+    font-size: 1.28rem;
+  }
+
+  .decisionActions {
+    justify-content: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noiseCardInner {
+    animation: none;
+  }
+}

@@ -1,60 +1,32 @@
 import { ArrowRight } from "lucide-react";
 import { Suspense } from "react";
+import { HeroScrollytelling } from "@/components/home/HeroScrollytelling";
 import { ArchitectureFlow } from "@/components/marketing/ArchitectureFlow";
+import { EvidenceStrip } from "@/components/marketing/EvidenceStrip";
 import { MethodologyPreviewGrid } from "@/components/marketing/MethodologyPreviewGrid";
+import { SourcesConstellation } from "@/components/marketing/SourcesConstellation";
 import { UseCaseSelector } from "@/components/marketing/UseCaseSelector";
 import { ProductConsoleShowcase } from "@/components/product-scenes/ProductConsoleShowcase";
 import { Button } from "@/components/ui/Button";
 import { SectionHeader } from "@/components/ui/SectionHeader";
-import { serviceTiers, sourceTypes } from "@/content/site";
+import { serviceTiers } from "@/content/site";
 
 export default function HomePage() {
   return (
     <>
-      <section className="hero-experience">
-        <div className="hero-experience__inner">
-          <div className="hero-copy reveal">
-            <h1 className="display-xl">Inteligencia social no es un dashboard. Es una decisión.</h1>
-            <p className="body-lg">
-              Construimos inteligencia social para marcas que necesitan resolver una decisión, no
-              monitorear menciones. Orquestamos fuentes públicas, aplicamos metodología propietaria
-              y entregamos una recomendación que tu equipo puede accionar.
-            </p>
-            <div className="hero-actions">
-              <Button href="/diagnostico" icon={<ArrowRight size={17} strokeWidth={1.8} />}>
-                Iniciar diagnóstico
-              </Button>
-              <Button href="/metodologias" variant="secondary">
-                Ver metodologías
-              </Button>
-            </div>
-            <div className="hero-proof">
-              <div className="glass">
-                <strong>150+</strong>
-                <span>fuentes normalizadas</span>
-              </div>
-              <div className="glass">
-                <strong>6</strong>
-                <span>metodologías propietarias</span>
-              </div>
-              <div className="glass">
-                <strong>1</strong>
-                <span>decisión trazable por proyecto</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <HeroScrollytelling />
 
       <section className="section product-preview-section" data-reveal>
         <div className="section__inner product-preview-section__inner">
           <SectionHeader
             eyebrow="DEL DATO A LA DECISIÓN"
-            title="Cinco lecturas. Un sistema que cambia con la decisión."
-            lead="Cada decisión activa un protocolo distinto: qué fuentes leer, qué método aplicar, qué métrica defender. Estas son cinco lecturas reales — no demos, no plantillas — que muestran cómo se ve el output cuando la conversación deja de ser ruido y empieza a ordenar una decisión."
+            title="Así se ve cuando la conversación deja de ser ruido."
+            lead="Noisia no entrega listening crudo. Entrega lecturas defendibles, trazables y listas para decisión. Estas son cinco escenas del sistema en acción."
             align="center"
           />
-          <ProductConsoleShowcase />
+          <Suspense fallback={<div className="glass loading-panel">Cargando dashboards...</div>}>
+            <ProductConsoleShowcase />
+          </Suspense>
         </div>
       </section>
 
@@ -75,11 +47,22 @@ export default function HomePage() {
         <div className="section__inner">
           <SectionHeader
             eyebrow="METODOLOGÍAS PROPIETARIAS"
-            title="Seis lentes. Cada una construida para una pregunta distinta."
-            lead="Cada una entra cuando su pregunta aparece. Se aplican solas, en pares o como sistema, según la profundidad de la decisión."
+            title="Seis metodologías. Cada una entra cuando la incertidumbre lo exige."
+            lead="Se aplican solas, en combinación o como sistema, según la profundidad de la decisión. La estructura del problema define cuáles y en qué orden."
           />
           <MethodologyPreviewGrid />
         </div>
+      </section>
+
+      <section className="section section--compact">
+        <div className="section__inner">
+          <SectionHeader
+            eyebrow="EVIDENCIA"
+            title="Esto es lo que parece la conversación cuando se analiza bien."
+            lead="Fragmentos representativos del corpus. Cada cita lleva metodología, tag y fuente original."
+          />
+        </div>
+        <EvidenceStrip />
       </section>
 
       <section className="section">
@@ -87,8 +70,8 @@ export default function HomePage() {
           <div>
             <SectionHeader
               eyebrow="INFRAESTRUCTURA"
-              title="El corpus es la primera decisión analítica."
-              lead="Una metodología afilada operando sobre un corpus pobre produce conclusiones pobres. Por eso el primer trabajo de Noisia no es analizar — es orquestar las fuentes correctas, normalizarlas y construir un corpus comparable antes de aplicar método."
+              title="La inteligencia empieza antes del modelo."
+              lead="Noisia arma un corpus comparable, lo enriquece con contexto y conserva trazabilidad hasta el output. La metodología corre sobre evidencia normalizada, con fuente, tag y razón de inclusión."
             />
             <Button href="/arquitectura-de-datos" variant="secondary" icon={<ArrowRight size={17} strokeWidth={1.8} />}>
               Conocer arquitectura
@@ -106,13 +89,7 @@ export default function HomePage() {
             lead="El corpus se arma por pregunta, no por default. Combinamos fuentes sociales, reviews, foros, noticias, audio, video y marketplaces cuando la decisión lo exige — y dejamos fuera lo que no aporta señal."
             align="center"
           />
-          <div className="source-cloud">
-            {sourceTypes.map((source) => (
-              <span className="chip" key={source}>
-                {source}
-              </span>
-            ))}
-          </div>
+          <SourcesConstellation />
         </div>
       </section>
 

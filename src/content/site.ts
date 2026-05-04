@@ -1,10 +1,17 @@
+export type FoundationEntry = {
+  theory: string;
+  author: string;
+  description: string;
+  link: string;
+};
+
 export type Methodology = {
   slug: string;
   number: string;
   name: string;
   question: string;
   lead: string;
-  foundations: string[];
+  foundations: FoundationEntry[];
   problem: string;
   protocol: string[];
   outputs: string[];
@@ -299,10 +306,30 @@ export const methodologies: Methodology[] = [
     lead:
       "Toda categoría tiene fuerzas que empujan al consumidor hacia la compra y fuerzas que lo frenan. Esta metodología las separa, las cuantifica y muestra cuáles puede mover tu marca y cuáles no.",
     foundations: [
-      "Economia conductual: Kahneman y la decision entre sistemas rapido e intuitivo vs lento y deliberativo.",
-      "Jobs-to-be-Done: Christensen y los trabajos funcionales, emocionales y sociales que el consumidor intenta resolver.",
-      "Self-Determination Theory: Deci y Ryan para diferenciar motivaciones internas y externas.",
-      "Psicologia de la friccion: Nordgren y Schonthal para tipificar inercia, esfuerzo, emocion y reactancia."
+      {
+        theory: "Dual-Process Theory",
+        author: "Kahneman (2011)",
+        description: "Decisiones entre el sistema rápido e intuitivo y el lento y deliberativo.",
+        link: "https://en.wikipedia.org/wiki/Thinking,_Fast_and_Slow"
+      },
+      {
+        theory: "Jobs-to-be-Done",
+        author: "Christensen (2016)",
+        description: "Trabajos funcionales, emocionales y sociales que el consumidor intenta resolver.",
+        link: "https://en.wikipedia.org/wiki/Jobs_to_be_done_theory"
+      },
+      {
+        theory: "Self-Determination Theory",
+        author: "Deci & Ryan (1985)",
+        description: "Motivaciones internas y externas como motores diferenciados del comportamiento.",
+        link: "https://en.wikipedia.org/wiki/Self-determination_theory"
+      },
+      {
+        theory: "Friction Theory",
+        author: "Nordgren & Schonthal (2021)",
+        description: "Inercia, esfuerzo, emoción y reactancia como fuerzas que bloquean el cambio.",
+        link: "https://en.wikipedia.org/wiki/Behavioral_inhibition"
+      }
     ],
     problem:
       "Las marcas suelen conocer los motivos de compra como aparecen en focus groups. Esta metodologia desmonta esa formulacion reportada para revelar lo que el consumidor expresa cuando no esta siendo entrevistado.",
@@ -338,10 +365,30 @@ export const methodologies: Methodology[] = [
     lead:
       "Valor no es precio. Es lo que tu consumidor recibe en dinero, tiempo, esfuerzo y riesgo, comparado contra cada alternativa relevante. Esta metodología muestra dónde tu marca capitaliza y dónde está pagando una prima sin retorno.",
     foundations: [
-      "Valor percibido: Zeithaml y la evaluacion subjetiva de utilidad.",
-      "Prospect Theory: Kahneman y Tversky sobre el peso desproporcionado de las perdidas.",
-      "Beneficios funcionales, emocionales y simbolicos: Park, Jaworski y MacInnis.",
-      "Customer-Based Brand Equity: Keller y la marca como red asociativa en memoria."
+      {
+        theory: "Perceived Value",
+        author: "Zeithaml (1988)",
+        description: "Evaluación subjetiva de utilidad: lo que se recibe comparado contra lo que se entrega.",
+        link: "https://en.wikipedia.org/wiki/Value_(marketing)"
+      },
+      {
+        theory: "Prospect Theory",
+        author: "Kahneman & Tversky (1979)",
+        description: "Las pérdidas pesan desproporcionadamente más que las ganancias equivalentes.",
+        link: "https://en.wikipedia.org/wiki/Prospect_theory"
+      },
+      {
+        theory: "Brand Benefits Framework",
+        author: "Park, Jaworski & MacInnis (1986)",
+        description: "Beneficios funcionales, emocionales y simbólicos como dimensiones del valor de marca.",
+        link: "https://en.wikipedia.org/wiki/Brand_equity"
+      },
+      {
+        theory: "Customer-Based Brand Equity",
+        author: "Keller (1993)",
+        description: "La marca como red asociativa en la memoria del consumidor, construida por experiencias.",
+        link: "https://en.wikipedia.org/wiki/Brand_equity"
+      }
     ],
     problem:
       "Las marcas asumen que su valor esta en lo que comunican. El consumidor construye valor contra alternativas reales, no en abstracto.",
@@ -377,10 +424,30 @@ export const methodologies: Methodology[] = [
     lead:
       "Toda categoría tiene reglas no escritas — qué se dice, qué no, qué legitima, qué cancela. Esta metodología las hace visibles para que tu marca decida si las cumple, las rompe o las reescribe.",
     foundations: [
-      "Semiotica estructural: Saussure y los signos definidos por oposicion.",
-      "Mitologias: Barthes y los significados de segundo orden en objetos de consumo.",
-      "Antropologia interpretativa: Geertz y la descripcion densa.",
-      "Antropologia del consumo: Douglas e Isherwood sobre bienes como sistemas de comunicacion."
+      {
+        theory: "Semiótica Estructural",
+        author: "Saussure (1916)",
+        description: "Los signos adquieren significado por oposición a otros dentro de un sistema simbólico.",
+        link: "https://en.wikipedia.org/wiki/Semiotic_theory_of_Ferdinand_de_Saussure"
+      },
+      {
+        theory: "Mitologías",
+        author: "Barthes (1957)",
+        description: "Los objetos de consumo operan como mitos culturales con significados de segundo orden.",
+        link: "https://en.wikipedia.org/wiki/Mythologies_(book)"
+      },
+      {
+        theory: "Descripción Densa",
+        author: "Geertz (1973)",
+        description: "La interpretación cultural requiere leer el contexto local desde adentro, no desde afuera.",
+        link: "https://en.wikipedia.org/wiki/Thick_description"
+      },
+      {
+        theory: "Bienes como Comunicación",
+        author: "Douglas & Isherwood (1979)",
+        description: "Los bienes de consumo funcionan como sistemas de comunicación social y simbólica.",
+        link: "https://en.wikipedia.org/wiki/The_World_of_Goods"
+      }
     ],
     problem:
       "Las marcas globales aplican formulas globales en mercados locales; las marcas locales asumen proximidad como conocimiento. Ambas pierden cuando no traducen el sistema simbolico.",
@@ -411,10 +478,30 @@ export const methodologies: Methodology[] = [
     lead:
       "Hay categorías donde el consumidor decide en treinta segundos y otras donde tarda seis meses. La velocidad la define la categoría, no el comprador. Esta metodología detecta qué la acelera y qué la traba.",
     foundations: [
-      "Dual-Process Theory: sistemas rapido e intuitivo vs lento y esforzado.",
-      "Choice Architecture: Thaler y Sunstein sobre como se presentan opciones.",
-      "Decision Fatigue: Baumeister y la decision como recurso que se agota.",
-      "Information Foraging: Pirolli y Card sobre busqueda de informacion como maximizacion de valor/costo."
+      {
+        theory: "Dual-Process Theory",
+        author: "Kahneman (2011)",
+        description: "Sistema 1 rápido e intuitivo vs Sistema 2 lento y esforzado: dos modos de decidir.",
+        link: "https://en.wikipedia.org/wiki/Dual_process_theory"
+      },
+      {
+        theory: "Choice Architecture",
+        author: "Thaler & Sunstein (2008)",
+        description: "Cómo se presentan las opciones determina qué se elige, independientemente del contenido.",
+        link: "https://en.wikipedia.org/wiki/Choice_architecture"
+      },
+      {
+        theory: "Decision Fatigue",
+        author: "Baumeister (1998)",
+        description: "La capacidad de decidir se agota con el uso, degradando la calidad de decisiones tardías.",
+        link: "https://en.wikipedia.org/wiki/Decision_fatigue"
+      },
+      {
+        theory: "Information Foraging",
+        author: "Pirolli & Card (1999)",
+        description: "Los usuarios buscan información como maximización del valor obtenido por costo cognitivo.",
+        link: "https://en.wikipedia.org/wiki/Information_foraging"
+      }
     ],
     problem:
       "Muchas marcas optimizan mensaje y canal sin diagnosticar la velocidad cognitiva que su categoria exige. Ese desajuste cuesta conversion o consideracion.",
@@ -450,10 +537,30 @@ export const methodologies: Methodology[] = [
     lead:
       "El journey que se construye en workshop es una hipótesis. El journey real es donde se pierden ventas. Esta metodología identifica los puntos de pérdida y los tipifica para que la solución sea quirúrgica, no cosmética.",
     foundations: [
-      "Customer Journey Theory: Lemon y Verhoef sobre touchpoints dinamicos.",
-      "Friction Theory: Nordgren y Schonthal sobre inercia, esfuerzo, emocion y reactancia.",
-      "Cognitive Load Theory: Sweller sobre carga cognitiva y abandono.",
-      "Peak-End Rule: Kahneman sobre los momentos que dominan la memoria de experiencia."
+      {
+        theory: "Customer Journey Theory",
+        author: "Lemon & Verhoef (2016)",
+        description: "Los touchpoints dinámicos, no el embudo, son la unidad de análisis de la experiencia real.",
+        link: "https://en.wikipedia.org/wiki/Customer_experience"
+      },
+      {
+        theory: "Friction Theory",
+        author: "Nordgren & Schonthal (2021)",
+        description: "Inercia, esfuerzo, emoción y reactancia como los cuatro tipos de fricción en el comportamiento.",
+        link: "https://en.wikipedia.org/wiki/Behavioral_economics"
+      },
+      {
+        theory: "Cognitive Load Theory",
+        author: "Sweller (1988)",
+        description: "La carga cognitiva excesiva provoca abandono antes de completar la acción deseada.",
+        link: "https://en.wikipedia.org/wiki/Cognitive_load"
+      },
+      {
+        theory: "Peak-End Rule",
+        author: "Kahneman (1993)",
+        description: "La memoria de una experiencia la dominan su pico emocional y su último momento.",
+        link: "https://en.wikipedia.org/wiki/Peak%E2%80%93end_rule"
+      }
     ],
     problem:
       "La analitica web muestra donde la gente abandona, no por que. Esta metodologia reconstruye el por que desde conversacion espontanea y masiva.",
@@ -484,10 +591,30 @@ export const methodologies: Methodology[] = [
     lead:
       "La influencia no se mide en seguidores. Se mide en nodos: ciertas voces mueven significado entre comunidades y desbloquean adopción de manera desproporcionada. Esta metodología los identifica, los caracteriza y los prioriza.",
     foundations: [
-      "The Strength of Weak Ties: Granovetter sobre lazos debiles como transmisores de informacion nueva.",
-      "Diffusion of Innovations: Rogers sobre roles diferenciados en adopcion.",
-      "Two-Step Flow: Katz y Lazarsfeld sobre opinion leaders como mediadores.",
-      "Network Topology: Barabasi sobre hubs y redes scale-free."
+      {
+        theory: "Strength of Weak Ties",
+        author: "Granovetter (1973)",
+        description: "Los lazos débiles son los canales privilegiados para transmitir información nueva entre comunidades.",
+        link: "https://en.wikipedia.org/wiki/Interpersonal_ties"
+      },
+      {
+        theory: "Diffusion of Innovations",
+        author: "Rogers (1962)",
+        description: "Roles diferenciados en la adopción: innovators, early adopters, majorities, laggards.",
+        link: "https://en.wikipedia.org/wiki/Diffusion_of_innovations"
+      },
+      {
+        theory: "Two-Step Flow",
+        author: "Katz & Lazarsfeld (1955)",
+        description: "Los opinion leaders median entre los medios masivos y la adopción real de ideas.",
+        link: "https://en.wikipedia.org/wiki/Two-step_flow_of_communication"
+      },
+      {
+        theory: "Scale-Free Networks",
+        author: "Barabási (1999)",
+        description: "Las redes tienen hubs que concentran desproporcionadamente el flujo de información.",
+        link: "https://en.wikipedia.org/wiki/Scale-free_network"
+      }
     ],
     problem:
       "Las marcas hacen influencer marketing por followers y engagement rate. La influencia que mueve categorias suele vivir en nodos especializados, validadores invisibles y conectores entre comunidades.",
