@@ -131,7 +131,7 @@
 .decisionScene {
   opacity: 0;
   transform: translate3d(0, 42vh, 0) scale(0.96);
-  filter: blur(22px);
+  filter: blur(10px);
 }
 
 .scene :is(a, button) {

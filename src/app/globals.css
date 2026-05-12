@@ -248,24 +248,26 @@ h4 {
   line-height: 1;
 }
 
+/* Type scale tuned for compact desktops (1024-1440px ≈ MacBook 13").
+   Max values still reach generous large-screen sizes at ≥1920px. */
 .display-xl {
-  font-size: clamp(2.6rem, 5vw, 4.8rem);
-  font-weight: 500;
-  line-height: 0.96;
-  letter-spacing: 0;
-}
-
-.display-lg {
-  font-size: clamp(2.6rem, 5.5vw, 5.2rem);
+  font-size: clamp(2.4rem, 3.9vw, 4.5rem);
   font-weight: 500;
   line-height: 1.0;
   letter-spacing: 0;
 }
 
-.display-md {
-  font-size: clamp(1.7rem, 3.6vw, 2.6rem);
+.display-lg {
+  font-size: clamp(2.2rem, 3.35vw, 3.75rem);
   font-weight: 500;
-  line-height: 1.08;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.display-md {
+  font-size: clamp(1.55rem, 2.5vw, 2.25rem);
+  font-weight: 500;
+  line-height: 1.12;
   letter-spacing: 0;
 }
 
@@ -3451,8 +3453,8 @@ h4 {
 @keyframes reveal-up {
   from {
     opacity: 0;
-    transform: translateY(18px) scale(0.992);
-    filter: blur(8px);
+    transform: translateY(16px) scale(0.994);
+    filter: blur(4px);
   }
   to {
     opacity: 1;
@@ -3503,13 +3505,13 @@ h4 {
 
 .has-scroll-reveal :is([data-reveal], [data-auto-reveal]) {
   opacity: 0;
-  transform: translateY(32px) scale(0.995);
-  filter: blur(8px);
-  will-change: opacity, transform, filter;
+  transform: translateY(28px) scale(0.996);
+  filter: blur(4px);
+  will-change: opacity, transform;
   transition:
-    opacity 780ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 780ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 780ms ease;
+    opacity 620ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 620ms ease;
 }
 
 .has-scroll-reveal :is([data-reveal], [data-auto-reveal]).is-visible {
@@ -3520,13 +3522,13 @@ h4 {
 
 .has-scroll-reveal .reveal-item {
   opacity: 0;
-  transform: translateY(20px) scale(0.987);
-  filter: blur(9px);
-  will-change: opacity, transform, filter;
+  transform: translateY(18px) scale(0.99);
+  filter: blur(4px);
+  will-change: opacity, transform;
   transition:
-    opacity 640ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0ms),
-    transform 640ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0ms),
-    filter 640ms ease var(--reveal-delay, 0ms);
+    opacity 520ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0ms),
+    transform 520ms cubic-bezier(0.22, 1, 0.36, 1) var(--reveal-delay, 0ms),
+    filter 520ms ease var(--reveal-delay, 0ms);
 }
 
 .has-scroll-reveal .reveal-item.is-visible {

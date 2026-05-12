@@ -136,7 +136,7 @@ export function HeroScrollytelling() {
           opacity: 0,
           y: "42vh",
           scale: 0.96,
-          filter: "blur(22px)"
+          filter: "blur(10px)"
         });
         gsap.set(".scrollyFill", { scaleX: 0, transformOrigin: "left center" });
         gsap.set(".scrollyPipelineRailFill", { scaleY: 0, transformOrigin: "top center" });
@@ -202,7 +202,7 @@ export function HeroScrollytelling() {
           )
           .fromTo(
             ".scrollyPipeline",
-            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(24px)" },
+            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(12px)" },
             { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.88 },
             0.58
           )
@@ -246,12 +246,12 @@ export function HeroScrollytelling() {
           )
           .to(
             ".scrollyPipeline",
-            { opacity: 0, y: "-24vh", scale: 0.98, filter: "blur(18px)", duration: 0.58 },
+            { opacity: 0, y: "-24vh", scale: 0.98, filter: "blur(9px)", duration: 0.58 },
             1.64
           )
           .fromTo(
             ".scrollyMethod",
-            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(24px)" },
+            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(12px)" },
             { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.82 },
             1.94
           )
@@ -262,12 +262,12 @@ export function HeroScrollytelling() {
           )
           .to(
             ".scrollyMethod",
-            { opacity: 0, y: "-24vh", scale: 0.98, filter: "blur(18px)", duration: 0.58 },
+            { opacity: 0, y: "-24vh", scale: 0.98, filter: "blur(9px)", duration: 0.58 },
             2.82
           )
           .fromTo(
             ".scrollyDecision",
-            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(24px)" },
+            { opacity: 0, y: "48vh", scale: 0.94, filter: "blur(12px)" },
             { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.82 },
             3.1
           )
@@ -278,7 +278,7 @@ export function HeroScrollytelling() {
           )
           .to(
             ".scrollyDecision",
-            { opacity: 0, y: "-22vh", scale: 0.985, filter: "blur(18px)", duration: 0.5 },
+            { opacity: 0, y: "-22vh", scale: 0.985, filter: "blur(9px)", duration: 0.5 },
             3.86
           );
 
@@ -291,7 +291,7 @@ export function HeroScrollytelling() {
 
       mm.add("(max-width: 1023px), (hover: none), (pointer: coarse)", () => {
         gsap.set(".scrollyScene", { clearProps: "opacity,y,scale,filter,position,transform" });
-        gsap.set(".scrollyScene:not(.scrollyIntro)", { opacity: 0.28, y: 88, scale: 0.96, filter: "blur(18px)" });
+        gsap.set(".scrollyScene:not(.scrollyIntro)", { opacity: 0.28, y: 88, scale: 0.96, filter: "blur(9px)" });
         gsap.set(".scrollyFill", { scaleX: 0, transformOrigin: "left center" });
         gsap.set(".scrollyPipelineRailFill", { scaleY: 0, transformOrigin: "top center" });
         gsap.set(".scrollyPipelineRow, .scrollyMetricCard, .scrollyStateRow, .scrollyRecommendation, .scrollyStat", {
@@ -340,7 +340,7 @@ export function HeroScrollytelling() {
               scrub: 0.75,
               animation: gsap.fromTo(
                 scene,
-                { opacity: 0.28, y: 88, scale: 0.96, filter: "blur(18px)" },
+                { opacity: 0.28, y: 88, scale: 0.96, filter: "blur(9px)" },
                 { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", ease: "none" }
               )
             })
