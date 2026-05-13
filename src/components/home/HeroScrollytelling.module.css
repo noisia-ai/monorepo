@@ -109,7 +109,7 @@
 .stage {
   position: relative;
   z-index: 2;
-  width: min(100%, var(--max-wide));
+  width: min(100%, var(--max-content));
   margin: 0 auto;
   overflow: visible;
   display: grid;
@@ -277,15 +277,15 @@
 .eyebrow {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
-  padding: 0 14px;
+  min-height: 22px;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.68);
-  border: 1px solid rgba(35, 35, 39, 0.08);
+  background: var(--surface-02);
   color: var(--neutral-10);
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+  line-height: 1;
   text-transform: uppercase;
 }
 
@@ -331,7 +331,7 @@
 }
 
 .pipelinePanel {
-  width: min(100%, 1220px);
+  width: 100%;
   padding: 26px;
   border-radius: 34px;
   box-shadow: 0 28px 110px rgba(47, 56, 72, 0.12);
@@ -594,7 +594,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 14px;
-  width: min(100%, 1220px);
+  width: 100%;
   margin-bottom: clamp(28px, 3.5vw, 48px);
 }
 
@@ -608,13 +608,13 @@
 .methodologyKicker {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  margin-top: 12px;
-  padding: 0 14px;
+  min-height: 26px;
+  margin-top: 4px;
+  padding: 5px 12px;
   border-radius: 999px;
   background: rgba(35, 35, 39, 0.05);
   color: var(--neutral-10);
-  font-size: 0.92rem;
+  font-size: 0.78rem;
   font-weight: 700;
 }
 
@@ -640,7 +640,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.85fr);
   gap: 18px;
-  width: min(100%, 1220px);
+  width: 100%;
 }
 
 .matrixGrid {

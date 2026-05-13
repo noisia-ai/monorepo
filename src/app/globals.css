@@ -54,6 +54,7 @@
   --space-2xl: 64px;
   --space-3xl: 96px;
   --max-read: 720px;
+  --max-content: 1220px; /* unified inner content width — sections + hero stage share this */
   --max-wide: 1440px;
   --max-site: 1440px;
   --shadow-glass: 0 22px 64px rgba(43, 43, 43, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.86);
@@ -225,7 +226,7 @@ h4 {
 }
 
 .section__inner {
-  width: min(100%, var(--max-wide));
+  width: min(100%, var(--max-content));
   margin: 0 auto;
 }
 
@@ -428,7 +429,7 @@ h4 {
   position: sticky;
   top: 12px;
   z-index: 20;
-  width: min(100% - 28px, var(--max-wide));
+  width: min(100% - 28px, var(--max-content));
   margin: 12px auto -86px;
   pointer-events: none;
 }
@@ -821,23 +822,15 @@ h4 {
 .section-heading {
   display: grid;
   gap: 14px;
-  max-width: 640px;
+  max-width: 720px;
   margin-bottom: clamp(22px, 3vw, 38px);
-}
-
-.section-heading h2 {
-  max-width: 22ch;
 }
 
 .section-heading--center {
   justify-items: center;
-  max-width: 720px;
+  max-width: 760px;
   margin-inline: auto;
   text-align: center;
-}
-
-.section-heading--center h2 {
-  max-width: 26ch;
 }
 
 /* Eyebrow always left-anchored regardless of parent alignment */
@@ -853,7 +846,7 @@ h4 {
   display: grid;
   grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1.55fr);
   gap: clamp(28px, 4.5vw, 56px);
-  width: min(100%, var(--max-wide));
+  width: min(100%, var(--max-content));
   margin: 0 auto;
   padding: clamp(22px, 3.6vw, 36px);
   border-radius: var(--radius-xxl);
@@ -4197,9 +4190,41 @@ h4 {
 }
 
 @media print {
+  html:has(.printScope),
   body:has(.printScope) {
+    width: auto !important;
+    min-width: 0 !important;
     background: #ffffff !important;
     color: #000000 !important;
+    overflow: visible !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .printScope {
+    display: block !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #111111 !important;
+    font-size: 9.4pt;
+    line-height: 1.42;
+  }
+
+  .printScope *,
+  .printScope *::before,
+  .printScope *::after {
+    animation: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+    transition: none !important;
+  }
+
+  .printScope a {
+    color: inherit !important;
+    text-decoration: none !important;
   }
 
   body:has(.printScope)::before,
