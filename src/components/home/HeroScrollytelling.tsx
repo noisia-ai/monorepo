@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -232,8 +233,24 @@ export function HeroScrollytelling() {
     <section className={styles.heroSection} ref={rootRef}>
       <div className={`${styles.loader} ${isLoaded ? styles.loaderHidden : ""}`} aria-hidden={isLoaded ? true : undefined}>
         <div className={styles.loaderMark}>
-          <img className={styles.loaderBlue} src="/assets/logos/noisia-blue.svg" alt="" />
-          <img className={styles.loaderRed} src="/assets/logos/noisia-red.svg" alt="" />
+          <Image
+            className={styles.loaderBlue}
+            src="/assets/logos/noisia-blue.svg"
+            alt=""
+            width={169}
+            height={47}
+            priority
+            unoptimized
+          />
+          <Image
+            className={styles.loaderRed}
+            src="/assets/logos/noisia-red.svg"
+            alt=""
+            width={169}
+            height={47}
+            priority
+            unoptimized
+          />
           <span className={styles.loaderBar} />
         </div>
       </div>
