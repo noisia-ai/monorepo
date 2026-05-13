@@ -120,94 +120,92 @@ export function HeroScrollytelling() {
 
       const mm = gsap.matchMedia();
 
-      // Universal: scenes scroll naturally and reveal on enter — no pinning, no fade-out
+      // Universal: hero behaves like the rest of the site.
+      // - Intro noise cards: slow theatrical idle reveal on page load, then scroll-coupled drift outward.
+      // - Acts 02, 03, 04: one-shot onEnter timelines. Reveal forward, stay revealed (like data-reveal sections).
       mm.add("all", () => {
-        // Noise cards: faded-in by default on load. Quick staggered reveal, then they stay.
-        gsap.set(".scrollyNoiseCard", { autoAlpha: 0, scale: 0.96, filter: "blur(4px)" });
-        const idleReveal = gsap.to(".scrollyNoiseCard", {
-          autoAlpha: 1,
-          scale: 1,
-          filter: "blur(0px)",
-          duration: 0.55,
-          delay: 0.35,
-          stagger: { each: 0.07, from: "random" },
-          ease: "power2.out"
-        });
-
+        // Initial states
         gsap.set(".scrollyScene", { clearProps: "opacity,y,scale,filter,position,transform" });
-        gsap.set(".scrollyScene:not(.scrollyIntro)", { opacity: 0.28, y: 60, scale: 0.97, filter: "blur(6px)" });
+        gsap.set(".scrollyNoiseCard", { autoAlpha: 0, scale: 0.94, filter: "blur(5px)" });
+        gsap.set(".scrollyScene:not(.scrollyIntro)", { opacity: 0, y: 32, filter: "blur(4px)" });
         gsap.set(".scrollyFill", { scaleX: 0, transformOrigin: "left center" });
         gsap.set(".scrollyPipelineRailFill", { scaleY: 0, transformOrigin: "top center" });
         gsap.set(".scrollyPipelineRow, .scrollyMetricCard, .scrollyStateRow, .scrollyRecommendation, .scrollyStat", {
           opacity: 0,
-          y: 22
+          y: 18
         });
-        gsap.set(".scrollySignalChip", { opacity: 0, y: 26, scale: 0.9, filter: "blur(8px)" });
-        gsap.set(".scrollyPipelineOutcome", { opacity: 0, y: 24, scale: 0.96 });
+        gsap.set(".scrollySignalChip", { opacity: 0, y: 22, scale: 0.94 });
+        gsap.set(".scrollyPipelineOutcome", { opacity: 0, y: 20 });
+
+        // 1) Theatrical idle reveal of noise cards — one by one from center outward.
+        // Total reveal time ≈ 1.0s delay + (12 cards × 0.5s stagger) ≈ 6.5s
+        const idleReveal = gsap.to(".scrollyNoiseCard", {
+          autoAlpha: 1,
+          scale: 1,
+          filter: "blur(0px)",
+          duration: 0.85,
+          delay: 1.0,
+          stagger: { each: 0.5, from: "center" },
+          ease: "power2.out"
+        });
 
         const triggers: ScrollTrigger[] = [];
 
-        // Intro: cards drift + fade quickly as user starts scrolling (60vh of scroll)
+        // 2) Scroll-coupled drift — cards fly OUTWARD from origin on scroll down,
+        //    return INWARD on scroll up. Bidirectional scrub. Amplified ~4x for visibility.
         triggers.push(
           ScrollTrigger.create({
             trigger: ".scrollyIntro",
             start: "top top",
-            end: () => `+=${Math.round(window.innerHeight * 0.6)}`,
-            scrub: 0.6,
+            end: "bottom 30%",
+            scrub: 1.0,
             animation: gsap.to(".scrollyNoiseCard", {
-              x: (index) => desktopDrift[index % desktopDrift.length].x * 0.28,
-              y: (index) => desktopDrift[index % desktopDrift.length].y * 0.28,
-              rotate: (index) => desktopDrift[index % desktopDrift.length].r * 0.5,
+              x: (index) => desktopDrift[index % desktopDrift.length].x * 4.5,
+              y: (index) => desktopDrift[index % desktopDrift.length].y * 4.5,
+              rotate: (index) => desktopDrift[index % desktopDrift.length].r * 2,
               autoAlpha: 0,
               filter: "blur(8px)",
-              scale: 0.92,
-              stagger: { each: 0.015, from: "center" },
+              scale: 0.82,
+              stagger: { each: 0.012, from: "center" },
               ease: "none"
             })
           })
         );
 
-        // Per-scene reveal-on-enter; once revealed, the scene stays visible
-        [
-          {
-            scene: ".scrollyPipeline",
-            children:
-              ".scrollySignalChip, .scrollyPipelineRow, .scrollyPipeline .scrollyFill, .scrollyPipelineRailFill, .scrollyPipelineOutcome"
-          },
-          { scene: ".scrollyMethod", children: ".scrollyMetricCard, .scrollyMethod .scrollyFill, .scrollyStateRow" },
-          { scene: ".scrollyDecision", children: ".scrollyRecommendation, .scrollyStat" }
-        ].forEach(({ scene, children }) => {
-          // Scene container reveals as soon as it's barely visible
-          triggers.push(
-            ScrollTrigger.create({
-              trigger: scene,
-              start: "top 90%",
-              end: "top 55%",
-              scrub: 0.6,
-              animation: gsap.fromTo(
-                scene,
-                { opacity: 0.28, y: 60, scale: 0.97, filter: "blur(6px)" },
-                { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", ease: "none" }
-              )
-            })
-          );
+        // 3) Acts 02, 03, 04: one-shot onEnter reveals. Plays forward at fixed pace,
+        //    no scrub, no reverse. Mirrors how `[data-reveal]` sections enter.
+        const buildSceneTimeline = (sceneSel: string) => {
+          const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+          tl.to(sceneSel, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.65 });
 
-          // Internal elements stagger in shortly after
+          const child = (s: string) => `${sceneSel} ${s}`;
+
+          if (sceneSel === ".scrollyPipeline") {
+            tl.to(child(".scrollySignalChip"), { opacity: 1, y: 0, scale: 1, stagger: 0.035, duration: 0.42 }, "-=0.42");
+            tl.to(child(".scrollyPipelineRailFill"), { scaleY: 1, duration: 0.55, ease: "none" }, "-=0.32");
+            tl.to(child(".scrollyPipelineRow"), { opacity: 1, y: 0, stagger: 0.05, duration: 0.4 }, "-=0.42");
+            tl.to(child(".scrollyFill"), { scaleX: 1, stagger: 0.04, duration: 0.5, ease: "none" }, "-=0.3");
+            tl.to(child(".scrollyPipelineOutcome"), { opacity: 1, y: 0, duration: 0.42 }, "-=0.32");
+          } else if (sceneSel === ".scrollyMethod") {
+            tl.to(child(".scrollyMetricCard"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.42 }, "-=0.42");
+            tl.to(child(".scrollyFill"), { scaleX: 1, stagger: 0.04, duration: 0.5, ease: "none" }, "-=0.3");
+            tl.to(child(".scrollyStateRow"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.4 }, "-=0.35");
+          } else {
+            tl.to(child(".scrollyRecommendation"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.45 }, "-=0.42");
+            tl.to(child(".scrollyStat"), { opacity: 1, y: 0, stagger: 0.05, duration: 0.35 }, "-=0.3");
+          }
+          return tl;
+        };
+
+        [".scrollyPipeline", ".scrollyMethod", ".scrollyDecision"].forEach((sceneSel) => {
           triggers.push(
             ScrollTrigger.create({
-              trigger: scene,
-              start: "top 78%",
-              end: "top 40%",
-              scrub: 0.55,
-              animation: gsap.to(children, {
-                opacity: 1,
-                y: 0,
-                scale: 1,
-                scaleX: 1,
-                filter: "blur(0px)",
-                stagger: 0.04,
-                ease: "none"
-              })
+              trigger: sceneSel,
+              start: "top 82%",
+              once: true,
+              onEnter: () => {
+                buildSceneTimeline(sceneSel);
+              }
             })
           );
         });

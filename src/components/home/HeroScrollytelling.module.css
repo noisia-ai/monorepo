@@ -109,11 +109,11 @@
 .stage {
   position: relative;
   z-index: 2;
-  width: min(100%, 1440px);
+  width: min(100%, var(--max-wide));
   margin: 0 auto;
   overflow: visible;
   display: grid;
-  gap: clamp(48px, 5vw, 96px);
+  /* No gap — each scene controls its own vertical rhythm, matching .section padding */
 }
 
 .scene {
@@ -122,13 +122,15 @@
   align-content: center;
   justify-items: center;
   gap: clamp(18px, 2.6vw, 30px);
-  padding-block: clamp(40px, 5vw, 80px);
+  /* Match .section padding from globals so the hero acts feel like the rest of the page */
+  padding-block: clamp(44px, 5vw, 72px);
 }
 
 /* Intro scene fills the first viewport — the hero treatment */
 .introScene {
   min-height: calc(100svh - 112px);
   align-content: center;
+  padding-block: 0;
 }
 
 /* Other scenes: natural height, reveal on scroll, stay visible */
@@ -588,7 +590,9 @@
 
 /* Act 03: open layout — no glass container, items live in the stage flow */
 .methodologyHead {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 14px;
   width: min(100%, 1220px);
   margin-bottom: clamp(28px, 3.5vw, 48px);
