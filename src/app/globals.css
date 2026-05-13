@@ -4214,12 +4214,9 @@ h4 {
   .printScope *::before,
   .printScope *::after {
     animation: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: none !important;
-    filter: none !important;
-    text-shadow: none !important;
     transition: none !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .printScope a {

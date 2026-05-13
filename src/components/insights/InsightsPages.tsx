@@ -50,6 +50,7 @@ const sectionLinks = [
 const heroNumberOrder = ["corpus_scope", "period", "sources", "signals", "keywords", "evidence"];
 const heroMetaStatOrder = ["period", "sources", "signals", "evidence"];
 const maturityOrder: InsightSignal["maturity"][] = ["emergente", "acelerando", "mainstreaming"];
+const printTotalPages = "18";
 const linkedInIcon = {
   path: "M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 1 1 0-4.124 2.062 2.062 0 0 1 0 4.124zM7.119 20.452H3.554V9h3.565v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0z"
 };
@@ -170,6 +171,27 @@ function SectionIntro({ eyebrow, title, lead }: { eyebrow: string; title: string
       <h2>{title}</h2>
       {lead ? <p>{lead}</p> : null}
     </div>
+  );
+}
+
+function PrintChrome({ page, label = "cultural foresight" }: { page: string; label?: string }) {
+  return (
+    <>
+      <div className={styles.printAtmos} aria-hidden="true" />
+      <header className={styles.printHeader} aria-hidden="true">
+        <div className={styles.printHeaderBrand}>
+          <span className={styles.printLogo} />
+          <span>· {label}</span>
+        </div>
+        <div className={styles.printPageNumber}>
+          <strong>{page}</strong>
+          <span>/ {printTotalPages}</span>
+        </div>
+      </header>
+      <footer className={styles.printFooter} aria-hidden="true">
+        noisia · social intelligence architects
+      </footer>
+    </>
   );
 }
 
@@ -333,6 +355,40 @@ function WrappedSignalTitle({ text }: { text: string }) {
   );
 }
 
+function PrintSignalEvidence({ signal }: { signal: InsightSignal }) {
+  const supportingEvidence = signal.evidence.find(
+    (item) =>
+      item.platform.toLowerCase() !== signal.lead_quote.platform.toLowerCase() ||
+      cleanText(item.text, 120) !== cleanText(signal.lead_quote.text, 120)
+  ) ?? signal.evidence[0];
+  const primaryHeadline = signal.cultural_headlines[0];
+
+  return (
+    <aside className={styles.printSignalEvidence} aria-hidden="true">
+      {primaryHeadline ? (
+        <div className={styles.printSignalEvidenceStat}>
+          <strong>{primaryHeadline.value}</strong>
+          <span>{primaryHeadline.label}</span>
+          <p>{headlineDetailCopy(primaryHeadline.detail)}</p>
+        </div>
+      ) : null}
+      {supportingEvidence ? (
+        <blockquote>
+          <div className={styles.leadQuoteMeta}>
+            <span className={styles.platformMark}>
+              <PlatformIcon platform={supportingEvidence.platform} />
+              {platformName(supportingEvidence.platform)}
+            </span>
+            <span>{supportingEvidence.date}</span>
+            {supportingEvidence.mx ? <b>MX</b> : null}
+          </div>
+          <p>&ldquo;{cleanText(supportingEvidence.text, 190)}&rdquo;</p>
+        </blockquote>
+      ) : null}
+    </aside>
+  );
+}
+
 function SignalCard({ signal }: { signal: InsightSignal }) {
   return (
     <article
@@ -340,6 +396,7 @@ function SignalCard({ signal }: { signal: InsightSignal }) {
       id={`signal-${signal.order}`}
       style={{ ["--signal-color" as string]: signal.color }}
     >
+      <PrintChrome page={padOrder(signal.order + 7)} label={`señal ${padOrder(signal.order)}`} />
       <header className={styles.signalHeader}>
         <span className={styles.signalNumber}>{padOrder(signal.order)}</span>
         <div>
@@ -393,6 +450,7 @@ function SignalCard({ signal }: { signal: InsightSignal }) {
           </article>
         ))}
       </section>
+      <PrintSignalEvidence signal={signal} />
 
       <section className={styles.evidenceSection}>
         <div className={styles.evidenceHeader}>
@@ -551,8 +609,9 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
   );
 
   return (
-    <>
+    <div className="printScope">
       <section className={styles.reportHero} id="cover">
+        <PrintChrome page="01" label="cultural foresight" />
         <div className={styles.reportHeroInner}>
           <div className={styles.heroText}>
             <span className="eyebrow">NOISIA · INTELIGENCIA SOCIAL</span>
@@ -590,6 +649,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
 
       <main className={styles.reportMain}>
         <section className={styles.openingSection} id="opening">
+          <PrintChrome page="02" label="contexto" />
           <div className={styles.editorialColumn}>
             <p className={styles.openingLead}>Del Mundial 2026 ya hablarán todos.</p>
             <p>
@@ -607,6 +667,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         </section>
 
         <section className={styles.contractSection} id="looked-for">
+          <PrintChrome page="03" label="contrato de lectura" />
           <SectionIntro
             eyebrow="Contrato de lectura"
             title="No buscamos tendencias. Buscamos señales."
@@ -649,37 +710,41 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         </section>
 
         <section className={styles.radarSection} id="radar">
-          <SectionIntro
-            eyebrow="Las 8 señales"
-            title="Por madurez cultural."
-            lead="El radar separa señales emergentes, señales acelerando y señales que ya operan como lenguaje dominante."
-          />
+          <div className={styles.printDeckPage}>
+            <PrintChrome page="04" label="radar cultural" />
+            <SectionIntro
+              eyebrow="Las 8 señales"
+              title="Por madurez cultural."
+              lead="El radar separa señales emergentes, señales acelerando y señales que ya operan como lenguaje dominante."
+            />
 
-          <div className={styles.radarColumns}>
-            {maturityOrder.map((maturity) => (
-              <article className={styles.radarColumn} key={maturity}>
-                <header>
-                  <MaturityBadge maturity={maturity} />
-                  <p>{maturityCopy[maturity].note}</p>
-                </header>
-                <ol>
-                  {report.signals
-                    .filter((signal) => signal.maturity === maturity)
-                    .map((signal) => (
-                      <li key={signal.id}>
-                        <a href={`#signal-${signal.order}`} style={{ ["--signal-color" as string]: signal.color }}>
-                          <span>{padOrder(signal.order)}</span>
-                          <strong>{signal.commercial_name}</strong>
-                          <small>{signal.one_liner}</small>
-                        </a>
-                      </li>
-                    ))}
-                </ol>
-              </article>
-            ))}
+            <div className={styles.radarColumns}>
+              {maturityOrder.map((maturity) => (
+                <article className={styles.radarColumn} key={maturity}>
+                  <header>
+                    <MaturityBadge maturity={maturity} />
+                    <p>{maturityCopy[maturity].note}</p>
+                  </header>
+                  <ol>
+                    {report.signals
+                      .filter((signal) => signal.maturity === maturity)
+                      .map((signal) => (
+                        <li key={signal.id}>
+                          <a href={`#signal-${signal.order}`} style={{ ["--signal-color" as string]: signal.color }}>
+                            <span>{padOrder(signal.order)}</span>
+                            <strong>{signal.commercial_name}</strong>
+                            <small>{signal.one_liner}</small>
+                          </a>
+                        </li>
+                      ))}
+                  </ol>
+                </article>
+              ))}
+            </div>
           </div>
 
-          <div className={styles.chartGrid}>
+          <div className={`${styles.chartGrid} ${styles.printDeckPage}`}>
+            <PrintChrome page="05" label="lectura visual" />
             <ChartFigure
               label="Radar mix"
               title="La mayoría de las señales ya están acelerando."
@@ -696,18 +761,23 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
             >
               <SignalScaleChart signals={report.signals} />
             </ChartFigure>
+          </div>
+
+          <div className={`${styles.chartGrid} ${styles.chartGridSingle} ${styles.printDeckPage}`}>
+            <PrintChrome page="06" label="evidencia comparada" />
             <ChartFigure
-              label="MX evidence"
-              title="Escala de conversación vs. marcadores mexicanos."
-              subtitle="Una lectura útil cruza volumen, marcas locales de lenguaje y fuentes de captura."
-              info="Cada punto es una señal. El eje horizontal muestra menciones revisadas y el vertical marcadores MX estimados."
+              label="Lifecycle view"
+              title="Dónde está cada señal en su ciclo de vida."
+              subtitle="La altura muestra escala de conversación revisada; la posición muestra madurez cultural. Los marcadores MX ayudan a leer el tipo de lenguaje que sostiene cada señal."
+              info="Cada punto es una señal cultural. El eje horizontal usa la clasificación de madurez del estudio; el eje vertical usa menciones revisadas del JSON. El tamaño indica fuentes de captura."
               wide
             >
               <SignalEvidenceScatter signals={report.signals} />
             </ChartFigure>
           </div>
 
-          <aside className={styles.umbrellaPanel}>
+          <aside className={`${styles.umbrellaPanel} ${styles.printDeckPage}`}>
+            <PrintChrome page="07" label="hipótesis paraguas" />
             <span className="eyebrow">Hipótesis paraguas</span>
             <h2>{displayCopy(report.narrative_umbrella.title)}</h2>
             <p>{displayCopy(report.narrative_umbrella.description)}</p>
@@ -734,6 +804,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         </section>
 
         <section className={styles.brandSection} id="brands">
+          <PrintChrome page="16" label="movimientos de marca" />
           <SectionIntro
             eyebrow="Qué significa para marcas"
             title="Cinco movimientos para pasar de lectura a decisión."
@@ -763,6 +834,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         </section>
 
         <section className={styles.methodSection} id="methodology">
+          <PrintChrome page="17" label="método" />
           <SectionIntro
             eyebrow="Cómo se leyeron las señales"
             title="Método cualitativo, evidencia trazable."
@@ -828,6 +900,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         </section>
 
         <section className={styles.ctaSection} id="cta">
+          <PrintChrome page="18" label="siguiente paso" />
           <span className="eyebrow">Foundation Snapshot</span>
           <h2>¿Qué señal está creciendo en tu categoría?</h2>
           <p>
@@ -841,6 +914,6 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
           </div>
         </section>
       </main>
-    </>
+    </div>
   );
 }

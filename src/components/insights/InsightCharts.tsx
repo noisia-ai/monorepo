@@ -16,6 +16,19 @@ const maturityColors: Record<InsightSignal["maturity"], string> = {
   mainstreaming: "#1D7A55"
 };
 
+const lifecycleStages = [
+  { key: "emergente", label: "Emergente", helper: "lenguaje formándose" },
+  { key: "acelerando", label: "Acelerando", helper: "frecuencia creciente" },
+  { key: "mainstreaming", label: "Mainstreaming", helper: "lenguaje dominante" },
+  { key: "saturacion", label: "Saturación", helper: "riesgo de cliché" }
+] as const;
+
+const lifecycleBaseX: Record<InsightSignal["maturity"], number> = {
+  emergente: 14,
+  acelerando: 39,
+  mainstreaming: 63
+};
+
 function compactSignalName(input: string) {
   return input
     .replace(/^El /, "")
@@ -111,21 +124,35 @@ export function SignalScaleChart({ signals }: { signals: InsightSignal[] }) {
 
 export function SignalEvidenceScatter({ signals }: { signals: InsightSignal[] }) {
   const maxMentions = Math.max(...signals.map((signal) => signal.volume_indicator.records_analyzed));
-  const maxMx = Math.max(...signals.map((signal) => signal.volume_indicator.mx_evidence_estimated));
+  const strongestMxSignals = [...signals]
+    .sort((a, b) => b.volume_indicator.mx_evidence_estimated - a.volume_indicator.mx_evidence_estimated)
+    .slice(0, 3);
 
   return (
-    <div className={styles.scatterChart} role="img" aria-label="Escala de conversación contra marcadores mexicanos">
-      <div className={styles.scatterPlot}>
-        <span className={styles.scatterAxisX}>Menciones revisadas</span>
-        <span className={styles.scatterAxisY}>Marcadores MX</span>
+    <div className={styles.lifecycleChart} role="img" aria-label="Ciclo de vida de señales culturales por madurez y escala de conversación">
+      <div className={styles.lifecyclePlot}>
+        <span className={styles.lifecycleAxisY}>Escala de conversación revisada</span>
+        <span className={styles.lifecycleAxisX}>Madurez cultural</span>
+        <div className={styles.lifecycleBands} aria-hidden="true">
+          {lifecycleStages.map((stage) => (
+            <span key={stage.key}>
+              <strong>{stage.label}</strong>
+              <small>{stage.helper}</small>
+            </span>
+          ))}
+        </div>
         {signals.map((signal) => {
-          const x = 8 + (signal.volume_indicator.records_analyzed / maxMentions) * 84;
-          const y = 10 + (signal.volume_indicator.mx_evidence_estimated / maxMx) * 78;
-          const size = 14 + signal.volume_indicator.sources_count * 5;
+          const stageSignals = signals.filter((item) => item.maturity === signal.maturity);
+          const stageIndex = stageSignals.findIndex((item) => item.id === signal.id);
+          const stageOffset = stageSignals.length > 1 ? (stageIndex - (stageSignals.length - 1) / 2) * 3.4 : 0;
+          const x = lifecycleBaseX[signal.maturity] + stageOffset;
+          const y = 18 + Math.sqrt(signal.volume_indicator.records_analyzed / maxMentions) * 68;
+          const size = 30 + signal.volume_indicator.sources_count * 7;
+          const topMarkers = signal.monitor_next.slice(0, 2).join(" · ");
 
           return (
             <a
-              className={styles.scatterPoint}
+              className={styles.lifecyclePoint}
               href={`#signal-${signal.order}`}
               key={signal.id}
               style={{
@@ -139,12 +166,21 @@ export function SignalEvidenceScatter({ signals }: { signals: InsightSignal[] })
               <span>{String(signal.order).padStart(2, "0")}</span>
               <strong>{signal.commercial_name}</strong>
               <small>
-                {signal.volume_indicator.records_analyzed.toLocaleString("es-MX")} menciones ·{" "}
-                {signal.volume_indicator.mx_evidence_estimated.toLocaleString("es-MX")} MX
+                {signal.volume_indicator.records_analyzed.toLocaleString("es-MX")} menciones · {topMarkers}
               </small>
             </a>
           );
         })}
+        <aside className={styles.lifecycleCallout}>
+          <span>Marcadores MX más densos</span>
+          {strongestMxSignals.map((signal) => (
+            <a href={`#signal-${signal.order}`} key={signal.id} style={{ ["--signal-color" as string]: signal.color }}>
+              <b>{String(signal.order).padStart(2, "0")}</b>
+              <strong>{compactSignalName(signal.commercial_name)}</strong>
+              <small>{signal.monitor_next.slice(0, 3).join(" · ")}</small>
+            </a>
+          ))}
+        </aside>
       </div>
     </div>
   );

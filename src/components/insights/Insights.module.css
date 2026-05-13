@@ -1124,6 +1124,217 @@
   transform: translateY(0);
 }
 
+.lifecycleChart {
+  min-width: 0;
+}
+
+.lifecyclePlot {
+  position: relative;
+  height: clamp(390px, 48vw, 560px);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 30px;
+  background:
+    linear-gradient(rgba(26, 26, 26, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26, 26, 26, 0.045) 1px, transparent 1px),
+    rgba(255, 255, 255, 0.34);
+  background-size: 100% 25%, 25% 100%, auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  overflow: hidden;
+}
+
+.lifecycleBands {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  pointer-events: none;
+}
+
+.lifecycleBands span {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 16px 18px;
+  border-right: 1px solid rgba(26, 26, 26, 0.06);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lifecycleBands span:nth-child(even) {
+  background: rgba(26, 26, 26, 0.035);
+}
+
+.lifecycleBands span:last-child {
+  border-right: 0;
+}
+
+.lifecycleBands strong,
+.lifecycleBands small,
+.lifecycleAxisX,
+.lifecycleAxisY {
+  color: rgba(26, 26, 26, 0.54);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lifecycleBands strong {
+  font-size: 0.7rem;
+}
+
+.lifecycleBands small {
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  text-transform: none;
+}
+
+.lifecycleAxisX,
+.lifecycleAxisY {
+  position: absolute;
+  z-index: 2;
+  font-size: 0.68rem;
+}
+
+.lifecycleAxisX {
+  right: 20px;
+  bottom: 18px;
+}
+
+.lifecycleAxisY {
+  top: 20px;
+  left: 20px;
+}
+
+.lifecyclePoint {
+  position: absolute;
+  z-index: 3;
+  left: var(--point-x);
+  bottom: var(--point-y);
+  width: var(--point-size);
+  height: var(--point-size);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  background: var(--signal-color);
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--signal-color) 30%, transparent);
+  color: #1a1a1a;
+  text-decoration: none;
+  transform: translate(-50%, 50%);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.lifecyclePoint > span {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-weight: 950;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
+
+.lifecyclePoint strong,
+.lifecyclePoint small {
+  position: absolute;
+  left: calc(100% + 10px);
+  width: max-content;
+  max-width: 250px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.lifecyclePoint strong {
+  bottom: 18px;
+  padding: 9px 11px 3px;
+  border-radius: 12px 12px 0 0;
+  background: rgba(255, 255, 255, 0.95);
+  font-size: 0.82rem;
+  line-height: 1.12;
+}
+
+.lifecyclePoint small {
+  top: calc(50% + 5px);
+  padding: 3px 11px 9px;
+  border-radius: 0 0 12px 12px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #6f7072;
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.lifecyclePoint:hover,
+.lifecyclePoint:focus-visible {
+  z-index: 6;
+  transform: translate(-50%, 50%) scale(1.14);
+  box-shadow: 0 24px 60px color-mix(in srgb, var(--signal-color) 42%, transparent);
+}
+
+.lifecyclePoint:hover strong,
+.lifecyclePoint:hover small,
+.lifecyclePoint:focus-visible strong,
+.lifecyclePoint:focus-visible small {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.lifecycleCallout {
+  position: absolute;
+  right: 22px;
+  top: 22px;
+  z-index: 4;
+  display: grid;
+  gap: 10px;
+  width: min(330px, 34%);
+  padding: 18px;
+  border: 1px solid rgba(26, 26, 26, 0.09);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px) saturate(120%);
+}
+
+.lifecycleCallout > span {
+  color: #777;
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.lifecycleCallout a {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 9px;
+  padding-block: 8px;
+  border-top: 1px solid rgba(26, 26, 26, 0.08);
+  color: #2b2b2b;
+  text-decoration: none;
+}
+
+.lifecycleCallout b {
+  grid-row: span 2;
+  color: var(--signal-color);
+  font-size: 0.82rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.lifecycleCallout strong {
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.lifecycleCallout small {
+  color: #717274;
+  font-size: 0.68rem;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
 .umbrellaPanel {
   display: grid;
   gap: 22px;
@@ -2218,6 +2429,61 @@
     max-width: 180px;
   }
 
+  .lifecyclePlot {
+    height: 520px;
+    overflow: visible;
+  }
+
+  .lifecycleBands {
+    grid-template-columns: 1fr;
+  }
+
+  .lifecycleBands span {
+    min-height: 25%;
+    justify-content: flex-start;
+    padding: 12px 14px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(26, 26, 26, 0.06);
+  }
+
+  .lifecycleBands span:first-child {
+    padding-top: 46px;
+  }
+
+  .lifecycleAxisX {
+    right: 14px;
+    bottom: 12px;
+  }
+
+  .lifecycleAxisY {
+    top: 16px;
+    left: 18px;
+    max-width: calc(100% - 36px);
+    line-height: 1.05;
+  }
+
+  .lifecyclePoint {
+    left: clamp(42px, var(--point-x), calc(100% - 42px));
+  }
+
+  .lifecyclePoint strong,
+  .lifecyclePoint small {
+    left: auto;
+    right: calc(100% + 8px);
+    max-width: 180px;
+  }
+
+  .lifecycleChart {
+    padding-bottom: 230px;
+  }
+
+  .lifecycleCallout {
+    inset: calc(100% + 14px) 0 auto 0;
+    width: auto;
+    padding: 14px;
+    border-radius: 20px;
+  }
+
   .stickyNav {
     top: 72px;
     padding-inline: 12px;
@@ -2484,47 +2750,1660 @@
   }
 }
 
+.printAtmos,
+.printHeader,
+.printFooter,
+.printSignalEvidence {
+  display: none;
+}
+
+.printDeckPage {
+  display: contents;
+}
+
 @media print {
+  @page {
+    size: 16in 9in;
+    margin: 0;
+  }
+
   .stickyNav,
   .printButton,
   .chartInfo,
   .reportLinkCard,
-  .ctaSection :global(.button) {
+  .ctaSection :global(.button),
+  .evidenceList footer {
     display: none !important;
   }
 
-  .reportHero,
-  .reportMain {
+  .reportHero::before,
+  .reportHero::after,
+  .heroVisual::before,
+  .heroVisual::after,
+  .headlineCard::after {
+    content: none !important;
+    display: none !important;
+  }
+
+  .reportMain,
+  .signalStack {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
   }
 
-  .reportHeroInner,
-  .reportMain {
-    width: 100% !important;
-  }
-
-  .reportMain {
-    gap: 34px;
-  }
-
+  .reportHero,
+  .openingSection,
+  .contractSection,
+  .printDeckPage,
   .signalCard,
-  .chartSheet,
-  .brandCard,
+  .brandSection,
+  .methodSection,
+  .ctaSection {
+    --print-ink: #2d2d2d;
+    --print-muted: #6f7072;
+    --print-line: rgba(42, 49, 54, 0.12);
+    --print-card: rgba(255, 255, 255, 0.88);
+    --print-cyan: rgba(180, 238, 240, 0.52);
+    --print-warm: rgba(255, 220, 205, 0.64);
+    --print-shadow: 0 18px 48px rgba(16, 24, 32, 0.1);
+    position: relative !important;
+    display: grid !important;
+    width: 16in !important;
+    height: 9in !important;
+    min-height: 9in !important;
+    max-height: 9in !important;
+    margin: 0 !important;
+    padding: 1.28in 1in 0.72in !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background:
+      radial-gradient(circle at 88% 12%, rgba(188, 237, 242, 0.62) 0 0.95in, transparent 3.8in),
+      radial-gradient(circle at 10% 92%, rgba(255, 219, 202, 0.7) 0 1.1in, transparent 3.2in),
+      linear-gradient(135deg, #ffffff 0%, #fbfaf7 58%, #f7fbfb 100%) !important;
+    color: var(--print-ink) !important;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .reportHero > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .openingSection > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .contractSection > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .printDeckPage > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .signalCard > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .brandSection > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .methodSection > :not(.printAtmos):not(.printHeader):not(.printFooter),
+  .ctaSection > :not(.printAtmos):not(.printHeader):not(.printFooter) {
+    position: relative !important;
+    z-index: 2 !important;
+  }
+
+  .printAtmos {
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 0 !important;
+    display: block !important;
+    pointer-events: none !important;
+    overflow: hidden !important;
+    background-image: url("/assets/insights/technical-report-background.png");
+    background-position: center;
+    background-size: cover;
+    opacity: 0.08;
+  }
+
+  .printAtmos::before,
+  .printAtmos::after {
+    position: absolute;
+    border-radius: 999px;
+    content: "";
+    mix-blend-mode: multiply;
+  }
+
+  .printAtmos::before {
+    top: -2.8in;
+    right: -1.65in;
+    width: 7.1in;
+    height: 7.1in;
+    background: rgba(185, 236, 240, 0.72);
+  }
+
+  .printAtmos::after {
+    bottom: -2.05in;
+    left: -1.1in;
+    width: 5.7in;
+    height: 5.7in;
+    background: rgba(255, 219, 205, 0.72);
+  }
+
+  .printHeader,
+  .printFooter {
+    position: absolute !important;
+    left: 1in !important;
+    right: 1in !important;
+    z-index: 4 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    color: rgba(45, 45, 45, 0.68) !important;
+    font-size: 9pt !important;
+    font-weight: 650 !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  .printHeader {
+    top: 0.58in !important;
+  }
+
+  .printHeaderBrand,
+  .printPageNumber {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0.12in !important;
+    white-space: nowrap !important;
+  }
+
+  .printLogo {
+    display: inline-block !important;
+    width: 0.52in !important;
+    height: 0.2in !important;
+    background: transparent !important;
+  }
+
+  .printLogo::before {
+    color: #161616 !important;
+    font-size: 14pt !important;
+    font-style: italic !important;
+    font-weight: 950 !important;
+    line-height: 0.9 !important;
+    letter-spacing: -0.09em !important;
+    text-shadow:
+      0.8px 0.8px 0 #14d9df,
+      -0.8px -0.8px 0 #ee0b00 !important;
+    content: "noisia";
+  }
+
+  .printPageNumber strong {
+    color: #0d8785 !important;
+    font-weight: 900 !important;
+  }
+
+  .printFooter {
+    bottom: 0.38in !important;
+    justify-content: flex-start !important;
+    color: rgba(45, 45, 45, 0.48) !important;
+    font-size: 8pt !important;
+  }
+
+  .reportHero {
+    align-items: center !important;
+  }
+
+  .reportHeroInner {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr) !important;
+    gap: 1in !important;
+    align-items: center !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+  }
+
+  .heroText {
+    display: grid !important;
+    gap: 0.24in !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  .heroText :global(.eyebrow),
+  .sectionIntro :global(.eyebrow),
+  .chartLabel,
+  .signalHeaderMeta span,
+  .leadQuoteMeta,
+  .evidenceMeta,
+  .brandCard > span,
+  .methodGrid dt {
+    color: var(--print-muted) !important;
+    font-size: 8pt !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.09em !important;
+    text-transform: uppercase !important;
+  }
+
+  .heroText h1 {
+    max-width: 7.3in !important;
+    color: #242424 !important;
+    font-size: 65pt !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.072em !important;
+    line-height: 0.86 !important;
+  }
+
+  .heroText p {
+    max-width: 6.9in !important;
+    color: #66686b !important;
+    font-size: 18pt !important;
+    line-height: 1.18 !important;
+  }
+
+  .heroMeta {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 0.11in !important;
+    max-width: 6.4in !important;
+  }
+
+  .heroMeta span,
+  .heroMetaStat {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0.06in !important;
+    width: auto !important;
+    min-height: 0 !important;
+    max-width: 2.15in !important;
+    padding: 0.1in 0.18in !important;
+    border: 1px solid rgba(180, 190, 196, 0.42) !important;
+    border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+    box-shadow: 0 10px 24px rgba(16, 24, 32, 0.05) !important;
+    color: #62666a !important;
+    font-size: 8.2pt !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+  }
+
+  .heroMetaStat strong {
+    color: #232323 !important;
+    font-size: 9pt !important;
+    line-height: 1 !important;
+  }
+
+  .heroVisual {
+    display: grid !important;
+    align-content: center !important;
+    min-height: 3.95in !important;
+    gap: 0.2in !important;
+    padding: 0.62in !important;
+    border: 1px solid rgba(205, 214, 220, 0.78) !important;
+    border-radius: 0.28in !important;
+    background: rgba(255, 255, 255, 0.52) !important;
+    box-shadow: 0 26px 70px rgba(31, 44, 56, 0.12) !important;
+    color: #2d3948 !important;
+  }
+
+  .heroVisual span,
+  .heroVisual p {
+    color: #67717c !important;
+  }
+
+  .heroVisual strong {
+    max-width: 4.3in !important;
+    color: #344153 !important;
+    font-size: 29pt !important;
+    line-height: 0.92 !important;
+    letter-spacing: -0.062em !important;
+  }
+
+  .heroVisual p {
+    font-size: 11pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .editorialColumn {
+    display: grid !important;
+    grid-template-columns: 0.92fr 1.08fr !important;
+    gap: 0.36in 0.76in !important;
+    align-items: start !important;
+    max-width: none !important;
+    align-self: center !important;
+  }
+
+  .editorialColumn .openingLead {
+    grid-row: span 3;
+    max-width: none !important;
+    color: #242424 !important;
+    font-size: 46pt !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.066em !important;
+    line-height: 0.9 !important;
+  }
+
+  .editorialColumn p:not(.openingLead) {
+    max-width: none !important;
+    color: #4b4e52 !important;
+    font-size: 17pt !important;
+    line-height: 1.38 !important;
+  }
+
+  .sectionIntro {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.14in !important;
+    max-width: 10.8in !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  .sectionIntro :global(.eyebrow) {
+    display: inline-flex !important;
+    width: fit-content !important;
+    padding: 0.06in 0.15in !important;
+    border: 1px solid rgba(190, 199, 205, 0.45) !important;
+    border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.78) !important;
+    color: #73777b !important;
+  }
+
+  .sectionIntro h2 {
+    max-width: 10.8in !important;
+    color: #262626 !important;
+    font-size: 44pt !important;
+    line-height: 0.92 !important;
+    letter-spacing: -0.066em !important;
+  }
+
+  .sectionIntro p {
+    max-width: 8.7in !important;
+    color: #63666a !important;
+    font-size: 15pt !important;
+    line-height: 1.36 !important;
+  }
+
+  .contractGrid,
+  .maturityFramework,
+  .radarColumns,
+  .chartGrid,
+  .umbrellaPanel,
+  .headlineGrid,
+  .evidenceSection,
+  .implicationsGrid,
+  .categoryBlock,
+  .brandGrid,
   .methodGrid,
+  .methodStats,
+  .limitations,
+  .methodChips {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .contractGrid,
+  .methodGrid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.22in !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+
+  .contractGrid article,
+  .methodGrid article,
+  .maturityFrameworkCards article,
   .headlineCard,
+  .doPanel,
+  .avoidPanel,
+  .brandCard,
+  .limitations,
+  .chartSheet {
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 0.16in !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .contractGrid article,
+  .methodGrid article {
+    gap: 0.16in !important;
+    padding: 0.3in !important;
+  }
+
+  .contractGrid h3,
+  .methodGrid h3,
+  .brandCard h3,
+  .limitations h3,
+  .maturityFrameworkHeader h3 {
+    color: #262626 !important;
+    font-size: 17pt !important;
+    line-height: 1.08 !important;
+    letter-spacing: -0.04em !important;
+  }
+
+  .contractGrid ul,
+  .methodGrid ul,
+  .limitations ul,
+  .implicationsGrid ul {
+    gap: 2mm !important;
+  }
+
+  .contractGrid li,
+  .methodGrid li,
+  .limitations li,
+  .implicationsGrid li {
+    padding-left: 0.22in !important;
+    color: #4d545b !important;
+    font-size: 11pt !important;
+    line-height: 1.34 !important;
+  }
+
+  .contractGrid li::before,
+  .methodGrid li::before,
+  .limitations li::before {
+    top: 0.62em !important;
+    width: 1.5mm !important;
+    height: 1.5mm !important;
+    background: #111111 !important;
+  }
+
+  .maturityFramework {
+    gap: 0.18in !important;
+    align-self: end !important;
+    padding: 0.18in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 0.18in !important;
+    background: rgba(255, 255, 255, 0.62) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .maturityFrameworkCards,
+  .headlineGrid,
+  .implicationsGrid,
+  .categoryBlock {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 0.18in !important;
+  }
+
+  .radarColumns {
+    display: grid !important;
+    grid-template-columns: 0.72fr 1.48fr 0.72fr !important;
+    gap: 0.22in !important;
+    align-items: stretch !important;
+    margin-top: 0.38in !important;
+  }
+
+  .radarColumn {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    align-content: start !important;
+    min-height: 4.7in !important;
+    gap: 0.18in !important;
+    padding: 0.34in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 0.2in !important;
+    background: rgba(255, 255, 255, 0.68) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .radarColumn header {
+    align-content: start !important;
+    min-height: 1in !important;
+    gap: 0.16in !important;
+  }
+
+  .radarColumn:nth-child(2) {
+    min-height: 5.32in !important;
+    background: rgba(255, 255, 255, 0.82) !important;
+  }
+
+  .radarColumn:nth-child(2) ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .radarColumn ol {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.12in !important;
+    min-height: 0 !important;
+  }
+
+  .radarColumn a {
+    gap: 0.05in !important;
+    min-height: 0 !important;
+    padding: 0.13in 0.18in !important;
+    border: 1px solid color-mix(in srgb, var(--signal-color) 46%, transparent) !important;
+    border-radius: 0.12in !important;
+    background: color-mix(in srgb, var(--signal-color) 6%, rgba(255, 255, 255, 0.9)) !important;
+  }
+
+  .radarColumn a strong,
+  .headlineCard h3 {
+    font-size: 11pt !important;
+    line-height: 1.1 !important;
+  }
+
+  .radarColumn a small,
+  .radarColumn header p,
+  .maturityFramework p {
+    color: #565c62 !important;
+    font-size: 9.5pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .maturityBadge,
+  .signalChip,
+  .chipList li,
+  .chipOutlined,
+  .chipFilled,
+  .methodChips :global(.methodology-chip) {
+    min-height: 0 !important;
+    height: auto !important;
+    max-width: 100% !important;
+    padding: 0.06in 0.12in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 999px !important;
+    background: rgba(255, 255, 255, 0.76) !important;
+    color: #353b40 !important;
+    font-size: 8pt !important;
+    font-weight: 900 !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    text-overflow: clip !important;
+  }
+
+  .maturityIcon {
+    display: inline-block !important;
+  }
+
+  .chartGrid {
+    grid-template-columns: 0.9fr 1.1fr !important;
+    gap: 0.22in !important;
+    align-content: center !important;
+  }
+
+  .chartGridSingle {
+    grid-template-columns: 1fr !important;
+  }
+
+  .chartSheet {
+    min-height: 0 !important;
+    gap: 0.14in !important;
+    padding: 0.24in !important;
+    margin: 0 !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .chartSheetWide {
+    grid-column: 1 / -1 !important;
+  }
+
+  .chartGridSingle .chartSheetWide {
+    min-height: 5.55in !important;
+  }
+
+  .chartGridSingle .scatterPlot {
+    height: 4.15in !important;
+  }
+
+  .chartGridSingle .lifecyclePlot {
+    height: 5.28in !important;
+  }
+
+  .chartFigureHeader {
+    display: block !important;
+  }
+
+  .chartFigureHeader h3 {
+    margin-top: 0.06in !important;
+    color: #252525 !important;
+    font-size: 18pt !important;
+    line-height: 1.08 !important;
+  }
+
+  .chartFigureHeader p {
+    color: #5d6268 !important;
+    font-size: 10.5pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .lifecycleMap {
+    min-height: 3in !important;
+    gap: 0.1in !important;
+    padding: 0.1in !important;
+    border: 1px solid rgba(202, 211, 218, 0.65) !important;
+    border-radius: 0.12in !important;
+    background: rgba(255, 255, 255, 0.55) !important;
+  }
+
+  .lifecycleStage {
+    gap: 0.08in !important;
+    padding: 0.14in !important;
+    border-radius: 0.1in !important;
+    background: #ffffff !important;
+  }
+
+  .lifecycleStage i {
+    display: none !important;
+  }
+
+  .lifecycleStage strong {
+    margin-top: 3mm !important;
+    font-size: 24pt !important;
+  }
+
+  .scaleRow {
+    grid-template-columns: 2.4in 1fr 0.48in !important;
+    gap: 0.11in !important;
+    min-height: 0.28in !important;
+  }
+
+  .scaleName,
+  .scaleRow strong {
+    font-size: 7.5pt !important;
+  }
+
+  .scaleBar {
+    height: 3.4mm !important;
+    border: 0.25mm solid #dddddd !important;
+    background: #eeeeee !important;
+  }
+
+  .scatterPlot {
+    height: 2.75in !important;
+    border: 1px solid rgba(202, 211, 218, 0.65) !important;
+    border-radius: 0.12in !important;
+    background:
+      linear-gradient(rgba(17, 17, 17, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(17, 17, 17, 0.06) 1px, transparent 1px),
+      rgba(255, 255, 255, 0.54) !important;
+    background-size: 100% 25%, 25% 100%, auto !important;
+  }
+
+  .lifecyclePlot {
+    border: 1px solid rgba(202, 211, 218, 0.65) !important;
+    border-radius: 0.14in !important;
+    background:
+      linear-gradient(rgba(17, 17, 17, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(17, 17, 17, 0.06) 1px, transparent 1px),
+      rgba(255, 255, 255, 0.54) !important;
+    background-size: 100% 25%, 25% 100%, auto !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+  }
+
+  .lifecycleBands span {
+    justify-content: flex-end !important;
+    min-height: 0 !important;
+    padding: 0 0.14in 0.14in !important;
+    border-right: 1px solid rgba(26, 26, 26, 0.06) !important;
+    border-bottom: 0 !important;
+  }
+
+  .lifecycleBands {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .lifecycleBands strong {
+    font-size: 7.2pt !important;
+  }
+
+  .lifecycleBands small {
+    font-size: 5.8pt !important;
+  }
+
+  .lifecycleAxisX,
+  .lifecycleAxisY {
+    font-size: 6.8pt !important;
+  }
+
+  .lifecyclePoint {
+    left: var(--point-x) !important;
+    box-shadow: none !important;
+    border: 0.4mm solid #ffffff !important;
+  }
+
+  .lifecyclePoint strong,
+  .lifecyclePoint small {
+    display: none !important;
+  }
+
+  .lifecycleCallout {
+    inset: 0.18in 0.18in auto auto !important;
+    right: 0.18in !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 2.95in !important;
+    padding: 0.15in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 0.16in !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .lifecycleCallout > span {
+    font-size: 6.8pt !important;
+  }
+
+  .lifecycleCallout strong {
+    font-size: 8.4pt !important;
+  }
+
+  .lifecycleCallout small {
+    font-size: 6.5pt !important;
+  }
+
+  .scatterPoint {
+    box-shadow: none !important;
+    border: 0.4mm solid #ffffff !important;
+  }
+
+  .scatterPoint strong,
+  .scatterPoint small {
+    display: none !important;
+  }
+
+  .umbrellaPanel {
+    align-content: center !important;
+    gap: 0.24in !important;
+    background:
+      radial-gradient(circle at 80% 18%, rgba(32, 151, 153, 0.34), transparent 3.2in),
+      radial-gradient(circle at 8% 86%, rgba(255, 112, 70, 0.16), transparent 2.8in),
+      #171819 !important;
+    color: #ffffff !important;
+  }
+
+  .umbrellaPanel .printHeader,
+  .ctaSection .printHeader,
+  .umbrellaPanel .printFooter,
+  .ctaSection .printFooter {
+    color: rgba(255, 255, 255, 0.55) !important;
+  }
+
+  .umbrellaPanel .printLogo::before,
+  .ctaSection .printLogo::before {
+    color: #ffffff !important;
+  }
+
+  .umbrellaPanel :global(.eyebrow),
+  .umbrellaPanel h2,
+  .umbrellaPanel > p,
+  .umbrellaGrid h3,
+  .umbrellaGrid p {
+    color: #ffffff !important;
+  }
+
+  .umbrellaPanel h2 {
+    max-width: 8.6in !important;
+    font-size: 44pt !important;
+    line-height: 0.96 !important;
+  }
+
+  .umbrellaPanel > p {
+    max-width: 8in !important;
+    font-size: 15pt !important;
+    line-height: 1.36 !important;
+  }
+
+  .umbrellaGrid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.22in !important;
+  }
+
+  .umbrellaGrid article {
+    gap: 0.11in !important;
+    padding: 0.2in !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 0.16in !important;
+    background: rgba(255, 255, 255, 0.07) !important;
+  }
+
+  .umbrellaGrid .signalChip {
+    border-color: rgba(255, 255, 255, 0.34) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+  }
+
+  .signalStack {
+    display: block !important;
+  }
+
+  .signalCard {
+    display: grid !important;
+    grid-template-columns: 0.86fr 1.14fr !important;
+    grid-template-areas:
+      "header quote"
+      "tension reading"
+      "headline action" !important;
+    align-content: center !important;
+    gap: 0.22in !important;
+  }
+
+  .signalHeader {
+    grid-area: header !important;
+    display: grid !important;
+    grid-template-columns: 0.66in 1fr !important;
+    gap: 0.2in !important;
+    align-items: start !important;
+    padding: 0 !important;
+  }
+
+  .signalNumber {
+    color: var(--signal-color) !important;
+    font-size: 42pt !important;
+    line-height: 0.82 !important;
+  }
+
+  .signalHeader h2 {
+    width: auto !important;
+    max-width: none !important;
+    color: #252525 !important;
+    font-size: 33pt !important;
+    line-height: 0.94 !important;
+    letter-spacing: -0.055em !important;
+  }
+
+  .signalHeader p {
+    width: auto !important;
+    max-width: 5.2in !important;
+    color: #5d6268 !important;
+    font-size: 12.2pt !important;
+    line-height: 1.32 !important;
+  }
+
+  .signalTension {
+    grid-area: tension !important;
+    gap: 0.13in !important;
+    padding: 0.2in !important;
+    border: 1px solid color-mix(in srgb, var(--signal-color) 28%, transparent) !important;
+    border-radius: 0.14in !important;
+    background: color-mix(in srgb, var(--signal-color) 6%, rgba(255, 255, 255, 0.76)) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .signalTension div {
+    display: grid !important;
+    grid-template-columns: 1fr 0.52in 1fr !important;
+    gap: 0.13in !important;
+  }
+
+  .signalTension strong {
+    color: #262626 !important;
+    font-size: 15pt !important;
+    line-height: 1.05 !important;
+  }
+
+  .signalTension span[aria-hidden] {
+    width: 0.42in !important;
+    height: 0.42in !important;
+    background: var(--signal-color) !important;
+    color: #ffffff !important;
+    font-size: 7pt !important;
+  }
+
   .leadQuote {
+    grid-area: quote !important;
+    min-height: 1.6in !important;
+    padding: 0.28in !important;
+    border: 1.5px solid color-mix(in srgb, var(--signal-color) 55%, transparent) !important;
+    border-radius: 0.18in !important;
+    background: color-mix(in srgb, var(--signal-color) 5%, rgba(255, 255, 255, 0.82)) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .leadQuote p {
+    max-width: none !important;
+    color: #26313b !important;
+    font-size: 17pt !important;
+    line-height: 1.15 !important;
+  }
+
+  .signalReading {
+    grid-area: reading !important;
+    gap: 0.09in !important;
+  }
+
+  .signalReading p {
+    max-width: none !important;
+    color: #42474d !important;
+    font-size: 12.5pt !important;
+    line-height: 1.42 !important;
+  }
+
+  .headlineGrid {
+    grid-area: headline !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.12in !important;
+    padding: 0 !important;
+  }
+
+  .headlineCard {
+    min-height: 0 !important;
+    gap: 0.07in !important;
+    padding: 0.16in !important;
+  }
+
+  .signalCard .headlineCard:not(:first-child) {
+    display: none !important;
+  }
+
+  .headlineCard strong {
+    color: var(--signal-color) !important;
+    font-size: 18pt !important;
+    line-height: 0.96 !important;
+  }
+
+  .headlineCard span,
+  .headlineCard p,
+  .headlineCard footer,
+  .evidenceSummary {
+    font-size: 7.4pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .evidenceSection {
+    display: none !important;
+    gap: 3mm !important;
+  }
+
+  .evidenceHeader {
+    display: grid !important;
+    grid-template-columns: 1fr auto !important;
+    gap: 4mm !important;
+    align-items: center !important;
+  }
+
+  .evidenceList {
+    display: none !important;
+  }
+
+  .evidenceList li {
+    width: 100% !important;
+    gap: 2mm !important;
+    padding: 4mm !important;
+    border: 0.3mm solid #dddddd !important;
+    border-left: 1.2mm solid var(--signal-color) !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
-  .signalCard {
-    padding-top: 28px;
+  .evidenceList li::before,
+  .evidenceList blockquote::after {
+    display: none !important;
+    content: none !important;
   }
 
-  .heroText h1,
-  .signalHeader h2,
-  .sectionIntro h2 {
-    color: #111111 !important;
+  .evidenceList blockquote,
+  :global(.has-scroll-reveal) .evidenceList li:global(.reveal-item) blockquote,
+  :global(.has-scroll-reveal) .evidenceList li:global(.reveal-item.is-visible) blockquote {
+    color: #303030 !important;
+    clip-path: none !important;
+    font-size: 8.7pt !important;
+    line-height: 1.42 !important;
+  }
+
+  .implicationsGrid {
+    grid-area: action !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.18in !important;
+  }
+
+  .implicationsGrid > div {
+    display: grid !important;
+    grid-template-columns: 0.34in 1fr !important;
+    gap: 0.12in !important;
+    padding: 0.22in !important;
+    border-radius: 0.16in !important;
+    background: rgba(255, 255, 255, 0.74) !important;
+    box-shadow: var(--print-shadow) !important;
+  }
+
+  .implicationsGrid > div::before {
+    width: 0.28in !important;
+    height: 0.28in !important;
+    border: 1px solid var(--panel-color) !important;
+    background: color-mix(in srgb, var(--panel-color) 16%, white) !important;
+    color: var(--panel-color) !important;
+    font-size: 8pt !important;
+  }
+
+  .doPanel :global(.eyebrow),
+  .avoidPanel :global(.eyebrow) {
+    color: #262626 !important;
+    font-size: 12pt !important;
+    line-height: 1 !important;
+  }
+
+  .doPanel li,
+  .avoidPanel li {
+    color: #4a5158 !important;
+    font-size: 9.5pt !important;
+    line-height: 1.38 !important;
+  }
+
+  .doPanel li::before,
+  .avoidPanel li::before {
+    width: 4mm !important;
+    height: 4mm !important;
+    color: #ffffff !important;
+    font-size: 6pt !important;
+  }
+
+  .categoryBlock {
+    display: none !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 4mm !important;
+  }
+
+  .monitorBlock {
+    display: none !important;
+  }
+
+  .categoryBlock > div,
+  .monitorBlock {
+    display: grid !important;
+    gap: 2.5mm !important;
+  }
+
+  .categoryBlock :global(.eyebrow),
+  .monitorBlock :global(.eyebrow) {
+    display: inline-flex !important;
+    width: fit-content !important;
+    min-height: 0 !important;
+    padding: 1.5mm 3mm !important;
+    border-radius: 0 !important;
+    background: #f2f2f2 !important;
+    color: #686868 !important;
+    font-size: 7pt !important;
+    line-height: 1 !important;
+  }
+
+  .chipList {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 2mm !important;
+  }
+
+  .brandGrid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 0.2in !important;
+    align-self: center !important;
+    margin-top: -0.12in !important;
+  }
+
+  .brandCard,
+  .brandCard:nth-child(4),
+  .brandCard:nth-child(5) {
+    grid-column: auto !important;
+  }
+
+  .brandCard {
+    gap: 0.12in !important;
+    padding: 0.22in !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .brandCard p,
+  .methodGrid dd,
+  .limitations li,
+  .ctaSection p {
+    color: #4d545b !important;
+    font-size: 10pt !important;
+    line-height: 1.42 !important;
+  }
+
+  .methodStats {
+    display: grid !important;
+    grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+    gap: 0.1in !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+
+  .methodGrid,
+  .methodStats {
+    display: none !important;
+  }
+
+  .methodStats li {
+    min-height: 0 !important;
+    padding: 0.14in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    border-radius: 0.12in !important;
+    background: rgba(255, 255, 255, 0.74) !important;
+  }
+
+  .methodStats strong {
+    font-size: 20pt !important;
+  }
+
+  .methodChips {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 2mm !important;
+  }
+
+  .limitations {
+    gap: 0.1in !important;
+    padding: 0.18in !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .ctaSection {
+    align-content: center !important;
+    background:
+      radial-gradient(circle at 82% 18%, rgba(32, 151, 153, 0.34), transparent 3.5in),
+      radial-gradient(circle at 8% 86%, rgba(255, 112, 70, 0.18), transparent 3in),
+      #171819 !important;
+    color: #ffffff !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  .ctaSection :global(.eyebrow),
+  .ctaSection h2,
+  .ctaSection p {
+    color: #ffffff !important;
+  }
+
+  .ctaSection h2 {
+    max-width: 8.8in !important;
+    font-size: 56pt !important;
+    line-height: 0.95 !important;
+  }
+
+  .ctaSection p {
+    max-width: 7.2in !important;
+    font-size: 15pt !important;
+  }
+
+  .platformStrip span {
+    width: 0.18in !important;
+    height: 0.18in !important;
+    border: 1px solid rgba(202, 211, 218, 0.72) !important;
+    background: #ffffff !important;
+  }
+
+  .platformIcon {
+    width: 0.11in !important;
+    height: 0.11in !important;
+  }
+
+  .platformStrip .platformIcon {
+    width: 0.1in !important;
+    height: 0.1in !important;
+  }
+
+  .printAtmos {
+    display: block !important;
+    background: transparent !important;
+    opacity: 1 !important;
+  }
+
+  .printAtmos::before,
+  .printAtmos::after {
+    position: absolute !important;
+    display: block !important;
+    border-radius: 50% !important;
+    filter: none !important;
+    mix-blend-mode: normal !important;
+    content: "" !important;
+  }
+
+  .printAtmos::before {
+    top: -2.05in !important;
+    right: -1.15in !important;
+    width: 6.25in !important;
+    height: 6.25in !important;
+    background: #dffafa !important;
+  }
+
+  .printAtmos::after {
+    bottom: -2.3in !important;
+    left: -1.55in !important;
+    width: 5.2in !important;
+    height: 5.2in !important;
+    background: #fff0ea !important;
+  }
+
+  .reportHero,
+  .openingSection,
+  .contractSection,
+  .printDeckPage,
+  .signalCard,
+  .brandSection,
+  .methodSection {
+    --print-shadow: none;
+    background: #ffffff !important;
+  }
+
+  .umbrellaPanel,
+  .ctaSection {
+    --print-shadow: none;
+    background: #171819 !important;
+  }
+
+  .umbrellaPanel .printAtmos::before,
+  .ctaSection .printAtmos::before {
+    background: rgba(32, 151, 153, 0.22) !important;
+  }
+
+  .umbrellaPanel .printAtmos::after,
+  .ctaSection .printAtmos::after {
+    background: rgba(255, 112, 70, 0.12) !important;
+  }
+
+  .heroMeta span,
+  .heroMetaStat,
+  .heroVisual,
+  .contractGrid article,
+  .methodGrid article,
+  .maturityFramework,
+  .maturityFrameworkCards article,
+  .radarColumn,
+  .chartSheet,
+  .lifecycleMap,
+  .lifecycleStage,
+  .scatterPlot,
+  .lifecyclePlot,
+  .lifecycleCallout,
+  .signalTension,
+  .leadQuote,
+  .headlineCard,
+  .printSignalEvidence,
+  .printSignalEvidence blockquote,
+  .implicationsGrid > div,
+  .brandCard,
+  .limitations,
+  .methodStats li,
+  .methodChips :global(.methodology-chip) {
+    box-shadow: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .heroMeta span,
+  .heroMetaStat,
+  .heroVisual,
+  .contractGrid article,
+  .maturityFramework,
+  .maturityFrameworkCards article,
+  .radarColumn,
+  .chartSheet,
+  .lifecyclePlot,
+  .lifecycleCallout,
+  .headlineCard,
+  .printSignalEvidence,
+  .implicationsGrid > div,
+  .brandCard,
+  .limitations {
+    background: #ffffff !important;
+    border-color: #d8e0e5 !important;
+  }
+
+  .contractSection {
+    grid-template-rows: auto auto auto !important;
+    align-content: start !important;
+    gap: 0.26in !important;
+  }
+
+  .contractSection .sectionIntro h2 {
+    max-width: 8.6in !important;
+    font-size: 38pt !important;
+  }
+
+  .contractSection .sectionIntro p {
+    max-width: 9in !important;
+    font-size: 13pt !important;
+  }
+
+  .contractGrid {
+    gap: 0.18in !important;
+  }
+
+  .contractGrid article {
+    min-height: 1.45in !important;
+    padding: 0.22in !important;
+  }
+
+  .contractGrid li {
+    font-size: 9.6pt !important;
+    line-height: 1.25 !important;
+  }
+
+  .maturityFramework {
+    align-self: start !important;
+    gap: 0.13in !important;
+    padding: 0.16in !important;
+  }
+
+  .maturityFrameworkHeader {
+    gap: 0.04in !important;
+  }
+
+  .maturityFrameworkHeader h3 {
+    font-size: 18pt !important;
+  }
+
+  .maturityFrameworkCards {
+    gap: 0.16in !important;
+  }
+
+  .maturityFrameworkCards article {
+    min-height: 0 !important;
+    padding: 0.18in !important;
+  }
+
+  .maturityFrameworkCards p {
+    font-size: 9pt !important;
+  }
+
+  .brandSection {
+    align-content: start !important;
+    gap: 0.18in !important;
+  }
+
+  .brandSection .sectionIntro h2 {
+    max-width: 7in !important;
+    font-size: 36pt !important;
+  }
+
+  .brandSection .sectionIntro p {
+    display: none !important;
+  }
+
+  .brandGrid {
+    margin-top: 0 !important;
+    gap: 0.18in !important;
+  }
+
+  .brandCard {
+    min-height: 2.05in !important;
+    padding: 0.2in !important;
+  }
+
+  .brandCard h3 {
+    font-size: 15pt !important;
+  }
+
+  .brandCard p {
+    font-size: 8.7pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .methodSection {
+    align-content: start !important;
+    gap: 0.38in !important;
+  }
+
+  .methodSection .sectionIntro h2 {
+    font-size: 40pt !important;
+  }
+
+  .methodChips {
+    gap: 0.08in !important;
+  }
+
+  .methodChips :global(.methodology-chip) {
+    min-width: 1.55in !important;
+    justify-content: center !important;
+    background: #ffffff !important;
+  }
+
+  .limitations {
+    margin-top: 0 !important;
+    padding: 0.28in !important;
+    background: #ffffff !important;
+  }
+
+  .signalCard {
+    grid-template-columns: 0.86fr 1.14fr !important;
+    grid-template-rows: auto auto minmax(1.42in, auto) !important;
+    grid-template-areas:
+      "header quote"
+      "tension reading"
+      "evidence action" !important;
+    align-content: center !important;
+    gap: 0.18in !important;
+  }
+
+  .signalHeader h2 {
+    font-size: 30pt !important;
+  }
+
+  .signalHeader p {
+    font-size: 11pt !important;
+  }
+
+  .signalTension,
+  .leadQuote,
+  .implicationsGrid > div {
+    background: #ffffff !important;
+  }
+
+  .leadQuote {
+    min-height: 1.4in !important;
+    padding: 0.24in !important;
+  }
+
+  .leadQuote p {
+    font-size: 15.5pt !important;
+  }
+
+  .signalReading p {
+    font-size: 11.4pt !important;
+    line-height: 1.34 !important;
+  }
+
+  .headlineGrid {
+    display: none !important;
+  }
+
+  .printSignalEvidence {
+    grid-area: evidence !important;
+    display: grid !important;
+    gap: 0.12in !important;
+    min-height: 1.45in !important;
+    padding: 0.18in !important;
+    border: 1px solid #d8e0e5 !important;
+    border-radius: 0.16in !important;
+  }
+
+  .printSignalEvidenceStat {
+    display: grid !important;
+    gap: 0.03in !important;
+    padding-bottom: 0.11in !important;
+    border-bottom: 1px solid #e3e8ec !important;
+  }
+
+  .printSignalEvidenceStat strong {
+    color: var(--signal-color) !important;
+    font-size: 20pt !important;
+    line-height: 0.95 !important;
+  }
+
+  .printSignalEvidenceStat span {
+    color: #242424 !important;
+    font-size: 7.4pt !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.02em !important;
+  }
+
+  .printSignalEvidenceStat p {
+    color: #596068 !important;
+    font-size: 7.5pt !important;
+    line-height: 1.35 !important;
+  }
+
+  .printSignalEvidence blockquote {
+    display: grid !important;
+    gap: 0.07in !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .printSignalEvidence blockquote p {
+    margin: 0 !important;
+    color: #30353a !important;
+    font-size: 9.2pt !important;
+    font-weight: 750 !important;
+    line-height: 1.32 !important;
+  }
+
+  .implicationsGrid {
+    gap: 0.14in !important;
+  }
+
+  .implicationsGrid > div {
+    padding: 0.18in !important;
+  }
+
+  .doPanel li,
+  .avoidPanel li {
+    font-size: 8.8pt !important;
+    line-height: 1.28 !important;
+  }
+
+  .signalCard .categoryBlock,
+  .signalCard .monitorBlock {
+    display: none !important;
+  }
+
+  .radarSection .printDeckPage {
+    padding: 1.04in 0.72in 0.5in !important;
+    align-content: start !important;
+    gap: 0.18in !important;
+  }
+
+  .radarSection .sectionIntro {
+    max-width: 10.2in !important;
+    gap: 0.08in !important;
+  }
+
+  .radarSection .sectionIntro h2 {
+    font-size: 34pt !important;
+    line-height: 0.92 !important;
+  }
+
+  .radarSection .sectionIntro p {
+    max-width: 9.5in !important;
+    font-size: 12pt !important;
+    line-height: 1.25 !important;
+  }
+
+  .radarSection .radarColumns {
+    grid-template-columns: 0.72fr 1.62fr 0.72fr !important;
+    gap: 0.14in !important;
+    align-items: stretch !important;
+    margin-top: 0.12in !important;
+  }
+
+  .radarSection .radarColumn {
+    height: 5.05in !important;
+    min-height: 0 !important;
+    gap: 0.1in !important;
+    padding: 0.22in !important;
+    overflow: hidden !important;
+  }
+
+  .radarSection .radarColumn:nth-child(2) {
+    height: 5.05in !important;
+    min-height: 0 !important;
+  }
+
+  .radarSection .radarColumn header {
+    min-height: 0 !important;
+    gap: 0.09in !important;
+  }
+
+  .radarSection .radarColumn ol {
+    gap: 0.08in !important;
+  }
+
+  .radarSection .radarColumn a {
+    gap: 0.035in !important;
+    padding: 0.095in 0.12in !important;
+    border-radius: 0.1in !important;
+  }
+
+  .radarSection .radarColumn a strong {
+    font-size: 9.2pt !important;
+    line-height: 1.08 !important;
+  }
+
+  .radarSection .radarColumn a small,
+  .radarSection .radarColumn header p {
+    font-size: 7.5pt !important;
+    line-height: 1.22 !important;
+  }
+
+  .umbrellaPanel,
+  .ctaSection {
+    --print-shadow: none;
+    background: #ffffff !important;
+    color: var(--print-ink) !important;
+  }
+
+  .umbrellaPanel .printHeader,
+  .ctaSection .printHeader,
+  .umbrellaPanel .printFooter,
+  .ctaSection .printFooter {
+    color: rgba(45, 45, 45, 0.68) !important;
+  }
+
+  .umbrellaPanel .printLogo::before,
+  .ctaSection .printLogo::before {
+    color: #161616 !important;
+  }
+
+  .umbrellaPanel :global(.eyebrow),
+  .ctaSection :global(.eyebrow) {
+    border: 1px solid rgba(190, 199, 205, 0.45) !important;
+    background: rgba(255, 255, 255, 0.78) !important;
+    color: #73777b !important;
+  }
+
+  .umbrellaPanel h2,
+  .umbrellaPanel > p,
+  .umbrellaGrid h3,
+  .umbrellaGrid p,
+  .ctaSection h2,
+  .ctaSection p {
+    color: var(--print-ink) !important;
+  }
+
+  .umbrellaPanel > p,
+  .ctaSection p {
+    color: #4d545b !important;
+  }
+
+  .umbrellaGrid article {
+    border-color: #d8e0e5 !important;
+    background: #ffffff !important;
+  }
+
+  .umbrellaGrid .signalChip {
+    border-color: #d8e0e5 !important;
+    background: #ffffff !important;
+    color: #353b40 !important;
+  }
+
+  .umbrellaPanel .printAtmos::before,
+  .ctaSection .printAtmos::before {
+    background: #dffafa !important;
+  }
+
+  .umbrellaPanel .printAtmos::after,
+  .ctaSection .printAtmos::after {
+    background: #fff0ea !important;
   }
 }
