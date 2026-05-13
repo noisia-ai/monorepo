@@ -122,13 +122,15 @@ export function HeroScrollytelling() {
 
       // Universal: scenes scroll naturally and reveal on enter — no pinning, no fade-out
       mm.add("all", () => {
+        // Noise cards: faded-in by default on load. Quick staggered reveal, then they stay.
+        gsap.set(".scrollyNoiseCard", { autoAlpha: 0, scale: 0.96, filter: "blur(4px)" });
         const idleReveal = gsap.to(".scrollyNoiseCard", {
-          autoAlpha: (index) => (index < 6 ? 1 : 0.78),
-          filter: "blur(0px)",
+          autoAlpha: 1,
           scale: 1,
-          duration: 0.72,
-          delay: 1.2,
-          stagger: { each: 0.42, from: 6 },
+          filter: "blur(0px)",
+          duration: 0.55,
+          delay: 0.35,
+          stagger: { each: 0.07, from: "random" },
           ease: "power2.out"
         });
 
@@ -142,34 +144,24 @@ export function HeroScrollytelling() {
         });
         gsap.set(".scrollySignalChip", { opacity: 0, y: 26, scale: 0.9, filter: "blur(8px)" });
         gsap.set(".scrollyPipelineOutcome", { opacity: 0, y: 24, scale: 0.96 });
-        gsap.set(".scrollyNoiseCard", {
-          autoAlpha: (index) => (index < 6 ? 1 : 0),
-          scale: (index) => (index < 6 ? 1 : 0.94),
-          filter: (index) => (index < 6 ? "blur(0px)" : "blur(6px)")
-        });
 
         const triggers: ScrollTrigger[] = [];
 
-        // Intro: subtle noise-card drift as user scrolls through the first viewport
+        // Intro: cards drift + fade quickly as user starts scrolling (60vh of scroll)
         triggers.push(
           ScrollTrigger.create({
             trigger: ".scrollyIntro",
-            start: "top 12%",
-            end: "bottom 30%",
-            scrub: 0.8,
-            onUpdate: (self) => {
-              if (self.progress > 0.02) {
-                idleReveal.kill();
-              }
-            },
+            start: "top top",
+            end: () => `+=${Math.round(window.innerHeight * 0.6)}`,
+            scrub: 0.6,
             animation: gsap.to(".scrollyNoiseCard", {
-              x: (index) => desktopDrift[index % desktopDrift.length].x * 0.32,
-              y: (index) => desktopDrift[index % desktopDrift.length].y * 0.32,
-              rotate: (index) => desktopDrift[index % desktopDrift.length].r * 0.6,
-              autoAlpha: 0.2,
-              filter: "blur(6px)",
-              scale: 0.94,
-              stagger: { each: 0.02, from: "center" },
+              x: (index) => desktopDrift[index % desktopDrift.length].x * 0.28,
+              y: (index) => desktopDrift[index % desktopDrift.length].y * 0.28,
+              rotate: (index) => desktopDrift[index % desktopDrift.length].r * 0.5,
+              autoAlpha: 0,
+              filter: "blur(8px)",
+              scale: 0.92,
+              stagger: { each: 0.015, from: "center" },
               ease: "none"
             })
           })
@@ -185,13 +177,13 @@ export function HeroScrollytelling() {
           { scene: ".scrollyMethod", children: ".scrollyMetricCard, .scrollyMethod .scrollyFill, .scrollyStateRow" },
           { scene: ".scrollyDecision", children: ".scrollyRecommendation, .scrollyStat" }
         ].forEach(({ scene, children }) => {
-          // Scene container reveals as it enters viewport
+          // Scene container reveals as soon as it's barely visible
           triggers.push(
             ScrollTrigger.create({
               trigger: scene,
-              start: "top 82%",
-              end: "top 38%",
-              scrub: 0.75,
+              start: "top 90%",
+              end: "top 55%",
+              scrub: 0.6,
               animation: gsap.fromTo(
                 scene,
                 { opacity: 0.28, y: 60, scale: 0.97, filter: "blur(6px)" },
@@ -200,20 +192,20 @@ export function HeroScrollytelling() {
             })
           );
 
-          // Internal elements stagger in once the scene is mostly in view
+          // Internal elements stagger in shortly after
           triggers.push(
             ScrollTrigger.create({
               trigger: scene,
-              start: "top 68%",
-              end: "top 25%",
-              scrub: 0.7,
+              start: "top 78%",
+              end: "top 40%",
+              scrub: 0.55,
               animation: gsap.to(children, {
                 opacity: 1,
                 y: 0,
                 scale: 1,
                 scaleX: 1,
                 filter: "blur(0px)",
-                stagger: 0.05,
+                stagger: 0.04,
                 ease: "none"
               })
             })
@@ -291,12 +283,12 @@ export function HeroScrollytelling() {
           </div>
 
           <div className={styles.introContent}>
-            <span className={`${styles.eyebrow} scrollyIntroCopy`}>ACTO 01 · EL RUIDO</span>
+            <span className={`${styles.eyebrow} scrollyIntroCopy`}>ACTO 01 · INTELIGENCIA SOCIAL APLICADA</span>
             <h1 className={`display-xl ${styles.heroTitle} scrollyIntroCopy`}>
-              Cada día tu marca habla en cinco lugares distintos.
+              Convertimos ruido social en decisiones que defiendes con evidencia.
             </h1>
             <p className={`body-lg ${styles.heroLead} scrollyIntroCopy`}>
-              Las conversaciones que importan están dispersas. La decisión que necesitas hacer, no.
+              Diseñamos un protocolo a la medida de tu pregunta. Construimos el corpus, codificamos con seis metodologías propietarias y entregamos trazabilidad de cada hallazgo hasta la fuente. Foundation, Intelligence o Strategy — el tier lo define la decisión.
             </p>
             <div className={`${styles.heroActions} scrollyIntroActions`}>
               <Button href="/diagnostico" icon={<ArrowRight size={17} strokeWidth={1.8} />}>
@@ -391,60 +383,58 @@ export function HeroScrollytelling() {
         </div>
 
         <div className={`${styles.scene} ${styles.methodScene} scrollyScene scrollyMethod`}>
-          <div className={`${styles.methodologyShell} glass`}>
-            <div className={styles.methodologyTop}>
-              <div>
-                <span className={styles.eyebrow}>ACTO 03 · LA METODOLOGÍA EN ACCIÓN</span>
-                <span className={styles.methodologyKicker}>Triggers &amp; Barriers · Seguros México</span>
-                <h2 className={`display-lg ${styles.methodologyTitle}`}>
-                  La conversación no pide cobertura más amplia. Pide claridad cuando algo falla.
-                </h2>
-                <p className={`body-lg ${styles.methodologyLead}`}>
-                  Aplicamos la metodología sobre un caso sintético representativo para separar qué empuja la elección y qué la frena.
-                </p>
-              </div>
-              <div className={styles.methodologyChips}>
-                <MethodologyChip identifier="Triggers & Barriers" />
-                <MethodologyChip identifier="Decision Velocity" />
-              </div>
+          <div className={styles.methodologyHead}>
+            <span className={styles.eyebrow}>ACTO 03 · LA METODOLOGÍA EN ACCIÓN</span>
+            <span className={styles.methodologyKicker}>
+              Triggers &amp; Barriers · Banca digital LATAM
+            </span>
+            <h2 className={`display-lg ${styles.methodologyTitle}`}>
+              Lo que mueve la decisión y lo que la frena no es lo mismo en cada mercado.
+            </h2>
+            <p className={`body-lg ${styles.methodologyLead}`}>
+              Aplicamos Triggers &amp; Barriers sobre un caso ilustrativo. Cada cifra apunta a evidencia codificable; cada lectura territorial revela dónde la fricción se organiza primero — y por tanto dónde conviene mover el mensaje, el producto o el precio.
+            </p>
+            <div className={styles.methodologyChips}>
+              <MethodologyChip identifier="Triggers & Barriers" />
+              <MethodologyChip identifier="Decision Velocity" />
+            </div>
+          </div>
+
+          <div className={styles.methodologyGrid}>
+            <div className={styles.matrixGrid}>
+              {heroMethodologyMetrics.map((metric) => (
+                <article className={`${styles.matrixCard} scrollyMetricCard`} key={metric.label}>
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                  <div className={styles.metricTrack}>
+                    <span
+                      className={`${styles.metricFill} scrollyFill ${
+                        metric.tone === "tension" ? styles.metricFillTension : styles.metricFillSignal
+                      }`}
+                      style={{ width: metric.value }}
+                    />
+                  </div>
+                </article>
+              ))}
             </div>
 
-            <div className={styles.methodologyGrid}>
-              <div className={styles.matrixGrid}>
-                {heroMethodologyMetrics.map((metric) => (
-                  <article className={`${styles.matrixCard} scrollyMetricCard`} key={metric.label}>
-                    <span>{metric.label}</span>
-                    <strong>{metric.value}</strong>
-                    <div className={styles.metricTrack}>
-                      <span
-                        className={`${styles.metricFill} scrollyFill ${
-                          metric.tone === "tension" ? styles.metricFillTension : styles.metricFillSignal
-                        }`}
-                        style={{ width: metric.value }}
-                      />
-                    </div>
-                  </article>
-                ))}
+            <div className={styles.statePanel}>
+              <div className={styles.stateHeader}>
+                <strong>Lectura territorial</strong>
+                <span>Dónde la fricción se organiza más rápido</span>
               </div>
-
-              <div className={styles.statePanel}>
-                <div className={styles.stateHeader}>
-                  <strong>Lectura territorial</strong>
-                  <span>Señales donde la fricción se organiza más rápido</span>
-                </div>
-                <div className={styles.stateList}>
-                  {heroStateRead.map((item) => (
-                    <div className={`${styles.stateRow} scrollyStateRow`} key={item.state}>
-                      <div>
-                        <strong>{item.state}</strong>
-                        <span>{item.label}</span>
-                      </div>
-                      <div className={styles.stateBarTrack}>
-                        <span className={`${styles.stateBar} scrollyFill`} style={{ width: `${item.share}%` }} />
-                      </div>
+              <div className={styles.stateList}>
+                {heroStateRead.map((item) => (
+                  <div className={`${styles.stateRow} scrollyStateRow`} key={item.state}>
+                    <div>
+                      <strong>{item.state}</strong>
+                      <span>{item.label}</span>
                     </div>
-                  ))}
-                </div>
+                    <div className={styles.stateBarTrack}>
+                      <span className={`${styles.stateBar} scrollyFill`} style={{ width: `${item.share}%` }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

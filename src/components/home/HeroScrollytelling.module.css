@@ -113,7 +113,7 @@
   margin: 0 auto;
   overflow: visible;
   display: grid;
-  gap: clamp(80px, 9vw, 160px);
+  gap: clamp(48px, 5vw, 96px);
 }
 
 .scene {
@@ -328,8 +328,7 @@
   max-width: 720px;
 }
 
-.pipelinePanel,
-.methodologyShell {
+.pipelinePanel {
   width: min(100%, 1220px);
   padding: 26px;
   border-radius: 34px;
@@ -587,9 +586,12 @@
   opacity: 0.72;
 }
 
-.methodologyShell {
+/* Act 03: open layout — no glass container, items live in the stage flow */
+.methodologyHead {
   display: grid;
-  gap: 26px;
+  gap: 14px;
+  width: min(100%, 1220px);
+  margin-bottom: clamp(28px, 3.5vw, 48px);
 }
 
 .methodologyTop {
@@ -626,13 +628,15 @@
   flex-wrap: wrap;
   gap: 10px;
   align-content: start;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  margin-top: 6px;
 }
 
 .methodologyGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.85fr);
   gap: 18px;
+  width: min(100%, 1220px);
 }
 
 .matrixGrid {
@@ -850,12 +854,16 @@
     justify-content: center;
   }
 
-  .pipelinePanel,
-  .methodologyShell {
+  .pipelinePanel {
     width: min(100%, 660px);
     padding: 18px;
     border-radius: 28px;
     box-shadow: 0 28px 92px rgba(47, 56, 72, 0.1);
+  }
+
+  .methodologyHead,
+  .methodologyGrid {
+    width: min(100%, 660px);
   }
 
   .pipelineScene,

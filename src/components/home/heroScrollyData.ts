@@ -183,35 +183,37 @@ export const heroPipelineSteps: PipelineStep[] = [
   }
 ];
 
+// Caso ilustrativo: banca digital LATAM. Triggers (signal) y barriers (tension) mezclados
+// para mostrar la matriz que la metodología produce.
 export const heroMethodologyMetrics: ForceMetric[] = [
-  { label: "claridad al siniestro", value: "49.2%", tone: "signal" },
-  { label: "miedo a letra chica", value: "34.6%", tone: "tension" },
-  { label: "soporte humano visible", value: "28.1%", tone: "signal" },
-  { label: "desconfianza comparativa", value: "22.4%", tone: "tension" }
+  { label: "depósito inmediato sin papeleo", value: "47.3%", tone: "signal" },
+  { label: "miedo a fraude en lo digital", value: "36.4%", tone: "tension" },
+  { label: "control 24/7 desde el celular", value: "31.8%", tone: "signal" },
+  { label: "comisiones que no entiendo", value: "27.6%", tone: "tension" }
 ];
 
 export const heroStateRead = [
-  { state: "CDMX", share: "62", label: "densidad de quejas por proceso" },
-  { state: "Jalisco", share: "48", label: "ansiedad por tiempos de respuesta" },
-  { state: "Nuevo Leon", share: "41", label: "sensibilidad a letra chica" },
-  { state: "Puebla", share: "35", label: "confianza condicionada a soporte" }
+  { state: "México", share: "62", label: "prioriza estabilidad antes que features" },
+  { state: "Colombia", share: "47", label: "lealtad si hay sucursal accesible" },
+  { state: "Argentina", share: "41", label: "comparación constante con dólar" },
+  { state: "Chile", share: "35", label: "rotación por cashback diferencial" }
 ];
 
 export const heroRecommendations: Recommendation[] = [
   {
-    title: "Mover el mensaje",
-    body: "De cobertura amplia a claridad cuando algo falla. La conversación premia explicación, no grandilocuencia.",
-    move: "Reescribir framing principal"
+    title: "Visibilizar costos antes de signup",
+    body: "El barrier dominante no es producto digital. Es no entender qué se paga. Mostrar el desglose completo antes de pedir datos cierra el miedo más reportado.",
+    move: "Reescribir flujo de signup"
   },
   {
-    title: "Hacer visible el soporte",
-    body: "La confianza sube cuando el usuario ve resolución, tiempos y responsables antes de cotizar.",
-    move: "Exponer prueba operativa"
+    title: "Segmentar el mensaje por mercado",
+    body: "En México defender estabilidad y backing institucional. En Chile competir por incentivo concreto. La misma campaña en ambos mercados convierte 0.4x.",
+    move: "Diseñar copy por país"
   },
   {
-    title: "Defender valor sin bajar precio",
-    body: "La barrera no es costo absoluto. Es riesgo mal explicado. La defensa debe mostrar costo de equivocarse.",
-    move: "Armar argumento de margen"
+    title: "Construir presencia híbrida en Colombia",
+    body: "El barrier territorial pide sucursal física. Una alianza local con presencia visible reduce desconfianza donde el digital puro no escala todavía.",
+    move: "Plan de cobertura híbrida"
   }
 ];
 
