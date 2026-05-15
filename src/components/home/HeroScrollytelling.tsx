@@ -45,17 +45,17 @@ const desktopDrift = [
 ];
 
 const mobilePositions = [
-  { x: "-22vw", y: "-28vh", r: "-6deg" },
-  { x: "22vw", y: "-24vh", r: "6deg" },
-  { x: "-23vw", y: "-15vh", r: "-5deg" },
-  { x: "23vw", y: "-11vh", r: "5deg" }
+  { x: "-82px", y: "-72px", r: "-6deg" },
+  { x: "82px", y: "-54px", r: "6deg" },
+  { x: "-82px", y: "54px", r: "-5deg" },
+  { x: "82px", y: "72px", r: "5deg" }
 ];
 
 const mobileDrift = [
-  { x: -20, y: -92, r: -4 },
-  { x: 22, y: -88, r: 4 },
-  { x: -16, y: -78, r: -3 },
-  { x: 18, y: -74, r: 3 }
+  { x: -18, y: -26, r: -4 },
+  { x: 18, y: -24, r: 4 },
+  { x: -14, y: -18, r: -3 },
+  { x: 14, y: -16, r: 3 }
 ];
 
 const channelStyles = {

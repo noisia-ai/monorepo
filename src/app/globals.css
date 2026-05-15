@@ -3737,6 +3737,36 @@ h4 {
     padding: clamp(118px, 18vh, 172px) 16px 44px;
   }
 
+  .hero-experience .hero-copy {
+    justify-items: center;
+    margin-inline: auto;
+    text-align: center;
+  }
+
+  .hero-experience .hero-copy > .eyebrow,
+  .page-intro .eyebrow,
+  .diag-page-header > .eyebrow {
+    display: none;
+  }
+
+  .hero-experience .hero-copy h1,
+  .hero-experience .hero-copy p {
+    margin-inline: auto;
+  }
+
+  .page-intro__inner,
+  .diag-page-header {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .page-intro__inner h1,
+  .page-intro__inner p,
+  .diag-page-header h1,
+  .diag-page-header p {
+    margin-inline: auto;
+  }
+
   .hero-experience__inner,
   .console-grid,
   .surface-grid,
@@ -3756,15 +3786,16 @@ h4 {
   .hero-actions {
     display: flex;
     flex-direction: column;
-    align-items: stretch;
+    align-items: center;
     gap: 10px;
     margin-top: 8px;
-    max-width: 320px;
+    max-width: 100%;
   }
 
   .hero-actions .button {
-    width: 100%;
-    min-width: 0;
+    width: auto;
+    min-width: min(260px, 72vw);
+    max-width: min(320px, 86vw);
     padding-inline: 18px;
     font-size: 0.95rem;
     white-space: normal;
@@ -4227,12 +4258,14 @@ h4 {
   }
 
   .architecture-guardrails__footer {
-    align-items: stretch;
+    align-items: center;
     flex-direction: column;
   }
 
-  .architecture-guardrails__footer .btn {
-    width: 100%;
+  .architecture-guardrails__footer .button {
+    width: auto;
+    min-width: min(260px, 72vw);
+    max-width: min(320px, 86vw);
     justify-content: center;
   }
 
@@ -5983,7 +6016,15 @@ h4 {
 
   .no-method-cta {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    text-align: center;
+  }
+
+  .no-method-cta .button {
+    width: auto;
+    min-width: min(260px, 72vw);
+    max-width: min(320px, 86vw);
+    justify-content: center;
   }
 
   .output-preview {
@@ -6865,8 +6906,11 @@ h4 {
   display: flex;
   align-items: center;
   justify-content: center;
+  justify-self: center;
+  width: fit-content;
+  min-width: 232px;
   min-height: 46px;
-  padding: 0 20px;
+  padding: 0 24px;
   border-radius: 999px;
   font-size: 0.9rem;
   font-weight: 700;

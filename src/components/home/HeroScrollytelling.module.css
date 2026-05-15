@@ -996,10 +996,21 @@
   }
 
   .introScene {
+    grid-template-rows: clamp(260px, 34svh, 310px) auto;
     min-height: calc(100svh - 86px);
-    align-content: end;
-    padding-top: 20px;
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    align-content: start;
+    gap: clamp(12px, 2.8svh, 22px);
+    padding-top: 10px;
+    padding-bottom: max(22px, env(safe-area-inset-bottom));
+  }
+
+  .introScene .noiseField {
+    position: relative;
+    inset: auto;
+    width: min(100%, 390px);
+    height: clamp(260px, 34svh, 310px);
+    justify-self: center;
+    align-self: end;
   }
 
   .introContent,
@@ -1023,14 +1034,14 @@
 
   .introContent {
     gap: 14px;
-    align-self: end;
+    align-self: start;
   }
 
   .noiseCard {
-    width: clamp(136px, 40vw, 168px);
-    min-height: 88px;
-    padding: 10px 11px;
-    border-radius: 18px;
+    width: clamp(145px, 40vw, 166px);
+    min-height: 104px;
+    padding: 10px 11px 11px;
+    border-radius: 17px;
   }
 
   .heroTitle {
@@ -1060,13 +1071,14 @@
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    width: min(100%, 320px);
+    width: min(100%, 340px);
   }
 
   .heroActions :global(.button) {
     flex: none;
-    width: 100%;
-    min-width: 0;
+    width: auto;
+    min-width: min(270px, 74vw);
+    max-width: min(320px, 86vw);
     min-height: 50px;
   }
 
