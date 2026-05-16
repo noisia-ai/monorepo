@@ -41,43 +41,41 @@ type ChannelStyle = {
   iconNode?: ReactNode;
 };
 
-const desktopDrift = [
-  { x: 52, y: 90, r: 3 },
-  { x: -54, y: 76, r: -4 },
-  { x: 36, y: -28, r: 2 },
-  { x: -48, y: -22, r: -3 },
-  { x: 22, y: -72, r: 2 },
-  { x: -24, y: -88, r: -2 },
-  { x: 58, y: -64, r: 5 },
-  { x: -62, y: 48, r: -5 }
-];
-
 const mobilePositions = [
-  { x: "-82px", y: "-72px", r: "-6deg" },
-  { x: "82px", y: "-54px", r: "6deg" },
-  { x: "-82px", y: "54px", r: "-5deg" },
-  { x: "82px", y: "72px", r: "5deg" }
+  { x: "-148px", y: "-250px", r: "-8deg" },
+  { x: "112px", y: "-238px", r: "7deg" },
+  { x: "-118px", y: "-118px", r: "6deg" },
+  { x: "142px", y: "-76px", r: "-7deg" },
+  { x: "-126px", y: "16px", r: "-6deg" },
+  { x: "122px", y: "36px", r: "6deg" },
+  { x: "-150px", y: "156px", r: "8deg" },
+  { x: "132px", y: "178px", r: "-8deg" },
+  { x: "-82px", y: "284px", r: "-7deg" },
+  { x: "92px", y: "300px", r: "7deg" }
 ];
 
-const mobileDrift = [
-  { x: -18, y: -26, r: -4 },
-  { x: 18, y: -24, r: 4 },
-  { x: -14, y: -18, r: -3 },
-  { x: 14, y: -16, r: 3 }
-];
+const mobileCardOpacities = [1, 1, 0.4, 0.4, 0.5, 0.5, 0.8, 0.8, 1, 1];
 
 const channelStyles: Record<string, ChannelStyle> = {
   Amazon: { iconNode: <ShoppingBag size={14} strokeWidth={2} />, accent: "#ff9900", accent2: "#232f3e" },
   "App Store": { icon: siAppstore, accent: "#0d96f6", accent2: "#7cc4ff" },
+  Búsquedas: { glyph: "G", accent: "#4285f4", accent2: "#34a853" },
+  Comunidades: { glyph: "CO", accent: "#00abb5", accent2: "#67d7de" },
+  CRM: { glyph: "C", accent: "#008a8a", accent2: "#6edbd6" },
+  Encuestas: { glyph: "Q", accent: "#8f6ad8", accent2: "#c4a8e8" },
   Facebook: { icon: siFacebook, accent: "#1877f2", accent2: "#8cc7ff" },
   Foro: { icon: siDiscourse, accent: "#00abb5", accent2: "#67d7de" },
+  Foros: { icon: siDiscourse, accent: "#00abb5", accent2: "#67d7de" },
   "Google Reviews": { icon: siGoogle, accent: "#4285f4", accent2: "#34a853" },
   Instagram: { icon: siInstagram, accent: "#e4405f", accent2: "#f77737" },
   Klaviyo: { iconNode: <Mail size={14} strokeWidth={2} />, accent: "#111111", accent2: "#ff6f61" },
+  Marketplaces: { glyph: "M", accent: "#00b1ea", accent2: "#ffe600" },
   "Mercado Libre": { icon: siMercadopago, accent: "#00b1ea", accent2: "#ffe600" },
   Reddit: { icon: siReddit, accent: "#ff4500", accent2: "#ff9a64" },
+  Reviews: { glyph: "R", accent: "#00b67a", accent2: "#73dfbd" },
   Salesforce: { iconNode: <Cloud size={14} strokeWidth={2} />, accent: "#00a1e0", accent2: "#77d4ff" },
   Shopify: { icon: siShopify, accent: "#7ab55c", accent2: "#95bf47" },
+  Tickets: { iconNode: <Headphones size={14} strokeWidth={2} />, accent: "#03363d", accent2: "#78a300" },
   TikTok: { icon: siTiktok, accent: "#111111", accent2: "#00f2ea" },
   Trustpilot: { icon: siTrustpilot, accent: "#00b67a", accent2: "#73dfbd" },
   WhatsApp: { icon: siWhatsapp, accent: "#25d366", accent2: "#7ee6a6" },
@@ -85,6 +83,33 @@ const channelStyles: Record<string, ChannelStyle> = {
   YouTube: { icon: siYoutube, accent: "#ff0033", accent2: "#ff8a8a" },
   Zendesk: { iconNode: <Headphones size={14} strokeWidth={2} />, accent: "#03363d", accent2: "#78a300" }
 };
+
+const pipelineSignalSources = [
+  "TikTok",
+  "Instagram",
+  "X",
+  "YouTube",
+  "Facebook",
+  "Reddit",
+  "Amazon",
+  "Klaviyo",
+  "Salesforce",
+  "Zendesk",
+  "Mercado Libre",
+  "Google Reviews",
+  "Shopify",
+  "WhatsApp",
+  "App Store",
+  "Trustpilot",
+  "Tickets",
+  "Reviews",
+  "Foros",
+  "Búsquedas",
+  "Comunidades",
+  "CRM",
+  "Marketplaces",
+  "Encuestas"
+];
 
 function getChannelStyle(platform: string) {
   return channelStyles[platform as keyof typeof channelStyles] ?? channelStyles.Foro;
@@ -151,8 +176,6 @@ export function HeroScrollytelling() {
         const inactiveNoiseSelector = isMobileIntro
           ? ".scrollyNoiseCard:not([data-mobile-noise='true'])"
           : ".scrollyNoiseCard:not([data-intro-noise='true'])";
-        const drift = isMobileIntro ? mobileDrift : desktopDrift;
-
         gsap.set(".scrollyScene", { clearProps: "opacity,y,scale,filter,position,transform" });
         gsap.set(inactiveNoiseSelector, { autoAlpha: 0 });
         gsap.set(activeNoiseSelector, { autoAlpha: 0, scale: isMobileIntro ? 0.98 : 0.94, filter: "blur(5px)" });
@@ -164,38 +187,22 @@ export function HeroScrollytelling() {
           y: 18
         });
         gsap.set(".scrollySignalChip", { opacity: 0, y: 22, scale: 0.94 });
-        gsap.set(".scrollyPipelineOutcome", { opacity: 0, y: 20 });
 
         const idleReveal = gsap.to(activeNoiseSelector, {
-          autoAlpha: 1,
+          autoAlpha: (_index, target) =>
+            isMobileIntro ? Number((target as HTMLElement).dataset.mobileOpacity ?? 0.8) : 1,
           scale: 1,
-          filter: "blur(0px)",
+          filter: (_index, target) =>
+            isMobileIntro && Number((target as HTMLElement).dataset.mobileOpacity ?? 1) < 1
+              ? "blur(0.8px)"
+              : "blur(0px)",
           duration: isMobileIntro ? 0.58 : 0.78,
           delay: isMobileIntro ? 0.46 : 0.76,
-          stagger: { each: isMobileIntro ? 0.14 : 0.18, from: isMobileIntro ? "start" : "center" },
+          stagger: { each: isMobileIntro ? 0.32 : 0.38, from: "start" },
           ease: "power2.out"
         });
 
         const triggers: ScrollTrigger[] = [];
-
-        triggers.push(
-          ScrollTrigger.create({
-            trigger: ".scrollyIntro",
-            start: "top top",
-            end: isMobileIntro ? "bottom 55%" : "bottom 30%",
-            scrub: 1.0,
-            animation: gsap.to(activeNoiseSelector, {
-              x: (index) => drift[index % drift.length].x * (isMobileIntro ? 1 : 4.5),
-              y: (index) => drift[index % drift.length].y * (isMobileIntro ? 1 : 4.5),
-              rotate: (index) => drift[index % drift.length].r * (isMobileIntro ? 1 : 2),
-              autoAlpha: 0,
-              filter: isMobileIntro ? "blur(5px)" : "blur(8px)",
-              scale: isMobileIntro ? 0.92 : 0.82,
-              stagger: { each: isMobileIntro ? 0.018 : 0.012, from: "center" },
-              ease: "none"
-            })
-          })
-        );
 
         const buildSceneTimeline = (sceneSel: string) => {
           const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
@@ -208,7 +215,6 @@ export function HeroScrollytelling() {
             tl.to(child(".scrollyPipelineRailFill"), { scaleY: 1, duration: 0.55, ease: "none" }, "-=0.32");
             tl.to(child(".scrollyPipelineRow"), { opacity: 1, y: 0, stagger: 0.05, duration: 0.4 }, "-=0.42");
             tl.to(child(".scrollyFill"), { scaleX: 1, stagger: 0.04, duration: 0.5, ease: "none" }, "-=0.3");
-            tl.to(child(".scrollyPipelineOutcome"), { opacity: 1, y: 0, duration: 0.42 }, "-=0.32");
           } else if (sceneSel === ".scrollyMethod") {
             tl.to(child(".scrollyMetricCard"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.42 }, "-=0.42");
             tl.to(child(".scrollyFill"), { scaleX: 1, stagger: 0.04, duration: 0.5, ease: "none" }, "-=0.3");
@@ -283,8 +289,9 @@ export function HeroScrollytelling() {
               return (
                 <article
                   className={`${styles.noiseCard} scrollyNoiseCard glass`}
-                  data-intro-noise={index < 8 ? "true" : "false"}
-                  data-mobile-noise={index < 4 ? "true" : "false"}
+                  data-intro-noise={index < 20 ? "true" : "false"}
+                  data-mobile-noise={index < 10 ? "true" : "false"}
+                  data-mobile-opacity={String(mobileCardOpacities[index % mobileCardOpacities.length])}
                   key={`${voice.platform}-${voice.quote}`}
                   style={
                     {
@@ -329,7 +336,7 @@ export function HeroScrollytelling() {
           </div>
 
           <div className={styles.introContent}>
-            <span className={`${styles.eyebrow} scrollyIntroCopy`}>Inteligencia social para decidir</span>
+            <span className={`${styles.eyebrow} scrollyIntroCopy`}>Voz del mercado</span>
             <h1 className={`display-xl ${styles.heroTitle} scrollyIntroCopy`}>
               Decide qué hacer con lo que México ya está diciendo.
             </h1>
@@ -350,7 +357,7 @@ export function HeroScrollytelling() {
 
         <div className={`${styles.scene} ${styles.pipelineScene} scrollyScene scrollyPipeline`}>
           <div className={styles.storyHeading}>
-            <span className={styles.eyebrow}>De ruido a respuesta</span>
+            <span className={styles.eyebrow}>Ruido ordenado</span>
             <h2 className="display-lg">Ordenamos conversaciones dispersas hasta que aparece la decisión.</h2>
             <p className="body-lg">
               En México la voz del cliente vive en TikTok, Instagram, Amazon, Klaviyo, Salesforce, Zendesk, marketplaces, reviews y comunidades. La leemos completa para mostrar qué importa, por qué importa y qué mover primero.
@@ -366,17 +373,17 @@ export function HeroScrollytelling() {
             <div className={styles.pipelineNarrative}>
               <div className={styles.signalStack}>
                 <div className={styles.signalStackHeader}>
-                  <span>Señales compactadas</span>
-                  <strong>Corpus vivo</strong>
+                  <span>Fuentes VoC</span>
+                  <strong>Señales conectadas</strong>
                 </div>
                 <div className={styles.signalCloud} aria-hidden="true">
-                  {heroVoiceCards.slice(0, 16).map((voice, index) => {
-                    const channel = getChannelStyle(voice.platform);
+                  {pipelineSignalSources.map((source, index) => {
+                    const channel = getChannelStyle(source);
 
                     return (
                       <span
                         className={`${styles.signalChip} scrollySignalChip`}
-                        key={`pipeline-${voice.platform}-${index}`}
+                        key={`pipeline-${source}-${index}`}
                         style={
                           {
                             "--channel-accent": channel.accent,
@@ -397,7 +404,7 @@ export function HeroScrollytelling() {
                             {channel.glyph}
                           </span>
                         )}
-                        <span>{voice.platform}</span>
+                        <span>{source}</span>
                       </span>
                     );
                   })}
@@ -428,19 +435,13 @@ export function HeroScrollytelling() {
                   ))}
                 </div>
               </div>
-
-              <div className={`${styles.pipelineOutcome} scrollyPipelineOutcome`}>
-                <span>Decisión lista</span>
-                <strong>Lectura defendible</strong>
-                <p>La conversación deja de ser volumen y se vuelve una respuesta que negocio puede usar.</p>
-              </div>
             </div>
           </div>
         </div>
 
         <div className={`${styles.scene} ${styles.methodScene} scrollyScene scrollyMethod`}>
           <div className={styles.methodologyHead}>
-            <span className={styles.eyebrow}>Conversaciones negativas por industria</span>
+            <span className={styles.eyebrow}>Quejas por industria</span>
             <h2 className={`display-lg ${styles.methodologyTitle}`}>
               Casi todas las industrias tienen conversaciones que pueden mejorar.
             </h2>

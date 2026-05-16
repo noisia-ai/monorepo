@@ -1,35 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { productConsoleScenes } from "@/content/site";
 import { ProductConsole } from "@/components/product-scenes/ProductConsole";
 
+const AUTO_ADVANCE_MS = 12000;
+const USER_FOCUS_HOLD_MS = 18000;
+
 export function ProductConsoleShowcase() {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [hasInteracted, setHasInteracted] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const cardRefs = useRef<Array<HTMLElement | null>>([]);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
-  const hasInteractedRef = useRef(false);
-  const scrollSyncRef = useRef<number | null>(null);
+  const lastInteractionRef = useRef(0);
 
-  const alignActiveScene = useCallback(
-    (useSmoothScroll = hasInteractedRef.current) => {
-      const activeCard = cardRefs.current[selectedIndex];
-      const viewport = viewportRef.current;
-      if (activeCard && viewport) {
-        const maxLeft = viewport.scrollWidth - viewport.clientWidth;
-        const targetLeft = Math.max(0, Math.min(activeCard.offsetLeft, maxLeft));
-        if (useSmoothScroll) {
-          viewport.scrollTo({ left: targetLeft, behavior: "smooth" });
-        } else {
-          viewport.scrollLeft = targetLeft;
-        }
-      }
-
+  const alignActiveTab = useCallback(
+    (useSmoothScroll = lastInteractionRef.current > 0) => {
       const activeTab = tabRefs.current[selectedIndex];
       const tabs = tabsRef.current;
       if (activeTab && tabs) {
@@ -67,51 +54,43 @@ export function ProductConsoleShowcase() {
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion || hasInteracted || !isVisible) {
+    if (reducedMotion || !isVisible) {
       return undefined;
     }
 
     const interval = window.setInterval(() => {
+      if (Date.now() - lastInteractionRef.current < USER_FOCUS_HOLD_MS) {
+        return;
+      }
       setSelectedIndex((current) => (current + 1) % productConsoleScenes.length);
-    }, 6200);
+    }, AUTO_ADVANCE_MS);
 
     return () => window.clearInterval(interval);
-  }, [hasInteracted, isVisible]);
+  }, [isVisible]);
 
-  useLayoutEffect(() => {
-    const fastTimer = window.setTimeout(() => alignActiveScene(false), 20);
-    const settledTimer = window.setTimeout(() => alignActiveScene(false), 220);
+  useEffect(() => {
+    const fastTimer = window.setTimeout(() => alignActiveTab(false), 20);
+    const settledTimer = window.setTimeout(() => alignActiveTab(false), 220);
 
     return () => {
       window.clearTimeout(fastTimer);
       window.clearTimeout(settledTimer);
     };
-  }, [alignActiveScene]);
+  }, [alignActiveTab]);
 
   useEffect(() => {
     if (!isVisible) {
       return undefined;
     }
 
-    const handleResize = () => alignActiveScene(false);
+    const handleResize = () => alignActiveTab(false);
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [alignActiveScene, isVisible]);
-
-  useEffect(() => {
-    return () => {
-      if (scrollSyncRef.current) {
-        window.clearTimeout(scrollSyncRef.current);
-      }
-    };
-  }, []);
+  }, [alignActiveTab, isVisible]);
 
   const markInteracted = () => {
-    if (!hasInteractedRef.current) {
-      hasInteractedRef.current = true;
-      setHasInteracted(true);
-    }
+    lastInteractionRef.current = Date.now();
   };
 
   const selectScene = (index: number) => {
@@ -119,40 +98,20 @@ export function ProductConsoleShowcase() {
     setSelectedIndex(index);
   };
 
-  const syncSelectedFromScroll = () => {
-    if (!hasInteractedRef.current) {
-      return;
+  const getSceneState = (index: number) => {
+    const previousIndex = (selectedIndex - 1 + productConsoleScenes.length) % productConsoleScenes.length;
+    const nextIndex = (selectedIndex + 1) % productConsoleScenes.length;
+
+    if (index === selectedIndex) {
+      return "is-active";
     }
-
-    if (scrollSyncRef.current) {
-      window.clearTimeout(scrollSyncRef.current);
+    if (index === previousIndex) {
+      return "is-prev";
     }
-
-    scrollSyncRef.current = window.setTimeout(() => {
-      const viewport = viewportRef.current;
-      if (!viewport) {
-        return;
-      }
-
-      let closestIndex = 0;
-      let closestDistance = Number.POSITIVE_INFINITY;
-
-      cardRefs.current.forEach((card, index) => {
-        if (!card) {
-          return;
-        }
-
-        const viewportCenter = viewport.scrollLeft + viewport.clientWidth / 2;
-        const cardCenter = card.offsetLeft + card.clientWidth / 2;
-        const distance = Math.abs(cardCenter - viewportCenter);
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closestIndex = index;
-        }
-      });
-
-      setSelectedIndex(closestIndex);
-    }, 90);
+    if (index === nextIndex) {
+      return "is-next";
+    }
+    return "is-hidden";
   };
 
   return (
@@ -181,20 +140,16 @@ export function ProductConsoleShowcase() {
       <div
         className="product-console-showcase__viewport"
         onPointerDown={markInteracted}
-        onScroll={syncSelectedFromScroll}
         onWheel={markInteracted}
-        ref={viewportRef}
         role="tabpanel"
         aria-live="polite"
       >
         <div className="product-console-showcase__track">
           {productConsoleScenes.map((scene, index) => (
             <div
-              className={selectedIndex === index ? "is-active" : ""}
+              aria-hidden={selectedIndex !== index}
+              className={getSceneState(index)}
               key={scene.slug}
-              ref={(node) => {
-                cardRefs.current[index] = node;
-              }}
             >
               <ProductConsole scene={scene} />
             </div>

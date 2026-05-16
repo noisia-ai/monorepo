@@ -51,7 +51,6 @@ const PLATFORMS: Platform[] = [
 ];
 
 const SOURCE_STATS = [
-  { value: "+214M", label: "señales potenciales en México" },
   { value: "150+", label: "tipos de fuente VoC" },
   { value: "12", label: "familias de datos conectables" }
 ];

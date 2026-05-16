@@ -137,7 +137,7 @@
 .pipelineScene,
 .methodScene {
   opacity: 0.28;
-  transform: translate3d(0, 60px, 0) scale(0.97);
+  transform: translate3d(0, 60px, 0);
   filter: blur(6px);
   will-change: opacity, transform;
 }
@@ -208,28 +208,6 @@
 
 .noiseCardInner {
   display: block;
-  animation: noise-card-breathe 6.8s cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
-  will-change: transform;
-}
-
-.noiseCard:nth-child(2n) .noiseCardInner {
-  animation-duration: 7.6s;
-  animation-delay: -2.2s;
-}
-
-.noiseCard:nth-child(3n) .noiseCardInner {
-  animation-duration: 8.2s;
-  animation-delay: -3.8s;
-}
-
-@keyframes noise-card-breathe {
-  0% {
-    transform: translate3d(0, -6px, 0);
-  }
-
-  100% {
-    transform: translate3d(0, 8px, 0);
-  }
 }
 
 .voiceMeta {
@@ -357,7 +335,7 @@
 }
 
 .pipelinePanel {
-  width: 100%;
+  width: min(100%, 1040px);
   padding: 26px;
   border-radius: 34px;
   box-shadow: 0 28px 110px rgba(47, 56, 72, 0.12);
@@ -382,17 +360,16 @@
 
 .pipelineNarrative {
   display: grid;
-  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.55fr) minmax(190px, 0.52fr);
+  grid-template-columns: minmax(280px, 0.54fr) minmax(0, 1.46fr);
   gap: 22px;
   align-items: stretch;
   margin-top: 20px;
 }
 
-.signalStack,
-.pipelineOutcome {
+.signalStack {
   display: grid;
   align-content: space-between;
-  gap: 18px;
+  gap: 16px;
   min-height: 100%;
   padding: 18px;
   border-radius: 26px;
@@ -400,8 +377,7 @@
   border: 1px solid rgba(35, 35, 39, 0.08);
 }
 
-.signalStackHeader,
-.pipelineOutcome {
+.signalStackHeader {
   color: var(--neutral-10);
 }
 
@@ -414,15 +390,14 @@
   font-weight: 700;
 }
 
-.signalStackHeader strong,
-.pipelineOutcome strong {
+.signalStackHeader strong {
   color: var(--ink);
 }
 
 .signalCloud {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
   align-content: end;
 }
 
@@ -431,13 +406,13 @@
   align-items: center;
   min-width: 0;
   gap: 6px;
-  min-height: 34px;
+  min-height: 31px;
   padding: 0 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(35, 35, 39, 0.08);
   color: var(--neutral-10);
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   font-weight: 700;
   box-shadow: 0 16px 46px rgba(47, 56, 72, 0.08);
   will-change: transform, opacity, filter;
@@ -591,49 +566,6 @@
 
 .stateBar {
   background: linear-gradient(90deg, rgba(238, 72, 72, 0.9), rgba(255, 152, 118, 0.72));
-}
-
-.pipelineOutcome {
-  align-content: center;
-  position: relative;
-  overflow: hidden;
-}
-
-.pipelineOutcome span {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(0, 171, 181, 0.13);
-  color: var(--signal-dark);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.pipelineOutcome strong {
-  font-size: clamp(1.55rem, 2vw, 2rem);
-  line-height: 1.02;
-}
-
-.pipelineOutcome p {
-  margin: 0;
-  color: var(--neutral-10);
-  line-height: 1.45;
-}
-
-.pipelineOutcome::after {
-  content: "";
-  position: absolute;
-  inset: auto 18px 18px 18px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(0, 171, 181, 0.82), rgba(238, 108, 95, 0.42));
-  opacity: 0.72;
 }
 
 .methodologyHead {
@@ -892,8 +824,7 @@
     margin-top: 14px;
   }
 
-  .signalStack,
-  .pipelineOutcome {
+  .signalStack {
     min-height: auto;
     padding: 16px 16px 20px;
     border-radius: 22px;
@@ -951,14 +882,6 @@
     height: 7px;
   }
 
-  .pipelineOutcome {
-    align-content: start;
-  }
-
-  .pipelineOutcome strong {
-    font-size: 1.24rem;
-  }
-
   .methodologyGrid,
   .matrixGrid {
     grid-template-columns: 1fr;
@@ -996,21 +919,21 @@
   }
 
   .introScene {
-    grid-template-rows: clamp(260px, 34svh, 310px) auto;
     min-height: calc(100svh - 86px);
-    align-content: start;
+    align-content: center;
     gap: clamp(12px, 2.8svh, 22px);
     padding-top: 10px;
     padding-bottom: max(22px, env(safe-area-inset-bottom));
   }
 
   .introScene .noiseField {
-    position: relative;
-    inset: auto;
-    width: min(100%, 390px);
-    height: clamp(260px, 34svh, 310px);
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
     justify-self: center;
-    align-self: end;
+    align-self: stretch;
   }
 
   .introContent,
@@ -1032,7 +955,13 @@
 
   .introContent {
     gap: 14px;
-    align-self: start;
+    position: relative;
+    z-index: 2;
+    align-self: center;
+    text-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.92),
+      0 18px 54px rgba(255, 255, 255, 0.88),
+      0 0 42px rgba(255, 255, 255, 0.78);
   }
 
   .noiseCard {
@@ -1174,32 +1103,6 @@
     line-height: 1.28;
   }
 
-  .pipelineOutcome {
-    gap: 12px;
-    padding: 20px 18px;
-    background:
-      linear-gradient(135deg, rgba(18, 19, 20, 0.95), rgba(18, 19, 20, 0.86)),
-      radial-gradient(circle at 20% 15%, rgba(0, 171, 181, 0.22), transparent 42%);
-    border-color: rgba(18, 19, 20, 0.12);
-  }
-
-  .pipelineOutcome span {
-    min-height: 24px;
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.18);
-    color: rgba(255, 255, 255, 0.78);
-    font-size: 0.58rem;
-  }
-
-  .pipelineOutcome strong {
-    color: #fff;
-  }
-
-  .pipelineOutcome p {
-    color: rgba(255, 255, 255, 0.72);
-    font-size: 0.78rem;
-  }
-
   .pipelineLabels strong {
     font-size: 0.88rem;
   }
@@ -1219,6 +1122,11 @@
 
   .matrixCard strong {
     font-size: 1.42rem;
+  }
+
+  .matrixCard span {
+    font-size: 0.95rem;
+    font-weight: 700;
   }
 
 }

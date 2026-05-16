@@ -21,7 +21,7 @@ export default function HomePage() {
       <section className="section">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="COBERTURA"
+            eyebrow="Mapa de fuentes"
             title="Escuchamos México donde vive la voz del cliente."
             lead="La señal puede vivir en TikTok, Instagram, X, Amazon, Klaviyo, Salesforce, Zendesk, reviews, tickets, foros, búsquedas, comunidades o marketplaces. La cobertura se define por tu pregunta, no por una lista fija de redes."
           />
@@ -32,7 +32,7 @@ export default function HomePage() {
       <section className="section product-preview-section" data-reveal>
         <div className="section__inner product-preview-section__inner">
           <SectionHeader
-            eyebrow="DEL DATO A LA DECISIÓN"
+            eyebrow="Lecturas accionables"
             title="Casos de uso: cuando la lectura ya está lista para negocio."
             lead="Usamos preguntas reales de campaña, medios, producto, competencia y tendencias para mostrar cómo se ve una salida accionable, con evidencia y un botón para profundizar."
           />
@@ -45,7 +45,7 @@ export default function HomePage() {
       <section className="section">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="LA PREGUNTA QUE TIENES ENFRENTE"
+            eyebrow="Pregunta abierta"
             title="Encuentra la pregunta que hoy te está frenando."
             lead="Lanzamiento, medios, producto, entrada a México, competencia, tendencias o crisis. El punto de partida cambia, pero la salida siempre es una decisión defendible."
           />
@@ -58,7 +58,7 @@ export default function HomePage() {
       <section className="section">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="INSIGHTS NOISIA"
+            eyebrow="Lecturas recientes"
             title="Dos lecturas vivas sobre México para empezar la conversación."
             lead="Los insights editoriales muestran cómo se ve una lectura Noisia cuando junta escala, evidencia y criterio cultural: no solo social listening, sino señal lista para negocio."
           />
@@ -69,7 +69,7 @@ export default function HomePage() {
       <section className="section">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="METODOLOGÍAS PROPIETARIAS"
+            eyebrow="Métodos de lectura"
             title="Métodos propios, explicados en lenguaje de negocio."
             lead="Cada método responde una duda concreta: qué activa compra, qué frena confianza, dónde hay valor, quién influye y qué mensaje acelera la decisión."
           />
@@ -80,7 +80,7 @@ export default function HomePage() {
       <section className="section section--compact">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="EVIDENCIA"
+            eyebrow="Citas trazables"
             title="La evidencia no queda escondida."
             lead="Cada hallazgo conserva la cita, la fuente y el tag que lo sostiene para que tu equipo pueda discutir la decisión, no adivinarla."
           />
@@ -91,7 +91,7 @@ export default function HomePage() {
       <section className="section">
         <div className="section__inner">
           <SectionHeader
-            eyebrow="SERVICIOS"
+            eyebrow="Formas de trabajo"
             title="Elige la profundidad según el tamaño de la decisión."
             lead="Foundation, Intelligence y Strategy son tres formas de llegar a una respuesta útil en México: desde validar una hipótesis hasta sostener un sistema continuo de decisiones."
           />
@@ -117,7 +117,7 @@ export default function HomePage() {
       <section className="section section--compact">
         <div className="section__inner">
           <div className="closing-panel glass">
-            <span className="eyebrow">LISTO PARA DECIDIR</span>
+            <span className="eyebrow">Decidir con evidencia</span>
             <h2 className="display-lg">No necesitas más ruido. Necesitas una lectura que puedas defender.</h2>
             <p className="body-lg">
               Trabajamos con conversación pública y fuentes de voz del cliente en México para responder una pregunta de negocio, sostenerla con evidencia trazable y traducirla en acciones que tu equipo pueda poner sobre la mesa.
