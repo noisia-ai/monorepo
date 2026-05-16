@@ -135,8 +135,7 @@
 
 /* Other scenes: natural height, reveal on scroll, stay visible */
 .pipelineScene,
-.methodScene,
-.decisionScene {
+.methodScene {
   opacity: 0.28;
   transform: translate3d(0, 60px, 0) scale(0.97);
   filter: blur(6px);
@@ -149,8 +148,7 @@
 }
 
 .pipelineScene,
-.methodScene,
-.decisionScene {
+.methodScene {
   z-index: 3;
 }
 
@@ -260,6 +258,15 @@
   fill: var(--channel-accent);
 }
 
+.voiceIconWrap {
+  display: inline-grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--channel-accent);
+}
+
 .voiceGlyph {
   display: inline-grid;
   place-items: center;
@@ -332,8 +339,7 @@
   font-weight: 600;
 }
 
-.storyHeading,
-.decisionTop {
+.storyHeading {
   display: grid;
   justify-items: center;
   gap: 14px;
@@ -341,14 +347,12 @@
   text-align: center;
 }
 
-.storyHeading h2,
-.decisionTop h2 {
+.storyHeading h2 {
   width: min(100%, 760px);
   text-wrap: balance;
 }
 
-.storyHeading p,
-.decisionTop p {
+.storyHeading p {
   width: min(100%, 760px);
 }
 
@@ -446,6 +450,15 @@
   fill: var(--channel-accent);
 }
 
+.signalIconWrap {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--channel-accent);
+}
+
 .signalGlyph {
   display: inline-grid;
   place-items: center;
@@ -535,9 +548,7 @@
 .pipelineLabels strong,
 .stateHeader strong,
 .stateRow strong,
-.matrixCard strong,
-.recommendationCard h3,
-.decisionStat strong {
+.matrixCard strong {
   color: var(--ink);
 }
 
@@ -549,10 +560,7 @@
 .pipelineMetric em,
 .stateHeader span,
 .stateRow span,
-.matrixCard span,
-.recommendationCard p,
-.decisionStat span,
-.decisionCopy {
+.matrixCard span {
   color: var(--neutral-10);
   font-style: normal;
   line-height: 1.5;
@@ -632,17 +640,13 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
-  margin-bottom: clamp(24px, 3vw, 42px);
+  margin-bottom: clamp(18px, 2.1vw, 28px);
 }
 
 .methodologyTitle {
   margin-top: 0;
-  width: min(100%, 760px);
-}
-
-.methodologyLead {
   width: min(100%, 760px);
 }
 
@@ -652,7 +656,6 @@
   gap: 10px;
   align-content: start;
   justify-content: flex-start;
-  margin-top: 6px;
 }
 
 .methodologyChips :global(.chip) {
@@ -664,25 +667,30 @@
 
 .methodologyGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
+  align-items: stretch;
   width: 100%;
 }
 
 .matrixStack {
   display: grid;
-  gap: 12px;
+  height: 100%;
 }
 
 .matrixGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  height: 100%;
 }
 
 .matrixCard {
   display: grid;
+  align-content: space-between;
   gap: 10px;
+  min-height: 160px;
   padding: 18px;
   border-radius: 26px;
   background: rgba(255, 255, 255, 0.48);
@@ -715,15 +723,6 @@
   font-weight: 700;
 }
 
-.matrixNote {
-  margin: 0;
-  padding: 0 4px;
-  color: var(--neutral-10);
-  font-size: 0.82rem;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
 .metricFillSignal {
   background: linear-gradient(90deg, rgba(18, 167, 122, 0.92), rgba(78, 206, 167, 0.72));
 }
@@ -734,8 +733,10 @@
 
 .statePanel {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  min-height: 100%;
+  padding: 22px;
   border-radius: 26px;
   background: rgba(255, 255, 255, 0.44);
   border: 1px solid rgba(35, 35, 39, 0.08);
@@ -748,12 +749,17 @@
 
 .stateList {
   display: grid;
-  gap: 12px;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  min-height: 0;
 }
 
 .stateRow {
   display: grid;
-  gap: 8px;
+  align-content: center;
+  gap: 10px;
+  min-height: 0;
+  padding-block: 4px;
 }
 
 .stateRow > div:first-child {
@@ -767,77 +773,6 @@
 .stateRow > div:first-child strong,
 .stateRow > div:first-child span {
   min-width: 0;
-}
-
-.decisionTop h2 {
-  max-width: none;
-}
-
-.recommendationGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  width: min(100%, 1180px);
-}
-
-.recommendationCard {
-  display: grid;
-  gap: 14px;
-  padding: 24px;
-  border-radius: 30px;
-  box-shadow: 0 24px 90px rgba(47, 56, 72, 0.1);
-}
-
-.recommendationCard h3 {
-  margin: 0;
-  font-size: clamp(1.4rem, 1.85vw, 1.8rem);
-  line-height: 1.06;
-}
-
-.recommendationMove {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  width: fit-content;
-  padding: 0 12px;
-  border-radius: 999px;
-  background: rgba(0, 171, 181, 0.08);
-  color: var(--signal-dark);
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.decisionFooter {
-  display: grid;
-  gap: 18px;
-  width: min(100%, 1180px);
-}
-
-.signatureStrip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.decisionStat {
-  display: grid;
-  gap: 8px;
-  min-height: 108px;
-  padding: 18px;
-  border-radius: 24px;
-}
-
-.decisionStat strong {
-  font-size: 1.8rem;
-  line-height: 1;
-}
-
-.decisionActions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
 }
 
 @media (max-width: 1220px) {
@@ -916,8 +851,7 @@
   }
 
   .introContent,
-  .storyHeading,
-  .decisionTop {
+  .storyHeading {
     width: min(100%, 680px);
   }
 
@@ -925,8 +859,7 @@
     width: min(100%, 760px);
   }
 
-  .heroActions :global(.button),
-  .decisionActions :global(.button) {
+  .heroActions :global(.button) {
     flex: 1 1 190px;
     justify-content: center;
   }
@@ -944,8 +877,7 @@
   }
 
   .pipelineScene,
-  .methodScene,
-  .decisionScene {
+  .methodScene {
     align-content: center;
     justify-items: center;
   }
@@ -1028,9 +960,7 @@
   }
 
   .methodologyGrid,
-  .matrixGrid,
-  .recommendationGrid,
-  .signatureStrip {
+  .matrixGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1038,8 +968,7 @@
     justify-content: flex-start;
   }
 
-  .methodologyTitle,
-  .decisionTop h2 {
+  .methodologyTitle {
     max-width: none;
     width: min(100%, 660px);
   }
@@ -1048,9 +977,6 @@
     display: none;
   }
 
-  .recommendationGrid {
-    width: min(100%, 620px);
-  }
 }
 
 @media (max-width: 760px) {
@@ -1089,8 +1015,7 @@
 
   .introContent,
   .storyHeading,
-  .methodologyHead,
-  .decisionTop {
+  .methodologyHead {
     justify-items: center;
     text-align: center;
     width: var(--scrolly-copy-width);
@@ -1101,8 +1026,7 @@
   }
 
   .storyHeading .eyebrow,
-  .methodologyHead .eyebrow,
-  .decisionTop .eyebrow {
+  .methodologyHead .eyebrow {
     justify-self: center;
   }
 
@@ -1123,9 +1047,7 @@
   }
 
   .heroLead,
-  .storyHeading p,
-  .methodologyLead,
-  .decisionTop p {
+  .storyHeading p {
     width: 100%;
     max-width: none;
     font-size: 1rem;
@@ -1286,15 +1208,8 @@
   .pipelineMetric em,
   .stateHeader span,
   .stateRow span,
-  .matrixCard span,
-  .recommendationCard p,
-  .decisionStat span,
-  .decisionCopy {
+  .matrixCard span {
     font-size: 0.8rem;
-  }
-
-  .methodologyLead {
-    font-size: 0.95rem;
   }
 
   .matrixCard {
@@ -1306,46 +1221,6 @@
     font-size: 1.42rem;
   }
 
-  .recommendationGrid {
-    gap: 10px;
-  }
-
-  .recommendationCard {
-    gap: 8px;
-    padding: 16px;
-    border-radius: 22px;
-  }
-
-  .recommendationCard h3 {
-    font-size: 1.18rem;
-  }
-
-  .recommendationMove {
-    min-height: 26px;
-    font-size: 0.62rem;
-  }
-
-  .decisionStat {
-    min-height: 74px;
-    padding: 14px;
-    border-radius: 20px;
-  }
-
-  .decisionStat strong {
-    font-size: 1.28rem;
-  }
-
-  .decisionActions {
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .decisionActions :global(.button) {
-    flex: none;
-    width: min(100%, 320px);
-    min-width: 0;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -23,12 +23,6 @@ export type ForceMetric = {
   tone?: "signal" | "tension";
 };
 
-export type Recommendation = {
-  title: string;
-  body: string;
-  move: string;
-};
-
 export const heroVoiceCards: VoiceCard[] = [
   {
     platform: "TikTok",
@@ -191,32 +185,7 @@ export const heroIndustryMetrics: ForceMetric[] = [
 ];
 
 export const heroRoleRead = [
-  { state: "Brand", share: "68", label: "quejas por promesas que suenan grandes y se sostienen poco" },
   { state: "CX", share: "61", label: "reclamos por soporte lento, respuestas automáticas y poca claridad" },
   { state: "Producto", share: "54", label: "fallas repetidas, onboarding confuso y expectativa no cumplida" },
   { state: "Precio", share: "47", label: "molestia cuando el costo extra aparece tarde o no se justifica" }
-];
-
-export const heroRecommendations: Recommendation[] = [
-  {
-    title: "Aterrizar la pregunta correcta",
-    body: "No empezamos por métricas sueltas. Convertimos la duda del equipo en una pregunta de negocio clara: qué decisión se necesita tomar y qué evidencia la haría defendible.",
-    move: "Antes de escuchar"
-  },
-  {
-    title: "Separar señal de ruido",
-    body: "Leemos conversaciones abiertas para distinguir lo que se repite, lo que pesa y lo que realmente cambia una decisión. Menos volumen bruto, más lectura útil.",
-    move: "Durante la lectura"
-  },
-  {
-    title: "Traducir evidencia a acción",
-    body: "Cada salida termina en movimientos concretos: qué decir, qué ajustar, qué priorizar y qué puede presentar tu equipo con respaldo.",
-    move: "Después del análisis"
-  }
-];
-
-export const heroSignature = [
-  { value: "Pregunta", label: "partimos de una decisión real" },
-  { value: "Señales", label: "leemos conversaciones con contexto" },
-  { value: "Acción", label: "cerramos con un movimiento defendible" }
 ];

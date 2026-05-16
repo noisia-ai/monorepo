@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { ArrowRight } from "lucide-react";
-import type { CSSProperties } from "react";
+import { ArrowRight, Cloud, Headphones, Mail, ShoppingBag } from "lucide-react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   siAppstore,
@@ -17,8 +17,7 @@ import {
   siTrustpilot,
   siWhatsapp,
   siX,
-  siYoutube,
-  siZendesk
+  siYoutube
 } from "simple-icons";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -27,8 +26,6 @@ import { Button } from "@/components/ui/Button";
 import {
   heroIndustryMetrics,
   heroPipelineSteps,
-  heroRecommendations,
-  heroSignature,
   heroRoleRead,
   heroVoiceCards
 } from "@/components/home/heroScrollyData";
@@ -41,6 +38,7 @@ type ChannelStyle = {
   accent2: string;
   glyph?: string;
   icon?: { path: string };
+  iconNode?: ReactNode;
 };
 
 const desktopDrift = [
@@ -69,23 +67,23 @@ const mobileDrift = [
 ];
 
 const channelStyles: Record<string, ChannelStyle> = {
-  Amazon: { icon: siGoogle, accent: "#ff9900", accent2: "#232f3e" },
+  Amazon: { iconNode: <ShoppingBag size={14} strokeWidth={2} />, accent: "#ff9900", accent2: "#232f3e" },
   "App Store": { icon: siAppstore, accent: "#0d96f6", accent2: "#7cc4ff" },
   Facebook: { icon: siFacebook, accent: "#1877f2", accent2: "#8cc7ff" },
   Foro: { icon: siDiscourse, accent: "#00abb5", accent2: "#67d7de" },
   "Google Reviews": { icon: siGoogle, accent: "#4285f4", accent2: "#34a853" },
   Instagram: { icon: siInstagram, accent: "#e4405f", accent2: "#f77737" },
-  Klaviyo: { glyph: "K", accent: "#111111", accent2: "#ff6f61" },
+  Klaviyo: { iconNode: <Mail size={14} strokeWidth={2} />, accent: "#111111", accent2: "#ff6f61" },
   "Mercado Libre": { icon: siMercadopago, accent: "#00b1ea", accent2: "#ffe600" },
   Reddit: { icon: siReddit, accent: "#ff4500", accent2: "#ff9a64" },
-  Salesforce: { glyph: "SF", accent: "#00a1e0", accent2: "#77d4ff" },
+  Salesforce: { iconNode: <Cloud size={14} strokeWidth={2} />, accent: "#00a1e0", accent2: "#77d4ff" },
   Shopify: { icon: siShopify, accent: "#7ab55c", accent2: "#95bf47" },
   TikTok: { icon: siTiktok, accent: "#111111", accent2: "#00f2ea" },
   Trustpilot: { icon: siTrustpilot, accent: "#00b67a", accent2: "#73dfbd" },
   WhatsApp: { icon: siWhatsapp, accent: "#25d366", accent2: "#7ee6a6" },
   X: { icon: siX, accent: "#111111", accent2: "#777777" },
   YouTube: { icon: siYoutube, accent: "#ff0033", accent2: "#ff8a8a" },
-  Zendesk: { icon: siZendesk, accent: "#03363d", accent2: "#78a300" }
+  Zendesk: { iconNode: <Headphones size={14} strokeWidth={2} />, accent: "#03363d", accent2: "#78a300" }
 };
 
 function getChannelStyle(platform: string) {
@@ -161,7 +159,7 @@ export function HeroScrollytelling() {
         gsap.set(".scrollyScene:not(.scrollyIntro)", { opacity: 0, y: 32, filter: "blur(4px)" });
         gsap.set(".scrollyFill", { scaleX: 0, transformOrigin: "left center" });
         gsap.set(".scrollyPipelineRailFill", { scaleY: 0, transformOrigin: "top center" });
-        gsap.set(".scrollyPipelineRow, .scrollyMetricCard, .scrollyStateRow, .scrollyRecommendation, .scrollyStat", {
+        gsap.set(".scrollyPipelineRow, .scrollyMetricCard, .scrollyStateRow", {
           opacity: 0,
           y: 18
         });
@@ -215,14 +213,11 @@ export function HeroScrollytelling() {
             tl.to(child(".scrollyMetricCard"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.42 }, "-=0.42");
             tl.to(child(".scrollyFill"), { scaleX: 1, stagger: 0.04, duration: 0.5, ease: "none" }, "-=0.3");
             tl.to(child(".scrollyStateRow"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.4 }, "-=0.35");
-          } else {
-            tl.to(child(".scrollyRecommendation"), { opacity: 1, y: 0, stagger: 0.06, duration: 0.45 }, "-=0.42");
-            tl.to(child(".scrollyStat"), { opacity: 1, y: 0, stagger: 0.05, duration: 0.35 }, "-=0.3");
           }
           return tl;
         };
 
-        [".scrollyPipeline", ".scrollyMethod", ".scrollyDecision"].forEach((sceneSel) => {
+        [".scrollyPipeline", ".scrollyMethod"].forEach((sceneSel) => {
           triggers.push(
             ScrollTrigger.create({
               trigger: sceneSel,
@@ -307,7 +302,11 @@ export function HeroScrollytelling() {
                   <div className={styles.noiseCardInner}>
                     <div className={styles.voiceMeta}>
                       <span className={styles.voicePlatform}>
-                        {channel.icon ? (
+                        {channel.iconNode ? (
+                          <span className={styles.voiceIconWrap} aria-hidden="true">
+                            {channel.iconNode}
+                          </span>
+                        ) : channel.icon ? (
                           <svg className={styles.voiceIcon} viewBox="0 0 24 24" aria-hidden="true">
                             <path d={channel.icon.path} />
                           </svg>
@@ -385,7 +384,11 @@ export function HeroScrollytelling() {
                           } as CSSProperties
                         }
                       >
-                        {channel.icon ? (
+                        {channel.iconNode ? (
+                          <span className={styles.signalIconWrap} aria-hidden="true">
+                            {channel.iconNode}
+                          </span>
+                        ) : channel.icon ? (
                           <svg className={styles.signalIcon} viewBox="0 0 24 24" aria-hidden="true">
                             <path d={channel.icon.path} />
                           </svg>
@@ -441,9 +444,6 @@ export function HeroScrollytelling() {
             <h2 className={`display-lg ${styles.methodologyTitle}`}>
               Casi todas las industrias tienen conversaciones que pueden mejorar.
             </h2>
-            <p className={`body-lg ${styles.methodologyLead}`}>
-              Cuando una queja se repite, deja de ser ruido y se vuelve una oportunidad de negocio: ajustar promesa, producto, soporte, precio o experiencia antes de que la conversación te lo cobre.
-            </p>
             <div className={styles.methodologyChips}>
               <span className="chip">Últimos 24 meses</span>
               <span className="chip">México</span>
@@ -476,7 +476,6 @@ export function HeroScrollytelling() {
                   </article>
                 ))}
               </div>
-              <p className={styles.matrixNote}>Análisis últimos 24 meses · México · 234M menciones analizadas</p>
             </div>
 
             <div className={styles.statePanel}>
@@ -501,44 +500,6 @@ export function HeroScrollytelling() {
           </div>
         </div>
 
-        <div className={`${styles.scene} ${styles.decisionScene} scrollyScene scrollyDecision`}>
-          <div className={styles.decisionTop}>
-            <span className={styles.eyebrow}>Decisión defendible</span>
-            <h2 className="display-lg">Tres movimientos claros, no treinta slides difíciles de vender.</h2>
-            <p className={`body-lg ${styles.decisionCopy}`}>
-              Cada lectura termina en acciones priorizadas, evidencia detrás y lenguaje listo para comité.
-            </p>
-          </div>
-
-          <div className={styles.recommendationGrid}>
-            {heroRecommendations.map((recommendation) => (
-              <article className={`${styles.recommendationCard} scrollyRecommendation glass`} key={recommendation.title}>
-                <span className={styles.recommendationMove}>{recommendation.move}</span>
-                <h3>{recommendation.title}</h3>
-                <p>{recommendation.body}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className={styles.decisionFooter}>
-            <div className={styles.signatureStrip}>
-              {heroSignature.map((item) => (
-                <div className={`${styles.decisionStat} scrollyStat glass`} key={item.label}>
-                  <strong>{item.value}</strong>
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
-            <div className={styles.decisionActions}>
-              <Button href="/diagnostico" icon={<ArrowRight size={17} strokeWidth={1.8} />}>
-                Iniciar diagnóstico
-              </Button>
-              <Button href="/casos-de-uso" variant="secondary">
-                Ver casos
-              </Button>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   );

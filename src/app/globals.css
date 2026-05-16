@@ -1041,13 +1041,13 @@ h4 {
 }
 
 .product-preview-section__inner {
-  width: min(100%, var(--max-site));
+  width: min(100%, var(--max-content));
 }
 
 .product-preview-section__inner .section-heading {
-  max-width: 860px;
-  margin-inline: auto;
-  margin-bottom: clamp(30px, 3.6vw, 42px);
+  max-width: 760px;
+  margin-inline: 0;
+  margin-bottom: clamp(22px, 2.6vw, 32px);
 }
 
 .product-preview-section__inner .section-heading p {
@@ -1055,17 +1055,18 @@ h4 {
 }
 
 .product-console-showcase {
-  --console-card-width: min(76vw, 1120px);
+  --console-card-width: min(100%, 1080px);
   --tab-pill-width: clamp(136px, 13vw, 178px);
   display: grid;
-  gap: clamp(30px, 4.4vw, 46px);
+  gap: clamp(22px, 3vw, 34px);
 }
 
 .product-console-showcase__tabs-viewport {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
-  margin-inline: auto;
-  overflow: visible;
+  margin-inline: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding-block: 2px 8px;
   scroll-behavior: smooth;
   scrollbar-width: none;
@@ -1073,7 +1074,7 @@ h4 {
 
 .product-console-showcase__tabs-track {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   width: max-content;
   min-width: 0;
@@ -1129,14 +1130,14 @@ h4 {
 }
 
 .product-console-showcase__viewport {
-  width: 100vw;
-  margin-inline: calc(50% - 50vw);
+  width: 100%;
+  margin-inline: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: smooth;
-  scroll-padding-inline: max(20px, calc((100vw - var(--console-card-width)) / 2));
+  scroll-padding-inline: 0;
   scroll-snap-type: x mandatory;
-  padding-block: 8px 52px;
+  padding-block: 8px 40px;
   scrollbar-width: none;
 }
 
@@ -1144,8 +1145,8 @@ h4 {
   display: flex;
   gap: 18px;
   width: max-content;
-  min-width: 100%;
-  padding-inline: max(20px, calc((100vw - var(--console-card-width)) / 2));
+  min-width: 0;
+  padding-inline: 0;
 }
 
 .product-console-showcase__track > div {
@@ -1694,23 +1695,23 @@ h4 {
 
 .home-insights-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .home-insight-card {
   display: grid;
-  grid-template-rows: minmax(240px, 0.84fr) auto;
+  grid-template-rows: 170px auto;
   overflow: hidden;
-  min-height: 560px;
+  min-height: 390px;
   color: inherit;
   text-decoration: none;
-  border-radius: 30px;
+  border-radius: 24px;
 }
 
 .home-insight-card__media {
   position: relative;
-  min-height: 240px;
+  min-height: 170px;
   overflow: hidden;
   background:
     radial-gradient(circle at 30% 20%, rgba(0, 171, 181, 0.14), transparent 44%),
@@ -1730,23 +1731,24 @@ h4 {
 .home-insight-card__body {
   display: grid;
   align-content: space-between;
-  gap: 26px;
-  min-height: 280px;
-  padding: clamp(20px, 2.4vw, 30px);
+  gap: 16px;
+  min-height: 220px;
+  padding: 18px;
 }
 
 .home-insight-card__body h3 {
-  margin-top: 14px;
+  margin-top: 10px;
   color: var(--ink);
-  font-size: clamp(1.65rem, 2.4vw, 2.45rem);
-  line-height: 1.02;
+  font-size: clamp(1.18rem, 1.35vw, 1.55rem);
+  line-height: 1.08;
   text-wrap: balance;
 }
 
 .home-insight-card__body p {
   max-width: 620px;
-  margin-top: 12px;
+  margin-top: 8px;
   color: var(--neutral-10);
+  font-size: 0.9rem;
   line-height: 1.48;
 }
 
@@ -1754,8 +1756,8 @@ h4 {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
-  padding-top: 18px;
+  gap: 12px;
+  padding-top: 14px;
   border-top: 1px solid rgba(35, 35, 39, 0.08);
 }
 
@@ -1771,7 +1773,7 @@ h4 {
 
 .home-insight-card__footer strong {
   color: var(--ink);
-  font-size: 1.65rem;
+  font-size: 1.25rem;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -1781,9 +1783,15 @@ h4 {
   align-items: center;
   gap: 6px;
   color: var(--signal-dark);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   line-height: 1;
   white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  .home-insights-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .methodology-grid {
@@ -8826,28 +8834,33 @@ h4 {
 }
 
 .sources-constellation-meta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: clamp(18px, 3vw, 34px);
-  padding: clamp(16px, 2vw, 22px);
-  border-radius: 28px;
+  gap: clamp(14px, 2.4vw, 28px);
+  padding: 0;
 }
 
 .sources-constellation-meta__stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex: 1 1 560px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px 20px;
 }
 
 .sources-constellation-meta__stats div {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(35, 35, 39, 0.06);
+  padding-right: 20px;
+  border-right: 1px solid rgba(35, 35, 39, 0.12);
+}
+
+.sources-constellation-meta__stats div:last-child {
+  padding-right: 0;
+  border-right: 0;
 }
 
 .sources-constellation-meta__stats strong {
@@ -8957,21 +8970,18 @@ h4 {
 
 @media (max-width: 760px) {
   .sources-constellation-meta {
-    grid-template-columns: 1fr;
     gap: 12px;
-    padding: 14px;
-    border-radius: 22px;
   }
 
   .sources-constellation-meta__stats {
+    display: grid;
     grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   .sources-constellation-meta__stats div {
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: baseline;
-    gap: 10px;
-    padding: 10px 12px;
+    padding-right: 0;
+    border-right: 0;
   }
 
   .sources-constellation {

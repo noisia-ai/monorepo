@@ -59,7 +59,7 @@ const SOURCE_STATS = [
 export function SourcesConstellation() {
   return (
     <div className="sources-constellation-shell">
-      <div className="sources-constellation-meta glass">
+      <div className="sources-constellation-meta">
         <span className="eyebrow">Escucha en México</span>
         <div className="sources-constellation-meta__stats">
           {SOURCE_STATS.map((stat) => (

@@ -21,9 +21,8 @@ export function ProductConsoleShowcase() {
       const activeCard = cardRefs.current[selectedIndex];
       const viewport = viewportRef.current;
       if (activeCard && viewport) {
-        const centeredLeft = activeCard.offsetLeft - (viewport.clientWidth - activeCard.clientWidth) / 2;
         const maxLeft = viewport.scrollWidth - viewport.clientWidth;
-        const targetLeft = Math.max(0, Math.min(centeredLeft, maxLeft));
+        const targetLeft = Math.max(0, Math.min(activeCard.offsetLeft, maxLeft));
         if (useSmoothScroll) {
           viewport.scrollTo({ left: targetLeft, behavior: "smooth" });
         } else {
