@@ -2,9 +2,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 
-const contactHref =
-  "mailto:hola@noisia.ai?subject=Quiero%20hablar%20con%20Noisia&body=Hola%20Noisia%2C%0A%0AQuiero%20platicar%20sobre%20una%20decisi%C3%B3n%20que%20necesitamos%20defender%20con%20evidencia.%0A%0AGracias.";
-
 const footerRoutes = [
   {
     href: "/insights",
@@ -61,12 +58,15 @@ export function SiteFooter() {
           </div>
 
           <div className="site-footer__bottom">
-            <a className="site-footer__contact-button" href={contactHref}>
-              hola@noisia.ai
-            </a>
-            <Link className="site-footer__cta" href="/diagnostico">
-              Iniciar diagnóstico <ArrowRight size={16} strokeWidth={1.9} />
-            </Link>
+            <p>¿Tienes una decisión concreta? Podemos empezar con poco contexto.</p>
+            <div className="site-footer__actions">
+              <Link className="site-footer__contact-button" href="/contacto">
+                Contacto
+              </Link>
+              <Link className="site-footer__cta" href="/diagnostico">
+                Iniciar diagnóstico <ArrowRight size={16} strokeWidth={1.9} />
+              </Link>
+            </div>
           </div>
         </div>
       </div>
