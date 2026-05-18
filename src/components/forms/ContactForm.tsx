@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowRight, Check } from "lucide-react";
-import { FormEvent, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { useState } from "react";
 import { z } from "zod";
 
 const contactSchema = z.object({
@@ -20,10 +21,11 @@ const contactSchema = z.object({
 });
 
 type ContactFormData = z.infer<typeof contactSchema>;
-type FieldName = keyof ContactFormData;
+type ContactFormValues = Omit<ContactFormData, "terms"> & { terms: boolean };
+type FieldName = keyof ContactFormValues;
 type FieldErrors = Partial<Record<FieldName, string>>;
 
-const initialForm: ContactFormData = {
+const initialForm: ContactFormValues = {
   firstName: "",
   lastName: "",
   email: "",
@@ -33,11 +35,11 @@ const initialForm: ContactFormData = {
 };
 
 export function ContactForm() {
-  const [form, setForm] = useState<ContactFormData>(initialForm);
+  const [form, setForm] = useState<ContactFormValues>(initialForm);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
 
-  function updateField<K extends FieldName>(field: K, value: ContactFormData[K]) {
+  function updateField<K extends FieldName>(field: K, value: ContactFormValues[K]) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => {
       if (!prev[field]) return prev;
@@ -204,7 +206,7 @@ function Field({
   label,
   name
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   error?: string;
   label: string;
   name: FieldName;
