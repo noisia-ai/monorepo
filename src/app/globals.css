@@ -19,6 +19,34 @@
 @tailwind utilities;
 
 :root {
+  --color-noisia-black: #070113;
+  --color-noisia-void-plum: #12001f;
+  --color-noisia-deep-violet: #261447;
+  --color-noisia-electric-purple: #4b1d95;
+  --color-noisia-deep-teal: #01535f;
+  --color-noisia-cyan-ink: #007e89;
+  --color-noisia-bright-cyan: #009ca8;
+  --color-noisia-magenta-ink: #d81b60;
+  --color-noisia-glitch-red: #d91441;
+  --color-noisia-muted-gold: #a76700;
+  --color-bg-primary: #ffffff;
+  --color-bg-dark: var(--color-noisia-black);
+  --color-bg-editorial: var(--color-noisia-void-plum);
+  --color-text-primary: var(--color-noisia-black);
+  --color-text-inverse: #ffffff;
+  --color-text-muted: #4b5563;
+  --color-brand-primary: var(--color-noisia-black);
+  --color-brand-secondary: var(--color-noisia-deep-violet);
+  --color-accent-cyan: var(--color-noisia-cyan-ink);
+  --color-accent-magenta: var(--color-noisia-magenta-ink);
+  --color-accent-red: var(--color-noisia-glitch-red);
+  --color-accent-purple: var(--color-noisia-electric-purple);
+  --color-link: var(--color-noisia-cyan-ink);
+  --color-link-hover: var(--color-noisia-deep-teal);
+  --color-border-subtle: rgba(7, 1, 19, 0.12);
+  --glitch-cyan: var(--color-noisia-bright-cyan);
+  --glitch-magenta: var(--color-noisia-magenta-ink);
+  --glitch-red: var(--color-noisia-glitch-red);
   --canvas: #ffffff;
   --surface-01: #fafafa;
   --surface-02: #f4f4f4;
@@ -30,15 +58,15 @@
   --neutral-08: #858585;
   --neutral-09: #999999;
   --neutral-10: #6d6d6d;
-  --neutral-11: #2b2b2b;
-  --ink: #0a0a0a;
-  --signal: #00eeee;
-  --signal-dark: #008a8a;
-  --tension: #ee0b00;
-  --tension-soft: #fff0ef;
-  --positive: #008f66;
+  --neutral-11: var(--color-noisia-black);
+  --ink: var(--color-noisia-black);
+  --signal: var(--color-noisia-cyan-ink);
+  --signal-dark: var(--color-noisia-deep-teal);
+  --tension: var(--color-noisia-glitch-red);
+  --tension-soft: rgba(217, 20, 65, 0.08);
+  --positive: var(--color-noisia-cyan-ink);
   --positive-soft: #eaf8f2;
-  --whisper: #c4a8e8;
+  --whisper: rgba(75, 29, 149, 0.26);
   --font-sans: "Product Sans", "Google Sans", "Google Sans Text", "SF Pro Display", "SF Pro Text", -apple-system,
     BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   --font-geist-mono: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;

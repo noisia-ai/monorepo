@@ -5,7 +5,7 @@
     "agency": "Noisia",
     "version": "v1",
     "analysis_date": "2026-05-13",
-    "codex_instructions": "HTML interactivo estilo Noisia. Mismo framework visual que Cultural Foresight México 2026 v4. HERO: presentar 1.7M líneas escaneadas + 150K menciones procesadas como contexto de escala. NUNCA mostrar \"ruido %\", \"registros limpios\", \"señal degradada\" — eso es cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGES con color: emergente (amarillo #C9892E) · acelerando (azul #2D6A9F) · mainstreaming (verde #1D7A55). EVIDENCIA: las citas son el corazón del reporte — tipografía generosa, atribución clara con plataforma y tag MX cuando aplica."
+    "codex_instructions": "HTML interactivo estilo Noisia. Mismo framework visual que Cultural Foresight México 2026 v4. HERO: presentar 1.7M líneas escaneadas + 150K menciones procesadas como contexto de escala. Mantener metodología en lenguaje ejecutivo, sin exponer cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGES: usar la paleta canónica Noisia; emergente magenta ink, acelerando cyan ink, mainstreaming deep violet. EVIDENCIA: las citas son el corazón del reporte — tipografía generosa, atribución clara con plataforma y tag MX cuando aplica."
   },
   "hero_numbers": {
     "corpus_scope": {
@@ -81,7 +81,7 @@
       "id": "humano_demandado",
       "order": 1,
       "commercial_name": "El humano se volvió default explícito",
-      "color": "#1D7A55",
+      "color": "#007E89",
       "maturity": "mainstreaming",
       "maturity_note": "Comportamiento ya consolidado en México: la gente etiqueta a la marca con quiero hablar con una persona como entrada al servicio, no como queja final.",
       "one_liner": "En México, la gente ya pide humano antes de probar el bot. No es queja: es default.",
@@ -337,7 +337,7 @@
       "id": "transparencia_IA",
       "order": 2,
       "commercial_name": "La transparencia humaniza más que la simulación",
-      "color": "#2D6A9F",
+      "color": "#01535F",
       "maturity": "acelerando",
       "maturity_note": "Vocabulario consolidado alrededor de publicidad engañosa como diagnóstico estructural. La acusación de simular o no avisar sobre automatización aparece dirigida a marcas concretas con frecuencia creciente.",
       "one_liner": "Cuando una marca usa IA o automatización sin avisar, la confianza se rompe más fuerte que cuando falla.",
@@ -451,7 +451,7 @@
         {
           "platform": "reviews",
           "count": 6264,
-          "pct": 1.0
+          "pct": 1
         },
         {
           "platform": "web",
@@ -596,7 +596,7 @@
       "id": "responsabilidad",
       "order": 3,
       "commercial_name": "Lo humano se mide cuando algo sale mal",
-      "color": "#E8521A",
+      "color": "#D81B60",
       "maturity": "acelerando",
       "maturity_note": "La conversación tiene ambos lados articulados, lo cual indica que el comportamiento esperado ya tiene nombre. Las marcas que sí responden quedan citadas; las que se lavan las manos también.",
       "one_liner": "No es el tono lo que humaniza a una marca. Es estar dispuesta a hacerse responsable cuando hay un problema.",
@@ -852,7 +852,7 @@
       "id": "voz_genérica",
       "order": 4,
       "commercial_name": "Cuando la marca suena a prompt, pierde voz",
-      "color": "#5B2D8E",
+      "color": "#D91441",
       "maturity": "emergente",
       "maturity_note": "Vocabulario en formación. Aparece poco como acusación explícita, pero cuando aparece está dirigida a marcas con respuestas automatizadas. La detección está activa; el lenguaje todavía no se ha estabilizado.",
       "one_liner": "La eficiencia bien hecha empezó a sonar como ChatGPT mal hecho. El copy genérico se detecta más rápido que nunca.",
@@ -1084,7 +1084,7 @@
       "id": "contexto_perdido",
       "order": 5,
       "commercial_name": "Velocidad sin contexto no es atención",
-      "color": "#C9892E",
+      "color": "#4B1D95",
       "maturity": "emergente",
       "maturity_note": "Señal de baja frecuencia pero alta especificidad. Cuando aparece, la queja es clara y enfocada. El comportamiento existe; el vocabulario para nombrarlo todavía no es público.",
       "one_liner": "Una respuesta técnicamente correcta puede sentirse deshumana si no leyó el problema.",
@@ -1188,7 +1188,7 @@
         {
           "platform": "tiktok",
           "count": 368,
-          "pct": 3.0
+          "pct": 3
         }
       ],
       "evidence": [
@@ -1307,7 +1307,7 @@
       "id": "craft_humano",
       "order": 6,
       "commercial_name": "El craft sigue siendo señal de cuidado",
-      "color": "#7B3F61",
+      "color": "#261447",
       "maturity": "emergente",
       "maturity_note": "Señal positiva con vocabulario fragmentado. Tiene personalidad, le echaron cabeza, se nota que alguien lo pensó aparecen sin un término unificador. La audiencia detecta cuidado, pero todavía no tiene un nombre estable para nombrarlo.",
       "one_liner": "Detalle, paciencia, criterio y personalidad son cada vez más raros. Por eso valen más.",

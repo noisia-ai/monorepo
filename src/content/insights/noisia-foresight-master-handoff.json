@@ -5,7 +5,7 @@
     "agency": "Noisia",
     "version": "v4",
     "analysis_date": "2026-05-11",
-    "codex_instructions": "HTML interactivo estilo Noisia. Data storytelling sobre charts decorativos. HERO: presentar +245K filas escaneadas como contexto de escala; +15K menciones revisadas; +40 frases. NUNCA presentar \"registros limpios\" o \"% ruido\" — eso es interno. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGE DE MADUREZ con color: emergente (amarillo #C9892E) · acelerando (azul #2D6A9F) · mainstreaming (verde #1D7A55). COLORS: cada señal tiene color propio (campo \"color\"). EVIDENCIA: formatear citas con énfasis visual; las citas son el corazón del reporte, no decoración. METODOLOGÍA: framing como método cualitativo serio, no como justificación de volumen."
+    "codex_instructions": "HTML interactivo estilo Noisia. Data storytelling sobre charts decorativos. HERO: presentar +245K filas escaneadas como contexto de escala; +15K menciones revisadas; +40 frases. Mantener metodología en lenguaje ejecutivo, sin exponer cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGES: usar la paleta canónica Noisia; emergente magenta ink, acelerando cyan ink, mainstreaming deep violet. COLORS: cada señal tiene color propio desde la secuencia canónica Noisia. EVIDENCIA: formatear citas con énfasis visual; las citas son el corazón del reporte, no decoración. METODOLOGÍA: framing como método cualitativo serio, no como justificación de volumen."
   },
   "hero_numbers": {
     "corpus_scope": {
@@ -83,7 +83,7 @@
       "id": "descanso_sin_permiso",
       "order": 1,
       "commercial_name": "El descanso deja de pedir permiso",
-      "color": "#E8521A",
+      "color": "#007E89",
       "one_liner": "En México descansar ya empezó a sonar a derecho, no a permiso.",
       "tension": {
         "left": "Productividad obligatoria",
@@ -296,7 +296,7 @@
       "id": "privacidad_emocional",
       "order": 2,
       "commercial_name": "La privacidad se vuelve emocional",
-      "color": "#2D6A9F",
+      "color": "#01535F",
       "one_liner": "Compartir menos empezó a sonar a inteligencia, no a ausencia.",
       "tension": {
         "left": "Visibilidad permanente",
@@ -509,7 +509,7 @@
       "id": "perfeccion_pierde_credibilidad",
       "order": 3,
       "commercial_name": "La perfección pierde credibilidad",
-      "color": "#5B2D8E",
+      "color": "#D81B60",
       "one_liner": "Lo demasiado pulido empezó a sonar sospechoso. La imperfección vale como prueba de que es de verdad.",
       "tension": {
         "left": "Producción pulida",
@@ -722,7 +722,7 @@
       "id": "humor_carga_tension",
       "order": 4,
       "commercial_name": "El humor carga lo que no se puede decir en serio",
-      "color": "#1D7A55",
+      "color": "#D91441",
       "one_liner": "El humor en México no es despreocupación. Es la forma de cargar lo que no puede decirse derecho.",
       "tension": {
         "left": "Tensión real",
@@ -926,7 +926,7 @@
       "id": "decision_necesita_curaduria",
       "order": 5,
       "commercial_name": "La decisión necesita curaduría",
-      "color": "#C9892E",
+      "color": "#4B1D95",
       "one_liner": "Frente a demasiadas opciones, México ya no quiere más libertad de elección. Quiere a alguien que filtre antes.",
       "tension": {
         "left": "Saturación de opciones",
@@ -1140,7 +1140,7 @@
       "id": "comunidades_confianza",
       "order": 6,
       "commercial_name": "Comunidades pequeñas, confianza grande",
-      "color": "#7B3F61",
+      "color": "#261447",
       "one_liner": "En México, la decisión de compra dejó de pasar por la marca. Pasa por la comunidad que ya probó.",
       "tension": {
         "left": "Claim de marca",
@@ -1319,7 +1319,7 @@
       "id": "aspirar_da_cringe",
       "order": 7,
       "commercial_name": "Aspirar demasiado empieza a dar cringe",
-      "color": "#D14B4B",
+      "color": "#070113",
       "one_liner": "No todo lo aspiracional genera deseo. En México, ciertas formas de estatus pasaron de envidia a burla.",
       "tension": {
         "left": "Aspiración performativa",
@@ -1531,7 +1531,7 @@
       "id": "local_contemporaneo",
       "order": 8,
       "commercial_name": "Lo local busca verse contemporáneo",
-      "color": "#0F7B6C",
+      "color": "#12001F",
       "one_liner": "Lo mexicano dejó de ser el sombrero. Ahora es el diseño, el producto, la marca y el contenido, sin tener que explicarse con cliché.",
       "tension": {
         "left": "Lo mexicano folclórico",

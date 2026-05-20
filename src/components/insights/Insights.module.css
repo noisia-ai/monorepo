@@ -69,6 +69,11 @@
 .indexAsideMedia img,
 .indexInsightMedia img {
   object-fit: cover;
+  mix-blend-mode: multiply;
+  filter: saturate(0.98) contrast(1.03);
+  opacity: 0.96;
+  -webkit-mask-image: radial-gradient(ellipse 86% 78% at 50% 52%, #000 58%, rgba(0, 0, 0, 0.84) 76%, transparent 100%);
+  mask-image: radial-gradient(ellipse 86% 78% at 50% 52%, #000 58%, rgba(0, 0, 0, 0.84) 76%, transparent 100%);
   transform: scale(1.01);
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -494,6 +499,11 @@
   z-index: 0;
   object-fit: contain;
   object-position: center;
+  mix-blend-mode: multiply;
+  filter: saturate(0.98) contrast(1.03);
+  opacity: 0.96;
+  -webkit-mask-image: radial-gradient(ellipse 82% 76% at 50% 52%, #000 58%, rgba(0, 0, 0, 0.88) 74%, transparent 100%);
+  mask-image: radial-gradient(ellipse 82% 76% at 50% 52%, #000 58%, rgba(0, 0, 0, 0.88) 74%, transparent 100%);
   transform: scale(1.08);
   transform-origin: center;
 }
@@ -1015,18 +1025,18 @@
 }
 
 .maturity-emergente {
-  background: #fdf6e3;
-  color: #7a5500;
+  background: rgba(216, 27, 96, 0.1);
+  color: #d81b60;
 }
 
 .maturity-acelerando {
-  background: #e8f0f8;
-  color: #1a4470;
+  background: rgba(0, 126, 137, 0.1);
+  color: #007e89;
 }
 
 .maturity-mainstreaming {
-  background: #e5f4ed;
-  color: #0f4a35;
+  background: rgba(38, 20, 71, 0.1);
+  color: #261447;
 }
 
 .chartGrid {
@@ -1574,6 +1584,7 @@
   font-size: 0.66rem;
   font-weight: 950;
   line-height: 1;
+  text-shadow: 0 1px 4px rgba(13, 2, 33, 0.52);
   transform: translate(-50%, -50%);
 }
 
@@ -2436,23 +2447,35 @@
 }
 
 .brandPill[data-vertical="telcos"] {
-  --vertical-color: #5b2d8e;
+  --vertical-color: #4b1d95;
 }
 
 .brandPill[data-vertical="retail"] {
-  --vertical-color: #e8521a;
+  --vertical-color: #d81b60;
 }
 
 .brandPill[data-vertical="delivery"] {
-  --vertical-color: #1d7a55;
+  --vertical-color: #007e89;
 }
 
 .brandPill[data-vertical="airlines"] {
-  --vertical-color: #2d6a9f;
+  --vertical-color: #01535f;
 }
 
 .brandPill[data-vertical="cpg"] {
-  --vertical-color: #c9892e;
+  --vertical-color: #261447;
+}
+
+.brandPill[data-vertical="platforms"] {
+  --vertical-color: #d91441;
+}
+
+.brandPill[data-vertical="finance"] {
+  --vertical-color: #007e89;
+}
+
+.brandPill[data-vertical="realtors"] {
+  --vertical-color: #12001f;
 }
 
 .phraseTag {
@@ -3115,10 +3138,11 @@
 
   .lifecycleBands {
     grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(0, 1fr));
   }
 
   .lifecycleBands span {
-    min-height: 25%;
+    min-height: 0;
     justify-content: flex-start;
     padding: 12px 14px;
     border-right: 0;
@@ -3142,7 +3166,8 @@
   }
 
   .lifecyclePoint {
-    left: clamp(42px, var(--point-x), calc(100% - 42px));
+    left: clamp(42px, var(--point-mobile-x), calc(100% - 42px));
+    bottom: clamp(42px, var(--point-mobile-y), calc(100% - 42px));
   }
 
   .lifecyclePoint strong,
@@ -3688,8 +3713,8 @@
     line-height: 0.9 !important;
     letter-spacing: -0.09em !important;
     text-shadow:
-      0.8px 0.8px 0 #14d9df,
-      -0.8px -0.8px 0 #ee0b00 !important;
+      0.8px 0.8px 0 #009ca8,
+      -0.8px -0.8px 0 #d91441 !important;
     content: "noisia";
   }
 

@@ -8,9 +8,21 @@ description: >
   diffuse fluid backgrounds, and restrained scroll motion.
 
 colors:
-  primary: "#2b2b2b"
+  noisia:
+    black: "#070113"
+    voidPlum: "#12001F"
+    deepViolet: "#261447"
+    electricPurple: "#4B1D95"
+    deepTeal: "#01535F"
+    cyanInk: "#007E89"
+    brightCyan: "#009CA8"
+    magentaInk: "#D81B60"
+    glitchRed: "#D91441"
+    mutedGold: "#A76700"
+
+  primary: "#070113"
   secondary: "#6d6d6d"
-  tertiary: "#00eeee"
+  tertiary: "#007E89"
   neutral: "#ffffff"
 
   canvas: "#ffffff"
@@ -23,21 +35,36 @@ colors:
   neutral-05: "#dadada"
   neutral-09: "#999999"
   neutral-10: "#6d6d6d"
-  neutral-11: "#2b2b2b"
-  ink: "#0a0a0a"
+  neutral-11: "#070113"
+  ink: "#070113"
 
-  signal: "#00eeee"
-  signal-dark: "#008a8a"
-  tension: "#ee0b00"
-  tension-soft: "#fff0ef"
-  positive: "#008f66"
+  signal: "#007E89"
+  signal-dark: "#01535F"
+  tension: "#D91441"
+  tension-soft: "rgba(217, 20, 65, 0.08)"
+  positive: "#007E89"
   positive-soft: "#eaf8f2"
-  whisper: "#c4a8e8"
+  whisper: "rgba(75, 29, 149, 0.26)"
 
-  blob-dark: "#061218"
-  blob-charcoal: "#2a2b2f"
-  blob-cyan: "#00eeee"
-  blob-red: "#ee0b00"
+  blob-dark: "#070113"
+  blob-charcoal: "#261447"
+  blob-cyan: "#009CA8"
+  blob-red: "#D91441"
+
+colorSystem:
+  principle: "Neon references are decorative only; functional UI, charts, icons, and text use deeper Noisia ink colors for legibility on white."
+  chartPalette:
+    - "#007E89"
+    - "#01535F"
+    - "#D81B60"
+    - "#D91441"
+    - "#4B1D95"
+    - "#261447"
+    - "#070113"
+    - "#12001F"
+  chartRule: "Use the chartPalette sequence for Noisia reports before introducing any other hue. Do not use yellow/orange for chart series unless a brief explicitly calls for the limited mutedGold token."
+  glitchRule: "Use #009CA8, #D81B60, and #D91441 as offsets, glows, auras, or editorial accents; do not use them as long-form body text."
+  gradientRule: "Gradients are atmospheric only. Do not use gradient text for report/article titles."
 
 typography:
   display:

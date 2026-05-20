@@ -183,22 +183,47 @@ Solo después de pasar 1, 2, 3, ejecuta el protocolo y entrega el output
 en el formato exacto del playbook.
 ```
 
-## 6. Decision log
+## 6. Color System
+
+La paleta canónica de Noisia vive también en `brand/DESIGN.md`. Para trabajo visual, dashboards y reportes, usa estos tokens antes de inventar colores nuevos.
+
+| Token | HEX | Uso |
+| --- | ---: | --- |
+| `noisia.black` | `#070113` | Logo, texto primario, fondos densos. |
+| `noisia.voidPlum` | `#12001F` | Fondos editoriales premium. |
+| `noisia.deepViolet` | `#261447` | Institucional, headers, charts secundarios. |
+| `noisia.electricPurple` | `#4B1D95` | Acentos, tags, líneas de chart. |
+| `noisia.deepTeal` | `#01535F` | Teal legible para UI y datos sobre blanco. |
+| `noisia.cyanInk` | `#007E89` | Cyan funcional principal: links, iconos, charts. |
+| `noisia.brightCyan` | `#009CA8` | Acento grande, glow o anaglyph; no texto pequeño. |
+| `noisia.magentaInk` | `#D81B60` | Magenta funcional: highlights, estados activos, fricción. |
+| `noisia.glitchRed` | `#D91441` | Offset glitch, tensión, alertas editoriales. |
+| `noisia.mutedGold` | `#A76700` | Señal premium limitada; no color base para charts. |
+
+Reglas:
+
+- **Charts:** usar primero `#007E89`, `#01535F`, `#D81B60`, `#D91441`, `#4B1D95`, `#261447`, `#070113`, `#12001F`. No usar amarillo/naranja en series salvo que el brief pida explícitamente `mutedGold`.
+- **Neón:** cyan/magenta brillante funciona como glitch, glow, blur, aura u offset; no como color funcional dominante.
+- **Legibilidad:** en fondos blancos, priorizar versiones ink profundas para texto, iconos, botones y datos.
+- **Gradientes:** son atmósfera editorial, no tratamiento de texto. No usar gradient text en títulos de reportes o artículos.
+
+## 7. Decision log
 
 | Fecha       | Decisión                                                                                  | Razón                                                                                |
 | ----------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | 2026-05-04  | Separar metodología (concepto) de playbook (operación) en archivos distintos.             | El concepto rota poco; el playbook se afina cada proyecto. Mezclarlos hace drift.    |
 | 2026-05-04  | Triggers & Barriers se estructura en 4 capas: psicológico → personal → social → cultural. | Sin estratificación, los analistas codifican todo como "trigger emocional" y se pierden patrones de capa social/cultural que son los que realmente mueven mercados. |
 | 2026-05-04  | KB vive en el monorepo del sitio, no en repo aparte.                                      | Trazabilidad junta de cambios de marketing y operación. Si el sitio dice X y el KB dice Y, el commit muestra cuál se desincronizó. |
+| 2026-05-20  | La paleta canónica de charts y UI pasa a usar tintas Noisia profundas, no neones funcionales ni amarillo/naranja por defecto. | Mantener estética glitch/anaglyph sin perder legibilidad ni consistencia de marca. |
 
-## 7. Open questions
+## 8. Open questions
 
 - **OQ-1**: ¿Los playbooks deben incluir prompts literales o solo protocolos en lenguaje natural? Hoy: lenguaje natural. A revisar tras 3 corridas reales con IA.
 - **OQ-2**: ¿Cómo versionar un playbook cuando cambia un criterio de codificación? Hoy: commit message. Evaluar si vale meter `## Changelog` adentro de cada playbook.
 - **OQ-3**: ¿Hay un séptimo método emergiendo (Decoding de tendencias)? Si la respuesta llega 3 veces en proyectos distintos, formalizarlo en `01-methodologies/`.
 - **OQ-4**: ¿Quién audita el KB y cada cuánto? Hoy: nadie formalmente. Proponer auditoría trimestral con un dueño rotativo.
 
-## 8. Referencias
+## 9. Referencias
 
 - [google-labs-code/design.md](https://github.com/google-labs-code/design.md) — formato base de este meta-doc.
 - Sitio público de Noisia: `/metodologias`, `/servicios`, `/casos-de-uso`.

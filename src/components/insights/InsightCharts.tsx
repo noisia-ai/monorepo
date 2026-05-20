@@ -12,9 +12,9 @@ const maturityLabels: Record<InsightSignal["maturity"], string> = {
 };
 
 const maturityColors: Record<InsightSignal["maturity"], string> = {
-  emergente: "#C9892E",
-  acelerando: "#2D6A9F",
-  mainstreaming: "#1D7A55"
+  emergente: "#D81B60",
+  acelerando: "#007E89",
+  mainstreaming: "#261447"
 };
 
 const lifecycleStages = [
@@ -28,6 +28,12 @@ const lifecycleBaseX: Record<InsightSignal["maturity"], number> = {
   emergente: 14,
   acelerando: 39,
   mainstreaming: 63
+};
+
+const lifecycleMobileBaseY: Record<InsightSignal["maturity"], number> = {
+  emergente: 87.5,
+  acelerando: 62.5,
+  mainstreaming: 37.5
 };
 
 function compactSignalName(input: string) {
@@ -350,6 +356,9 @@ export function SignalEvidenceScatter({
           const stageOffset = stageSignals.length > 1 ? (stageIndex - (stageSignals.length - 1) / 2) * 3.4 : 0;
           const x = lifecycleBaseX[signal.maturity] + stageOffset;
           const y = 18 + Math.sqrt(signal.volume_indicator.records_analyzed / maxMentions) * 68;
+          const mobileX = 18 + Math.sqrt(signal.volume_indicator.records_analyzed / maxMentions) * 62;
+          const mobileStageOffset = stageSignals.length > 1 ? (stageIndex - (stageSignals.length - 1) / 2) * 3.8 : 0;
+          const mobileY = lifecycleMobileBaseY[signal.maturity] - mobileStageOffset;
           const size = 30 + signal.volume_indicator.sources_count * 7;
           const topMarkers = signal.monitor_next.slice(0, 2).join(" · ");
 
@@ -362,6 +371,8 @@ export function SignalEvidenceScatter({
                 ["--signal-color" as string]: signal.color,
                 ["--point-x" as string]: `${x}%`,
                 ["--point-y" as string]: `${y}%`,
+                ["--point-mobile-x" as string]: `${mobileX}%`,
+                ["--point-mobile-y" as string]: `${mobileY}%`,
                 ["--point-size" as string]: `${size}px`
               }}
               aria-label={`${signal.commercial_name}: ${signal.volume_indicator.records_analyzed} menciones revisadas`}

@@ -23,7 +23,7 @@ export const signalEvolution = {
   'descanso_sin_permiso': {
     id: 'descanso_sin_permiso',
     name: 'El descanso deja de pedir permiso',
-    color: '#E8521A',
+    color: '#007E89',
     maturity: 'acelerando',
     total: 427268,
     monthly: [
@@ -50,7 +50,7 @@ export const signalEvolution = {
   'privacidad_emocional': {
     id: 'privacidad_emocional',
     name: 'La privacidad se vuelve emocional',
-    color: '#2D6A9F',
+    color: '#01535F',
     maturity: 'acelerando',
     total: 379992,
     monthly: [
@@ -77,7 +77,7 @@ export const signalEvolution = {
   'perfeccion_pierde_credibilidad': {
     id: 'perfeccion_pierde_credibilidad',
     name: 'La perfección pierde credibilidad',
-    color: '#5B2D8E',
+    color: '#D81B60',
     maturity: 'acelerando',
     total: 539660,
     monthly: [
@@ -104,7 +104,7 @@ export const signalEvolution = {
   'humor_carga_tension': {
     id: 'humor_carga_tension',
     name: 'El humor carga lo que no se puede decir en serio',
-    color: '#1D7A55',
+    color: '#D91441',
     maturity: 'mainstreaming',
     total: 2165775,
     monthly: [
@@ -131,7 +131,7 @@ export const signalEvolution = {
   'decision_necesita_curaduria': {
     id: 'decision_necesita_curaduria',
     name: 'La decisión necesita curaduría',
-    color: '#C9892E',
+    color: '#4B1D95',
     maturity: 'acelerando',
     total: 3691986,
     monthly: [
@@ -158,7 +158,7 @@ export const signalEvolution = {
   'comunidades_confianza': {
     id: 'comunidades_confianza',
     name: 'Comunidades pequeñas, confianza grande',
-    color: '#7B3F61',
+    color: '#261447',
     maturity: 'emergente',
     total: 108824,
     monthly: [
@@ -185,7 +185,7 @@ export const signalEvolution = {
   'aspirar_da_cringe': {
     id: 'aspirar_da_cringe',
     name: 'Aspirar demasiado empieza a dar cringe',
-    color: '#D14B4B',
+    color: '#070113',
     maturity: 'acelerando',
     total: 2220187,
     monthly: [
@@ -212,7 +212,7 @@ export const signalEvolution = {
   'local_contemporaneo': {
     id: 'local_contemporaneo',
     name: 'Lo local busca verse contemporáneo',
-    color: '#0F7B6C',
+    color: '#12001F',
     maturity: 'acelerando',
     total: 1944559,
     monthly: [

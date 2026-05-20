@@ -5,7 +5,7 @@ import { ArrowLeft, ArrowRight, Info } from "lucide-react";
 import { siFacebook, siInstagram, siReddit, siTiktok, siX, siYoutube } from "simple-icons";
 import { Button } from "@/components/ui/Button";
 import { MethodologyChip } from "@/components/ui/MethodologyIcon";
-import type { InsightReport, InsightSignal } from "@/content/insights/reports";
+import type { InsightPageCopy, InsightReport, InsightSignal } from "@/content/insights/reports";
 import { insightsReports } from "@/content/insights/reports";
 import { useCases } from "@/content/site";
 import {
@@ -32,7 +32,7 @@ const maturityCopy: Record<InsightSignal["maturity"], { title: string; note: str
   }
 };
 
-const heroNumberOrder = ["corpus_scope", "mentions_reviewed", "period", "sources", "signals", "keywords", "evidence"];
+const heroNumberOrder = ["corpus_scope", "mentions_reviewed", "period", "sources", "signals", "territories", "keywords", "evidence"];
 const maturityOrder: InsightSignal["maturity"][] = ["emergente", "acelerando", "mainstreaming"];
 const printTotalPages = "18";
 const insightsPerPage = 6;
@@ -51,8 +51,9 @@ const platformIcons = {
 };
 
 const futureHumanStudy = "Future is Human";
+const mexicanHomeStudy = "The Mexican Home";
 
-const reportCopy = {
+const reportCopy: Record<"foresight" | "futureHuman", InsightPageCopy> = {
   foresight: {
     printLabel: "cultural foresight",
     heroVisualKicker: "México Foresight 2026",
@@ -175,6 +176,24 @@ const reportCopy = {
   }
 };
 
+const homeBrandCatalog = [
+  { name: "Inmuebles24", patterns: [/\bInmuebles\s*24\b/i, /@Inmuebles24/i], vertical: "platforms" },
+  { name: "Homie", patterns: [/\bHomie\b/i, /@Homie/i], vertical: "platforms" },
+  { name: "Propiedades.com", patterns: [/\bPropiedades\.?com\b/i], vertical: "platforms" },
+  { name: "Mercado Libre Inmuebles", patterns: [/\bMercado\s?Libre\s+Inmuebles\b/i, /\bMercado\s?Libre\b/i], vertical: "platforms" },
+  { name: "La Haus", patterns: [/\bLa\s?Haus\b/i, /\bLaHaus\b/i], vertical: "platforms" },
+  { name: "Vivanuncios", patterns: [/\bVivanuncios\b/i], vertical: "platforms" },
+  { name: "Lamudi", patterns: [/\bLamudi\b/i], vertical: "platforms" },
+  { name: "Tuhabi", patterns: [/\bTu\s?Habi\b/i, /\bTuhabi\b/i], vertical: "platforms" },
+  { name: "Infonavit", patterns: [/\bInfonavit\b/i], vertical: "finance" },
+  { name: "Cofinavit", patterns: [/\bCofinavit\b/i], vertical: "finance" },
+  { name: "Condusef", patterns: [/\bCondusef\b/i], vertical: "finance" },
+  { name: "Profeco", patterns: [/\bProfeco\b/i], vertical: "finance" },
+  { name: "Century 21", patterns: [/\bCentury\s?21\b/i], vertical: "realtors" },
+  { name: "Tecnocasa", patterns: [/\bTecnocasa\b/i], vertical: "realtors" },
+  { name: "Remax", patterns: [/\bRe\s?Max\b/i, /\bRemax\b/i], vertical: "realtors" }
+];
+
 const brandCatalog = [
   { name: "BBVA", patterns: [/\bBBVA\b/i, /@BBVA/i], vertical: "banking" },
   { name: "Banorte", patterns: [/\bBanorte\b/i], vertical: "banking" },
@@ -285,15 +304,21 @@ function isFutureHumanReport(report: InsightReport) {
   return report.meta.study === futureHumanStudy;
 }
 
+function isMexicanHomeReport(report: InsightReport) {
+  return report.meta.study === mexicanHomeStudy;
+}
+
 function getReportCopy(report: InsightReport) {
-  return isFutureHumanReport(report) ? reportCopy.futureHuman : reportCopy.foresight;
+  return report.pageCopy ?? (isFutureHumanReport(report) ? reportCopy.futureHuman : reportCopy.foresight);
 }
 
 function makeSectionLinks(report: InsightReport) {
+  const lookedForLabel = isFutureHumanReport(report) || isMexicanHomeReport(report) ? "Qué buscamos" : "Señales";
+
   return [
     { id: "cover", label: "Cover" },
     { id: "opening", label: isFutureHumanReport(report) ? "Apertura" : "Contexto" },
-    { id: "looked-for", label: isFutureHumanReport(report) ? "Qué buscamos" : "Señales" },
+    { id: "looked-for", label: lookedForLabel },
     { id: "radar", label: "Radar" },
     ...report.signals.map((signal) => ({ id: `signal-${signal.order}`, label: padOrder(signal.order) })),
     { id: "brands", label: "Marcas" },
@@ -307,6 +332,10 @@ function methodologyChipItems(report: InsightReport) {
 }
 
 function heroVisualAsset(report: InsightReport) {
+  if (report.heroVisual) {
+    return report.heroVisual;
+  }
+
   if (isFutureHumanReport(report)) {
     return {
       src: "/assets/insights/future-is-human-hero-v2.png",
@@ -325,34 +354,47 @@ function getIndexMetric(report: InsightReport) {
   return report.hero_numbers[preferredKey] ?? report.hero_numbers.corpus_scope;
 }
 
+function getHeroSummaryChips(report: InsightReport) {
+  const period = report.hero_numbers.period;
+  const sources = report.hero_numbers.sources;
+  const scale = report.hero_numbers.mentions_reviewed ?? report.hero_numbers.evidence ?? report.hero_numbers.corpus_scope;
+
+  return [period ? `${period.value} de escucha` : null, sources?.value, scale ? `${scale.value} menciones` : null].filter(
+    Boolean
+  ) as string[];
+}
+
 function clampPage(page: number, totalPages: number) {
   if (!Number.isFinite(page)) return 1;
   return Math.min(Math.max(Math.trunc(page), 1), totalPages);
 }
 
-function heroSummaryChips() {
-  return [
-    "17 meses de escucha",
-    "7 plataformas",
-    "+15M menciones"
-  ];
-}
+function detectBrands(text: string) {
+  const homeMatches = homeBrandCatalog.filter((brand) => brand.patterns.some((pattern) => pattern.test(text)));
+  const generalMatches = brandCatalog.filter(
+    (brand) =>
+      brand.patterns.some((pattern) => pattern.test(text)) &&
+      !homeMatches.some((homeBrand) => homeBrand.name.toLowerCase().includes(brand.name.toLowerCase()))
+  );
 
-function detectBrand(text: string) {
-  return brandCatalog.find((brand) => brand.patterns.some((pattern) => pattern.test(text))) ?? null;
+  return [...homeMatches, ...generalMatches];
 }
 
 function BrandPill({ text }: { text: string }) {
-  const brand = detectBrand(text);
+  const brands = detectBrands(text);
 
-  if (!brand) {
+  if (!brands.length) {
     return null;
   }
 
   return (
-    <span className={styles.brandPill} data-vertical={brand.vertical}>
-      {brand.name}
-    </span>
+    <>
+      {brands.map((brand) => (
+        <span className={styles.brandPill} data-vertical={brand.vertical} key={brand.name}>
+          {brand.name}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -779,8 +821,17 @@ function SignalCard({
   printTotal: string;
   isFutureHuman?: boolean;
 }) {
-  const positiveEvidence = signal.evidence.filter((item) => item.polarity === "positive");
-  const negativeEvidence = signal.evidence.filter((item) => item.polarity === "negative");
+  const fallbackEvidence: InsightSignal["evidence"] = [
+    {
+      text: signal.lead_quote.text,
+      platform: signal.lead_quote.platform,
+      date: signal.lead_quote.attribution,
+      mx: /mx/i.test(signal.lead_quote.attribution)
+    }
+  ];
+  const evidence = signal.evidence.length ? signal.evidence : fallbackEvidence;
+  const positiveEvidence = evidence.filter((item) => item.polarity === "positive");
+  const negativeEvidence = evidence.filter((item) => item.polarity === "negative");
   const hasDualEvidence = positiveEvidence.length > 0 && negativeEvidence.length > 0;
 
   return (
@@ -794,7 +845,7 @@ function SignalCard({
         <span className={styles.signalNumber}>{padOrder(signal.order)}</span>
         <div>
           <div className={styles.signalHeaderMeta}>
-            <span>Señal {padOrder(signal.order)}</span>
+            <span>{signal.is_big_finding ? "El hallazgo principal" : `Señal ${padOrder(signal.order)}`}</span>
             <MaturityBadge signal={signal} />
           </div>
           <h2>
@@ -869,7 +920,7 @@ function SignalCard({
             </article>
           </div>
         ) : (
-          <EvidenceList signal={signal} evidence={signal.evidence} />
+          <EvidenceList signal={signal} evidence={evidence} />
         )}
       </section>
 
@@ -1105,11 +1156,14 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
   const copy = getReportCopy(report);
   const sectionLinks = makeSectionLinks(report);
   const isFutureHuman = isFutureHumanReport(report);
-  const hasBrandSeeds = Boolean(report.methodology.corpus.brand_seeds?.length);
+  const isMexicanHome = isMexicanHomeReport(report);
+  const seededMethodologyItems = report.methodology.corpus.territories ?? report.methodology.corpus.brand_seeds ?? [];
+  const seededMethodologyLabel = report.methodology.corpus.territories ? "Territorios sembrados" : "Verticales sembradas";
+  const hasSeededMethodology = seededMethodologyItems.length > 0;
   const printPagesTotal = String(report.signals.length + 10);
   const printPage = (page: number) => padOrder(page);
   const heroVisual = heroVisualAsset(report);
-  const heroChips = heroSummaryChips();
+  const heroChips = getHeroSummaryChips(report);
 
   return (
     <div className="printScope">
@@ -1117,7 +1171,7 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
         <PrintChrome page="01" label={copy.printLabel} total={printPagesTotal} />
         <div className={styles.reportHeroInner}>
           <div className={styles.heroText}>
-            <span className="eyebrow">NOISIA · INTELIGENCIA SOCIAL</span>
+            {!isMexicanHome ? <span className="eyebrow">NOISIA · INTELIGENCIA SOCIAL</span> : null}
             <h1>{report.meta.study}</h1>
             <p>{report.meta.subtitle}</p>
           </div>
@@ -1367,11 +1421,11 @@ export function InsightReportPage({ report }: { report: InsightReport }) {
               </dl>
             </article>
           </div>
-          {hasBrandSeeds ? (
+          {hasSeededMethodology ? (
             <div className={styles.verticalSeedBlock}>
-              <span className="eyebrow">Verticales sembradas</span>
+              <span className="eyebrow">{seededMethodologyLabel}</span>
               <ul className={styles.verticalBadges}>
-                {report.methodology.corpus.brand_seeds?.map((seed) => (
+                {seededMethodologyItems.map((seed) => (
                   <li key={seed}>{seed}</li>
                 ))}
               </ul>

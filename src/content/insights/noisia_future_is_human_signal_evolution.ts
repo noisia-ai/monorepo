@@ -23,7 +23,7 @@ export const signalEvolution = {
   'humano_demandado': {
     id: 'humano_demandado',
     name: 'El humano se volvió default explícito',
-    color: '#1D7A55',
+    color: '#007E89',
     maturity: 'mainstreaming',
     total: 564824,
     monthly: [
@@ -46,7 +46,7 @@ export const signalEvolution = {
   'transparencia_IA': {
     id: 'transparencia_IA',
     name: 'La transparencia humaniza más que la simulación',
-    color: '#2D6A9F',
+    color: '#01535F',
     maturity: 'acelerando',
     total: 619723,
     monthly: [
@@ -69,7 +69,7 @@ export const signalEvolution = {
   'responsabilidad': {
     id: 'responsabilidad',
     name: 'Lo humano se mide cuando algo sale mal',
-    color: '#E8521A',
+    color: '#D81B60',
     maturity: 'acelerando',
     total: 454660,
     monthly: [
@@ -92,7 +92,7 @@ export const signalEvolution = {
   'voz_genérica': {
     id: 'voz_genérica',
     name: 'Cuando la marca suena a prompt, pierde voz',
-    color: '#5B2D8E',
+    color: '#D91441',
     maturity: 'emergente',
     total: 19528,
     monthly: [
@@ -115,7 +115,7 @@ export const signalEvolution = {
   'contexto_perdido': {
     id: 'contexto_perdido',
     name: 'Velocidad sin contexto no es atención',
-    color: '#C9892E',
+    color: '#4B1D95',
     maturity: 'emergente',
     total: 12159,
     monthly: [
@@ -138,7 +138,7 @@ export const signalEvolution = {
   'craft_humano': {
     id: 'craft_humano',
     name: 'El craft sigue siendo señal de cuidado',
-    color: '#7B3F61',
+    color: '#261447',
     maturity: 'emergente',
     total: 29107,
     monthly: [
