@@ -53,7 +53,8 @@ git push -u origin main
    - Install command: `pnpm install --frozen-lockfile`
    - Build command: `pnpm run build`
    - Start command: `pnpm run start`
-6. En `Networking`, haz clic en **Generate Domain** para obtener el dominio `*.up.railway.app`.
+6. Google Analytics ya usa el Measurement ID `G-CPCFPVBDTP`. Si alguna vez necesitas cambiarlo sin tocar código, en `Variables` agrega `NEXT_PUBLIC_GA_MEASUREMENT_ID` con el nuevo Measurement ID de GA4 (`G-...`).
+7. En `Networking`, haz clic en **Generate Domain** para obtener el dominio `*.up.railway.app`.
 
 ## Dominio `noisia.ai`
 
