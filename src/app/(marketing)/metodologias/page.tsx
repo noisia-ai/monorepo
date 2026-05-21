@@ -3,11 +3,13 @@ import { Button } from "@/components/ui/Button";
 import { MethodologySignature } from "@/components/marketing/MethodologySignature";
 import { MethodologyWizard } from "@/components/marketing/MethodologyWizard";
 import { methodologies } from "@/content/site";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Metodologías",
-  description: "Los métodos de Noisia para convertir conversación social en decisiones claras."
-};
+  description: "Los métodos de Noisia para convertir conversación social en decisiones claras.",
+  path: "/metodologias"
+});
 
 export default function MethodologiesPage() {
   return (

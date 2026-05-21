@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { MethodologySignature } from "@/components/marketing/MethodologySignature";
 import { ProcessTrace, type ProcessStep } from "@/components/marketing/ProcessTrace";
+import { StructuredData } from "@/components/seo/StructuredData";
 import { useCases, type UseCase } from "@/content/site";
+import { SITE_URL, absoluteUrl, breadcrumbJsonLd, createPageMetadata } from "@/lib/seo";
 
 type UseCaseDetailProps = {
   params: Promise<{ slug: string }>;
@@ -32,10 +34,11 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: UseCaseDetailProps) {
   const { slug } = await params;
   const useCase = useCases.find((item) => item.slug === slug);
-  return {
+  return createPageMetadata({
     title: useCase ? useCase.shortTitle : "Caso de uso",
-    description: useCase?.approach
-  };
+    description: useCase?.approach ?? "Caso de uso de Noisia para convertir conversación social en decisiones de negocio.",
+    path: useCase ? `/casos-de-uso/${useCase.slug}` : "/casos-de-uso"
+  });
 }
 
 const CASE_DOSSIERS: Record<string, CaseDossier> = {
@@ -356,9 +359,61 @@ export default async function UseCaseDetailPage({ params }: UseCaseDetailProps) 
   const linkedMethodologies = useCase.methodologies
     .map((m) => ({ name: m, slug: methodologySlug(m) }))
     .filter((m) => m.slug);
+  const canonicalPath = `/casos-de-uso/${useCase.slug}`;
+  const useCaseJsonLd = [
+    breadcrumbJsonLd([
+      { name: "Noisia", path: "/" },
+      { name: "Casos de uso", path: "/casos-de-uso" },
+      { name: useCase.shortTitle, path: canonicalPath }
+    ]),
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      name: useCase.title,
+      description: useCase.approach,
+      url: absoluteUrl(canonicalPath),
+      inLanguage: "es-MX",
+      isPartOf: {
+        "@type": "WebSite",
+        name: "Noisia",
+        url: SITE_URL
+      },
+      provider: {
+        "@type": "Organization",
+        name: "Noisia",
+        url: SITE_URL
+      },
+      about: {
+        "@type": "Thing",
+        name: useCase.shortTitle,
+        description: useCase.vignette
+      },
+      mainEntity: {
+        "@type": "Service",
+        name: `Noisia para ${useCase.shortTitle}`,
+        serviceType: "Social intelligence use case",
+        description: useCase.approach,
+        audience: {
+          "@type": "BusinessAudience",
+          audienceType: useCase.industries
+        },
+        provider: {
+          "@type": "Organization",
+          name: "Noisia",
+          url: SITE_URL
+        },
+        additionalProperty: useCase.deliverables.slice(0, 4).map((deliverable) => ({
+          "@type": "PropertyValue",
+          name: "Public deliverable",
+          value: deliverable
+        }))
+      }
+    }
+  ];
 
   return (
     <>
+      <StructuredData data={useCaseJsonLd} />
       <article className="case-article">
         <header className="case-article-hero">
           <div className="case-article-hero__inner">

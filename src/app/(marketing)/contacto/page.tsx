@@ -2,11 +2,13 @@ import { ArrowUpRight, Linkedin, Mail, MessageCircle } from "lucide-react";
 import { ContactForm } from "@/components/forms/ContactForm";
 import { HomeInsights } from "@/components/marketing/HomeInsights";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Contacto",
-  description: "Convierte la voz del cliente en un engine de insights con Noisia."
-};
+  description: "Convierte la voz del cliente en un engine de insights con Noisia.",
+  path: "/contacto"
+});
 
 const contactCards = [
   {

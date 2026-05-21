@@ -1,9 +1,11 @@
 import { DiagnosticWizard } from "@/components/forms/DiagnosticWizard";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Diagnóstico",
   description: "Cuestionario breve para entender qué decisión necesitas tomar.",
-};
+  path: "/diagnostico"
+});
 
 export default function DiagnosticPage() {
   return (

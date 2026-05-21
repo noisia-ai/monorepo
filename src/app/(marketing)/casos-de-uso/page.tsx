@@ -2,11 +2,13 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { CasosFilter } from "@/components/marketing/CasosFilter";
 import { useCases } from "@/content/site";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Casos de uso",
-  description: "Casos ficticios para entender en qué decisiones puede ayudarte Noisia."
-};
+  description: "Casos ficticios para entender en qué decisiones puede ayudarte Noisia.",
+  path: "/casos-de-uso"
+});
 
 const featuredStories = [
   {

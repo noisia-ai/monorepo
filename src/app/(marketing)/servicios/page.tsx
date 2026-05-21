@@ -4,11 +4,14 @@ import { Button } from "@/components/ui/Button";
 import { FAQAccordion, type FAQItem } from "@/components/marketing/FAQAccordion";
 import { OutOfScope, type OutOfScopeItem } from "@/components/marketing/OutOfScope";
 import { ProcessTrace, type ProcessStep } from "@/components/marketing/ProcessTrace";
+import { StructuredData } from "@/components/seo/StructuredData";
+import { SITE_URL, absoluteUrl, breadcrumbJsonLd, createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Servicios",
-  description: "Foundation, Intelligence y Strategy: tres formas de convertir conversación en decisiones claras."
-};
+  description: "Foundation, Intelligence y Strategy: tres formas de convertir conversación en decisiones claras.",
+  path: "/servicios"
+});
 
 type Tier = {
   number: string;
@@ -122,9 +125,58 @@ const faqItems: FAQItem[] = [
   },
 ];
 
+const servicesJsonLd = [
+  breadcrumbJsonLd([
+    { name: "Noisia", path: "/" },
+    { name: "Servicios", path: "/servicios" }
+  ]),
+  {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    name: "Social intelligence para decisiones de marca, producto y estrategia",
+    serviceType: "Social intelligence and consumer insights",
+    provider: {
+      "@type": "Organization",
+      name: "Noisia",
+      url: SITE_URL
+    },
+    areaServed: ["México", "Latinoamérica"],
+    url: absoluteUrl("/servicios"),
+    description:
+      "Lecturas de conversación pública y voz del cliente para convertir señales sociales en decisiones claras.",
+    hasOfferCatalog: {
+      "@type": "OfferCatalog",
+      name: "Profundidades de servicio Noisia",
+      itemListElement: tiers.map((tier) => ({
+        "@type": "Offer",
+        name: tier.name,
+        description: `${tier.tagline}. ${tier.trigger}`,
+        itemOffered: {
+          "@type": "Service",
+          name: tier.name,
+          description: tier.features.join(". ")
+        }
+      }))
+    }
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqItems.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: item.answer
+      }
+    }))
+  }
+];
+
 export default function ServicesPage() {
   return (
     <>
+      <StructuredData data={servicesJsonLd} />
       {/* ─── Hero ─────────────────────────────────────────────────────────── */}
       <section className="hero-experience page-hero">
         <div className="hero-experience__inner page-hero__inner">

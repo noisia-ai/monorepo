@@ -1,9 +1,11 @@
 import { InsightsIndexPage } from "@/components/insights/InsightsPages";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Insights",
-  description: "Reportes editoriales de Noisia para convertir conversacion digital en inteligencia accionable."
-};
+  description: "Reportes editoriales de Noisia para convertir conversación digital en inteligencia accionable.",
+  path: "/insights"
+});
 
 type InsightsPageProps = {
   searchParams?: Promise<{

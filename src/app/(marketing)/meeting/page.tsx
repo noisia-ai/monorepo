@@ -3,11 +3,13 @@ import { LandingHero } from "@/components/marketing/LandingHero";
 import { LandingMobileCta } from "@/components/marketing/LandingMobileCta";
 import { LandingScheduler } from "@/components/marketing/LandingScheduler";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Meeting | Noisia",
-  description: "Agenda una conversación con Noisia para ordenar señales y tomar mejores decisiones."
-};
+  description: "Agenda una conversación con Noisia para ordenar señales y tomar mejores decisiones.",
+  path: "/meeting"
+});
 
 export default function MeetingPage() {
   return (

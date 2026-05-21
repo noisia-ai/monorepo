@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { MethodologySignature } from "@/components/marketing/MethodologySignature";
 import { ProcessTrace, type ProcessStep } from "@/components/marketing/ProcessTrace";
+import { StructuredData } from "@/components/seo/StructuredData";
 import { methodologies, useCases } from "@/content/site";
+import { SITE_URL, absoluteUrl, breadcrumbJsonLd, createPageMetadata } from "@/lib/seo";
 
 type MethodologyDetailProps = {
   params: Promise<{ slug: string }>;
@@ -16,10 +18,11 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: MethodologyDetailProps) {
   const { slug } = await params;
   const methodology = methodologies.find((m) => m.slug === slug);
-  return {
+  return createPageMetadata({
     title: methodology ? methodology.name : "Metodología",
-    description: methodology?.lead
-  };
+    description: methodology?.lead ?? "Metodología de Noisia para convertir conversación social en decisiones claras.",
+    path: methodology ? `/metodologias/${methodology.slug}` : "/metodologias"
+  });
 }
 
 // Hero stat chips: dimensiones simples del método.
@@ -231,9 +234,61 @@ export default async function MethodologyDetailPage({ params }: MethodologyDetai
   const relatedCases = useCases.filter((uc) =>
     uc.methodologies.some((m) => m.toLowerCase().includes(methodology.name.split(" ")[0].toLowerCase()))
   ).slice(0, 3);
+  const canonicalPath = `/metodologias/${methodology.slug}`;
+  const methodologyJsonLd = [
+    breadcrumbJsonLd([
+      { name: "Noisia", path: "/" },
+      { name: "Metodologías", path: "/metodologias" },
+      { name: methodology.name, path: canonicalPath }
+    ]),
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      name: methodology.name,
+      description: methodology.lead,
+      url: absoluteUrl(canonicalPath),
+      inLanguage: "es-MX",
+      isPartOf: {
+        "@type": "WebSite",
+        name: "Noisia",
+        url: SITE_URL
+      },
+      provider: {
+        "@type": "Organization",
+        name: "Noisia",
+        url: SITE_URL
+      },
+      about: {
+        "@type": "Thing",
+        name: methodology.question,
+        description: methodology.uses
+      },
+      mainEntity: {
+        "@type": "Service",
+        name: methodology.name,
+        serviceType: "Social intelligence methodology",
+        description: methodology.lead,
+        provider: {
+          "@type": "Organization",
+          name: "Noisia",
+          url: SITE_URL
+        },
+        audience: {
+          "@type": "BusinessAudience",
+          audienceType: "Brand, product, research and strategy teams"
+        },
+        additionalProperty: methodology.outputs.slice(0, 4).map((output) => ({
+          "@type": "PropertyValue",
+          name: "Public output",
+          value: output
+        }))
+      }
+    }
+  ];
 
   return (
     <>
+      <StructuredData data={methodologyJsonLd} />
       {/* ─── Hero ─────────────────────────────────────────────────────────── */}
       <section className="hero-experience method-detail-hero">
         <div className="hero-experience__inner method-detail-hero__inner">

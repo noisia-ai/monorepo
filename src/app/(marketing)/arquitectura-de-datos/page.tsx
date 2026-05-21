@@ -4,11 +4,13 @@ import { ArchitectureCounters } from "@/components/marketing/ArchitectureCounter
 import { ArchitectureFlow } from "@/components/marketing/ArchitectureFlow";
 import { QueryEvidenceTrace } from "@/components/marketing/QueryEvidenceTrace";
 import { SourcesConstellation } from "@/components/marketing/SourcesConstellation";
+import { createPageMetadata } from "@/lib/seo";
 
-export const metadata = {
+export const metadata = createPageMetadata({
   title: "Arquitectura de datos",
-  description: "Cómo Noisia construye evidencia confiable antes de recomendar una decisión."
-};
+  description: "Cómo Noisia construye evidencia confiable antes de recomendar una decisión.",
+  path: "/arquitectura-de-datos"
+});
 
 const runtimeNotes = [
   {
