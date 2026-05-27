@@ -1,0 +1,21 @@
+{
+  "name": "@noisia/blocks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "echo \"No lint configured for @noisia/blocks yet\"",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No block tests yet\""
+  },
+  "dependencies": {
+    "@noisia/types": "workspace:*",
+    "@noisia/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

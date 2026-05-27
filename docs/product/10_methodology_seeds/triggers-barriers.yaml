@@ -1,0 +1,281 @@
+# ┌─────────────────────────────────────────────────────────────┐
+# │ Triggers & Barriers — Manifest Noisia v1                    │
+# │ Primera metodología a implementar en MVP.                   │
+# │ Source of truth: este archivo.                              │
+# │ Doc conceptual extendida: packages/kb/01-methodologies/...  │
+# └─────────────────────────────────────────────────────────────┘
+
+slug: triggers-barriers
+name: Triggers & Barriers
+version: "1.0"
+status: active
+
+business_question: |
+  ¿Qué motiva y qué frena la decisión del consumidor en esta categoría,
+  y dónde tiene tu marca permiso real para actuar?
+
+when_applies:
+  - Lanzamiento de producto con hipótesis de adopción no validada
+  - Optimización de funnel cuando la conversión cae sin causa atribuible al canal
+  - Defensa competitiva cuando la migración no es de precio sino de algo más
+  - Repositioning motivacional en categoría madura
+  - Comunicación que busca activar comportamiento, no solo recordar marca
+
+when_not_applies:
+  - Cuando la pregunta es tamaño de mercado o forecasting
+  - Cuando no existe categoría establecida (sin frame de referencia)
+  - Cuando el problema es awareness puro
+
+theoretical_foundations:
+  - author: Kahneman
+    year: 2011
+    contribution: "Dual-Process Theory — sistema 1 vs sistema 2 separa impulso de deliberación"
+  - author: Christensen
+    year: 2016
+    contribution: "Jobs-to-be-Done — tipología funcional/emocional/social del job"
+  - author: Nordgren_Schonthal
+    year: 2021
+    contribution: "Friction Theory — los 4 tipos de barrier"
+  - author: Deci_Ryan
+    year: 1985
+    contribution: "Self-Determination Theory — motivación intrínseca vs extrínseca"
+
+coding_dimensions:
+  polarity:
+    type: enum
+    values: [trigger, barrier]
+    required: true
+  layer:
+    type: enum
+    values: [psicologico, personal, social, cultural]
+    required: true
+    diagnostic_questions:
+      psicologico: "¿Pasaría aunque el consumidor estuviera solo, sin presupuesto, sin contexto?"
+      personal: "¿Cambia si tiene más dinero / tiempo / hábito distinto?"
+      social: "¿Cambia si nadie va a enterarse jamás que lo usa?"
+      cultural: "¿Sería cierto solo por lo que la categoría significa en este mercado?"
+  intensity:
+    type: numeric
+    range: [1, 5]
+    description: "1=neutral, 5=catártico/identitario"
+  predictive_signal:
+    type: numeric
+    range: [0, 1]
+    description: "% de piezas que coocurren con decisión declarada"
+
+inputs:
+  corpus:
+    minimum_viable: 800
+    ideal: 3000
+    maximum_useful: 5000
+  sources:
+    minimum_count: 3
+    required_types: [reviews, foro, social]
+    ideal_count: 5
+  business_question_required: true
+  competitive_corpus:
+    required: false
+    ideal: true
+    max_competitors: 3
+  time_window:
+    maximum_age_months: 9
+    ideal_age_months: 6
+
+outputs:
+  - id: tb_map
+    name: Triggers & Barriers Map
+    type: structured_matrix
+    format: json
+    description: "Matriz 4 layers x (triggers / barriers) con jerarquización tridimensional"
+  - id: activation_playbook
+    name: Activation Playbook
+    type: narrative
+    length_pages: "1-2"
+    sections:
+      - top_triggers_movibles
+      - activation_per_trigger
+      - triggers_a_evitar
+  - id: friction_removal_plan
+    name: Friction Removal Plan
+    type: narrative
+    length_pages: "1-2"
+    sections:
+      - top_barriers_movibles
+      - intervention_per_barrier
+      - barriers_estructurales
+  - id: comparative_brief
+    name: Comparative Brief
+    type: comparative_table
+    conditional: requires_competitive_corpus
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+    ordered_position: 1
+  - block_id: tb_matrix_4layers
+    ordered_position: 2
+  - block_id: cultural_tension_cards
+    ordered_position: 3
+    props: { per_layer: true, max: 4 }
+  - block_id: activation_playbook_block
+    ordered_position: 4
+  - block_id: friction_removal_block
+    ordered_position: 5
+  - block_id: comparative_block
+    ordered_position: 6
+    conditional: has_competitive_corpus
+  - block_id: monthly_pulse
+    ordered_position: 7
+    conditional: has_historical
+  - block_id: evidence_list_top
+    ordered_position: 8
+  - block_id: methodology_note
+    ordered_position: 9
+
+scrollytelling_narrative_template:
+  scrolls:
+    - id: 1_hero
+      content_template: "intro_business_question"
+    - id: 2_question
+      content_template: "explain_the_question"
+    - id: 3_layers_intro
+      content_template: "introduce_4_layers"
+    - id: 4_psicologico
+      content_template: "layer_chapter"
+      params: { layer: psicologico }
+    - id: 5_personal
+      content_template: "layer_chapter"
+      params: { layer: personal }
+    - id: 6_social
+      content_template: "layer_chapter"
+      params: { layer: social }
+    - id: 7_cultural
+      content_template: "layer_chapter"
+      params: { layer: cultural }
+    - id: 8_movibles_triggers
+      content_template: "top_movibles"
+      params: { polarity: trigger }
+    - id: 9_movibles_barriers
+      content_template: "top_movibles"
+      params: { polarity: barrier }
+    - id: 10_estructural
+      content_template: "structural_warnings"
+    - id: 11_comparative
+      content_template: "comparative"
+      conditional: has_competitive_corpus
+    - id: 12_limitations
+      content_template: "limitations"
+    - id: 13_cta
+      content_template: "next_step_cta"
+
+quality_gates:
+  - id: traceability
+    description: "Cada hallazgo apunta a evidencia en corpus (cita o ID)"
+    auto: true
+  - id: layer_coverage
+    description: "Los 4 layers están representados o se justifica si alguno está vacío"
+    auto: true
+  - id: jerarquia_3d
+    description: "Cada T/B tiene frecuencia + intensidad + capacidad predictiva"
+    auto: true
+  - id: movible_vs_structural
+    description: "Cada hallazgo está marcado como movible / influenciable / estructural"
+    auto: true
+  - id: limitations_section
+    description: "Sección 'lo que esta corrida no respondió' con ≥1 item específico"
+    auto: true
+  - id: confidence_calibrated
+    description: "Cada hallazgo tiene nivel de confianza (alta / media / baja_direccional)"
+    auto: true
+  - id: no_future_projection
+    description: "Cero proyecciones futuras sin evidencia presente"
+    auto: true
+  - id: humanizer_applied
+    description: "Texto narrativo pasa filtro humanizer (cero patrones AI writing)"
+    auto: true
+
+failure_modes:
+  - symptom: "El layer cultural sale vacío"
+    cause: "Corpus puramente transaccional (solo reviews)"
+    remediation: "Sumar fuentes editoriales / foros / podcasts"
+  - symptom: "Todo codificado como 'psicológico emocional'"
+    cause: "Pase abierto (paso 1) fue superficial"
+    remediation: "Repetir paso 1 con tags más finos antes de paso 2"
+  - symptom: "Muchos triggers, pocos barriers"
+    cause: "Corpus sesgado a reviews positivas"
+    remediation: "Sumar foros de queja, reviews 1-3 estrellas, comments de abandono"
+  - symptom: "Frecuencia inflada por una sola fuente"
+    cause: "Una plataforma >60% del corpus"
+    remediation: "Re-balancear muestreo o reportar como limitación explícita"
+  - symptom: "Cliente dice 'no encontramos nada nuevo'"
+    cause: "Confirmó hipótesis previas — éxito parcial"
+    remediation: "Si jerarquización es distinta a la intuición, eso ya es valor accionable"
+  - symptom: "IA recita teoría de Kahneman en output"
+    cause: "Confundió playbook con archivo de metodología"
+    remediation: "Re-prompt con anti-instruction: 'ejecuta protocolo, no expliques teoría'"
+
+ai_prompts:
+  pre_flight_check_prompt_id: "tb_pre_flight_v1"
+  paso_1_pase_abierto_prompt_id: "tb_paso1_v1"
+  paso_2_codificacion_prompt_id: "tb_paso2_v1"
+  paso_3_jerarquizacion_prompt_id: "tb_paso3_v1"
+  paso_4_movilidad_prompt_id: "tb_paso4_v1"
+  paso_5_comparativo_prompt_id: "tb_paso5_v1"
+  paso_6_sintesis_prompt_id: "tb_paso6_v1"
+  # Los prompts completos viven en packages/methodologies/src/prompts/tb/
+
+memory_consultation:
+  industry_memory:
+    consulted_at: [pre_flight, paso_1, paso_2]
+    query_template: "T&B aprendizajes en industria {{industry}}: failure modes recientes, exclusiones globales, brand seeds adicionales"
+  brand_memory:
+    consulted_at: [pre_flight, paso_5]
+    query_template: "Análisis T&B previos de marca {{brand}}: T/B documentados, layers ya identificados, evolución"
+  methodology_memory:
+    consulted_at: [paso_1, paso_2]
+    query_template: "Tags emergentes que han funcionado en T&B en categorías análogas, failure modes recientes globales"
+  client_memory:
+    consulted_at: [paso_6]
+    query_template: "Preferencias de lenguaje y nivel de detalle del cliente {{client}} en outputs previos"
+
+engine_validation_prompt: |
+  El Engine de Validación de Queries usa este texto cuando arma el primer query.
+  Combinar: brand_seeds + signal_phrases (definidas abajo) + memoria_industria + exclusiones_globales.
+
+signal_phrases:
+  triggers_generic:
+    - "vale la pena"
+    - "me sirve"
+    - "lo recomiendo"
+    - "ya lo tengo"
+    - "lo compré"
+    - "estoy contento con"
+    - "no puedo vivir sin"
+    - "me salvó"
+  barriers_generic:
+    - "no me alcanza"
+    - "es carísimo"
+    - "no sirve"
+    - "estafa"
+    - "letra chica"
+    - "no me cubrió"
+    - "me cancelaron"
+    - "ni vale la pena"
+    - "me cobraron sin avisar"
+
+global_exclusions:
+  - "spam"
+  - "promo"
+  - "regalo de la marca"  # testimoniales incentivados
+  - "PR package"
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: agregar campo 'localization' para variantes
+# linguísticas por país LATAM (MX vs AR vs CO vs ES). Las signal_phrases
+# cambian: "carísimo" en MX vs "muy caro" en AR vs "muy costoso" en CO.
+
+# TODO mejora-futura: agregar campo 'industry_overrides' donde
+# cada industria puede sobreescribir signal_phrases. Para seguros:
+# "no me cubrió" pesa más que "carísimo". Para CPG: al revés.
+
+# TODO mejora-futura: separar el campo 'engine_validation_prompt'
+# en un archivo aparte porque va a crecer y ensucia el manifest.

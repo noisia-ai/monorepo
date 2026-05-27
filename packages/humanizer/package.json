@@ -1,0 +1,17 @@
+{
+  "name": "@noisia/humanizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "echo \"No lint configured for @noisia/humanizer yet\"",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No humanizer tests yet\""
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

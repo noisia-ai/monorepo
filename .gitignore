@@ -3,6 +3,7 @@ node_modules
 .next
 .vercel
 .railway
+.turbo
 dist
 out
 coverage

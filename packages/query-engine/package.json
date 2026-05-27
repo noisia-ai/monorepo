@@ -1,0 +1,21 @@
+{
+  "name": "@noisia/query-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "echo \"No lint configured for @noisia/query-engine yet\"",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No query-engine tests yet\""
+  },
+  "dependencies": {
+    "@noisia/methodologies": "workspace:*",
+    "@noisia/types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

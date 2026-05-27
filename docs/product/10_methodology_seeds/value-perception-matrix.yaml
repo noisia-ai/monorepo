@@ -1,0 +1,102 @@
+# Value Perception Matrix — Manifest v0.1 (DRAFT — implementación post-MVP)
+
+slug: value-perception-matrix
+name: Value Perception Matrix
+version: "0.1"
+status: beta  # cambia a active cuando se implemente Fase 6
+
+business_question: |
+  ¿Qué dimensión de valor capitaliza tu marca, cuál está abandonando,
+  y dónde hay whitespace que ningún competidor ocupa?
+
+when_applies:
+  - Reposicionamiento o redefinición de propuesta de valor
+  - Pricing strategy y defensa de margen
+  - Evaluación post-lanzamiento (¿la propuesta de valor llegó?)
+  - Justificación de precio premium contra entrante low-cost
+  - Detección de gaps defensivos antes de que un competidor los ocupe
+
+when_not_applies:
+  - Sin competencia comparable (no hay matriz si solo hay una marca)
+  - Cuando se necesita elasticidad de precio cuantitativa (usar conjoint)
+  - Cuando la categoría es puramente funcional sin componentes simbólicos
+
+theoretical_foundations:
+  - author: Aaker
+    year: 1996
+    contribution: "Brand Equity Model — dimensiones de valor de marca"
+  - author: Kapferer
+    year: 2008
+    contribution: "Brand Identity Prism — posicionamiento perceptual"
+
+coding_dimensions:
+  cost_dimension:
+    type: enum
+    values: [monetario, tiempo, cognitivo, social]
+    required: true
+  benefit_dimension:
+    type: enum
+    values: [funcional, emocional, social]
+    required: true
+  brand_attribution:
+    type: text
+    required: true  # qué marca está siendo evaluada en la mención
+
+inputs:
+  corpus:
+    minimum_viable: 1800  # 600/marca x 3 marcas
+    ideal: 4500
+  sources:
+    minimum_count: 3
+  competitive_corpus:
+    required: true
+    minimum_brands: 2
+  time_window:
+    maximum_age_months: 12
+
+outputs:
+  - id: vpm_matrix
+    name: Value Perception Matrix
+    type: structured_matrix_4x3
+  - id: brand_position_cards
+    name: Brand Position Cards
+    type: radial_per_brand
+  - id: whitespace_map
+    name: Whitespace Map
+    type: structured
+  - id: defense_brief
+    name: Defense Brief
+    type: narrative
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+  - block_id: vpm_matrix_4x3
+  - block_id: vpm_brand_position
+  - block_id: whitespace_overlay
+  - block_id: comparative_block
+  - block_id: evidence_list_top
+  - block_id: methodology_note
+
+quality_gates:
+  - id: balance_per_brand
+    description: "Cada marca tiene ≥30% del corpus comparable"
+  - id: evidence_per_quadrant
+    description: "Cada cuadrante 4x3 tiene ≥1 cita representativa o se justifica vacío"
+  - id: whitespace_identification
+    description: "Whitespace identificados tienen evidencia de ausencia, no solo conjetura"
+
+ai_prompts:
+  # Definir cuando se implemente
+  status: pending
+
+memory_consultation:
+  industry_memory:
+    query_template: "Dimensiones de valor relevantes en industria {{industry}}"
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: este manifest es DRAFT. Antes de activar en
+# producción (Fase 6 del MVP), expandir con:
+# - Prompts IA completos por paso
+# - Failure modes documentados
+# - Scrollytelling template
+# - Brand position cards spec con eje custom (no solo radial)

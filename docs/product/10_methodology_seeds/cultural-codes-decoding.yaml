@@ -1,0 +1,109 @@
+# Cultural Codes Decoding — Manifest v0.1 (DRAFT — post-MVP)
+
+slug: cultural-codes-decoding
+name: Cultural Codes Decoding
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué significa tu categoría en el sistema simbólico de tu consumidor —
+  qué se legitima, qué se ridiculiza, qué se transgrede?
+
+when_applies:
+  - Entrada a nuevo mercado donde la categoría opera con códigos locales distintos
+  - Reposicionamiento profundo (semiótico, no estético)
+  - Lanzamiento de marca en categoría madura donde "lo obvio" ya no diferencia
+  - Transferibilidad de campañas globales a contextos culturales específicos
+  - Detección de tensiones simbólicas que abren whitespace narrativo
+
+when_not_applies:
+  - Cuando el corpus es puramente transaccional (solo reviews de producto)
+  - Cuando se pide certeza estadística (es interpretativa, tradición Geertz)
+  - Cuando el cliente quiere demografía (opera por sistema simbólico, no demografía)
+
+theoretical_foundations:
+  - author: Geertz
+    year: 1973
+    contribution: "Thick Description — interpretación cultural"
+  - author: Alexander
+    year: 2003
+    contribution: "Cultural Sociology — códigos como sistemas semióticos"
+  - author: Sewell
+    year: 2005
+    contribution: "Logics of History — códigos vigentes vs emergentes"
+
+coding_dimensions:
+  signification_level:
+    type: enum
+    values: [superficial, estructural, mitico]
+    required: true
+    descriptions:
+      superficial: "Lo que se ve"
+      estructural: "Lo que organiza la categoría"
+      mitico: "La narrativa profunda"
+  binary_opposition:
+    type: text  # ej. "frescura ↔ tradición", "natural ↔ artificial"
+    required: true
+  maturity:
+    type: enum
+    values: [emergente, acelerando, mainstreaming]
+    required: true
+
+inputs:
+  corpus:
+    minimum_viable: 1200
+    ideal: 3000
+  sources:
+    minimum_count: 4
+    required_types: [foro, blog, podcast, video]  # NO solo transaccional
+  time_window:
+    maximum_age_months: 18
+    note: "Window más largo para detectar movimientos generacionales"
+
+outputs:
+  - id: cultural_codes_map
+    name: Cultural Codes Map
+    type: structured_3_levels
+  - id: tensiones_activas
+    name: Tensiones Activas
+    type: narrative
+  - id: whitespace_narrativo
+    name: Whitespace Narrativo
+    type: structured
+  - id: voice_recommendations
+    name: Voice Recommendations
+    type: narrative
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+  - block_id: cultural_codes_waterfall
+  - block_id: binary_oppositions
+  - block_id: cultural_tension_cards
+  - block_id: maturity_badges
+  - block_id: monthly_pulse
+  - block_id: evidence_list_top
+  - block_id: methodology_note
+
+quality_gates:
+  - id: three_levels_present
+    description: "Lectura tiene los 3 niveles (no solo superficial)"
+  - id: oppositions_explicit
+    description: "Oposiciones binarias identificadas explícitamente"
+  - id: maturity_assigned
+    description: "Cada código tiene madurez (emergente/acelerando/mainstreaming)"
+  - id: long_text_evidence
+    description: "Evidencia incluye texto largo, no solo fragmentos"
+
+memory_consultation:
+  cultural_region_memory:
+    query_template: "Códigos vigentes en {{country}} en categorías análogas a {{industry}}"
+  brand_memory:
+    query_template: "Posición simbólica histórica de {{brand}}"
+
+ai_prompts:
+  status: pending
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: Cultural Codes ya tiene precedentes en
+# Cultural Foresight 2026 y The Mexican Home. Cuando se implemente,
+# migrar esos análisis como fixtures de validación.

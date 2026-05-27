@@ -1,0 +1,1 @@
+ALTER TABLE "query_iterations" ADD COLUMN "industry_query_text" text;

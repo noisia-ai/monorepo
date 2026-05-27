@@ -1,0 +1,65 @@
+import { and, eq, isNull, sql } from "drizzle-orm";
+
+import { cleanupActions } from "@noisia/db";
+import { forbidden, unauthorized } from "@/lib/api/responses";
+import { canManageCorpus } from "@/lib/auth/roles";
+import { getAuthenticatedAppUser } from "@/lib/auth/session";
+import { getCorpusForUser } from "@/lib/data/corpora";
+import { db } from "@/lib/db";
+
+/**
+ * Revert a cleanup_action: re-include every mention linked to it, null
+ * out the link, and stamp reverted_at on the action so the UI hides
+ * the "Revertir" button afterwards.
+ */
+export async function POST(
+  _request: Request,
+  context: { params: Promise<{ id: string; actionId: string }> }
+) {
+  const session = await getAuthenticatedAppUser();
+  if (!session) return unauthorized();
+  if (!canManageCorpus(session.appUser.primaryRole)) return forbidden();
+
+  const { id, actionId } = await context.params;
+  const corpus = await getCorpusForUser(session.appUser, id);
+  if (!corpus) {
+    return Response.json({ error: "not_found", message: "Corpus not found." }, { status: 404 });
+  }
+
+  // Confirm the action belongs to this corpus and isn't already reverted
+  const [action] = await db
+    .select({
+      id: cleanupActions.id,
+      studyCorpusId: cleanupActions.studyCorpusId,
+      revertedAt: cleanupActions.revertedAt
+    })
+    .from(cleanupActions)
+    .where(and(eq(cleanupActions.id, actionId), eq(cleanupActions.studyCorpusId, corpus.id), isNull(cleanupActions.revertedAt)))
+    .limit(1);
+
+  if (!action) {
+    return Response.json(
+      { error: "not_found", message: "Acción no encontrada o ya revertida." },
+      { status: 404 }
+    );
+  }
+
+  const restored = await db.execute(sql`
+    UPDATE mentions
+    SET inclusion_status = 'included',
+        exclusion_reason = NULL,
+        cleanup_action_id = NULL
+    WHERE study_corpus_id = ${corpus.id}::uuid
+      AND cleanup_action_id = ${actionId}::uuid
+    RETURNING id
+  `);
+
+  const count = (restored as unknown as { rows?: unknown[] }).rows?.length ?? (restored as unknown as { length?: number }).length ?? 0;
+
+  await db
+    .update(cleanupActions)
+    .set({ revertedAt: new Date(), revertedByUserId: session.appUser.id })
+    .where(eq(cleanupActions.id, actionId));
+
+  return Response.json({ ok: true, restored_count: count });
+}

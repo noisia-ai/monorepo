@@ -1,0 +1,14 @@
+{
+  "name": "@noisia/kb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "build": "echo \"KB package has no build step yet\"",
+    "lint": "echo \"KB package has no lint step yet\"",
+    "typecheck": "echo \"KB package has no TS step yet\"",
+    "test": "echo \"KB package has no tests yet\""
+  }
+}

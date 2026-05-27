@@ -1,0 +1,89 @@
+# Journey Friction Mapping — Manifest v0.1 (DRAFT — post-MVP)
+
+slug: journey-friction-mapping
+name: Journey Friction Mapping
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Dónde se rompe el camino entre la intención y la acción,
+  y qué tipo de fricción lo está rompiendo?
+
+when_applies:
+  - Optimización de conversión cuando la analítica muestra dónde pero no por qué
+  - Rediseño de experiencias (e-commerce, apps, signup, onboarding)
+  - Evaluación post-lanzamiento donde el producto es bueno pero no convierte
+
+when_not_applies:
+  - Cuando la fricción es invisible al lenguaje (usar usability testing)
+  - Cuando no hay journey suficientemente largo (compra impulsiva 30s)
+  - Cuando el problema es propuesta de valor, no fricción
+
+theoretical_foundations:
+  - author: Nordgren_Schonthal
+    year: 2021
+    contribution: "The Human Element — 4 tipos de fricción"
+
+coding_dimensions:
+  friction_type:
+    type: enum
+    values: [inertia, effort, emotion, reactance]
+    required: true
+  journey_phase:
+    type: enum
+    values: [awareness, consideration, decision, purchase, post_purchase]
+    required: true
+    description: "Default 5 fases. Configurable por industria."
+
+inputs:
+  corpus:
+    minimum_viable: 1500
+    ideal: 4000
+  sources:
+    minimum_count: 3
+    required_types: [reviews, foro_troubleshooting, q_and_a]
+  time_window:
+    maximum_age_months: 9
+
+outputs:
+  - id: journey_map
+    name: Journey Friction Map
+    type: matrix_phase_x_type
+  - id: choke_points
+    name: Top 5 Choke Points
+    type: ranked_list
+  - id: friction_removal_recommendations
+    name: Friction Removal Recommendations
+    type: narrative
+  - id: quick_wins
+    name: Quick Wins List
+    type: effort_impact_scatter
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+  - block_id: journey_timeline
+  - block_id: friction_heatmap
+  - block_id: choke_point_cards
+  - block_id: effort_impact_scatter
+  - block_id: evidence_list_top
+  - block_id: methodology_note
+
+quality_gates:
+  - id: dual_coding
+    description: "Cada fricción tiene tipo + fase del journey"
+  - id: articulable_only
+    description: "Fricciones documentadas son las articulables en lenguaje"
+  - id: removability_estimate
+    description: "Cada recommendation tiene effort + impact estimados"
+
+memory_consultation:
+  industry_memory:
+    query_template: "Journeys típicos en industria {{industry}}"
+
+ai_prompts:
+  status: pending
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: agregar configuración de journey_phase
+# personalizable. Para e-commerce default funciona, para banca
+# B2B el journey es distinto (lead → demo → trial → contract).

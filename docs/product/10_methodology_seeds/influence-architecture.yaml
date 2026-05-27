@@ -1,0 +1,110 @@
+# Influence Architecture — Manifest v0.1 (DRAFT — post-MVP)
+
+slug: influence-architecture
+name: Influence Architecture
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Quiénes diseñan, sin saberlo, el imaginario de tu categoría,
+  y cómo se mueve realmente la influencia entre comunidades?
+
+when_applies:
+  - Estrategias de influencia donde follower-count demostró ser mala señal
+  - Lanzamientos en categorías especializadas (tech, gaming, beauty avanzado, finanzas)
+  - Defensa reputacional cuando una crisis se está propagando entre comunidades
+  - Detección de tendencias emergentes (nodos adoptando vocabulario nuevo)
+  - Diseño de comunidad de marca con criterios más allá del reach
+
+when_not_applies:
+  - Cuando la categoría es de adopción masiva sin estructura comunitaria
+  - Cuando el cliente espera "lista de influencers para contratar" (es analítica, no booking)
+  - Cuando se busca medir retorno de campañas pasadas
+
+theoretical_foundations:
+  - author: Granovetter
+    year: 1973
+    contribution: "Strength of Weak Ties — ties débiles mueven info entre clusters"
+  - author: Watts
+    year: 2003
+    contribution: "Small Worlds — estructura de red social"
+
+coding_dimensions:
+  node_type:
+    type: enum
+    values: [architect, translator, amplifier, validator, practitioner, critic]
+    required: true
+    descriptions:
+      architect: "Define vocabulario"
+      translator: "Mueve entre comunidades"
+      amplifier: "Eleva volumen"
+      validator: "Otorga credibilidad"
+      practitioner: "Prueba y reporta"
+      critic: "Defiende estándares"
+  tie_type:
+    type: enum
+    values: [mentoria, validacion, translacion, citacion, colaboracion, oposicion]
+    required: true
+  community_cluster:
+    type: text
+    required: true
+
+inputs:
+  corpus:
+    minimum_viable: 2000
+    ideal: 10000
+    note: "Necesita metadata robusta de autores (handle, comunidad, historial)"
+  sources:
+    minimum_count: 4
+    ideal_types: [discord_publico, subreddits, foros, twitter_specialized]
+  time_window:
+    maximum_age_months: 12
+
+outputs:
+  - id: network_map
+    name: Influence Network Map
+    type: graph
+  - id: top_node_types
+    name: Top 6 Tipos de Nodo
+    type: structured
+  - id: translation_points
+    name: Translation Points
+    type: structured
+  - id: activation_strategy
+    name: Activation Strategy
+    type: narrative
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+  - block_id: network_graph
+  - block_id: top_nodes_cards
+  - block_id: tie_type_distribution
+  - block_id: evidence_list_top
+  - block_id: brand_pills
+  - block_id: methodology_note
+
+quality_gates:
+  - id: six_node_types_or_justified
+    description: "Los 6 tipos de nodo están representados o se justifica si falta alguno"
+  - id: ties_typified
+    description: "Ties tipificados (no solo 'conexión genérica')"
+  - id: cross_community_evidence
+    description: "Translation points tienen evidencia de cross-community"
+  - id: not_just_megainfluencers
+    description: "Distinguir influencer mediático vs nodo arquitectónico"
+
+memory_consultation:
+  industry_memory:
+    query_template: "Tipos de nodo comunes en industria {{industry}}"
+  community_map_memory:
+    query_template: "Comunidades activas en {{country}} para {{industry}}"
+
+ai_prompts:
+  status: pending
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: Influence Architecture requiere infraestructura
+# de network graph. Cuando se implemente, evaluar:
+# - Postgres con plugin pgGraph
+# - Neo4j si la complejidad lo amerita (>10K nodos)
+# - Visualización con D3 force-directed o ReactFlow

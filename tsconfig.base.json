@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "incremental": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "paths": {
+      "@noisia/types": ["./packages/types/src"],
+      "@noisia/ui": ["./packages/ui/src"],
+      "@noisia/blocks": ["./packages/blocks/src"],
+      "@noisia/humanizer": ["./packages/humanizer/src"],
+      "@noisia/methodologies": ["./packages/methodologies/src"],
+      "@noisia/query-engine": ["./packages/query-engine/src"],
+      "@noisia/kb": ["./packages/kb"]
+    }
+  },
+  "exclude": ["node_modules", ".next", "dist", "build"]
+}

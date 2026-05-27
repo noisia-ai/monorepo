@@ -1,0 +1,89 @@
+# Decision Velocity — Manifest v0.1 (BETA — evaluar continuidad post-MVP)
+
+slug: decision-velocity
+name: Decision Velocity
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Por qué el consumidor decide rápido en una categoría y lento en la tuya,
+  y qué arquitectura de elección altera esa velocidad?
+
+when_applies:
+  - Optimización de funnel cuando el problema es conversión (no awareness)
+  - UX de decisión: rediseño de configuradores, pricing pages, comparadores
+  - E-commerce con assortment grande donde el consumidor abandona por sobrecarga
+  - Categorías de compra inusualmente lenta o rápida
+
+when_not_applies:
+  - Cuando el problema es awareness puro
+  - Cuando se busca conversion lift cuantitativo predecible (usar A/B test)
+  - Cuando la categoría es compra impulsiva pura sin journey
+
+theoretical_foundations:
+  - author: Kahneman
+    year: 2011
+    contribution: "Sistema 1 / Sistema 2 — velocidad de decisión por sistema"
+  - author: Thaler
+    year: 2008
+    contribution: "Choice architecture — palancas de aceleración"
+
+coding_dimensions:
+  journey_phase:
+    type: enum
+    values: [initiation, evaluation, commitment]
+  cognitive_system:
+    type: enum
+    values: [sistema_1, sistema_2]
+
+inputs:
+  corpus:
+    minimum_viable: 1000
+    ideal: 3000
+    note: "Necesita narrativa de proceso de decisión"
+  sources:
+    minimum_count: 3
+    ideal_types: [reviews_comparativos, foros, youtube_comparativas, tiktok_decision_content]
+  time_window:
+    maximum_age_months: 9
+  optional_high_value: "Data de funnel del cliente"
+
+outputs:
+  - id: velocity_diagnosis
+    name: Velocity Diagnosis
+    type: gauge
+  - id: slowdown_causes
+    name: Slowdown Causes
+    type: ranked_list
+  - id: speedup_levers
+    name: Speedup Levers
+    type: structured
+  - id: architecture_recommendations
+    name: Architecture Recommendations
+    type: narrative
+
+default_dashboard_blocks:
+  - block_id: hero_stats
+  - block_id: velocity_gauge
+  - block_id: slowdown_ranking
+  - block_id: lever_map
+  - block_id: hypothesis_cards
+  - block_id: evidence_list_top
+  - block_id: methodology_note
+
+quality_gates:
+  - id: phase_system_dual_coding
+    description: "Cada hallazgo codificado con fase + sistema cognitivo"
+  - id: testable_hypotheses
+    description: "Hypothesis derivadas son testeables A/B"
+  - id: benchmark_referenced
+    description: "Velocidad referenciada contra benchmark de la industria"
+
+ai_prompts:
+  status: pending
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: Decision Velocity es candidata a posponer
+# o descartar si después de 12 meses no hay demanda comercial real.
+# Es la metodología más sofisticada y requiere data de funnel del
+# cliente que no siempre se puede obtener.

@@ -1,0 +1,567 @@
+# Catálogo inicial de brand_seeds para seed de DB
+# Carga: infrastructure/db/seeds/brand_seeds.ts
+# Estos seeds vienen de los 4 estudios pasados + research de industrias MX
+
+# Estructura: cada entry es un row de la tabla brand_seeds
+
+brand_seeds:
+
+  # ═══════════════════════════════════════════════════════════
+  # BANKING & FINTECH
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: BBVA
+    aliases: [BBVA, BBVA México, BBVA Mexico, @BBVAMx]
+    detection_patterns: ['\bBBVA\b', '@BBVAMx']
+    vertical: banking
+    country: MX
+    is_institution: false
+
+  - canonical_name: Banorte
+    aliases: [Banorte, Banco Mercantil del Norte, @Banorte_mx]
+    detection_patterns: ['\bBanorte\b', '@Banorte_mx']
+    vertical: banking
+    country: MX
+
+  - canonical_name: Santander
+    aliases: [Santander, Santander México, @SantanderMX]
+    detection_patterns: ['\bSantander\b', '@SantanderMX']
+    vertical: banking
+    country: MX
+
+  - canonical_name: Banamex
+    aliases: [Banamex, Citibanamex, @Citibanamex]
+    detection_patterns: ['\bBanamex\b', '\bCitibanamex\b']
+    vertical: banking
+    country: MX
+
+  - canonical_name: HSBC México
+    aliases: [HSBC, HSBC México, HSBC Mexico]
+    detection_patterns: ['\bHSBC\b']
+    vertical: banking
+    country: MX
+
+  - canonical_name: Scotiabank México
+    aliases: [Scotiabank, Scotia, @ScotiabankMX]
+    detection_patterns: ['\bScotiabank\b', '\bScotia\b']
+    vertical: banking
+    country: MX
+
+  - canonical_name: Banco Azteca
+    aliases: [Banco Azteca, BancoAzteca]
+    detection_patterns: ['\bBanco\s?Azteca\b']
+    vertical: banking
+    country: MX
+
+  - canonical_name: Nu México
+    aliases: [Nu, Nubank, Nu México]
+    detection_patterns: ['\bNu\b(?=\s+M[eé]xico|\s+bank)', '\bNubank\b']
+    vertical: fintech
+    country: MX
+
+  - canonical_name: Klar
+    aliases: [Klar, @KlarMexico]
+    detection_patterns: ['\bKlar\b', '@KlarMexico']
+    vertical: fintech
+    country: MX
+
+  - canonical_name: Stori
+    aliases: [Stori, @StoriCard]
+    detection_patterns: ['\bStori\b', '@StoriCard']
+    vertical: fintech
+    country: MX
+
+  - canonical_name: Hey Banco
+    aliases: [Hey Banco, Hey, @HeyBanco]
+    detection_patterns: ['\bHey\s?Banco\b']
+    vertical: fintech
+    country: MX
+
+  - canonical_name: Mercado Pago
+    aliases: [Mercado Pago, MercadoPago, @mercadopago]
+    detection_patterns: ['\bMercado\s?Pago\b', '\bMercadoPago\b']
+    vertical: fintech
+    country: MX
+
+  - canonical_name: Spin by OXXO
+    aliases: [Spin, Spin by OXXO, Spin OXXO]
+    detection_patterns: ['\bSpin\b(?=\s+OXXO|\s+by)']
+    vertical: fintech
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # SEGUROS (incluye Seguros El Potosí para MVP)
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Seguros El Potosí
+    aliases: [Seguros El Potosí, Seguro El Potosí, El Potosí Seguros, @SegurosElPotosi]
+    detection_patterns: ['\bSeguros?\s+El\s+Potos[ií]\b', '\bEl\s+Potos[ií]\s+Seguros?\b', '@SegurosElPotosi']
+    vertical: seguros
+    sub_vertical: seguros_generales
+    country: MX
+
+  - canonical_name: AXA México
+    aliases: [AXA, AXA México, @AXAMexico]
+    detection_patterns: ['\bAXA\b(?=\s+seguros|\s+M[eé]xico)?']
+    vertical: seguros
+    country: MX
+
+  - canonical_name: GNP Seguros
+    aliases: [GNP, GNP Seguros, @GNPSeguros]
+    detection_patterns: ['\bGNP\b']
+    vertical: seguros
+    country: MX
+
+  - canonical_name: Qualitas
+    aliases: [Qualitas, Quálitas, @QualitasMX]
+    detection_patterns: ['\bQu[aá]litas\b']
+    vertical: seguros
+    sub_vertical: seguros_auto
+    country: MX
+
+  - canonical_name: Allianz México
+    aliases: [Allianz, Allianz México]
+    detection_patterns: ['\bAllianz\b']
+    vertical: seguros
+    country: MX
+
+  - canonical_name: Mapfre México
+    aliases: [Mapfre, Mapfre México]
+    detection_patterns: ['\bMapfre\b']
+    vertical: seguros
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # TELCOS
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Telcel
+    aliases: [Telcel, @Telcel]
+    detection_patterns: ['\bTelcel\b']
+    vertical: telcos
+    country: MX
+
+  - canonical_name: Movistar México
+    aliases: [Movistar, Movistar México]
+    detection_patterns: ['\bMovistar\b']
+    vertical: telcos
+    country: MX
+
+  - canonical_name: AT&T México
+    aliases: [AT&T, ATT, AT&T México]
+    detection_patterns: ['\bAT&T\b', '\bATT\b']
+    vertical: telcos
+    country: MX
+
+  - canonical_name: Izzi
+    aliases: [Izzi, izzi telecom, @IzziMx]
+    detection_patterns: ['\bizzi\b']
+    vertical: telcos
+    country: MX
+
+  - canonical_name: Totalplay
+    aliases: [Totalplay, @Totalplay]
+    detection_patterns: ['\bTotalplay\b']
+    vertical: telcos
+    country: MX
+
+  - canonical_name: Megacable
+    aliases: [Megacable, @megacable]
+    detection_patterns: ['\bMegacable\b']
+    vertical: telcos
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # RETAIL & E-COMMERCE
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Amazon México
+    aliases: [Amazon, Amazon México, @AmazonMexico]
+    detection_patterns: ['\bAmazon\s+M[eé]xico\b', '\bAmazon\b']
+    vertical: retail_ecommerce
+    country: MX
+
+  - canonical_name: Mercado Libre
+    aliases: [Mercado Libre, MercadoLibre, @MLibre_MX]
+    detection_patterns: ['\bMercado\s?Libre\b']
+    vertical: retail_ecommerce
+    country: MX
+
+  - canonical_name: Walmart México
+    aliases: [Walmart, Walmart México, @WalmartMexico]
+    detection_patterns: ['\bWalmart\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Bodega Aurrera
+    aliases: [Bodega Aurrera, Aurrera, @BodegaAurrera]
+    detection_patterns: ['\bBodega\s?Aurrera\b', '\bAurrera\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Soriana
+    aliases: [Soriana, @soriana]
+    detection_patterns: ['\bSoriana\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Chedraui
+    aliases: [Chedraui, @chedraui_oficial]
+    detection_patterns: ['\bChedraui\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Costco México
+    aliases: [Costco, Costco México]
+    detection_patterns: ['\bCostco\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Liverpool
+    aliases: [Liverpool, El Puerto de Liverpool, @liverpoolmexico]
+    detection_patterns: ['\bLiverpool\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: El Palacio de Hierro
+    aliases: [El Palacio de Hierro, Palacio de Hierro, Palacio]
+    detection_patterns: ['\bPalacio\s+de\s+Hierro\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Sears México
+    aliases: [Sears, Sears México]
+    detection_patterns: ['\bSears\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Coppel
+    aliases: [Coppel, @Coppel]
+    detection_patterns: ['\bCoppel\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Elektra
+    aliases: [Elektra, @Elektra]
+    detection_patterns: ['\bElektra\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: Suburbia
+    aliases: [Suburbia, @Suburbia_mx]
+    detection_patterns: ['\bSuburbia\b']
+    vertical: retail
+    country: MX
+
+  - canonical_name: SHEIN
+    aliases: [SHEIN, Shein, @SHEIN_Official]
+    detection_patterns: ['\bSHEIN\b', '\bShein\b']
+    vertical: retail_ecommerce
+    country: MX
+
+  - canonical_name: Temu
+    aliases: [Temu, @temu]
+    detection_patterns: ['\bTemu\b']
+    vertical: retail_ecommerce
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # DELIVERY & QSR
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Rappi
+    aliases: [Rappi, @rappi]
+    detection_patterns: ['\bRappi\b']
+    vertical: delivery
+    country: MX
+
+  - canonical_name: Uber Eats
+    aliases: [Uber Eats, UberEats, @UberEats_MEX]
+    detection_patterns: ['\bUber\s?Eats\b']
+    vertical: delivery
+    country: MX
+
+  - canonical_name: DiDi Food
+    aliases: [DiDi Food, DiDiFood, DiDi, @DiDi_Mexico]
+    detection_patterns: ['\bDiDi\b(?=\s+Food)?', '@DiDi_Mexico']
+    vertical: delivery
+    country: MX
+
+  - canonical_name: OXXO
+    aliases: [OXXO, Oxxo, @oxxotiendas]
+    detection_patterns: ['\bOXXO\b', '\bOxxo\b']
+    vertical: conveniencia
+    country: MX
+
+  - canonical_name: 7-Eleven México
+    aliases: [7-Eleven, 7 Eleven, Seven Eleven]
+    detection_patterns: ['\b7-?Eleven\b', '\bSeven Eleven\b']
+    vertical: conveniencia
+    country: MX
+
+  - canonical_name: Circle K
+    aliases: [Circle K, CircleK]
+    detection_patterns: ['\bCircle\s?K\b']
+    vertical: conveniencia
+    country: MX
+
+  - canonical_name: Starbucks México
+    aliases: [Starbucks, Starbucks México]
+    detection_patterns: ['\bStarbucks\b']
+    vertical: qsr
+    country: MX
+
+  - canonical_name: McDonald's México
+    aliases: [McDonald's, McDonalds, @McDonalds_Mex]
+    detection_patterns: ["\bMcDonald'?s\b"]
+    vertical: qsr
+    country: MX
+
+  - canonical_name: Burger King México
+    aliases: [Burger King, BurgerKing]
+    detection_patterns: ['\bBurger\s?King\b']
+    vertical: qsr
+    country: MX
+
+  - canonical_name: KFC México
+    aliases: [KFC]
+    detection_patterns: ['\bKFC\b']
+    vertical: qsr
+    country: MX
+
+  - canonical_name: Domino's Pizza México
+    aliases: ["Domino's", Dominos, "Domino's Pizza"]
+    detection_patterns: ["\bDomino'?s\b"]
+    vertical: qsr
+    country: MX
+
+  - canonical_name: Little Caesars México
+    aliases: [Little Caesars, LittleCaesars]
+    detection_patterns: ['\bLittle\s?Caesars\b']
+    vertical: qsr
+    country: MX
+
+  - canonical_name: Cinépolis
+    aliases: [Cinépolis, Cinepolis, @Cinepolis]
+    detection_patterns: ['\bCin[eé]polis\b']
+    vertical: entretenimiento
+    country: MX
+
+  - canonical_name: Cinemex
+    aliases: [Cinemex, @Cinemex]
+    detection_patterns: ['\bCinemex\b']
+    vertical: entretenimiento
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # AEROLÍNEAS
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Aeroméxico
+    aliases: [Aeroméxico, Aeromexico, @Aeromexico_com]
+    detection_patterns: ['\bAerom[eé]xico\b']
+    vertical: aerolineas
+    country: MX
+
+  - canonical_name: Volaris
+    aliases: [Volaris, @viajaVolaris]
+    detection_patterns: ['\bVolaris\b']
+    vertical: aerolineas
+    country: MX
+
+  - canonical_name: Viva Aerobus
+    aliases: [Viva Aerobus, VivaAerobus, @VivaAerobus]
+    detection_patterns: ['\bViva\s?Aerob[uú]s\b']
+    vertical: aerolineas
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # CPG / BEBIDAS / SNACKS
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Coca-Cola
+    aliases: [Coca-Cola, CocaCola, Coca Cola]
+    detection_patterns: ['\bCoca-?\s?Cola\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Pepsi
+    aliases: [Pepsi, @PepsiMex]
+    detection_patterns: ['\bPepsi\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Bimbo
+    aliases: [Bimbo, Grupo Bimbo, @bimbomx]
+    detection_patterns: ['\bBimbo\b']
+    vertical: cpg_alimentos
+    country: MX
+
+  - canonical_name: Sabritas
+    aliases: [Sabritas, @sabritas_mx]
+    detection_patterns: ['\bSabritas\b']
+    vertical: cpg_snacks
+    country: MX
+
+  - canonical_name: Doritos México
+    aliases: [Doritos]
+    detection_patterns: ['\bDoritos\b']
+    vertical: cpg_snacks
+    country: MX
+
+  - canonical_name: Cheetos
+    aliases: [Cheetos]
+    detection_patterns: ['\bCheetos\b']
+    vertical: cpg_snacks
+    country: MX
+
+  - canonical_name: Takis
+    aliases: [Takis, @takismexico]
+    detection_patterns: ['\bTakis\b']
+    vertical: cpg_snacks
+    country: MX
+
+  - canonical_name: Gatorade México
+    aliases: [Gatorade]
+    detection_patterns: ['\bGatorade\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Red Bull México
+    aliases: [Red Bull, RedBull]
+    detection_patterns: ['\bRed\s?Bull\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Electrolit
+    aliases: [Electrolit, @Electrolit]
+    detection_patterns: ['\bElectrolit\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Bonafont
+    aliases: [Bonafont, @Bonafont]
+    detection_patterns: ['\bBonafont\b']
+    vertical: cpg_bebidas
+    country: MX
+
+  - canonical_name: Ciel
+    aliases: [Ciel, agua Ciel]
+    detection_patterns: ['\bCiel\b(?=\s+agua|\s+lata|\s+botella)?']
+    vertical: cpg_bebidas
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # PLATAFORMAS INMOBILIARIAS (de The Mexican Home)
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Inmuebles24
+    aliases: [Inmuebles24, Inmuebles 24, @Inmuebles24]
+    detection_patterns: ['\bInmuebles\s?24\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Vivanuncios
+    aliases: [Vivanuncios, @Vivanuncios]
+    detection_patterns: ['\bVivanuncios\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Propiedades.com
+    aliases: [Propiedades.com, Propiedades]
+    detection_patterns: ['\bPropiedades\.?com\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Homie
+    aliases: [Homie, @HomieMx]
+    detection_patterns: ['\bHomie\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: La Haus
+    aliases: [La Haus, LaHaus]
+    detection_patterns: ['\bLa\s?Haus\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Lamudi
+    aliases: [Lamudi, @Lamudi_MX]
+    detection_patterns: ['\bLamudi\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Tuhabi
+    aliases: [Tuhabi, Tu Habi, @Tuhabi]
+    detection_patterns: ['\bTu\s?Habi\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Mercado Libre Inmuebles
+    aliases: [Mercado Libre Inmuebles, MercadoLibre Inmuebles, ML Inmuebles]
+    detection_patterns: ['\bMercado\s?Libre\s+Inmuebles\b']
+    vertical: real_estate_platform
+    country: MX
+
+  - canonical_name: Remax México
+    aliases: [Remax, RE/MAX, Re Max]
+    detection_patterns: ['\bRe\s?\/?\s?Max\b']
+    vertical: real_estate_realtor
+    country: MX
+
+  - canonical_name: Century 21 México
+    aliases: [Century 21, Century21]
+    detection_patterns: ['\bCentury\s?21\b']
+    vertical: real_estate_realtor
+    country: MX
+
+  - canonical_name: Tecnocasa México
+    aliases: [Tecnocasa]
+    detection_patterns: ['\bTecnocasa\b']
+    vertical: real_estate_realtor
+    country: MX
+
+  # ═══════════════════════════════════════════════════════════
+  # INSTITUCIONES FINANCIERAS / REGULATORIAS
+  # ═══════════════════════════════════════════════════════════
+  - canonical_name: Infonavit
+    aliases: [Infonavit, INFONAVIT, Crédito Infonavit]
+    detection_patterns: ['\bInfonavit\b']
+    vertical: institucion_financiera
+    is_institution: true
+    country: MX
+
+  - canonical_name: Cofinavit
+    aliases: [Cofinavit, COFINAVIT, Cofinanciamiento Infonavit]
+    detection_patterns: ['\bCofinavit\b']
+    vertical: institucion_financiera
+    is_institution: true
+    country: MX
+
+  - canonical_name: Fovissste
+    aliases: [Fovissste, FOVISSSTE]
+    detection_patterns: ['\bFovissste\b']
+    vertical: institucion_financiera
+    is_institution: true
+    country: MX
+
+  - canonical_name: Condusef
+    aliases: [Condusef, CONDUSEF]
+    detection_patterns: ['\bCondusef\b']
+    vertical: institucion_regulatoria
+    is_institution: true
+    country: MX
+
+  - canonical_name: Profeco
+    aliases: [Profeco, PROFECO]
+    detection_patterns: ['\bProfeco\b']
+    vertical: institucion_regulatoria
+    is_institution: true
+    country: MX
+
+  - canonical_name: CFE
+    aliases: [CFE, Comisión Federal de Electricidad]
+    detection_patterns: ['\bCFE\b']
+    vertical: institucion_servicios
+    is_institution: true
+    country: MX
+
+# ─── Mejora futura ───────────────────────────────────────────
+# TODO mejora-futura: este catálogo arranca con 60+ entries. Crecerá
+# a 200+ en 6 meses según se agregan clientes. Considerar:
+# - UI de admin para que el UX Data Specialist agregue brand_seeds sin commits
+# - Validación automática de detection_patterns (regex válidos, no muy permisivos)
+# - Análisis cross-corpus para detectar marcas no catalogadas con alta frecuencia
+# - Internacionalización: cuando entre LATAM, alias por país (Coppel solo MX vs internacional)

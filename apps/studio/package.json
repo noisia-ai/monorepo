@@ -1,0 +1,40 @@
+{
+  "name": "@noisia/studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3001}",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No studio tests yet\""
+  },
+  "dependencies": {
+    "@kinde-oss/kinde-auth-nextjs": "^2.10.2",
+    "@noisia/db": "workspace:*",
+    "@noisia/query-engine": "workspace:*",
+    "@noisia/types": "workspace:*",
+    "bullmq": "^5.77.1",
+    "drizzle-orm": "^0.44.0",
+    "ioredis": "^5.10.1",
+    "next": "^15.5.15",
+    "pg": "^8.13.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-feather": "^2.0.10",
+    "recharts": "^3.8.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@types/node": "^20.14.10",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.5.15",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@noisia/workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "start": "tsx src/index.ts",
+    "lint": "echo \"No lint configured for workers yet\"",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No worker tests yet\""
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.79",
+    "@noisia/db": "workspace:*",
+    "@noisia/query-engine": "workspace:*",
+    "ai": "^6.0.191",
+    "bullmq": "^5.0.0",
+    "dotenv": "^16.6.1",
+    "drizzle-orm": "^0.44.7",
+    "ioredis": "^5.4.1",
+    "pg": "^8.21.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
