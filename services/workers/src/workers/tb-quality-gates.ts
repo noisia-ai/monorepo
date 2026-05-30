@@ -47,8 +47,10 @@ type AnalysisRow = {
   status: string;
   activation_playbook: unknown;
   friction_removal_plan: unknown;
+  comparative_brief: unknown;
   limitations: unknown;
   confidence_per_finding: unknown;
+  meta_json: unknown;
 };
 
 type GateResult = {
@@ -81,6 +83,20 @@ const FUTURE_PROJECTION_PHRASES = [
   "tendencia futura",
   "inevitablemente",
   "garantiza que"
+];
+
+const COMPETITIVE_CLAIM_PHRASES = [
+  "competencia",
+  "competidor",
+  "competidores",
+  "benchmark",
+  "comparativo",
+  "comparativa",
+  "vs.",
+  "versus",
+  "posee la competencia",
+  "la competencia aparece",
+  "ganarle a"
 ];
 
 export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
@@ -150,7 +166,7 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
 
 async function loadAnalysis(tbAnalysisId: string): Promise<AnalysisRow> {
   const r = await pool.query<AnalysisRow>(
-    `SELECT status, activation_playbook, friction_removal_plan, limitations, confidence_per_finding
+    `SELECT status, activation_playbook, friction_removal_plan, comparative_brief, limitations, confidence_per_finding, meta_json
      FROM tb_analyses
      WHERE id = $1`,
     [tbAnalysisId]
@@ -224,7 +240,10 @@ function runQualityGates(args: {
     synthesisCompletenessGate(analysis, recommendations),
     actionabilityGate(recommendations),
     confidenceGate(findings, analysis.confidence_per_finding),
-    voiceAndProjectionGate(analysis, recommendations)
+    voiceAndProjectionGate(analysis, recommendations),
+    actionStudioGate(analysis),
+    competitiveBenchmarkGate(analysis),
+    competitiveClaimEvidenceGate(analysis)
   ];
 }
 
@@ -389,6 +408,114 @@ function voiceAndProjectionGate(analysis: AnalysisRow, recommendations: Recommen
   };
 }
 
+function actionStudioGate(analysis: AnalysisRow): GateResult {
+  const meta = asRecord(analysis.meta_json);
+  const actions = Array.isArray(meta.action_studio) ? meta.action_studio.map(asRecord) : [];
+  if (actions.length === 0) {
+    return {
+      id: "action_studio_native_complete",
+      passed: false,
+      level: "fail",
+      notes: "Step 6 no produjo action_studio[] nativo por equipo."
+    };
+  }
+
+  const incomplete = actions.filter((action) => {
+    const findingIds = Array.isArray(action.finding_ids) ? action.finding_ids.filter(Boolean) : [];
+    return (
+      !stringField(action.target_team) ||
+      findingIds.length === 0 ||
+      !stringField(action.action_text) ||
+      !stringField(action.success_signal) ||
+      !stringField(action.estimated_effort) ||
+      !stringField(action.estimated_impact) ||
+      !stringField(action.confidence)
+    );
+  });
+
+  const teams = new Set(actions.map((action) => String(action.target_team ?? "")));
+  const hasCoreTeams = ["brand_strategy", "creative_content", "product_cx", "measurement"].some((team) => teams.has(team));
+
+  return {
+    id: "action_studio_native_complete",
+    passed: incomplete.length === 0 && hasCoreTeams,
+    level: incomplete.length === 0 && hasCoreTeams ? "pass" : "fail",
+    notes:
+      incomplete.length === 0 && hasCoreTeams
+        ? `Action Studio tiene ${actions.length} acciones con owner, finding_ids, esfuerzo, impacto, confidence y señal de éxito.`
+        : `${incomplete.length} acciones incompletas; core teams cubiertos=${hasCoreTeams}.`
+  };
+}
+
+function competitiveBenchmarkGate(analysis: AnalysisRow): GateResult {
+  const comparative = asRecord(analysis.comparative_brief);
+  const entities = arrayRecords(comparative.entities);
+  const presence = arrayRecords(comparative.finding_entity_presence);
+  const limitations = arrayStrings(comparative.limitations);
+  const hasBrand = entities.some((entity) => entity.entity_kind === "primary_brand" && positiveNumber(entity.mention_count));
+  const hasCompetitor = entities.some((entity) =>
+    (entity.entity_kind === "competitor" || entity.entity_kind === "competitor_pool") && positiveNumber(entity.mention_count)
+  );
+  const hasCategory = entities.some((entity) => entity.entity_kind === "category" && positiveNumber(entity.mention_count));
+  const benchmarkAvailable = comparative.benchmark_available === true;
+
+  if (benchmarkAvailable && hasBrand && hasCompetitor && presence.length > 0) {
+    return {
+      id: "competitive_benchmark_evidence",
+      passed: true,
+      level: hasCategory ? "pass" : "warn",
+      notes: hasCategory
+        ? "Comparativo tiene marca, competencia, categoría y presencia por finding."
+        : "Comparativo tiene marca y competencia; falta baseline de categoría, documentar al presentar."
+    };
+  }
+
+  const limitationText = limitations.join(" ").toLowerCase();
+  const declared = /competencia|benchmark|categoria|categoría|marca|atribuid/.test(limitationText);
+  return {
+    id: "competitive_benchmark_evidence",
+    passed: declared,
+    level: declared ? "warn" : "fail",
+    notes: declared
+      ? "Benchmark competitivo limitado, pero la limitación está declarada en comparative_brief."
+      : "Benchmark competitivo incompleto sin limitación explícita."
+  };
+}
+
+function competitiveClaimEvidenceGate(analysis: AnalysisRow): GateResult {
+  const comparative = asRecord(analysis.comparative_brief);
+  const entities = arrayRecords(comparative.entities);
+  const presence = arrayRecords(comparative.finding_entity_presence);
+  const hasCompetitorEvidence = entities.some((entity) =>
+    (entity.entity_kind === "competitor" || entity.entity_kind === "competitor_pool") && positiveNumber(entity.mention_count)
+  ) && presence.length > 0;
+
+  const claimText = textBlob([
+    analysis.activation_playbook,
+    analysis.friction_removal_plan,
+    asRecord(analysis.meta_json).action_studio
+  ]).toLowerCase();
+  const claimHits = COMPETITIVE_CLAIM_PHRASES.filter((phrase) => claimText.includes(phrase));
+
+  if (claimHits.length === 0) {
+    return {
+      id: "competitive_claims_have_evidence",
+      passed: true,
+      level: "pass",
+      notes: "La síntesis no hace claims competitivos explícitos."
+    };
+  }
+
+  return {
+    id: "competitive_claims_have_evidence",
+    passed: hasCompetitorEvidence,
+    level: hasCompetitorEvidence ? "pass" : "fail",
+    notes: hasCompetitorEvidence
+      ? `Claims competitivos detectados (${claimHits.join(", ")}) y respaldados por comparative_brief.`
+      : `Claims competitivos detectados sin evidencia competitiva suficiente: ${claimHits.join(", ")}.`
+  };
+}
+
 async function persistGates(tbAnalysisId: string, gates: GateResult[]) {
   for (const gate of gates) {
     const prefix = gate.level === "pass" ? "PASS" : gate.level === "warn" ? "WARN" : "FAIL";
@@ -411,6 +538,18 @@ function hasProtagonistQuote(value: unknown) {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+function arrayStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function positiveNumber(value: unknown) {

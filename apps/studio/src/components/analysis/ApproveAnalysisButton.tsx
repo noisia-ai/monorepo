@@ -36,22 +36,27 @@ export function ApproveAnalysisButton({
     setIsApproving(true);
     setError(null);
 
-    const response = await fetch(`/api/corpora/${corpusId}/tb-analysis/${analysisId}/approve`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ approve_with_warnings: approveWithWarnings })
-    });
-    const payload = await response.json() as { message?: string };
+    try {
+      const response = await fetch(`/api/corpora/${corpusId}/tb-analysis/${analysisId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approve_with_warnings: approveWithWarnings })
+      });
+      const payload = await response.json().catch(() => ({})) as { message?: string };
 
-    if (!response.ok) {
-      setError(payload.message ?? "No se pudo aprobar el análisis.");
+      if (!response.ok) {
+        setError(payload.message ?? "No se pudo aprobar el análisis.");
+        return;
+      }
+
+      setIsConfirmingOverride(false);
+      router.refresh();
+    } catch (err) {
+      console.error("Failed to approve T&B analysis", err);
+      setError("No pudimos aprobar el análisis. Revisa la conexión e intenta otra vez.");
+    } finally {
       setIsApproving(false);
-      return;
     }
-
-    setIsApproving(false);
-    setIsConfirmingOverride(false);
-    router.refresh();
   }
 
   return (

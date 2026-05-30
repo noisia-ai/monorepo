@@ -7,6 +7,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { createCorpusSnapshot } from "@/lib/corpus/snapshots";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { db } from "@/lib/db";
+import { getQueryEngineQueue } from "@/lib/queue/query-engine";
 
 /**
  * Corpus-level approve. Marks the latest iteration as approved and flips
@@ -57,6 +58,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     kind: "approval",
     userId: session.appUser.id
   });
+
+  try {
+    const queue = getQueryEngineQueue();
+    await queue.add(
+      "embed_corpus_semantics",
+      { corpusId: corpus.id, mode: "all" },
+      {
+        jobId: `semantic-${corpus.id}-${Date.now()}`,
+        attempts: 2,
+        backoff: { type: "exponential", delay: 10000 },
+        removeOnComplete: { age: 60 * 60 * 24, count: 200 },
+        removeOnFail: { age: 60 * 60 * 24 * 7, count: 500 }
+      }
+    );
+  } catch (error) {
+    console.warn("[semantic-embeddings] enqueue skipped", error);
+  }
 
   return Response.json({ ok: true, iteration_id: latest?.id ?? null, status: "corpus_approved" });
 }

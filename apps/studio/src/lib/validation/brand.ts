@@ -64,6 +64,7 @@ export const createStudySchema = z.object({
   audience_segment: optionalText(400),
   category_context: optionalText(1200),
   hypotheses: optionalText(1200),
+  competitive_context: optionalText(2400),
   known_barriers: optionalText(1200),
   known_triggers: optionalText(1200),
   strategic_constraints: optionalText(1200),

@@ -75,6 +75,13 @@ export type PreflightInput = {
   windowMonths: number | null;
   languageDistribution: { lang: string; pct: number }[];
   triggerToBarrierRatio?: number; // heuristic from initial sample
+  ragContext?: TbRagPromptContext;
+};
+
+export type TbRagPromptContext = {
+  query_strategy_brief?: unknown | null;
+  knowledge_sources?: unknown[];
+  corpus_intelligence?: unknown | null;
 };
 
 export function buildPreflightPrompt(input: PreflightInput): string {
@@ -97,6 +104,9 @@ export function buildPreflightPrompt(input: PreflightInput): string {
     `- Window temporal: ${input.windowMonths ?? "?"} meses`,
     `- Idiomas detectados: ${input.languageDistribution.map((l) => `${l.lang} ${l.pct.toFixed(1)}%`).join(", ")}`,
     "",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(input.ragContext),
+    "",
     "Tu tarea: validar 5 puntos. Por cada uno responde PASS, WARN o FAIL con razon breve (<30 palabras).",
     "Al final da decision: PROCEDER, PROCEDER_WITH_WARNINGS o ABORTAR.",
     "",
@@ -109,8 +119,8 @@ export function buildPreflightPrompt(input: PreflightInput): string {
     "   PASS si <=13 meses · WARN si entre 14 y 24 meses (cultura puede haber cambiado) · FAIL si >24 meses",
     "4. polarity_balance — Mix de positivos vs quejas en el corpus:",
     "   PASS si mix visible · WARN si polarizado a un lado · FAIL si TODO un lado (impide T&B por definicion)",
-    "5. language_uniformity — Idioma uniforme español:",
-    "   PASS si >=90% es · WARN si entre 70-90% es · FAIL si <70% es (corpus es de otro idioma)",
+    "5. language_uniformity — Idioma uniforme del estudio:",
+    "   PASS si un idioma domina >=90% · WARN si domina entre 70-90% · FAIL si no hay idioma dominante claro",
     "",
     "Reglas de decision final:",
     "- CUALQUIER FAIL → decision = ABORTAR, listar TODOS los FAIL en blockers[]",
@@ -125,7 +135,7 @@ export function buildPreflightPrompt(input: PreflightInput): string {
           { id: "source_balance", result: "WARN", reason: "Fuente comments concentra 84%, supera el 60% recomendado pero hay 5 fuentes mas que aportan diversidad." },
           { id: "window_temporal", result: "PASS", reason: "12 meses dentro del limite de 13." },
           { id: "polarity_balance", result: "PASS", reason: "Mix visible de positivos y quejas." },
-          { id: "language_uniformity", result: "PASS", reason: "100% español MX." }
+          { id: "language_uniformity", result: "PASS", reason: "100% en el idioma dominante del estudio." }
         ],
         decision: "PROCEDER_WITH_WARNINGS",
         blockers: [],
@@ -149,9 +159,9 @@ export function buildPreflightPrompt(input: PreflightInput): string {
  * context without truncating tag arrays. */
 export const TB_OPEN_PASS_BATCH_SIZE = 30;
 
-/** Max mentions to sample from a large corpus in one open-pass run.
- * For tiny corpora (<= cap), we process all of them. */
-export const TB_OPEN_PASS_MAX_SAMPLE = 1500;
+/** Max mentions to read in one open-pass run.
+ * For current sold-work corpora (<= cap), we process all of them. */
+export const TB_OPEN_PASS_MAX_SAMPLE = 50000;
 
 export type OpenPassMentionInput = {
   id: string;
@@ -172,8 +182,11 @@ export function buildOpenPassPrompt(args: {
   brandName: string;
   industry: string | null;
   businessQuestion: string | null;
+  outputLanguage?: string | null;
+  ragContext?: TbRagPromptContext;
   mentions: OpenPassMentionInput[];
 }): string {
+  const outputLanguage = args.outputLanguage?.trim() || "the corpus language";
   return [
     "Rol: Eres un analista Noisia ejecutando Paso 1 del protocolo Triggers & Barriers.",
     "",
@@ -184,6 +197,10 @@ export function buildOpenPassPrompt(args: {
     `- Marca: ${args.brandName}`,
     `- Industria: ${args.industry ?? "(no especificada)"}`,
     `- Pregunta de negocio: ${args.businessQuestion ?? "(no especificada)"}`,
+    `- Idioma de tags/salida: ${outputLanguage}`,
+    "",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(args.ragContext),
     "",
     "Tarea: leer cada mención y asignarle 1-3 tags emergentes EN EL LENGUAJE DEL CORPUS MISMO.",
     "Los tags deben sonar como cosas que diría el consumidor, NO como vocabulario de consultor/marketing.",
@@ -203,7 +220,7 @@ export function buildOpenPassPrompt(args: {
     "",
     "Reglas:",
     "- Cada mención recibe 1 a 3 tags. Si la mención es 100% irrelevante a la categoria, devuelve tags: ['irrelevant'].",
-    "- Tag corto (2-6 palabras), en español MX informal cuando aplique.",
+    "- Tag corto (2-6 palabras), en el idioma de salida. Si el corpus está en inglés, los tags deben salir en inglés.",
     "- Reusa tags entre menciones cuando capturen el mismo concepto (NO crees variantes innecesarias).",
     "- NO inventes tags que no esten ancladas en el texto literal de las menciones.",
     "",
@@ -267,9 +284,9 @@ export function parseOpenPassResponse(raw: string): OpenPassBatchResult {
    STEP 2 — Coding (polarity + layer per tag/mention)
    ============================================================ */
 
-/** Top N tags we ask Claude to code in one call. Beyond this the prompt
- * grows uncomfortably and the long-tail tags add noise more than signal. */
-export const TB_CODING_TOP_TAGS = 120;
+/** Top N tags we ask Claude to code in one call. Kept high so large corpora
+ * don't collapse into the same few generic tensions before hierarchy. */
+export const TB_CODING_TOP_TAGS = 300;
 
 /** Number of sample verbatims to attach per tag so Claude can ground its
  * coding in real text rather than guessing from the tag label alone. */
@@ -303,8 +320,11 @@ export function buildCodingPrompt(args: {
   brandName: string;
   industry: string | null;
   businessQuestion: string | null;
+  outputLanguage?: string | null;
+  ragContext?: TbRagPromptContext;
   tags: CodingTagInput[];
 }): string {
+  const outputLanguage = args.outputLanguage?.trim() || "Spanish (Mexico)";
   return [
     "Rol: Eres un analista Noisia ejecutando Paso 2 del protocolo Triggers & Barriers.",
     "",
@@ -315,6 +335,10 @@ export function buildCodingPrompt(args: {
     `- Marca: ${args.brandName}`,
     `- Industria: ${args.industry ?? "(no especificada)"}`,
     `- Pregunta de negocio: ${args.businessQuestion ?? "(no especificada)"}`,
+    `- Idioma de salida: ${outputLanguage}`,
+    "",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(args.ragContext),
     "",
     "Tarea: para cada tag emergente (con sus muestras reales), asignarle DOS dimensiones:",
     "",
@@ -332,6 +356,8 @@ export function buildCodingPrompt(args: {
     "  · null           — solo cuando polaridad es 'irrelevant'",
     "",
     "REGLAS:",
+    "- Mantén `tag` EXACTAMENTE como llegó para que el sistema lo pueda mapear.",
+    "- `reason` y `cluster` deben estar en el idioma de salida. Si el corpus es inglés, NO traduzcas a español.",
     "- Lee las muestras antes de codificar. Un mismo wording puede ser trigger o barrier según contexto.",
     "- 'ambiguous: true' SOLO si genuinamente no se puede decidir entre dos opciones (no abuses).",
     "- Si dos tags son semanticamente iguales (ej: 'pesimo servicio' y 'mal servicio'), asígnales el MISMO valor en 'cluster' (texto corto representativo).",
@@ -488,8 +514,8 @@ export function parseCodingResponse(raw: string): CodingResponse {
    ============================================================ */
 
 /** Hard cap on how many clusters we ask Claude to evaluate in one call.
- * The output JSON grows linearly so this also bounds response tokens. */
-export const TB_HIERARCHY_MAX_CLUSTERS = 60;
+ * The output JSON grows linearly so this still bounds response tokens. */
+export const TB_HIERARCHY_MAX_CLUSTERS = 140;
 
 /** Minimum mentions a candidate cluster needs to become a finding. Below
  * this it's long-tail noise that step 6 will ignore anyway. */
@@ -532,8 +558,11 @@ export function buildHierarchyPrompt(args: {
   brandName: string;
   industry: string | null;
   businessQuestion: string | null;
+  outputLanguage?: string | null;
+  ragContext?: TbRagPromptContext;
   clusters: HierarchyClusterInput[];
 }): string {
+  const outputLanguage = args.outputLanguage?.trim() || "Spanish (Mexico)";
   return [
     "Rol: Eres un analista Noisia ejecutando Paso 3 del protocolo Triggers & Barriers (jerarquizacion tridimensional).",
     "",
@@ -544,11 +573,16 @@ export function buildHierarchyPrompt(args: {
     `- Marca: ${args.brandName}`,
     `- Industria: ${args.industry ?? "(no especificada)"}`,
     `- Pregunta de negocio: ${args.businessQuestion ?? "(no especificada)"}`,
+    `- Idioma de salida: ${outputLanguage}`,
+    "",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(args.ragContext),
     "",
     "Tarea: para cada cluster (que ya tiene polaridad + layer + frecuencia del paso anterior), evaluar TRES dimensiones:",
     "",
     "DIMENSIÓN 1 — Nombre comercial:",
     "  Una etiqueta profesional, business-friendly, que podría ir en un slide ejecutivo.",
+    "  · Debe estar en el idioma de salida. Si el corpus es inglés, `nombre_comercial` y `reason` deben salir en inglés.",
     "  · NO es la frase cruda del usuario (eso ya esta en label).",
     "  · SI es una sintesis interpretativa: ej. 'Desconfianza en el pago de siniestros' (no 'no me cubrio').",
     "  · Maximo 60 caracteres.",
@@ -721,8 +755,11 @@ export function buildMobilityPrompt(args: {
   brandName: string;
   industry: string | null;
   businessQuestion: string | null;
+  outputLanguage?: string | null;
+  ragContext?: TbRagPromptContext;
   findings: MobilityFindingInput[];
 }): string {
+  const outputLanguage = args.outputLanguage?.trim() || "Spanish (Mexico)";
   return [
     "Rol: Eres un strategist Noisia ejecutando Paso 4 del protocolo Triggers & Barriers.",
     "",
@@ -733,6 +770,10 @@ export function buildMobilityPrompt(args: {
     `- Marca: ${args.brandName}`,
     `- Industria: ${args.industry ?? "(no especificada)"}`,
     `- Pregunta de negocio: ${args.businessQuestion ?? "(no especificada)"}`,
+    `- Idioma de salida: ${outputLanguage}`,
+    "",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(args.ragContext),
     "",
     "Tarea: para cada finding, decidir su MOVILIDAD ESTRATÉGICA — qué tanto puede la marca mover este trigger/barrier con sus propias armas (producto, comunicación, operación).",
     "",
@@ -761,6 +802,7 @@ export function buildMobilityPrompt(args: {
     "- NO uses la heurística ciegamente — lee el `nombre_comercial` y el verbatim protagonista antes de decidir.",
     "",
     "`movilidad_razon`: 2-3 oraciones que justifiquen el verdict ANCLADAS en el verbatim/finding (no genéricas).",
+    `Escribe \`movilidad_razon\` en ${outputLanguage}. No traduzcas a otro idioma.`,
     "",
     "Formato JSON obligatorio:",
     JSON.stringify(
@@ -910,33 +952,154 @@ export type FrictionRemovalPlan = {
   barriers_estructurales: StructuralBarrierNote[];
 };
 
+export type ActionStudioCard = {
+  action_id: string;
+  target_team: "brand_strategy" | "creative_content" | "product_cx" | "retail_media" | "measurement" | "cultural_guardrails";
+  kind: "activation" | "friction_removal" | "alignment" | "experiment" | "guardrail" | "structural_note";
+  title: string;
+  finding_ids: string[];
+  primary_finding_id: string | null;
+  rationale: string;
+  action_text: string;
+  suggested_channel: string | null;
+  suggested_format: string | null;
+  success_signal: string;
+  estimated_effort: "baja" | "media" | "alta";
+  estimated_impact: "bajo" | "medio" | "alto";
+  confidence: "alta" | "media" | "baja_direccional";
+  priority_rank: number;
+};
+
+export type EmergingPatternOutput = {
+  pattern_id: string;
+  title: string;
+  pattern_type: "source_pattern" | "unexpected_insight" | "language_code" | "cx_signal" | "product_signal" | "content_signal" | "hypothesis";
+  why_it_matters: string;
+  data_basis: string[];
+  evidence_count: number;
+  source_breakdown: Array<{ source: string; count: number }>;
+  related_finding_ids: string[];
+  confidence: "alta" | "media" | "baja_direccional";
+  evidence_quotes: string[];
+};
+
+export type KnowledgeImpactOutput = {
+  business_question_answer: string;
+  confirmed_by_corpus: string[];
+  contradicted_or_unproven: string[];
+  decision_implications: string[];
+  strategic_constraints: string[];
+};
+
+export type StrategicOpportunityOutput = {
+  opportunity_id: string;
+  title: string;
+  decision: string;
+  why_now: string;
+  level: "brand" | "content" | "product_cx" | "competitive" | "measurement" | "category";
+  source_mix: string[];
+  related_finding_ids: string[];
+  evidence_summary: string;
+  what_to_do: string;
+  success_signal: string;
+  confidence: "alta" | "media" | "baja_direccional";
+};
+
+export type FutureSignalOutput = {
+  signal_id: string;
+  title: string;
+  polarity: "future_trigger" | "future_barrier";
+  horizon: "30_90_days" | "3_6_months" | "6_12_months";
+  why_it_could_emerge: string;
+  evidence_basis: string[];
+  watch_metric: string;
+  related_finding_ids: string[];
+  confidence: "alta" | "media" | "baja_direccional";
+};
+
+export type MarketAnalysisOutput = {
+  headline: string;
+  answer: string;
+  implications: string[];
+  patterns: Array<{
+    title: string;
+    why_it_matters: string;
+    source_basis: string[];
+    related_finding_ids: string[];
+  }>;
+};
+
+export type EvidenceDeepDiveOutput = {
+  finding_id: string;
+  plain_language_title: string;
+  description: string;
+  channel_insight: string;
+  format_insight: string;
+  period_insight: string;
+  competitor_insight: string | null;
+  future_watchout: string | null;
+  proof_points: string[];
+};
+
 export type SynthesisResponse = {
   activation_playbook: ActivationPlaybook;
   friction_removal_plan: FrictionRemovalPlan;
+  action_studio: ActionStudioCard[];
+  emerging_patterns: EmergingPatternOutput[];
+  knowledge_impact: KnowledgeImpactOutput;
+  strategic_opportunities: StrategicOpportunityOutput[];
+  future_signals: FutureSignalOutput[];
+  market_analysis: MarketAnalysisOutput;
+  evidence_deep_dives: EvidenceDeepDiveOutput[];
 };
 
 export function buildSynthesisPrompt(args: {
   brandName: string;
   industry: string | null;
   businessQuestion: string | null;
+  outputLanguage?: string | null;
+  ragContext?: TbRagPromptContext;
+  comparativeBrief?: unknown;
   findings: SynthesisFindingInput[];
 }): string {
   const triggers = args.findings.filter((f) => f.polarity === "trigger");
   const barriers = args.findings.filter((f) => f.polarity === "barrier");
+  const comparativeContext = compactJson(args.comparativeBrief, 8_000);
+  const outputLanguage = args.outputLanguage?.trim() || "Spanish (Mexico)";
+  const englishOutput = outputLanguage.toLowerCase().startsWith("english");
+  const voiceLine = outputLanguage.toLowerCase().startsWith("english")
+    ? "English, direct, commercially sharp, no LinkedIn-speak. Preserve the corpus and Knowledge Base wording when it is already in English."
+    : "Español directo, accionable, sin LinkedIn-speak.";
 
   return [
     "Rol: Eres un strategist senior de Noisia ejecutando Paso 6 del protocolo Triggers & Barriers.",
     "",
     "CRITICAL OUTPUT RULE: Tu PRIMER caracter de respuesta debe ser '{'. Tu ULTIMO caracter debe ser '}'.",
     "NO escribas preamble, NO uses markdown fences, NO expliques fuera del JSON.",
+    englishOutput
+      ? "ABSOLUTE LANGUAGE CONTRACT: every client-visible string value MUST be written in English. Schema keys may stay Spanish; values cannot. Translate/adapt any Spanish finding names, mobility reasons, examples, or prior text into natural English."
+      : "CONTRATO DE IDIOMA: todos los valores visibles para cliente deben estar en español natural.",
+    englishOutput
+      ? "FAILURE CONDITION: do not output Spanish narrative phrases such as 'aparece en', 'señal', 'barrera', 'intervención', 'día de pago', 'confío'. Use English equivalents."
+      : "Evita inglés innecesario si el estudio está en español.",
     "",
     "Contexto:",
     `- Marca: ${args.brandName}`,
     `- Industria: ${args.industry ?? "(no especificada)"}`,
     `- Pregunta de negocio: ${args.businessQuestion ?? "(no especificada)"}`,
+    `- Idioma de salida: ${outputLanguage}`,
+    `- Comparative brief disponible: ${comparativeContext ? "sí" : "no"}`,
     "",
-    "Tarea: producir el output canónico que el cliente puede leer: activation_playbook + friction_removal_plan.",
+    "Contexto Knowledge Base / Query Strategy Brief:",
+    renderTbRagContext(args.ragContext),
+    "",
+    "Tarea: producir el output canónico que el cliente puede leer: activation_playbook + friction_removal_plan + action_studio + opportunities + market analysis.",
+    "Modo compacto obligatorio para estabilidad: prioriza calidad sobre volumen. Max 5 action_studio, max 5 strategic_opportunities, max 4 future_signals, max 4 evidence_deep_dives, max 4 emerging_patterns.",
+    "Límites de longitud obligatorios: cada string narrativo máximo 25 palabras; evidence_quotes máximo 1 por item; nada de párrafos largos.",
     "No inventes evidencia. Si no hay triggers movibles suficientes, deja arrays vacios y escríbelo como limitacion accionable.",
+    "Usa el comparative brief para distinguir si una recomendacion ataca algo propio de marca, algo de competencia o algo de categoria.",
+    "Regla dura: no hagas claims competitivos si el comparative brief no trae evidencia para ese finding.",
+    "Regla dura de Knowledge Base: el brief, CSVs y archivos del cliente NO son decoración. Debes decir qué confirmaron, qué contradijeron o qué todavía no se pudo probar.",
     "",
     "6.A Activation playbook:",
     `- Usa hasta ${TB_SYNTHESIS_TOP_PER_KIND} triggers con movilidad 'movible_por_marca' o 'parcialmente_movible'.`,
@@ -947,9 +1110,48 @@ export function buildSynthesisPrompt(args: {
     `- Usa hasta ${TB_SYNTHESIS_TOP_PER_KIND} barriers con movilidad='movible_por_marca'.`,
     "- Cada intervención debe decir qué hacer concretamente, no una intención abstracta.",
     "- Para barriers estructurales NO propongas intervención; escribe razon_estructural + recomendacion de alineamiento o whitespace.",
+    "- Si una barrera es de categoria, la recomendacion debe ser de alineamiento/claridad, no de 'ganarle' a un competidor sin evidencia.",
+    "- Si un trigger lo posee competencia, decide si la marca debe disputarlo, reinterpretarlo o evitar copiarlo.",
+    "",
+    "6.C Action Studio:",
+    "- Produce acciones por equipo: brand_strategy, creative_content, product_cx, retail_media, measurement, cultural_guardrails.",
+    "- Cada accion debe traer finding_ids, rationale, action_text, success_signal, estimated_effort, estimated_impact, confidence y priority_rank.",
+    "- No repitas la misma accion en dos equipos. Si dos equipos colaboran, elige owner principal y menciona colaboradores en action_text.",
+    "- Debe haber maximo 5 acciones totales; prioriza lo que contesta la pregunta de negocio.",
+    "- Escribe para un usuario de negocio: títulos concretos, sin nombres abstractos de findings como headline.",
+    "- Si un equipo no tiene una accion con evidencia, NO fuerces relleno.",
+    "",
+    "6.D Knowledge Impact:",
+    "- Responde la pregunta del cliente en 1 parrafo contundente usando corpus + KB + comparative brief.",
+    "- Lista qué cosas del brief/CSVs confirmó el corpus, qué quedó sin probar y qué implica para la decisión.",
+    "- Incluye restricciones estratégicas del cliente si afectan la recomendación.",
+    "",
+    "6.E Strategic Opportunities:",
+    "- NO son triggers ni barriers. Son apuestas/conclusiones accionables que nacen de cruzar T&B + cuantitativo + KB + competencia.",
+    "- Cada oportunidad debe decir: la decisión que cambia, por qué ahora, qué hacer y cómo medir si funcionó.",
+    "- Maximo 5. Si una oportunidad sólo repite un finding, elimínala.",
+    "",
+    "6.F Future Triggers / Future Barriers:",
+    "- Forecast cultural: qué podría mover o frenar mañana a la marca si las señales actuales evolucionan.",
+    "- Debe anclarse en evidencia actual, no en futurismo genérico.",
+    "- Maximo 4.",
+    "",
+    "6.G Market Analysis / Source Patterns:",
+    "- Esta es la sección agnóstica: responde la pregunta de negocio aunque T&B no alcance.",
+    "- Puede usar corpus, Knowledge Base, CSVs, competitive brief, acciones y hallazgos.",
+    "- NO repitas payday/keywords como tarjetas. Sintetiza patrones de mercado con implicación.",
+    "",
+    "6.H Evidence Deep Dives:",
+    "- Para cada finding principal explica en lenguaje humano qué significa, dónde vive por canal/formato/periodo y qué watchout futuro tiene.",
+    "- Estos deep dives alimentan Evidence; no deben ser recomendaciones disfrazadas.",
+    "",
+    "6.I Emerging Patterns:",
+    "- Mantén sólo insights abiertos realmente nuevos. No repitas Strategic Opportunities ni Evidence.",
+    "- Maximo 4 patterns. Cada uno necesita evidence_count, source_breakdown y 1-3 quotes.",
     "",
     "Voz Noisia:",
-    "- Español directo, accionable, sin LinkedIn-speak.",
+    `- ${voiceLine}`,
+    "- No traduzcas el corpus ni el brief si ya están en el idioma de salida.",
     "- Evita: 'aprovechar sinergias', 'optimizar engagement', 'palanca de crecimiento', 'landscape', 'pivotal'.",
     "- Nada de frases genéricas tipo 'fortalecer la confianza del consumidor' si no dices cómo.",
     "",
@@ -1009,11 +1211,108 @@ export function buildSynthesisPrompt(args: {
               recomendacion: "No prometer confianza en abstracto; demostrar claridad con reglas visibles y pruebas de cumplimiento."
             }
           ]
-        }
+        },
+        action_studio: [
+          {
+            action_id: "AS-01",
+            target_team: "product_cx",
+            kind: "friction_removal",
+            title: "Hacer visible la exclusion critica antes del pago",
+            finding_ids: ["B-PER-01"],
+            primary_finding_id: "B-PER-01",
+            rationale: "La barrera aparece como friccion movible y se puede reducir con claridad operacional.",
+            action_text: "Producto y Legal deben convertir las tres exclusiones principales en una ficha simple con ejemplo cubierto/no cubierto.",
+            suggested_channel: "checkout / PDP / onboarding",
+            suggested_format: "ficha de decision",
+            success_signal: "Bajan menciones de letra chica y no cubre en la siguiente medicion.",
+            estimated_effort: "media",
+            estimated_impact: "alto",
+            confidence: "alta",
+            priority_rank: 1
+          }
+        ],
+        knowledge_impact: {
+          business_question_answer: "El problema principal no es awareness sino conversion de reach a comunidad: la evidencia muestra fricciones de confianza y baja participacion organica, mientras los CSVs competitivos apuntan a creator-led y cultura UK como brecha.",
+          confirmed_by_corpus: ["La categoria conversa sobre ansiedad de dinero y payday con lenguaje cotidiano."],
+          contradicted_or_unproven: ["El corpus no prueba aun que #SweatTheSillyStuff tenga adopcion organica fuera de la marca."],
+          decision_implications: ["Priorizar always-on creator-led antes que otra ola paid de awareness."],
+          strategic_constraints: ["FCA: evitar consejo financiero especifico y separar paid/organic con claridad."]
+        },
+        strategic_opportunities: [
+          {
+            opportunity_id: "OP-01",
+            title: "Convertir alcance pagado en conversacion propia",
+            decision: "Mover el plan anual de videos de spots cerrados a formatos conversacionales con creator seeding.",
+            why_now: "El benchmark muestra views altos pero engagement bajo; el corpus confirma que la gente responde a dinero cotidiano, no a claims bancarios.",
+            level: "content",
+            source_mix: ["corpus", "knowledge_base", "competitive_csv"],
+            related_finding_ids: ["B-PER-02", "T-PER-01"],
+            evidence_summary: "Payday y coste de vida concentran menciones; Monzo/NatWest ganan con formatos culturales o humanos.",
+            what_to_do: "Lanzar una serie always-on de situaciones de dinero UK con creators mid-tier y CTA de conversacion, no de producto.",
+            success_signal: "Suben comentarios y shares organicos por video frente al benchmark base.",
+            confidence: "media"
+          }
+        ],
+        future_signals: [
+          {
+            signal_id: "FS-01",
+            title: "Fatiga contra consejos financieros genéricos",
+            polarity: "future_barrier",
+            horizon: "3_6_months",
+            why_it_could_emerge: "El corpus ya castiga contenido financiero derivativo y la categoria TikTok esta saturada por hustle culture.",
+            evidence_basis: ["B-CUL-02", "query_strategy_brief"],
+            watch_metric: "Aumento de comentarios que llaman repetitivo, falso o generic al contenido de bancos.",
+            related_finding_ids: ["B-CUL-02"],
+            confidence: "media"
+          }
+        ],
+        market_analysis: {
+          headline: "La oportunidad no es hablar de banca; es entrar a la conversacion UK de dinero cotidiano",
+          answer: "First direct debe construir un sistema de contenido que traduzca su equity humano/offline a formatos de participacion TikTok.",
+          implications: ["Competir con Monzo por cultura, no por claims de banco.", "Usar creators para prestar confianza antes de pedir engagement."],
+          patterns: [
+            {
+              title: "Creator trust antes que brand trust",
+              why_it_matters: "NatWest demuestra que el formato human-story supera al branded spot cuando la categoria necesita credibilidad.",
+              source_basis: ["competitive_brief", "corpus"],
+              related_finding_ids: ["B-CUL-01"]
+            }
+          ]
+        },
+        evidence_deep_dives: [
+          {
+            finding_id: "B-PER-02",
+            plain_language_title: "La audiencia espera el cobro para volver a respirar",
+            description: "No es solo falta de dinero; es una rutina emocional donde payday reorganiza consumo, ansiedad y control.",
+            channel_insight: "Vive sobre todo en TikTok cuando la mencion usa humor o confesion personal.",
+            format_insight: "Funciona mejor como storytime corto, confession o lista de microdecisiones.",
+            period_insight: "Revisar picos alrededor de fin de mes y ciclos de pago.",
+            competitor_insight: "Si competidores ya ocupan money moments, first direct debe diferenciar por tono honesto y UK-specific.",
+            future_watchout: "Puede convertirse en rechazo a bancos que romantizan budgeting sin reconocer presion real.",
+            proof_points: ["Menciones recurrentes de esperar payday antes de comprar o resolver necesidades."]
+          }
+        ],
+        emerging_patterns: [
+          {
+            pattern_id: "EP-01",
+            title: "Customer service domina la narrativa operativa",
+            pattern_type: "cx_signal",
+            why_it_matters: "Aparece como tema transversal que no sólo frena compra; también define expectativa de experiencia.",
+            data_basis: ["corpus", "customer_service_csv"],
+            evidence_count: 42,
+            source_breakdown: [{ source: "customer_service_csv", count: 28 }, { source: "sentione", count: 14 }],
+            related_finding_ids: ["B-PER-01"],
+            confidence: "media",
+            evidence_quotes: ["La gente no sabe con quién resolver cuando algo falla."]
+          }
+        ]
       },
       null,
       2
     ),
+    "",
+    "Comparative brief (client-safe, evidencia agregada):",
+    comparativeContext || "(sin comparativo disponible)",
     "",
     `Findings disponibles (${args.findings.length}; triggers=${triggers.length}, barriers=${barriers.length}):`,
     args.findings
@@ -1027,7 +1326,33 @@ export function buildSynthesisPrompt(args: {
   ].join("\n");
 }
 
-export function buildHumanizerPrompt(args: { jsonText: string }): string {
+function compactJson(value: unknown, maxChars: number): string {
+  if (!value) return "";
+  try {
+    return JSON.stringify(value, null, 2).slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+
+function renderTbRagContext(context: TbRagPromptContext | undefined): string {
+  if (!context) return "(sin contexto Knowledge Base disponible)";
+  const text = compactJson(
+    {
+      query_strategy_brief: context.query_strategy_brief ?? null,
+      knowledge_sources: Array.isArray(context.knowledge_sources)
+        ? context.knowledge_sources.slice(0, 8)
+        : [],
+      corpus_intelligence: context.corpus_intelligence ?? null
+    },
+    10_000
+  );
+  return text || "(sin contexto Knowledge Base disponible)";
+}
+
+export function buildHumanizerPrompt(args: { jsonText: string; outputLanguage?: string | null }): string {
+  const outputLanguage = args.outputLanguage?.trim() || "Spanish (Mexico)";
+  const englishOutput = outputLanguage.toLowerCase().startsWith("english");
   return [
     "Rol: Editor senior Noisia. Vas a humanizar un JSON de recomendaciones T&B sin cambiar su estructura.",
     "",
@@ -1035,6 +1360,13 @@ export function buildHumanizerPrompt(args: { jsonText: string }): string {
     "NO escribas preamble, NO uses markdown fences, NO expliques fuera del JSON.",
     "",
     "Tarea: reescribe SOLO los textos narrativos del JSON para que suenen a strategist humano.",
+    `Idioma de salida: ${outputLanguage}. No traduzcas a otro idioma.`,
+    englishOutput
+      ? "Main job for this pass: translate/adapt EVERY client-visible Spanish narrative string into natural English while preserving ids and schema keys."
+      : "Trabajo principal: dejar los textos en español natural, sin calcos raros.",
+    englishOutput
+      ? "Hard fail if any visible value remains in Spanish. Examples to translate: 'día de pago' → 'payday', 'barrera' → 'barrier', 'aparece en' → 'appears in'."
+      : "No cambies ids ni llaves, sólo texto visible.",
     "",
     "Reglas de humanizer:",
     "- Elimina jerga consultora y LinkedIn-speak.",
@@ -1169,7 +1501,143 @@ function normalizeSynthesisShape(parsed: Record<string, unknown>): SynthesisResp
           };
         })
         .filter((item) => item.barrier_id.length > 0)
-    }
+    },
+    action_studio: arrayValue(parsed.action_studio)
+      .map((item, index) => {
+        const v = objectValue(item);
+        const findingIds = stringArrayValue(v.finding_ids);
+        const primary = stringValue(v.primary_finding_id) || findingIds[0] || null;
+        return {
+          action_id: stringValue(v.action_id) || `AS-${String(index + 1).padStart(2, "0")}`,
+          target_team: teamValue(v.target_team),
+          kind: actionKindValue(v.kind),
+          title: stringValue(v.title) || "Accion priorizada",
+          finding_ids: findingIds,
+          primary_finding_id: primary,
+          rationale: stringValue(v.rationale),
+          action_text: stringValue(v.action_text),
+          suggested_channel: stringValue(v.suggested_channel) || null,
+          suggested_format: stringValue(v.suggested_format) || null,
+          success_signal: stringValue(v.success_signal),
+          estimated_effort: investmentValue(v.estimated_effort),
+          estimated_impact: impactValue(v.estimated_impact),
+          confidence: confidenceValue(v.confidence),
+          priority_rank: numberValue(v.priority_rank) || index + 1
+        };
+      })
+      .filter((item) => item.action_text.length > 0)
+      .slice(0, 12),
+    emerging_patterns: arrayValue(parsed.emerging_patterns)
+      .map((item, index) => {
+        const v = objectValue(item);
+        return {
+          pattern_id: stringValue(v.pattern_id) || `EP-${String(index + 1).padStart(2, "0")}`,
+          title: stringValue(v.title) || "Pattern emergente",
+          pattern_type: patternTypeValue(v.pattern_type),
+          why_it_matters: stringValue(v.why_it_matters),
+          data_basis: stringArrayValue(v.data_basis),
+          evidence_count: numberValue(v.evidence_count),
+          source_breakdown: arrayValue(v.source_breakdown)
+            .map((source) => {
+              const item = objectValue(source);
+              return { source: stringValue(item.source), count: numberValue(item.count) };
+            })
+            .filter((source) => source.source.length > 0)
+            .slice(0, 6),
+          related_finding_ids: stringArrayValue(v.related_finding_ids),
+          confidence: confidenceValue(v.confidence),
+          evidence_quotes: stringArrayValue(v.evidence_quotes).slice(0, 3)
+        };
+      })
+      .filter((item) => item.why_it_matters.length > 0)
+      .slice(0, 5),
+    knowledge_impact: normalizeKnowledgeImpact(parsed.knowledge_impact),
+    strategic_opportunities: arrayValue(parsed.strategic_opportunities)
+      .map((item, index) => {
+        const v = objectValue(item);
+        return {
+          opportunity_id: stringValue(v.opportunity_id) || `OP-${String(index + 1).padStart(2, "0")}`,
+          title: stringValue(v.title) || "Oportunidad estrategica",
+          decision: stringValue(v.decision),
+          why_now: stringValue(v.why_now),
+          level: opportunityLevelValue(v.level),
+          source_mix: stringArrayValue(v.source_mix),
+          related_finding_ids: stringArrayValue(v.related_finding_ids),
+          evidence_summary: stringValue(v.evidence_summary),
+          what_to_do: stringValue(v.what_to_do),
+          success_signal: stringValue(v.success_signal),
+          confidence: confidenceValue(v.confidence)
+        };
+      })
+      .filter((item) => item.decision.length > 0 || item.what_to_do.length > 0)
+      .slice(0, 8),
+    future_signals: arrayValue(parsed.future_signals)
+      .map((item, index) => {
+        const v = objectValue(item);
+        return {
+          signal_id: stringValue(v.signal_id) || `FS-${String(index + 1).padStart(2, "0")}`,
+          title: stringValue(v.title) || "Señal futura",
+          polarity: futurePolarityValue(v.polarity),
+          horizon: horizonValue(v.horizon),
+          why_it_could_emerge: stringValue(v.why_it_could_emerge),
+          evidence_basis: stringArrayValue(v.evidence_basis),
+          watch_metric: stringValue(v.watch_metric),
+          related_finding_ids: stringArrayValue(v.related_finding_ids),
+          confidence: confidenceValue(v.confidence)
+        };
+      })
+      .filter((item) => item.why_it_could_emerge.length > 0)
+      .slice(0, 6),
+    market_analysis: normalizeMarketAnalysis(parsed.market_analysis),
+    evidence_deep_dives: arrayValue(parsed.evidence_deep_dives)
+      .map((item) => {
+        const v = objectValue(item);
+        return {
+          finding_id: stringValue(v.finding_id),
+          plain_language_title: stringValue(v.plain_language_title),
+          description: stringValue(v.description),
+          channel_insight: stringValue(v.channel_insight),
+          format_insight: stringValue(v.format_insight),
+          period_insight: stringValue(v.period_insight),
+          competitor_insight: stringValue(v.competitor_insight) || null,
+          future_watchout: stringValue(v.future_watchout) || null,
+          proof_points: stringArrayValue(v.proof_points)
+        };
+      })
+      .filter((item) => item.finding_id.length > 0 && item.description.length > 0)
+      .slice(0, 16)
+  };
+}
+
+function normalizeKnowledgeImpact(value: unknown): KnowledgeImpactOutput {
+  const v = objectValue(value);
+  return {
+    business_question_answer: stringValue(v.business_question_answer),
+    confirmed_by_corpus: stringArrayValue(v.confirmed_by_corpus),
+    contradicted_or_unproven: stringArrayValue(v.contradicted_or_unproven),
+    decision_implications: stringArrayValue(v.decision_implications),
+    strategic_constraints: stringArrayValue(v.strategic_constraints)
+  };
+}
+
+function normalizeMarketAnalysis(value: unknown): MarketAnalysisOutput {
+  const v = objectValue(value);
+  return {
+    headline: stringValue(v.headline),
+    answer: stringValue(v.answer),
+    implications: stringArrayValue(v.implications),
+    patterns: arrayValue(v.patterns)
+      .map((item) => {
+        const p = objectValue(item);
+        return {
+          title: stringValue(p.title),
+          why_it_matters: stringValue(p.why_it_matters),
+          source_basis: stringArrayValue(p.source_basis),
+          related_finding_ids: stringArrayValue(p.related_finding_ids)
+        };
+      })
+      .filter((item) => item.title.length > 0 && item.why_it_matters.length > 0)
+      .slice(0, 6)
   };
 }
 
@@ -1215,6 +1683,76 @@ function interventionTypeValue(value: unknown): BarrierIntervention["tipo_interv
   return valid.includes(value as BarrierIntervention["tipo_intervencion"])
     ? (value as BarrierIntervention["tipo_intervencion"])
     : "comunicacion";
+}
+
+function teamValue(value: unknown): ActionStudioCard["target_team"] {
+  const valid: ActionStudioCard["target_team"][] = [
+    "brand_strategy",
+    "creative_content",
+    "product_cx",
+    "retail_media",
+    "measurement",
+    "cultural_guardrails"
+  ];
+  return valid.includes(value as ActionStudioCard["target_team"])
+    ? (value as ActionStudioCard["target_team"])
+    : "creative_content";
+}
+
+function actionKindValue(value: unknown): ActionStudioCard["kind"] {
+  const valid: ActionStudioCard["kind"][] = [
+    "activation",
+    "friction_removal",
+    "alignment",
+    "experiment",
+    "guardrail",
+    "structural_note"
+  ];
+  return valid.includes(value as ActionStudioCard["kind"])
+    ? (value as ActionStudioCard["kind"])
+    : "activation";
+}
+
+function confidenceValue(value: unknown): ActionStudioCard["confidence"] {
+  return value === "alta" || value === "baja_direccional" ? value : "media";
+}
+
+function opportunityLevelValue(value: unknown): StrategicOpportunityOutput["level"] {
+  const valid: StrategicOpportunityOutput["level"][] = ["brand", "content", "product_cx", "competitive", "measurement", "category"];
+  return valid.includes(value as StrategicOpportunityOutput["level"]) ? value as StrategicOpportunityOutput["level"] : "content";
+}
+
+function futurePolarityValue(value: unknown): FutureSignalOutput["polarity"] {
+  return value === "future_trigger" ? "future_trigger" : "future_barrier";
+}
+
+function horizonValue(value: unknown): FutureSignalOutput["horizon"] {
+  if (value === "30_90_days" || value === "6_12_months") return value;
+  return "3_6_months";
+}
+
+function impactValue(value: unknown): ActionStudioCard["estimated_impact"] {
+  return value === "bajo" || value === "alto" ? value : "medio";
+}
+
+function patternTypeValue(value: unknown): EmergingPatternOutput["pattern_type"] {
+  const valid: EmergingPatternOutput["pattern_type"][] = [
+    "source_pattern",
+    "unexpected_insight",
+    "language_code",
+    "cx_signal",
+    "product_signal",
+    "content_signal",
+    "hypothesis"
+  ];
+  return valid.includes(value as EmergingPatternOutput["pattern_type"])
+    ? (value as EmergingPatternOutput["pattern_type"])
+    : "unexpected_insight";
+}
+
+function numberValue(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export function parsePreflightResponse(raw: string): PreflightResult {

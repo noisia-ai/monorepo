@@ -11,6 +11,7 @@ import {
 } from "@noisia/query-engine";
 import { fetchHistoricalSample, fetchRecentSample, type SentiOneMention } from "../clients/sentione";
 import { pool } from "../db/client";
+import { loadAnalysisRagContext } from "./analysis-rag-context";
 
 type EvaluateSampleJobData = {
   corpusId: string;
@@ -73,6 +74,7 @@ export async function evaluateSampleJob(job: Job<EvaluateSampleJobData>) {
   await job.updateProgress(45);
 
   const subject = buildSubject(iteration);
+  const ragContext = await loadAnalysisRagContext(job.data.corpusId, iteration.brand_id);
   const prompt = buildSampleEvaluatorPrompt({
     corpus: {
       id: job.data.corpusId,
@@ -89,6 +91,8 @@ export async function evaluateSampleJob(job: Job<EvaluateSampleJobData>) {
       slug: iteration.methodology_slug,
       name: iteration.methodology_name
     },
+    queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
+    knowledgeSources: ragContext.knowledgeSources,
     query_text: iteration.query_text,
     sample: sample.map(toSampleMention)
   });

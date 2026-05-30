@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { type ChangeEvent, type FormEvent, type ReactNode, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -29,6 +29,7 @@ type KnowledgeSource = {
   file_name: string | null;
   file_size_bytes: number | null;
   status: string;
+  error_message: string | null;
   summary: string;
   file_understanding: string;
   dataset_inventory: string[];
@@ -44,6 +45,7 @@ type Draft = {
   audienceSegment: string;
   categoryContext: string;
   hypotheses: string;
+  competitiveContext: string;
   knownBarriers: string;
   knownTriggers: string;
   strategicConstraints: string;
@@ -81,6 +83,8 @@ const steps = [
   { key: "brief", label: "Brief" },
   { key: "launch", label: "Launch" }
 ];
+const MAX_KNOWLEDGE_FILES = 20;
+const KNOWLEDGE_ACCEPT = ".xlsx,.xls,.csv,.tsv,.txt,.json,.md,text/plain,text/csv,application/json,text/markdown,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudyFormProps) {
   const t = useTranslations("NewStudy");
@@ -101,6 +105,7 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
     audienceSegment: "",
     categoryContext: "",
     hypotheses: "",
+    competitiveContext: "",
     knownBarriers: "",
     knownTriggers: "",
     strategicConstraints: "",
@@ -122,15 +127,19 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
     knowledgeNotes: ""
   });
   const [files, setFiles] = useState<File[]>([]);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
   const [engineUrl, setEngineUrl] = useState<string | null>(null);
+  const [createdCorpusId, setCreatedCorpusId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedBrand = brands.find((brand) => brand.id === draft.brandId) ?? null;
   const selectedMethodology = methodologies.find((methodology) => methodology.id === draft.methodologyId) ?? defaultMethodology;
+  const failedSourceCount = knowledgeSources.filter((source) => source.status === "failed").length;
   const brandLabel = brandMode === "new"
     ? inlineBrand.displayName || inlineBrand.name || t("rail.newBrand")
     : selectedBrand
@@ -154,7 +163,41 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
   }
 
   function onFiles(event: ChangeEvent<HTMLInputElement>) {
-    setFiles(Array.from(event.target.files ?? []));
+    const incoming = Array.from(event.target.files ?? []);
+    if (incoming.length === 0) return;
+
+    let duplicateCount = 0;
+    let overflowCount = 0;
+    const nextFiles = [...files];
+    const known = new Set(files.map(fileKey));
+    for (const file of incoming) {
+      const key = fileKey(file);
+      if (known.has(key)) {
+        duplicateCount += 1;
+        continue;
+      }
+      if (nextFiles.length >= MAX_KNOWLEDGE_FILES) {
+        overflowCount += 1;
+        continue;
+      }
+      known.add(key);
+      nextFiles.push(file);
+    }
+    setFiles(nextFiles);
+
+    event.target.value = "";
+    if (overflowCount > 0) {
+      setFileNotice(t("sources.maxReached", { max: MAX_KNOWLEDGE_FILES, count: overflowCount }));
+    } else if (duplicateCount > 0) {
+      setFileNotice(t("sources.duplicatesSkipped", { count: duplicateCount }));
+    } else {
+      setFileNotice(null);
+    }
+  }
+
+  function removeFile(target: File) {
+    setFiles((current) => current.filter((file) => fileKey(file) !== fileKey(target)));
+    setFileNotice(null);
   }
 
   function validateThroughStep(maxStep: number) {
@@ -222,6 +265,7 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
     setIsSubmitting(true);
     setKnowledgeSources([]);
     setEngineUrl(null);
+    setCreatedCorpusId(null);
 
     try {
       let brandId = draft.brandId;
@@ -243,29 +287,12 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("progress.fallbackStudyError")));
+      const corpusId = String(json.data?.id ?? "");
+      if (!corpusId) throw new Error(t("progress.fallbackStudyError"));
+      setCreatedCorpusId(corpusId);
 
       if (files.length > 0) {
-        setProgressLabel(t("progress.uploadingKnowledge"));
-        const upload = new FormData();
-        upload.set("source_kind", draft.sourceKind);
-        for (const file of files) upload.append("files", file);
-        const uploadRes = await fetch(`/api/corpora/${json.data.id}/knowledge`, {
-          method: "POST",
-          body: upload
-        });
-        const uploadJson = await uploadRes.json().catch(() => ({}));
-        if (!uploadRes.ok) throw new Error(uploadJson?.message ?? t("progress.fallbackKnowledgeProcessError"));
-        if (uploadJson.job_id) {
-          await waitForJob(uploadJson.job_id, setProgressLabel, {
-            fallbackJobReadError: t("progress.fallbackJobReadError"),
-            knowledgeReady: t("progress.knowledgeReady"),
-            knowledgeFailed: t("progress.knowledgeFailed"),
-            knowledgeTimeout: t("progress.knowledgeTimeout"),
-            analyzingKnowledge: (progress) => t("progress.analyzingKnowledge", { progress })
-          });
-        }
-        const sources = await fetchKnowledgeSources(json.data.id, t("progress.fallbackKnowledgeReadError"));
-        setKnowledgeSources(sources);
+        await uploadKnowledgeFiles(corpusId);
       }
 
       setEngineUrl(json.data.engine_url);
@@ -273,6 +300,45 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
       setProgressLabel(t("progress.readyEngine"));
     } catch (err) {
       setError(err instanceof Error ? err.message : t("progress.fallbackStudyError"));
+      setProgressLabel(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function uploadKnowledgeFiles(corpusId: string) {
+    setProgressLabel(t("progress.uploadingKnowledge"));
+    const upload = new FormData();
+    upload.set("source_kind", draft.sourceKind);
+    for (const file of files) upload.append("files", file);
+    const uploadRes = await fetch(`/api/corpora/${corpusId}/knowledge`, {
+      method: "POST",
+      body: upload
+    });
+    const uploadJson = await uploadRes.json().catch(() => ({}));
+    if (!uploadRes.ok) throw new Error(uploadJson?.message ?? t("progress.fallbackKnowledgeProcessError"));
+    if (uploadJson.job_id) {
+      await waitForJob(uploadJson.job_id, setProgressLabel, {
+        fallbackJobReadError: t("progress.fallbackJobReadError"),
+        knowledgeReady: t("progress.knowledgeReady"),
+        knowledgeFailed: t("progress.knowledgeFailed"),
+        knowledgeTimeout: t("progress.knowledgeTimeout"),
+        analyzingKnowledge: (progress) => t("progress.analyzingKnowledge", { progress })
+      });
+    }
+    const sources = await fetchKnowledgeSources(corpusId, t("progress.fallbackKnowledgeReadError"));
+    setKnowledgeSources(sources);
+  }
+
+  async function retryKnowledgeUpload() {
+    if (!createdCorpusId || files.length === 0) return;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await uploadKnowledgeFiles(createdCorpusId);
+      setProgressLabel(t("progress.readyEngine"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("progress.fallbackKnowledgeProcessError"));
       setProgressLabel(null);
     } finally {
       setIsSubmitting(false);
@@ -404,6 +470,7 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
               <TextField label={t("objective.audience")} value={draft.audienceSegment} onChange={(value) => updateDraft("audienceSegment", value)} placeholder={t("objective.audiencePlaceholder")} />
             </div>
             <TextAreaField label={t("objective.categoryContext")} value={draft.categoryContext} onChange={(value) => updateDraft("categoryContext", value)} compact />
+            <TextAreaField label={t("objective.competitiveContext")} value={draft.competitiveContext} onChange={(value) => updateDraft("competitiveContext", value)} placeholder={t("objective.competitiveContextPlaceholder")} />
             <div className="new-study-grid">
               <TextAreaField label={t("objective.hypotheses")} value={draft.hypotheses} onChange={(value) => updateDraft("hypotheses", value)} compact />
               <TextAreaField label={t("objective.constraints")} value={draft.strategicConstraints} onChange={(value) => updateDraft("strategicConstraints", value)} compact />
@@ -439,15 +506,30 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
                   <option value="scraper_export">{t("sources.types.scraperExport")}</option>
                 </select>
               </Field>
-              <Field label={t("sources.files")}>
+              <div className="new-study-field new-study-file-field">
+                <span>{t("sources.files")}</span>
+                <div className="new-study-file-uploader">
+                  <div>
+                    <strong>{t("sources.dropTitle")}</strong>
+                    <p>{t("sources.dropHint", { max: MAX_KNOWLEDGE_FILES })}</p>
+                  </div>
+                  <button className="new-study-file-button" type="button" onClick={() => fileInputRef.current?.click()}>
+                    <Icon name="upload" size={15} /> {t("sources.addFiles")}
+                  </button>
+                </div>
                 <input
-                  className="filter-input new-study-input"
+                  ref={fileInputRef}
+                  className="new-study-file-input"
                   type="file"
                   multiple
-                  accept=".xlsx,.xls,.csv,.tsv,.txt,.json,.md,text/plain,text/csv,application/json,text/markdown,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  accept={KNOWLEDGE_ACCEPT}
                   onChange={onFiles}
                 />
-              </Field>
+                <small className="new-study-file-count">
+                  {t("sources.selectedCount", { count: files.length, max: MAX_KNOWLEDGE_FILES })}
+                </small>
+                {fileNotice && <small className="new-study-field-error">{fileNotice}</small>}
+              </div>
             </div>
             <div className="knowledge-file-list">
               {files.length === 0 ? (
@@ -458,6 +540,9 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
                     <Icon name="upload" size={15} />
                     <span>{file.name}</span>
                     <code>{formatBytes(file.size)}</code>
+                    <button type="button" className="knowledge-file-remove" onClick={() => removeFile(file)} aria-label={t("sources.removeFile", { name: file.name })}>
+                      <Icon name="x" size={13} />
+                    </button>
                   </div>
                 ))
               )}
@@ -490,7 +575,7 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
                       <strong>{source.file_name ?? source.title}</strong>
                       <span>{source.status}</span>
                     </header>
-                    <p>{source.summary || source.file_understanding || t("launch.sourceProcessedFallback")}</p>
+                    <p>{source.status === "failed" ? source.error_message || t("launch.sourceFailedFallback") : source.summary || source.file_understanding || t("launch.sourceProcessedFallback")}</p>
                     {source.query_language.length > 0 && (
                       <div className="knowledge-tags">
                         {source.query_language.map((term) => <span key={term}>{term}</span>)}
@@ -510,9 +595,16 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
               </div>
             )}
             {engineUrl && (
-              <button className="wizard-cta" type="button" onClick={() => router.push(engineUrl)}>
-                <Icon name="play" size={14} /> {t("launch.openEngine")}
-              </button>
+              <div className="launch-actions">
+                {failedSourceCount > 0 && files.length > 0 && (
+                  <button className="wizard-cta wizard-cta--ghost" type="button" onClick={retryKnowledgeUpload} disabled={isSubmitting}>
+                    <Icon name={isSubmitting ? "spinner" : "refresh"} size={14} /> {t("launch.retrySources", { count: failedSourceCount })}
+                  </button>
+                )}
+                <button className="wizard-cta" type="button" onClick={() => router.push(engineUrl)} disabled={isSubmitting}>
+                  <Icon name="play" size={14} /> {t("launch.openEngine")}
+                </button>
+              </div>
             )}
           </WizardPanel>
         )}
@@ -662,6 +754,7 @@ function BriefPreview({
     [t("decision"), draft.decisionToInform],
     [t("audience"), draft.audienceSegment],
     [t("context"), draft.categoryContext],
+    [t("competitive"), draft.competitiveContext],
     [t("hypotheses"), draft.hypotheses],
     [t("knownBarriers"), draft.knownBarriers],
     [t("knownTriggers"), draft.knownTriggers],
@@ -718,6 +811,7 @@ function buildStudyPayload(draft: Draft, brandId: string) {
     audience_segment: draft.audienceSegment,
     category_context: draft.categoryContext,
     hypotheses: draft.hypotheses,
+    competitive_context: draft.competitiveContext,
     known_barriers: draft.knownBarriers,
     known_triggers: draft.knownTriggers,
     strategic_constraints: draft.strategicConstraints,
@@ -841,4 +935,8 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
 }

@@ -8,6 +8,7 @@ import type { Job } from "bullmq";
 import * as XLSX from "xlsx";
 
 import { pool } from "../db/client";
+import { embedKnowledgeSources } from "./semantic-embeddings";
 
 type ProcessKnowledgeSourcesJobData = {
   corpusId: string;
@@ -25,6 +26,7 @@ type KnowledgeSourceRow = {
   mime_type: string | null;
   storage_path: string | null;
   file_size_bytes: number | null;
+  raw_text: string | null;
   extracted_payload: unknown;
 };
 
@@ -100,11 +102,11 @@ export async function processKnowledgeSourcesJob(job: Job<ProcessKnowledgeSource
   return { processed, failed, source_ids: ids };
 }
 
-async function processOneSource(sourceId: string, corpusId: string) {
+export async function processOneSource(sourceId: string, corpusId: string) {
   const result = await pool.query<KnowledgeSourceRow>(
     `
       SELECT id, brand_id, study_corpus_id, source_kind, title, original_file_name,
-             mime_type, storage_path, file_size_bytes, extracted_payload
+             mime_type, storage_path, file_size_bytes, raw_text, extracted_payload
       FROM brand_knowledge_sources
       WHERE id = $1
         AND study_corpus_id = $2
@@ -114,16 +116,13 @@ async function processOneSource(sourceId: string, corpusId: string) {
   );
   const source = result.rows[0];
   if (!source) throw new Error(`Knowledge source not found: ${sourceId}`);
-  if (!source.storage_path) throw new Error(`Knowledge source has no storage path: ${sourceId}`);
 
   await pool.query(
     `UPDATE brand_knowledge_sources SET status = 'processing', updated_at = now() WHERE id = $1`,
     [sourceId]
   );
 
-  const profile = isDelimitedSource(source)
-    ? await profileDelimitedFile(source.storage_path, source)
-    : profileWorkbook(await readFile(source.storage_path), source);
+  const profile = await buildSourceProfile(source);
   const analysis = await analyzeWorkbookContext(profile);
   const rawText = renderKnowledgeText(profile, analysis);
 
@@ -147,6 +146,41 @@ async function processOneSource(sourceId: string, corpusId: string) {
       })
     ]
   );
+
+  try {
+    await embedKnowledgeSources(corpusId, [sourceId]);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[knowledge] semantic embedding skipped for ${sourceId}: ${msg}`);
+  }
+}
+
+async function buildSourceProfile(source: KnowledgeSourceRow): Promise<WorkbookProfile> {
+  let storageError: unknown = null;
+  if (source.storage_path) {
+    try {
+      return isDelimitedSource(source)
+        ? await profileDelimitedFile(source.storage_path, source)
+        : profileWorkbook(await readFile(source.storage_path), source);
+    } catch (error) {
+      storageError = error;
+      if (!source.raw_text) throw error;
+      console.warn(
+        `[knowledge] storage read failed for ${source.id}, falling back to DB raw_text: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  if (source.raw_text) {
+    return isDelimitedSource(source)
+      ? profileDelimitedText(source.raw_text, source)
+      : profilePlainText(source.raw_text, source);
+  }
+
+  if (storageError instanceof Error) throw storageError;
+  throw new Error(`Knowledge source has no readable file snapshot: ${source.id}`);
 }
 
 function profileWorkbook(buffer: Buffer, source: KnowledgeSourceRow): WorkbookProfile {
@@ -224,6 +258,55 @@ async function profileDelimitedFile(path: string, source: KnowledgeSourceRow): P
         ? `Archivo delimitado grande: perfil basado en ${rows.length} filas muestreadas de ${totalLines} lineas.`
         : `Archivo delimitado completo: ${totalLines} lineas.`
     ]
+  };
+}
+
+function profileDelimitedText(text: string, source: KnowledgeSourceRow): WorkbookProfile {
+  const delimiter = source.original_file_name?.toLowerCase().endsWith(".tsv") ? "\t" : ",";
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const rows = lines.slice(0, 5000).map((line) => parseDelimitedLine(line, delimiter));
+  const sheetName = source.original_file_name?.toLowerCase().endsWith(".tsv") ? "TSV Export" : "CSV Export";
+  const sheet = profileSheet(sheetName, null, rows);
+  sheet.row_count = lines.length;
+
+  return {
+    file: {
+      name: source.original_file_name ?? source.title,
+      title: source.title,
+      source_kind: source.source_kind,
+      byte_size: source.file_size_bytes
+    },
+    workbook: {
+      sheet_count: 1,
+      sheet_names: [sheetName]
+    },
+    sheets: [sheet],
+    cross_sheet_observations: [
+      lines.length > rows.length
+        ? `Archivo delimitado desde snapshot DB: perfil basado en ${rows.length} filas muestreadas de ${lines.length} lineas.`
+        : `Archivo delimitado desde snapshot DB: ${lines.length} lineas.`
+    ]
+  };
+}
+
+function profilePlainText(text: string, source: KnowledgeSourceRow): WorkbookProfile {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0).slice(0, 1000);
+  const rows = [["line_number", "text"], ...lines.map((line, index) => [index + 1, line.slice(0, 500)])];
+  const sheet = profileSheet("Text Snapshot", null, rows);
+
+  return {
+    file: {
+      name: source.original_file_name ?? source.title,
+      title: source.title,
+      source_kind: source.source_kind,
+      byte_size: source.file_size_bytes
+    },
+    workbook: {
+      sheet_count: 1,
+      sheet_names: ["Text Snapshot"]
+    },
+    sheets: [sheet],
+    cross_sheet_observations: [`Archivo de texto perfilado desde snapshot DB: ${lines.length} lineas muestreadas.`]
   };
 }
 
@@ -329,13 +412,22 @@ async function analyzeWorkbookContext(profile: WorkbookProfile) {
     JSON.stringify(compactProfileForPrompt(profile), null, 2)
   ].join("\n");
 
-  const result = await generateText({
-    model: anthropic(model),
-    prompt,
-    temperature: 0.1
-  });
+  try {
+    const result = await generateText({
+      model: anthropic(model),
+      prompt,
+      temperature: 0.1
+    });
 
-  return normalizeAnalysis(parseJson(result.text));
+    return normalizeAnalysis(parseJson(result.text));
+  } catch (error) {
+    console.warn(
+      `[knowledge] Claude analysis failed for ${profile.file.name}, using extractive fallback: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return buildExtractiveAnalysis(profile, error);
+  }
 }
 
 function compactProfileForPrompt(profile: WorkbookProfile) {
@@ -445,6 +537,41 @@ function normalizeAnalysis(value: Record<string, unknown>) {
     recommended_use: stringArray(value.recommended_use),
     limitations: stringArray(value.limitations)
   };
+}
+
+function buildExtractiveAnalysis(profile: WorkbookProfile, error: unknown) {
+  const firstSheet = profile.sheets[0];
+  const headers = profile.sheets.flatMap((sheet) => sheet.headers).slice(0, 30);
+  const inventory = profile.sheets.map(
+    (sheet) => `${sheet.name}: ${sheet.row_count} filas, ${sheet.column_count} columnas (${sheet.headers.slice(0, 12).join(", ")})`
+  );
+  const textExamples = profile.sheets
+    .flatMap((sheet) => sheet.columns)
+    .filter((column) => column.inferred_type === "text")
+    .flatMap((column) => column.examples)
+    .filter((value): value is string => typeof value === "string")
+    .slice(0, 24);
+
+  return normalizeAnalysis({
+    summary: `${profile.file.name} contiene ${profile.workbook.sheet_count} hoja(s) y ${firstSheet?.row_count ?? 0} filas perfiladas para contexto del estudio.`,
+    file_understanding: `Fuente ${profile.file.source_kind} perfilada por estructura tabular/textual. Campos detectados: ${headers.join(", ") || "sin headers claros"}.`,
+    dataset_inventory: inventory,
+    key_fields: headers,
+    content_or_channel_insights: profile.cross_sheet_observations,
+    query_language: Array.from(new Set(textExamples.flatMap(extractQueryTerms))).slice(0, 24),
+    recommended_use: ["query_composition", "analysis_context"],
+    limitations: [
+      `Claude no pudo completar el análisis semántico; se usó fallback extractivo. Motivo: ${error instanceof Error ? error.message : String(error)}`
+    ]
+  });
+}
+
+function extractQueryTerms(value: string) {
+  return value
+    .split(/[^A-Za-z0-9#@áéíóúÁÉÍÓÚñÑ_-]+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 4 && term.length <= 40)
+    .slice(0, 6);
 }
 
 function guessHeaderRow(rows: unknown[][]) {

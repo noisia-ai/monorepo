@@ -16,6 +16,8 @@ import {
   type TbLayer
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { detectTbOutputLanguage } from "./tb-language";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
   markStepCompleted,
@@ -45,6 +47,10 @@ type CandidateCluster = {
   mention_ids: string[]; // ids of mentions touching any member tag
 };
 
+type HierarchyClusterWithMentions = HierarchyClusterInput & {
+  mention_ids: string[];
+};
+
 /**
  * Step 3 — Hierarchy.
  * Spec §5.4: turn the coded vocabulary + mention codings into ranked findings
@@ -71,6 +77,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
 
   try {
     const ctx = await loadCtx(tbAnalysisId);
+    const outputLanguage = await detectTbOutputLanguage(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(12);
 
     // Pull step 2's coded vocabulary
@@ -116,6 +124,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
       businessQuestion: ctx.business_question,
+      outputLanguage,
+      ragContext,
       clusters: clustersWithSamples
     });
 
@@ -142,13 +152,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
       if (c.frequency > cur) maxFreqByPolarity.set(c.polarity, c.frequency);
     }
 
-    type Scored = {
-      cluster: HierarchyClusterInput;
-      evaluation: ReturnType<typeof evalResult.evaluated.at> extends infer T ? T : never;
-      score: number;
-    };
     const scored: Array<{
-      cluster: HierarchyClusterInput;
+      cluster: HierarchyClusterWithMentions;
       evaluation: typeof evalResult.evaluated[number];
       score: number;
     }> = [];
@@ -178,7 +183,7 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
 
     type Persistable = {
       finding_id: string;
-      cluster: HierarchyClusterInput;
+      cluster: HierarchyClusterWithMentions;
       evaluation: typeof evalResult.evaluated[number];
       score: number;
       position_in_layer: number;
@@ -331,8 +336,8 @@ async function populateClusterMentions(args: {
   }
 }
 
-async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClusterInput[]> {
-  const result: HierarchyClusterInput[] = [];
+async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClusterWithMentions[]> {
+  const result: HierarchyClusterWithMentions[] = [];
   for (const c of eligible) {
     // Take up to N random mention_ids from this cluster's pool
     const pool_ = c.mention_ids.slice();
@@ -360,7 +365,8 @@ async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClu
       layer: c.layer,
       member_tags: c.member_tags,
       frequency: c.mention_ids.length,
-      samples
+      samples,
+      mention_ids: c.mention_ids
     });
   }
   return result;
@@ -368,7 +374,7 @@ async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClu
 
 type PersistedFinding = {
   finding_id: string;
-  cluster: HierarchyClusterInput;
+  cluster: HierarchyClusterWithMentions;
   evaluation: ReturnType<typeof parseHierarchyResponse>["evaluated"][number];
   score: number;
   position_in_layer: number;
@@ -385,14 +391,15 @@ async function persistFindings(args: {
   for (const p of args.toPersist) {
     const protagonistSample =
       p.cluster.samples[p.evaluation.protagonist_sample_index] ?? p.cluster.samples[0];
+    const period = await loadFindingPeriod(p.cluster.mention_ids);
 
     // INSERT finding
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO tb_findings
         (tb_analysis_id, finding_id, polarity, layer, nombre_comercial,
          frecuencia, intensidad_promedio, capacidad_predictiva, score_compuesto,
-         confidence, cita_protagonista, raw_data, position_in_layer)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+         confidence, period_start, period_end, cita_protagonista, raw_data, position_in_layer)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::date, $12::date, $13::jsonb, $14::jsonb, $15)
        ON CONFLICT (tb_analysis_id, finding_id) DO UPDATE
          SET nombre_comercial = EXCLUDED.nombre_comercial,
              frecuencia = EXCLUDED.frecuencia,
@@ -400,6 +407,8 @@ async function persistFindings(args: {
              capacidad_predictiva = EXCLUDED.capacidad_predictiva,
              score_compuesto = EXCLUDED.score_compuesto,
              confidence = EXCLUDED.confidence,
+             period_start = EXCLUDED.period_start,
+             period_end = EXCLUDED.period_end,
              cita_protagonista = EXCLUDED.cita_protagonista,
              position_in_layer = EXCLUDED.position_in_layer
        RETURNING id`,
@@ -414,6 +423,8 @@ async function persistFindings(args: {
         p.evaluation.capacidad_predictiva.toFixed(2),
         p.score.toFixed(2),
         p.evaluation.confidence,
+        period.start,
+        period.end,
         protagonistSample ? JSON.stringify({
           text: protagonistSample.text,
           mention_id: protagonistSample.mention_id,
@@ -475,4 +486,20 @@ async function persistFindings(args: {
   }
 
   return { findingsInserted, citationsInserted, codingsLinked };
+}
+
+async function loadFindingPeriod(mentionIds: string[]) {
+  if (mentionIds.length === 0) return { start: null, end: null };
+  const uniqueIds = Array.from(new Set(mentionIds));
+  const placeholders = uniqueIds.map((_, index) => `$${index + 1}::uuid`).join(", ");
+  const r = await pool.query<{ start: string | null; end: string | null }>(
+    `SELECT MIN(published_at)::date::text AS start, MAX(published_at)::date::text AS end
+     FROM mentions
+     WHERE id IN (${placeholders})`,
+    uniqueIds
+  );
+  return {
+    start: r.rows[0]?.start ?? null,
+    end: r.rows[0]?.end ?? null
+  };
 }

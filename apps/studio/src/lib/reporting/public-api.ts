@@ -10,8 +10,10 @@ export type ReportingDataset =
   | "kpis"
   | "findings"
   | "recommendations"
+  | "emerging-patterns"
   | "time-series-monthly"
   | "platform-distribution"
+  | "content-type-distribution"
   | "layer-distribution"
   | "mobility-distribution"
   | "polarity-distribution"
@@ -38,11 +40,16 @@ const DATASET_ALIASES: Record<string, ReportingDataset> = {
   findings: "findings",
   recommendations: "recommendations",
   actions: "recommendations",
+  "emerging-patterns": "emerging-patterns",
+  "emerging_patterns": "emerging-patterns",
+  patterns: "emerging-patterns",
   "time-series-monthly": "time-series-monthly",
   "time_series_monthly": "time-series-monthly",
   "volume-timeline": "time-series-monthly",
   "platform-distribution": "platform-distribution",
   "platform_distribution": "platform-distribution",
+  "content-type-distribution": "content-type-distribution",
+  "content_type_distribution": "content-type-distribution",
   "layer-distribution": "layer-distribution",
   "layer_distribution": "layer-distribution",
   "mobility-distribution": "mobility-distribution",
@@ -61,8 +68,10 @@ const DATASET_LABELS: Record<ReportingDataset, string> = {
   kpis: "Report KPIs",
   findings: "Findings",
   recommendations: "Recommendations",
+  "emerging-patterns": "Emerging patterns",
   "time-series-monthly": "Monthly time series",
   "platform-distribution": "Platform distribution",
+  "content-type-distribution": "Content type distribution",
   "layer-distribution": "Layer distribution",
   "mobility-distribution": "Mobility distribution",
   "polarity-distribution": "Polarity distribution",
@@ -100,6 +109,8 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
   const rows = await db
     .select({
       outputId: publishedOutputs.id,
+      studyCorpusId: publishedOutputs.studyCorpusId,
+      outputType: publishedOutputs.outputType,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
@@ -117,7 +128,9 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
     .where(and(...where))
     .orderBy(desc(publishedOutputs.publishedAt), desc(publishedOutputs.updatedAt));
 
-  return rows.map((row) => ({
+  const visibleRows = grant.outputs.includes("*") ? latestCanonicalReports(rows) : rows;
+
+  return visibleRows.map((row) => ({
     output_id: row.outputId,
     title: row.title,
     headline: row.headline,
@@ -128,6 +141,18 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
     methodology_slug: row.methodologySlug,
     published_at: row.publishedAt?.toISOString() ?? null
   }));
+}
+
+function latestCanonicalReports<
+  T extends { studyCorpusId: string; outputType: string; methodologySlug: string }
+>(rows: T[]) {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = `${row.studyCorpusId}:${row.outputType}:${row.methodologySlug}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function getPublishedOutputForReporting(outputId: string) {
@@ -212,6 +237,27 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
   }
 
   if (dataset === "findings") {
+    const publicFindings = arrayValue(payload.findings).map(asRecord);
+    if (publicFindings.length > 0) {
+      return publicFindings.map((row) => ({
+        output_id: output.outputId,
+        finding_id: stringValue(row.finding_id),
+        finding_name: stringValue(row.finding_name),
+        polarity: stringValue(row.polarity),
+        layer: stringValue(row.layer),
+        mobility: stringValue(row.mobility),
+        confidence: stringValue(row.confidence),
+        frequency_mentions: numberValue(row.frequency_mentions),
+        intensity_score: numberValue(row.intensity_score),
+        predictive_capacity: numberValue(row.predictive_capacity),
+        composite_score: numberValue(row.composite_score),
+        citation_count: numberValue(row.evidence_count),
+        period_start: stringValue(row.period_start),
+        period_end: stringValue(row.period_end),
+        public_quote: stringValue(row.public_quote)
+      }));
+    }
+
     const scatterById = new Map(
       arrayValue(aggregates.findings_scatter).map((item) => {
         const row = asRecord(item);
@@ -247,6 +293,30 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
   }
 
   if (dataset === "recommendations") {
+    const actionCards = arrayValue(payload.action_cards).map(asRecord);
+    if (actionCards.length > 0) {
+      return actionCards.map((row, index) => ({
+        output_id: output.outputId,
+        recommendation_id: stringValue(row.action_id),
+        finding_id: stringValue(row.primary_finding_id),
+        finding_ids: stringArray(row.finding_ids).join(","),
+        finding_name: stringValue(row.title),
+        kind: stringValue(row.kind),
+        target_team: stringValue(row.target_team),
+        recommendation_text: stringValue(row.action_text),
+        rationale: stringValue(row.rationale),
+        intervention_type: stringValue(row.suggested_format),
+        estimated_effort: stringValue(row.estimated_effort),
+        estimated_impact: stringValue(row.estimated_impact),
+        success_signal: stringValue(row.success_signal),
+        suggested_owner: stringValue(row.target_team),
+        recommended_medium: stringValue(row.suggested_channel),
+        recommended_tone: "",
+        confidence: stringValue(row.confidence),
+        priority_rank: numberValue(row.priority_rank) || index + 1
+      }));
+    }
+
     const barriers = arrayValue(payload.barriers).map(asRecord);
     const triggers = arrayValue(payload.triggers).map(asRecord);
     return [...barriers, ...triggers]
@@ -269,6 +339,23 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
       }));
   }
 
+  if (dataset === "emerging-patterns") {
+    return arrayValue(payload.emerging_patterns).map((item) => {
+      const row = asRecord(item);
+      return {
+        output_id: output.outputId,
+        pattern_id: stringValue(row.pattern_id),
+        title: stringValue(row.title),
+        pattern_type: stringValue(row.pattern_type),
+        why_it_matters: stringValue(row.why_it_matters),
+        data_basis: stringArray(row.data_basis).join(","),
+        evidence_count: numberValue(row.evidence_count),
+        related_finding_ids: stringArray(row.related_finding_ids).join(","),
+        confidence: stringValue(row.confidence)
+      };
+    });
+  }
+
   if (dataset === "time-series-monthly") {
     return arrayValue(aggregates.volume_timeline).map((item) => {
       const row = asRecord(item);
@@ -286,6 +373,18 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
       return {
         output_id: output.outputId,
         platform: stringValue(row.platform),
+        mention_count: numberValue(row.count),
+        share_pct: numberValue(row.pct)
+      };
+    });
+  }
+
+  if (dataset === "content-type-distribution") {
+    return arrayValue(aggregates.content_type_distribution).map((item) => {
+      const row = asRecord(item);
+      return {
+        output_id: output.outputId,
+        content_type: stringValue(row.content_type),
         mention_count: numberValue(row.count),
         share_pct: numberValue(row.pct)
       };
@@ -460,6 +559,10 @@ function arrayValue(value: unknown): unknown[] {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : value === null || value === undefined ? null : String(value);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function numberValue(value: unknown) {

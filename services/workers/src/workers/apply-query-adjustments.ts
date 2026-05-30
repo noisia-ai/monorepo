@@ -12,6 +12,7 @@ import {
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { loadAnalysisRagContext } from "./analysis-rag-context";
 
 type ApplyAdjustmentsJobData = {
   corpusId: string;
@@ -68,6 +69,8 @@ export async function applyQueryAdjustmentsJob(job: Job<ApplyAdjustmentsJobData>
     subject: corpusInput.subject,
     corpus: corpusInput.corpus,
     methodology: { slug: corpusInput.methodology.slug, name: corpusInput.methodology.name },
+    knowledgeSources: corpusInput.knowledgeSources,
+    queryStrategyBrief: corpusInput.queryStrategyBrief,
     evaluationHistory,
     userComments: job.data.userComments
   });
@@ -400,6 +403,7 @@ async function loadCorpusContext(corpusId: string): Promise<QueryComposerInput> 
         [row.brand_id]
       )
     : { rows: [] as Array<{ canonical_name: string; aliases: string[] | null }> };
+  const ragContext = await loadAnalysisRagContext(row.corpus_id, row.brand_id);
 
   const subject: QueryComposerInput["subject"] = row.brand_id
     ? {
@@ -452,7 +456,8 @@ async function loadCorpusContext(corpusId: string): Promise<QueryComposerInput> 
           ...(row.brand_seed_handles ?? [])
         ].filter(Boolean)
       : [row.theme_name ?? ""].filter(Boolean),
-    knowledgeSources: [],
+    knowledgeSources: ragContext.knowledgeSources,
+    queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
     memoryIndustry: [],
     memoryBrand: []
   };

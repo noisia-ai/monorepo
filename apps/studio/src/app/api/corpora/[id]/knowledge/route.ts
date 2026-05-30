@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { desc, eq } from "drizzle-orm";
 import { brandKnowledgeSources } from "@noisia/db";
@@ -15,6 +14,8 @@ import { getQueryEngineQueue } from "@/lib/queue/query-engine";
 export const runtime = "nodejs";
 
 const MAX_TOTAL_BYTES = 300 * 1024 * 1024;
+const MAX_FILES_PER_BATCH = 20;
+const MAX_RAW_TEXT_CHARS = 1_000_000;
 const SUPPORTED_TYPES = new Set([
   "text/plain",
   "text/csv",
@@ -108,6 +109,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   }
 
+  if (files.length > MAX_FILES_PER_BATCH) {
+    return Response.json(
+      { error: "too_many_files", message: `El intake acepta hasta ${MAX_FILES_PER_BATCH} archivos por batch.` },
+      { status: 422 }
+    );
+  }
+
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
   if (totalBytes > MAX_TOTAL_BYTES) {
     return Response.json(
@@ -118,10 +126,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const created = [];
   const sourceIds: string[] = [];
-  const uploadDir = join(tmpdir(), "noisia-knowledge", corpus.id);
+  const uploadRoot = process.env.NOISIA_KNOWLEDGE_UPLOAD_DIR
+    ? resolve(process.env.NOISIA_KNOWLEDGE_UPLOAD_DIR)
+    : resolve(process.cwd(), ".data", "knowledge-uploads");
+  const uploadDir = join(uploadRoot, corpus.id);
   await mkdir(uploadDir, { recursive: true });
 
-  for (const file of files.slice(0, 8)) {
+  for (const file of files) {
     if (!isSupported(file)) {
       created.push({ file: file.name, status: "skipped", reason: "unsupported_type" });
       continue;
@@ -131,6 +142,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const hash = createHash("sha256").update(buffer).digest("hex");
     const storagePath = join(uploadDir, `${randomUUID()}-${safeFileName(file.name)}`);
     await writeFile(storagePath, buffer);
+    const rawText = extractRawTextSnapshot(file, buffer);
 
     const title = cleanTitle(file.name);
     const [row] = await db
@@ -146,13 +158,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         storagePath,
         fileSizeBytes: buffer.byteLength,
         fileHash: hash,
-        rawText: null,
+        rawText,
         extractedPayload: {
           intake: {
             file_name: file.name,
             byte_size: buffer.byteLength,
             sha256: hash,
-            source_kind: sourceKind
+            source_kind: sourceKind,
+            raw_text_snapshot: Boolean(rawText),
+            raw_text_truncated: rawText ? rawText.length >= MAX_RAW_TEXT_CHARS : false
           }
         },
         status: "pending",
@@ -203,6 +217,17 @@ function isSupported(file: File) {
     SUPPORTED_TYPES.has(file.type || "application/octet-stream") ||
     /\.(xlsx|xls|csv|tsv|txt|json|md)$/.test(name)
   );
+}
+
+function extractRawTextSnapshot(file: File, buffer: Buffer) {
+  const name = file.name.toLowerCase();
+  const mime = file.type.toLowerCase();
+  const isTextLike =
+    mime.startsWith("text/") ||
+    mime === "application/json" ||
+    /\.(csv|tsv|txt|json|md)$/.test(name);
+  if (!isTextLike) return null;
+  return buffer.toString("utf8").replace(/\u0000/g, "").slice(0, MAX_RAW_TEXT_CHARS);
 }
 
 function safeFileName(fileName: string) {

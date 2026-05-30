@@ -367,6 +367,10 @@ export const importBatches = pgTable(
     queryIterationId: uuid("query_iteration_id").references(() => queryIterations.id),
     /** 'brand' | 'competitor' | 'industry' | null — null = legacy/uncategorized */
     mentionType: text("mention_type"),
+    competitorId: uuid("competitor_id").references(() => competitors.id),
+    /** primary_brand | competitor_pool | competitor | category | unknown */
+    entityKind: text("entity_kind"),
+    entityLabel: text("entity_label"),
     sourceSystem: text("source_system").notNull(),
     sourceFileName: text("source_file_name"),
     sourceFileHash: text("source_file_hash"),
@@ -380,6 +384,8 @@ export const importBatches = pgTable(
   },
   (table) => [
     index("idx_import_batches_corpus").on(table.studyCorpusId),
+    index("idx_import_batches_entity").on(table.studyCorpusId, table.mentionType, table.entityKind),
+    index("idx_import_batches_competitor").on(table.studyCorpusId, table.competitorId),
     index("idx_import_batches_status").on(table.status)
   ]
 );
@@ -552,6 +558,9 @@ export const tbFindings = pgTable(
     /** 'alta' | 'media' | 'baja_direccional' */
     confidence: text("confidence"),
 
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+
     citaProtagonista: jsonb("cita_protagonista"),
     rawData: jsonb("raw_data"),
 
@@ -561,7 +570,8 @@ export const tbFindings = pgTable(
   (table) => [
     unique("uq_tb_findings_analysis_finding_id").on(table.tbAnalysisId, table.findingId),
     index("idx_tb_findings_kanban").on(table.tbAnalysisId, table.polarity, table.layer, table.positionInLayer),
-    index("idx_tb_findings_top").on(table.tbAnalysisId, table.scoreCompuesto)
+    index("idx_tb_findings_top").on(table.tbAnalysisId, table.scoreCompuesto),
+    index("idx_tb_findings_period").on(table.tbAnalysisId, table.periodStart, table.periodEnd)
   ]
 );
 

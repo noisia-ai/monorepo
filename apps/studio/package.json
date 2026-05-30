@@ -9,6 +9,8 @@
     "start": "next start -H 0.0.0.0 -p ${PORT:-3001}",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "signal:republish-v2": "../../infrastructure/db/node_modules/.bin/tsx scripts/republish-signal-v2.ts",
+    "signal:backfill-intelligence": "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-intelligence-and-republish.ts",
     "test": "echo \"No studio tests yet\""
   },
   "dependencies": {

@@ -1,13 +1,27 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { SessionBadge } from "@/components/layout/SessionBadge";
+import { SignalCorpusChat } from "@/components/signal/SignalCorpusChat";
+import { FindingDetailWorkspace } from "@/components/signal/FindingDetailWorkspace";
+import { SignalCorpusExplorer } from "@/components/signal/SignalCorpusExplorer";
 import { SignalDashboardCharts } from "@/components/signal/SignalDashboardCharts";
+import { SignalEmergingPatternsExplorer } from "@/components/signal/SignalEmergingPatternsExplorer";
+import { SignalOpportunitiesExplorer } from "@/components/signal/SignalOpportunitiesExplorer";
+import {
+  SignalLocalizedText,
+  SignalReportShell,
+  SignalSettingsPanel,
+  type SignalShellGroup,
+} from "@/components/signal/SignalReportShell";
 import { SignalTriggerExplorer } from "@/components/signal/SignalTriggerExplorer";
 import { Icon } from "@/components/ui/Icon";
+import { SourceIcon } from "@/components/ui/SourceIcon";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
-import type { SignalModuleKey } from "@/lib/signal/manifest";
+import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
+import type { EmergingPattern, PublicActionCard, PublicTbFinding, TbDecisionFieldNode } from "@/lib/signal/contracts";
+import { signalModuleMeta, type SignalModuleKey } from "@/lib/signal/manifest";
 
 export const dynamic = "force-dynamic";
 
@@ -30,19 +44,20 @@ export default async function SignalOutputPage({
   if (!output) notFound();
 
   const payload = asRecord(output.payload);
+  const viewModel = adaptTbSignalPayload(payload);
   const manifest = asRecord(output.manifest);
   const metrics = asRecord(payload.metrics);
   const overview = asRecord(payload.overview);
   const actions = asRecord(payload.actions);
-  const quality = asRecord(payload.quality);
   const limitations = asRecord(payload.limitations);
   const aggregates = asRecord(payload.aggregates);
   const barriers = arrayValue(payload.barriers).map(asRecord);
   const triggers = arrayValue(payload.triggers).map(asRecord);
   const structuralNotes = arrayValue(actions.structural_notes).map(asRecord);
   const topBarriers = arrayValue(overview.top_barriers).map(asRecord);
-  const enabledModules = moduleOrder.filter((key) => manifest[key] !== false);
-  const brandLabel = output.brandName ?? output.brandFallbackName ?? "Marca";
+  const hasV2Manifest = signalModuleMeta.some((module) => Object.prototype.hasOwnProperty.call(manifest, module.key));
+  const moduleEnabled = (key: SignalModuleKey) => isSignalModuleEnabled(manifest, key, hasV2Manifest);
+  const brandLabel = output.brandName ?? output.brandFallbackName ?? "Brand";
   const bestMove = asRecord(actions.best_move);
   const fmtNum = (v: unknown) => new Intl.NumberFormat("es-MX").format(Number(v ?? 0));
 
@@ -55,35 +70,18 @@ export default async function SignalOutputPage({
   const layerDist = arrayValue(aggregates.layer_distribution).map(asRecord);
   const mobilityDist = arrayValue(aggregates.mobility_distribution).map(asRecord);
   const platformDist = arrayValue(aggregates.platform_distribution).map(asRecord);
+  const contentTypeDist = arrayValue(aggregates.content_type_distribution).map(asRecord);
   const volumeTimeline = arrayValue(aggregates.volume_timeline).map(asRecord);
+  const findingTimeSeries = arrayValue(aggregates.finding_time_series).map(asRecord);
+  const polarityTimeSeries = arrayValue(aggregates.polarity_time_series).map(asRecord);
   const findingsScatter = arrayValue(aggregates.findings_scatter).map(asRecord);
   const topVoice = arrayValue(aggregates.top_findings_by_voice).map(asRecord);
   const mentionsSample = arrayValue(aggregates.mentions_sample).map(asRecord);
+  const shellGroups = buildSignalShellGroups(moduleEnabled);
+  const defaultSection = shellGroups[0]?.sections[0]?.key ?? "overview";
 
   return (
-    <div className="signal-report">
-      {/* Sticky aside nav */}
-      <aside className="signal-aside">
-        <Link href="/signal" className="signal-aside-logo" aria-label="Volver a Signal">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/assets/logos/logo_black.svg" alt="Noisia" width={92} height={32} />
-          <span>Signal</span>
-        </Link>
-        <nav className="signal-aside-nav" aria-label="Secciones del reporte">
-          <a className="is-active" href="#overview">
-            <Icon name="platform" size={14} />
-            Dashboard
-          </a>
-          {enabledModules.filter((k) => k !== "overview").map((key) => (
-            <a href={`#${key}`} key={key}>
-              {moduleLabels[key]}
-            </a>
-          ))}
-          <a href="#voces">Voces del corpus</a>
-        </nav>
-      </aside>
-
-      <main className="signal-main">
+    <SignalReportShell defaultSection={defaultSection} groups={shellGroups}>
         {/* TOP UTILITY BAR — period chip + profile */}
         <div className="signal-topbar">
           <div className="signal-topbar-left">
@@ -96,7 +94,14 @@ export default async function SignalOutputPage({
           <div className="signal-topbar-right">
             <span className="signal-period-pill">
               <Icon name="calendar" size={14} />
-              {windowMonths > 0 ? `Corte publicado · ${windowMonths} meses` : "Snapshot publicado"}
+              {windowMonths > 0 ? (
+                <SignalLocalizedText
+                  en={`Published cut · ${windowMonths} months`}
+                  es={`Corte publicado · ${windowMonths} meses`}
+                />
+              ) : (
+                <SignalLocalizedText en="Published snapshot" es="Snapshot publicado" />
+              )}
             </span>
             <SessionBadge user={session.appUser} compact />
             <button className="signal-icon-btn" type="button" aria-label="Más opciones">
@@ -105,33 +110,190 @@ export default async function SignalOutputPage({
           </div>
         </div>
 
-        <SignalDashboardCharts
-          brandLabel={brandLabel}
-          corpusTotal={corpusTotal}
-          findingsScatter={findingsScatter}
-          layerDist={layerDist}
-          methodologyName={output.methodologyName ?? "Triggers & Barriers"}
-          metrics={{
-            findingsTotal: Number(metrics.findings_total ?? 0),
-            barriersTotal: Number(metrics.barriers_total ?? 0),
-            triggersTotal: Number(metrics.triggers_total ?? 0),
-            movableTotal: Number(metrics.movable_total ?? 0),
-          }}
-          mobilityDist={mobilityDist}
-          platformDist={platformDist}
-          polarityDist={polarityDist}
-          topBarriers={topBarriers}
-          topVoice={topVoice}
-          volumeTimeline={volumeTimeline}
-          windowLabel={
-            windowMonths > 0
-              ? `${fmtDateRange(corpusWindow.start, corpusWindow.end)} · ${windowMonths} meses`
-              : "Snapshot publicado"
-          }
-        />
+        {moduleEnabled("overview") ? (
+          <div className="signal-view-panel" data-signal-section="overview" id="overview">
+            <KnowledgeImpactPanel impact={viewModel.knowledgeImpact} report={viewModel.report} />
+            <SignalDashboardCharts
+              brandLabel={brandLabel}
+              corpusTotal={corpusTotal}
+              findingsScatter={findingsScatter}
+              layerDist={layerDist}
+              methodologyName={output.methodologyName ?? "Triggers & Barriers"}
+              metrics={{
+                findingsTotal: Number(metrics.findings_total ?? 0),
+                barriersTotal: Number(metrics.barriers_total ?? 0),
+                triggersTotal: Number(metrics.triggers_total ?? 0),
+                movableTotal: Number(metrics.movable_total ?? 0),
+              }}
+              mobilityDist={mobilityDist}
+              platformDist={platformDist}
+              contentTypeDist={contentTypeDist}
+              polarityDist={polarityDist}
+              findingTimeSeries={findingTimeSeries}
+              polarityTimeSeries={polarityTimeSeries}
+              topBarriers={topBarriers}
+              topVoice={topVoice}
+              volumeTimeline={volumeTimeline}
+              windowLabel={
+                windowMonths > 0
+                  ? `${fmtDateRange(corpusWindow.start, corpusWindow.end, "en-US")} · ${windowMonths} months`
+                  : "Published snapshot"
+              }
+            />
+          </div>
+        ) : null}
+
+        {moduleEnabled("tb_decision_field") ? (
+          <section className="signal-section" data-signal-section="tb-decision-field" hidden id="tb-decision-field">
+            <SectionHead
+              eyebrow="Triggers & Barriers"
+              title="Decision Field"
+              sub={
+                <SignalLocalizedText
+                  en="Where each decision force lives: what the brand can move, what weighs as friction and what should be treated as structural context."
+                  es="Dónde vive cada fuerza de decisión: qué puede mover la marca, qué pesa como fricción y qué debe tratarse como contexto estructural."
+                />
+              }
+            />
+            <DecisionFieldPanel findings={viewModel.findings} nodes={viewModel.decisionFieldNodes} />
+          </section>
+        ) : null}
+
+        {moduleEnabled("opportunities") ? (
+          <section className="signal-section" data-signal-section="tb-opportunities" hidden id="tb-opportunities">
+            <SectionHead
+              eyebrow={<SignalLocalizedText en="Prioritization" es="Priorización" />}
+              title={<SignalLocalizedText en="Opportunities that change the decision" es="Oportunidades que sí cambian la decisión" />}
+              sub={
+                <SignalLocalizedText
+                  en="This section compresses findings into decision bets, avoiding the same evidence repeated across five formats."
+                  es="Este bloque compacta los hallazgos en apuestas de decisión para evitar repetir la misma evidencia en cinco formatos distintos."
+                />
+              }
+            />
+            <OpportunitiesPanel opportunities={viewModel.strategicOpportunities} findings={viewModel.findings} />
+          </section>
+        ) : null}
+
+        {moduleEnabled("competitive_intelligence") ? (
+          <section className="signal-section" data-signal-section="competitive" hidden id="competitive">
+            <SectionHead
+              eyebrow="Competitive intelligence"
+              title={
+                <SignalLocalizedText
+                  en={`Where can ${viewModel.report.brand_name} turn competitor friction into advantage?`}
+                  es={`¿Dónde puede ${viewModel.report.brand_name} convertir fricción competitiva en ventaja?`}
+                />
+              }
+              sub={
+                <SignalLocalizedText
+                  en="Signal compares brand, competitor and category signals to find barriers competitors are carrying and the moves the brand can credibly own."
+                  es="Signal compara señales de marca, competencia y categoría para encontrar barreras que carga la competencia y movimientos que la marca puede poseer con credibilidad."
+                />
+              }
+            />
+            <CompetitivePanel
+              brandName={viewModel.report.brand_name}
+              competitive={viewModel.competitive}
+              evidenceDeepDives={viewModel.evidenceDeepDives}
+              findings={viewModel.findings}
+            />
+          </section>
+        ) : null}
+
+        {moduleEnabled("action_studio") ? (
+          <section className="signal-section" data-signal-section="tb-action-studio" hidden id="tb-action-studio">
+            <SectionHead
+              eyebrow="Action Studio"
+              title={<SignalLocalizedText en="What each team does with this" es="Qué hace cada equipo con esto" />}
+              sub={
+                <SignalLocalizedText
+                  en="Actions grouped by team so the report does not stop at diagnosis."
+                  es="Acciones agrupadas por área para que el reporte no se quede en diagnóstico."
+                />
+              }
+            />
+            <ActionStudioPanel actions={viewModel.actionCards} />
+          </section>
+        ) : null}
+
+        {moduleEnabled("emerging_patterns") ? (
+          <section className="signal-section" data-signal-section="emerging-patterns" hidden id="emerging-patterns">
+            <SectionHead
+              eyebrow="Emerging Patterns"
+              title={<SignalLocalizedText en="Open signals beyond the method" es="Señales abiertas fuera del método" />}
+              sub={
+                <SignalLocalizedText
+                  en="Insights born from the corpus, Knowledge Base and client files without forcing them into the Triggers & Barriers framework."
+                  es="Insights que nacen del corpus, Knowledge Base y archivos del cliente sin forzarlos al marco Triggers & Barriers."
+                />
+              }
+            />
+            <EmergingPatternsPanel
+              corpusId={output.studyCorpusId}
+              futureSignals={viewModel.futureSignals}
+              marketAnalysis={viewModel.marketAnalysis}
+              patterns={viewModel.emergingPatterns}
+            />
+          </section>
+        ) : null}
+
+        {moduleEnabled("corpus_view") ? (
+          <section className="signal-section" data-signal-section="corpus-view" hidden id="corpus-view">
+            <SectionHead
+              eyebrow="Corpus View"
+              title={<SignalLocalizedText en="Explore corpus and evidence" es="Explorar corpus y evidencia" />}
+              sub={
+                <SignalLocalizedText
+                  en="Operational view of the study corpus: search, channel, date and finding filters, and evidence connected to the analysis."
+                  es="Vista operativa del corpus del estudio: búsqueda, filtros por canal, fecha y finding, y evidencia conectada al análisis."
+                />
+              }
+            />
+            <SignalCorpusExplorer mentions={mentionsSample} outputId={output.id} />
+          </section>
+        ) : null}
+
+        {moduleEnabled("corpus_chat") ? (
+          <section className="signal-section" data-signal-section="corpus-chat" hidden id="corpus-chat">
+            <SectionHead
+              eyebrow="Corpus Chat"
+              title={<SignalLocalizedText en="Ask the published cut" es="Preguntarle al corte publicado" />}
+              sub={
+                <SignalLocalizedText
+                  en="Agent restricted to the report, processed Knowledge Base and semantic evidence from the snapshot. It does not open access to the full corpus or other studies."
+                  es="Agente restringido al reporte, Knowledge Base procesado y evidencia semántica del snapshot. No abre acceso al corpus completo ni a otros estudios."
+                />
+              }
+            />
+            <SignalCorpusChat outputId={output.id} />
+          </section>
+        ) : null}
+
+        {moduleEnabled("evidence") ? (
+          <section className="signal-section" data-signal-section="finding-detail" hidden id="finding-detail">
+            <SectionHead
+              eyebrow="Evidence system"
+              title="Finding Detail Drawer"
+              sub={
+                <SignalLocalizedText
+                  en="Each finding lives once. Charts, actions and annexes point to this detail so recommendations are not repeated as loose cards."
+                  es="Cada hallazgo vive una sola vez. Charts, acciones y anexos apuntan a este detalle para no repetir recomendaciones como tarjetas sueltas."
+                />
+              }
+            />
+            <FindingDetailDrawer
+              actions={viewModel.actionCards}
+              competitive={viewModel.competitive}
+              evidenceDeepDives={viewModel.evidenceDeepDives}
+              findings={viewModel.findings}
+              mentionsSample={mentionsSample}
+            />
+          </section>
+        ) : null}
 
         {/* OVERVIEW — top barriers as editorial kicker cards */}
-        {manifest.overview !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "overview") && (
           <section className="signal-section" id="overview-detail">
             <SectionHead eyebrow="Top barreras" title="Lo que está frenando la decisión" />
             <TopBarriersPanel
@@ -144,7 +306,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* TENSION MAP */}
-        {manifest.tension_map !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "tension_map") && (
           <section className="signal-section" id="tension_map">
             <SectionHead eyebrow="Visualización" title="Mapa de tensión" />
             <TensionMap
@@ -158,7 +320,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* ACTIONS */}
-        {manifest.actions !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "actions") && (
           <section className="signal-section" id="actions">
             <SectionHead eyebrow="Plan de acción" title="La mejor jugada y alternativas" />
             <BestMoveCard
@@ -180,7 +342,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* BARRIERS */}
-        {manifest.barriers !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "barriers") && (
           <section className="signal-section" id="barriers">
             <SectionHead
               eyebrow="Barreras movibles"
@@ -196,7 +358,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* TRIGGERS */}
-        {manifest.triggers !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "triggers") && (
           <section className="signal-section" id="triggers">
             <SectionHead eyebrow="Señales positivas" title="Triggers a aprovechar" />
             <SignalTriggerExplorer
@@ -209,7 +371,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* STRUCTURAL */}
-        {structuralNotes.length > 0 && (
+        {!hasV2Manifest && structuralNotes.length > 0 && (
           <section className="signal-section">
             <SectionHead
               eyebrow="Contexto estructural"
@@ -229,7 +391,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* FRICTION HEATMAP */}
-        {manifest.friction_heatmap !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "friction_heatmap") && (
           <section className="signal-section" id="friction_heatmap">
             <SectionHead
               eyebrow="Journey"
@@ -241,7 +403,7 @@ export default async function SignalOutputPage({
         )}
 
         {/* MENTIONS BROWSER — voces del corpus */}
-        {mentionsSample.length > 0 && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "verbatims") && mentionsSample.length > 0 && (
           <section className="signal-section" id="voces">
             <SectionHead
               eyebrow="Voces del corpus"
@@ -257,29 +419,29 @@ export default async function SignalOutputPage({
         )}
 
         {/* PLACEHOLDERS */}
-        {manifest.stream_graph !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "stream_graph") && (
           <section className="signal-section" id="stream_graph">
             <SectionHead eyebrow="Evolución" title="Stream cultural" />
             <FindingNotice
               icon="wave"
               title="Vista de evolución semanal por hallazgo en construcción."
-              body={stringValue(limitations.stream_graph) || "Esta vista contará cuándo nacen, crecen o se apagan las narrativas del corpus."}
+              body={viewModel.clientBoundaries.find((item) => item.toLowerCase().includes("evidencia")) || "Esta vista contará cuándo nacen, crecen o se apagan las narrativas del corpus."}
             />
           </section>
         )}
 
-        {manifest.compare !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "compare") && (
           <section className="signal-section" id="compare">
             <SectionHead eyebrow="Benchmark" title="Comparativo competitivo" />
             <FindingNotice
               icon="layers"
               title="On hold hasta tener corpora competidores aprobados."
-              body={stringValue(limitations.compare) || "Signal no inventa benchmarks. Para comparar contra otras aseguradoras se requiere que cada marca tenga su corpus T&B aprobado."}
+              body={viewModel.competitive.limitations[0] || "Signal no inventa benchmarks. Para comparar se requiere corpus competitivo atribuido y suficiente."}
             />
           </section>
         )}
 
-        {manifest.chat !== false && (
+        {!hasV2Manifest && legacyModuleEnabled(manifest, "chat") && (
           <section className="signal-section" id="chat">
             <SectionHead eyebrow="Pregúntale al corte" title="Chat sobre este reporte" />
             <FindingNotice
@@ -291,45 +453,21 @@ export default async function SignalOutputPage({
         )}
 
         {/* META FOOTER */}
-        <footer className="signal-meta">
-          <div className="signal-meta-block">
-            <p className="signal-eyebrow signal-eyebrow--quiet">Control de calidad</p>
-            <p>
-              {Number(quality.gates_total ?? 0)} checks ejecutados ·{" "}
-              {arrayValue(quality.failed).length === 0 ? (
-                <span className="signal-meta-good">todos pasaron</span>
-              ) : (
-                <span className="signal-meta-warn">
-                  {arrayValue(quality.failed).length} con observación
-                </span>
-              )}
-            </p>
-            {arrayValue(quality.failed).map((f, i) => {
-              const r = asRecord(f);
-              return (
-                <p key={i} className="signal-meta-warn-line">
-                  <Icon name="alert" size={12} /> {stringValue(r.notes) || stringValue(r.name)}
-                </p>
-              );
-            })}
-          </div>
-          <div className="signal-meta-block">
-            <p className="signal-eyebrow signal-eyebrow--quiet">Limitaciones declaradas</p>
-            {Object.entries(limitations).length === 0 ? (
-              <p>Sin limitaciones declaradas en este corte.</p>
-            ) : (
-              <ul className="signal-meta-list">
-                {Object.entries(limitations).map(([key, value]) => (
-                  <li key={key}>
-                    <strong>{prettifyKey(key)}:</strong> {String(value)}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </footer>
-      </main>
-    </div>
+        {moduleEnabled("quality_boundaries") ? (
+          <footer className="signal-meta" data-signal-section="quality-boundaries" hidden id="quality-boundaries">
+            <QualityBoundariesPanel
+              clientBoundaries={viewModel.clientBoundaries}
+              limitations={limitations}
+              publishedEvidenceCount={mentionsSample.length}
+              totalMentions={corpusTotal}
+            />
+          </footer>
+        ) : null}
+
+        <section className="signal-section" data-signal-section="settings" hidden id="settings">
+          <SignalSettingsPanel />
+        </section>
+    </SignalReportShell>
   );
 }
 
@@ -337,13 +475,545 @@ export default async function SignalOutputPage({
    Sub-components
    ============================================================ */
 
-function SectionHead({ eyebrow, title, sub }: { eyebrow: string; title: string; sub?: string }) {
+function SectionHead({ eyebrow, title, sub }: { eyebrow: ReactNode; title: ReactNode; sub?: ReactNode }) {
   return (
     <header className="signal-sec-head">
       <p className="signal-eyebrow">{eyebrow}</p>
       <h2 className="signal-sec-title">{title}</h2>
       {sub && <p className="signal-sec-sub">{sub}</p>}
     </header>
+  );
+}
+
+function DecisionFieldPanel({ findings, nodes }: { findings: PublicTbFinding[]; nodes: TbDecisionFieldNode[] }) {
+  if (findings.length === 0) {
+    return (
+      <FindingNotice
+        icon="info"
+        title="Decision Field pendiente de dataset de findings."
+        body="Los outputs publicados antes del contrato v2 pueden no traer hallazgos suficientes para construir el mapa."
+      />
+    );
+  }
+
+  const top = findings.slice().sort((a, b) => b.composite_score - a.composite_score).slice(0, 5);
+  const layers: PublicTbFinding["layer"][] = ["personal", "psicologico", "social", "cultural"];
+  const mobilityRows: Array<{ key: NonNullable<PublicTbFinding["mobility"]>; label: string; note: string }> = [
+    { key: "movible_por_marca", label: "Act on it", note: "Direct brand action can shift this." },
+    { key: "parcialmente_movible", label: "Shape it", note: "Brand can influence with partners, formats or timing." },
+    { key: "estructural", label: "Respect it", note: "Do not promise it away; design around it." },
+  ];
+  const totalEvidence = findings.reduce((sum, finding) => sum + finding.evidence_count, 0);
+  const movableEvidence = findings
+    .filter((finding) => finding.mobility === "movible_por_marca")
+    .reduce((sum, finding) => sum + finding.evidence_count, 0);
+  const nodeCount = nodes.length;
+  return (
+    <div className="decision-field-shell decision-field-shell--matrix">
+      <div className="decision-field-matrix" role="table" aria-label="Triggers and barriers by layer and mobility">
+        <div className="decision-field-matrix-head" role="row">
+          <span />
+          {layers.map((layer) => <strong key={layer}>{layerLabel(layer)}</strong>)}
+        </div>
+        {mobilityRows.map((row) => (
+          <div className="decision-field-matrix-row" role="row" key={row.key}>
+            <div className="decision-field-row-label">
+              <strong>{row.label}</strong>
+              <span>{row.note}</span>
+            </div>
+            {layers.map((layer) => {
+              const cellFindings = findings
+                .filter((finding) => finding.layer === layer && finding.mobility === row.key)
+                .sort((a, b) => b.composite_score - a.composite_score);
+              return (
+                <div className="decision-field-cell" role="cell" key={`${row.key}-${layer}`}>
+                  {cellFindings.length > 0 ? cellFindings.slice(0, 4).map((finding) => (
+                    <a
+                      className={`decision-field-chip decision-field-chip--${finding.polarity}`}
+                      href={`#${findingAnchor(finding.finding_id)}`}
+                      key={finding.finding_id}
+                    >
+                      <span>{finding.finding_id}</span>
+                      <strong>{truncate(finding.finding_name, 54)}</strong>
+                      <small>{finding.evidence_count} evidence · score {finding.composite_score.toFixed(1)}</small>
+                    </a>
+                  )) : (
+                    <span className="decision-field-empty">No signal</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <aside className="decision-field-rank">
+        <div className="decision-field-legend">
+          <span><i className="legend-dot legend-dot--trigger" /> Trigger = motivation</span>
+          <span><i className="legend-dot legend-dot--barrier" /> Barrier = friction</span>
+          <span><i className="legend-ring" /> Rows = actionability</span>
+          <span><i className="legend-size" /> Columns = decision layer</span>
+        </div>
+        <div className="decision-field-stats">
+          <div><strong>{findings.length}</strong><span>findings</span></div>
+          <div><strong>{fmtCompact(totalEvidence)}</strong><span>evidence points</span></div>
+          <div><strong>{Math.round((movableEvidence / Math.max(1, totalEvidence)) * 100)}%</strong><span>movable evidence</span></div>
+          <div><strong>{nodeCount}</strong><span>mapped nodes</span></div>
+        </div>
+        <p className="signal-eyebrow">Decision priority</p>
+        {top.map((finding, index) => (
+          <article key={finding.finding_id}>
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <div>
+              <strong><a href={`#${findingAnchor(finding.finding_id)}`}>{finding.finding_name}</a></strong>
+              <small>{prettifyKey(finding.polarity)} · {prettifyKey(finding.layer)} · score {finding.composite_score.toFixed(1)}</small>
+            </div>
+          </article>
+        ))}
+      </aside>
+    </div>
+  );
+}
+
+function KnowledgeImpactPanel({
+  impact,
+  report,
+}: {
+  impact: ReturnType<typeof adaptTbSignalPayload>["knowledgeImpact"];
+  report: ReturnType<typeof adaptTbSignalPayload>["report"];
+}) {
+  if (!impact) return null;
+  const sources = dedupeKnowledgeSources(impact.sources_used);
+  const briefSources = sources.filter((source) => source.source_kind.includes("brief"));
+  const fileSources = sources.filter((source) => source.original_file_name || source.source_kind.includes("spreadsheet"));
+  const sourceTypes = buildKnowledgeSourceTypes(sources, briefSources.length, fileSources.length);
+  const visibleSourceTypes = sourceTypes.slice(0, 5);
+  const sourceOverflow = Math.max(0, sourceTypes.length - visibleSourceTypes.length);
+  const answerLead = splitLeadSentence(selectKnowledgeHeroText(impact.business_question_answer, report.summary));
+  return (
+    <section className="knowledge-impact-strip knowledge-impact-strip--hero">
+      <div className="knowledge-impact-top">
+        <div className="knowledge-impact-main">
+          <p className="signal-eyebrow">Brief + Knowledge Base</p>
+          <h3>{answerLead.title || <SignalLocalizedText en="What the brief asks us to decide" es="Lo que el brief pide decidir" />}</h3>
+          {answerLead.body ? <p className="knowledge-impact-answer">{answerLead.body}</p> : null}
+          <p className="knowledge-impact-validated">
+            <Icon name="check" size={13} /> Validated by Noisia AI · Published insight
+          </p>
+        </div>
+        <aside className="knowledge-source-ledger">
+          <div className="knowledge-source-logo-panel">
+            <strong>Data sources</strong>
+            <div className="knowledge-source-logo-row" aria-label="Sources used by the analysis">
+              {visibleSourceTypes.map((source) => (
+                <span className="knowledge-source-logo" key={source.value} title={source.label}>
+                  <SourceIcon value={source.value} />
+                </span>
+              ))}
+              {sourceOverflow > 0 ? <span className="knowledge-source-more">+{sourceOverflow} more</span> : null}
+            </div>
+          </div>
+          <div className="knowledge-source-stats" aria-label="Source totals">
+            <div>
+              <span><Icon name="copy" size={20} /></span>
+              <strong>{briefSources.length}</strong>
+              <small>Brief inputs</small>
+            </div>
+            <div>
+              <span><Icon name="upload" size={20} /></span>
+              <strong>{fileSources.length}</strong>
+              <small>Uploaded files</small>
+            </div>
+            <div>
+              <span><Icon name="layers" size={20} /></span>
+              <strong>{sources.length}</strong>
+              <small>Total sources</small>
+            </div>
+          </div>
+          <div className="knowledge-source-insight-note">
+            <span><Icon name="star" size={16} /></span>
+            <p>This is the top insight based on impact and signal strength across your selected sources.</p>
+          </div>
+        </aside>
+      </div>
+      <dl className="knowledge-impact-brief">
+        <div>
+          <dt><Icon name="tag" size={14} /> Business decision</dt>
+          <dd>{impact.decision_to_inform || "No decision was published for this cut."}</dd>
+          <a href="#tb-action-studio">See recommendation <Icon name="arrow-right" size={13} /></a>
+        </div>
+        <div>
+          <dt><Icon name="copy" size={14} /> What the corpus confirms</dt>
+          <dd>{impact.confirmed_by_corpus[0] || "No confirmation note was published."}</dd>
+          <a href="#finding-detail">See evidence <Icon name="arrow-right" size={13} /></a>
+        </div>
+        <div>
+          <dt><Icon name="alert" size={14} /> Strategic constraint</dt>
+          <dd>{impact.strategic_constraints[0] || "No strategic constraint was published."}</dd>
+          <a href="#quality-boundaries">See implications <Icon name="arrow-right" size={13} /></a>
+        </div>
+      </dl>
+      <div className="knowledge-impact-cta">
+        <span><Icon name="search" size={18} /></span>
+        <div>
+          <strong>Looking for something specific?</strong>
+          <p>Explore the evidence, audience insights and content examples behind this insight.</p>
+        </div>
+        <a href="#corpus-view">Explore the evidence <Icon name="arrow-right" size={14} /></a>
+      </div>
+    </section>
+  );
+}
+
+function OpportunitiesPanel({
+  opportunities,
+  findings,
+}: {
+  opportunities: ReturnType<typeof adaptTbSignalPayload>["strategicOpportunities"];
+  findings: PublicTbFinding[];
+}) {
+  return <SignalOpportunitiesExplorer findings={findings} opportunities={opportunities} />;
+}
+
+function CompetitivePanel({
+  brandName,
+  competitive,
+  evidenceDeepDives,
+  findings,
+}: {
+  brandName: string;
+  competitive: ReturnType<typeof adaptTbSignalPayload>["competitive"];
+  evidenceDeepDives: ReturnType<typeof adaptTbSignalPayload>["evidenceDeepDives"];
+  findings: PublicTbFinding[];
+}) {
+  if (!competitive.enabled) {
+    return (
+      <FindingNotice
+        icon="layers"
+        title="Benchmark competitivo pendiente."
+        body={competitive.limitations[0] || "Sube CSVs de competencia o industria atribuidos para activar ownership, gaps y acciones competitivas."}
+      />
+    );
+  }
+
+  const presence = competitive.finding_entity_presence.map(asRecord);
+  const gaps = competitive.gaps.map(asRecord);
+  const brandCount = competitive.entities.find((entity) => entity.entity_kind === "primary_brand")?.mention_count ?? 0;
+  const competitorCount = competitive.entities.find((entity) => entity.entity_kind === "competitor_pool")?.mention_count ?? 0;
+  const categoryCount = competitive.entities.find((entity) => entity.entity_kind === "category")?.mention_count ?? 0;
+  const ownershipSegments = [
+    { key: "category", title: "Category-wide", count: categoryCount, tone: "category" },
+    { key: "competitor", title: "Competitor-owned", count: competitorCount, tone: "competitor" },
+    { key: "brand", title: "Brand-owned", count: brandCount, tone: "brand" }
+  ].filter((segment) => segment.count > 0);
+  const ownershipTotal = ownershipSegments.reduce((sum, segment) => sum + segment.count, 0);
+  const ownershipGroups = [
+    {
+      key: "brand_owned",
+      title: "Brand-owned",
+      description: "Where first direct is visibly implicated or can credibly own the move.",
+      items: presence.filter((item) => stringValue(item.ownership) === "brand_owned" || Number(item.brand_mentions ?? 0) > Number(item.competitor_mentions ?? 0))
+    },
+    {
+      key: "competitor_owned",
+      title: "Competitor-owned",
+      description: "Where competitors or the competitor pool are carrying the signal.",
+      items: presence.filter((item) => stringValue(item.ownership) === "competitor_owned" || stringValue(item.dominant_entity_kind) === "competitor_pool")
+    },
+    {
+      key: "category_wide",
+      title: "Category-wide",
+      description: "Where the barrier/trigger belongs to banking culture, not one brand.",
+      items: presence.filter((item) => stringValue(item.ownership) === "category_wide" || stringValue(item.dominant_entity_kind) === "category")
+    }
+  ];
+  const categoryGroup = ownershipGroups.find((group) => group.key === "category_wide");
+  const competitorGroup = ownershipGroups.find((group) => group.key === "competitor_owned");
+  const brandGroup = ownershipGroups.find((group) => group.key === "brand_owned");
+  const strongestCategory = categoryGroup?.items[0];
+  const strongestCompetitor = competitorGroup?.items[0];
+  const strongestBrand = brandGroup?.items[0];
+  const topConversionItems = uniqueCompetitiveItems([
+    ...(competitorGroup?.items ?? []),
+    ...(brandGroup?.items ?? []),
+    ...(categoryGroup?.items ?? [])
+  ]).slice(0, 3);
+  const dominantSegment = ownershipSegments.reduce<typeof ownershipSegments[number] | null>(
+    (winner, segment) => (!winner || segment.count > winner.count ? segment : winner),
+    null
+  );
+  const ownershipInsight = dominantSegment
+    ? `Most of the attributed signal is ${dominantSegment.title.toLowerCase()}, while competitor-owned barriers create ${Math.max(1, competitorGroup?.items.length ?? 0)} possible openings for ${brandName}.`
+    : "Competitive ownership is available only for claims with attributed evidence.";
+
+  return (
+    <div className="competitive-panel competitive-panel--intelligence">
+      <section className="competitive-ownership-card">
+        <header>
+          <div>
+            <h3>Signal ownership</h3>
+            <p>How the attributed corpus splits between category pressure, competitor-owned friction and brand-owned signal.</p>
+          </div>
+          <div className="competitive-share-actions" aria-label="Benchmark actions">
+            <button type="button"><Icon name="upload" size={15} /> Share benchmark</button>
+            <button type="button" aria-label="More benchmark options">...</button>
+          </div>
+        </header>
+        <div className="competitive-ownership-bar" aria-label="Competitive ownership split">
+          {ownershipSegments.map((segment) => {
+            const share = Math.round((segment.count / Math.max(1, ownershipTotal)) * 100);
+            return (
+              <div
+                className={`competitive-ownership-segment competitive-ownership-segment--${segment.tone}`}
+                key={segment.key}
+                style={{ width: `${Math.max(share, 12)}%` }}
+              >
+                <span>{segment.title}</span>
+                <strong>{share}% · {fmtCompact(segment.count)}</strong>
+              </div>
+            );
+          })}
+        </div>
+        <p className="competitive-ownership-insight">
+          <Icon name="sparkle" size={16} />
+          {ownershipInsight}
+        </p>
+      </section>
+
+      <section className="competitive-answer competitive-answer--benchmark">
+        <div>
+          <p className="signal-eyebrow">Benchmark answer</p>
+          <h3>
+            {dominantSegment?.key === "category"
+              ? `This is mostly a category problem, but competitors are exposed where trust, switching and tone break down.`
+              : `${brandName} has a distinct competitive read, but claims stay tied to attributed evidence.`}
+          </h3>
+          <ul className="competitive-answer-list">
+            <li>
+              <Icon name="clock" size={16} />
+              <p><strong>Category pressure:</strong> {competitiveItemDescription(strongestCategory ?? {}, "The biggest pressure is category-wide, so the brand should treat it as context before claiming ownership.")}</p>
+            </li>
+            <li>
+              <Icon name="alert" size={16} />
+              <p><strong>Competitor weakness:</strong> {competitiveItemDescription(strongestCompetitor ?? {}, "Competitor-owned signals reveal what the brand can counter, avoid or convert into a clearer proof point.")}</p>
+            </li>
+            <li>
+              <Icon name="arrow-up" size={16} />
+              <p><strong>{brandName} opening:</strong> {competitiveItemDescription(strongestBrand ?? strongestCompetitor ?? {}, "The strongest opening is to turn competitor friction into a credible brand move with evidence, not imitation.")}</p>
+            </li>
+          </ul>
+        </div>
+        <div className="competitive-answer-orb" aria-hidden="true">
+          <Icon name="arrow-up" size={42} />
+        </div>
+      </section>
+
+      {topConversionItems.length > 0 ? (
+        <section className="competitive-conversion-section">
+          <header>
+            <h3>Top conversion opportunities</h3>
+            <p>Competitor and category barriers the brand can convert into first-party advantage.</p>
+          </header>
+          <div className="competitive-conversion-grid">
+            {topConversionItems.map((item, index) => {
+              const findingId = stringValue(item.finding_id);
+              const deepDive = evidenceDeepDives.find((dive) => dive.finding_id === findingId);
+              const finding = findings.find((candidate) => candidate.finding_id === findingId);
+              const evidenceCount = Number(item.brand_mentions ?? 0) + Number(item.competitor_mentions ?? 0) + Number(item.category_mentions ?? 0);
+              return (
+                <article className="competitive-conversion-card" key={`${findingId}-${index}`}>
+                  <header>
+                    <span>{index + 1}</span>
+                    <h4>{stringValue(item.finding_name) || deepDive?.plain_language_title || finding?.finding_name || `Opportunity ${index + 1}`}</h4>
+                  </header>
+                  <div>
+                    <span>Competitor barrier</span>
+                    <p>{competitiveItemDescription(item, deepDive?.competitor_insight || finding?.public_quote || undefined)}</p>
+                  </div>
+                  <div>
+                    <span>Convert into advantage</span>
+                    <p>{deepDive?.future_watchout || deepDive?.description || "Use this signal as a proof point for a clearer, more credible brand move."}</p>
+                  </div>
+                  <div>
+                    <span>Why it matters</span>
+                    <p>{deepDive?.period_insight || deepDive?.channel_insight || "This opportunity matters because the claim is visible in attributed evidence, not inferred from the brief alone."}</p>
+                  </div>
+                  <small><Icon name="check" size={13} /> Evidence strength: {evidenceCount >= 25 ? "High" : evidenceCount >= 10 ? "Medium" : "Directional"} · {fmtCompact(evidenceCount)} items</small>
+                  <a href={`#${findingAnchor(findingId)}`}>View evidence <Icon name="arrow-right" size={14} /></a>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {presence.length > 0 ? (
+        <section className="competitive-ownership-table">
+          <header>
+            <div>
+              <h3>Explore evidence by ownership</h3>
+              <p>Counts reflect deduplicated, attributed signals only.</p>
+            </div>
+          </header>
+          <div className="competitive-ownership-tabs" aria-label="Ownership evidence groups">
+            {ownershipGroups.map((group) => (
+              <a href={`#competitive-${group.key}`} key={group.key}>
+                <Icon name={group.key === "brand_owned" ? "tag" : group.key === "competitor_owned" ? "alert" : "platform"} size={15} />
+                {group.title}
+                <span>{group.items.length}</span>
+              </a>
+            ))}
+          </div>
+          <div className="competitive-ledger-grid">
+            {ownershipGroups.map((group) => (
+              <section id={`competitive-${group.key}`} key={group.key}>
+                <h4>{group.title}</h4>
+                {group.items.length > 0 ? group.items.slice(0, 4).map((item) => (
+                  <article key={`${group.key}-ledger-${stringValue(item.finding_id)}`}>
+                    <strong>{stringValue(item.finding_name)}</strong>
+                    <p>{competitiveItemDescription(item)}</p>
+                    <small>Brand {fmtCompact(Number(item.brand_mentions ?? 0))} · Competitors {fmtCompact(Number(item.competitor_mentions ?? 0))} · Category {fmtCompact(Number(item.category_mentions ?? 0))}</small>
+                  </article>
+                )) : <p className="competitive-empty">No claim with enough evidence.</p>}
+              </section>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {gaps.length > 0 ? (
+        <div className="competitive-gaps">
+          <h3>Actionable gaps</h3>
+          {gaps.slice(0, 6).map((gap, index) => (
+            <p key={`${stringValue(gap.finding_id)}-${index}`}>
+              <strong>{stringValue(gap.finding_name)}</strong>
+              {stringValue(gap.question_to_answer)}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ActionStudioPanel({ actions }: { actions: PublicActionCard[] }) {
+  const teams: Array<{ key: PublicActionCard["target_team"]; label: string }> = [
+    { key: "brand_strategy", label: "Brand Strategy" },
+    { key: "creative_content", label: "Creative / Content" },
+    { key: "product_cx", label: "Product / CX" },
+    { key: "retail_media", label: "Retail / Media" },
+    { key: "measurement", label: "Measurement" },
+    { key: "cultural_guardrails", label: "Guardrails" }
+  ];
+  const teamsWithActions = teams
+    .map((team) => ({ ...team, actions: actions.filter((action) => action.target_team === team.key).slice(0, 3) }))
+    .filter((team) => team.actions.length > 0);
+
+  return (
+    <div className="action-studio-grid">
+      {teamsWithActions.map((team) => {
+        const teamActions = team.actions;
+        return (
+          <section key={team.key}>
+            <h3>{team.label}</h3>
+            {teamActions.map((action) => (
+              <article key={action.action_id}>
+                <header>
+                  <span>{prettifyActionKind(action.kind)}</span>
+                  <strong>{action.title}</strong>
+                </header>
+                <div className="action-card-body">
+                  <section>
+                    <span>Why it matters</span>
+                    <p>{action.rationale || "This action is tied to the prioritized evidence in the report."}</p>
+                  </section>
+                  <section>
+                    <span>What to do</span>
+                    <p>{action.action_text}</p>
+                  </section>
+                  {(action.suggested_format || action.suggested_channel) && (
+                    <section className="action-example">
+                      <span>Example activation</span>
+                      <p>{actionExample(action)}</p>
+                    </section>
+                  )}
+                </div>
+                <div className="action-card-meta">
+                  {action.suggested_channel && <span><Icon name="platform" size={12} /> {action.suggested_channel}</span>}
+                  {action.suggested_format && <span><Icon name="message" size={12} /> {action.suggested_format}</span>}
+                  {action.estimated_impact && <span>Impact {valueLabel(action.estimated_impact)}</span>}
+                  {action.estimated_effort && <span>Effort {valueLabel(action.estimated_effort)}</span>}
+                  {action.confidence && <span>Confidence {confidenceLabel(action.confidence)}</span>}
+                </div>
+                {action.finding_ids.length > 0 && (
+                  <div className="action-card-findings">
+                    {action.finding_ids.slice(0, 3).map((findingId) => (
+                      <a href={`#${findingAnchor(findingId)}`} key={findingId}>{findingId}</a>
+                ))}
+              </div>
+            )}
+            {action.success_signal && (
+              <small>
+                <Icon name="check" size={12} />
+                Success signal: {action.success_signal}
+              </small>
+            )}
+              </article>
+            ))}
+          </section>
+        );
+      })}
+      {teamsWithActions.length === 0 ? (
+        <FindingNotice icon="info" title="Action Studio pendiente." body="Este corte no trae acciones client-safe suficientes. Recorre Step 6 para generar el handoff por equipo." />
+      ) : null}
+    </div>
+  );
+}
+
+function EmergingPatternsPanel({
+  corpusId,
+  patterns,
+  marketAnalysis,
+  futureSignals,
+}: {
+  corpusId: string;
+  patterns: EmergingPattern[];
+  marketAnalysis: ReturnType<typeof adaptTbSignalPayload>["marketAnalysis"];
+  futureSignals: ReturnType<typeof adaptTbSignalPayload>["futureSignals"];
+}) {
+  const visiblePatterns = dedupeEmergingPatterns(patterns);
+  if (visiblePatterns.length === 0 && !marketAnalysis && futureSignals.length === 0) {
+    return (
+      <FindingNotice
+        icon="wave"
+        title="Emerging Patterns pendiente."
+        body="Los próximos outputs generarán esta capa abierta desde corpus, Knowledge Base y archivos del cliente."
+      />
+    );
+  }
+
+  return <SignalEmergingPatternsExplorer corpusId={corpusId} futureSignals={futureSignals} marketAnalysis={marketAnalysis} patterns={patterns} />;
+}
+
+function FindingDetailDrawer({
+  findings,
+  actions,
+  competitive,
+  evidenceDeepDives,
+  mentionsSample,
+}: {
+  findings: PublicTbFinding[];
+  actions: PublicActionCard[];
+  competitive: ReturnType<typeof adaptTbSignalPayload>["competitive"];
+  evidenceDeepDives: ReturnType<typeof adaptTbSignalPayload>["evidenceDeepDives"];
+  mentionsSample: JsonRecord[];
+}) {
+  return (
+    <FindingDetailWorkspace
+      actions={actions}
+      competitivePresence={competitive.finding_entity_presence}
+      evidenceDeepDives={evidenceDeepDives}
+      findings={findings}
+      mentionsSample={mentionsSample}
+    />
   );
 }
 
@@ -586,11 +1256,14 @@ function TensionMap({
 }
 
 function FrictionHeatmap({ barriers }: { barriers: JsonRecord[] }) {
-  const stages: { label: string; key: "consideracion" | "compra" | "siniestro" | "renovacion" }[] = [
-    { label: "Consideración", key: "consideracion" },
-    { label: "Compra", key: "compra" },
-    { label: "Siniestro", key: "siniestro" },
-    { label: "Renovación", key: "renovacion" },
+  const stages = [
+    { label: "Awareness", key: "awareness" },
+    { label: "Consideración", key: "consideration" },
+    { label: "Evaluación", key: "evaluation" },
+    { label: "Compra", key: "purchase" },
+    { label: "Uso", key: "usage" },
+    { label: "Recompra", key: "repeat" },
+    { label: "Recomendación", key: "advocacy" },
   ];
   return (
     <div className="friction-heatmap">
@@ -669,6 +1342,80 @@ function FindingNotice({ icon, title, body }: { icon: "info" | "wave" | "message
   );
 }
 
+function QualityBoundariesPanel({
+  clientBoundaries,
+  limitations,
+  publishedEvidenceCount,
+  totalMentions,
+}: {
+  clientBoundaries: string[];
+  limitations: JsonRecord;
+  publishedEvidenceCount: number;
+  totalMentions: number;
+}) {
+  const limitationEntries = Object.entries(limitations)
+    .map(([key, value]) => friendlyLimitation(key, value))
+    .filter(Boolean);
+  const cards = [
+    {
+      icon: "check" as const,
+      title: "Qué sí podemos afirmar",
+      body: "Los findings y acciones están conectados a evidencia del corte publicado y deben leerse junto con su confianza.",
+      stat: `${fmtCompact(totalMentions)} menciones en el snapshot`
+    },
+    {
+      icon: "message" as const,
+      title: "Qué evidencia ve el cliente",
+      body: "Signal muestra citas seleccionadas para explicar los hallazgos sin abrir el corpus completo ni datos operativos internos.",
+      stat: `${fmtCompact(publishedEvidenceCount)} verbatims publicados`
+    },
+    {
+      icon: "layers" as const,
+      title: "Cómo leer competencia",
+      body: "Los claims comparativos sólo aparecen cuando existe data atribuida de marca, competencia o industria.",
+      stat: "Sin evidencia, queda como pendiente"
+    }
+  ];
+
+  return (
+    <div className="quality-panel">
+      <header>
+        <p className="signal-eyebrow signal-eyebrow--quiet">Quality / Boundaries</p>
+        <h3>Cómo leer este reporte con confianza</h3>
+        <span>Client-friendly: límites claros, sin SQL, gates internos ni notas de operación.</span>
+      </header>
+
+      <div className="quality-card-grid">
+        {cards.map((card) => (
+          <article key={card.title}>
+            <span className="quality-card-icon"><Icon name={card.icon} size={17} /></span>
+            <strong>{card.title}</strong>
+            <p>{card.body}</p>
+            <small>{card.stat}</small>
+          </article>
+        ))}
+      </div>
+
+      <div className="quality-boundary-list">
+        <section>
+          <strong>Notas de lectura</strong>
+          {(clientBoundaries.length > 0 ? clientBoundaries : ["El reporte muestra una lectura accionable del snapshot publicado."]).map((boundary, index) => (
+            <p key={index}><Icon name="info" size={12} /> {friendlyBoundary(boundary)}</p>
+          ))}
+        </section>
+        <section>
+          <strong>Límites del corte</strong>
+          {limitationEntries.length > 0 ? limitationEntries.map((entry, index) => (
+            <p key={index}><Icon name="info" size={12} /> {entry}</p>
+          )) : (
+            <p><Icon name="check" size={12} /> No hay límites adicionales declarados para este output publicado.</p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className="signal-chip">{children}</span>;
 }
@@ -683,13 +1430,200 @@ function heatColor(intensity: number): string {
 function summarizeChannels(items: JsonRecord[]) {
   const counts = new Map<string, number>();
   for (const item of items) {
-    const platform = stringValue(item.platform) || "Fuente";
+    const platform = stringValue(item.platform);
+    if (!platform || isContentTypeToken(platform)) continue;
     counts.set(platform, (counts.get(platform) ?? 0) + 1);
   }
   return Array.from(counts.entries())
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 3);
+}
+
+function isContentTypeToken(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, "_");
+  return ["comment", "comments", "video", "shorts", "reel", "reels", "post", "tweet", "quote_tweet"].includes(normalized);
+}
+
+function splitLeadSentence(text: string) {
+  const clean = text.trim();
+  if (!clean) return { title: "", body: "" };
+  const match = clean.match(/^(.+?[.!?])(\s+|$)([\s\S]*)$/);
+  if (!match) return { title: clean, body: "" };
+  return {
+    title: (match[1] ?? clean).trim(),
+    body: (match[3] ?? "").trim(),
+  };
+}
+
+function selectKnowledgeHeroText(answer: string, summary: string | null) {
+  const cleanAnswer = answer.trim();
+  const cleanSummary = (summary ?? "").trim();
+  const genericSummary = /^client-ready read of the approved corpus/i.test(cleanSummary);
+  const isMainAnswer = /first direct'?s tiktok problem/i.test(cleanAnswer);
+  const isCompetitiveSnippet = /^(monzo|natwest|barclays|revolut)\b/i.test(cleanAnswer) || /hip[oó]tesis:/i.test(cleanAnswer);
+
+  if (isMainAnswer) return cleanAnswer;
+  if (cleanSummary && !genericSummary) return cleanSummary;
+  if (cleanAnswer && !isCompetitiveSnippet) return cleanAnswer;
+  return cleanSummary || cleanAnswer;
+}
+
+function layerLabel(layer: PublicTbFinding["layer"]) {
+  if (layer === "psicologico") return "Psychological";
+  if (layer === "personal") return "Personal";
+  if (layer === "social") return "Social";
+  if (layer === "cultural") return "Cultural";
+  return prettifyKey(layer);
+}
+
+function confidenceLabel(value: unknown) {
+  const normalized = normalizeConfidence(value);
+  if (normalized === "alta") return "High";
+  if (normalized === "baja") return "Directional";
+  return "Medium";
+}
+
+function valueLabel(value: unknown) {
+  const normalized = String(value ?? "").toLowerCase();
+  if (normalized === "alto" || normalized === "alta" || normalized === "high") return "High";
+  if (normalized === "bajo" || normalized === "baja" || normalized === "low") return "Low";
+  if (normalized === "media" || normalized === "medio" || normalized === "medium") return "Medium";
+  return prettifyKey(value);
+}
+
+function prettifyActionKind(kind: PublicActionCard["kind"]) {
+  const labels: Record<PublicActionCard["kind"], string> = {
+    activation: "Activation",
+    friction_removal: "Friction removal",
+    alignment: "Alignment",
+    experiment: "Experiment",
+    guardrail: "Guardrail",
+    structural_note: "Structural note"
+  };
+  return labels[kind] ?? valueLabel(kind);
+}
+
+function competitiveItemDescription(item: JsonRecord, fallback?: string) {
+  if (fallback) return truncate(fallback, 170);
+  const ownership = stringValue(item.ownership);
+  const brand = Number(item.brand_mentions ?? 0);
+  const competitor = Number(item.competitor_mentions ?? 0);
+  const category = Number(item.category_mentions ?? 0);
+  if (ownership === "brand_owned" || brand > competitor + category) {
+    return "This signal is visibly connected to the brand, so it needs a brand-owned response rather than a category explanation.";
+  }
+  if (ownership === "competitor_owned" || competitor > brand) {
+    return "Competitors are carrying more evidence for this signal, so the opportunity is to decide whether to counter, borrow or avoid the move.";
+  }
+  return "The signal is mostly category-wide: useful context for strategy, but not a claim that one brand alone owns the problem.";
+}
+
+function uniqueCompetitiveItems(items: JsonRecord[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = stringValue(item.finding_id) || stringValue(item.finding_name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function actionExample(action: PublicActionCard) {
+  const channel = action.suggested_channel ? ` on ${action.suggested_channel}` : "";
+  const format = action.suggested_format || "a concrete execution";
+  if (action.kind === "friction_removal") {
+    return `Show the fix as ${format}${channel}: what changed, where users find it, and how success will be measured.`;
+  }
+  if (action.kind === "experiment") {
+    return `Run ${format}${channel} as a controlled test with a clear audience, timing and success threshold.`;
+  }
+  return `Turn this into ${format}${channel}, then connect the execution back to the finding IDs listed below.`;
+}
+
+function dedupeKnowledgeSources(sources: NonNullable<ReturnType<typeof adaptTbSignalPayload>["knowledgeImpact"]>["sources_used"]) {
+  const seen = new Map<string, (typeof sources)[number]>();
+  for (const source of sources) {
+    const key = `${source.original_file_name ?? source.title}:${source.source_kind}`;
+    if (!seen.has(key)) seen.set(key, source);
+  }
+  return Array.from(seen.values());
+}
+
+function buildKnowledgeSourceTypes(
+  sources: NonNullable<ReturnType<typeof adaptTbSignalPayload>["knowledgeImpact"]>["sources_used"],
+  briefCount: number,
+  fileCount: number
+) {
+  const haystack = sources
+    .map((source) => `${source.source_kind} ${source.title} ${source.original_file_name ?? ""} ${source.summary}`)
+    .join(" ")
+    .toLowerCase();
+  const has = (needle: string) => haystack.includes(needle);
+  const tokens: Array<{ value: string; label: string; count?: number }> = [];
+  const add = (value: string, label: string, count?: number) => tokens.push({ value, label, count });
+
+  if (has("tiktok") || fileCount > 0) add("tiktok", "TikTok");
+  add("x", "X");
+  add("instagram", "Instagram");
+  if (has("reddit")) add("reddit", "Reddit");
+  add("csv", "CSV", fileCount);
+  add("comment", "Comments");
+  if (has("youtube")) add("youtube", "YouTube");
+  if (has("facebook")) add("facebook", "Facebook");
+  if (has("brief") || briefCount > 0) add("post", "Brief input", briefCount);
+
+  const unique = new Map<string, { value: string; label: string; count?: number }>();
+  for (const token of tokens) {
+    if (!unique.has(token.value)) unique.set(token.value, token);
+  }
+  return Array.from(unique.values());
+}
+
+function dedupeEmergingPatterns(patterns: EmergingPattern[]) {
+  const seen = new Map<string, EmergingPattern>();
+  for (const pattern of patterns) {
+    const key = normalizePatternKey(pattern);
+    const current = seen.get(key);
+    if (!current || pattern.evidence_count > current.evidence_count) {
+      seen.set(key, pattern);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => b.evidence_count - a.evidence_count);
+}
+
+function normalizePatternKey(pattern: EmergingPattern) {
+  const title = pattern.title
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 3 && !["pattern", "cluster", "senal", "signals", "emerging"].includes(token))
+    .slice(0, 5)
+    .join("-");
+  return `${pattern.pattern_type}:${title || pattern.pattern_id}`;
+}
+
+function friendlyBoundary(value: string) {
+  return value
+    .replace("El reporte publica una muestra de evidencia vinculada a hallazgos; no expone el corpus completo.", "El reporte muestra evidencia seleccionada por finding; el corpus completo permanece protegido.")
+    .replace("Las recomendaciones deben leerse junto con su nivel de confianza y evidencia disponible.", "Cada recomendación debe leerse con su confianza, volumen de evidencia y contexto del corte.")
+    .replace("Este corte tuvo observaciones metodológicas internas; Noisia las considera antes de presentar conclusiones finales.", "Algunos hallazgos requieren lectura cuidadosa; se presentan como dirección de decisión, no como afirmación absoluta.")
+    .replace("La lectura competitiva requiere corpus de marca, competencia e industria atribuido; si falta, se muestra como pendiente.", "La inteligencia competitiva sólo se activa cuando hay data competitiva atribuida y suficiente.");
+}
+
+function friendlyLimitation(key: string, value: unknown) {
+  if (value === null || value === undefined || value === "") return "";
+  const label = prettifyKey(key)
+    .replace("Sample", "Muestra")
+    .replace("Coverage", "Cobertura")
+    .replace("Competitive", "Competencia");
+  const text = String(value)
+    .replace(/quality gates?/gi, "validaciones metodológicas")
+    .replace(/failed/gi, "pendientes")
+    .replace(/internal/gi, "metodológico");
+  return `${label}: ${text}`;
 }
 
 function summarizeLayerTension(items: JsonRecord[], scatter: JsonRecord[]) {
@@ -728,15 +1662,15 @@ function normalizeConfidence(value: unknown): "alta" | "media" | "baja" {
   return "media";
 }
 
-function prettifyKey(key: string): string {
-  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+function prettifyKey(key: unknown): string {
+  return String(key ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function fmtDateRange(start: unknown, end: unknown): string {
+function fmtDateRange(start: unknown, end: unknown, locale = "es-MX"): string {
   const s = String(start ?? "");
   const e = String(end ?? "");
   const opts: Intl.DateTimeFormatOptions = { month: "short", year: "2-digit" };
-  const fmt = (d: string) => (d ? new Date(d).toLocaleDateString("es-MX", opts) : "");
+  const fmt = (d: string) => (d ? new Date(d).toLocaleDateString(locale, opts) : "");
   return [fmt(s), fmt(e)].filter(Boolean).join(" → ");
 }
 
@@ -746,31 +1680,80 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max).replace(/\s+\S*$/, "") + "…";
 }
 
-const moduleOrder: SignalModuleKey[] = [
-  "overview",
-  "tension_map",
-  "actions",
-  "barriers",
-  "triggers",
-  "friction_heatmap",
-  "verbatims",
-  "stream_graph",
-  "compare",
-  "chat",
-];
+function findingAnchor(findingId: string) {
+  return `finding-${findingId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+}
 
-const moduleLabels: Record<SignalModuleKey, string> = {
-  overview: "Overview",
-  barriers: "Barriers",
-  triggers: "Triggers",
-  verbatims: "Verbatims",
-  actions: "Acciones",
-  compare: "Compare",
-  chat: "Chat",
-  tension_map: "Tensión",
-  stream_graph: "Stream",
-  friction_heatmap: "Heatmap",
+function buildSignalShellGroups(moduleEnabled: (key: SignalModuleKey) => boolean): SignalShellGroup[] {
+  const groups: SignalShellGroup[] = [
+    {
+      sections: [
+        moduleEnabled("overview") ? { key: "overview", label: "Overview", icon: "platform" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Triggers & Barriers",
+      sections: [
+        moduleEnabled("tb_decision_field") ? { key: "tb-decision-field", label: "Decision Field" } : null,
+        moduleEnabled("opportunities") ? { key: "tb-opportunities", label: "Opportunities" } : null,
+        moduleEnabled("competitive_intelligence") ? { key: "competitive", label: "Competitive Intelligence" } : null,
+        moduleEnabled("action_studio") ? { key: "tb-action-studio", label: "Action Studio" } : null,
+        moduleEnabled("evidence") ? { key: "finding-detail", label: "Evidence" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Emerging Patterns",
+      sections: [
+        moduleEnabled("emerging_patterns") ? { key: "emerging-patterns", label: "Source Patterns", icon: "wave" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Corpus",
+      sections: [
+        moduleEnabled("corpus_view") ? { key: "corpus-view", label: "Corpus View", icon: "message" } : null,
+        moduleEnabled("corpus_chat") ? { key: "corpus-chat", label: "Corpus Chat", icon: "message" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Quality",
+      sections: [
+        moduleEnabled("quality_boundaries") ? { key: "quality-boundaries", label: "Boundaries", icon: "info" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Settings",
+      sections: [
+        { key: "settings", label: "Settings", icon: "info" }
+      ]
+    }
+  ];
+
+  return groups.filter((group) => group.sections.length > 0);
+}
+
+const legacySignalModuleAliases: Record<SignalModuleKey, string[]> = {
+  overview: ["overview"],
+  tb_decision_field: ["tension_map"],
+  opportunities: ["overview", "barriers", "triggers"],
+  competitive_intelligence: ["compare"],
+  action_studio: ["actions"],
+  evidence: ["verbatims"],
+  quality_boundaries: [],
+  emerging_patterns: [],
+  corpus_view: ["verbatims"],
+  corpus_chat: ["chat"]
 };
+
+function isSignalModuleEnabled(manifest: JsonRecord, key: SignalModuleKey, hasV2Manifest: boolean) {
+  if (hasV2Manifest) return manifest[key] !== false;
+  const aliases = legacySignalModuleAliases[key];
+  const legacyKey = aliases.find((alias) => Object.prototype.hasOwnProperty.call(manifest, alias));
+  return legacyKey ? manifest[legacyKey] !== false : true;
+}
+
+function legacyModuleEnabled(manifest: JsonRecord, key: string) {
+  return manifest[key] !== false;
+}
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};

@@ -6,6 +6,7 @@ import { startTbAnalysisWorker } from "./queues/tb-analysis";
 
 const queryEngineWorker = startQueryEngineWorker();
 const tbAnalysisWorker = startTbAnalysisWorker();
+const keepAlive = setInterval(() => undefined, 60_000);
 
 queryEngineWorker.on("completed", (job) => {
   console.log(`Query Engine job completed: ${job.id}`);
@@ -22,6 +23,7 @@ tbAnalysisWorker.on("failed", (job, error) => {
 });
 
 async function shutdown() {
+  clearInterval(keepAlive);
   await queryEngineWorker.close();
   await tbAnalysisWorker.close();
   await redisConnection.quit();

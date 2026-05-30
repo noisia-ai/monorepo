@@ -37,11 +37,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   const sourceLabel = String(form.get("source_label") ?? "sentione_csv");
   const mentionTypeRaw = form.get("mention_type");
   const iterationIdRaw = form.get("query_iteration_id");
+  const competitorIdRaw = form.get("competitor_id");
+  const entityLabelRaw = form.get("entity_label");
+  const entityKindRaw = form.get("entity_kind");
   const mentionType =
     mentionTypeRaw === "brand" || mentionTypeRaw === "competitor" || mentionTypeRaw === "industry"
       ? (mentionTypeRaw as "brand" | "competitor" | "industry")
       : null;
   const queryIterationId = typeof iterationIdRaw === "string" && iterationIdRaw.length > 0 ? iterationIdRaw : null;
+  const competitorId =
+    typeof competitorIdRaw === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(competitorIdRaw)
+      ? competitorIdRaw
+      : null;
+  const entityLabel =
+    typeof entityLabelRaw === "string" && entityLabelRaw.trim().length > 0
+      ? entityLabelRaw.trim().slice(0, 140)
+      : defaultEntityLabel(mentionType);
+  const entityKind = normalizeEntityKind(entityKindRaw, mentionType, competitorId, entityLabel);
 
   if (!(file instanceof File)) {
     return Response.json(
@@ -63,6 +75,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       studyCorpusId: corpus.id,
       queryIterationId,
       mentionType,
+      competitorId,
+      entityKind,
+      entityLabel,
       sourceSystem: "sentione_csv",
       sourceFileName: file.name || sourceLabel,
       sourceFileHash: fileHash(buffer),
@@ -107,4 +122,35 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       { status: 500 }
     );
   }
+}
+
+function defaultEntityLabel(mentionType: "brand" | "competitor" | "industry" | null) {
+  if (mentionType === "brand") return "Marca";
+  if (mentionType === "competitor") return "Pool competitivo";
+  if (mentionType === "industry") return "Categoría";
+  return null;
+}
+
+function normalizeEntityKind(
+  raw: FormDataEntryValue | null,
+  mentionType: "brand" | "competitor" | "industry" | null,
+  competitorId: string | null,
+  entityLabel: string | null
+) {
+  if (
+    raw === "primary_brand" ||
+    raw === "competitor_pool" ||
+    raw === "competitor" ||
+    raw === "category"
+  ) {
+    return raw;
+  }
+
+  if (mentionType === "brand") return "primary_brand";
+  if (mentionType === "industry") return "category";
+  if (mentionType === "competitor") {
+    return competitorId || (entityLabel && entityLabel !== "Pool competitivo") ? "competitor" : "competitor_pool";
+  }
+
+  return "unknown";
 }

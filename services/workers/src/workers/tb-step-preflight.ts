@@ -9,6 +9,7 @@ import {
   type PreflightResult
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import { enqueueStep, markStepCompleted, markStepFailed, markStepRunning, releaseCorpusLock } from "./tb-shared";
 
 type TbPreflightJobData = {
@@ -34,12 +35,16 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
 
   try {
     const ctx = await loadAnalysisContext(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(25);
 
     // Build the input from the corpus snapshot — for now we just sample the
     // current 'included' set. The snapshot table contains the exact mention
     // ids so future iterations can re-run preflight against historical state.
-    const input = await buildPreflightInput(ctx);
+    const input = {
+      ...(await buildPreflightInput(ctx)),
+      ragContext
+    };
     await job.updateProgress(45);
 
     const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";

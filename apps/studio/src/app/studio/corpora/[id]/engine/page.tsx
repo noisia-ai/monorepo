@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { TbAnalysisRunPanel } from "@/components/analysis/TbAnalysisRunPanel";
 import { EngineWizard } from "@/components/engine/EngineWizard";
 import { requireStudioUser } from "@/lib/auth/guards";
+import { getBrandDetailForUser } from "@/lib/data/brands";
 import { getCorpusEngineState, getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function CorpusEnginePage({ params }: { params: Promise<{ i
 
   const state = await getCorpusEngineState(corpus.id);
   const latestAnalysis = await getTbAnalysisForCorpus(corpus.id);
+  const brand = corpus.brandId ? await getBrandDetailForUser(session.appUser, corpus.brandId) : null;
 
   return (
     <div className="studio-page">
@@ -37,6 +39,7 @@ export default async function CorpusEnginePage({ params }: { params: Promise<{ i
         assessedAt={state.assessedAt}
         snapshots={state.snapshots}
         cleanups={state.cleanups}
+        competitors={brand?.competitors ?? []}
       />
       <TbAnalysisRunPanel
         corpusId={corpus.id}

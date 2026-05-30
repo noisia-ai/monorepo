@@ -1,4 +1,5 @@
 export * from "./tb";
+export * from "./semantic-rag";
 
 export const QUERY_ENGINE_QUEUE_NAME = "noisia-query-engine";
 export const QUERY_ENGINE_PIPELINE_VERSION = "query-engine-f2-1-mvp";
@@ -44,6 +45,8 @@ export type SampleEvaluatorInput = {
   corpus: QueryComposerInput["corpus"];
   subject: QueryComposerInput["subject"];
   methodology: Pick<QueryComposerInput["methodology"], "slug" | "name">;
+  queryStrategyBrief?: QueryStrategyBrief;
+  knowledgeSources?: MemoryRecord[];
   query_text: string;
   sample: SampleMention[];
 };
@@ -92,6 +95,8 @@ export function buildSampleEvaluatorPrompt(input: SampleEvaluatorInput): string 
         business_question: input.corpus.businessQuestion,
         audience_segment: input.corpus.audienceSegment,
         geo_focus: input.corpus.geoFocus,
+        query_strategy_brief: input.queryStrategyBrief ?? null,
+        knowledge_base: input.knowledgeSources ?? [],
         query_text: input.query_text
       },
       null,
@@ -300,6 +305,21 @@ export type QueryComposerInput = {
   knowledgeSources: MemoryRecord[];
   memoryIndustry: MemoryRecord[];
   memoryBrand: MemoryRecord[];
+  queryStrategyBrief?: QueryStrategyBrief;
+};
+
+export type QueryStrategyBrief = {
+  summary: string;
+  priority_topics: string[];
+  audience_clues: string[];
+  competitor_hypotheses: string[];
+  query_language: string[];
+  exclusions_or_noise: string[];
+  brand_query_role: string;
+  competitor_query_role: string;
+  industry_query_role: string;
+  must_answer: string[];
+  limitations: string[];
 };
 
 export type MethodologyManifest = {
@@ -340,6 +360,7 @@ export type ComposedQuery = {
     knowledge_potential_barriers?: string[];
     global_exclusions: string[];
     knowledge_sources?: MemoryRecord[];
+    query_strategy_brief?: QueryStrategyBrief | null;
     memory_industry: MemoryRecord[];
     memory_brand: MemoryRecord[];
     model?: string;
@@ -364,6 +385,11 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
     "- Usalo como CONTEXTO para entender lenguaje, tensiones, competidores y ruido probable.",
     "- No copies claims internos si no son lenguaje que un consumidor diria.",
     "- Si la fuente sugiere frases buscables, traducelas a lenguaje real de plataforma antes de meterlas a la query.",
+    "",
+    "Query Strategy Brief:",
+    "- Si existe, es la lectura priorizada del Knowledge Base. Usalo como brujula.",
+    "- Las tres queries deben responder roles distintos definidos ahi: marca = diagnostico, competencia = benchmark, industria = baseline cultural.",
+    "- No ignores exclusiones, hipotesis competitivas o temas prioritarios del strategy brief.",
     "",
     "Escalera de traduccion cultural (aplica siempre):",
     "Concepto estrategico → Espanol llano → Espanol mexicano informal → Expresion nativa de plataforma → Frase buscable",
@@ -415,6 +441,7 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
     JSON.stringify(
       {
         corpus: input.corpus,
+        query_strategy_brief: input.queryStrategyBrief ?? null,
         knowledge_base: input.knowledgeSources,
         subject: input.subject,
         methodology: {
@@ -429,6 +456,97 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
       2
     )
   ].join("\n");
+}
+
+export function buildQueryStrategyBriefPrompt(input: QueryComposerInput): string {
+  return [
+    "Eres el Strategy Intake Engine de Noisia.",
+    "Tu tarea es leer el brief, Brand OS y Knowledge Base PRE-CORPUS para producir una estrategia de busqueda y analisis.",
+    "No generes queries booleanas aqui. Devuelve SOLO JSON valido.",
+    "",
+    "Objetivo:",
+    "- Priorizar que debe buscar el engine.",
+    "- Separar diagnostico de marca, benchmark competitivo y baseline de industria.",
+    "- Traducir lenguaje de brief/cliente a lenguaje real de usuario/plataforma.",
+    "- Detectar ruido/exclusiones antes de componer queries.",
+    "- Decir que necesita poder responder el output final.",
+    "",
+    "Reglas:",
+    "- No inventes competidores que no esten en input.",
+    "- No conviertas claims internos en verdad del consumidor.",
+    "- Si el Knowledge Base trae customer service/social archive con lenguaje real, extrae frases buscables.",
+    "- Si trae campañas/briefs, usalos como contexto e hipotesis, no como evidencia.",
+    "- Si falta data competitiva suficiente, dilo como limitacion.",
+    "",
+    "Formato JSON obligatorio:",
+    JSON.stringify(
+      {
+        summary: "...",
+        priority_topics: ["..."],
+        audience_clues: ["..."],
+        competitor_hypotheses: ["..."],
+        query_language: ["..."],
+        exclusions_or_noise: ["..."],
+        brand_query_role: "Diagnosticar que triggers/barriers aparecen cuando la marca esta presente.",
+        competitor_query_role: "Benchmarkear si las mismas tensiones pertenecen al peer set o a competidores.",
+        industry_query_role: "Medir si la tension es de categoria aunque nadie mencione marcas.",
+        must_answer: ["..."],
+        limitations: ["..."]
+      },
+      null,
+      2
+    ),
+    "",
+    "Input:",
+    JSON.stringify(
+      {
+        corpus: input.corpus,
+        subject: input.subject,
+        methodology: {
+          slug: input.methodology.slug,
+          name: input.methodology.name,
+          version: input.methodology.version
+        },
+        competitors: input.competitors,
+        brand_seeds: input.brandSeeds,
+        knowledge_base: input.knowledgeSources,
+        memory_industry: input.memoryIndustry,
+        memory_brand: input.memoryBrand
+      },
+      null,
+      2
+    )
+  ].join("\n");
+}
+
+export function parseQueryStrategyBriefJson(raw: string): QueryStrategyBrief {
+  const cleaned = raw
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error("No JSON object in query strategy brief response");
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as Partial<QueryStrategyBrief>;
+  return normalizeQueryStrategyBrief(parsed);
+}
+
+function normalizeQueryStrategyBrief(value: Partial<QueryStrategyBrief>): QueryStrategyBrief {
+  return {
+    summary: asBriefString(value.summary, 1200),
+    priority_topics: briefArray(value.priority_topics, 12),
+    audience_clues: briefArray(value.audience_clues, 10),
+    competitor_hypotheses: briefArray(value.competitor_hypotheses, 12),
+    query_language: briefArray(value.query_language, 24),
+    exclusions_or_noise: briefArray(value.exclusions_or_noise, 16),
+    brand_query_role: asBriefString(value.brand_query_role, 500),
+    competitor_query_role: asBriefString(value.competitor_query_role, 500),
+    industry_query_role: asBriefString(value.industry_query_role, 500),
+    must_answer: briefArray(value.must_answer, 10),
+    limitations: briefArray(value.limitations, 10)
+  };
 }
 
 export type EvaluationHistoryEntry = {
@@ -448,6 +566,8 @@ export function buildQueryRefinementPrompt(params: {
   subject: QueryComposerInput["subject"];
   corpus: QueryComposerInput["corpus"];
   methodology: Pick<QueryComposerInput["methodology"], "slug" | "name">;
+  knowledgeSources?: MemoryRecord[];
+  queryStrategyBrief?: QueryStrategyBrief;
   /** All previous evaluated iterations — oldest first — so Claude can see the full arc. */
   evaluationHistory?: EvaluationHistoryEntry[];
   /** Optional free-form user instructions to apply on top of the diagnostic. */
@@ -528,7 +648,17 @@ export function buildQueryRefinementPrompt(params: {
         ]
       : []),
     "Contexto:",
-    JSON.stringify({ subject: params.subject, corpus: params.corpus, methodology: params.methodology }, null, 2)
+    JSON.stringify(
+      {
+        subject: params.subject,
+        corpus: params.corpus,
+        methodology: params.methodology,
+        query_strategy_brief: params.queryStrategyBrief ?? null,
+        knowledge_base: params.knowledgeSources ?? []
+      },
+      null,
+      2
+    )
   ].join("\n");
 }
 
@@ -623,12 +753,20 @@ function buildQueryComponents(input: QueryComposerInput) {
     category_seeds: unique(categorySeeds),
     trigger_phrases_tb: unique(signalPhrases.triggers_generic ?? []),
     barrier_phrases_tb: unique(signalPhrases.barriers_generic ?? []),
-    knowledge_query_language: unique(extractKnowledgeStrings(input.knowledgeSources, "query_language")),
+    knowledge_query_language: unique([
+      ...extractKnowledgeStrings(input.knowledgeSources, "query_language"),
+      ...(input.queryStrategyBrief?.query_language ?? [])
+    ]),
     knowledge_potential_triggers: unique(extractKnowledgeStrings(input.knowledgeSources, "potential_triggers")),
     knowledge_potential_barriers: unique(extractKnowledgeStrings(input.knowledgeSources, "potential_barriers")),
-    global_exclusions: unique([...(input.methodology.manifest.global_exclusions ?? []), ...memoryExclusions]),
+    global_exclusions: unique([
+      ...(input.methodology.manifest.global_exclusions ?? []),
+      ...memoryExclusions,
+      ...(input.queryStrategyBrief?.exclusions_or_noise ?? [])
+    ]),
     memory_industry: input.memoryIndustry,
-    memory_brand: input.memoryBrand
+    memory_brand: input.memoryBrand,
+    query_strategy_brief: input.queryStrategyBrief ?? null
   };
 }
 
@@ -672,4 +810,14 @@ function unique(values: string[]) {
 
 function compact(values: Array<string | null | undefined>) {
   return values.filter((value): value is string => Boolean(value));
+}
+
+function asBriefString(value: unknown, max: number) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function briefArray(value: unknown, limit: number) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim().slice(0, 500)).filter(Boolean).slice(0, limit)
+    : [];
 }

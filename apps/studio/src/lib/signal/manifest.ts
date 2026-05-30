@@ -1,26 +1,26 @@
 export type SignalModuleKey =
   | "overview"
-  | "barriers"
-  | "triggers"
-  | "verbatims"
-  | "actions"
-  | "compare"
-  | "chat"
-  | "tension_map"
-  | "stream_graph"
-  | "friction_heatmap";
+  | "tb_decision_field"
+  | "opportunities"
+  | "competitive_intelligence"
+  | "action_studio"
+  | "evidence"
+  | "quality_boundaries"
+  | "emerging_patterns"
+  | "corpus_view"
+  | "corpus_chat";
 
 export const defaultSignalManifest: Record<SignalModuleKey, boolean> = {
   overview: true,
-  barriers: true,
-  triggers: true,
-  verbatims: true,
-  actions: true,
-  compare: false,
-  chat: true,
-  tension_map: true,
-  stream_graph: false,
-  friction_heatmap: true
+  tb_decision_field: true,
+  opportunities: true,
+  competitive_intelligence: true,
+  action_studio: true,
+  evidence: true,
+  quality_boundaries: true,
+  emerging_patterns: true,
+  corpus_view: true,
+  corpus_chat: true
 };
 
 export const signalModuleMeta: Array<{
@@ -31,62 +31,62 @@ export const signalModuleMeta: Array<{
 }> = [
   {
     key: "overview",
-    label: "Overview editorial",
-    description: "Cover story, top barreras y lectura del momento cultural.",
+    label: "Overview & confianza",
+    description: "Contexto del corte, tamaño de corpus, periodo, confianza y lectura ejecutiva.",
     status: "ready"
   },
   {
-    key: "barriers",
-    label: "Barriers",
-    description: "Kanban y detalle de barreras con evidencia.",
+    key: "tb_decision_field",
+    label: "T&B Decision Field",
+    description: "Vista propietaria central: fuerzas que motivan, frenan y qué tan movibles son.",
     status: "ready"
   },
   {
-    key: "triggers",
-    label: "Triggers",
-    description: "Señales positivas cuando el corpus las tenga.",
-    status: "partial"
-  },
-  {
-    key: "verbatims",
-    label: "Verbatims",
-    description: "Explorador editorial de citas y menciones.",
-    status: "partial"
-  },
-  {
-    key: "actions",
-    label: "Actions",
-    description: "Playbook priorizado para equipos de marca/agencia.",
+    key: "opportunities",
+    label: "Opportunities",
+    description: "Tensiones, whitespace y prioridades sin repetir el mismo finding.",
     status: "ready"
   },
   {
-    key: "compare",
-    label: "Compare",
-    description: "Benchmark vs competidores. Requiere corpora aprobados.",
-    status: "hold"
+    key: "competitive_intelligence",
+    label: "Competitive Intelligence",
+    description: "Qué es de la marca, qué posee la competencia y qué es de categoría.",
+    status: "ready"
   },
   {
-    key: "chat",
-    label: "Chat del estudio",
-    description: "Asistente restringido al output publicado.",
-    status: "partial"
+    key: "action_studio",
+    label: "Action Studio",
+    description: "Acciones por equipo: estrategia, contenido, producto/CX, media y medición.",
+    status: "ready"
   },
   {
-    key: "tension_map",
-    label: "Tension Map",
-    description: "Fuerzas que jalan hacia o alejan de la marca.",
-    status: "partial"
+    key: "evidence",
+    label: "Evidence",
+    description: "Citas y finding detail conectados a cada recomendación.",
+    status: "ready"
   },
   {
-    key: "stream_graph",
-    label: "Stream cultural",
-    description: "Evolución narrativa en el tiempo. Requiere series por semana.",
-    status: "hold"
+    key: "quality_boundaries",
+    label: "Quality / Boundaries",
+    description: "Límites de lo que podemos afirmar, gates y advertencias client-safe.",
+    status: "ready"
   },
   {
-    key: "friction_heatmap",
-    label: "Friction Heatmap",
-    description: "Barreras por etapa del journey.",
+    key: "emerging_patterns",
+    label: "Emerging Patterns",
+    description: "Insights abiertos que nacen del corpus sin forzarlos al método T&B.",
+    status: "ready"
+  },
+  {
+    key: "corpus_view",
+    label: "Corpus View",
+    description: "Vista client-safe del corpus publicado: búsqueda, fuente, fecha y finding.",
+    status: "ready"
+  },
+  {
+    key: "corpus_chat",
+    label: "Corpus Chat",
+    description: "Agente restringido al reporte publicado, Knowledge Base y evidencia del snapshot.",
     status: "partial"
   }
 ];

@@ -36,10 +36,10 @@ export function SignalComposer({
   const [isPending, startTransition] = useTransition();
   const initialManifest = useMemo(() => normalizeManifest(draft?.manifest), [draft?.manifest]);
   const [title, setTitle] = useState(draft?.title ?? `${brandName} · Triggers & Barriers`);
-  const [headline, setHeadline] = useState(draft?.headline ?? `Lo que frena a México de contratar ${brandName}`);
+  const [headline, setHeadline] = useState(draft?.headline ?? `Qué mueve y qué frena la decisión sobre ${brandName}`);
   const [summary, setSummary] = useState(
     draft?.summary ??
-      "Lectura editorial del corpus aprobado: barreras accionables, contexto estructural y movimientos recomendados para la marca."
+      "Lectura client-safe del corpus aprobado: T&B Decision Field, patrones emergentes, inteligencia competitiva, acciones por equipo, evidencia y límites del análisis."
   );
   const [manifest, setManifest] = useState(initialManifest);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export function SignalComposer({
   const [outputId, setOutputId] = useState(draft?.id ?? null);
   const [status, setStatus] = useState(draft?.status ?? "sin preparar");
 
-  const selectedCount = Object.values(manifest).filter(Boolean).length;
+  const selectedCount = signalModuleMeta.filter((module) => manifest[module.key]).length;
 
   function toggleModule(key: SignalModuleKey) {
     setManifest((current) => ({ ...current, [key]: !current[key] }));
@@ -87,8 +87,8 @@ export function SignalComposer({
           <p className="vitals-eyebrow">Siguiente paso</p>
           <h2>Preparar Noisia Signal</h2>
           <p>
-            Elige qué módulos entran al reporte cliente. El output queda congelado
-            como snapshot publicado, aunque el corpus siga evolucionando.
+            Elige qué secciones entran al cockpit cliente. El output queda congelado
+            como snapshot publicado con hallazgos, evidencia, límites y corpus view.
           </p>
         </div>
         <div className="signal-composer-status">
@@ -123,7 +123,7 @@ export function SignalComposer({
               type="button"
             >
               <span className={`signal-module-status signal-module-status--${module.status}`}>
-                {module.status === "ready" ? "Listo" : module.status === "partial" ? "MVP" : "Hold"}
+                {module.status === "ready" ? "Listo" : module.status === "partial" ? "Beta" : "Hold"}
               </span>
               <strong>{module.label}</strong>
               <p>{module.description}</p>
@@ -164,5 +164,31 @@ function normalizeManifest(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return defaultSignalManifest;
   }
-  return { ...defaultSignalManifest, ...(value as Partial<Record<SignalModuleKey, boolean>>) };
+  const input = value as Partial<Record<SignalModuleKey, boolean>> & Record<string, unknown>;
+  return {
+    ...defaultSignalManifest,
+    ...legacyManifestToV2(input),
+    ...input
+  };
+}
+
+function legacyManifestToV2(input: Record<string, unknown>): Partial<Record<SignalModuleKey, boolean>> {
+  const hasV2 = signalModuleMeta.some((module) => Object.prototype.hasOwnProperty.call(input, module.key));
+  if (hasV2) return {};
+
+  return {
+    overview: booleanOrDefault(input.overview, defaultSignalManifest.overview),
+    tb_decision_field: booleanOrDefault(input.tension_map, defaultSignalManifest.tb_decision_field),
+    opportunities: booleanOrDefault(input.overview, defaultSignalManifest.opportunities),
+    competitive_intelligence: booleanOrDefault(input.compare, defaultSignalManifest.competitive_intelligence),
+    action_studio: booleanOrDefault(input.actions, defaultSignalManifest.action_studio),
+    evidence: booleanOrDefault(input.verbatims, defaultSignalManifest.evidence),
+    quality_boundaries: true,
+    emerging_patterns: true,
+    corpus_view: booleanOrDefault(input.verbatims, defaultSignalManifest.corpus_view)
+  };
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }

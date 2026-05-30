@@ -12,6 +12,7 @@ import {
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { ensureQueryStrategyBrief, loadAnalysisRagContext } from "./analysis-rag-context";
 
 type ComposeInitialQueryJobData = {
   corpusId: string;
@@ -54,18 +55,27 @@ type MemoryRow = {
   content: unknown;
 };
 
-type KnowledgeSourceRow = {
-  type: string;
-  title: string;
-  content: unknown;
-};
-
 export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData>) {
   await job.updateProgress(10);
-  const input = await loadComposerInput(job.data.corpusId);
+  const baseInput = await loadComposerInput(job.data.corpusId);
   await job.updateProgress(35);
 
   const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+  const queryStrategyBrief = await ensureQueryStrategyBrief({
+    input: baseInput,
+    model,
+    requestedByUserId: job.data.requestedByUserId
+  });
+  const input: QueryComposerInput = {
+    ...baseInput,
+    queryStrategyBrief,
+    knowledgeSources: [
+      { type: "query_strategy_brief", content: queryStrategyBrief },
+      ...baseInput.knowledgeSources.filter((source) => source.type !== "query_strategy_brief")
+    ]
+  };
+  await job.updateProgress(50);
+
   const composed = await composeWithClaude(input, model);
   await job.updateProgress(75);
 
@@ -305,7 +315,7 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
     `,
     [row.brand_id]
   );
-  const knowledge = await loadKnowledgeSources(row.brand_id, row.corpus_id);
+  const ragContext = await loadAnalysisRagContext(row.corpus_id, row.brand_id);
 
   return {
     corpus: {
@@ -343,7 +353,8 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
       row.brand_display_name ?? "",
       ...(row.brand_seed_handles ?? [])
     ].filter(Boolean),
-    knowledgeSources: knowledge,
+    knowledgeSources: ragContext.knowledgeSources,
+    queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
     memoryIndustry: industryMemory.rows,
     memoryBrand: brandMemory.rows
   };
@@ -380,68 +391,10 @@ function loadThemeInput(row: CorpusComposerRow): QueryComposerInput {
     competitors: [],
     brandSeeds: [row.theme_name ?? ""].filter(Boolean),
     knowledgeSources: [],
+    queryStrategyBrief: undefined,
     memoryIndustry: [],
     memoryBrand: []
   };
-}
-
-async function loadKnowledgeSources(brandId: string | null, corpusId: string): Promise<MemoryRow[]> {
-  const result = await pool.query<KnowledgeSourceRow>(
-    `
-      SELECT
-        source_kind AS type,
-        title,
-        extracted_payload AS content
-      FROM brand_knowledge_sources
-      WHERE status IN ('processed', 'processed_truncated')
-        AND (
-          study_corpus_id = $2
-          OR ($1::uuid IS NOT NULL AND brand_id = $1 AND study_corpus_id IS NULL)
-        )
-      ORDER BY
-        CASE WHEN study_corpus_id = $2 THEN 0 ELSE 1 END,
-        created_at DESC
-      LIMIT 16
-    `,
-    [brandId, corpusId]
-  );
-
-  return result.rows.map((row) => ({
-    type: row.type,
-    content: compactKnowledgeContent(row.title, row.content)
-  }));
-}
-
-function compactKnowledgeContent(title: string, content: unknown) {
-  const source = content && typeof content === "object" ? content as Record<string, unknown> : {};
-  return {
-    title,
-    summary: stringValue(source.summary, 600),
-    file_understanding: stringValue(source.file_understanding, 360),
-    dataset_inventory: stringArray(source.dataset_inventory, 4),
-    key_fields: stringArray(source.key_fields, 6),
-    time_coverage: stringValue(source.time_coverage),
-    audience_clues: stringArray(source.audience_clues, 4),
-    cultural_codes: stringArray(source.cultural_codes, 4),
-    brand_claims: stringArray(source.brand_claims, 3),
-    competitor_clues: stringArray(source.competitor_clues, 3),
-    content_or_channel_insights: stringArray(source.content_or_channel_insights, 4),
-    potential_triggers: stringArray(source.potential_triggers, 4),
-    potential_barriers: stringArray(source.potential_barriers, 4),
-    query_language: stringArray(source.query_language, 10),
-    exclusions_or_noise: stringArray(source.exclusions_or_noise, 4),
-    limitations: stringArray(source.limitations, 3)
-  };
-}
-
-function stringValue(value: unknown, limit = 320) {
-  return typeof value === "string" ? value.slice(0, limit) : "";
-}
-
-function stringArray(value: unknown, limit: number) {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 220)).slice(0, limit)
-    : [];
 }
 
 async function nextIterationNumber(corpusId: string) {

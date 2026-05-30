@@ -1,15 +1,12 @@
 "use client";
 
-import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import {
   Activity,
-  AlertTriangle,
   BarChart2,
   Grid,
   MessageCircle,
-  Target,
   TrendingUp,
-  UserPlus,
 } from "react-feather";
 import {
   Area,
@@ -18,19 +15,14 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Pie,
-  PieChart,
-  PolarAngleAxis,
   ReferenceDot,
-  RadialBar,
-  RadialBarChart,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+
+import { useSignalUiLanguage, type SignalUiLanguage } from "@/components/signal/SignalReportShell";
 
 type ChartRecord = Record<string, unknown>;
 
@@ -49,7 +41,10 @@ type SignalDashboardChartsProps = {
   layerDist: ChartRecord[];
   mobilityDist: ChartRecord[];
   platformDist: ChartRecord[];
+  contentTypeDist?: ChartRecord[];
   volumeTimeline: ChartRecord[];
+  findingTimeSeries: ChartRecord[];
+  polarityTimeSeries: ChartRecord[];
   findingsScatter: ChartRecord[];
   topVoice: ChartRecord[];
   topBarriers: ChartRecord[];
@@ -84,6 +79,147 @@ const mobilityColors: Record<string, string> = {
   estructural: COLORS.ink,
 };
 
+const chartCopy = {
+  en: {
+    unavailable: "Dashboard temporarily unavailable",
+    unavailableBody: "The report is still loaded; a visualization failed in the browser.",
+    unavailableHint: "Refresh and try again. If it persists, the team can inspect the console without blocking the rest of Signal.",
+    contextAria: "Analysis context",
+    publishedMentions: "published mentions",
+    cutSummary: "Published cut summary",
+    mentions: "Mentions",
+    periodCorpus: "Period corpus",
+    findings: "Findings",
+    clientSafeFindings: "Client-safe findings",
+    triggersOfFindings: "of findings",
+    opportunities: "Opportunities",
+    movableByBrand: "movable by brand",
+    confidence: "Confidence",
+    signalsOverTime: "Signals over time",
+    temporalFilter: "Date filter",
+    from: "From",
+    to: "To",
+    clear: "Clear",
+    mentionsInRange: "mentions in range",
+    findingsWithActivity: "findings with activity",
+    composition: "Composition",
+    layers: "Layers",
+    tensionLives: "Where tension lives",
+    mobility: "Mobility",
+    brandCanAct: "What the brand can act on",
+    evidence: "Evidence",
+    realChannelVsContent: "Real channel vs content type",
+    channelReality: "Real channel distribution",
+    contentFormatMix: "Content type distribution",
+    traceability: "Traceability",
+    findingsMostEvidence: "Findings with most evidence",
+    noComposition: "No composition published",
+    polarityComposition: "Polarity composition",
+    noMobility: "No mobility coded",
+    findingsUnit: "findings",
+    noSourceDistribution: "No source distribution published",
+    realChannels: "Real channels",
+    contentTypes: "Content types",
+    notPublished: "Not published",
+    noFindingEvidence: "No aggregate evidence by finding",
+    data: "Data",
+    value: "Value",
+    noData: "No data",
+    month: "Month",
+    mentionsInCut: "mentions in the cut",
+    averageIntensity: "Average intensity",
+    traceableQuotes: "traceable quotes",
+    high: "High",
+    medium: "Medium",
+    bounded: "Bounded",
+    broadCorpus: "Broad corpus + traceable evidence",
+    sufficientRead: "Sufficient reading with boundaries",
+    reviewLimits: "Review boundaries before deciding",
+    frictionDominates: "Friction dominates",
+    impulseDominates: "Momentum dominates",
+    balanced: "Momentum and friction are balanced",
+    frictionBody: "This is not just negative perception: it shows where the decision gets blocked and what the brand can move.",
+    impulseBody: "Motivators carry more weight than barriers; the focus is converting those signals into repeatable actions.",
+    balancedBody: "Triggers and barriers carry similar weight; the decision depends on what is movable and what is structural.",
+    mixed: "Mixed",
+    irrelevant: "Irrelevant",
+    movable: "Movable",
+    partial: "Partial",
+    structural: "Structural",
+    unknown: "Unknown",
+    signal: "signal",
+  },
+  es: {
+    unavailable: "Dashboard temporalmente no disponible",
+    unavailableBody: "El reporte sigue cargado; una visualización falló en el navegador.",
+    unavailableHint: "Reintenta con refresh. Si persiste, el equipo puede revisar la consola sin bloquear el resto del Signal.",
+    contextAria: "Contexto del análisis",
+    publishedMentions: "menciones publicadas",
+    cutSummary: "Resumen del corte",
+    mentions: "Menciones",
+    periodCorpus: "Corpus del periodo",
+    findings: "Findings",
+    clientSafeFindings: "Hallazgos client-safe",
+    triggersOfFindings: "de hallazgos",
+    opportunities: "Oportunidades",
+    movableByBrand: "movibles por marca",
+    confidence: "Confianza",
+    signalsOverTime: "Señales en el tiempo",
+    temporalFilter: "Filtro temporal",
+    from: "Desde",
+    to: "Hasta",
+    clear: "Limpiar",
+    mentionsInRange: "menciones en rango",
+    findingsWithActivity: "findings con actividad",
+    composition: "Composición",
+    layers: "Capas",
+    tensionLives: "Dónde vive la tensión",
+    mobility: "Movilidad",
+    brandCanAct: "Qué puede accionar la marca",
+    evidence: "Evidencia",
+    realChannelVsContent: "Canal real vs tipo de contenido",
+    channelReality: "Distribución por canal real",
+    contentFormatMix: "Distribución por tipo de contenido",
+    traceability: "Trazabilidad",
+    findingsMostEvidence: "Findings con más evidencia",
+    noComposition: "Sin composición publicada",
+    polarityComposition: "Composición de polaridad",
+    noMobility: "Sin movilidad codificada",
+    findingsUnit: "hallazgos",
+    noSourceDistribution: "Sin distribución de fuentes publicada",
+    realChannels: "Canales reales",
+    contentTypes: "Tipos de contenido",
+    notPublished: "No publicado",
+    noFindingEvidence: "Sin evidencia agregada por finding",
+    data: "Dato",
+    value: "Valor",
+    noData: "Sin datos",
+    month: "Mes",
+    mentionsInCut: "menciones en el corte",
+    averageIntensity: "Intensidad promedio",
+    traceableQuotes: "citas trazables",
+    high: "Alta",
+    medium: "Media",
+    bounded: "Acotada",
+    broadCorpus: "Corpus amplio + evidencia trazable",
+    sufficientRead: "Lectura suficiente con límites",
+    reviewLimits: "Revisar límites antes de decidir",
+    frictionDominates: "Predomina la fricción",
+    impulseDominates: "Predomina el impulso",
+    balanced: "Impulso y fricción balanceados",
+    frictionBody: "La lectura no se resume como percepción negativa: muestra dónde la decisión se bloquea y qué parte puede mover la marca.",
+    impulseBody: "Los motivadores aparecen con más peso que las barreras; el foco es convertir esas señales en acciones repetibles.",
+    balancedBody: "Triggers y barriers tienen peso similar; la decisión depende de qué señales sean movibles y cuáles son estructurales.",
+    mixed: "Mixtos",
+    irrelevant: "Irrelevantes",
+    movable: "Movible",
+    partial: "Parcial",
+    structural: "Estructural",
+    unknown: "Unknown",
+    signal: "señal",
+  },
+} satisfies Record<SignalUiLanguage, Record<string, string>>;
+
 export function SignalDashboardCharts(props: SignalDashboardChartsProps) {
   return (
     <SignalChartBoundary>
@@ -107,17 +243,25 @@ class SignalChartBoundary extends Component<{ children: ReactNode }, SignalChart
     if (this.state.hasError) {
       return (
         <section className="signal-dashboard" id="overview">
-          <div className="signal-chart-fallback">
-            <span>Dashboard temporalmente no disponible</span>
-            <strong>El reporte sigue cargado; una visualización falló en el navegador.</strong>
-            <p>Reintenta con refresh. Si persiste, el equipo puede revisar la consola sin bloquear el resto del Signal.</p>
-          </div>
+          <SignalChartFallback />
         </section>
       );
     }
 
     return this.props.children;
   }
+}
+
+function SignalChartFallback() {
+  const { uiLanguage } = useSignalUiLanguage();
+  const copy = chartCopy[uiLanguage];
+  return (
+    <div className="signal-chart-fallback">
+      <span>{copy.unavailable}</span>
+      <strong>{copy.unavailableBody}</strong>
+      <p>{copy.unavailableHint}</p>
+    </div>
+  );
 }
 
 function SignalDashboardChartsInner({
@@ -130,99 +274,126 @@ function SignalDashboardChartsInner({
   layerDist,
   mobilityDist,
   platformDist,
+  contentTypeDist = [],
   volumeTimeline,
-  findingsScatter,
+  findingTimeSeries,
+  polarityTimeSeries,
   topVoice,
   topBarriers,
 }: SignalDashboardChartsProps) {
-  const [chartsReady, setChartsReady] = useState(false);
-  const timeline = normalizeTimeline(volumeTimeline);
-  const layers = normalizeLayerData(layerDist);
-  const mobility = normalizeMobilityData(mobilityDist);
+  const { uiLanguage } = useSignalUiLanguage();
+  const copy = chartCopy[uiLanguage];
+  const polarityTimeline = normalizePolarityTimeline(polarityTimeSeries);
+  const allTimeline = mergeTimelinePolarity(normalizeTimeline(volumeTimeline, uiLanguage), polarityTimeline);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const timeline = filterTimelineByDate(allTimeline, dateFrom, dateTo);
+  const filteredPolarityTimeline = filterPolarityTimelineByDate(polarityTimeline, dateFrom, dateTo);
+  const filteredFindingSeries = filterFindingSeriesByDate(normalizeFindingTimeSeries(findingTimeSeries), dateFrom, dateTo);
+  const layers = normalizeLayerData(layerDist, uiLanguage);
+  const mobility = normalizeMobilityData(mobilityDist, uiLanguage);
   const platforms = normalizePlatformData(platformDist);
-  const scatter = normalizeScatterData(findingsScatter);
-  const voice = normalizeVoiceData(topVoice);
-  const polarity = normalizePolarityData(polarityDist);
+  const contentTypes = normalizeContentTypeData(contentTypeDist);
+  const voice = normalizeVoiceData(topVoice, uiLanguage);
+  const polarity = normalizePolarityData(polarityDist, uiLanguage);
   const triggerPct = Math.round((metrics.triggersTotal / Math.max(1, metrics.findingsTotal)) * 100);
   const barrierPct = Math.round((metrics.barriersTotal / Math.max(1, metrics.findingsTotal)) * 100);
   const movablePct = Math.round((metrics.movableTotal / Math.max(1, metrics.findingsTotal)) * 100);
-  const perception = metrics.barriersTotal > metrics.triggersTotal ? "Negativa" : "Mixta";
-  const topBarrier = topBarriers[0];
-  const markers = buildTimelineMarkers(timeline, [...topBarriers, ...topVoice].slice(0, 4));
-  const severityInsight = buildSeverityInsight(scatter);
-
-  useEffect(() => {
-    setChartsReady(true);
-  }, []);
+  const markers = buildTimelineMarkers(timeline, [...topBarriers, ...topVoice].slice(0, 4), uiLanguage);
+  const filteredMentionTotal = timeline.reduce((sum, row) => sum + row.mentions, 0);
+  const topTemporalFindings = buildTopTemporalFindings(filteredFindingSeries);
+  const confidence = buildConfidenceLabel(corpusTotal, metrics.findingsTotal, voice.length, uiLanguage);
+  const balance = buildSignalBalance(metrics.triggersTotal, metrics.barriersTotal, uiLanguage);
 
   return (
-    <section className="signal-dashboard" id="overview">
+    <section className="signal-dashboard signal-dashboard--redesign" id="overview">
       <div className="signal-dashboard-context">
         <span>{methodologyName}</span>
         <strong>{brandLabel}</strong>
       </div>
 
-      <div className="signal-kpi-row" aria-label="Resumen del corte">
+      <div className="signal-context-strip" aria-label={copy.contextAria}>
+        <span>{methodologyName}</span>
+        <strong>{brandLabel}</strong>
+        <span>{windowLabel}</span>
+        <span>{formatNumber(corpusTotal)} {copy.publishedMentions}</span>
+      </div>
+
+      <div className="signal-kpi-row signal-kpi-row--six" aria-label={copy.cutSummary}>
         <KpiCard
-          label="Menciones totales"
+          label={copy.mentions}
           value={formatNumber(corpusTotal)}
-          sub="Corpus del periodo"
+          sub={copy.periodCorpus}
           icon={<Grid size={15} />}
-          action="Ver corpus"
-          chartsReady={chartsReady}
         />
         <KpiCard
-          label="Percepción"
-          value={perception}
-          sub={metrics.triggersTotal === 0 ? "Sin motivadores detectados" : "Fricción domina la lectura"}
-          tone={perception === "Negativa" ? "negative" : "neutral"}
-          action="Ver insight"
-          chartsReady={chartsReady}
+          label={copy.findings}
+          value={formatNumber(metrics.findingsTotal)}
+          sub={copy.clientSafeFindings}
+          icon={<Activity size={15} />}
         />
         <KpiCard
           label="Triggers"
           value={formatNumber(metrics.triggersTotal)}
-          sub={`${triggerPct}% de hallazgos`}
+          sub={`${triggerPct}% ${copy.triggersOfFindings}`}
           radialValue={triggerPct}
-          icon={<AlertTriangle size={15} />}
+          icon={<TrendingUp size={15} />}
           radialTone="signal"
-          chartsReady={chartsReady}
         />
         <KpiCard
           label="Barriers"
           value={formatNumber(metrics.barriersTotal)}
-          sub={`${barrierPct}% de hallazgos`}
+          sub={`${barrierPct}% ${copy.triggersOfFindings}`}
           radialValue={barrierPct}
-          icon={<UserPlus size={15} />}
+          icon={<BarChart2 size={15} />}
           radialTone="tension"
-          chartsReady={chartsReady}
         />
         <KpiCard
-          label="Mejoras"
+          label={copy.opportunities}
           value={formatNumber(metrics.movableTotal)}
-          sub={`${movablePct}% movibles por marca`}
+          sub={`${movablePct}% ${copy.movableByBrand}`}
           radialValue={movablePct}
-          icon={<UserPlus size={15} />}
+          icon={<MessageCircle size={15} />}
           radialTone="signal"
-          chartsReady={chartsReady}
+        />
+        <KpiCard
+          label={copy.confidence}
+          value={confidence.value}
+          sub={confidence.sub}
+          icon={<Activity size={15} />}
+          tone={confidence.tone}
         />
       </div>
 
-      <div className="signal-hero-chart-card">
+      <div className="signal-hero-chart-card signal-hero-chart-card--compact">
         <div className="signal-hero-chart-head">
           <div>
-            <span>Señales en el tiempo</span>
+            <span>{copy.signalsOverTime}</span>
             <strong>{windowLabel}</strong>
           </div>
-          <div className="signal-hero-chart-tabs" aria-label="Dimensiones visibles">
-            <span>Volumen real</span>
-            <span>Peaks anotados</span>
-            <span>Hover activo</span>
+          <div className="signal-date-filter" aria-label={copy.temporalFilter}>
+            <label>
+              {copy.from}
+              <input type="month" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+            </label>
+            <label>
+              {copy.to}
+              <input type="month" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+            </label>
+            {(dateFrom || dateTo) && (
+              <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>
+                {copy.clear}
+              </button>
+            )}
           </div>
         </div>
+        <div className="signal-temporal-summary">
+          <span>{formatNumber(filteredMentionTotal)} {copy.mentionsInRange}</span>
+          <span>{topTemporalFindings.length} {copy.findingsWithActivity}</span>
+          <span>{filteredPolarityTimeline.reduce((sum, row) => sum + row.trigger, 0)} triggers · {filteredPolarityTimeline.reduce((sum, row) => sum + row.barrier, 0)} barriers</span>
+        </div>
         <div className="signal-hero-chart signal-recharts-frame">
-          {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={timeline} margin={{ top: 14, right: 18, bottom: 10, left: 0 }}>
               <defs>
                 <linearGradient id="signalVolumeFill" x1="0" x2="0" y1="0" y2="1">
@@ -249,9 +420,27 @@ function SignalDashboardChartsInner({
                 dot={{ r: 4, fill: COLORS.ink, stroke: "#fff", strokeWidth: 2 }}
                 fill="url(#signalVolumeFill)"
                 fillOpacity={1}
-                name="Menciones"
+                name={copy.mentions}
                 stroke={COLORS.ink}
                 strokeWidth={2}
+                type="monotone"
+              />
+              <Area
+                dataKey="barriers"
+                fill="rgba(217,20,65,0.08)"
+                name="Barriers T&B"
+                stroke={COLORS.tension}
+                strokeDasharray="5 5"
+                strokeWidth={1.5}
+                type="monotone"
+              />
+              <Area
+                dataKey="triggers"
+                fill="rgba(0,169,179,0.08)"
+                name="Triggers T&B"
+                stroke={COLORS.signalDark}
+                strokeDasharray="3 6"
+                strokeWidth={1.5}
                 type="monotone"
               />
               {markers.map((marker) => (
@@ -275,177 +464,62 @@ function SignalDashboardChartsInner({
               ))}
             </AreaChart>
           </ResponsiveContainer>
-          ) : <ChartSkeleton />}
-          {topBarrier ? (
-            <div className="signal-floating-insight">
-              <span>barrera encontrada</span>
-              <strong>{stringValue(topBarrier.label) || "Fricción principal"}</strong>
-              <small>{stringValue(topBarrier.confidence) || "media"} · prioridad alta</small>
-            </div>
-          ) : null}
         </div>
+        {topTemporalFindings.length > 0 && (
+          <div className="signal-temporal-findings">
+            {topTemporalFindings.slice(0, 4).map((finding) => (
+              <span key={finding.findingId}>
+                <i className={`signal-temporal-dot signal-temporal-dot--${finding.polarity}`} />
+                {finding.name} · {formatNumber(finding.count)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="signal-chart-bento" id="snapshot">
-        <ChartPanel eyebrow="Polaridad" title="La conversación empuja o frena" icon={<Activity size={15} />} span="half">
-          <div className="signal-recharts-frame signal-recharts-frame--sm">
-            {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                cx="50%"
-                cy="50%"
-                data={polarity}
-                dataKey="count"
-                innerRadius={58}
-                outerRadius={78}
-                paddingAngle={4}
-                nameKey="label"
-              >
-                {polarity.map((entry) => <Cell fill={entry.color} key={entry.key} />)}
-              </Pie>
-              <Tooltip content={<SignalTooltip />} />
-            </PieChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
-          </div>
-          <MiniLegend items={polarity.map((p) => ({ label: p.label, value: p.count, color: p.color }))} />
+      <div className="signal-overview-grid" id="snapshot">
+        <ChartPanel eyebrow={copy.composition} title={balance.title} icon={<Activity size={15} />} span="third">
+          <CompositionStack items={polarity} uiLanguage={uiLanguage} />
+          <p className="signal-overview-note">{balance.body}</p>
         </ChartPanel>
 
-        <ChartPanel eyebrow="Capas" title="Dónde vive la fricción" icon={<BarChart2 size={15} />} span="half">
+        <ChartPanel eyebrow={copy.layers} title={copy.tensionLives} icon={<BarChart2 size={15} />} span="third">
           <div className="signal-recharts-frame signal-recharts-frame--md">
-            {chartsReady ? (
             <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={layers} layout="vertical" margin={{ top: 6, right: 18, left: 8, bottom: 0 }}>
-              <CartesianGrid horizontal={false} stroke={COLORS.grid} />
-              <XAxis axisLine={false} hide type="number" />
-              <YAxis
-                axisLine={false}
-                dataKey="label"
-                tick={{ fill: COLORS.quiet, fontSize: 12 }}
-                tickLine={false}
-                type="category"
-                width={96}
-              />
-              <Tooltip content={<SignalTooltip />} />
-              <Bar dataKey="count" name="Hallazgos" radius={[0, 10, 10, 0]}>
-                {layers.map((entry) => <Cell fill={entry.color} key={entry.key} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
+                <BarChart data={layers} layout="vertical" margin={{ top: 6, right: 18, left: 8, bottom: 0 }}>
+                  <CartesianGrid horizontal={false} stroke={COLORS.grid} />
+                  <XAxis axisLine={false} hide type="number" />
+                  <YAxis
+                    axisLine={false}
+                    dataKey="label"
+                    tick={{ fill: COLORS.quiet, fontSize: 12 }}
+                    tickLine={false}
+                    type="category"
+                    width={96}
+                  />
+                  <Tooltip content={<SignalTooltip />} />
+                  <Bar dataKey="count" name={copy.findings} radius={[0, 10, 10, 0]}>
+                    {layers.map((entry) => <Cell fill={entry.color} key={entry.key} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
           </div>
         </ChartPanel>
 
-        <ChartPanel eyebrow="Movilidad" title="Qué sí puede mover la marca" icon={<TrendingUp size={15} />} span="half">
-          <div className="signal-recharts-frame signal-recharts-frame--sm">
-            {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <RadialBarChart
-              cx="50%"
-              cy="50%"
-              data={mobility}
-              endAngle={-270}
-              innerRadius="38%"
-              outerRadius="88%"
-              startAngle={90}
-            >
-              <PolarAngleAxis angleAxisId={0} domain={[0, 100]} tick={false} type="number" />
-              <RadialBar background={{ fill: "rgba(37,38,42,0.06)" }} dataKey="percent" radius={10} />
-              <Tooltip content={<SignalTooltip />} />
-            </RadialBarChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
-          </div>
-          <MiniLegend items={mobility.map((m) => ({ label: m.label, value: `${m.percent}%`, color: m.fill }))} />
+        <ChartPanel eyebrow={copy.mobility} title={copy.brandCanAct} icon={<TrendingUp size={15} />} span="third">
+          <MobilityList items={mobility} uiLanguage={uiLanguage} />
         </ChartPanel>
 
-        <ChartPanel eyebrow="Fuentes" title="Dónde aparece la señal" icon={<Grid size={15} />} span="half">
-          <div className="signal-recharts-frame signal-recharts-frame--md">
-            {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={platforms} margin={{ top: 8, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke={COLORS.grid} strokeDasharray="2 8" vertical={false} />
-              <XAxis axisLine={false} dataKey="label" tick={{ fill: COLORS.quiet, fontSize: 12 }} tickLine={false} />
-              <YAxis axisLine={false} tick={{ fill: COLORS.quiet, fontSize: 11 }} tickLine={false} width={34} />
-              <Tooltip content={<SignalTooltip />} />
-              <Bar dataKey="count" fill={COLORS.signalDark} name="Menciones" radius={[10, 10, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
-          </div>
+        <ChartPanel eyebrow={copy.evidence} title={copy.channelReality} icon={<Grid size={15} />} span="third">
+          <EvidenceColumn title={copy.realChannels} items={platforms} color={COLORS.signalDark} uiLanguage={uiLanguage} />
         </ChartPanel>
 
-        <ChartPanel eyebrow="Mapa de severidad" title="Frecuencia vs intensidad" icon={<Activity size={15} />} span="wide">
-          <div className="signal-recharts-frame signal-recharts-frame--lg">
-            {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 14, right: 16, bottom: 20, left: 4 }}>
-              <CartesianGrid stroke={COLORS.grid} strokeDasharray="2 8" />
-              <XAxis
-                axisLine={false}
-                dataKey="frequency"
-                name="Frecuencia"
-                tick={{ fill: COLORS.quiet, fontSize: 11 }}
-                tickLine={false}
-                type="number"
-              />
-              <YAxis
-                axisLine={false}
-                dataKey="intensity"
-                name="Intensidad"
-                tick={{ fill: COLORS.quiet, fontSize: 11 }}
-                tickLine={false}
-                type="number"
-              />
-              <Tooltip content={<SignalTooltip />} />
-              <Scatter data={scatter} name="Hallazgos">
-                {scatter.map((entry) => <Cell fill={entry.color} fillOpacity={0.72} key={entry.id} stroke={entry.color} />)}
-              </Scatter>
-            </ScatterChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
-          </div>
+        <ChartPanel eyebrow={copy.evidence} title={copy.contentFormatMix} icon={<BarChart2 size={15} />} span="third">
+          <EvidenceColumn title={copy.contentTypes} items={contentTypes} color={COLORS.quiet} uiLanguage={uiLanguage} />
         </ChartPanel>
 
-        <article className="signal-chart-insight">
-          <Target size={18} />
-          <span>Lectura rápida</span>
-          <strong>{severityInsight.title}</strong>
-          <p>{severityInsight.body}</p>
-          <dl>
-            <div>
-              <dt>Hallazgos</dt>
-              <dd>{scatter.length}</dd>
-            </div>
-            <div>
-              <dt>Alta intensidad</dt>
-              <dd>{severityInsight.highIntensity}</dd>
-            </div>
-          </dl>
-        </article>
-
-        <ChartPanel eyebrow="Share of voice" title="Qué barreras cargan más evidencia" icon={<MessageCircle size={15} />} span="full">
-          <div className="signal-recharts-frame signal-recharts-frame--md">
-            {chartsReady ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={voice} layout="vertical" margin={{ top: 6, right: 18, left: 8, bottom: 0 }}>
-              <CartesianGrid horizontal={false} stroke={COLORS.grid} />
-              <XAxis axisLine={false} hide type="number" />
-              <YAxis
-                axisLine={false}
-                dataKey="code"
-                tick={{ fill: COLORS.quiet, fontSize: 11 }}
-                tickLine={false}
-                type="category"
-                width={58}
-              />
-              <Tooltip content={<SignalTooltip />} />
-              <Bar dataKey="count" fill={COLORS.tension} name="Citas" radius={[0, 10, 10, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-            ) : <ChartSkeleton compact />}
-          </div>
+        <ChartPanel eyebrow={copy.traceability} title={copy.findingsMostEvidence} icon={<MessageCircle size={15} />} span="third">
+          <EvidenceBars items={voice} uiLanguage={uiLanguage} />
         </ChartPanel>
       </div>
     </section>
@@ -461,7 +535,6 @@ function KpiCard({
   radialValue,
   radialTone = "ink",
   tone = "neutral",
-  chartsReady,
 }: {
   label: string;
   value: string;
@@ -471,7 +544,6 @@ function KpiCard({
   radialValue?: number;
   radialTone?: "ink" | "signal" | "tension";
   tone?: "neutral" | "negative";
-  chartsReady: boolean;
 }) {
   const fill = radialTone === "signal" ? COLORS.signalDark : radialTone === "tension" ? COLORS.tension : COLORS.ink;
   const radialPct = Math.max(0, Math.min(100, radialValue ?? 0));
@@ -486,7 +558,7 @@ function KpiCard({
         <span>{sub}</span>
         {action ? <button type="button">{action}</button> : null}
       </footer>
-      {typeof radialValue === "number" && chartsReady ? (
+      {typeof radialValue === "number" ? (
         <div
           className="signal-kpi-radial"
           style={{
@@ -500,17 +572,6 @@ function KpiCard({
   );
 }
 
-function ChartSkeleton({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`signal-chart-skeleton${compact ? " signal-chart-skeleton--compact" : ""}`} aria-hidden>
-      <span />
-      <span />
-      <span />
-      <span />
-    </div>
-  );
-}
-
 function ChartPanel({
   eyebrow,
   title,
@@ -521,7 +582,7 @@ function ChartPanel({
   eyebrow: string;
   title: string;
   icon: React.ReactNode;
-  span: "half" | "wide" | "full";
+  span: "third" | "half" | "wide" | "full";
   children: React.ReactNode;
 }) {
   return (
@@ -538,16 +599,134 @@ function ChartPanel({
   );
 }
 
+function CompositionStack({ items, uiLanguage }: { items: ReturnType<typeof normalizePolarityData>; uiLanguage: SignalUiLanguage }) {
+  const copy = chartCopy[uiLanguage];
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  if (total <= 0) {
+    return <EmptyChartNote label={copy.noComposition} />;
+  }
+  return (
+    <div className="signal-composition-stack">
+      <div className="signal-stack-bar" aria-label={copy.polarityComposition}>
+        {items.map((item) => {
+          const width = Math.max(4, Math.round((item.count / total) * 100));
+          return (
+            <span
+              key={item.key}
+              style={{ "--stack-color": item.color, "--stack-width": `${width}%` } as CSSProperties}
+              title={`${item.label}: ${formatNumber(item.count)}`}
+            />
+          );
+        })}
+      </div>
+      <MiniLegend items={items.map((p) => ({ label: p.label, value: p.count, color: p.color }))} />
+    </div>
+  );
+}
+
+function MobilityList({ items, uiLanguage }: { items: ReturnType<typeof normalizeMobilityData>; uiLanguage: SignalUiLanguage }) {
+  const copy = chartCopy[uiLanguage];
+  if (items.length === 0) {
+    return <EmptyChartNote label={copy.noMobility} />;
+  }
+  return (
+    <div className="signal-mobility-list">
+      {items.map((item) => (
+        <div className="signal-mobility-row" key={item.key}>
+          <div>
+            <span>{item.label}</span>
+            <strong>{formatNumber(item.count)} {copy.findingsUnit}</strong>
+          </div>
+          <div className="signal-progress-track" aria-hidden>
+            <i style={{ "--progress-color": item.fill, "--progress-width": `${item.percent}%` } as CSSProperties} />
+          </div>
+          <em>{item.percent}%</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EvidenceColumn({
+  title,
+  items,
+  color,
+  uiLanguage,
+}: {
+  title: string;
+  items: Array<{ label: string; count: number }>;
+  color: string;
+  uiLanguage: SignalUiLanguage;
+}) {
+  const copy = chartCopy[uiLanguage];
+  const max = Math.max(1, ...items.map((item) => item.count));
+  return (
+    <div className="signal-evidence-column">
+      <span>{title}</span>
+      {items.length > 0 ? (
+        items.slice(0, 6).map((item) => (
+          <div className="signal-evidence-row" key={`${title}-${item.label}`}>
+            <strong>{item.label}</strong>
+            <div className="signal-progress-track" aria-hidden>
+              <i
+                style={{
+                  "--progress-color": color,
+                  "--progress-width": `${Math.max(5, Math.round((item.count / max) * 100))}%`,
+                } as CSSProperties}
+              />
+            </div>
+            <em>{fmtCompact(item.count)}</em>
+          </div>
+        ))
+      ) : (
+        <small>{copy.notPublished}</small>
+      )}
+    </div>
+  );
+}
+
+function EvidenceBars({ items, uiLanguage }: { items: ReturnType<typeof normalizeVoiceData>; uiLanguage: SignalUiLanguage }) {
+  const copy = chartCopy[uiLanguage];
+  if (items.length === 0) {
+    return <EmptyChartNote label={copy.noFindingEvidence} />;
+  }
+  const max = Math.max(1, ...items.map((item) => item.count));
+  return (
+    <div className="signal-evidence-bars">
+      {items.slice(0, 7).map((item) => (
+        <div className="signal-evidence-bar" key={item.code}>
+          <span>{item.code}</span>
+          <div className="signal-progress-track" aria-hidden>
+            <i
+              style={{
+                "--progress-color": COLORS.tension,
+                "--progress-width": `${Math.max(5, Math.round((item.count / max) * 100))}%`,
+              } as CSSProperties}
+            />
+          </div>
+          <strong>{formatNumber(item.count)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyChartNote({ label }: { label: string }) {
+  return <div className="signal-chart-empty-note">{label}</div>;
+}
+
 function SignalTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: unknown; payload?: ChartRecord; color?: string }>; label?: unknown }) {
+  const { uiLanguage } = useSignalUiLanguage();
+  const copy = chartCopy[uiLanguage];
   if (!active || !payload?.length) return null;
   const first = payload[0]?.payload;
   return (
     <div className="signal-chart-tooltip">
-      <strong>{stringValue(first?.tooltipTitle) || stringValue(label) || stringValue(first?.label) || "Dato"}</strong>
+      <strong>{stringValue(first?.tooltipTitle) || stringValue(label) || stringValue(first?.label) || copy.data}</strong>
       {payload.slice(0, 3).map((item, index) => (
         <span key={`${item.name ?? "value"}-${index}`}>
           <i style={{ background: item.color ?? stringValue(first?.color) ?? COLORS.ink }} />
-          {item.name ?? "Valor"}: {formatNumber(Number(item.value ?? 0))}
+          {item.name ?? copy.value}: {formatNumber(Number(item.value ?? 0))}
         </span>
       ))}
       {stringValue(first?.hint) ? <em>{stringValue(first?.hint)}</em> : null}
@@ -569,25 +748,100 @@ function MiniLegend({ items }: { items: Array<{ label: string; value: number | s
   );
 }
 
-function normalizeTimeline(rows: ChartRecord[]) {
-  if (rows.length === 0) return [{ label: "Sin datos", mentions: 0, tooltipTitle: "Sin datos" }];
+function normalizeTimeline(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
+  const locale = uiLanguage === "en" ? "en-US" : "es-MX";
+  if (rows.length === 0) return [{ month: "", label: copy.noData, mentions: 0, triggers: 0, barriers: 0, tooltipTitle: copy.noData, hint: copy.noData }];
   return rows.map((row) => {
     const rawMonth = stringValue(row.month);
     const date = rawMonth ? new Date(`${rawMonth}-01T00:00:00Z`) : null;
     const label = date && !Number.isNaN(date.getTime())
-      ? date.toLocaleDateString("es-MX", { month: "short", year: "2-digit", timeZone: "UTC" })
-      : rawMonth || "Mes";
+      ? date.toLocaleDateString(locale, { month: "short", year: "2-digit", timeZone: "UTC" })
+      : rawMonth || copy.month;
     const mentions = Number(row.count ?? 0);
     return {
+      month: rawMonth,
       label,
       mentions,
+      triggers: 0,
+      barriers: 0,
       tooltipTitle: label,
-      hint: `${formatNumber(mentions)} menciones en el corte`,
+      hint: `${formatNumber(mentions)} ${copy.mentionsInCut}`,
     };
   });
 }
 
-function normalizePolarityData(rows: ChartRecord[]) {
+function normalizePolarityTimeline(rows: ChartRecord[]) {
+  return rows.map((row) => ({
+    month: stringValue(row.month),
+    trigger: Number(row.trigger ?? 0),
+    barrier: Number(row.barrier ?? 0),
+    mixed: Number(row.mixed ?? 0),
+    total: Number(row.total ?? 0)
+  })).filter((row) => row.month);
+}
+
+function mergeTimelinePolarity(
+  timeline: ReturnType<typeof normalizeTimeline>,
+  polarityTimeline: ReturnType<typeof normalizePolarityTimeline>
+) {
+  const byMonth = new Map(polarityTimeline.map((row) => [row.month, row]));
+  return timeline.map((row) => {
+    const polarity = byMonth.get(row.month);
+    return {
+      ...row,
+      triggers: polarity?.trigger ?? 0,
+      barriers: polarity?.barrier ?? 0
+    };
+  });
+}
+
+function normalizeFindingTimeSeries(rows: ChartRecord[]) {
+  return rows.map((row) => ({
+    month: stringValue(row.month),
+    findingId: stringValue(row.finding_id),
+    name: stringValue(row.finding_name),
+    polarity: stringValue(row.polarity),
+    layer: stringValue(row.layer),
+    count: Number(row.count ?? 0)
+  })).filter((row) => row.month && row.findingId && row.count > 0);
+}
+
+function filterTimelineByDate<T extends { month: string }>(rows: T[], dateFrom: string, dateTo: string) {
+  return rows.filter((row) => inMonthRange(row.month, dateFrom, dateTo));
+}
+
+function filterPolarityTimelineByDate(rows: ReturnType<typeof normalizePolarityTimeline>, dateFrom: string, dateTo: string) {
+  return filterTimelineByDate(rows, dateFrom, dateTo);
+}
+
+function filterFindingSeriesByDate(rows: ReturnType<typeof normalizeFindingTimeSeries>, dateFrom: string, dateTo: string) {
+  return filterTimelineByDate(rows, dateFrom, dateTo);
+}
+
+function inMonthRange(month: string, dateFrom: string, dateTo: string) {
+  if (!month) return false;
+  if (dateFrom && month < dateFrom) return false;
+  if (dateTo && month > dateTo) return false;
+  return true;
+}
+
+function buildTopTemporalFindings(rows: ReturnType<typeof normalizeFindingTimeSeries>) {
+  const byFinding = new Map<string, { findingId: string; name: string; polarity: string; count: number }>();
+  for (const row of rows) {
+    const current = byFinding.get(row.findingId) ?? {
+      findingId: row.findingId,
+      name: row.name || row.findingId,
+      polarity: row.polarity,
+      count: 0
+    };
+    current.count += row.count;
+    byFinding.set(row.findingId, current);
+  }
+  return Array.from(byFinding.values()).sort((a, b) => b.count - a.count);
+}
+
+function normalizePolarityData(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
   const colorBy: Record<string, string> = {
     barrier: COLORS.tension,
     trigger: COLORS.signalDark,
@@ -598,14 +852,15 @@ function normalizePolarityData(rows: ChartRecord[]) {
     const key = stringValue(row.polarity) || "unknown";
     return {
       key,
-      label: prettifyPolarity(key),
+      label: prettifyPolarity(key, uiLanguage),
       count: Number(row.count ?? 0),
       color: colorBy[key] ?? COLORS.quiet,
     };
   }).filter((row) => row.count > 0);
 }
 
-function normalizeLayerData(rows: ChartRecord[]) {
+function normalizeLayerData(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
   return rows.map((row) => {
     const key = stringValue(row.layer) || "sin capa";
     return {
@@ -615,12 +870,12 @@ function normalizeLayerData(rows: ChartRecord[]) {
       intensity: Number(row.avg_intensity ?? 0),
       color: layerColors[key] ?? COLORS.quiet,
       tooltipTitle: prettifyKey(key),
-      hint: `Intensidad promedio ${Number(row.avg_intensity ?? 0).toFixed(1)}`,
+      hint: `${copy.averageIntensity} ${Number(row.avg_intensity ?? 0).toFixed(1)}`,
     };
   }).filter((row) => row.count > 0);
 }
 
-function normalizeMobilityData(rows: ChartRecord[]) {
+function normalizeMobilityData(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
   const total = rows.reduce((sum, row) => sum + Number(row.count ?? 0), 0);
   return rows.map((row) => {
     const key = stringValue(row.movilidad) || "sin movilidad";
@@ -628,40 +883,42 @@ function normalizeMobilityData(rows: ChartRecord[]) {
     const percent = Math.round((count / Math.max(1, total)) * 100);
     return {
       key,
-      label: mobilityLabel(key),
+      label: mobilityLabel(key, uiLanguage),
       count,
       percent,
       fill: mobilityColors[key] ?? COLORS.quiet,
-      tooltipTitle: mobilityLabel(key),
-      hint: `${count} hallazgos`,
+      tooltipTitle: mobilityLabel(key, uiLanguage),
+      hint: `${count} ${chartCopy[uiLanguage].findingsUnit}`,
     };
   }).filter((row) => row.count > 0);
 }
 
 function normalizePlatformData(rows: ChartRecord[]) {
   return rows.slice(0, 7).map((row) => {
-    const label = stringValue(row.platform) || "Fuente";
+    const label = titleCaseToken(stringValue(row.platform) || "unknown");
     const count = Number(row.count ?? 0);
     return { label, count, tooltipTitle: label };
   }).filter((row) => row.count > 0);
 }
 
-function normalizeScatterData(rows: ChartRecord[]) {
-  return rows.map((row, index) => {
-    const layer = stringValue(row.layer);
-    return {
-      id: stringValue(row.finding_id) || String(index),
-      frequency: Number(row.frecuencia ?? 0),
-      intensity: Number(row.intensidad ?? 0),
-      score: Number(row.score ?? 0),
-      color: layerColors[layer] ?? COLORS.quiet,
-      tooltipTitle: stringValue(row.nombre) || stringValue(row.finding_id) || "Hallazgo",
-      hint: `${prettifyKey(layer)} · score ${Number(row.score ?? 0).toFixed(1)}`,
-    };
-  });
+function normalizeContentTypeData(rows: ChartRecord[]) {
+  return rows.slice(0, 6).map((row) => {
+    const label = titleCaseToken(stringValue(row.content_type) || stringValue(row.platform) || "unknown");
+    const count = Number(row.count ?? 0);
+    return { label, count };
+  }).filter((row) => row.count > 0 && row.label !== "Unknown");
 }
 
-function normalizeVoiceData(rows: ChartRecord[]) {
+function titleCaseToken(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase()) || "Unknown";
+}
+
+function normalizeVoiceData(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
   return rows.slice(0, 8).map((row, index) => {
     const code = stringValue(row.finding_id) || `B-${index + 1}`;
     const count = Number(row.citation_count ?? 0);
@@ -669,7 +926,7 @@ function normalizeVoiceData(rows: ChartRecord[]) {
       code,
       count,
       tooltipTitle: stringValue(row.nombre) || code,
-      hint: `${count} citas trazables`,
+      hint: `${count} ${copy.traceableQuotes}`,
     };
   }).filter((row) => row.count > 0);
 }
@@ -678,14 +935,18 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("es-MX").format(Number.isFinite(value) ? value : 0);
 }
 
-function buildTimelineMarkers(timeline: ReturnType<typeof normalizeTimeline>, records: ChartRecord[]) {
+function fmtCompact(value: number) {
+  return new Intl.NumberFormat("es-MX", { notation: "compact", maximumFractionDigits: 1 }).format(Number.isFinite(value) ? value : 0);
+}
+
+function buildTimelineMarkers(timeline: ReturnType<typeof normalizeTimeline>, records: ChartRecord[], uiLanguage: SignalUiLanguage) {
   const points = timeline
     .filter((point) => point.mentions > 0)
     .sort((a, b) => b.mentions - a.mentions)
     .slice(0, 3);
   return points.map((point, index) => {
     const record = records[index] ?? records[0] ?? {};
-    const label = truncateLabel(stringValue(record.label) || stringValue(record.nombre) || stringValue(record.finding_id) || "señal", 24);
+    const label = truncateLabel(stringValue(record.label) || stringValue(record.nombre) || stringValue(record.finding_id) || chartCopy[uiLanguage].signal, 24);
     const id = stringValue(record.finding_id) || stringValue(record.id);
     return {
       x: point.label,
@@ -696,20 +957,34 @@ function buildTimelineMarkers(timeline: ReturnType<typeof normalizeTimeline>, re
   });
 }
 
-function buildSeverityInsight(scatter: ReturnType<typeof normalizeScatterData>) {
-  if (scatter.length === 0) {
+function buildConfidenceLabel(corpusTotal: number, findingsTotal: number, evidenceFindingCount: number, uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
+  if (corpusTotal >= 10000 && findingsTotal >= 8 && evidenceFindingCount >= 3) {
+    return { value: copy.high, sub: copy.broadCorpus, tone: "neutral" as const };
+  }
+  if (corpusTotal >= 1500 && findingsTotal >= 5) {
+    return { value: copy.medium, sub: copy.sufficientRead, tone: "neutral" as const };
+  }
+  return { value: copy.bounded, sub: copy.reviewLimits, tone: "negative" as const };
+}
+
+function buildSignalBalance(triggersTotal: number, barriersTotal: number, uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
+  if (barriersTotal > triggersTotal) {
     return {
-      title: "Sin mapa de severidad todavía",
-      body: "Cuando el análisis tenga hallazgos codificados, aquí se mostrará qué tensiones combinan frecuencia e intensidad.",
-      highIntensity: 0,
+      title: copy.frictionDominates,
+      body: copy.frictionBody,
     };
   }
-  const highIntensity = scatter.filter((item) => item.intensity >= 4).length;
-  const leader = [...scatter].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+  if (triggersTotal > barriersTotal) {
+    return {
+      title: copy.impulseDominates,
+      body: copy.impulseBody,
+    };
+  }
   return {
-    title: truncateLabel(leader?.tooltipTitle ?? "Tensión principal", 64),
-    body: `${highIntensity} hallazgos viven arriba del umbral de intensidad alta. Prioriza los puntos que combinan frecuencia, intensidad y score compuesto.`,
-    highIntensity,
+    title: copy.balanced,
+    body: copy.balancedBody,
   };
 }
 
@@ -727,17 +1002,19 @@ function prettifyKey(key: string): string {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function prettifyPolarity(p: string): string {
+function prettifyPolarity(p: string, uiLanguage: SignalUiLanguage): string {
+  const copy = chartCopy[uiLanguage];
   if (p === "barrier") return "Barriers";
   if (p === "trigger") return "Triggers";
-  if (p === "mixed") return "Mixtos";
-  if (p === "irrelevant") return "Irrelevantes";
+  if (p === "mixed") return copy.mixed;
+  if (p === "irrelevant") return copy.irrelevant;
   return prettifyKey(p);
 }
 
-function mobilityLabel(key: string) {
-  if (key === "movible_por_marca") return "Movible";
-  if (key === "parcialmente_movible") return "Parcial";
-  if (key === "estructural") return "Estructural";
+function mobilityLabel(key: string, uiLanguage: SignalUiLanguage) {
+  const copy = chartCopy[uiLanguage];
+  if (key === "movible_por_marca") return copy.movable;
+  if (key === "parcialmente_movible") return copy.partial;
+  if (key === "estructural") return copy.structural;
   return prettifyKey(key);
 }

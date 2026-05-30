@@ -30,10 +30,16 @@ export function getQueryEngineQueue() {
   }
 
   if (!globalThis.noisiaQueryEngineQueue) {
-    globalThis.noisiaQueryEngineQueue = new Queue(QUERY_ENGINE_QUEUE_NAME, {
+    globalThis.noisiaQueryEngineQueue = new Queue(resolveQueueName(QUERY_ENGINE_QUEUE_NAME), {
       connection: globalThis.noisiaQueryEngineRedis
     });
   }
 
   return globalThis.noisiaQueryEngineQueue;
+}
+
+function resolveQueueName(baseName: string) {
+  if (process.env.NOISIA_QUERY_ENGINE_QUEUE_NAME) return process.env.NOISIA_QUERY_ENGINE_QUEUE_NAME;
+  const runtimeEnv = process.env.RAILWAY_ENVIRONMENT || process.env.VERCEL_ENV || process.env.NODE_ENV;
+  return runtimeEnv && runtimeEnv !== "development" ? baseName : `${baseName}-local`;
 }

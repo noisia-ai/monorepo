@@ -63,6 +63,7 @@ export async function POST(request: Request) {
     audience_segment: emptyToNull(parsed.data.audience_segment),
     category_context: emptyToNull(parsed.data.category_context),
     hypotheses: emptyToNull(parsed.data.hypotheses),
+    competitive_context: emptyToNull(parsed.data.competitive_context),
     known_barriers: emptyToNull(parsed.data.known_barriers),
     known_triggers: emptyToNull(parsed.data.known_triggers),
     strategic_constraints: emptyToNull(parsed.data.strategic_constraints),
@@ -111,6 +112,7 @@ export async function POST(request: Request) {
       summary: parsed.data.business_question.trim(),
       audience_clues: parsed.data.audience_segment ? [parsed.data.audience_segment.trim()] : [],
       cultural_codes: splitLines(parsed.data.category_context),
+      competitor_clues: splitLines(parsed.data.competitive_context),
       potential_triggers: splitLines(parsed.data.known_triggers),
       potential_barriers: splitLines(parsed.data.known_barriers),
       query_language: [],
@@ -122,6 +124,25 @@ export async function POST(request: Request) {
     status: "processed",
     createdByUserId: session.appUser.id
   });
+
+  if (parsed.data.competitive_context?.trim()) {
+    await db.insert(brandKnowledgeSources).values({
+      organizationId: brand.organizationId,
+      brandId: brand.id,
+      studyCorpusId: corpus.id,
+      sourceKind: "competitive_brief",
+      title: `${cleanName} · Competitive context`,
+      rawText: parsed.data.competitive_context.trim(),
+      extractedPayload: {
+        summary: parsed.data.competitive_context.trim().slice(0, 1200),
+        competitor_clues: splitLines(parsed.data.competitive_context),
+        recommended_use: ["query_composition", "analysis_context", "signal_editorial", "competitive_analysis"],
+        source: "study_competitive_brief"
+      },
+      status: "processed",
+      createdByUserId: session.appUser.id
+    });
+  }
 
   return Response.json(
     {

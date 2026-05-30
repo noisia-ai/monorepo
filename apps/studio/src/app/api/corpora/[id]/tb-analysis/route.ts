@@ -93,6 +93,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       status: "running",
       currentStep: "preflight",
       businessQuestion: corpus.businessQuestion,
+      decisionToInform: corpus.decisionToInform,
       executedByUserId: session.appUser.id
     })
     .returning({ id: tbAnalyses.id });

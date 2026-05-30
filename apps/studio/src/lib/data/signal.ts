@@ -30,9 +30,10 @@ export async function listSignalOutputsForUser(appUser: AppUser) {
     where.push(inArray(publishedOutputs.brandId, brandIds));
   }
 
-  return db
+  const rows = await db
     .select({
       id: publishedOutputs.id,
+      studyCorpusId: publishedOutputs.studyCorpusId,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
@@ -51,6 +52,14 @@ export async function listSignalOutputsForUser(appUser: AppUser) {
     .leftJoin(brands, eq(brands.id, publishedOutputs.brandId))
     .where(and(...where))
     .orderBy(desc(publishedOutputs.publishedAt), desc(publishedOutputs.updatedAt));
+
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = `${row.studyCorpusId}:${row.outputType}:${row.methodologySlug}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export async function getSignalOutputForUser(appUser: AppUser, outputId: string) {

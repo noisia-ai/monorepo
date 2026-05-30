@@ -8,6 +8,7 @@ import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { getDraftSignalOutput } from "@/lib/data/signal";
+import { buildSignalPayload } from "@/lib/signal/build";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export default async function TbAnalysisReviewPage({
 
   if (!corpus) notFound();
 
-  const state = await getTbAnalysisForCorpus(corpus.id, analysisId);
+  const state = await getTbAnalysisForCorpus(corpus.id, analysisId, { includeAggregates: true });
   if (!state) notFound();
 
   const { analysis, recommendations, gates, findingSummary } = state;
@@ -40,6 +41,27 @@ export default async function TbAnalysisReviewPage({
         publishedAt: draftOutput.publishedAt?.toISOString() ?? null
       }
     : null;
+  const signalPreview = buildSignalPayload({
+    state,
+    corpus: {
+      id: corpus.id,
+      brandName: corpus.brandName,
+      themeName: corpus.themeName,
+      methodologyName: corpus.methodologyName,
+      methodologySlug: corpus.methodologySlug,
+      businessQuestion: corpus.businessQuestion,
+      decisionToInform: corpus.decisionToInform
+    }
+  });
+  const knowledgeImpact = asRecord(signalPreview.knowledge_impact);
+  const knowledgeSources = arrayRecords(knowledgeImpact.sources_used);
+  const opportunities = arrayRecords(signalPreview.strategic_opportunities);
+  const emergingPatterns = arrayRecords(signalPreview.emerging_patterns);
+  const actionCards = arrayRecords(signalPreview.action_cards);
+  const competitive = asRecord(signalPreview.competitive);
+  const competitiveEntities = arrayRecords(competitive.entities);
+  const boundaries = asRecord(signalPreview.client_boundaries);
+  const publicFindings = arrayRecords(signalPreview.findings);
   const activation = asRecord(analysis.activationPlaybook);
   const triggerRecs = recommendations.filter((rec) => rec.kind === "activation");
   const frictionRecs = recommendations.filter((rec) => rec.kind === "friction_removal");
@@ -91,6 +113,55 @@ export default async function TbAnalysisReviewPage({
         <MetricCard label="Accionables" value={findingSummary.movable} />
       </section>
 
+      <section className="analysis-review-card analysis-review-brief">
+        <div className="analysis-section-head">
+          <SectionTitle icon="info" eyebrow="Brief + Knowledge Base" title="Lo que debe gobernar el reporte" />
+          <span>{knowledgeSources.length} fuentes KB</span>
+        </div>
+        <div className="analysis-brief-grid">
+          <div className="analysis-brief-block analysis-brief-block--wide">
+            <span>Pregunta de negocio</span>
+            <p>{analysis.businessQuestion || corpus.businessQuestion || "No hay pregunta de negocio guardada para este estudio."}</p>
+          </div>
+          <div className="analysis-brief-block">
+            <span>Decisión interna</span>
+            <p>{analysis.decisionToInform || corpus.decisionToInform || "No hay decisión interna guardada para este estudio."}</p>
+          </div>
+          <div className="analysis-brief-block">
+            <span>Respuesta preliminar del Signal</span>
+            <p>{stringValue(knowledgeImpact.business_question_answer) || "El payload todavía no trae una respuesta explícita cruzando brief, KB y corpus."}</p>
+          </div>
+        </div>
+        <div className="analysis-kb-strip">
+          {knowledgeSources.length > 0 ? (
+            knowledgeSources.slice(0, 8).map((source) => (
+              <article className="analysis-kb-source" key={stringValue(source.source_id) || stringValue(source.title)}>
+                <strong>{stringValue(source.original_file_name) || stringValue(source.title) || "Fuente KB"}</strong>
+                <p>{stringValue(source.summary) || "Fuente disponible sin resumen client-safe."}</p>
+                <span>{stringValue(source.source_kind) || "knowledge_source"}</span>
+              </article>
+            ))
+          ) : (
+            <EmptyCard text="El review no encontró fuentes KB procesadas en el payload. Si el cliente subió archivos, esto debe revisarse antes de publicar." />
+          )}
+        </div>
+      </section>
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="check" eyebrow="Signal readiness" title="Componentes que sí llegarán al dashboard" />
+          <span>{signalPreview.schema_version}</span>
+        </div>
+        <div className="analysis-readiness-grid">
+          <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
+          <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
+          <ReadinessTile label="Action Studio" value={actionCards.length} detail={`${countClientReadyActions(actionCards)} con texto útil`} />
+          <ReadinessTile label="Competitive" value={competitiveEntities.length} detail={competitiveEntities.length > 0 ? "Benchmark conectado" : "Sin entidades competitivas"} />
+          <ReadinessTile label="Emerging Patterns" value={emergingPatterns.length} detail="Fuera del método T&B" />
+          <ReadinessTile label="Boundaries" value={arrayValue(boundaries.limitations).length} detail="Límites client-safe" />
+        </div>
+      </section>
+
       {arrayValue(activation.top_triggers_movibles).length === 0 ? (
         <section className="analysis-empty-signal">
           <Icon name="info" size={18} />
@@ -105,6 +176,50 @@ export default async function TbAnalysisReviewPage({
       ) : null}
 
       <div className="analysis-review-sections">
+        <article className="analysis-review-card">
+          <div className="analysis-section-head">
+            <SectionTitle icon="arrow-up" eyebrow="Opportunities" title="Decisiones que cambian la estrategia" />
+            <span>{opportunities.length}</span>
+          </div>
+          <div className="analysis-preview-list">
+            {opportunities.length > 0 ? (
+              opportunities.slice(0, 6).map((opportunity, index) => (
+                <PreviewItem
+                  key={stringValue(opportunity.opportunity_id) || index}
+                  code={stringValue(opportunity.opportunity_id) || `OP-${index + 1}`}
+                  title={stringValue(opportunity.title) || "Oportunidad estratégica"}
+                  body={stringValue(opportunity.decision) || stringValue(opportunity.what_to_do) || stringValue(opportunity.evidence_summary)}
+                  meta={stringValue(opportunity.level) || stringValue(opportunity.confidence)}
+                />
+              ))
+            ) : (
+              <EmptyCard text="El payload todavía no trae oportunidades estratégicas. Antes de publicar, Step 6 debe producir conclusiones que no sean sólo triggers o barriers." />
+            )}
+          </div>
+        </article>
+
+        <article className="analysis-review-card">
+          <div className="analysis-section-head">
+            <SectionTitle icon="wave" eyebrow="Emerging Patterns" title="Señales fuera del método" />
+            <span>{emergingPatterns.length}</span>
+          </div>
+          <div className="analysis-preview-list analysis-preview-list--two">
+            {emergingPatterns.length > 0 ? (
+              emergingPatterns.slice(0, 6).map((pattern, index) => (
+                <PreviewItem
+                  key={stringValue(pattern.pattern_id) || index}
+                  code={stringValue(pattern.pattern_id) || `EP-${index + 1}`}
+                  title={stringValue(pattern.title) || "Pattern emergente"}
+                  body={stringValue(pattern.why_it_matters)}
+                  meta={`${numberValue(pattern.evidence_count)} evidencias`}
+                />
+              ))
+            ) : (
+              <EmptyCard text="No hay patrones emergentes listos. Si la pregunta del cliente no se responde sólo con T&B, este bloque debe regenerarse." />
+            )}
+          </div>
+        </article>
+
         <article className="analysis-review-card">
           <div className="analysis-section-head">
             <SectionTitle icon="arrow-up" eyebrow="Plan de acción" title="Barreras que la marca sí puede mover" />
@@ -210,6 +325,39 @@ function MetricCard({ label, value }: { label: string; value: number | string | 
   );
 }
 
+function ReadinessTile({ label, value, detail }: { label: string; value: number | string; detail: string }) {
+  return (
+    <div className="analysis-readiness-tile">
+      <span>{label}</span>
+      <strong>{typeof value === "number" ? new Intl.NumberFormat("es-MX").format(value) : value}</strong>
+      <p>{detail}</p>
+    </div>
+  );
+}
+
+function PreviewItem({
+  code,
+  title,
+  body,
+  meta
+}: {
+  code: string;
+  title: string;
+  body: string;
+  meta?: string;
+}) {
+  return (
+    <article className="analysis-preview-item">
+      <header>
+        <span>{code}</span>
+        {meta ? <em>{meta}</em> : null}
+      </header>
+      <h3>{title}</h3>
+      <p>{body || "Falta redacción client-safe para este bloque; debe regenerarse antes de publicar."}</p>
+    </article>
+  );
+}
+
 function RecommendationCard({
   rec,
   compact = false
@@ -230,7 +378,7 @@ function RecommendationCard({
   };
   compact?: boolean;
 }) {
-  const mainText = rec.intervencionSugerida ?? rec.recomendacion ?? rec.razonEstructural ?? "Sin texto todavía.";
+  const mainText = rec.intervencionSugerida ?? rec.recomendacion ?? rec.razonEstructural ?? recommendationFallback(rec);
 
   return (
     <article className={`recommendation-card${compact ? " recommendation-card--compact" : ""}`}>
@@ -338,6 +486,35 @@ function arrayValue(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function arrayRecords(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function countClientReadyActions(actions: JsonRecord[]) {
+  return actions.filter((action) => stringValue(action.action_text).trim().length > 20).length;
+}
+
+function recommendationFallback(rec: {
+  findingHumanId: string | null;
+  findingName: string | null;
+  kind: string;
+}) {
+  const subject = rec.findingName || rec.findingHumanId || "este hallazgo";
+  if (rec.kind === "activation") {
+    return `Este trigger fue detectado como señal positiva, pero Step 6 no dejó una intervención redactada. Antes de publicar, conviértelo en una oportunidad concreta para ${subject}.`;
+  }
+  if (rec.kind === "structural_note") {
+    return `Este hallazgo está marcado como contexto estructural. Úsalo como límite de decisión y evita prometer una acción directa sobre ${subject}.`;
+  }
+  return `Falta redacción de acción para ${subject}. Antes de publicar, Step 6 debe convertir el hallazgo en qué hacer, responsable, esfuerzo y señal de éxito.`;
 }

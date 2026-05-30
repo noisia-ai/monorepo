@@ -10,6 +10,8 @@ import {
   type TbMobility
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { detectTbOutputLanguage } from "./tb-language";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
   markStepCompleted,
@@ -63,6 +65,8 @@ export async function tbStep4MobilityJob(job: Job<StepJobData>) {
 
   try {
     const ctx = await loadCtx(tbAnalysisId);
+    const outputLanguage = await detectTbOutputLanguage(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(20);
 
     const findings = await loadFindings(tbAnalysisId);
@@ -91,6 +95,8 @@ export async function tbStep4MobilityJob(job: Job<StepJobData>) {
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
       businessQuestion: ctx.business_question,
+      outputLanguage,
+      ragContext,
       findings: inputs
     });
 

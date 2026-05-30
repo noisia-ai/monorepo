@@ -38,7 +38,8 @@ const textKeys = ["text", "content", "body", "mention", "snippet", "description"
 const titleKeys = ["title", "headline", "subject"];
 const dateKeys = ["date", "published at", "published_at", "created at", "created_at", "created", "time"];
 const urlKeys = ["url", "link", "source url", "source_url", "link to the source"];
-const platformKeys = ["platform", "source", "source type", "medium", "channel", "specific type", "domain group"];
+const platformKeys = ["platform", "channel", "network", "social network", "service", "domain group", "source", "source type", "medium", "specific type"];
+const contentTypeKeys = ["content type", "type", "source type", "specific type", "media type", "post type", "kind"];
 const authorKeys = ["author", "author name", "author_name", "user", "username", "handle"];
 const sentimentKeys = ["sentiment", "sentiment label", "sentiment_label"];
 const sentimentScoreKeys = ["sentiment score", "sentiment_score", "score"];
@@ -189,8 +190,9 @@ function normalizeMention(row: CsvRow, sourceFileName: string): NormalizedMentio
   const textHash = hashText(textClean);
   const title = pick(row, titleKeys) || null;
   const publishedAt = parseDate(pick(row, dateKeys)) ?? new Date(0);
-  const platform = normalizePlatform(pick(row, platformKeys));
   const url = pick(row, urlKeys) || null;
+  const platform = normalizePlatform(row, url);
+  const contentType = normalizeContentType(pick(row, contentTypeKeys));
   const sentimentSource = normalizeSentiment(pick(row, sentimentKeys));
   const sentimentScore = parseSentimentScore(pick(row, sentimentScoreKeys) || sentimentSource);
   const country = normalizeCountry(pick(row, countryKeys));
@@ -222,6 +224,7 @@ function normalizeMention(row: CsvRow, sourceFileName: string): NormalizedMentio
     rawMetadata: {
       source_file_name: sourceFileName,
       author: pick(row, authorKeys) || null,
+      content_type: contentType,
       row
     },
     textHash
@@ -327,8 +330,64 @@ function parseDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function normalizePlatform(value: string) {
-  return value ? value.toLowerCase().replace(/\s+/g, "_") : "unknown";
+function normalizePlatform(row: CsvRow, url: string | null) {
+  const haystack = [
+    url ?? "",
+    ...platformKeys.map((key) => pick(row, [key])),
+    ...Object.values(row)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  const known = detectKnownPlatform(haystack);
+  if (known) return known;
+
+  const candidate = pick(row, platformKeys);
+  const normalized = normalizeToken(candidate);
+  if (!normalized || isContentTypeToken(normalized)) return "unknown";
+  return normalized;
+}
+
+function detectKnownPlatform(value: string) {
+  const rules: Array<[RegExp, string]> = [
+    [/\btik\s*tok\b|tiktok\.com|douyin/i, "tiktok"],
+    [/\btwitter\b|\bx\b|x\.com|twitter\.com/i, "x"],
+    [/\binstagram\b|instagram\.com/i, "instagram"],
+    [/\bfacebook\b|facebook\.com|fb\.com/i, "facebook"],
+    [/\byoutube\b|youtu\.be|youtube\.com/i, "youtube"],
+    [/\breddit\b|reddit\.com/i, "reddit"],
+    [/\blinkedin\b|linkedin\.com/i, "linkedin"],
+    [/\bthreads\b|threads\.net/i, "threads"],
+    [/\btelegram\b|t\.me/i, "telegram"],
+    [/\bwhatsapp\b|wa\.me/i, "whatsapp"],
+    [/\btrustpilot\b|trustpilot\./i, "trustpilot"],
+    [/\bgoogle\b|google\./i, "google"],
+    [/\bnews\b|newspaper|article|press|media outlet/i, "news"],
+    [/\bblog\b|blogspot|wordpress|medium\.com/i, "blog"],
+    [/\bforum\b|community/i, "forum"]
+  ];
+  return rules.find(([regex]) => regex.test(value))?.[1] ?? null;
+}
+
+function normalizeContentType(value: string) {
+  const token = normalizeToken(value);
+  return token || null;
+}
+
+function normalizeToken(value: string) {
+  return value
+    ? value
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+    : "";
+}
+
+function isContentTypeToken(value: string) {
+  return /^(comment|comments|comentario|comentarios|video|short|shorts|post|posts|tweet|tweets|article|articles|news|reel|reels|story|stories|image|photo|photos|forum_post)$/.test(value);
 }
 
 function normalizeSentiment(value: string) {

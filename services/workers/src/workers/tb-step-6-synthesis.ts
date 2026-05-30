@@ -10,12 +10,16 @@ import {
   parseSynthesisResponse,
   TB_SYNTHESIS_TOP_PER_KIND,
   type ActivationPlaybook,
+  type ActionStudioCard,
   type FrictionRemovalPlan,
+  type SynthesisResponse,
   type SynthesisFindingInput,
   type TbLayer,
   type TbMobility
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { detectTbOutputLanguage } from "./tb-language";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
   markStepCompleted,
@@ -30,11 +34,14 @@ type StepJobData = {
 };
 
 type AnalysisCtxRow = {
+  study_corpus_id: string;
+  snapshot_id: string | null;
   business_question: string | null;
   decision_to_inform: string | null;
   brand_name: string | null;
   brand_display_name: string | null;
   brand_industry: string | null;
+  comparative_brief: unknown | null;
 };
 
 type FindingRow = {
@@ -57,10 +64,10 @@ type FindingRow = {
 // cuando tengamos benchmarks. Step 6 privilegia profundidad estrategica sobre
 // velocidad porque recibe findings ya curados; los limites solo evitan workers
 // colgados indefinidamente.
-const STEP6_SYNTHESIS_TIMEOUT_MS = 10 * 60 * 1000;
-const STEP6_HUMANIZER_TIMEOUT_MS = 10 * 60 * 1000;
-const STEP6_SYNTHESIS_MAX_OUTPUT_TOKENS = 9_000;
-const STEP6_HUMANIZER_MAX_OUTPUT_TOKENS = 8_000;
+const STEP6_SYNTHESIS_TIMEOUT_MS = 20 * 60 * 1000;
+const STEP6_HUMANIZER_TIMEOUT_MS = 20 * 60 * 1000;
+const STEP6_SYNTHESIS_MAX_OUTPUT_TOKENS = 14_000;
+const STEP6_HUMANIZER_MAX_OUTPUT_TOKENS = 10_000;
 
 /**
  * Step 6 — Synthesis + humanizer.
@@ -74,6 +81,9 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
 
   try {
     const ctx = await loadCtx(tbAnalysisId);
+    const outputLanguage = await detectTbOutputLanguage(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
+    const corpusOpenSignals = buildOpenSignalsFromCorpusIntelligence(ragContext.corpus_intelligence, outputLanguage);
     await job.updateProgress(18);
 
     const findings = await loadFindings(tbAnalysisId);
@@ -87,6 +97,9 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
       businessQuestion: ctx.business_question ?? ctx.decision_to_inform,
+      outputLanguage,
+      ragContext,
+      comparativeBrief: ctx.comparative_brief,
       findings: promptFindings.map(toSynthesisInput)
     });
 
@@ -97,30 +110,28 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     );
     await job.updateProgress(32);
 
-    let synthesis = parseSynthesisResponse(
-      (await generateText({
-        model: anthropic(model),
-        prompt,
-        temperature: 0.18,
-        maxOutputTokens: STEP6_SYNTHESIS_MAX_OUTPUT_TOKENS,
-        timeout: STEP6_SYNTHESIS_TIMEOUT_MS,
-        maxRetries: 1
-      })).text
-    );
+    let synthesis = await generateAndParseSynthesis({
+      model,
+      prompt,
+      parser: parseSynthesisResponse,
+      phase: "synthesis",
+      temperature: 0.18,
+      maxOutputTokens: STEP6_SYNTHESIS_MAX_OUTPUT_TOKENS,
+      timeout: STEP6_SYNTHESIS_TIMEOUT_MS
+    });
     await job.updateProgress(62);
 
     const beforeHumanizer = JSON.stringify(synthesis, null, 2);
-    const humanizerPrompt = buildHumanizerPrompt({ jsonText: beforeHumanizer });
-    synthesis = parseHumanizerResponse(
-      (await generateText({
-        model: anthropic(model),
-        prompt: humanizerPrompt,
-        temperature: 0.12,
-        maxOutputTokens: STEP6_HUMANIZER_MAX_OUTPUT_TOKENS,
-        timeout: STEP6_HUMANIZER_TIMEOUT_MS,
-        maxRetries: 1
-      })).text
-    );
+    const humanizerPrompt = buildHumanizerPrompt({ jsonText: beforeHumanizer, outputLanguage });
+    synthesis = await generateAndParseSynthesis({
+      model,
+      prompt: humanizerPrompt,
+      parser: parseHumanizerResponse,
+      phase: "humanizer",
+      temperature: 0.12,
+      maxOutputTokens: STEP6_HUMANIZER_MAX_OUTPUT_TOKENS,
+      timeout: STEP6_HUMANIZER_TIMEOUT_MS
+    });
     console.log(
       `[tb-step6] humanizer before="${beforeHumanizer.slice(0, 180).replace(/\s+/g, " ")}" ` +
       `after="${JSON.stringify(synthesis).slice(0, 180).replace(/\s+/g, " ")}"`
@@ -134,6 +145,14 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
       tbAnalysisId,
       activationPlaybook: synthesis.activation_playbook,
       frictionRemovalPlan: synthesis.friction_removal_plan,
+      actionStudio: synthesis.action_studio,
+      emergingPatterns: synthesis.emerging_patterns,
+      knowledgeImpact: synthesis.knowledge_impact,
+      strategicOpportunities: synthesis.strategic_opportunities,
+      futureSignals: synthesis.future_signals,
+      marketAnalysis: synthesis.market_analysis,
+      evidenceDeepDives: synthesis.evidence_deep_dives,
+      openSignals: corpusOpenSignals,
       confidencePerFinding,
       findings
     });
@@ -149,6 +168,9 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
         friction_top_barriers: synthesis.friction_removal_plan.top_barriers_movibles.length,
         friction_recommendations: synthesis.friction_removal_plan.por_barrier_intervencion.length,
         structural_notes: synthesis.friction_removal_plan.barriers_estructurales.length,
+        action_studio_cards: synthesis.action_studio.length,
+        emerging_patterns: synthesis.emerging_patterns.length,
+        open_signals: corpusOpenSignals.length,
         recommendations_inserted: persistResult.recommendationsInserted,
         unmatched_recommendation_ids: persistResult.unmatchedFindingIds,
         humanizer_preview: {
@@ -168,17 +190,73 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[tb-step6] failed: ${msg}`);
+    if (process.env.TB_ALLOW_DUPLICATE_STEP6_SKIP === "true" && await hasCompletedSynthesis(tbAnalysisId)) {
+      await markStepSkipped({
+        pipelineStepId,
+        reason: `Skipped duplicate Step 6 failure after completed synthesis: ${msg}`
+      });
+      await releaseCorpusLock(tbAnalysisId);
+      return {
+        skipped_duplicate: true,
+        reason: msg
+      };
+    }
     await markStepFailed({ pipelineStepId, errorMessage: msg });
     await releaseCorpusLock(tbAnalysisId);
     throw err;
   }
 }
 
+async function generateAndParseSynthesis(args: {
+  model: string;
+  prompt: string;
+  parser: (raw: string) => SynthesisResponse;
+  phase: "synthesis" | "humanizer";
+  temperature: number;
+  maxOutputTokens: number;
+  timeout: number;
+}): Promise<SynthesisResponse> {
+  const run = async (prompt: string) => generateText({
+    model: anthropic(args.model),
+    prompt,
+    temperature: args.temperature,
+    maxOutputTokens: args.maxOutputTokens,
+    timeout: args.timeout,
+    maxRetries: 1
+  });
+
+  const first = await run(args.prompt);
+  try {
+    return args.parser(first.text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[tb-step6] ${args.phase} returned invalid JSON (${message}); retrying compact regeneration. ` +
+      `finish=${first.finishReason ?? "unknown"} chars=${first.text.length}`
+    );
+  }
+
+  const retryPrompt = [
+    args.prompt,
+    "",
+    "RETRY BECAUSE YOUR PREVIOUS RESPONSE WAS NOT VALID JSON.",
+    "Return the same required schema again, but be more compact.",
+    "Hard limits: max 3 items per array, max 16 words per explanation string.",
+    "Your first character must be { and your last character must be }.",
+    "Do not include markdown fences or prose outside JSON."
+  ].join("\n");
+  const second = await run(retryPrompt);
+  return args.parser(second.text);
+}
+
 async function loadCtx(tbAnalysisId: string): Promise<AnalysisCtxRow> {
   const r = await pool.query<AnalysisCtxRow>(
     `SELECT
+       ta.study_corpus_id,
+       ta.snapshot_id,
        ta.business_question,
-       ta.decision_to_inform,
+       COALESCE(ta.decision_to_inform, sc.decision_to_inform) AS decision_to_inform,
+       ta.comparative_brief,
        b.name AS brand_name,
        b.display_name AS brand_display_name,
        b.industry AS brand_industry
@@ -206,6 +284,32 @@ async function loadFindings(tbAnalysisId: string): Promise<FindingRow[]> {
     [tbAnalysisId]
   );
   return r.rows;
+}
+
+async function hasCompletedSynthesis(tbAnalysisId: string): Promise<boolean> {
+  const r = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM tb_pipeline_steps
+       WHERE tb_analysis_id = $1
+         AND step = 'step6_synthesis'
+         AND status = 'completed'
+     ) AS exists`,
+    [tbAnalysisId]
+  );
+  return Boolean(r.rows[0]?.exists);
+}
+
+async function markStepSkipped(args: { pipelineStepId: string; reason: string }): Promise<void> {
+  await pool.query(
+    `UPDATE tb_pipeline_steps
+     SET status = 'skipped',
+         completed_at = NOW(),
+         duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000,
+         error_message = $1
+     WHERE id = $2`,
+    [args.reason.slice(0, 2000), args.pipelineStepId]
+  );
 }
 
 function selectFindingsForSynthesis(findings: FindingRow[]): FindingRow[] {
@@ -266,6 +370,14 @@ async function persistSynthesis(args: {
   tbAnalysisId: string;
   activationPlaybook: ActivationPlaybook;
   frictionRemovalPlan: FrictionRemovalPlan;
+  actionStudio: ActionStudioCard[];
+  emergingPatterns: SynthesisResponse["emerging_patterns"];
+  knowledgeImpact: SynthesisResponse["knowledge_impact"];
+  strategicOpportunities: SynthesisResponse["strategic_opportunities"];
+  futureSignals: SynthesisResponse["future_signals"];
+  marketAnalysis: SynthesisResponse["market_analysis"];
+  evidenceDeepDives: SynthesisResponse["evidence_deep_dives"];
+  openSignals: ReturnType<typeof buildOpenSignalsFromCorpusIntelligence>;
   confidencePerFinding: Record<string, string>;
   findings: FindingRow[];
 }): Promise<{ recommendationsInserted: number; unmatchedFindingIds: string[] }> {
@@ -281,17 +393,49 @@ async function persistSynthesis(args: {
        SET activation_playbook = $1::jsonb,
            friction_removal_plan = $2::jsonb,
            confidence_per_finding = $3::jsonb,
+           meta_json = jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 jsonb_set(
+                   jsonb_set(
+                     jsonb_set(
+                       jsonb_set(
+                         jsonb_set(COALESCE(meta_json, '{}'::jsonb), '{action_studio}', $4::jsonb, true),
+                         '{emerging_patterns}', $5::jsonb, true
+                       ),
+                       '{knowledge_impact}', $7::jsonb, true
+                     ),
+                     '{strategic_opportunities}', $8::jsonb, true
+                   ),
+                   '{future_signals}', $9::jsonb, true
+                 ),
+                 '{market_analysis}', $10::jsonb, true
+               ),
+               '{evidence_deep_dives}', $11::jsonb, true
+             ),
+             '{open_signals}', $6::jsonb, true
+           ),
            updated_at = NOW()
-       WHERE id = $4`,
+       WHERE id = $12`,
       [
         JSON.stringify(args.activationPlaybook),
         JSON.stringify(args.frictionRemovalPlan),
         JSON.stringify(args.confidencePerFinding),
+        JSON.stringify(args.actionStudio),
+        JSON.stringify(args.emergingPatterns),
+        JSON.stringify(args.openSignals),
+        JSON.stringify(args.knowledgeImpact),
+        JSON.stringify(args.strategicOpportunities),
+        JSON.stringify(args.futureSignals),
+        JSON.stringify(args.marketAnalysis),
+        JSON.stringify(args.evidenceDeepDives),
         args.tbAnalysisId
       ]
     );
 
     await client.query(`DELETE FROM tb_recommendations WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
+    await client.query(`DELETE FROM tb_insights WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
+    await client.query(`DELETE FROM tb_open_signals WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
 
     for (const [position, rec] of args.activationPlaybook.por_trigger_recomendacion.entries()) {
       const findingUuid = findingUuidById.get(rec.trigger_id) ?? null;
@@ -339,6 +483,15 @@ async function persistSynthesis(args: {
       });
       inserted += 1;
     }
+
+    await persistInsights(client, {
+      tbAnalysisId: args.tbAnalysisId,
+      emergingPatterns: args.emergingPatterns
+    });
+    await persistOpenSignals(client, {
+      tbAnalysisId: args.tbAnalysisId,
+      openSignals: args.openSignals
+    });
 
     await client.query("COMMIT");
     return { recommendationsInserted: inserted, unmatchedFindingIds: Array.from(unmatched) };
@@ -403,7 +556,188 @@ async function insertRecommendation(
   );
 }
 
+async function persistInsights(
+  client: PoolClient,
+  args: {
+    tbAnalysisId: string;
+    emergingPatterns: SynthesisResponse["emerging_patterns"];
+  }
+) {
+  for (const [position, pattern] of args.emergingPatterns.entries()) {
+    await client.query(
+      `INSERT INTO tb_insights (
+         tb_analysis_id,
+         insight_id,
+         kind,
+         title,
+         summary,
+         finding_ids,
+         data_basis,
+         source_breakdown,
+         evidence_quotes,
+         confidence,
+         position
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+       ON CONFLICT (tb_analysis_id, insight_id) DO UPDATE
+       SET kind = EXCLUDED.kind,
+           title = EXCLUDED.title,
+           summary = EXCLUDED.summary,
+           finding_ids = EXCLUDED.finding_ids,
+           data_basis = EXCLUDED.data_basis,
+           source_breakdown = EXCLUDED.source_breakdown,
+           evidence_quotes = EXCLUDED.evidence_quotes,
+           confidence = EXCLUDED.confidence,
+           position = EXCLUDED.position,
+           updated_at = NOW()`,
+      [
+        args.tbAnalysisId,
+        pattern.pattern_id,
+        pattern.pattern_type,
+        pattern.title,
+        pattern.why_it_matters,
+        pattern.related_finding_ids,
+        pattern.data_basis,
+        JSON.stringify(pattern.source_breakdown),
+        pattern.evidence_quotes,
+        pattern.confidence,
+        position
+      ]
+    );
+  }
+}
+
+async function persistOpenSignals(
+  client: PoolClient,
+  args: {
+    tbAnalysisId: string;
+    openSignals: ReturnType<typeof buildOpenSignalsFromCorpusIntelligence>;
+  }
+) {
+  for (const [position, signal] of args.openSignals.entries()) {
+    await client.query(
+      `INSERT INTO tb_open_signals (
+         tb_analysis_id,
+         signal_id,
+         title,
+         signal_type,
+         why_it_matters,
+         tags,
+         evidence_count,
+         source_breakdown,
+         metrics,
+         evidence_quotes,
+         confidence,
+         position
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12)
+       ON CONFLICT (tb_analysis_id, signal_id) DO UPDATE
+       SET title = EXCLUDED.title,
+           signal_type = EXCLUDED.signal_type,
+           why_it_matters = EXCLUDED.why_it_matters,
+           tags = EXCLUDED.tags,
+           evidence_count = EXCLUDED.evidence_count,
+           source_breakdown = EXCLUDED.source_breakdown,
+           metrics = EXCLUDED.metrics,
+           evidence_quotes = EXCLUDED.evidence_quotes,
+           confidence = EXCLUDED.confidence,
+           position = EXCLUDED.position,
+           updated_at = NOW()`,
+      [
+        args.tbAnalysisId,
+        signal.pattern_id,
+        signal.title,
+        signal.pattern_type,
+        signal.why_it_matters,
+        signal.data_basis,
+        signal.evidence_count,
+        JSON.stringify(signal.source_breakdown),
+        JSON.stringify({ data_basis: signal.data_basis, related_finding_ids: signal.related_finding_ids }),
+        signal.evidence_quotes,
+        signal.confidence,
+        position
+      ]
+    );
+  }
+}
+
 function scoreNumber(value: string | number | null): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function buildOpenSignalsFromCorpusIntelligence(source: unknown, outputLanguage: string) {
+  const record = source && typeof source === "object" ? source as Record<string, unknown> : {};
+  const candidates = Array.isArray(record.open_signal_candidates) ? record.open_signal_candidates : [];
+  const english = outputLanguage.toLowerCase().startsWith("english");
+  return candidates
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item, index) => {
+      const tag = stringFromUnknown(item.tag) || `senal-${index + 1}`;
+      const mentionCount = numberFromUnknown(item.mention_count);
+      const channel = stringFromUnknown(item.dominant_channel);
+      const quote = stringFromUnknown(item.sample_quote);
+      return {
+        pattern_id: `OS-${String(index + 1).padStart(2, "0")}`,
+        title: titleizeSignal(english ? englishSignalTitle(tag) : tag),
+        pattern_type: "unexpected_insight",
+        why_it_matters:
+          mentionCount > 0
+            ? english
+              ? `Appears in ${mentionCount} mentions that were outside or ambiguous in T&B; it may be an adjacent signal for another method.`
+              : `Aparece en ${mentionCount} menciones que quedaron fuera o ambiguas en T&B; puede ser una señal adyacente para otra metodología.`
+            : english
+              ? "Appears outside the T&B frame and may be an adjacent signal for another method."
+              : "Aparece fuera del marco T&B y puede ser señal adyacente para otra metodología.",
+        data_basis: ["corpus_sql", "noise_plus_signal"],
+        evidence_count: mentionCount,
+        source_breakdown: channel ? [{ source: channel, count: mentionCount }] : [],
+        related_finding_ids: [],
+        confidence: mentionCount >= 30 ? "media" : "baja_direccional",
+        evidence_quotes: quote ? [quote.slice(0, 260)] : []
+      };
+    })
+    .filter((item) => item.evidence_count > 0)
+    .slice(0, 8);
+}
+
+function englishSignalTitle(value: string) {
+  const key = normalizeLoose(value);
+  const known: Record<string, string> = {
+    "esperando el dia de pago": "waiting for payday",
+    "dia de pago": "payday",
+    "rutina de dia de pago": "payday routine",
+    "aguantando hasta el dia de pago": "making it to payday",
+    "no confio en los bancos": "distrust in banks",
+    "me cerraron la cuenta sin razon": "account closed without explanation",
+    "me cambie de banco": "switched banks",
+    "los numeros no cuadran": "the numbers do not add up"
+  };
+  return known[key] ?? value;
+}
+
+function normalizeLoose(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function stringFromUnknown(value: unknown) {
+  return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+}
+
+function numberFromUnknown(value: unknown) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function titleizeSignal(value: string) {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

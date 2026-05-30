@@ -8,6 +8,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { db } from "@/lib/db";
 import { buildSignalPayload, normalizeSignalManifest } from "@/lib/signal/build";
+import { SIGNAL_PAYLOAD_VERSION } from "@/lib/signal/contracts";
 import { defaultSignalManifest } from "@/lib/signal/manifest";
 
 const bodySchema = z.object({
@@ -37,7 +38,7 @@ export async function POST(
     return validationError(parsed.error);
   }
 
-  const state = await getTbAnalysisForCorpus(corpus.id, analysisId);
+  const state = await getTbAnalysisForCorpus(corpus.id, analysisId, { includeAggregates: true });
   if (!state) {
     return Response.json({ error: "not_found", message: "Analysis not found." }, { status: 404 });
   }
@@ -82,6 +83,7 @@ export async function POST(
       summary: parsed.data.summary,
       manifest,
       payload,
+      version: SIGNAL_PAYLOAD_VERSION,
       createdByUserId: session.appUser.id,
       publishedByUserId: isPublish ? session.appUser.id : null,
       publishedAt: isPublish ? new Date() : null,
@@ -96,6 +98,7 @@ export async function POST(
         summary: parsed.data.summary,
         manifest,
         payload,
+        version: SIGNAL_PAYLOAD_VERSION,
         publishedByUserId: isPublish ? session.appUser.id : null,
         publishedAt: isPublish ? new Date() : null,
         archivedAt: null,

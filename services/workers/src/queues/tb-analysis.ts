@@ -6,9 +6,9 @@ import { tbStep1OpenPassJob } from "../workers/tb-step-1-open-pass";
 import { tbStep2CodingJob } from "../workers/tb-step-2-coding";
 import { tbStep3HierarchyJob } from "../workers/tb-step-3-hierarchy";
 import { tbStep4MobilityJob } from "../workers/tb-step-4-mobility";
+import { tbStep5ComparativeJob } from "../workers/tb-step-5-comparative";
 import { tbStep6SynthesisJob } from "../workers/tb-step-6-synthesis";
 import { tbPreflightJob } from "../workers/tb-step-preflight";
-import { tbStep5ComparativeJob } from "../workers/tb-step-stubs";
 import { tbQualityGatesJob } from "../workers/tb-quality-gates";
 import { redisConnection } from "./query-engine";
 

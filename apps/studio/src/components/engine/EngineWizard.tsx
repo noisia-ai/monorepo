@@ -36,6 +36,9 @@ type Batch = {
   id: string;
   queryIterationId: string | null;
   mentionType: string | null;
+  competitorId: string | null;
+  entityKind: string | null;
+  entityLabel: string | null;
   recordCount: number | null;
   includedCount: number | null;
   excludedCount: number | null;
@@ -49,6 +52,13 @@ type CorpusCounts = {
   included: number;
   excluded: number;
   pending: number;
+};
+
+type CompetitorOption = {
+  id: string;
+  canonicalName: string;
+  vertical: string | null;
+  subVertical: string | null;
 };
 
 type Assessment = {
@@ -83,6 +93,7 @@ type WizardProps = {
   assessedAt: Date | string | null;
   snapshots: Snapshot[];
   cleanups: CleanupAction[];
+  competitors: CompetitorOption[];
 };
 
 type EvalNotes = {
@@ -141,6 +152,7 @@ export function EngineWizard(props: WizardProps) {
     assessedAt,
     snapshots,
     cleanups,
+    competitors,
   } = props;
 
   // Active step — server's computation is the source of truth, but we may
@@ -274,6 +286,7 @@ export function EngineWizard(props: WizardProps) {
               corpusId={corpusId}
               iteration={current}
               existingBatches={currentBatches}
+              competitors={competitors}
               onComplete={() => {
                 router.refresh();
                 setActiveStep("evaluate");
@@ -511,11 +524,13 @@ function StepUpload({
   corpusId,
   iteration,
   existingBatches,
+  competitors,
   onComplete,
 }: {
   corpusId: string;
   iteration: Iteration;
   existingBatches: Batch[];
+  competitors: CompetitorOption[];
   onComplete: () => void;
 }) {
   const wantsIndustry = !!iteration.industryQueryText;
@@ -581,6 +596,7 @@ function StepUpload({
             corpusId={corpusId}
             iterationId={iteration.id}
             mentionType="competitor"
+            competitors={competitors}
             done={competitorDone}
           />
         )}
@@ -624,11 +640,13 @@ function UploadSlot({
   corpusId,
   iterationId,
   mentionType,
+  competitors = [],
   done,
 }: {
   corpusId: string;
   iterationId: string;
   mentionType: "brand" | "competitor" | "industry";
+  competitors?: CompetitorOption[];
   done: boolean;
 }) {
   const router = useRouter();
@@ -636,6 +654,10 @@ function UploadSlot({
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">(
     done ? "success" : "idle"
   );
+  const [entityLabel, setEntityLabel] = useState(
+    mentionType === "competitor" ? "Pool competitivo" : mentionType === "industry" ? "Baseline de categoría" : "Marca"
+  );
+  const [competitorId, setCompetitorId] = useState<string>("");
   const [stats, setStats] = useState<{ included: number; excluded: number; duplicates: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -654,6 +676,20 @@ function UploadSlot({
     fd.append("mention_type", mentionType);
     fd.append("query_iteration_id", iterationId);
     fd.append("source_label", `iter_${mentionType}`);
+    if (mentionType === "competitor" && competitorId) {
+      fd.append("competitor_id", competitorId);
+    }
+    fd.append("entity_label", entityLabel.trim());
+    fd.append(
+      "entity_kind",
+      mentionType === "brand"
+        ? "primary_brand"
+        : mentionType === "industry"
+          ? "category"
+          : competitorId || (entityLabel.trim() && entityLabel.trim() !== "Pool competitivo")
+            ? "competitor"
+            : "competitor_pool"
+    );
 
     // Fake progressive feedback while server processes
     const tick = setInterval(() => {
@@ -712,6 +748,7 @@ function UploadSlot({
           <p className="upload-slot-msg">
             {stats ? `+${fmtNumber(stats.included)} menciones · ${fmtNumber(stats.duplicates)} duplicadas` : "CSV cargado"}
           </p>
+          <p className="upload-slot-entity">{entityLabel}</p>
           <button className="btn-micro" onClick={() => fileRef.current?.click()} type="button">
             Reemplazar CSV
           </button>
@@ -727,6 +764,47 @@ function UploadSlot({
         </>
       ) : (
         <>
+          {mentionType !== "brand" && (
+            <div className="upload-entity-stack">
+              {mentionType === "competitor" && competitors.length > 0 ? (
+                <label className="upload-entity-field">
+                  <span>Entidad competitiva</span>
+                  <select
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setCompetitorId(value === "__pool" || value === "__custom" ? "" : value);
+                      if (value === "__pool") setEntityLabel("Pool competitivo");
+                      if (value === "__custom") setEntityLabel("");
+                      const selected = competitors.find((competitor) => competitor.id === value);
+                      if (selected) setEntityLabel(selected.canonicalName);
+                    }}
+                    value={competitorId || (entityLabel === "Pool competitivo" ? "__pool" : "__custom")}
+                  >
+                    <option value="__pool">Pool competitivo</option>
+                    {competitors.map((competitor) => (
+                      <option key={competitor.id} value={competitor.id}>
+                        {competitor.canonicalName}
+                      </option>
+                    ))}
+                    <option value="__custom">Otro / etiqueta libre</option>
+                  </select>
+                </label>
+              ) : null}
+              <label className="upload-entity-field">
+                <span>{mentionType === "competitor" ? "Etiqueta de entidad" : "Baseline"}</span>
+                <input
+                  maxLength={140}
+                  onChange={(event) => {
+                    setEntityLabel(event.target.value);
+                    if (mentionType === "competitor" && competitorId) setCompetitorId("");
+                  }}
+                  placeholder={mentionType === "competitor" ? "Ej. Sephora, Amazon, pool premium" : "Ej. categoría beauty MX"}
+                  type="text"
+                  value={entityLabel}
+                />
+              </label>
+            </div>
+          )}
           <button
             className="upload-slot-drop"
             onClick={() => fileRef.current?.click()}

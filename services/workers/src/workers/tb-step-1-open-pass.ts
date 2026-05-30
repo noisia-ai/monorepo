@@ -11,6 +11,8 @@ import {
   type OpenPassMentionInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { detectTbOutputLanguage } from "./tb-language";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
   markStepCompleted,
@@ -60,9 +62,12 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
 
   try {
     const ctx = await loadAnalysisContext(tbAnalysisId);
+    const outputLanguage = await detectTbOutputLanguage(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
 
     // Build a stratified sample over the snapshot's mention set, capped.
-    const mentions = await sampleSnapshotMentions(ctx.snapshot_id, ctx.study_corpus_id, TB_OPEN_PASS_MAX_SAMPLE);
+    const requestedSampleSize = resolveOpenPassSampleSize();
+    const mentions = await sampleSnapshotMentions(ctx.snapshot_id, ctx.study_corpus_id, requestedSampleSize);
     if (mentions.length === 0) {
       throw new Error("Snapshot tiene 0 menciones — no se puede ejecutar open pass");
     }
@@ -93,7 +98,7 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
     for (let i = 0; i < batches.length; i += BATCH_CONCURRENCY) {
       const slice = batches.slice(i, i + BATCH_CONCURRENCY);
       const results = await Promise.allSettled(
-        slice.map((batch) => processBatch({ batch, ctx, model }))
+        slice.map((batch) => processBatch({ batch, ctx, model, outputLanguage, ragContext }))
       );
       for (const r of results) {
         batchesDone += 1;
@@ -167,6 +172,7 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
       pipelineStepId,
       resultSummary: {
         sampled_mentions: mentions.length,
+        requested_sample_size: requestedSampleSize,
         tagged_mentions: allTagged.length,
         unique_tags: uniqueTags.length,
         irrelevant_count: irrelevantCount,
@@ -197,6 +203,12 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
     await releaseCorpusLock(tbAnalysisId);
     throw err;
   }
+}
+
+function resolveOpenPassSampleSize() {
+  const raw = Number.parseInt(process.env.TB_OPEN_PASS_MAX_SAMPLE ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) return TB_OPEN_PASS_MAX_SAMPLE;
+  return Math.min(Math.max(raw, 1500), 50000);
 }
 
 async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContextRow> {
@@ -294,12 +306,16 @@ async function processBatch(args: {
   batch: OpenPassMentionInput[];
   ctx: AnalysisContextRow;
   model: string;
+  outputLanguage: string;
+  ragContext: Awaited<ReturnType<typeof loadTbRagPromptContext>>;
 }): Promise<{ mentionId: string; tags: string[] }[]> {
-  const { batch, ctx, model } = args;
+  const { batch, ctx, model, outputLanguage, ragContext } = args;
   const prompt = buildOpenPassPrompt({
     brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
     industry: ctx.brand_industry,
     businessQuestion: ctx.business_question,
+    outputLanguage,
+    ragContext,
     mentions: batch
   });
 

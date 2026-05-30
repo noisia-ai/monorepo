@@ -14,6 +14,8 @@ import {
   type TbLayer
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { detectTbOutputLanguage } from "./tb-language";
+import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
   markStepCompleted,
@@ -56,6 +58,8 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
 
   try {
     const ctx = await loadCtx(tbAnalysisId);
+    const outputLanguage = await detectTbOutputLanguage(tbAnalysisId);
+    const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(15);
 
     // Pull step 1's result_summary to get the tag vocabulary
@@ -85,6 +89,8 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
       businessQuestion: ctx.business_question,
+      outputLanguage,
+      ragContext,
       tags: tagInputs
     });
 

@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, gte, ilike, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 
 import {
   brands,
+  brandKnowledgeSources,
   cleanupActions,
   corpusSnapshots,
   importBatches,
@@ -18,7 +19,7 @@ import {
   themes,
   userBrandAccess
 } from "@noisia/db";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 
 type AppUser = {
   id: string;
@@ -51,6 +52,7 @@ export async function getCorpusForUser(appUser: AppUser, corpusId: string) {
       themeId: studyCorpora.themeId,
       status: studyCorpora.status,
       businessQuestion: studyCorpora.businessQuestion,
+      decisionToInform: studyCorpora.decisionToInform,
       targetWindowMonths: studyCorpora.targetWindowMonths,
       methodologyId: studyCorpora.methodologyId,
       methodologySlug: methodologies.slug,
@@ -126,7 +128,7 @@ export async function listCorporaForBrand(brandId: string) {
     })
     .from(studyCorpora)
     .innerJoin(methodologies, eq(methodologies.id, studyCorpora.methodologyId))
-    .where(eq(studyCorpora.brandId, brandId))
+    .where(and(eq(studyCorpora.brandId, brandId), ne(studyCorpora.status, "archived")))
     .orderBy(desc(studyCorpora.updatedAt));
 }
 
@@ -150,6 +152,10 @@ export async function listImportBatchesForCorpus(corpusId: string) {
       id: importBatches.id,
       sourceSystem: importBatches.sourceSystem,
       sourceFileName: importBatches.sourceFileName,
+      mentionType: importBatches.mentionType,
+      competitorId: importBatches.competitorId,
+      entityKind: importBatches.entityKind,
+      entityLabel: importBatches.entityLabel,
       recordCount: importBatches.recordCount,
       includedCount: importBatches.includedCount,
       excludedCount: importBatches.excludedCount,
@@ -331,7 +337,11 @@ export async function listQueryIterationsForCorpus(corpusId: string) {
     .orderBy(desc(queryIterations.createdAt));
 }
 
-export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: string) {
+export async function getTbAnalysisForCorpus(
+  corpusId: string,
+  analysisId?: string,
+  options: { includeAggregates?: boolean } = {}
+) {
   const where = [
     eq(tbAnalyses.studyCorpusId, corpusId),
     analysisId ? eq(tbAnalyses.id, analysisId) : undefined
@@ -344,6 +354,7 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
       currentStep: tbAnalyses.currentStep,
       businessQuestion: tbAnalyses.businessQuestion,
       decisionToInform: tbAnalyses.decisionToInform,
+      metaJson: tbAnalyses.metaJson,
       activationPlaybook: tbAnalyses.activationPlaybook,
       frictionRemovalPlan: tbAnalyses.frictionRemovalPlan,
       comparativeBrief: tbAnalyses.comparativeBrief,
@@ -363,8 +374,13 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
     .limit(1);
 
   if (!analysis) return null;
+  const persistedIntelligence = await loadPersistedIntelligence(analysis.id);
+  const analysisWithPersistedIntelligence = {
+    ...analysis,
+    metaJson: mergePersistedIntelligence(analysis.metaJson, persistedIntelligence)
+  };
 
-  const [steps, recommendations, gates, findingSummary] = await Promise.all([
+  const [steps, recommendations, gates, findingSummary, knowledgeSources] = await Promise.all([
     db
       .select({
         id: tbPipelineSteps.id,
@@ -427,7 +443,23 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
         movable: sql<number>`sum(case when ${tbFindings.movilidad} = 'movible_por_marca' then 1 else 0 end)::int`
       })
       .from(tbFindings)
-      .where(eq(tbFindings.tbAnalysisId, analysis.id))
+      .where(eq(tbFindings.tbAnalysisId, analysis.id)),
+    db
+      .select({
+        id: brandKnowledgeSources.id,
+        sourceKind: brandKnowledgeSources.sourceKind,
+        title: brandKnowledgeSources.title,
+        originalFileName: brandKnowledgeSources.originalFileName,
+        status: brandKnowledgeSources.status,
+        errorMessage: brandKnowledgeSources.errorMessage,
+        extractedPayload: brandKnowledgeSources.extractedPayload,
+        sourcePeriodStart: brandKnowledgeSources.sourcePeriodStart,
+        sourcePeriodEnd: brandKnowledgeSources.sourcePeriodEnd,
+        createdAt: brandKnowledgeSources.createdAt
+      })
+      .from(brandKnowledgeSources)
+      .where(eq(brandKnowledgeSources.studyCorpusId, corpusId))
+      .orderBy(asc(brandKnowledgeSources.createdAt))
   ]);
 
   // Per-finding enrichment: protagonist quote + journey intensity vector.
@@ -436,8 +468,19 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
   // pseudo-random intensity.
   const findingRows = await db
     .select({
-      findingId: tbFindings.id,
+      id: tbFindings.id,
       findingHumanId: tbFindings.findingId,
+      findingName: tbFindings.nombreComercial,
+      polarity: tbFindings.polarity,
+      layer: tbFindings.layer,
+      frecuencia: tbFindings.frecuencia,
+      intensidadPromedio: tbFindings.intensidadPromedio,
+      capacidadPredictiva: tbFindings.capacidadPredictiva,
+      scoreCompuesto: tbFindings.scoreCompuesto,
+      movilidad: tbFindings.movilidad,
+      confidence: tbFindings.confidence,
+      periodStart: tbFindings.periodStart,
+      periodEnd: tbFindings.periodEnd,
       citaProtagonista: tbFindings.citaProtagonista
     })
     .from(tbFindings)
@@ -476,7 +519,19 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
     const allCitations = citationsByFinding.get(f.findingHumanId) ?? [];
     return {
       findingHumanId: f.findingHumanId,
+      findingName: f.findingName,
+      polarity: f.polarity,
+      layer: f.layer,
+      frecuencia: f.frecuencia,
+      intensidadPromedio: f.intensidadPromedio,
+      capacidadPredictiva: f.capacidadPredictiva,
+      scoreCompuesto: f.scoreCompuesto,
+      movilidad: f.movilidad,
+      confidence: f.confidence,
+      periodStart: dateString(f.periodStart),
+      periodEnd: dateString(f.periodEnd),
       quote,
+      evidenceCount: allCitations.length,
       journeyIntensity: computeJourneyIntensity(allCitations.length > 0 ? allCitations : quote ? [quote] : [])
     };
   });
@@ -485,16 +540,19 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
   // distributions, source breakdown, volume timeline, severity scatter, top
   // findings by share-of-voice). All computed against the snapshot id so the
   // report stays reproducible from a frozen state.
-  const aggregates = await loadDashboardAggregates({
-    snapshotId: analysis.snapshotId,
-    tbAnalysisId: analysis.id
-  });
+  const aggregates = options.includeAggregates
+    ? await safeLoadDashboardAggregates({
+        snapshotId: analysis.snapshotId,
+        tbAnalysisId: analysis.id
+      })
+    : emptySignalAggregates();
 
   return {
-    analysis,
+    analysis: analysisWithPersistedIntelligence,
     steps,
     recommendations,
     gates,
+    knowledgeSources,
     findings,
     aggregates,
     findingSummary: findingSummary[0] ?? {
@@ -507,13 +565,127 @@ export async function getTbAnalysisForCorpus(corpusId: string, analysisId?: stri
   };
 }
 
+type PersistedInsightRow = {
+  insight_id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  finding_ids: string[] | null;
+  data_basis: string[] | null;
+  source_breakdown: unknown;
+  evidence_quotes: string[] | null;
+  confidence: string;
+};
+
+type PersistedOpenSignalRow = {
+  signal_id: string;
+  title: string;
+  signal_type: string;
+  why_it_matters: string;
+  tags: string[] | null;
+  evidence_count: number;
+  source_breakdown: unknown;
+  evidence_quotes: string[] | null;
+  confidence: string;
+};
+
+async function loadPersistedIntelligence(tbAnalysisId: string) {
+  const [insights, openSignals] = await Promise.all([
+    pool.query<PersistedInsightRow>(
+      `
+        SELECT
+          insight_id,
+          kind,
+          title,
+          summary,
+          finding_ids,
+          data_basis,
+          source_breakdown,
+          evidence_quotes,
+          confidence
+        FROM tb_insights
+        WHERE tb_analysis_id = $1
+        ORDER BY position ASC, created_at ASC
+      `,
+      [tbAnalysisId]
+    ),
+    pool.query<PersistedOpenSignalRow>(
+      `
+        SELECT
+          signal_id,
+          title,
+          signal_type,
+          why_it_matters,
+          tags,
+          evidence_count,
+          source_breakdown,
+          evidence_quotes,
+          confidence
+        FROM tb_open_signals
+        WHERE tb_analysis_id = $1
+        ORDER BY position ASC, created_at ASC
+      `,
+      [tbAnalysisId]
+    )
+  ]);
+
+  return {
+    emergingPatterns: insights.rows.map((row) => ({
+      pattern_id: row.insight_id,
+      title: row.title,
+      pattern_type: row.kind,
+      why_it_matters: row.summary,
+      data_basis: row.data_basis ?? [],
+      evidence_count: Array.isArray(row.evidence_quotes) ? row.evidence_quotes.length : 0,
+      source_breakdown: Array.isArray(row.source_breakdown) ? row.source_breakdown : [],
+      related_finding_ids: row.finding_ids ?? [],
+      confidence: row.confidence,
+      evidence_quotes: row.evidence_quotes ?? []
+    })),
+    openSignals: openSignals.rows.map((row) => ({
+      pattern_id: row.signal_id,
+      title: row.title,
+      pattern_type: row.signal_type,
+      why_it_matters: row.why_it_matters,
+      data_basis: row.tags ?? [],
+      evidence_count: row.evidence_count,
+      source_breakdown: Array.isArray(row.source_breakdown) ? row.source_breakdown : [],
+      related_finding_ids: [],
+      confidence: row.confidence,
+      evidence_quotes: row.evidence_quotes ?? []
+    }))
+  };
+}
+
+function mergePersistedIntelligence(
+  metaJson: unknown,
+  persisted: Awaited<ReturnType<typeof loadPersistedIntelligence>>
+) {
+  const meta = metaJson && typeof metaJson === "object" ? metaJson as Record<string, unknown> : {};
+  return {
+    ...meta,
+    emerging_patterns: persisted.emergingPatterns.length > 0 ? persisted.emergingPatterns : meta.emerging_patterns,
+    open_signals: persisted.openSignals.length > 0 ? persisted.openSignals : meta.open_signals
+  };
+}
+
 export type SignalAggregates = {
   corpus: { total_mentions: number; window: { start: string | null; end: string | null; months: number } };
   polarity_distribution: { polarity: string; count: number; pct: number }[];
   layer_distribution: { layer: string; count: number; pct: number; avg_intensity: number }[];
   mobility_distribution: { movilidad: string; count: number; pct: number }[];
   platform_distribution: { platform: string; count: number; pct: number }[];
+  content_type_distribution: { content_type: string; count: number; pct: number }[];
   volume_timeline: { month: string; count: number }[];
+  finding_time_series: {
+    month: string;
+    finding_id: string;
+    finding_name: string;
+    polarity: string;
+    layer: string | null;
+    count: number;
+  }[];
+  polarity_time_series: { month: string; trigger: number; barrier: number; mixed: number; total: number }[];
   findings_scatter: {
     finding_id: string;
     nombre: string;
@@ -523,6 +695,8 @@ export type SignalAggregates = {
     frecuencia: number;
     intensidad: number;
     score: number;
+    period_start: string | null;
+    period_end: string | null;
   }[];
   top_findings_by_voice: {
     finding_id: string;
@@ -542,6 +716,39 @@ export type SignalAggregates = {
   }[];
 };
 
+function emptySignalAggregates(): SignalAggregates {
+  return {
+    corpus: { total_mentions: 0, window: { start: null, end: null, months: 0 } },
+    polarity_distribution: [],
+    layer_distribution: [],
+    mobility_distribution: [],
+    platform_distribution: [],
+    content_type_distribution: [],
+    volume_timeline: [],
+    finding_time_series: [],
+    polarity_time_series: [],
+    findings_scatter: [],
+    top_findings_by_voice: [],
+    mentions_sample: []
+  };
+}
+
+async function safeLoadDashboardAggregates(args: {
+  snapshotId: string;
+  tbAnalysisId: string;
+}): Promise<SignalAggregates> {
+  try {
+    return await loadDashboardAggregates(args);
+  } catch (err) {
+    console.warn("Signal aggregates failed; rendering review without chart aggregates.", {
+      snapshotId: args.snapshotId,
+      tbAnalysisId: args.tbAnalysisId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return emptySignalAggregates();
+  }
+}
+
 async function loadDashboardAggregates(args: {
   snapshotId: string;
   tbAnalysisId: string;
@@ -550,7 +757,10 @@ async function loadDashboardAggregates(args: {
     corpusTotalRow,
     windowRow,
     platformRows,
+    contentTypeRows,
     timelineRows,
+    findingTimelineRows,
+    polarityTimelineRows,
     findingsRows,
     voiceRows,
     sampleRows
@@ -567,11 +777,60 @@ async function loadDashboardAggregates(args: {
       WHERE csm.snapshot_id = ${args.snapshotId}::uuid
     `),
     db.execute<{ platform: string; count: number }>(sql`
-      SELECT m.platform, COUNT(*)::int AS count
-      FROM mentions m
-      JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
-      WHERE csm.snapshot_id = ${args.snapshotId}::uuid
-      GROUP BY m.platform ORDER BY count DESC LIMIT 10
+      WITH scoped AS (
+        SELECT
+          lower(COALESCE(NULLIF(m.platform, ''), '')) AS platform,
+          lower(COALESCE(m.url, '')) AS source_url,
+          lower(COALESCE(m.raw_metadata->'row'->>'domain group', '')) AS domain_group,
+          lower(COALESCE(m.raw_metadata->'row'->>'domain', '')) AS domain,
+          lower(COALESCE(m.raw_metadata->>'source_file_name', '')) AS source_file_name
+        FROM mentions m
+        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+        WHERE csm.snapshot_id = ${args.snapshotId}::uuid
+      ),
+      resolved AS (
+        SELECT CASE
+          WHEN domain_group LIKE '%tiktok%' OR domain LIKE '%tiktok%' OR source_url LIKE '%tiktok%' OR source_file_name LIKE '%tiktok%' THEN 'tiktok'
+          WHEN domain_group LIKE '%twitter%' OR domain_group = 'x' OR domain LIKE '%twitter%' OR domain LIKE '%x.com%' OR source_url LIKE '%twitter.com%' OR source_url LIKE '%x.com%' THEN 'x'
+          WHEN domain_group LIKE '%instagram%' OR domain LIKE '%instagram%' OR source_url LIKE '%instagram%' THEN 'instagram'
+          WHEN domain_group LIKE '%facebook%' OR domain LIKE '%facebook%' OR source_url LIKE '%facebook%' OR source_url LIKE '%fb.com%' THEN 'facebook'
+          WHEN domain_group LIKE '%youtube%' OR domain LIKE '%youtube%' OR source_url LIKE '%youtube%' OR source_url LIKE '%youtu.be%' THEN 'youtube'
+          WHEN domain_group LIKE '%reddit%' OR domain LIKE '%reddit%' OR source_url LIKE '%reddit%' THEN 'reddit'
+          WHEN domain_group LIKE '%linkedin%' OR domain LIKE '%linkedin%' OR source_url LIKE '%linkedin%' THEN 'linkedin'
+          WHEN domain_group LIKE '%threads%' OR domain LIKE '%threads%' OR source_url LIKE '%threads.net%' THEN 'threads'
+          WHEN domain_group LIKE '%trustpilot%' OR domain LIKE '%trustpilot%' OR source_url LIKE '%trustpilot%' THEN 'trustpilot'
+          WHEN domain_group LIKE '%google%' OR domain LIKE '%google%' OR source_url LIKE '%google%' THEN 'google'
+          WHEN domain_group LIKE '%blog%' OR domain LIKE '%blogspot%' OR domain LIKE '%wordpress%' OR domain LIKE '%medium.com%' THEN 'blog'
+          WHEN domain_group LIKE '%forum%' OR domain_group LIKE '%community%' THEN 'forum'
+          WHEN platform IS NULL OR platform = '' OR platform IN ('comment','comments','comentario','comentarios','video','short','shorts','post','posts','tweet','tweets','article','articles','reel','reels','story','stories','image','photo','photos') THEN 'unknown'
+          ELSE platform
+        END AS platform
+        FROM scoped
+      )
+      SELECT platform, COUNT(*)::int AS count
+      FROM resolved
+      GROUP BY platform ORDER BY count DESC LIMIT 10
+    `),
+    db.execute<{ content_type: string; count: number }>(sql`
+      WITH scoped AS (
+        SELECT lower(
+          COALESCE(
+            NULLIF(m.raw_metadata->>'content_type', ''),
+            CASE
+              WHEN m.platform IN ('comment','comments','comentario','comentarios','video','short','shorts','post','posts','tweet','tweets','article','articles','reel','reels','story','stories','image','photo','photos')
+              THEN m.platform
+              ELSE NULL
+            END,
+            'unknown'
+          )
+        ) AS content_type
+        FROM mentions m
+        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+        WHERE csm.snapshot_id = ${args.snapshotId}::uuid
+      )
+      SELECT content_type, COUNT(*)::int AS count
+      FROM scoped
+      GROUP BY content_type ORDER BY count DESC LIMIT 10
     `),
     db.execute<{ month: string; count: number }>(sql`
       SELECT to_char(date_trunc('month', published_at), 'YYYY-MM') AS month, COUNT(*)::int AS count
@@ -579,6 +838,54 @@ async function loadDashboardAggregates(args: {
       JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
       WHERE csm.snapshot_id = ${args.snapshotId}::uuid
       GROUP BY month ORDER BY month ASC
+    `),
+    db.execute<{
+      month: string;
+      finding_id: string;
+      finding_name: string;
+      polarity: string;
+      layer: string | null;
+      count: number;
+    }>(sql`
+      SELECT to_char(date_trunc('month', m.published_at), 'YYYY-MM') AS month,
+             f.finding_id,
+             f.nombre_comercial AS finding_name,
+             f.polarity,
+             f.layer,
+             COUNT(*)::int AS count
+      FROM tb_mention_codings c
+      JOIN tb_findings f ON f.id = c.finding_id
+      JOIN mentions m ON m.id = c.mention_id
+      JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+      WHERE f.tb_analysis_id = ${args.tbAnalysisId}::uuid
+        AND c.tb_analysis_id = ${args.tbAnalysisId}::uuid
+        AND csm.snapshot_id = ${args.snapshotId}::uuid
+        AND c.finding_id IS NOT NULL
+      GROUP BY month, f.finding_id, f.nombre_comercial, f.polarity, f.layer
+      ORDER BY month ASC, count DESC
+    `),
+    db.execute<{ month: string; trigger: number; barrier: number; mixed: number; total: number }>(sql`
+      SELECT month,
+             SUM(CASE WHEN polarity = 'trigger' THEN count ELSE 0 END)::int AS trigger,
+             SUM(CASE WHEN polarity = 'barrier' THEN count ELSE 0 END)::int AS barrier,
+             SUM(CASE WHEN polarity = 'mixed' THEN count ELSE 0 END)::int AS mixed,
+             SUM(count)::int AS total
+      FROM (
+        SELECT to_char(date_trunc('month', m.published_at), 'YYYY-MM') AS month,
+               f.polarity,
+               COUNT(*)::int AS count
+        FROM tb_mention_codings c
+        JOIN tb_findings f ON f.id = c.finding_id
+        JOIN mentions m ON m.id = c.mention_id
+        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+        WHERE f.tb_analysis_id = ${args.tbAnalysisId}::uuid
+          AND c.tb_analysis_id = ${args.tbAnalysisId}::uuid
+          AND csm.snapshot_id = ${args.snapshotId}::uuid
+          AND c.finding_id IS NOT NULL
+        GROUP BY month, f.polarity
+      ) series
+      GROUP BY month
+      ORDER BY month ASC
     `),
     db.execute<{
       finding_id: string;
@@ -589,9 +896,12 @@ async function loadDashboardAggregates(args: {
       frecuencia: number;
       intensidad: number;
       score: number;
+      period_start: string | null;
+      period_end: string | null;
     }>(sql`
       SELECT finding_id, nombre_comercial AS nombre, polarity, layer, movilidad,
-             frecuencia, intensidad_promedio::float AS intensidad, score_compuesto::float AS score
+             frecuencia, intensidad_promedio::float AS intensidad, score_compuesto::float AS score,
+             period_start::text, period_end::text
       FROM tb_findings
       WHERE tb_analysis_id = ${args.tbAnalysisId}::uuid
       ORDER BY score_compuesto DESC
@@ -611,9 +921,9 @@ async function loadDashboardAggregates(args: {
       GROUP BY f.finding_id, f.nombre_comercial, f.polarity, f.layer
       ORDER BY citation_count DESC LIMIT 12
     `),
-    // Mentions sample for the "Voces del corpus" browser. Pull 1 protagonist
-    // verbatim per finding to start, then top-up with random verbatims to
-    // reach ~24 cards.
+    // Mentions sample for the client-safe Signal Corpus View. Pull protagonist
+    // verbatims per finding, then top-up with supporting/random citations so
+    // the published report can filter/search without exposing the full corpus.
     db.execute<{
       mention_id: string;
       finding_id: string | null;
@@ -631,7 +941,7 @@ async function loadDashboardAggregates(args: {
        JOIN mentions m ON m.id = c.mention_id
        WHERE f.tb_analysis_id = ${args.tbAnalysisId}::uuid AND c.is_protagonist = true
        ORDER BY f.score_compuesto DESC
-       LIMIT 14)
+       LIMIT 40)
       UNION ALL
       (SELECT m.id, f.finding_id, f.nombre_comercial, m.text_clean, m.platform,
               m.published_at::text, c.is_protagonist
@@ -640,7 +950,7 @@ async function loadDashboardAggregates(args: {
        JOIN mentions m ON m.id = c.mention_id
        WHERE f.tb_analysis_id = ${args.tbAnalysisId}::uuid AND c.is_protagonist = false
        ORDER BY random()
-       LIMIT 10)
+       LIMIT 80)
     `)
   ]);
 
@@ -655,7 +965,17 @@ async function loadDashboardAggregates(args: {
       : 0;
 
   const platforms = unwrap<{ platform: string; count: number }>(platformRows);
+  const contentTypes = unwrap<{ content_type: string; count: number }>(contentTypeRows);
   const timeline = unwrap<{ month: string; count: number }>(timelineRows);
+  const findingTimeline = unwrap<{
+    month: string;
+    finding_id: string;
+    finding_name: string;
+    polarity: string;
+    layer: string | null;
+    count: number;
+  }>(findingTimelineRows);
+  const polarityTimeline = unwrap<{ month: string; trigger: number; barrier: number; mixed: number; total: number }>(polarityTimelineRows);
   const findingsList = unwrap<{
     finding_id: string;
     nombre: string;
@@ -665,6 +985,8 @@ async function loadDashboardAggregates(args: {
     frecuencia: number;
     intensidad: number;
     score: number;
+    period_start: string | null;
+    period_end: string | null;
   }>(findingsRows);
   const voiceList = unwrap<{
     finding_id: string;
@@ -729,7 +1051,27 @@ async function loadDashboardAggregates(args: {
       count: p.count,
       pct: total > 0 ? (p.count / total) * 100 : 0
     })),
+    content_type_distribution: contentTypes.map((p) => ({
+      content_type: p.content_type,
+      count: p.count,
+      pct: total > 0 ? (p.count / total) * 100 : 0
+    })),
     volume_timeline: timeline.map((t) => ({ month: t.month, count: t.count })),
+    finding_time_series: findingTimeline.map((t) => ({
+      month: t.month,
+      finding_id: t.finding_id,
+      finding_name: t.finding_name,
+      polarity: t.polarity,
+      layer: t.layer,
+      count: Number(t.count ?? 0)
+    })),
+    polarity_time_series: polarityTimeline.map((t) => ({
+      month: t.month,
+      trigger: Number(t.trigger ?? 0),
+      barrier: Number(t.barrier ?? 0),
+      mixed: Number(t.mixed ?? 0),
+      total: Number(t.total ?? 0)
+    })),
     findings_scatter: findingsList.map((f) => ({
       finding_id: f.finding_id,
       nombre: f.nombre,
@@ -738,7 +1080,9 @@ async function loadDashboardAggregates(args: {
       movilidad: f.movilidad,
       frecuencia: Number(f.frecuencia ?? 0),
       intensidad: Number(f.intensidad ?? 0),
-      score: Number(f.score ?? 0)
+      score: Number(f.score ?? 0),
+      period_start: f.period_start,
+      period_end: f.period_end
     })),
     top_findings_by_voice: voiceList.map((v) => ({
       finding_id: v.finding_id,
@@ -768,45 +1112,55 @@ async function loadDashboardAggregates(args: {
  * Claude small) cuando agreguemos pgvector. Hoy esta heurística es honesta
  * — captura las señales fuertes y deja vacío cuando no hay match.
  */
-function computeJourneyIntensity(texts: string[]): {
-  consideracion: number;
-  compra: number;
-  siniestro: number;
-  renovacion: number;
-} {
+function computeJourneyIntensity(texts: string[]): Record<string, number> {
   if (texts.length === 0) {
-    return { consideracion: 0, compra: 0, siniestro: 0, renovacion: 0 };
+    return emptyJourneyIntensity();
   }
-  const stageKeywords: Record<keyof ReturnType<typeof computeJourneyIntensity>, RegExp[]> = {
-    consideracion: [/cotiz/i, /buscar (?:un |el )?seguro/i, /qu[eé] cubre/i, /comparar/i, /vale la pena/i, /elegir/i, /quiero contratar/i, /\bpensé\b/i, /\bduda(?:s)?\b/i],
-    compra:        [/contrat[eé]/i, /compr[eé]/i, /pag[ué]\b/i, /sali[oó] (?:la )?p[oó]liza/i, /firm[eé]/i, /me dieron (?:el|la|los)/i, /\bprima\b/i, /\bplan\b/i],
-    siniestro:     [/siniestro/i, /accidente/i, /choque/i, /robo/i, /incendio/i, /ajustador/i, /deducible/i, /indemniz/i, /reclam[oó]/i, /no me pagar/i, /me pagar(?:on|án)/i, /grua/i, /hospital/i],
-    renovacion:    [/renov/i, /cancel/i, /no (?:voy a |pienso |quiero )?renov/i, /cambi(?:é|ar) de aseguradora/i, /me di de baja/i, /\bvigencia\b/i, /\btermin[oó]\b/i]
+  const stageKeywords: Record<keyof ReturnType<typeof emptyJourneyIntensity>, RegExp[]> = {
+    awareness: [/vi (?:un |el |la )?/i, /me sali[oó]/i, /anuncio/i, /tiktok/i, /instagram/i, /viral/i, /me apareci[oó]/i, /escuch[eé]/i],
+    consideration: [/buscar/i, /comparar/i, /vale la pena/i, /elegir/i, /quiero/i, /\bduda(?:s)?\b/i, /opiniones/i, /reseñas/i, /recomend/i],
+    evaluation: [/qu[eé] tan/i, /calidad/i, /precio/i, /car[oa]/i, /barat[oa]/i, /conviene/i, /mejor/i, /diferencia/i, /funciona/i],
+    purchase: [/compr[eé]/i, /pag[ué]\b/i, /ped[ií]/i, /orden/i, /checkout/i, /env[ií]o/i, /tienda/i, /carrito/i],
+    usage: [/us[eé]/i, /prob[eé]/i, /me sirvi[oó]/i, /no me sirvi[oó]/i, /experiencia/i, /lleg[oó]/i, /servicio/i, /soporte/i],
+    repeat: [/volver[ií]a/i, /recompr/i, /otra vez/i, /cancel/i, /me cambi[eé]/i, /ya no/i, /seguir[eé]/i],
+    advocacy: [/recomiendo/i, /me recomendaron/i, /favorit[oa]/i, /amo/i, /me encant[oó]/i, /no lo recomiendo/i]
   };
 
-  const counts = { consideracion: 0, compra: 0, siniestro: 0, renovacion: 0 };
+  const counts = emptyJourneyIntensity();
   let totalMatches = 0;
 
   for (const text of texts) {
     if (!text) continue;
     for (const stage of Object.keys(stageKeywords) as Array<keyof typeof stageKeywords>) {
-      const hits = stageKeywords[stage].reduce((acc, re) => acc + (re.test(text) ? 1 : 0), 0);
+      const hits = (stageKeywords[stage] ?? []).reduce((acc, re) => acc + (re.test(text) ? 1 : 0), 0);
       counts[stage] += hits;
       totalMatches += hits;
     }
   }
 
   if (totalMatches === 0) {
-    // No keyword matched → distribute lightly toward siniestro (the most
-    // common stage in this category) so the heatmap doesn't look broken.
-    return { consideracion: 0.05, compra: 0.05, siniestro: 0.25, renovacion: 0.05 };
+    return emptyJourneyIntensity(0.02);
   }
 
+  return Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, value / totalMatches]));
+}
+
+function dateString(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value.slice(0, 10);
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return null;
+}
+
+function emptyJourneyIntensity(value = 0): Record<"awareness" | "consideration" | "evaluation" | "purchase" | "usage" | "repeat" | "advocacy", number> {
   return {
-    consideracion: counts.consideracion / totalMatches,
-    compra: counts.compra / totalMatches,
-    siniestro: counts.siniestro / totalMatches,
-    renovacion: counts.renovacion / totalMatches
+    awareness: value,
+    consideration: value,
+    evaluation: value,
+    purchase: value,
+    usage: value,
+    repeat: value,
+    advocacy: value
   };
 }
 
@@ -849,6 +1203,9 @@ export async function getCorpusEngineState(corpusId: string) {
       id: importBatches.id,
       queryIterationId: importBatches.queryIterationId,
       mentionType: importBatches.mentionType,
+      competitorId: importBatches.competitorId,
+      entityKind: importBatches.entityKind,
+      entityLabel: importBatches.entityLabel,
       recordCount: importBatches.recordCount,
       includedCount: importBatches.includedCount,
       excludedCount: importBatches.excludedCount,

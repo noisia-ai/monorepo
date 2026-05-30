@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 
 import {
   brandKnowledgeSources,
@@ -80,7 +80,7 @@ export async function listBrandsForUser(appUser: AppUser, filters: BrandFilters 
         approved: sql<number>`sum(case when ${studyCorpora.status}='corpus_approved' then 1 else 0 end)::int`
       })
       .from(studyCorpora)
-      .where(inArray(studyCorpora.brandId, brandIds))
+      .where(and(inArray(studyCorpora.brandId, brandIds), ne(studyCorpora.status, "archived")))
       .groupBy(studyCorpora.brandId);
 
     const statsByBrand = new Map(statsRows.map((r) => [r.brandId, r]));
@@ -126,7 +126,7 @@ export async function getStudioDashboard(appUser: AppUser) {
       approved: sql<number>`sum(case when ${studyCorpora.status}='corpus_approved' then 1 else 0 end)::int`
     })
     .from(studyCorpora)
-    .where(inArray(studyCorpora.brandId, brandIds));
+    .where(and(inArray(studyCorpora.brandId, brandIds), ne(studyCorpora.status, "archived")));
 
   const [mentionsAgg] = await db
     .select({
@@ -134,7 +134,7 @@ export async function getStudioDashboard(appUser: AppUser) {
     })
     .from(mentions)
     .innerJoin(studyCorpora, eq(studyCorpora.id, mentions.studyCorpusId))
-    .where(inArray(studyCorpora.brandId, brandIds));
+    .where(and(inArray(studyCorpora.brandId, brandIds), ne(studyCorpora.status, "archived")));
 
   const recentRows = await db.execute(sql`
     SELECT sc.id, sc.name, b.display_name AS brand_name, m.name AS methodology_name,
@@ -145,6 +145,7 @@ export async function getStudioDashboard(appUser: AppUser) {
     JOIN brands b ON b.id = sc.brand_id
     JOIN methodologies m ON m.id = sc.methodology_id
     WHERE sc.brand_id IN ${brandIds.length > 0 ? sql.raw(`('${brandIds.join("','")}')`) : sql`(NULL)`}
+      AND sc.status <> 'archived'
     ORDER BY sc.updated_at DESC
     LIMIT 5
   `);
