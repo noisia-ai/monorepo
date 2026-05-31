@@ -63,10 +63,10 @@ export default async function BrandDetailPage({ params }: { params: Promise<{ id
               <Stat label={t("competitors")} value={String(brand.competitors.length)} sub={t("seeds")} />
             </div>
             <div className="brand-hero-actions">
-              <Link className="wizard-cta" href={`/studio/corpora/new?brand=${brand.id}`}>
+              <Link prefetch={false} className="wizard-cta" href={`/studio/corpora/new?brand=${brand.id}`}>
                 <Icon name="sparkle" size={14} /> {t("newStudy")}
               </Link>
-              <Link className="wizard-cta wizard-cta--secondary" href={`/studio/brands/${brand.id}/edit`}>
+              <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/studio/brands/${brand.id}/edit`}>
                 <Icon name="pencil" size={14} /> {t("editBrand")}
               </Link>
             </div>
@@ -113,7 +113,7 @@ export default async function BrandDetailPage({ params }: { params: Promise<{ id
               <ul className="corpus-grid">
                 {brand.corpora.map((corpus) => (
                   <li key={corpus.id}>
-                    <Link href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
+                    <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
                       <div className="corpus-card-head">
                         <div>
                           <p className="corpus-card-eyebrow">{corpus.methodologyName}</p>

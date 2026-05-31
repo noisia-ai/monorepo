@@ -40,10 +40,10 @@ export default async function NewStudyPage({ searchParams }: { searchParams?: St
               <h1 className="page-head-title">{t("title")}</h1>
               <p className="page-head-sub">{t("subtitle")}</p>
             </div>
-            <Link className="wizard-cta wizard-cta--ghost" href="/studio">
+            <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href="/studio">
               <Icon name="arrow-right" size={13} className="icon--flip" /> {t("workspace")}
             </Link>
-            <Link className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
+            <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
               <Icon name="tag" size={13} /> {t("newBrand")}
             </Link>
           </header>

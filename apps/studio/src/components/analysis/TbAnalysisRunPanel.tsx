@@ -184,7 +184,7 @@ export function TbAnalysisRunPanel({
         </div>
         <div className="analysis-run-actions">
           {analysis?.status === "needs_review" || analysis?.status === "approved_by_im" || analysis?.status === "approved_by_kam" ? (
-            <Link className="wizard-cta" href={`/studio/corpora/${corpusId}/analysis/${analysis.id}`}>
+            <Link prefetch={false} className="wizard-cta" href={`/studio/corpora/${corpusId}/analysis/${analysis.id}`}>
               <Icon name="arrow-right" size={16} />
               Revisar síntesis
             </Link>

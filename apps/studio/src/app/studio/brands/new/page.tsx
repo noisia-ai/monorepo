@@ -30,7 +30,7 @@ export default async function NewBrandPage() {
               <h1 className="page-head-title">{t("new.title")}</h1>
               <p className="page-head-sub">{t("new.subtitle")}</p>
             </div>
-            <Link className="wizard-cta wizard-cta--ghost" href="/studio/brands">
+            <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href="/studio/brands">
               <Icon name="arrow-right" size={13} className="icon--flip" /> {t("new.back")}
             </Link>
           </header>

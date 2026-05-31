@@ -43,7 +43,7 @@ export default async function EditBrandPage({ params }: { params: Promise<{ id: 
               <h1>{t("title", { brand: brandLabel })}</h1>
               <p>{t("subtitle")}</p>
             </div>
-            <Link className="wizard-cta wizard-cta--ghost" href={`/studio/brands/${brand.id}`}>
+            <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href={`/studio/brands/${brand.id}`}>
               <Icon name="arrow-right" size={13} className="icon--flip" /> {t("back")}
             </Link>
           </header>

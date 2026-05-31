@@ -142,7 +142,7 @@ export function SignalComposer({
         </div>
         <div className="signal-composer-buttons">
           {outputId ? (
-            <Link className="wizard-cta wizard-cta--secondary" href={`/signal/${outputId}`}>
+            <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/signal/${outputId}`}>
               <Icon name="external" size={15} /> Abrir Signal
             </Link>
           ) : null}

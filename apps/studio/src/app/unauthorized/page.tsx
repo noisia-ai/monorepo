@@ -30,10 +30,10 @@ export default async function UnauthorizedPage({ searchParams }: { searchParams?
           <p>{t.rich("description", { role, strong: (chunks) => <strong>{chunks}</strong> })}</p>
         </div>
         <div className="auth-actions">
-          <Link className="wizard-cta" href={canUsePortal ? "/signal" : "/"}>
+          <Link prefetch={false} className="wizard-cta" href={canUsePortal ? "/signal" : "/"}>
             <Icon name="arrow-right" size={15} /> {canUsePortal ? t("goSignal") : t("goHome")}
           </Link>
-          <Link className="wizard-cta wizard-cta--secondary" href="/api/auth/logout">
+          <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href="/api/auth/logout">
             {t("logout")}
           </Link>
         </div>

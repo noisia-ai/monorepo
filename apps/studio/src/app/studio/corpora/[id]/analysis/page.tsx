@@ -23,7 +23,7 @@ export default async function TbAnalysisIndexPage({ params }: { params: Promise<
     <div className="studio-page analysis-review-page">
       <section className="analysis-review-hero">
         <div>
-          <Link className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
+          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
             <Icon name="arrow-right" size={14} />
             Volver al engine
           </Link>
@@ -34,7 +34,7 @@ export default async function TbAnalysisIndexPage({ params }: { params: Promise<
             esta ruta abre la revisión del output.
           </p>
         </div>
-        <Link className="wizard-cta" href={`/studio/corpora/${corpus.id}/engine`}>
+        <Link prefetch={false} className="wizard-cta" href={`/studio/corpora/${corpus.id}/engine`}>
           <Icon name="play" size={16} />
           Ir al flujo
         </Link>

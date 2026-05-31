@@ -46,10 +46,10 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
               </p>
             </div>
             <div className="page-head-actions">
-              <Link className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
+              <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
                 <Icon name="sparkle" size={14} /> {t("newBrand")}
               </Link>
-              <Link className="wizard-cta" href="/studio/corpora/new">
+              <Link prefetch={false} className="wizard-cta" href="/studio/corpora/new">
                 <Icon name="play" size={14} /> {t("newStudy")}
               </Link>
             </div>
@@ -99,7 +99,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
             <ul className="brand-grid">
               {result.data.map((brand) => (
                 <li key={brand.id}>
-                  <Link href={`/studio/brands/${brand.id}`} className="brand-card">
+                  <Link prefetch={false} href={`/studio/brands/${brand.id}`} className="brand-card">
                     <div className="brand-card-head">
                       <div>
                         <p className="brand-card-eyebrow">
@@ -145,7 +145,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
           {/* Pagination */}
           {totalPages > 1 && (
             <nav className="pagination-v2" aria-label={t("pagination.label")}>
-              <Link
+              <Link prefetch={false}
                 aria-disabled={filters.page <= 1}
                 className="wizard-cta wizard-cta--ghost"
                 href={`/studio/brands?page=${Math.max(1, filters.page - 1)}`}
@@ -155,7 +155,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
               <span className="pagination-position">
                 {filters.page} / {totalPages}
               </span>
-              <Link
+              <Link prefetch={false}
                 aria-disabled={filters.page >= totalPages}
                 className="wizard-cta wizard-cta--ghost"
                 href={`/studio/brands?page=${Math.min(totalPages, filters.page + 1)}`}

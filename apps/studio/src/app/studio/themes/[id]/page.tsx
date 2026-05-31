@@ -83,7 +83,7 @@ export default async function ThemeDetailPage({ params }: { params: Promise<{ id
               <ul className="corpus-grid">
                 {theme.corpora.map((corpus) => (
                   <li key={corpus.id}>
-                    <Link href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
+                    <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
                       <div className="corpus-card-head">
                         <div>
                           <p className="corpus-card-eyebrow">{corpus.methodologyName}</p>

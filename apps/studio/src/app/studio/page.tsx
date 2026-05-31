@@ -35,7 +35,7 @@ export default async function StudioHomePage() {
 
           {/* Quick links */}
           <section className="quick-actions">
-            <Link href="/studio/brands" className="quick-action-card">
+            <Link prefetch={false} href="/studio/brands" className="quick-action-card">
               <div className="quick-action-icon"><Icon name="sparkle" size={20} /></div>
               <div className="quick-action-body">
                 <h3>{t("actions.brands")}</h3>
@@ -43,7 +43,7 @@ export default async function StudioHomePage() {
               </div>
               <Icon name="arrow-right" size={18} className="quick-action-arrow" />
             </Link>
-            <Link href="/studio/brands/new" className="quick-action-card">
+            <Link prefetch={false} href="/studio/brands/new" className="quick-action-card">
               <div className="quick-action-icon"><Icon name="tag" size={20} /></div>
               <div className="quick-action-body">
                 <h3>{t("actions.newBrand")}</h3>
@@ -51,7 +51,7 @@ export default async function StudioHomePage() {
               </div>
               <Icon name="arrow-right" size={18} className="quick-action-arrow" />
             </Link>
-            <Link href="/studio/corpora/new" className="quick-action-card">
+            <Link prefetch={false} href="/studio/corpora/new" className="quick-action-card">
               <div className="quick-action-icon"><Icon name="star" size={20} /></div>
               <div className="quick-action-body">
                 <h3>{t("actions.newStudy")}</h3>
@@ -59,7 +59,7 @@ export default async function StudioHomePage() {
               </div>
               <Icon name="arrow-right" size={18} className="quick-action-arrow" />
             </Link>
-            <Link href="/studio/themes" className="quick-action-card">
+            <Link prefetch={false} href="/studio/themes" className="quick-action-card">
               <div className="quick-action-icon"><Icon name="layers" size={20} /></div>
               <div className="quick-action-body">
                 <h3>{t("actions.themes")}</h3>
@@ -74,14 +74,14 @@ export default async function StudioHomePage() {
             <section className="dash-section">
               <header className="dash-section-head">
                 <h2>{t("recent.title")}</h2>
-                <Link href="/studio/brands" className="dash-section-link">
+                <Link prefetch={false} href="/studio/brands" className="dash-section-link">
                   {t("recent.viewAll")} <Icon name="arrow-right" size={12} />
                 </Link>
               </header>
               <ul className="recent-list">
                 {dash.recent_corpora.map((c) => (
                   <li key={c.id}>
-                    <Link href={`/studio/corpora/${c.id}/engine`} className="recent-card">
+                    <Link prefetch={false} href={`/studio/corpora/${c.id}/engine`} className="recent-card">
                       <div className="recent-card-main">
                         <p className="recent-card-eyebrow">{c.methodologyName}</p>
                         <h4 className="recent-card-brand">{c.name || c.brandName}</h4>

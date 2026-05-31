@@ -36,10 +36,10 @@ export default async function LoginPage({ searchParams }: { searchParams?: Studi
         </div>
 
         <div className="auth-actions">
-          <Link className="wizard-cta" href={authHref("/api/auth/login", continueTo)}>
+          <Link prefetch={false} className="wizard-cta" href={authHref("/api/auth/login", continueTo)}>
             <Icon name="arrow-right" size={15} /> {t("enter")}
           </Link>
-          <Link className="wizard-cta wizard-cta--secondary" href={authHref("/api/auth/register", continueTo)}>
+          <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={authHref("/api/auth/register", continueTo)}>
             {t("createAccount")}
           </Link>
         </div>

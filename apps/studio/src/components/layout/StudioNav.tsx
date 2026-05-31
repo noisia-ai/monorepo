@@ -30,7 +30,7 @@ export async function StudioNav({ crumbs = [], showSections = true, activeSectio
 
   return (
     <nav className="studio-navbar" aria-label="Noisia Studio">
-      <Link href="/studio" className="studio-navbar-logo" aria-label={t("workspace")}>
+      <Link prefetch={false} href="/studio" className="studio-navbar-logo" aria-label={t("workspace")}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/assets/logos/logo_black.svg" alt="Noisia" width={84} height={29} />
       </Link>
@@ -41,7 +41,7 @@ export async function StudioNav({ crumbs = [], showSections = true, activeSectio
             <li key={i} className="studio-navbar-crumb">
               {i > 0 && <Icon name="chevron-down" size={12} className="studio-navbar-sep" />}
               {c.href ? (
-                <Link href={c.href}>{c.label}</Link>
+                <Link prefetch={false} href={c.href}>{c.label}</Link>
               ) : (
                 <span className="studio-navbar-crumb-current">{c.label}</span>
               )}
@@ -73,7 +73,7 @@ export async function StudioNav({ crumbs = [], showSections = true, activeSectio
 
 function SectionTab({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
   return (
-    <Link
+    <Link prefetch={false}
       href={href}
       className={`studio-section-tab${active ? " studio-section-tab--active" : ""}`}
       role="tab"

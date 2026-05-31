@@ -75,7 +75,7 @@ export default async function TbAnalysisReviewPage({
     <div className="studio-page analysis-review-page">
       <section className="analysis-review-hero">
         <div>
-          <Link className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
+          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
             <Icon name="arrow-right" size={14} />
             Volver al engine
           </Link>

@@ -40,7 +40,7 @@ export async function SessionBadge({ user, compact = false }: SessionBadgeProps)
         </span>
       </div>
       <LocaleSwitcher locale={locale} labels={labels} action={setUserLocaleAction} />
-      <Link className="session-badge-logout" href="/api/auth/logout">
+      <Link prefetch={false} className="session-badge-logout" href="/api/auth/logout">
         {t("logout")}
       </Link>
     </div>

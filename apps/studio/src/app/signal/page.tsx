@@ -16,7 +16,7 @@ export default async function SignalPage() {
   return (
     <main className="signal-page">
       <nav className="signal-nav" aria-label="Noisia Signal">
-        <Link href="/signal" className="signal-nav-logo" aria-label="Ir a Signal">
+        <Link prefetch={false} href="/signal" className="signal-nav-logo" aria-label="Ir a Signal">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/assets/logos/logo_black.svg" alt="Noisia" width={84} height={29} />
           <span>Signal</span>
@@ -39,7 +39,7 @@ export default async function SignalPage() {
         </div>
         <div className="signal-home-actions">
           {isInternal ? (
-            <Link className="wizard-cta" href="/studio">
+            <Link prefetch={false} className="wizard-cta" href="/studio">
               <Icon name="arrow-right" size={15} /> Ir a Studio
             </Link>
           ) : null}
@@ -50,7 +50,7 @@ export default async function SignalPage() {
       {outputs.length > 0 ? (
         <section className="signal-output-grid">
           {outputs.map((output) => (
-            <Link className="signal-output-card" href={`/signal/${output.id}`} key={output.id}>
+            <Link prefetch={false} className="signal-output-card" href={`/signal/${output.id}`} key={output.id}>
               <span>{output.methodologyName}</span>
               <h2>{output.headline ?? output.title}</h2>
               <p>{output.summary ?? "Reporte publicado para revisión del equipo cliente."}</p>

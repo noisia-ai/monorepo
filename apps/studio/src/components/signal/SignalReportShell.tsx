@@ -214,7 +214,7 @@ export function SignalReportShell({
         ref={rootRef}
       >
         <aside className="signal-aside">
-          <Link href="/signal" className="signal-aside-logo" aria-label={t("asideLogo")}>
+          <Link prefetch={false} href="/signal" className="signal-aside-logo" aria-label={t("asideLogo")}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/assets/logos/logo_black.svg" alt="Noisia" width={92} height={32} />
             <span>Signal</span>

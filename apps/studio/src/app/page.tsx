@@ -31,10 +31,10 @@ export default async function Page() {
           <p>{t("description")}</p>
         </div>
         <div className="auth-actions">
-          <Link className="wizard-cta" href={`/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath())}`}>
+          <Link prefetch={false} className="wizard-cta" href={`/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath())}`}>
             <Icon name="arrow-right" size={15} /> {t("enter")}
           </Link>
-          <Link className="wizard-cta wizard-cta--secondary" href={`/api/auth/register?post_login_redirect_url=${encodeURIComponent(authContinuePath())}`}>
+          <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/api/auth/register?post_login_redirect_url=${encodeURIComponent(authContinuePath())}`}>
             {t("createAccount")}
           </Link>
         </div>

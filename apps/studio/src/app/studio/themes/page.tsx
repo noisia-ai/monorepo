@@ -87,7 +87,7 @@ export default async function ThemesPage({ searchParams }: { searchParams?: Stud
             <ul className="brand-grid">
               {result.data.map((theme) => (
                 <li key={theme.id}>
-                  <Link href={`/studio/themes/${theme.id}`} className="brand-card">
+                  <Link prefetch={false} href={`/studio/themes/${theme.id}`} className="brand-card">
                     <div className="brand-card-head">
                       <div>
                         <p className="brand-card-eyebrow">
@@ -117,7 +117,7 @@ export default async function ThemesPage({ searchParams }: { searchParams?: Stud
 
           {totalPages > 1 && (
             <nav className="pagination-v2" aria-label="Paginación de themes">
-              <Link
+              <Link prefetch={false}
                 className="wizard-cta wizard-cta--ghost"
                 href={`/studio/themes?page=${Math.max(1, filters.page - 1)}`}
               >
@@ -126,7 +126,7 @@ export default async function ThemesPage({ searchParams }: { searchParams?: Stud
               <span className="pagination-position">
                 {filters.page} / {totalPages}
               </span>
-              <Link
+              <Link prefetch={false}
                 className="wizard-cta wizard-cta--ghost"
                 href={`/studio/themes?page=${Math.min(totalPages, filters.page + 1)}`}
               >

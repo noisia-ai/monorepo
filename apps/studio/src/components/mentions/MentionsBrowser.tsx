@@ -261,7 +261,7 @@ export function MentionsBrowser({
 
         <footer className="pagination-v2">
           {pageHref.previous ? (
-            <Link className="wizard-cta wizard-cta--ghost" href={pageHref.previous}>
+            <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href={pageHref.previous}>
               <Icon className="icon--flip" name="arrow-right" size={14} />
               Anterior
             </Link>
@@ -270,7 +270,7 @@ export function MentionsBrowser({
             Página {pagination.page} de {Math.max(1, Math.ceil(pagination.total / pagination.pageSize))}
           </span>
           {pageHref.next ? (
-            <Link className="wizard-cta wizard-cta--ghost" href={pageHref.next}>
+            <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href={pageHref.next}>
               Siguiente <Icon name="arrow-right" size={14} />
             </Link>
           ) : null}

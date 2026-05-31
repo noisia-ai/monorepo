@@ -17,7 +17,7 @@ export function CorpusNavTabs({ corpusId }: { corpusId: string }) {
       {tabs.map((tab) => {
         const isActive = pathname.startsWith(tab.href);
         return (
-          <Link
+          <Link prefetch={false}
             key={tab.href}
             href={tab.href}
             className={`corpus-tab${isActive ? " corpus-tab--active" : ""}`}
