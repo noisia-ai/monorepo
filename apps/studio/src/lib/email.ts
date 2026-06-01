@@ -9,14 +9,16 @@ type SendEmailArgs = {
   text?: string;
 };
 
+const DEFAULT_FROM_EMAIL = "Noisia Studio <team@hey.noisia.ai>";
+
 export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Promise<
   { ok: true } | { ok: false; error: string }
 > {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
+  const from = process.env.RESEND_FROM_EMAIL ?? DEFAULT_FROM_EMAIL;
 
-  if (!apiKey || !from) {
-    return { ok: false, error: "RESEND_API_KEY o RESEND_FROM_EMAIL no configurados." };
+  if (!apiKey) {
+    return { ok: false, error: "RESEND_API_KEY no configurado." };
   }
 
   try {
