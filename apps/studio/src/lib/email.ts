@@ -42,22 +42,53 @@ export async function sendEmail({ to, subject, html, text }: SendEmailArgs): Pro
   }
 }
 
-/** Plantilla mínima para el correo de invitación al workspace. */
-export function renderInvitationEmail(args: { appName: string; loginUrl: string; roleLabel: string }) {
-  const { appName, loginUrl, roleLabel } = args;
+export function renderInvitationEmail(args: {
+  appName: string;
+  loginUrl: string;
+  roleLabel: string;
+  organizationName?: string | null;
+}) {
+  const appName = escapeHtml(args.appName);
+  const loginUrl = escapeAttribute(args.loginUrl);
+  const roleLabel = escapeHtml(args.roleLabel);
+  const organizationName = args.organizationName ? escapeHtml(args.organizationName) : null;
   const html = `
-    <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 480px; margin: 0 auto; color: #111;">
-      <h1 style="font-size: 20px;">Te invitaron a ${appName}</h1>
-      <p>Tienes acceso como <strong>${roleLabel}</strong>. Entra con este correo para activar tu cuenta:</p>
-      <p style="margin: 24px 0;">
-        <a href="${loginUrl}" style="background:#111;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;">
-          Entrar a ${appName}
-        </a>
-      </p>
-      <p style="color:#666;font-size:13px;">Si el botón no funciona, copia esta liga: ${loginUrl}</p>
+    <div style="margin:0;background:#f4f5f6;padding:34px 18px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0a0a0a;">
+      <div style="max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #e6e8ea;border-radius:18px;overflow:hidden;">
+        <div style="background:#05020f;color:#ffffff;padding:30px 34px;">
+          <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#00eeee;font-weight:800;">Noisia Studio</div>
+          <h1 style="font-size:30px;line-height:1.08;margin:14px 0 10px;font-weight:800;">Te invitaron a ${appName}</h1>
+          <p style="margin:0;color:rgba(255,255,255,.72);font-size:15px;line-height:1.55;">
+            Activa tu acceso para revisar estudios, señales y entregables compartidos por Noisia.
+          </p>
+        </div>
+        <div style="padding:30px 34px;">
+          <div style="background:#fafafa;border:1px solid #e6e8ea;border-radius:14px;padding:18px 20px;margin-bottom:24px;">
+            <p style="margin:0 0 10px;color:#5b6168;font-size:13px;line-height:1.5;">Tu acceso quedó preconfigurado como:</p>
+            <p style="margin:0;color:#0a0a0a;font-size:17px;line-height:1.45;font-weight:800;">${roleLabel}</p>
+            ${organizationName ? `<p style="margin:6px 0 0;color:#5b6168;font-size:14px;line-height:1.45;">Organización: ${organizationName}</p>` : ""}
+          </div>
+          <p style="font-size:16px;line-height:1.6;margin:0 0 24px;color:#20232a;">
+            Entra con este mismo correo. Después del login, Noisia terminará de activar tu cuenta y te llevará al workspace correcto.
+          </p>
+          <a href="${loginUrl}" style="display:inline-block;background:#008a8a;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:800;font-size:15px;">
+            Activar acceso
+          </a>
+          <p style="font-size:12px;color:#8a9099;line-height:1.5;margin:20px 0 0;">
+            Si el botón no funciona, copia esta liga:<br />
+            <span style="word-break:break-all;color:#5b6168;">${loginUrl}</span>
+          </p>
+        </div>
+      </div>
     </div>
   `;
-  const text = `Te invitaron a ${appName} como ${roleLabel}. Entra con tu correo para activar tu cuenta: ${loginUrl}`;
+  const text = [
+    `Te invitaron a ${args.appName}.`,
+    `Rol: ${args.roleLabel}`,
+    args.organizationName ? `Organización: ${args.organizationName}` : "",
+    "Entra con este mismo correo para activar tu cuenta.",
+    args.loginUrl
+  ].filter(Boolean).join("\n\n");
   return { html, text };
 }
 
@@ -70,6 +101,7 @@ export function renderSignalShareEmail(args: {
   highlights: string[];
   opportunities: string[];
   reportUrl: string;
+  loginUrl: string;
   roleLabel: string;
 }) {
   const brandLabel = escapeHtml(args.brandLabel);
@@ -77,6 +109,7 @@ export function renderSignalShareEmail(args: {
   const reportTitle = escapeHtml(args.reportTitle);
   const executiveRead = escapeHtml(args.executiveRead);
   const reportUrl = escapeAttribute(args.reportUrl);
+  const loginUrl = escapeAttribute(args.loginUrl);
   const question = args.businessQuestion ? escapeHtml(args.businessQuestion) : null;
   const highlights = args.highlights.length > 0 ? args.highlights : ["La lectura completa está lista en el deck interactivo."];
   const opportunities = args.opportunities.length > 0 ? args.opportunities : ["Revisar el deck con el equipo y alinear próximos movimientos."];
@@ -103,11 +136,12 @@ export function renderSignalShareEmail(args: {
             ${renderEmailList(opportunities)}
           </div>
 
-          <a href="${reportUrl}" style="display:inline-block;background:#008a8a;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:800;font-size:15px;">
+          <a href="${loginUrl}" style="display:inline-block;background:#008a8a;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:800;font-size:15px;">
             Abrir reporte interactivo
           </a>
           <p style="font-size:12px;color:#8a9099;line-height:1.5;margin:18px 0 0;">
             Entra con este correo. Noisia asignará acceso como ${escapeHtml(args.roleLabel)} dentro de la organización del estudio.
+            <br />Liga directa del reporte: <span style="word-break:break-all;color:#5b6168;">${reportUrl}</span>
           </p>
         </div>
       </div>
@@ -123,7 +157,8 @@ export function renderSignalShareEmail(args: {
     ...highlights.map((item) => `- ${item}`),
     "Decisiones abiertas:",
     ...opportunities.map((item) => `- ${item}`),
-    `Abrir reporte: ${args.reportUrl}`,
+    `Abrir reporte: ${args.loginUrl}`,
+    `Liga directa: ${args.reportUrl}`,
     `Acceso: ${args.roleLabel}`
   ].filter(Boolean).join("\n\n");
 

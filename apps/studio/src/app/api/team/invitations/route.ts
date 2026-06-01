@@ -10,6 +10,7 @@ import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { createInvitationSchema } from "@/lib/validation/team";
 import { listPendingInvitations } from "@/lib/data/team";
 import { renderInvitationEmail, sendEmail } from "@/lib/email";
+import { absoluteAppUrl } from "@/lib/url/origin";
 
 const INVITATION_TTL_DAYS = 14;
 
@@ -47,15 +48,18 @@ export async function POST(request: Request) {
   }
 
   // Validar la organización si aplica.
+  let organizationName: string | null = null;
   if (organizationId) {
     const [org] = await db
-      .select({ id: organizations.id })
+      .select({ id: organizations.id, displayName: organizations.displayName, legalName: organizations.legalName })
       .from(organizations)
       .where(eq(organizations.id, organizationId))
       .limit(1);
     if (!org) {
       return Response.json({ error: "invalid_organization", message: "Organización no encontrada." }, { status: 422 });
     }
+
+    organizationName = org.displayName ?? org.legalName ?? null;
   }
 
   const token = randomBytes(24).toString("hex");
@@ -87,9 +91,16 @@ export async function POST(request: Request) {
 
   // Envío de correo best-effort: la invitación ya quedó creada.
   const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Noisia Studio";
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const loginUrl = `${baseUrl}/api/auth/login?post_login_redirect_url=${encodeURIComponent("/auth/continue")}`;
-  const { html, text } = renderInvitationEmail({ appName, loginUrl, roleLabel: displayRole(primary_role) });
+  const loginUrl = absoluteAppUrl(
+    request,
+    `/api/auth/login?post_login_redirect_url=${encodeURIComponent("/auth/continue")}`
+  );
+  const { html, text } = renderInvitationEmail({
+    appName,
+    loginUrl,
+    roleLabel: displayRole(primary_role),
+    organizationName
+  });
   const emailResult = await sendEmail({ to: email, subject: `Te invitaron a ${appName}`, html, text });
 
   return Response.json(

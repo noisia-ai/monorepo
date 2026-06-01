@@ -13,6 +13,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getSignalOutputForUser } from "@/lib/data/signal";
 import { renderSignalShareEmail, sendEmail } from "@/lib/email";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
+import { absoluteAppUrl } from "@/lib/url/origin";
 
 const INVITATION_TTL_DAYS = 14;
 
@@ -60,11 +61,12 @@ export async function POST(
   const lang = parsed.data.lang ?? "es";
   const role = "client_viewer";
   const roleLabel = displayRole(role);
-  const reportUrl = new URL(`/signal/${outputId}/deck?lang=${lang}`, request.url).toString();
-  const loginUrl = new URL(
-    `/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath(`/signal/${outputId}/deck?lang=${lang}`))}`,
-    request.url
-  ).toString();
+  const reportPath = `/signal/${outputId}/deck?lang=${lang}`;
+  const reportUrl = absoluteAppUrl(request, reportPath);
+  const loginUrl = absoluteAppUrl(
+    request,
+    `/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath(reportPath))}`
+  );
 
   const inviteResult = await createOrResolveShareInvite({
     email,
@@ -77,41 +79,12 @@ export async function POST(
     return Response.json({ error: inviteResult.error, message: inviteResult.message }, { status: inviteResult.status });
   }
 
-  const vm = adaptTbSignalPayload(output.payload);
-  const brandLabel = output.brandName ?? output.brandFallbackName ?? vm.report.brand_name;
-  const methodologyName = output.methodologyName ?? vm.report.methodology_name;
-  const reportTitle = output.headline ?? output.title ?? vm.report.headline;
-  const executiveRead = truncate(
-    vm.knowledgeImpact?.business_question_answer || vm.report.summary || output.summary || "El reporte ya está disponible para revisión.",
-    520
-  );
-  const highlights = vm.findings
-    .slice()
-    .sort((a, b) => b.composite_score - a.composite_score)
-    .slice(0, 4)
-    .map((finding) => finding.finding_name)
-    .filter(Boolean);
-  const opportunities = vm.strategicOpportunities
-    .slice(0, 3)
-    .map((opportunity) => opportunity.title || opportunity.what_to_do)
-    .filter(Boolean);
-
-  const { html, text } = renderSignalShareEmail({
-    brandLabel,
-    methodologyName,
-    reportTitle,
-    businessQuestion: vm.report.business_question,
-    executiveRead,
-    highlights,
-    opportunities,
+  const emailResult = await sendShareEmailBestEffort({
+    email,
+    output,
     reportUrl,
+    loginUrl,
     roleLabel
-  });
-  const emailResult = await sendEmail({
-    to: email,
-    subject: `${brandLabel}: reporte Noisia listo para revisar`,
-    html,
-    text
   });
 
   return Response.json(
@@ -226,11 +199,81 @@ async function createOrResolveShareInvite(args: {
       return { ok: true, created: false, statusLabel: "already_invited" };
     }
 
+    const pendingRole = normalizeRole(pending?.primaryRole);
+    if (pending?.id && pendingRole && getUserType(pendingRole) === "client") {
+      await db
+        .update(invitations)
+        .set({
+          primaryRole: args.role,
+          organizationId: args.organizationId,
+          token: randomBytes(24).toString("hex"),
+          invitedByUserId: args.invitedByUserId,
+          expiresAt: new Date(Date.now() + INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000),
+          updatedAt: new Date()
+        })
+        .where(eq(invitations.id, pending.id));
+      return { ok: true, created: false, statusLabel: "already_invited" };
+    }
+
     return {
       ok: false,
       status: 409,
       error: "already_invited_elsewhere",
       message: "Ya existe una invitación pendiente para ese correo."
+    };
+  }
+}
+
+async function sendShareEmailBestEffort(args: {
+  email: string;
+  output: NonNullable<Awaited<ReturnType<typeof getSignalOutputForUser>>>;
+  reportUrl: string;
+  loginUrl: string;
+  roleLabel: string;
+}) {
+  try {
+    const vm = adaptTbSignalPayload(args.output.payload);
+    const brandLabel = args.output.brandName ?? args.output.brandFallbackName ?? vm.report.brand_name;
+    const methodologyName = args.output.methodologyName ?? vm.report.methodology_name;
+    const reportTitle = args.output.headline ?? args.output.title ?? vm.report.headline;
+    const executiveRead = truncate(
+      vm.knowledgeImpact?.business_question_answer || vm.report.summary || args.output.summary || "El reporte ya está disponible para revisión.",
+      520
+    );
+    const highlights = vm.findings
+      .slice()
+      .sort((a, b) => b.composite_score - a.composite_score)
+      .slice(0, 4)
+      .map((finding) => finding.finding_name)
+      .filter(Boolean);
+    const opportunities = vm.strategicOpportunities
+      .slice(0, 3)
+      .map((opportunity) => opportunity.title || opportunity.what_to_do)
+      .filter(Boolean);
+
+    const { html, text } = renderSignalShareEmail({
+      brandLabel,
+      methodologyName,
+      reportTitle,
+      businessQuestion: vm.report.business_question,
+      executiveRead,
+      highlights,
+      opportunities,
+      reportUrl: args.reportUrl,
+      loginUrl: args.loginUrl,
+      roleLabel: args.roleLabel
+    });
+
+    return sendEmail({
+      to: args.email,
+      subject: `${brandLabel}: reporte Noisia listo para revisar`,
+      html,
+      text
+    });
+  } catch (err) {
+    return {
+      ok: false as const,
+      error: err instanceof Error ? err.message : "No pudimos preparar el correo del reporte."
     };
   }
 }
