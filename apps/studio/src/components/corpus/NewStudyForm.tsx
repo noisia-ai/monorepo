@@ -290,12 +290,12 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
       const corpusId = String(json.data?.id ?? "");
       if (!corpusId) throw new Error(t("progress.fallbackStudyError"));
       setCreatedCorpusId(corpusId);
+      setEngineUrl(json.data.engine_url);
 
       if (files.length > 0) {
         await uploadKnowledgeFiles(corpusId);
       }
 
-      setEngineUrl(json.data.engine_url);
       setStep(4);
       setProgressLabel(t("progress.readyEngine"));
     } catch (err) {
@@ -318,13 +318,16 @@ export function NewStudyForm({ brands, methodologies, defaultBrandId }: NewStudy
     const uploadJson = await uploadRes.json().catch(() => ({}));
     if (!uploadRes.ok) throw new Error(uploadJson?.message ?? t("progress.fallbackKnowledgeProcessError"));
     if (uploadJson.job_id) {
-      await waitForJob(uploadJson.job_id, setProgressLabel, {
+      const waitResult = await waitForJob(uploadJson.job_id, setProgressLabel, {
         fallbackJobReadError: t("progress.fallbackJobReadError"),
         knowledgeReady: t("progress.knowledgeReady"),
         knowledgeFailed: t("progress.knowledgeFailed"),
         knowledgeTimeout: t("progress.knowledgeTimeout"),
         analyzingKnowledge: (progress) => t("progress.analyzingKnowledge", { progress })
       });
+      if (waitResult === "timeout") {
+        setError(t("progress.knowledgeTimeout"));
+      }
     }
     const sources = await fetchKnowledgeSources(corpusId, t("progress.fallbackKnowledgeReadError"));
     setKnowledgeSources(sources);
@@ -846,7 +849,7 @@ async function waitForJob(
     const progress = typeof json.progress === "number" ? json.progress : 0;
     if (json.status === "completed") {
       onProgress(labels.knowledgeReady);
-      return;
+      return "completed";
     }
     if (json.status === "failed") {
       throw new Error(json.failed_reason ?? labels.knowledgeFailed);
@@ -854,7 +857,8 @@ async function waitForJob(
     onProgress(labels.analyzingKnowledge(Math.round(progress)));
     await new Promise((resolve) => setTimeout(resolve, 1200));
   }
-  throw new Error(labels.knowledgeTimeout);
+  onProgress(labels.knowledgeTimeout);
+  return "timeout";
 }
 
 function splitList(value: string) {

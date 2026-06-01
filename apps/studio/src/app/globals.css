@@ -6024,6 +6024,101 @@ a.mention-card-text .icon {
   background: var(--tension-soft);
 }
 
+.analysis-run-banner--info {
+  color: var(--signal-dark);
+  background: rgba(0, 126, 137, 0.08);
+}
+
+.analysis-size-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  background: rgba(250, 250, 250, 0.78);
+  border: 1px solid rgba(7, 1, 19, 0.06);
+}
+
+.analysis-size-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.analysis-size-head > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.analysis-size-head span,
+.analysis-size-option span,
+.analysis-size-saved {
+  color: var(--neutral-10);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.analysis-size-head strong {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-size-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-size-option {
+  display: grid;
+  gap: 6px;
+  min-height: 116px;
+  padding: 14px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(7, 1, 19, 0.08);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.analysis-size-option:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0, 126, 137, 0.24);
+  box-shadow: 0 14px 34px rgba(7, 1, 19, 0.06);
+}
+
+.analysis-size-option.is-selected {
+  border-color: rgba(0, 126, 137, 0.48);
+  background: rgba(0, 126, 137, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(0, 126, 137, 0.14);
+}
+
+.analysis-size-option strong {
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-size-option small {
+  color: var(--neutral-10);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.analysis-size-saved {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .analysis-progress-shell {
   display: grid;
   gap: 10px;
@@ -12368,6 +12463,8 @@ body:has(.signal-report)::before { display: none; }
   .analysis-override-card { width: 100%; }
   .analysis-override-actions { justify-content: stretch; }
   .analysis-process-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analysis-size-head,
+  .analysis-size-options { grid-template-columns: 1fr 1fr; }
   .analysis-review-vitals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .recommendation-list--compact-grid { grid-template-columns: 1fr; }
   .quality-gate-row { grid-template-columns: auto minmax(0, 1fr); }

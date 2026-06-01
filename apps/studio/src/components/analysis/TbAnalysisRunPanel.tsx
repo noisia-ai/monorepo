@@ -4,6 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  ANALYSIS_STUDY_SIZES,
+  AUTO_FULL_THRESHOLD,
+  type AnalysisStudyPlan,
+  type AnalysisStudySize,
+  resolveAnalysisStudyPlan
+} from "@/lib/analysis/study-size";
 import { Icon } from "@/components/ui/Icon";
 import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 
@@ -25,6 +32,17 @@ type AnalysisState = {
     createdAt: string | Date;
     updatedAt: string | Date;
     failureReason: string | null;
+    metaJson?: Record<string, unknown> & {
+      analysis_sample?: {
+        label?: string;
+        target_mentions?: number;
+        snapshot_mentions?: number;
+        coverage_pct?: number;
+        estimated_cost_usd?: number;
+        strategy?: string;
+        is_auto_full?: boolean;
+      };
+    } | null;
   };
   steps: AnalysisStep[];
   recommendations: unknown[];
@@ -42,6 +60,7 @@ type StartPayload = {
   tb_analysis_id?: string;
   bullmq_job_id?: string | number;
   status?: string;
+  study_plan?: AnalysisStudyPlan;
   message?: string;
 };
 
@@ -108,12 +127,19 @@ export function TbAnalysisRunPanel({
   const [jobId, setJobId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [studySize, setStudySize] = useState<AnalysisStudySize>("medium");
   const [error, setError] = useState<string | null>(null);
 
   const analysis = state?.analysis ?? null;
   const isRunning = analysis ? !TERMINAL_STATUSES.has(analysis.status) : false;
   const canStart = corpusApproved && includedCount > 0 && !isRunning && !isStarting;
   const progress = useMemo(() => computeProgress(state), [state]);
+  const selectedPlan = useMemo(
+    () => resolveAnalysisStudyPlan({ corpusMentions: includedCount, requestedSize: studySize }),
+    [includedCount, studySize]
+  );
+  const autoFull = includedCount <= AUTO_FULL_THRESHOLD;
+  const savedPlan = analysis?.metaJson?.analysis_sample ?? null;
 
   const refreshState = useCallback(async (analysisId: string, forceRouterRefresh: boolean) => {
     setIsRefreshing(true);
@@ -157,7 +183,11 @@ export function TbAnalysisRunPanel({
     setIsStarting(true);
     setError(null);
 
-    const response = await fetch(`/api/corpora/${corpusId}/tb-analysis`, { method: "POST" });
+    const response = await fetch(`/api/corpora/${corpusId}/tb-analysis`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studySize })
+    });
     const payload = await response.json() as StartPayload;
 
     if (!response.ok || !payload.tb_analysis_id) {
@@ -195,6 +225,59 @@ export function TbAnalysisRunPanel({
           </button>
         </div>
       </div>
+
+      {corpusApproved ? (
+        <div className="analysis-size-panel">
+          <div className="analysis-size-head">
+            <div>
+              <span>Tamaño del estudio</span>
+              <strong>{autoFull ? "Auto completo" : selectedPlan.label}</strong>
+            </div>
+            <div>
+              <span>Menciones a analizar</span>
+              <strong>{fmtNum(autoFull ? includedCount : selectedPlan.estimatedMentions)} / {fmtNum(includedCount)}</strong>
+            </div>
+            <div>
+              <span>Costo estimado</span>
+              <strong>{fmtUsd(selectedPlan.estimatedCostUsd)}</strong>
+            </div>
+          </div>
+
+          {autoFull ? (
+            <div className="analysis-run-banner analysis-run-banner--info">
+              <Icon name="check" size={16} />
+              Corpus menor a {fmtNum(AUTO_FULL_THRESHOLD)} menciones: se analizará completo automáticamente.
+            </div>
+          ) : (
+            <div className="analysis-size-options" role="radiogroup" aria-label="Tamaño del estudio">
+              {ANALYSIS_STUDY_SIZES.map((option) => {
+                const plan = resolveAnalysisStudyPlan({ corpusMentions: includedCount, requestedSize: option.size });
+                const selected = studySize === option.size;
+                return (
+                  <button
+                    className={`analysis-size-option${selected ? " is-selected" : ""}`}
+                    key={option.size}
+                    onClick={() => setStudySize(option.size)}
+                    role="radio"
+                    aria-checked={selected}
+                    type="button"
+                  >
+                    <span>{option.label}</span>
+                    <strong>{fmtNum(plan.estimatedMentions)}</strong>
+                    <small>{Math.round(plan.coveragePct * 100)}% · límite {fmtNum(plan.mentionLimit)} · {fmtUsd(plan.estimatedCostUsd)}</small>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {savedPlan ? (
+            <div className="analysis-size-saved">
+              Última corrida: {savedPlan.label ?? "estudio"} · {fmtNum(savedPlan.target_mentions ?? 0)} menciones · {fmtUsd(savedPlan.estimated_cost_usd ?? 0)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {!corpusApproved ? (
         <div className="analysis-run-banner analysis-run-banner--warn">
@@ -326,6 +409,14 @@ function currentActivityLabel(status: string, currentStep: string) {
   if (status === "approved_by_kam") return "Síntesis aprobada para cliente.";
   if (status === "failed") return "La lectura se detuvo; revisa el error antes de reintentar.";
   return `${labelForStep(currentStep)}. Puedes dejar esta pantalla abierta; se actualizará sola.`;
+}
+
+function fmtNum(value: number) {
+  return new Intl.NumberFormat("es-MX").format(Math.max(0, Math.round(value)));
+}
+
+function fmtUsd(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
 }
 
 function stageStatus(

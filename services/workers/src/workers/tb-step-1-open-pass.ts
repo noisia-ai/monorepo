@@ -33,6 +33,16 @@ type AnalysisContextRow = {
   brand_name: string | null;
   brand_display_name: string | null;
   brand_industry: string | null;
+  meta_json: {
+    analysis_sample?: {
+      target_mentions?: number;
+      snapshot_mentions?: number;
+      resolved_study_size?: string;
+      strategy?: string;
+      estimated_cost_usd?: number;
+      is_auto_full?: boolean;
+    };
+  } | null;
 };
 
 type MentionRow = {
@@ -43,6 +53,10 @@ type MentionRow = {
 };
 
 const BATCH_CONCURRENCY = 4;
+const MIN_ROLE_SAMPLE_SHARE = 0.08;
+const MIN_ROLE_SAMPLE_FLOOR = 40;
+const MIN_ROLE_SAMPLE_CEILING = 500;
+const LEGACY_OPEN_PASS_SAFE_MAX = 5000;
 
 /**
  * Step 1 — Pase abierto (open pass).
@@ -66,13 +80,15 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
     const ragContext = await loadTbRagPromptContext(tbAnalysisId);
 
     // Build a stratified sample over the snapshot's mention set, capped.
-    const requestedSampleSize = resolveOpenPassSampleSize();
+    const requestedSampleSize = resolveOpenPassSampleSize(ctx);
     const mentions = await sampleSnapshotMentions(ctx.snapshot_id, ctx.study_corpus_id, requestedSampleSize);
     if (mentions.length === 0) {
       throw new Error("Snapshot tiene 0 menciones — no se puede ejecutar open pass");
     }
 
-    console.log(`[tb-step1] sampling ${mentions.length} mentions for open pass`);
+    console.log(
+      `[tb-step1] sampling ${mentions.length} mentions for open pass (${ctx.meta_json?.analysis_sample?.resolved_study_size ?? "legacy"})`
+    );
     await job.updateProgress(15);
 
     // Split into batches
@@ -173,6 +189,10 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
       resultSummary: {
         sampled_mentions: mentions.length,
         requested_sample_size: requestedSampleSize,
+        snapshot_mentions: ctx.meta_json?.analysis_sample?.snapshot_mentions ?? null,
+        study_size: ctx.meta_json?.analysis_sample?.resolved_study_size ?? null,
+        sampling_strategy: ctx.meta_json?.analysis_sample?.strategy ?? null,
+        estimated_cost_usd: ctx.meta_json?.analysis_sample?.estimated_cost_usd ?? null,
         tagged_mentions: allTagged.length,
         unique_tags: uniqueTags.length,
         irrelevant_count: irrelevantCount,
@@ -205,10 +225,17 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
   }
 }
 
-function resolveOpenPassSampleSize() {
+function resolveOpenPassSampleSize(ctx: AnalysisContextRow) {
+  const configuredTarget = ctx.meta_json?.analysis_sample?.target_mentions;
+  if (typeof configuredTarget === "number" && Number.isFinite(configuredTarget) && configuredTarget > 0) {
+    return Math.min(Math.max(Math.floor(configuredTarget), 1), 100000);
+  }
+
   const raw = Number.parseInt(process.env.TB_OPEN_PASS_MAX_SAMPLE ?? "", 10);
-  if (!Number.isFinite(raw) || raw <= 0) return TB_OPEN_PASS_MAX_SAMPLE;
-  return Math.min(Math.max(raw, 1500), 50000);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return Math.min(TB_OPEN_PASS_MAX_SAMPLE, LEGACY_OPEN_PASS_SAFE_MAX);
+  }
+  return Math.min(Math.max(raw, 1500), LEGACY_OPEN_PASS_SAFE_MAX);
 }
 
 async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContextRow> {
@@ -219,7 +246,8 @@ async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContex
        ta.business_question,
        b.name AS brand_name,
        b.display_name AS brand_display_name,
-       b.industry AS brand_industry
+       b.industry AS brand_industry,
+       ta.meta_json
      FROM tb_analyses ta
      JOIN study_corpora sc ON sc.id = ta.study_corpus_id
      LEFT JOIN brands b ON b.id = sc.brand_id
@@ -232,9 +260,10 @@ async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContex
 }
 
 /**
- * Stratified sample: take proportional slices per platform so minority
- * sources don't disappear. The snapshot's mention set is the ground truth —
- * we sample from it directly (joining via corpus_snapshot_mentions).
+ * Stratified sample: take proportional slices per attribution role and then
+ * platform so minority competitor/category uploads do not disappear in partial
+ * studies. The snapshot's mention set is the ground truth — we sample from it
+ * directly (joining via corpus_snapshot_mentions).
  */
 async function sampleSnapshotMentions(
   snapshotId: string,
@@ -265,32 +294,63 @@ async function sampleSnapshotMentions(
     return r.rows;
   }
 
-  // Stratified sample: limit per platform proportional to size.
-  const platforms = await pool.query<{ platform: string; cnt: number }>(
-    `SELECT m.platform, COUNT(*)::int AS cnt
+  const roles = await pool.query<{ mention_role: string; cnt: number }>(
+    `SELECT COALESCE(ib.mention_type, 'unattributed') AS mention_role, COUNT(*)::int AS cnt
      FROM mentions m
      JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+     LEFT JOIN import_batches ib ON ib.id = m.source_file_id
      WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
-     GROUP BY m.platform`,
+       AND length(m.text_clean) >= 20
+     GROUP BY 1`,
     [snapshotId, corpusId]
   );
 
+  const roleQuotas = allocateRoleQuotas({ roles: roles.rows, maxSample, total });
   const allRows: MentionRow[] = [];
-  for (const p of platforms.rows) {
-    const proportion = p.cnt / total;
-    const quota = Math.max(10, Math.round(maxSample * proportion));
-    const r = await pool.query<MentionRow>(
-      `SELECT m.id, m.platform, m.text_snippet, m.text_clean
+  for (const role of roleQuotas) {
+    const platforms = await pool.query<{ platform: string; cnt: number }>(
+      `SELECT COALESCE(m.platform, 'unknown') AS platform, COUNT(*)::int AS cnt
        FROM mentions m
        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+       LEFT JOIN import_batches ib ON ib.id = m.source_file_id
        WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
-         AND m.platform = $3
+         AND COALESCE(ib.mention_type, 'unattributed') = $3
+         AND length(m.text_clean) >= 20
+       GROUP BY 1`,
+      [snapshotId, corpusId, role.mention_role]
+    );
+
+    let remainingQuota = role.quota;
+    let remainingCount = role.count;
+    for (let index = 0; index < platforms.rows.length; index += 1) {
+      const p = platforms.rows[index];
+      if (!p) continue;
+      const quota = Math.min(
+        remainingQuota,
+        index === platforms.rows.length - 1
+          ? remainingQuota
+          : Math.max(1, Math.round(remainingQuota * (p.cnt / Math.max(1, remainingCount))))
+      );
+      if (quota <= 0) continue;
+      const r = await pool.query<MentionRow>(
+        `SELECT m.id, COALESCE(m.platform, 'unknown') AS platform, m.text_snippet, m.text_clean
+       FROM mentions m
+       JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
+       LEFT JOIN import_batches ib ON ib.id = m.source_file_id
+       WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+         AND COALESCE(ib.mention_type, 'unattributed') = $3
+         AND COALESCE(m.platform, 'unknown') = $4
          AND length(m.text_clean) >= 20
        ORDER BY random()
-       LIMIT $4`,
-      [snapshotId, corpusId, p.platform, quota]
-    );
-    allRows.push(...r.rows);
+       LIMIT $5`,
+        [snapshotId, corpusId, role.mention_role, p.platform, quota]
+      );
+      allRows.push(...r.rows);
+      remainingQuota -= r.rows.length;
+      remainingCount -= p.cnt;
+
+      if (remainingQuota <= 0 || remainingCount <= 0) break;
+    }
   }
 
   // If proportional rounding pushed us over the cap, trim randomly.
@@ -300,6 +360,43 @@ async function sampleSnapshotMentions(
   }
 
   return allRows;
+}
+
+function allocateRoleQuotas(args: {
+  roles: { mention_role: string; cnt: number }[];
+  maxSample: number;
+  total: number;
+}) {
+  const minimum = Math.min(
+    MIN_ROLE_SAMPLE_CEILING,
+    Math.max(MIN_ROLE_SAMPLE_FLOOR, Math.round(args.maxSample * MIN_ROLE_SAMPLE_SHARE))
+  );
+  const quotas = args.roles.map((role) => {
+    const proportional = Math.round(args.maxSample * (role.cnt / Math.max(1, args.total)));
+    const protectedMinimum =
+      role.mention_role === "competitor" || role.mention_role === "industry" || role.mention_role === "brand"
+        ? minimum
+        : 1;
+    return {
+      mention_role: role.mention_role,
+      count: role.cnt,
+      quota: Math.min(role.cnt, Math.max(proportional, protectedMinimum))
+    };
+  });
+
+  let overflow = quotas.reduce((sum, role) => sum + role.quota, 0) - args.maxSample;
+  if (overflow <= 0) return quotas.filter((role) => role.quota > 0);
+
+  for (const role of [...quotas].sort((a, b) => b.quota - a.quota)) {
+    const floor = Math.min(role.count, role.mention_role === "unattributed" ? 1 : minimum);
+    const reducible = Math.max(0, role.quota - floor);
+    const reduction = Math.min(reducible, overflow);
+    role.quota -= reduction;
+    overflow -= reduction;
+    if (overflow <= 0) break;
+  }
+
+  return quotas.filter((role) => role.quota > 0);
 }
 
 async function processBatch(args: {

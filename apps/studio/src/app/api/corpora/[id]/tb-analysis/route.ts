@@ -1,14 +1,20 @@
 import { and, eq, isNotNull } from "drizzle-orm";
+import { z } from "zod";
 
 import { studyCorpora, tbAnalyses } from "@noisia/db";
 import { TB_METHODOLOGY_VERSION, TB_PIPELINE_VERSION } from "@noisia/query-engine";
 import { forbidden, unauthorized } from "@/lib/api/responses";
+import { type AnalysisStudySize, resolveAnalysisStudyPlan } from "@/lib/analysis/study-size";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { createCorpusSnapshot } from "@/lib/corpus/snapshots";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { db } from "@/lib/db";
 import { getTbAnalysisQueue } from "@/lib/queue/tb-analysis";
+
+const startBodySchema = z.object({
+  studySize: z.enum(["small", "medium", "large", "full_power"]).optional()
+});
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
@@ -38,7 +44,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
  *  5. Enqueue tb_run_analysis on the tb-analysis BullMQ queue.
  *  6. Return analysis id + bullmq job id so the UI can poll progress.
  */
-export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
   if (!session) return unauthorized();
   if (!canManageCorpus(session.appUser.primaryRole)) return forbidden();
@@ -67,6 +73,18 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     );
   }
 
+  let requestedStudySize: AnalysisStudySize | undefined;
+  try {
+    const body = await request.json();
+    const parsed = startBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", message: "Tamaño de estudio inválido." }, { status: 400 });
+    }
+    requestedStudySize = parsed.data.studySize;
+  } catch {
+    requestedStudySize = undefined;
+  }
+
   // 1. Snapshot for reproducibility
   const snapshotLabel = `Pre-análisis T&B · ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
   const snapshot = await createCorpusSnapshot({
@@ -82,6 +100,11 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     );
   }
 
+  const studyPlan = resolveAnalysisStudyPlan({
+    corpusMentions: snapshot.mention_count,
+    requestedSize: requestedStudySize
+  });
+
   // 2. Insert tb_analyses row
   const [analysis] = await db
     .insert(tbAnalyses)
@@ -94,6 +117,22 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       currentStep: "preflight",
       businessQuestion: corpus.businessQuestion,
       decisionToInform: corpus.decisionToInform,
+      metaJson: {
+        analysis_sample: {
+          requested_study_size: requestedStudySize ?? "medium",
+          resolved_study_size: studyPlan.size,
+          label: studyPlan.label,
+          strategy: studyPlan.isAutoFull ? "full_snapshot_auto" : "stratified_random",
+          snapshot_mentions: snapshot.mention_count,
+          target_mentions: studyPlan.estimatedMentions,
+          coverage_pct: studyPlan.coveragePct,
+          mention_limit: studyPlan.mentionLimit,
+          estimated_cost_usd: studyPlan.estimatedCostUsd,
+          cost_per_mention_usd: 0.00125,
+          auto_full_threshold: 5000,
+          is_auto_full: studyPlan.isAutoFull
+        }
+      },
       executedByUserId: session.appUser.id
     })
     .returning({ id: tbAnalyses.id });
@@ -124,6 +163,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       ok: true,
       tb_analysis_id: analysis.id,
       snapshot_id: snapshot.id,
+      study_plan: studyPlan,
       bullmq_job_id: job.id,
       status: "running"
     },
