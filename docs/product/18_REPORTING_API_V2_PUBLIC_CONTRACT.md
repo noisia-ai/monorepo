@@ -1,13 +1,13 @@
-# Reporting API V2 + Linkstudio Contract
+# Reporting API V2 + Public Customer Contract
 
 Fecha: 2026-06-01
 
 ## Objetivo
 
-Exponer el output publicado de Signal en formato JSON estructurado para
-Linkstudio. V1 se mantiene como contrato tabular/CSV para Looker; V2 entrega el
-reporte completo y sus secciones nuevas sin obligar al consumidor a reconstruir
-el dashboard desde datasets planos.
+Exponer el output publicado de Signal en formato JSON estructurado para clientes
+e integraciones externas. V1 se mantiene como contrato tabular/CSV para Looker;
+V2 entrega el reporte completo y sus secciones nuevas sin obligar al consumidor a
+reconstruir el dashboard desde datasets planos.
 
 La fuente de verdad sigue siendo `published_outputs.payload` y sólo se leen
 outputs con `status = published` y `archived_at IS NULL`.

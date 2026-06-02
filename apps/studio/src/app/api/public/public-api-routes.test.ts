@@ -158,7 +158,7 @@ test("public v1 report returns server_error when dataset build fails", async () 
   assert.equal(body.error, "server_error");
 });
 
-test("public v2 reports list returns Linkstudio metadata", async () => {
+test("public v2 reports list returns structured metadata", async () => {
   const response = await routeHandlers.handlePublicV2ReportsGET(request(), {
     authorize: async () => okAuth(),
     listReports: async () => [{ api_version: 2, output_id: "out_123", sections: ["overview"] }]

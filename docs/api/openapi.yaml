@@ -2,12 +2,12 @@ openapi: 3.1.0
 info:
   title: Noisia Public Reporting API
   version: "2.0.0"
-  summary: Public reporting endpoints for Looker Studio and Linkstudio.
+  summary: Public reporting endpoints for customers and external integrations.
   description: |
     Public API for published Noisia Signal reports.
 
     V1 exposes flat tabular datasets and CSV exports for BI tools.
-    V2 exposes the structured client-ready Signal output for Linkstudio.
+    V2 exposes the structured client-ready Signal output for external integrations.
 servers:
   - url: https://studio.noisia.ai
     description: Production
@@ -18,7 +18,7 @@ tags:
   - name: Public V1
     description: Flat datasets and CSV exports.
   - name: Public V2
-    description: Structured Signal output for Linkstudio.
+    description: Structured Signal output for customers and external integrations.
 paths:
   /api/public/v1/reports:
     get:
@@ -160,7 +160,7 @@ paths:
     get:
       tags: [Public V2]
       operationId: listPublicV2Reports
-      summary: List published reports visible to Linkstudio.
+      summary: List published reports visible to the API key.
       responses:
         "200":
           description: Visible published reports with available sections.
