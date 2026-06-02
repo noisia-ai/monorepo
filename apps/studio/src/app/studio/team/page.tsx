@@ -5,7 +5,7 @@ import { StudioNav } from "@/components/layout/StudioNav";
 import { TeamManager } from "@/components/team/TeamManager";
 import { canManageTeam } from "@/lib/auth/roles";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { listOrganizationsForPicker, listPendingInvitations, listTeamMembers } from "@/lib/data/team";
+import { listOrganizationsForAdmin, listPendingInvitations, listTeamMembers } from "@/lib/data/team";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export default async function TeamPage() {
   const [members, invitations, organizations] = await Promise.all([
     listTeamMembers(),
     listPendingInvitations(),
-    listOrganizationsForPicker()
+    listOrganizationsForAdmin()
   ]);
 
   return (
@@ -51,7 +51,18 @@ export default async function TeamPage() {
             }))}
             organizations={organizations.map((o) => ({
               id: o.id,
-              name: o.name ?? o.legalName
+              name: o.displayName ?? o.legalName,
+              slug: o.slug,
+              legalName: o.legalName,
+              hqCountry: o.hqCountry,
+              industryPrimary: o.industryPrimary,
+              status: o.status,
+              usersCount: o.usersCount,
+              pendingInvitationsCount: o.pendingInvitationsCount,
+              brandsCount: o.brandsCount,
+              activeBrandsCount: o.activeBrandsCount,
+              activeCorporaCount: o.activeCorporaCount,
+              themesCount: o.themesCount
             }))}
           />
         </div>

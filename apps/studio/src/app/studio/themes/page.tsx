@@ -41,6 +41,10 @@ export default async function ThemesPage({ searchParams }: { searchParams?: Stud
                 {result.pagination.total} {result.pagination.total === 1 ? "theme" : "themes"} ·
                 página {result.pagination.page} de {totalPages}
               </p>
+              <p className="page-head-sub">
+                Themes son estudios temáticos no atados a una marca: sirven para investigar tópicos,
+                categorías o tensiones de mercado y después correr corpora con metodologías.
+              </p>
             </div>
           </header>
 

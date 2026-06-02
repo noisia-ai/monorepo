@@ -90,6 +90,7 @@
     "countPlural": "brands",
     "page": "page {page} of {totalPages}",
     "newBrand": "New brand",
+    "archivedBrands": "Archived",
     "newStudy": "New study",
     "filters": {
       "organization": "Organization",
@@ -181,6 +182,17 @@
     "archived": "Archived",
     "relationsEyebrow": "Base relationships",
     "relationsTitle": "Aliases, handles, and markets",
+    "organizationTools": "Destination organization",
+    "newOrganization": "New organization",
+    "cancelCreateOrganization": "Cancel",
+    "createOrganizationEyebrow": "Workspace",
+    "createOrganizationTitle": "Create destination organization",
+    "orgLegalName": "Legal name",
+    "orgDisplayName": "Display name",
+    "orgSlug": "Slug",
+    "creatingOrganization": "Creating…",
+    "createOrganization": "Create and select",
+    "fallbackCreateOrgError": "Could not create organization.",
     "cancel": "Cancel",
     "saving": "Saving...",
     "save": "Save Brand OS",
@@ -215,6 +227,25 @@
     "fallbackAddError": "Could not create the Knowledge Base block.",
     "fallbackSaveError": "Could not save the block.",
     "fallbackDeleteError": "Could not delete the block."
+  },
+  "AdminActions": {
+    "archiveCorpus": "Archive corpus",
+    "archiving": "Archiving…",
+    "archiveCorpusConfirm": "Archive the corpus “{name}”? It will no longer appear in active lists.",
+    "archiveCorpusError": "Could not archive corpus.",
+    "deleteBrand": "Delete brand",
+    "deleting": "Deleting…",
+    "deleteBrandConfirm": "Delete the brand “{name}”? If it has corpora, it will be archived to preserve history.",
+    "deleteBrandError": "Could not delete brand.",
+    "brandArchived": "The brand has associated corpora; it was archived to preserve history.",
+    "permanentDelete": "Delete permanently",
+    "permanentDeleteBrandConfirm": "Delete “{name}” permanently? This removes the brand, corpora, mentions, analyses, and outputs. It cannot be undone.",
+    "permanentDeleteBrandError": "Could not permanently delete brand.",
+    "deleteTheme": "Delete theme",
+    "deleteThemeConfirm": "Delete the theme “{name}”? If it has corpora, it will be archived to preserve history.",
+    "permanentDeleteThemeConfirm": "Delete the theme “{name}” permanently? This removes corpora, mentions, analyses, and outputs. It cannot be undone.",
+    "deleteThemeError": "Could not delete theme.",
+    "themeArchived": "The theme has associated corpora; it was archived to preserve history."
   },
   "NewStudyPage": {
     "crumb": "New study",
@@ -384,6 +415,43 @@
       "successNoEmail": "Invitation created, but the email didn't send ({error}). Share the link manually.",
       "error": "Could not create the invitation."
     },
+    "organizations": {
+      "title": "Organizations",
+      "subtitle": "Edit client workspaces, clean duplicates, and delete only when they have no dependencies.",
+      "empty": "No organizations yet.",
+      "new": "New organization",
+      "cancelCreate": "Cancel",
+      "legalName": "Legal name",
+      "displayName": "Display name",
+      "slug": "Slug",
+      "industry": "Industry",
+      "country": "Country",
+      "status": "Status",
+      "statusActive": "Active",
+      "statusPaused": "Paused",
+      "statusArchived": "Archived",
+      "create": "Create organization",
+      "creating": "Creating…",
+      "createSuccess": "Organization created.",
+      "createError": "Could not create organization.",
+      "saveSuccess": "Organization updated.",
+      "deleteSuccess": "Organization deleted.",
+      "deleteError": "Could not delete organization.",
+      "deleteConfirm": "Delete the organization “{name}”?",
+      "deleteBlocked": "To delete, first move or remove its users, invitations, brands, and themes.",
+      "edit": "Edit",
+      "delete": "Delete",
+      "users": "{count} users",
+      "brands": "{count} brands",
+      "corpora": "{count} corpora",
+      "pending": "{count} pending invitations",
+      "blockers": {
+        "users": "users",
+        "pendingInvitations": "invitations",
+        "brands": "brands",
+        "themes": "themes"
+      }
+    },
     "members": {
       "title": "Users",
       "empty": "No users yet.",
@@ -416,7 +484,9 @@
       "active": "Active",
       "invited": "Invited",
       "suspended": "Suspended",
-      "pending": "Pending"
+      "pending": "Pending",
+      "paused": "Paused",
+      "archived": "Archived"
     }
   }
 }

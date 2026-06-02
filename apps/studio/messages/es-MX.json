@@ -90,6 +90,7 @@
     "countPlural": "marcas",
     "page": "página {page} de {totalPages}",
     "newBrand": "Nueva marca",
+    "archivedBrands": "Archivadas",
     "newStudy": "Nuevo estudio",
     "filters": {
       "organization": "Organización",
@@ -181,6 +182,17 @@
     "archived": "Archivada",
     "relationsEyebrow": "Relaciones base",
     "relationsTitle": "Aliases, handles y mercados",
+    "organizationTools": "Organización destino",
+    "newOrganization": "Nueva organización",
+    "cancelCreateOrganization": "Cancelar",
+    "createOrganizationEyebrow": "Workspace",
+    "createOrganizationTitle": "Crear organización destino",
+    "orgLegalName": "Razón social",
+    "orgDisplayName": "Nombre visible",
+    "orgSlug": "Slug",
+    "creatingOrganization": "Creando…",
+    "createOrganization": "Crear y seleccionar",
+    "fallbackCreateOrgError": "No se pudo crear la organización.",
     "cancel": "Cancelar",
     "saving": "Guardando...",
     "save": "Guardar Brand OS",
@@ -215,6 +227,25 @@
     "fallbackAddError": "No se pudo crear el bloque de Knowledge Base.",
     "fallbackSaveError": "No se pudo guardar el bloque.",
     "fallbackDeleteError": "No se pudo borrar el bloque."
+  },
+  "AdminActions": {
+    "archiveCorpus": "Archivar corpus",
+    "archiving": "Archivando…",
+    "archiveCorpusConfirm": "¿Archivar el corpus “{name}”? Ya no aparecerá en listados activos.",
+    "archiveCorpusError": "No se pudo archivar el corpus.",
+    "deleteBrand": "Borrar marca",
+    "deleting": "Borrando…",
+    "deleteBrandConfirm": "¿Borrar la marca “{name}”? Si tiene corpora, se archivará para conservar historial.",
+    "deleteBrandError": "No se pudo borrar la marca.",
+    "brandArchived": "La marca tiene corpora asociados; se archivó para conservar historial.",
+    "permanentDelete": "Borrar permanentemente",
+    "permanentDeleteBrandConfirm": "¿Borrar permanentemente “{name}”? Esto elimina marca, corpus, menciones, análisis y outputs asociados. No se puede deshacer.",
+    "permanentDeleteBrandError": "No se pudo borrar permanentemente la marca.",
+    "deleteTheme": "Borrar theme",
+    "deleteThemeConfirm": "¿Borrar el theme “{name}”? Si tiene corpora, se archivará para conservar historial.",
+    "permanentDeleteThemeConfirm": "¿Borrar permanentemente el theme “{name}”? Esto elimina corpus, menciones, análisis y outputs asociados. No se puede deshacer.",
+    "deleteThemeError": "No se pudo borrar el theme.",
+    "themeArchived": "El theme tiene corpora asociados; se archivó para conservar historial."
   },
   "NewStudyPage": {
     "crumb": "Nuevo estudio",
@@ -384,6 +415,43 @@
       "successNoEmail": "Invitación creada, pero el correo no salió ({error}). Comparte la liga a mano.",
       "error": "No se pudo crear la invitación."
     },
+    "organizations": {
+      "title": "Organizaciones",
+      "subtitle": "Edita workspaces cliente, limpia duplicados y borra sólo cuando no tengan dependencias.",
+      "empty": "Aún no hay organizaciones.",
+      "new": "Nueva organización",
+      "cancelCreate": "Cancelar",
+      "legalName": "Razón social",
+      "displayName": "Nombre visible",
+      "slug": "Slug",
+      "industry": "Industria",
+      "country": "País",
+      "status": "Status",
+      "statusActive": "Activa",
+      "statusPaused": "Pausada",
+      "statusArchived": "Archivada",
+      "create": "Crear organización",
+      "creating": "Creando…",
+      "createSuccess": "Organización creada.",
+      "createError": "No se pudo crear la organización.",
+      "saveSuccess": "Organización actualizada.",
+      "deleteSuccess": "Organización borrada.",
+      "deleteError": "No se pudo borrar la organización.",
+      "deleteConfirm": "¿Borrar la organización “{name}”?",
+      "deleteBlocked": "Para borrar, primero mueve o elimina sus usuarios, invitaciones, marcas y themes.",
+      "edit": "Editar",
+      "delete": "Borrar",
+      "users": "{count} usuarios",
+      "brands": "{count} marcas",
+      "corpora": "{count} corpora",
+      "pending": "{count} invitaciones pendientes",
+      "blockers": {
+        "users": "usuarios",
+        "pendingInvitations": "invitaciones",
+        "brands": "marcas",
+        "themes": "themes"
+      }
+    },
     "members": {
       "title": "Usuarios",
       "empty": "Aún no hay usuarios.",
@@ -416,7 +484,9 @@
       "active": "Activo",
       "invited": "Invitado",
       "suspended": "Suspendido",
-      "pending": "Pendiente"
+      "pending": "Pendiente",
+      "paused": "Pausado",
+      "archived": "Archivado"
     }
   }
 }

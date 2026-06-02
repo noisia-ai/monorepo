@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { DeleteThemeButton } from "@/components/brands/AdminEntityActions";
 import { StudioNav } from "@/components/layout/StudioNav";
 import { Icon } from "@/components/ui/Icon";
 import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
@@ -52,6 +53,13 @@ export default async function ThemeDetailPage({ params }: { params: Promise<{ id
             </div>
             <div className="vitals-stats">
               <Stat label="Corpora" value={String(theme.corpora.length)} sub="estudios" highlight />
+            </div>
+            <div className="brand-hero-actions">
+              <DeleteThemeButton
+                themeId={theme.id}
+                themeName={theme.name}
+                isArchived={theme.status === "archived"}
+              />
             </div>
           </header>
 

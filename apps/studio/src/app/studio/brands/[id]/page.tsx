@@ -2,6 +2,11 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
+import {
+  ArchiveCorpusButton,
+  DeleteBrandButton,
+  PermanentDeleteBrandButton
+} from "@/components/brands/AdminEntityActions";
 import { StudioNav } from "@/components/layout/StudioNav";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
 import { Icon } from "@/components/ui/Icon";
@@ -69,6 +74,11 @@ export default async function BrandDetailPage({ params }: { params: Promise<{ id
               <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/studio/brands/${brand.id}/edit`}>
                 <Icon name="pencil" size={14} /> {t("editBrand")}
               </Link>
+              {brand.status === "archived" ? (
+                <PermanentDeleteBrandButton brandId={brand.id} brandName={brandLabel} />
+              ) : (
+                <DeleteBrandButton brandId={brand.id} brandName={brandLabel} />
+              )}
             </div>
           </header>
 
@@ -113,7 +123,7 @@ export default async function BrandDetailPage({ params }: { params: Promise<{ id
               <ul className="corpus-grid">
                 {brand.corpora.map((corpus) => (
                   <li key={corpus.id}>
-                    <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
+                    <article className="corpus-card">
                       <div className="corpus-card-head">
                         <div>
                           <p className="corpus-card-eyebrow">{corpus.methodologyName}</p>
@@ -131,11 +141,15 @@ export default async function BrandDetailPage({ params }: { params: Promise<{ id
                         )}
                       </div>
                       <footer className="corpus-card-foot">
-                        <span className="corpus-card-cta">
+                        <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card-cta">
                           {t("openEngine")} <Icon name="arrow-right" size={13} />
-                        </span>
+                        </Link>
+                        <ArchiveCorpusButton
+                          corpusId={corpus.id}
+                          corpusName={corpus.name ?? corpus.businessQuestion ?? corpus.id}
+                        />
                       </footer>
-                    </Link>
+                    </article>
                   </li>
                 ))}
               </ul>

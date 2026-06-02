@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
+import { PermanentDeleteBrandButton } from "@/components/brands/AdminEntityActions";
 import { StudioNav } from "@/components/layout/StudioNav";
 import { Icon } from "@/components/ui/Icon";
 import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
@@ -48,6 +49,9 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
             <div className="page-head-actions">
               <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
                 <Icon name="sparkle" size={14} /> {t("newBrand")}
+              </Link>
+              <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href="/studio/brands?status=archived">
+                <Icon name="filter" size={14} /> {t("archivedBrands")}
               </Link>
               <Link prefetch={false} className="wizard-cta" href="/studio/corpora/new">
                 <Icon name="play" size={14} /> {t("newStudy")}
@@ -137,6 +141,14 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
                       <Icon name="arrow-right" size={16} className="brand-card-arrow" />
                     </footer>
                   </Link>
+                  {brand.status === "archived" ? (
+                    <div className="brand-card-admin-actions">
+                      <PermanentDeleteBrandButton
+                        brandId={brand.id}
+                        brandName={brand.displayName ?? brand.name}
+                      />
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

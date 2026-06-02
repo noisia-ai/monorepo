@@ -8,6 +8,7 @@ import { StudioNav } from "@/components/layout/StudioNav";
 import { Icon } from "@/components/ui/Icon";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getBrandDetailForUser } from "@/lib/data/brands";
+import { listOrganizationsForPicker } from "@/lib/data/team";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,10 @@ export default async function EditBrandPage({ params }: { params: Promise<{ id: 
   const tBrands = await getTranslations("Brands");
   const { id } = await params;
   const session = await requireStudioUser(`/studio/brands/${id}/edit`);
-  const brand = await getBrandDetailForUser(session.appUser, id);
+  const [brand, organizations] = await Promise.all([
+    getBrandDetailForUser(session.appUser, id),
+    listOrganizationsForPicker()
+  ]);
 
   if (!brand) {
     notFound();
@@ -48,7 +52,13 @@ export default async function EditBrandPage({ params }: { params: Promise<{ id: 
             </Link>
           </header>
 
-          <BrandEditForm brand={brand} />
+          <BrandEditForm
+            brand={brand}
+            organizations={organizations.map((organization) => ({
+              id: organization.id,
+              name: organization.name ?? organization.legalName
+            }))}
+          />
           <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
         </div>
       </main>

@@ -33,6 +33,7 @@ export const createBrandSchema = z.object({
 });
 
 export const updateBrandSchema = z.object({
+  organization_id: z.string().uuid(),
   slug: z.string().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   name: z.string().min(2).max(160),
   display_name: optionalText(160),

@@ -9,6 +9,7 @@ import { INDUSTRY_OPTIONS, subindustriesForIndustry } from "@/lib/industry-catal
 
 type EditableBrand = {
   id: string;
+  organizationId: string;
   slug: string;
   name: string;
   displayName: string | null;
@@ -20,13 +21,75 @@ type EditableBrand = {
   status: string;
 };
 
-export function BrandEditForm({ brand }: { brand: EditableBrand }) {
+type OrganizationOption = {
+  id: string;
+  name: string;
+};
+
+export function BrandEditForm({
+  brand,
+  organizations
+}: {
+  brand: EditableBrand;
+  organizations: OrganizationOption[];
+}) {
   const t = useTranslations("BrandEdit");
   const brandT = useTranslations("BrandOs.form");
   const router = useRouter();
+  const [organizationOptions, setOrganizationOptions] = useState(organizations);
+  const [selectedOrgId, setSelectedOrgId] = useState(brand.organizationId);
+  const [showOrgCreate, setShowOrgCreate] = useState(false);
+  const [newOrgLegalName, setNewOrgLegalName] = useState("");
+  const [newOrgDisplayName, setNewOrgDisplayName] = useState("");
+  const [newOrgSlug, setNewOrgSlug] = useState("");
+  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+  const [orgCreateError, setOrgCreateError] = useState<string | null>(null);
   const [industryValue, setIndustryValue] = useState(brand.industry ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function createOrganization() {
+    setOrgCreateError(null);
+    setIsCreatingOrg(true);
+
+    const legalName = newOrgLegalName.trim();
+    const displayName = newOrgDisplayName.trim();
+    const slug = (newOrgSlug.trim() || slugify(legalName)).slice(0, 80);
+
+    try {
+      const res = await fetch("/api/organizations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug,
+          legal_name: legalName,
+          display_name: displayName,
+          hq_country: (brand.countries?.[0] ?? "MX").toUpperCase(),
+          industry_primary: industryValue || brand.industry || "",
+          status: "active"
+        })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(formatApiError(json, t("fallbackCreateOrgError"), brandT("fieldFallback"), brandT("invalidFallback")));
+      const created = json?.data as { id?: string; displayName?: string | null; legalName?: string | null } | undefined;
+      if (!created?.id) throw new Error(t("fallbackCreateOrgError"));
+
+      const option = {
+        id: created.id,
+        name: created.displayName ?? created.legalName ?? legalName
+      };
+      setOrganizationOptions((current) => [...current, option].sort((a, b) => a.name.localeCompare(b.name)));
+      setSelectedOrgId(option.id);
+      setNewOrgLegalName("");
+      setNewOrgDisplayName("");
+      setNewOrgSlug("");
+      setShowOrgCreate(false);
+    } catch (err) {
+      setOrgCreateError(err instanceof Error ? err.message : t("fallbackCreateOrgError"));
+    } finally {
+      setIsCreatingOrg(false);
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,6 +98,7 @@ export function BrandEditForm({ brand }: { brand: EditableBrand }) {
 
     const form = new FormData(event.currentTarget);
     const payload = {
+      organization_id: selectedOrgId,
       slug: String(form.get("slug") ?? "").trim(),
       name: String(form.get("name") ?? "").trim(),
       display_name: String(form.get("display_name") ?? "").trim(),
@@ -72,9 +136,92 @@ export function BrandEditForm({ brand }: { brand: EditableBrand }) {
 
         <div className="new-study-grid">
           <label className="new-study-field">
+            <span>{brandT("organization")}</span>
+            <select
+              className="filter-input new-study-input"
+              name="organization_id"
+              required
+              value={selectedOrgId}
+              onChange={(event) => setSelectedOrgId(event.target.value)}
+            >
+              {organizationOptions.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="new-study-field">
+            <span>{t("organizationTools")}</span>
+            <button
+              className="wizard-cta wizard-cta--secondary"
+              type="button"
+              onClick={() => setShowOrgCreate((value) => !value)}
+            >
+              <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
+              {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
+            </button>
+          </div>
+          <label className="new-study-field">
             <span>{brandT("brand")}</span>
             <input className="filter-input new-study-input" name="name" required minLength={2} maxLength={160} defaultValue={brand.name} />
           </label>
+        </div>
+
+        {showOrgCreate ? (
+          <div className="org-form">
+            <div className="new-study-section-head">
+              <p className="vitals-eyebrow">{t("createOrganizationEyebrow")}</p>
+              <h2>{t("createOrganizationTitle")}</h2>
+            </div>
+            <div className="new-study-grid">
+              <label className="new-study-field">
+                <span>{t("orgLegalName")}</span>
+                <input
+                  className="filter-input new-study-input"
+                  minLength={2}
+                  maxLength={180}
+                  value={newOrgLegalName}
+                  onChange={(event) => {
+                    setNewOrgLegalName(event.target.value);
+                    if (!newOrgSlug.trim()) setNewOrgSlug(slugify(event.target.value));
+                  }}
+                />
+              </label>
+              <label className="new-study-field">
+                <span>{t("orgDisplayName")}</span>
+                <input
+                  className="filter-input new-study-input"
+                  maxLength={180}
+                  value={newOrgDisplayName}
+                  onChange={(event) => setNewOrgDisplayName(event.target.value)}
+                />
+              </label>
+              <label className="new-study-field">
+                <span>{t("orgSlug")}</span>
+                <input
+                  className="filter-input new-study-input"
+                  pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                  value={newOrgSlug}
+                  onChange={(event) => setNewOrgSlug(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="team-form-actions">
+              <button
+                className="wizard-cta"
+                type="button"
+                disabled={isCreatingOrg || newOrgLegalName.trim().length < 2}
+                onClick={createOrganization}
+              >
+                {isCreatingOrg ? <><Icon name="spinner" size={14} /> {t("creatingOrganization")}</> : <><Icon name="check" size={14} /> {t("createOrganization")}</>}
+              </button>
+              {orgCreateError ? <span className="team-msg team-msg--error">{orgCreateError}</span> : null}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="new-study-grid">
           <label className="new-study-field">
             <span>{brandT("displayName")}</span>
             <input className="filter-input new-study-input" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
@@ -164,6 +311,16 @@ export function BrandEditForm({ brand }: { brand: EditableBrand }) {
       </footer>
     </form>
   );
+}
+
+function slugify(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
 }
 
 function splitList(value: string) {

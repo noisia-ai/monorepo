@@ -13146,6 +13146,21 @@ body:has(.signal-report)::before { display: none; }
 .team-manager { display: flex; flex-direction: column; gap: 20px; }
 .team-invite-form { display: flex; flex-direction: column; gap: 16px; }
 .team-form-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.org-create,
+.org-form,
+.admin-action-stack { display: flex; flex-direction: column; gap: 12px; }
+.brand-card-admin-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 0;
+}
+.org-form {
+  padding: 14px;
+  border: 1px solid var(--neutral-04);
+  border-radius: var(--radius-xl, 24px);
+  background: rgba(255, 255, 255, 0.56);
+}
+.org-form--inline { width: 100%; }
 
 .team-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .team-row {
@@ -13160,6 +13175,8 @@ body:has(.signal-report)::before { display: none; }
 .team-row-sub { font-size: 12px; color: var(--neutral-09); }
 .team-row-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .team-row-controls .filter-input { min-width: 150px; height: 38px; }
+.team-row--org { align-items: flex-start; }
+.team-row--org .team-row-controls { padding-top: 2px; }
 
 .team-tag {
   font-size: 11px; padding: 2px 8px; border-radius: 999px;
@@ -13169,6 +13186,8 @@ body:has(.signal-report)::before { display: none; }
 .team-status--active { background: rgba(0, 138, 138, 0.12); color: var(--signal-dark); }
 .team-status--invited, .team-status--pending { background: rgba(43, 43, 43, 0.08); color: var(--neutral-10); }
 .team-status--suspended { background: var(--tension-soft); color: var(--tension); }
+.team-status--paused { background: rgba(43, 43, 43, 0.08); color: var(--neutral-10); }
+.team-status--archived { background: rgba(217, 20, 65, 0.1); color: var(--tension); }
 
 .wizard-cta--danger { background: var(--tension-soft); border-color: transparent; color: var(--tension); box-shadow: none; }
 .wizard-cta--danger:hover:not(:disabled) { transform: translateY(-2px); background: rgba(217, 20, 65, 0.14); }
