@@ -1,30 +1,21 @@
 import { pool } from "./client.js";
-import { seedBrandSeeds } from "./brand-seeds.js";
 import { requireSafeDatabaseWriteTarget } from "./connection.js";
-import { seedDemoData } from "./demo-data.js";
 import { requireEnv } from "./env.js";
-import { seedMemory } from "./memory.js";
 import { seedMethodologies } from "./methodologies.js";
 
 async function main() {
   requireSafeDatabaseWriteTarget(requireEnv("DATABASE_URL"), {
-    operation: "db:seed",
+    operation: "db:seed:methodologies",
     allowRemoteEnv: "NOISIA_DB_SEED_ALLOW_REMOTE"
   });
 
   const methodologies = await seedMethodologies();
-  const brandSeeds = await seedBrandSeeds();
-  const demo = await seedDemoData();
-  const memory = await seedMemory();
 
   console.log(
     JSON.stringify(
       {
         ok: true,
-        methodologies,
-        brandSeeds,
-        demo,
-        memory
+        methodologies
       },
       null,
       2

@@ -176,6 +176,69 @@
       "when": 1780199300000,
       "tag": "0024_corpus_snapshot_aggregates",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780199310000,
+      "tag": "0025_engine_methodologies",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780636320000,
+      "tag": "0026_live_intelligence_store",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780642800000,
+      "tag": "0027_query_pack_provenance_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780642860000,
+      "tag": "0028_signal_observation_run_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780642920000,
+      "tag": "0029_engine_cost_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1780642980000,
+      "tag": "0030_monthly_cut_and_composer",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1780643040000,
+      "tag": "0031_study_analysis_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780643100000,
+      "tag": "0032_import_batch_query_pack_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780643160000,
+      "tag": "0033_engine_run_mention_map",
+      "breakpoints": true
     }
   ]
 }
