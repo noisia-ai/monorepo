@@ -9,7 +9,7 @@
     "start": "tsx src/index.ts",
     "lint": "echo \"No lint configured for workers yet\"",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"No worker tests yet\""
+    "test": "node --test --import tsx src/workers/*.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.79",

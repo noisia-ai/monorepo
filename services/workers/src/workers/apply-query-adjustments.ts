@@ -13,6 +13,7 @@ import {
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
 import { loadAnalysisRagContext } from "./analysis-rag-context";
+import { materializeQueryPacksForIteration } from "./query-packs";
 
 type ApplyAdjustmentsJobData = {
   corpusId: string;
@@ -169,13 +170,22 @@ export async function applyQueryAdjustmentsJob(job: Job<ApplyAdjustmentsJobData>
     throw new Error("Could not persist refined query iteration.");
   }
 
+  const queryPacks = await materializeQueryPacksForIteration({
+    corpusId,
+    queryIterationId: newIteration.id,
+    input: corpusInput,
+    composed,
+    requestedByUserId: job.data.requestedByUserId
+  });
+
   await job.updateProgress(100);
 
   return {
     source_iteration_id: sourceIterationId,
     new_iteration_id: newIteration.id,
     iteration_number: iterationNumber,
-    query_text: newIteration.query_text
+    query_text: newIteration.query_text,
+    planned_query_packs: queryPacks.planned_packs
   };
 }
 

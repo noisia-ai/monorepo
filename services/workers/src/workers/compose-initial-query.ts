@@ -13,6 +13,7 @@ import {
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
 import { ensureQueryStrategyBrief, loadAnalysisRagContext } from "./analysis-rag-context";
+import { materializeQueryPacksForIteration } from "./query-packs";
 
 type ComposeInitialQueryJobData = {
   corpusId: string;
@@ -113,12 +114,21 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
     throw new Error("Could not persist query iteration.");
   }
 
+  const queryPacks = await materializeQueryPacksForIteration({
+    corpusId: input.corpus.id,
+    queryIterationId: iteration.id,
+    input,
+    composed,
+    requestedByUserId: job.data.requestedByUserId
+  });
+
   await job.updateProgress(100);
 
   return {
     query_iteration_id: iteration.id,
     query_text: iteration.query_text,
-    iteration_number: iterationNumber
+    iteration_number: iterationNumber,
+    planned_query_packs: queryPacks.planned_packs
   };
 }
 

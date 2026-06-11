@@ -7,6 +7,7 @@ import {
   markStepRunning,
   releaseCorpusLock
 } from "./tb-shared";
+import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
 
 type QualityGateJobData = {
   tbAnalysisId: string;
@@ -147,12 +148,30 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
     );
 
     await releaseCorpusLock(tbAnalysisId);
+    let selectedEngineLenses: unknown = null;
+    try {
+      selectedEngineLenses = await enqueueSelectedEngineLensesAfterTb(tbAnalysisId);
+    } catch (error) {
+      selectedEngineLenses = {
+        status: "failed",
+        reason: error instanceof Error ? error.message : String(error)
+      };
+      await pool.query(
+        `UPDATE tb_analyses
+         SET meta_json = COALESCE(meta_json, '{}'::jsonb) || $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [JSON.stringify({ selected_engine_lenses_after_tb: selectedEngineLenses }), tbAnalysisId]
+      );
+      console.error("[tb-quality-gates] selected engine lenses auto-launch failed", selectedEngineLenses);
+    }
     await job.updateProgress(100);
 
     return {
       gates_total: gates.length,
       failed: failed.map((gate) => gate.id),
       warnings: warned.map((gate) => gate.id),
+      selected_engine_lenses: selectedEngineLenses,
       pipeline_complete: true
     };
   } catch (err) {

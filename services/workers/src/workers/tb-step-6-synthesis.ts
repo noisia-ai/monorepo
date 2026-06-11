@@ -18,8 +18,10 @@ import {
   type TbMobility
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { safeJsonStringifyForPostgres, sanitizeUnicodeForPostgresJson, sanitizeUnicodeForPostgresText } from "./postgres-json";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
+import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
 import {
   enqueueStep,
   markStepCompleted,
@@ -225,6 +227,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[tb-step6] failed: ${msg}`);
+    await enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId, msg);
     if (process.env.TB_ALLOW_DUPLICATE_STEP6_SKIP === "true" && await hasCompletedSynthesis(tbAnalysisId)) {
       await markStepSkipped({
         pipelineStepId,
@@ -239,6 +242,40 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     await markStepFailed({ pipelineStepId, errorMessage: msg });
     await releaseCorpusLock(tbAnalysisId);
     throw err;
+  }
+}
+
+async function enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId: string, failureReason: string) {
+  try {
+    const result = await enqueueSelectedEngineLensesAfterTb(tbAnalysisId, {
+      launchSurface: "tb_step6_failure_auto_selected_lenses",
+      resultMetaKey: "selected_engine_lenses_after_tb_step6_failure",
+      triggerReason: failureReason.slice(0, 300)
+    });
+    console.log(
+      `[tb-step6] selected engine lenses auto-launch after failure: ` +
+      `${JSON.stringify(result).slice(0, 600)}`
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await pool.query(
+      `UPDATE tb_analyses
+       SET meta_json = COALESCE(meta_json, '{}'::jsonb) || $1::jsonb,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          selected_engine_lenses_after_tb_step6_failure: {
+            status: "failed",
+            launch_surface: "tb_step6_failure_auto_selected_lenses",
+            trigger_reason: failureReason.slice(0, 300),
+            reason
+          }
+        }),
+        tbAnalysisId
+      ]
+    );
+    console.error("[tb-step6] selected engine lenses auto-launch after failure failed", reason);
   }
 }
 
@@ -493,19 +530,19 @@ async function persistSynthesis(args: {
            updated_at = NOW()
        WHERE id = $12`,
       [
-        JSON.stringify(args.activationPlaybook),
-        JSON.stringify(args.frictionRemovalPlan),
-        JSON.stringify(args.confidencePerFinding),
-        JSON.stringify(args.actionStudio),
-        JSON.stringify(args.emergingPatterns),
-        JSON.stringify(args.openSignals),
-        JSON.stringify(args.knowledgeImpact),
-        JSON.stringify(args.strategicOpportunities),
-        JSON.stringify(args.futureSignals),
-        JSON.stringify(args.marketAnalysis),
-        JSON.stringify(args.evidenceDeepDives),
+        safeJsonStringifyForPostgres(args.activationPlaybook),
+        safeJsonStringifyForPostgres(args.frictionRemovalPlan),
+        safeJsonStringifyForPostgres(args.confidencePerFinding),
+        safeJsonStringifyForPostgres(args.actionStudio),
+        safeJsonStringifyForPostgres(args.emergingPatterns),
+        safeJsonStringifyForPostgres(args.openSignals),
+        safeJsonStringifyForPostgres(args.knowledgeImpact),
+        safeJsonStringifyForPostgres(args.strategicOpportunities),
+        safeJsonStringifyForPostgres(args.futureSignals),
+        safeJsonStringifyForPostgres(args.marketAnalysis),
+        safeJsonStringifyForPostgres(args.evidenceDeepDives),
         args.tbAnalysisId,
-        JSON.stringify(args.humanizerMeta)
+        safeJsonStringifyForPostgres(args.humanizerMeta)
       ]
     );
 
@@ -670,12 +707,12 @@ async function persistInsights(
         args.tbAnalysisId,
         pattern.pattern_id,
         pattern.pattern_type,
-        pattern.title,
-        pattern.why_it_matters,
-        pattern.related_finding_ids,
-        pattern.data_basis,
-        JSON.stringify(pattern.source_breakdown),
-        pattern.evidence_quotes,
+        sanitizeUnicodeForPostgresText(pattern.title),
+        sanitizeUnicodeForPostgresText(pattern.why_it_matters),
+        sanitizeUnicodeForPostgresJson(pattern.related_finding_ids),
+        sanitizeUnicodeForPostgresJson(pattern.data_basis),
+        safeJsonStringifyForPostgres(pattern.source_breakdown),
+        sanitizeUnicodeForPostgresJson(pattern.evidence_quotes),
         pattern.confidence,
         position
       ]
@@ -722,14 +759,14 @@ async function persistOpenSignals(
       [
         args.tbAnalysisId,
         signal.pattern_id,
-        signal.title,
+        sanitizeUnicodeForPostgresText(signal.title),
         signal.pattern_type,
-        signal.why_it_matters,
-        signal.data_basis,
+        sanitizeUnicodeForPostgresText(signal.why_it_matters),
+        sanitizeUnicodeForPostgresJson(signal.data_basis),
         signal.evidence_count,
-        JSON.stringify(signal.source_breakdown),
-        JSON.stringify({ data_basis: signal.data_basis, related_finding_ids: signal.related_finding_ids }),
-        signal.evidence_quotes,
+        safeJsonStringifyForPostgres(signal.source_breakdown),
+        safeJsonStringifyForPostgres({ data_basis: signal.data_basis, related_finding_ids: signal.related_finding_ids }),
+        sanitizeUnicodeForPostgresJson(signal.evidence_quotes),
         signal.confidence,
         position
       ]
@@ -802,7 +839,7 @@ function normalizeLoose(value: string) {
 }
 
 function stringFromUnknown(value: unknown) {
-  return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+  return sanitizeUnicodeForPostgresText(typeof value === "string" ? value : value === null || value === undefined ? "" : String(value));
 }
 
 function numberFromUnknown(value: unknown) {

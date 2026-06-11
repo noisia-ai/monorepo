@@ -39,6 +39,44 @@ type IngestMentionsCsvJobData = {
   entityLabel?: string | null;
 };
 
+type InsertedMentionRow = {
+  id: string;
+  inclusion_status: string | null;
+};
+
+type ImportBatchProvenanceRow = {
+  import_batch_id: string;
+  study_corpus_id: string;
+  query_iteration_id: string | null;
+  query_pack_id: string | null;
+  mention_type: string | null;
+  competitor_id: string | null;
+  corpus_entity_id: string | null;
+  entity_kind: string | null;
+  entity_label: string | null;
+  source_system: string | null;
+  source_file_name: string | null;
+  imported_by_user_id: string | null;
+  methodology_slug: string | null;
+  query_pack_lens_slug: string | null;
+  query_pack_signal_intent: string | null;
+  query_pack_scope: string | null;
+  query_pack_query_text: string | null;
+  query_pack_query_components: Record<string, unknown> | null;
+  query_pack_seeds: Record<string, unknown> | null;
+  query_text: string | null;
+  industry_query_text: string | null;
+  competitor_query_text: string | null;
+  query_components: Record<string, unknown> | null;
+  mentions_returned: number | null;
+  quality_score: string | number | null;
+  density_score: string | number | null;
+  noise_score: string | number | null;
+  ai_evaluation_notes: string | null;
+  insights_manager_decision: string | null;
+  decision_at: Date | string | null;
+};
+
 export type CsvImportStats = {
   record_count: number;
   included_count: number;
@@ -362,34 +400,365 @@ async function insertMentionChunk(
 
   try {
     const inserted = await insertMentionValues(values);
+    const provenanceRows = inserted.length === chunk.length
+      ? inserted
+      : await findMentionRowsByHashes(params.corpusId, values.map((value) => value.textHash));
 
     stats.duplicate_count += chunk.length - inserted.length;
     for (const inserted_row of inserted) {
       if (inserted_row.inclusion_status === "included") stats.included_count += 1;
       else stats.excluded_count += 1;
     }
+    await attachMentionQueryProvenance({ ...params, insertedMentions: provenanceRows });
   } catch (err) {
     // A batch can fail on the OTHER unique constraint (source_system,
     // external_id) when an id already exists in the DB. Don't lose the whole
     // chunk — retry row by row so only the genuinely conflicting rows are skipped.
     const msg = err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160);
     console.warn(`[csv-ingest] batch failed, retrying ${chunk.length} rows individually: ${msg}`);
+    const insertedRows: InsertedMentionRow[] = [];
     for (const m of chunk) {
+      const value = toInsertValue(m, params);
       try {
-        const inserted = await insertMentionValues([toInsertValue(m, params)]);
+        const inserted = await insertMentionValues([value]);
         if (inserted.length === 0) {
           stats.duplicate_count += 1;
+          const existing = await findMentionRowsByHashes(params.corpusId, [value.textHash]);
+          insertedRows.push(...existing);
         } else if (inserted[0]?.inclusion_status === "included") {
           stats.included_count += 1;
+          insertedRows.push(...inserted);
         } else {
           stats.excluded_count += 1;
+          insertedRows.push(...inserted);
         }
       } catch {
         // Conflicts with the source/external unique key or a bad row — skip it.
         stats.duplicate_count += 1;
+        const existing = await findMentionRowsByHashes(params.corpusId, [value.textHash]);
+        insertedRows.push(...existing);
       }
     }
+    await attachMentionQueryProvenance({ ...params, insertedMentions: insertedRows });
   }
+}
+
+async function findMentionRowsByHashes(corpusId: string, textHashes: string[]): Promise<InsertedMentionRow[]> {
+  const hashes = Array.from(new Set(textHashes.filter(Boolean)));
+  if (hashes.length === 0) return [];
+  const result = await pool.query<InsertedMentionRow>(
+    `
+      SELECT id, inclusion_status
+      FROM mentions
+      WHERE study_corpus_id = $1::uuid
+        AND text_hash = ANY($2::text[])
+    `,
+    [corpusId, hashes]
+  );
+  return result.rows;
+}
+
+async function attachMentionQueryProvenance(params: {
+  corpusId: string;
+  importBatchId: string;
+  insertedMentions: InsertedMentionRow[];
+}) {
+  const mentionIds = params.insertedMentions.map((mention) => mention.id).filter(Boolean);
+  if (mentionIds.length === 0) return;
+
+  const batchResult = await pool.query<ImportBatchProvenanceRow>(
+    `
+      SELECT
+        ib.id AS import_batch_id,
+        ib.study_corpus_id,
+        ib.query_iteration_id,
+        ib.query_pack_id,
+        ib.mention_type,
+        ib.competitor_id,
+        ib.corpus_entity_id,
+        ib.entity_kind,
+        ib.entity_label,
+        ib.source_system,
+        ib.source_file_name,
+        ib.imported_by_user_id,
+        m.slug AS methodology_slug,
+        qp.lens_slug AS query_pack_lens_slug,
+        qp.signal_intent AS query_pack_signal_intent,
+        qp.scope AS query_pack_scope,
+        qp.query_text AS query_pack_query_text,
+        qp.query_components AS query_pack_query_components,
+        qp.seeds AS query_pack_seeds,
+        qi.query_text,
+        qi.industry_query_text,
+        qi.competitor_query_text,
+        qi.query_components,
+        qi.mentions_returned,
+        qi.quality_score,
+        qi.density_score,
+        qi.noise_score,
+        qi.ai_evaluation_notes,
+        qi.insights_manager_decision,
+        qi.decision_at
+      FROM import_batches ib
+      JOIN study_corpora sc ON sc.id = ib.study_corpus_id
+      LEFT JOIN methodologies m ON m.id = sc.methodology_id
+      LEFT JOIN query_iterations qi ON qi.id = ib.query_iteration_id
+      LEFT JOIN query_packs qp ON qp.id = ib.query_pack_id
+      WHERE ib.id = $1::uuid
+        AND ib.study_corpus_id = $2::uuid
+      LIMIT 1
+    `,
+    [params.importBatchId, params.corpusId]
+  );
+  const batch = batchResult.rows[0];
+  if (!batch) return;
+
+  const scope = batch.query_pack_scope || resolveQueryScope(batch);
+  const signalIntent = batch.query_pack_signal_intent || resolveSignalIntent(scope);
+  const lensSlug = batch.query_pack_lens_slug || batch.methodology_slug || "triggers-barriers";
+  const queryPackId = batch.query_pack_id ?? (await getOrCreateQueryPack(batch, {
+    lensSlug,
+    scope,
+    signalIntent,
+    queryText: batch.query_pack_query_text || resolveQueryText(batch, scope)
+  }));
+  if (!queryPackId) {
+    throw new Error(`Could not create query pack provenance for import batch ${batch.import_batch_id}.`);
+  }
+
+  const metadata = {
+    source: "csv_ingest",
+    source_system: batch.source_system,
+    source_file_name: batch.source_file_name,
+    mention_type: batch.mention_type,
+    entity_kind: batch.entity_kind,
+    entity_label: batch.entity_label,
+    primary_query_pack_id: queryPackId,
+    query_pack_lens_slug: batch.query_pack_lens_slug,
+    query_pack_signal_intent: batch.query_pack_signal_intent,
+    query_pack_scope: batch.query_pack_scope,
+    fanout_strategy: "same_iteration_same_scope"
+  };
+
+  await pool.query(
+    `
+      WITH target_packs AS (
+        SELECT id, query_iteration_id, lens_slug, signal_intent, scope
+        FROM query_packs
+        WHERE study_corpus_id = $2::uuid
+          AND scope = $6
+          AND (
+            id = $3::uuid
+            OR (
+              (query_iteration_id IS NULL AND $4::uuid IS NULL)
+              OR query_iteration_id = $4::uuid
+            )
+          )
+      ),
+      inserted_links AS (
+        INSERT INTO mention_query_sources (
+          mention_id,
+          study_corpus_id,
+          query_pack_id,
+          query_iteration_id,
+          import_batch_id,
+          lens_slug,
+          signal_intent,
+          scope,
+          corpus_entity_id,
+          entity_id,
+          match_quality,
+          match_reason,
+          metadata
+        )
+        SELECT
+          inserted.mention_id,
+          $2::uuid,
+          tp.id,
+          tp.query_iteration_id,
+          $5::uuid,
+          tp.lens_slug,
+          tp.signal_intent,
+          tp.scope,
+          $7::uuid,
+          $8,
+          CASE WHEN tp.id = $3::uuid THEN 1.000 ELSE 0.700 END,
+          CASE WHEN tp.id = $3::uuid THEN 'csv_import_batch' ELSE 'csv_import_scope_fanout' END,
+          $9::jsonb
+        FROM unnest($1::uuid[]) AS inserted(mention_id)
+        CROSS JOIN target_packs tp
+        ON CONFLICT DO NOTHING
+        RETURNING mention_id, query_pack_id
+      ),
+      link_counts AS (
+        SELECT query_pack_id, COUNT(*)::int AS linked_count
+        FROM inserted_links
+        JOIN mentions m ON m.id = inserted_links.mention_id
+        WHERE query_pack_id IS NOT NULL
+          AND m.inclusion_status = 'included'
+        GROUP BY query_pack_id
+      )
+      UPDATE query_packs qp
+      SET mentions_returned = COALESCE(qp.mentions_returned, 0) + lc.linked_count,
+          status = 'imported',
+          updated_at = now()
+      FROM link_counts lc
+      WHERE qp.id = lc.query_pack_id
+    `,
+    [
+      mentionIds,
+      batch.study_corpus_id,
+      queryPackId,
+      batch.query_iteration_id,
+      batch.import_batch_id,
+      scope,
+      batch.corpus_entity_id,
+      resolveEntityId(batch, scope),
+      JSON.stringify(metadata)
+    ]
+  );
+}
+
+async function getOrCreateQueryPack(
+  batch: ImportBatchProvenanceRow,
+  input: { lensSlug: string; scope: string; signalIntent: string; queryText: string | null }
+) {
+  const existing = await findQueryPack(batch, input);
+  if (existing) return existing;
+
+  const seeds = {
+    source: "csv_ingest",
+    mention_type: batch.mention_type,
+    entity_kind: batch.entity_kind,
+    entity_label: batch.entity_label,
+    query_iteration_id: batch.query_iteration_id
+  };
+  const evaluation = {
+    source: "query_iteration",
+    query_iteration_mentions_returned: batch.mentions_returned,
+    ai_evaluation_notes: batch.ai_evaluation_notes,
+    insights_manager_decision: batch.insights_manager_decision
+  };
+
+  const inserted = await pool.query<{ id: string }>(
+    `
+      INSERT INTO query_packs (
+        study_corpus_id,
+        query_iteration_id,
+        lens_slug,
+        signal_intent,
+        scope,
+        objective,
+        query_text,
+        query_components,
+        seeds,
+        evaluation,
+        status,
+        mentions_returned,
+        quality_score,
+        density_score,
+        noise_score,
+        created_by_user_id,
+        evaluated_at,
+        approved_at
+      )
+      VALUES (
+        $1::uuid,
+        $2::uuid,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8::jsonb,
+        $9::jsonb,
+        $10::jsonb,
+        'imported',
+        0,
+        $11::numeric,
+        $12::numeric,
+        $13::numeric,
+        $14::uuid,
+        $15::timestamptz,
+        $15::timestamptz
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `,
+    [
+      batch.study_corpus_id,
+      batch.query_iteration_id,
+      input.lensSlug,
+      input.signalIntent,
+      input.scope,
+      `Imported CSV provenance for ${input.scope} / ${input.signalIntent}`,
+      input.queryText,
+      JSON.stringify(batch.query_components ?? {}),
+      JSON.stringify(seeds),
+      JSON.stringify(evaluation),
+      batch.quality_score,
+      batch.density_score,
+      batch.noise_score,
+      batch.imported_by_user_id,
+      batch.decision_at
+    ]
+  );
+
+  return inserted.rows[0]?.id ?? (await findQueryPack(batch, input));
+}
+
+async function findQueryPack(
+  batch: ImportBatchProvenanceRow,
+  input: { lensSlug: string; scope: string; signalIntent: string }
+) {
+  const existing = await pool.query<{ id: string }>(
+    `
+      SELECT id
+      FROM query_packs
+      WHERE study_corpus_id = $1::uuid
+        AND lens_slug = $3
+        AND signal_intent = $4
+        AND scope = $5
+        AND (
+          (query_iteration_id IS NULL AND $2::uuid IS NULL)
+          OR query_iteration_id = $2::uuid
+        )
+      LIMIT 1
+    `,
+    [batch.study_corpus_id, batch.query_iteration_id, input.lensSlug, input.signalIntent, input.scope]
+  );
+
+  return existing.rows[0]?.id ?? null;
+}
+
+function resolveQueryScope(batch: ImportBatchProvenanceRow) {
+  if (batch.mention_type === "brand") return "brand";
+  if (batch.mention_type === "competitor") return "competitors";
+  if (batch.mention_type === "industry") return "category";
+  if (batch.entity_kind === "primary_brand") return "brand";
+  if (batch.entity_kind === "competitor") return "competitors";
+  if (batch.entity_kind === "category") return "category";
+  return "source";
+}
+
+function resolveSignalIntent(scope: string) {
+  if (scope === "brand") return "decision_signal";
+  if (scope === "competitors") return "competitive_signal";
+  if (scope === "category") return "category_signal";
+  return "source_upload";
+}
+
+function resolveQueryText(batch: ImportBatchProvenanceRow, scope: string) {
+  if (scope === "competitors") return batch.competitor_query_text || batch.query_text;
+  if (scope === "category") return batch.industry_query_text || batch.query_text;
+  return batch.query_text;
+}
+
+function resolveEntityId(batch: ImportBatchProvenanceRow, scope: string) {
+  if (batch.corpus_entity_id) return `corpus_entity:${batch.corpus_entity_id}`;
+  if (batch.competitor_id) return `competitor:${batch.competitor_id}`;
+  if (batch.entity_label) return `${batch.entity_kind || scope}:${slugify(batch.entity_label)}`;
+  return null;
 }
 
 type InsertMentionValue = ReturnType<typeof toInsertValue>;
@@ -527,6 +896,17 @@ function normalizeKey(key: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
 }
 
 function cleanText(text: string) {
