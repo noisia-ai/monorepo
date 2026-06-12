@@ -6,6 +6,8 @@ export type SignalPulseGate = {
 
 export const SIGNAL_PULSE_PUBLISH_BLOCKER_GATES = new Set([
   "source_presence",
+  "period_coverage",
+  "period_comparability",
   "performance_structured",
   "signal_min_evidence",
   "chart_data_available",
