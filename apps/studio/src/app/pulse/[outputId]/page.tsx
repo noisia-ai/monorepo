@@ -413,7 +413,7 @@ function SourceCoverage({ periods, sources }: { periods: JsonRecord[]; sources: 
               </small>
             </article>
           )) : (
-            <PulseEmptyState title="Sin fuentes estructuradas" body="Este corte no tiene performance registrada." />
+            <PulseEmptyState title="Aún falta performance estructurada" body="Sube el export de paid u orgánico para leer inversión, alcance y conversación en el mismo periodo." />
           )}
         </div>
       </section>
@@ -655,7 +655,7 @@ function QualityGateTable({ gates, limitations, cost }: { gates: JsonRecord[]; l
       <aside className="pulse-limitations">
         <span>Límites visibles</span>
         <p>Costo estimado: USD {fmtMoney(estimatedCost)}{budgetCap > 0 ? ` de USD ${fmtMoney(budgetCap)}` : ""}.</p>
-        {limitations.length > 0 ? limitations.map((item) => <p key={item}>{item}</p>) : <p>Sin blockers visibles en este corte.</p>}
+        {limitations.length > 0 ? limitations.map((item) => <p key={item}>{item}</p>) : <p>Sin bloqueos visibles en este corte.</p>}
       </aside>
     </div>
   );

@@ -111,6 +111,7 @@ export default async function PulseDeckPage({
     config: output.visibilityConfig,
     isInternalUser: session.appUser.userType === "noisia_internal"
   });
+  const visibleEvidence = visibility.showEvidence ? evidence : [];
   const confidence = visibility.showQuality && qualityGates.some((gate) => gate.passed === false) ? "con límites visibles" : "listo para presentar";
 
   return (
@@ -119,7 +120,7 @@ export default async function PulseDeckPage({
         <CoverSlide brandLabel={brandLabel} dateLabel={dateLabel} confidence={confidence} periods={periods.length} />
         <ExecutiveSlide executiveRead={executiveRead} signals={signals} moves={moves} cost={cost} />
         <MapSlide signals={signals} />
-        <SignalsSlide signals={signals.slice(0, 5)} evidence={evidence} />
+        <SignalsSlide signals={signals.slice(0, 5)} evidence={visibleEvidence} />
         <MovesSlide moves={moves.slice(0, 6)} signals={signals} />
         <LimitsSlide periods={periods} sources={sources} gates={qualityGates} cost={cost} visibility={visibility} />
       </DeckRuntime>
