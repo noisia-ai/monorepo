@@ -20,6 +20,7 @@ import {
   type EmbeddingNeighborhoodRow,
   type TermCluster
 } from "./signal-pulse-clustering";
+import { buildSignalPulseDeterministicRead } from "./signal-pulse-copy";
 
 type SignalPulseStepJobData = {
   engineAnalysisId: string;
@@ -47,6 +48,14 @@ type MaterializedSignal = {
   engagement_sum: number;
   sample_mention_ids: string[];
   platforms: string[];
+};
+
+type SignalPulseNamingRow = {
+  id: string;
+  canonical_title: string;
+  signal_type: string;
+  dimensions: Record<string, unknown>;
+  position: number;
 };
 
 const STOPWORDS_ES_MX = new Set([
@@ -285,42 +294,60 @@ export async function signalPulseNameSignalsJob(job: Job<SignalPulseStepJobData>
   return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
     const ctx = await loadSignalPulseContext(engineAnalysisId);
     assertSignalPulse(ctx);
-    const result = await pool.query<{ updated: number }>(
+    const candidates = (await pool.query<SignalPulseNamingRow>(
       `
-        WITH ranked AS (
-          SELECT
-            cs.id,
-            cs.canonical_title,
-            cs.dimensions,
-            row_number() OVER (ORDER BY COALESCE((cs.dimensions->>'mention_count')::int, 0) DESC, cs.canonical_title) AS position
-          FROM canonical_signals cs
-          WHERE cs.study_corpus_id = $1
-            AND cs.methodology_slug = 'signal-pulse'
-            AND cs.status <> 'archived'
-        ),
-        updated AS (
-          UPDATE canonical_signals cs
-          SET
-            description = CONCAT(
-              'La conversacion esta agrupando evidencia alrededor de ',
-              lower(r.canonical_title),
-              '. Usala para decidir que claim, hook o territorio conviene probar primero.'
-            ),
-            dimensions = cs.dimensions || jsonb_build_object(
-              'rank', r.position,
-              'marketing_read', CONCAT('Probar contenido o pauta alrededor de ', lower(r.canonical_title), ' antes de escalar el territorio.'),
-              'interpretation_source', 'deterministic_cluster_read_v1',
-              'cluster_first', true
-            ),
-            updated_at = NOW()
-          FROM ranked r
-          WHERE cs.id = r.id
-          RETURNING cs.id
-        )
-        SELECT COUNT(*)::int AS updated FROM updated
+        SELECT
+          cs.id::text,
+          cs.canonical_title,
+          cs.signal_type,
+          cs.dimensions,
+          row_number() OVER (ORDER BY COALESCE((cs.dimensions->>'mention_count')::int, 0) DESC, cs.canonical_title)::int AS position
+        FROM canonical_signals cs
+        WHERE cs.study_corpus_id = $1
+          AND cs.methodology_slug = 'signal-pulse'
+          AND cs.status <> 'archived'
+        ORDER BY position
       `,
       [ctx.study_corpus_id]
-    );
+    )).rows;
+    let updated = 0;
+    for (const candidate of candidates) {
+      const dimensions = candidate.dimensions ?? {};
+      const read = buildSignalPulseDeterministicRead({
+        canonicalTitle: candidate.canonical_title,
+        term: stringFrom(dimensions.term),
+        signalType: candidate.signal_type,
+        mentionCount: Number(dimensions.mention_count ?? 0),
+        sentimentAvg: numberOrNull(dimensions.sentiment_avg),
+        platforms: stringArrayFrom(dimensions.platforms),
+        rank: candidate.position
+      });
+      const result = await pool.query(
+        `
+          UPDATE canonical_signals
+          SET
+            canonical_title = $2,
+            description = $3,
+            dimensions = dimensions || $4::jsonb,
+            updated_at = NOW()
+          WHERE id = $1
+        `,
+        [
+          candidate.id,
+          read.title,
+          read.description,
+          safeJsonStringifyForPostgres({
+            rank: candidate.position,
+            marketing_read: read.marketingRead,
+            action_hint: read.actionHint,
+            interpretation_source: read.interpretationSource,
+            cluster_first: true,
+            per_mention_coding: false
+          })
+        ]
+      );
+      updated += result.rowCount ?? 0;
+    }
     await recordEngineCostEvent({
       engineAnalysisId,
       pipelineStepId,
@@ -329,23 +356,24 @@ export async function signalPulseNameSignalsJob(job: Job<SignalPulseStepJobData>
       operation: "sp_name_signals_deterministic",
       estimatedCostUsd: 0,
       metadata: {
-        reason: "Cluster naming uses deterministic marketing copy in local/prod-safe mode; Claude interpretation can be layered under the budget cap without per-mention coding.",
-        updated_signals: Number(result.rows[0]?.updated ?? 0)
+        reason: "Cluster naming uses deterministic marketing copy grounded in cluster metrics; no per-mention coding or hidden LLM cost.",
+        updated_signals: updated
       }
     });
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
         naming: {
           status: "materialized",
+          interpretation_source: "deterministic_marketing_read_v2",
           cluster_first: true,
           per_mention_coding: false,
-          updated_signals: Number(result.rows[0]?.updated ?? 0)
+          updated_signals: updated
         }
       }
     });
     await markEngineStepCompleted({
       pipelineStepId,
-      resultSummary: { status: "materialized", updated_signals: Number(result.rows[0]?.updated ?? 0), per_mention_coding: false }
+      resultSummary: { status: "materialized", updated_signals: updated, per_mention_coding: false }
     });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_metrics" });
     return { status: "materialized", next_step_job_id: next.jobId };

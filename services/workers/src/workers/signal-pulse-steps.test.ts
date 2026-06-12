@@ -6,6 +6,7 @@ import {
   selectSignalPulseClusterPhrase,
   type EmbeddingNeighborhoodRow
 } from "./signal-pulse-clustering";
+import { buildSignalPulseDeterministicRead } from "./signal-pulse-copy";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
   const rows: EmbeddingNeighborhoodRow[] = [
@@ -39,6 +40,53 @@ test("Signal Pulse semantic phrase selection prefers repeated marketing language
 
   assert.match(phrase, /crujiente/);
   assert.doesNotMatch(phrase, /para/);
+});
+
+test("Signal Pulse deterministic copy sounds like a marketing read, not a placeholder", () => {
+  const copy = buildSignalPulseDeterministicRead({
+    canonicalTitle: "Territorio botana crujiente con chile",
+    term: "botana crujiente con chile",
+    signalType: "opportunity",
+    mentionCount: 64,
+    sentimentAvg: 0.31,
+    platforms: ["tiktok", "instagram"],
+    rank: 1
+  });
+
+  assert.equal(copy.title, "Oportunidad: Botana Crujiente Con Chile");
+  assert.match(copy.description, /64 menciones/);
+  assert.match(copy.marketingRead, /angulo creativo/);
+  assert.match(copy.actionHint, /claim o hook/);
+  assert.doesNotMatch(copy.description, /La conversacion esta agrupando/i);
+  assert.doesNotMatch(copy.marketingRead, /Probar contenido o pauta alrededor/i);
+});
+
+test("Signal Pulse deterministic copy changes posture for risks and weak signals", () => {
+  const risk = buildSignalPulseDeterministicRead({
+    canonicalTitle: "Territorio empaque roto",
+    term: "empaque roto",
+    signalType: "risk",
+    mentionCount: 18,
+    sentimentAvg: -0.34,
+    platforms: ["facebook"],
+    rank: 2
+  });
+  const directional = buildSignalPulseDeterministicRead({
+    canonicalTitle: "Territorio merch especial",
+    term: "merch especial",
+    signalType: "marketing_signal",
+    mentionCount: 6,
+    sentimentAvg: 0.02,
+    platforms: [],
+    rank: 5
+  });
+
+  assert.equal(risk.title, "Friccion: Empaque Roto");
+  assert.match(risk.marketingRead, /contener/);
+  assert.match(risk.actionHint, /reduzca duda/);
+  assert.equal(directional.title, "Merch Especial");
+  assert.match(directional.description, /apenas alcanzan para monitoreo/);
+  assert.match(directional.actionHint, /prueba de bajo costo/);
 });
 
 function row(
