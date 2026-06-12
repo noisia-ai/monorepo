@@ -11516,6 +11516,13 @@ body:has(.signal-report)::before { display: none; }
   margin: 0;
 }
 
+.signal-pulse-run-note {
+  color: var(--neutral-09);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .signal-pulse-run-card dl {
   display: grid;
   gap: 0;

@@ -16,11 +16,12 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { createCorpusSnapshot } from "@/lib/corpus/snapshots";
 import { getCorpusForUser, listCorpusEntitiesForCorpus, listImportBatchesForCorpus } from "@/lib/data/corpora";
 import { isUndefinedTableError } from "@/lib/db/errors";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 import { validateEngineLaunchRequest } from "@/lib/engine/launch-guards";
 import { ENGINE_BETA_METHODOLOGY_OPTIONS, buildEngineMethodologyOptions } from "@/lib/engine/methodology-options";
 import { validateEngineQueryPackCoverage } from "@/lib/engine/query-pack-validation";
 import { getEngineAnalysisQueue } from "@/lib/queue/engine-analysis";
+import { buildSignalPulseLaunchPlan } from "@/lib/signal-pulse/runtime-contracts";
 
 const startEngineSchema = z.object({
   methodology_slug: z.string().min(1).optional(),
@@ -95,6 +96,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
           .from(engineCostEvents)
           .where(eq(engineCostEvents.engineAnalysisId, latest.id))
       : [null];
+    const signalPulseLaunchPlan = corpus.methodologySlug === "signal-pulse"
+      ? await loadSignalPulseLaunchPlan({
+          corpusId: corpus.id,
+          analysisPlan: corpus.analysisPlan,
+          targetWindowMonths: corpus.targetWindowMonths
+        })
+      : null;
 
     return Response.json({
       ok: true,
@@ -103,6 +111,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       latest,
       analyses,
       steps,
+      signalPulseLaunchPlan,
       costSummary: costSummary
         ? {
             events: Number(costSummary.events ?? 0),
@@ -125,6 +134,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       latest: null,
       analyses: [],
       steps: [],
+      signalPulseLaunchPlan: null,
       costSummary: null
     });
   }
@@ -373,4 +383,52 @@ async function loadLatestTbMeta(corpusId: string) {
     .orderBy(desc(tbAnalyses.createdAt))
     .limit(1);
   return row?.metaJson ?? null;
+}
+
+async function loadSignalPulseLaunchPlan(args: {
+  corpusId: string;
+  analysisPlan: unknown;
+  targetWindowMonths: unknown;
+}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = '30s'");
+    const [coverage] = (await client.query<{
+      conversation_mentions: number;
+      signal_pulse_mentions: number;
+      performance_records: number;
+      query_packs: number;
+    }>(
+      `
+        SELECT
+          COUNT(DISTINCT m.id)::int AS conversation_mentions,
+          COUNT(DISTINCT m.id) FILTER (WHERE mqs.lens_slug = 'signal-pulse')::int AS signal_pulse_mentions,
+          (SELECT COUNT(*)::int FROM performance_records pr WHERE pr.study_corpus_id = $1) AS performance_records,
+          (SELECT COUNT(*)::int FROM query_packs qp WHERE qp.study_corpus_id = $1 AND qp.lens_slug = 'signal-pulse') AS query_packs
+        FROM mentions m
+        LEFT JOIN mention_query_sources mqs ON mqs.mention_id = m.id
+        WHERE m.study_corpus_id = $1
+          AND m.inclusion_status = 'included'
+      `,
+      [args.corpusId]
+    )).rows;
+    await client.query("COMMIT");
+
+    return buildSignalPulseLaunchPlan({
+      analysisPlan: args.analysisPlan,
+      targetWindowMonths: args.targetWindowMonths,
+      coverage: {
+        conversationMentions: coverage?.conversation_mentions,
+        signalPulseMentions: coverage?.signal_pulse_mentions,
+        performanceRecords: coverage?.performance_records,
+        queryPacks: coverage?.query_packs
+      }
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }

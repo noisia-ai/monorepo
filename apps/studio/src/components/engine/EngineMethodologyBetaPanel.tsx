@@ -14,7 +14,8 @@ import {
   SIGNAL_PULSE_SLUG,
   buildRuntimeMethodologyOptions,
   isSignalPulseMethodology,
-  shouldLoadSelectedLensState
+  shouldLoadSelectedLensState,
+  type SignalPulseLaunchPlan
 } from "@/lib/signal-pulse/runtime-contracts";
 
 type EngineAnalysis = {
@@ -49,6 +50,7 @@ type EngineState = {
   latest: EngineAnalysis | null;
   analyses: EngineAnalysis[];
   steps: EngineStep[];
+  signalPulseLaunchPlan?: SignalPulseLaunchPlan | null;
   costSummary: {
     events: number;
     totalTokens: number;
@@ -263,9 +265,17 @@ export function EngineMethodologyBetaPanel({
         ? `${statusLabel(latest.status as SelectedLensStatus["status"])} · ${stepLabel(latest.currentStep)}`
         : "sin corrida";
   const signalPulseReadiness = asRecord(asRecord(latest?.metaJson).signal_pulse).readiness;
-  const signalPulseBudgetCap = Number(asRecord(signalPulseReadiness).budget_cap_usd ?? 0);
-  const signalPulseCost = state?.costSummary?.estimatedCostUsd ?? 0;
+  const signalPulseLaunchPlan = state?.signalPulseLaunchPlan ?? null;
+  const signalPulseBudgetCap = Number(asRecord(signalPulseReadiness).budget_cap_usd ?? signalPulseLaunchPlan?.budgetCapUsd ?? 0);
+  const signalPulseCost = state?.costSummary?.estimatedCostUsd ?? signalPulseLaunchPlan?.estimatedCostUsd ?? 0;
+  const signalPulseCostLabel = state?.costSummary ? "Costo registrado" : "Estimación pre-run";
   const signalPulseCostOk = !signalPulseBudgetCap || signalPulseCost <= signalPulseBudgetCap;
+  const signalPulseLaunchBlocked = isSignalPulseCorpus && signalPulseLaunchPlan?.status === "blocked";
+  const signalPulseCoverage = signalPulseLaunchPlan?.coverage;
+  const signalPulseWindowMonths = signalPulseLaunchPlan?.windowMonths ?? 12;
+  const signalPulseCoverageLabel = signalPulseCoverage
+    ? `${signalPulseCoverage.conversationMentions} menciones · ${signalPulseCoverage.performanceRecords} performance records · ${signalPulseWindowMonths} meses`
+    : "Cobertura pendiente de calcular.";
 
   return (
     <section className={isSignalPulseCorpus ? "engine-beta-panel signal-pulse-runtime-panel" : "engine-beta-panel"}>
@@ -334,10 +344,15 @@ export function EngineMethodologyBetaPanel({
             <span>Corrida mensual</span>
             <strong>{latest ? statusLabel(latest.status as SelectedLensStatus["status"]) : "Lista para correr"}</strong>
             <p>{latest ? stepLabel(latest.currentStep) : "Usa conversación aprobada y performance estructurada de 12 meses."}</p>
+            <small className="signal-pulse-run-note">
+              {signalPulseLaunchPlan?.warnings.length
+                ? signalPulseLaunchPlan.warnings.slice(0, 2).join(" ")
+                : signalPulseCoverageLabel}
+            </small>
           </div>
           <dl>
             <div>
-              <dt>Costo estimado</dt>
+              <dt>{signalPulseCostLabel}</dt>
               <dd>USD {signalPulseCost.toFixed(4)}</dd>
             </div>
             <div>
@@ -346,12 +361,12 @@ export function EngineMethodologyBetaPanel({
             </div>
             <div>
               <dt>Guardrail</dt>
-              <dd>{signalPulseCostOk ? "Dentro del tope" : "Revisar antes de publicar"}</dd>
+              <dd>{signalPulseLaunchBlocked ? "Completa cobertura" : signalPulseCostOk ? "Dentro del tope" : "Revisar antes de publicar"}</dd>
             </div>
           </dl>
-          <button className="wizard-cta" disabled={isLoading || isStarting || schemaUnavailable || runtimeDisabled} onClick={startAnalysis} type="button">
+          <button className="wizard-cta" disabled={isLoading || isStarting || schemaUnavailable || runtimeDisabled || signalPulseLaunchBlocked} onClick={startAnalysis} type="button">
             {isStarting ? <Icon name="spinner" size={16} /> : <Icon name="play" size={16} />}
-            {runtimeDisabled ? "Runtime apagado" : latest && latest.status !== "failed" ? "Correr nuevo corte" : "Correr Signal Pulse"}
+            {runtimeDisabled ? "Runtime apagado" : signalPulseLaunchBlocked ? "Completa cobertura" : latest && latest.status !== "failed" ? "Correr nuevo corte" : "Correr Signal Pulse"}
           </button>
         </div>
       ) : (
