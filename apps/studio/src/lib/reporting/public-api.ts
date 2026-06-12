@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { brands, methodologies, publishedOutputs, studyCorpora, themes } from "@noisia/db";
 
 import { db } from "@/lib/db";
+import { resolveSignalPulseVisibility } from "@/lib/signal-pulse/runtime-contracts";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
 
 export type ReportingDataset =
@@ -37,6 +38,12 @@ export type ReportingV2Section =
   | "evidence-deep-dives"
   | "aggregates"
   | "evidence-sample"
+  | "signals"
+  | "marketing-moves"
+  | "paid-organic"
+  | "competitive-category"
+  | "sources"
+  | "quality"
   | "manifest";
 
 type ApiKeyConfig = {
@@ -181,6 +188,19 @@ const V2_SECTION_ALIASES: Record<string, ReportingV2Section> = {
   "mentions-sample": "evidence-sample",
   "mentions_sample": "evidence-sample",
   verbatims: "evidence-sample",
+  signals: "signals",
+  "signal-pulse-signals": "signals",
+  "marketing-moves": "marketing-moves",
+  "marketing_moves": "marketing-moves",
+  moves: "marketing-moves",
+  "paid-organic": "paid-organic",
+  "paid_organic": "paid-organic",
+  performance: "paid-organic",
+  "competitive-category": "competitive-category",
+  "competitive_category": "competitive-category",
+  category: "competitive-category",
+  sources: "sources",
+  quality: "quality",
   manifest: "manifest"
 };
 
@@ -217,6 +237,7 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
       outputId: publishedOutputs.id,
       studyCorpusId: publishedOutputs.studyCorpusId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
@@ -263,12 +284,14 @@ export async function listReportsForGrantV2(grant: ApiKeyGrant) {
       outputId: publishedOutputs.id,
       studyCorpusId: publishedOutputs.studyCorpusId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
       version: publishedOutputs.version,
       manifest: publishedOutputs.manifest,
       payload: publishedOutputs.payload,
+      visibilityConfig: publishedOutputs.visibilityConfig,
       publishedAt: publishedOutputs.publishedAt,
       updatedAt: publishedOutputs.updatedAt,
       brandName: brands.displayName,
@@ -304,7 +327,7 @@ export async function listReportsForGrantV2(grant: ApiKeyGrant) {
       methodology_slug: stringValue(report.methodology_slug) || row.methodologySlug,
       published_at: row.publishedAt?.toISOString() ?? null,
       updated_at: row.updatedAt?.toISOString() ?? null,
-      sections: getEnabledV2Sections(row.manifest, row.payload),
+      sections: getEnabledV2Sections(row.manifest, row.payload, row.visibilityConfig),
       links: {
         full: `/api/public/v2/reports/${row.outputId}`,
         sections: `/api/public/v2/reports/${row.outputId}/sections/{section}`
@@ -333,12 +356,14 @@ export async function getPublishedOutputForReporting(outputId: string) {
       studyCorpusId: publishedOutputs.studyCorpusId,
       brandId: publishedOutputs.brandId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
       version: publishedOutputs.version,
       manifest: publishedOutputs.manifest,
       payload: publishedOutputs.payload,
+      visibilityConfig: publishedOutputs.visibilityConfig,
       publishedAt: publishedOutputs.publishedAt,
       generatedAt: publishedOutputs.createdAt,
       updatedAt: publishedOutputs.updatedAt,
@@ -652,6 +677,10 @@ export function csvDatasetResponse(dataset: ReportingDataset, rows: Array<Record
 }
 
 export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>) {
+  if (output.kind === "signal_pulse" || output.methodologySlug === "signal-pulse") {
+    return buildSignalPulseReportingV2Document(output);
+  }
+
   const payload = asRecord(output.payload);
   const viewModel = adaptTbSignalPayload(payload);
   const aggregates = asRecord(viewModel.aggregates);
@@ -717,43 +746,145 @@ export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>
 
 export function buildReportingV2Section(output: NonNullable<PublishedOutputRow>, section: ReportingV2Section) {
   const document = buildReportingV2Document(output);
+  const sections = document.sections as Record<string, unknown>;
 
   switch (section) {
     case "full":
       return document;
     case "overview":
-      return document.sections.overview;
+      return sections.overview;
     case "findings":
-      return document.sections.findings;
+      return sections.findings;
     case "decision-field":
-      return document.sections.decision_field;
+      return sections.decision_field;
     case "action-cards":
-      return document.sections.action_cards;
+      return sections.action_cards;
     case "strategic-opportunities":
-      return document.sections.strategic_opportunities;
+      return sections.strategic_opportunities;
     case "competitive-intelligence":
-      return document.sections.competitive_intelligence;
+      return sections.competitive_intelligence;
     case "engine-methodology":
-      return document.sections.engine_methodology;
+      return sections.engine_methodology;
     case "methodology-view":
-      return document.sections.methodology_view;
+      return sections.methodology_view;
     case "emerging-patterns":
-      return document.sections.emerging_patterns;
+      return sections.emerging_patterns;
     case "future-signals":
-      return document.sections.future_signals;
+      return sections.future_signals;
     case "market-analysis":
-      return document.sections.market_analysis;
+      return sections.market_analysis;
     case "knowledge-impact":
-      return document.sections.knowledge_impact;
+      return sections.knowledge_impact;
     case "evidence-deep-dives":
-      return document.sections.evidence_deep_dives;
+      return sections.evidence_deep_dives;
     case "aggregates":
-      return document.sections.aggregates;
+      return sections.aggregates;
     case "evidence-sample":
-      return document.sections.evidence_sample;
+      return sections.evidence_sample;
+    case "signals":
+      return sections.signals;
+    case "marketing-moves":
+      return sections.marketing_moves;
+    case "paid-organic":
+      return sections.paid_organic;
+    case "competitive-category":
+      return sections.competitive_category;
+    case "sources":
+      return sections.sources;
+    case "quality":
+      return sections.quality;
     case "manifest":
-      return document.sections.manifest;
+      return sections.manifest;
   }
+}
+
+function buildSignalPulseReportingV2Document(output: NonNullable<PublishedOutputRow>) {
+  const payload = asRecord(output.payload);
+  const report = asRecord(payload.report);
+  const executiveRead = asRecord(payload.executive_read);
+  const periods = arrayValue(payload.periods).map(asRecord);
+  const signals = arrayValue(payload.signals).map(asRecord);
+  const moves = arrayValue(payload.marketing_moves).map(asRecord);
+  const evidence = arrayValue(payload.evidence).map(asRecord);
+  const sources = arrayValue(payload.sources).map(asRecord);
+  const qualityGates = arrayValue(payload.quality_gates).map(asRecord);
+  const performance = asRecord(payload.performance);
+  const chartRefs = asRecord(payload.chart_refs);
+  const cost = asRecord(payload.cost);
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser: false
+  });
+  const sectionsEnabled = getSignalPulseV2Sections(visibility);
+  const subjectName = reportSubjectName(output, report) ?? stringValue(report.title);
+  const metadata = {
+    api_version: 2,
+    output_id: output.outputId,
+    output_type: output.outputType,
+    report_version: output.version,
+    schema_version: numberValue(payload.schema_version) || output.version,
+    title: output.title,
+    published_at: output.publishedAt?.toISOString() ?? null,
+    generated_at: stringValue(payload.generated_at) || output.generatedAt?.toISOString() || null,
+    updated_at: output.updatedAt?.toISOString() ?? null,
+    brand_name: subjectName,
+    methodology: output.methodologyName,
+    methodology_slug: output.methodologySlug,
+    business_question: stringValue(report.business_question),
+    visibility: {
+      paid_data: visibility.showPaidOrganic,
+      competitive: visibility.showCompetitive,
+      evidence: visibility.showEvidence
+    },
+    corpus: {
+      period_count: periods.length,
+      window_start: stringValue(periods[0]?.period_start),
+      window_end: stringValue(periods.at(-1)?.period_end)
+    }
+  };
+  const locked = (section: string) => ({
+    locked: true,
+    section,
+    reason: "not_authorized_for_client_export"
+  });
+  const sections = {
+    overview: {
+      report: {
+        title: stringValue(report.title) || output.title,
+        brand_name: subjectName,
+        business_question: stringValue(report.business_question)
+      },
+      executive_read: executiveRead,
+      periods,
+      cost,
+      chart_refs: chartRefs
+    },
+    signals,
+    marketing_moves: moves,
+    evidence_sample: visibility.showEvidence ? evidence.slice(0, 80) : locked("evidence_sample"),
+    paid_organic: visibility.showPaidOrganic ? performance : locked("paid_organic"),
+    competitive_category: visibility.showCompetitive ? {
+      signals,
+      evidence_sample: visibility.showEvidence ? evidence.slice(0, 80) : []
+    } : locked("competitive_category"),
+    sources: visibility.showSources ? sources : locked("sources"),
+    quality: visibility.showQuality ? {
+      quality_gates: qualityGates,
+      limitations: arrayValue(payload.limitations).map(stringValue).filter(Boolean)
+    } : locked("quality"),
+    manifest: {
+      kind: "signal_pulse",
+      sections: sectionsEnabled,
+      visibility: metadata.visibility
+    }
+  };
+
+  return {
+    metadata,
+    report: sections.overview.report,
+    manifest: sections.manifest,
+    sections
+  };
 }
 
 export function jsonV2Response(
@@ -889,8 +1020,15 @@ function numberValue(value: unknown) {
   return 0;
 }
 
-export function getEnabledV2Sections(manifest: unknown, payload: unknown = null) {
+export function getEnabledV2Sections(manifest: unknown, payload: unknown = null, visibilityConfig: unknown = null) {
   const flags = asRecord(manifest);
+  const payloadRecord = asRecord(payload);
+  if (stringValue(payloadRecord.kind) === "signal_pulse" || stringValue(flags.kind) === "signal_pulse") {
+    return getSignalPulseV2Sections(resolveSignalPulseVisibility({
+      config: visibilityConfig,
+      isInternalUser: false
+    }));
+  }
   const engineBlock = asRecord(asRecord(payload).engine_block);
   const hasEngineBlock = Boolean(stringValue(engineBlock.methodology_slug) || stringValue(engineBlock.kind));
   const engineModuleKeys = [
@@ -938,4 +1076,18 @@ export function getEnabledV2Sections(manifest: unknown, payload: unknown = null)
   return sectionMap
     .filter(([, keys, options]) => (!options?.requiresEngine || hasEngineBlock) && keys.some((key) => flags[key] !== false))
     .map(([section]) => section);
+}
+
+function getSignalPulseV2Sections(visibility: ReturnType<typeof resolveSignalPulseVisibility>): ReportingV2Section[] {
+  return [
+    "overview",
+    "signals",
+    "marketing-moves",
+    visibility.showEvidence ? "evidence-sample" : null,
+    visibility.showPaidOrganic ? "paid-organic" : null,
+    visibility.showCompetitive ? "competitive-category" : null,
+    visibility.showSources ? "sources" : null,
+    visibility.showQuality ? "quality" : null,
+    "manifest"
+  ].filter((section): section is ReportingV2Section => Boolean(section));
 }

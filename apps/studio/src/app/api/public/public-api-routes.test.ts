@@ -364,6 +364,69 @@ test("public v2 section inventory honors method-specific engine module keys", ()
   }
 });
 
+test("public v2 Signal Pulse document hides paid data and internal support by default", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: {},
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse", business_question: "Que movemos?" },
+      executive_read: { headline: "Mover el claim principal", body: "Hay traccion.", action: "Probar contenido." },
+      periods: [{ id: "p1", period_start: "2026-05-01", period_end: "2026-05-31" }],
+      signals: [{ id: "s1", title: "Confianza en entrega" }],
+      marketing_moves: [{ id: "m1", action_text: "Probar claim de entrega" }],
+      evidence: [{ evidence_id: "e1", quote: "Llego rapido" }],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] },
+      sources: [{ id: "src-1", name: "Meta export" }],
+      quality_gates: [{ id: "performance_structured", passed: true }],
+      cost: { estimated_cost_usd: 1.2 }
+    }
+  };
+
+  const document = publicApi.buildReportingV2Document(signalPulseOutput as never) as Record<string, unknown>;
+  const sections = document.sections as Record<string, unknown>;
+  const paid = publicApi.buildReportingV2Section(signalPulseOutput as never, "paid-organic") as Record<string, unknown>;
+  const sources = publicApi.buildReportingV2Section(signalPulseOutput as never, "sources") as Record<string, unknown>;
+  const enabled = publicApi.getEnabledV2Sections(signalPulseOutput.manifest, signalPulseOutput.payload, signalPulseOutput.visibilityConfig);
+
+  assert.equal(enabled.includes("paid-organic"), false);
+  assert.equal(enabled.includes("sources"), false);
+  assert.equal((sections.paid_organic as Record<string, unknown>).locked, true);
+  assert.equal((sections.sources as Record<string, unknown>).locked, true);
+  assert.equal(paid.reason, "not_authorized_for_client_export");
+  assert.equal(sources.reason, "not_authorized_for_client_export");
+});
+
+test("public v2 Signal Pulse document exposes paid data only with explicit visibility", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: { paid_data: true },
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse" },
+      periods: [],
+      signals: [],
+      marketing_moves: [],
+      evidence: [],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] }
+    }
+  };
+
+  const paid = publicApi.buildReportingV2Section(signalPulseOutput as never, "paid-organic") as Record<string, unknown>;
+  const enabled = publicApi.getEnabledV2Sections(signalPulseOutput.manifest, signalPulseOutput.payload, signalPulseOutput.visibilityConfig);
+
+  assert.equal(enabled.includes("paid-organic"), true);
+  assert.deepEqual(paid, { campaigns: [{ external_id: "ad-1", spend: 1000 }] });
+});
+
 test("public OpenAPI route serves the YAML specification", async () => {
   const response = await openApiRoute.GET();
   const text = await response.text();
