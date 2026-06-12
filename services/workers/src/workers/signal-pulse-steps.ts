@@ -173,8 +173,8 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
           `
             WITH conversation AS (
               SELECT
-                COUNT(DISTINCT m.id)::int AS conversation,
-                jsonb_object_agg(platform, count) AS by_source
+                COALESCE(SUM(count), 0)::int AS conversation,
+                COALESCE(jsonb_object_agg(platform, count) FILTER (WHERE platform IS NOT NULL), '{}'::jsonb) AS by_source
               FROM (
                 SELECT COALESCE(NULLIF(m.resolved_platform, ''), m.platform, 'unknown') AS platform,
                        COUNT(DISTINCT m.id)::int AS count

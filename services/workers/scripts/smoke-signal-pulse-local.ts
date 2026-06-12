@@ -117,8 +117,12 @@ async function prepareLocalInfra() {
   });
 }
 
+let clientQueryChain = Promise.resolve();
+
 async function q<T extends Row = Row>(client: pg.Client, sql: string, params: unknown[] = []) {
-  return client.query<T>(sql, params);
+  const query = clientQueryChain.then(() => client.query<T>(sql, params));
+  clientQueryChain = query.then(() => undefined, () => undefined);
+  return query;
 }
 
 async function one<T extends Row = Row>(client: pg.Client, sql: string, params: unknown[] = []) {
@@ -871,6 +875,8 @@ async function main() {
     await client.end();
     const { pool } = await import("../src/db/client.js");
     await pool.end().catch(() => undefined);
+    const { redisConnection } = await import("../src/queues/query-engine.js");
+    await redisConnection.quit().catch(() => undefined);
   }
 }
 
