@@ -13,6 +13,7 @@ import { Icon } from "@/components/ui/Icon";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
 import { alignPulsePerformancePeriods, buildOrganicPaidCandidates, summarizePulsePerformance } from "@/lib/signal-pulse/performance-summary";
+import { resolveSignalPulseVisibility, type SignalPulseResolvedVisibility } from "@/lib/signal-pulse/runtime-contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,11 @@ export default async function PulseOutputPage({
   const defaultDateFrom = stringValue(periods[0]?.period_start);
   const defaultDateTo = stringValue(activePeriod?.period_end);
   const isInternalUser = session.appUser.userType === "noisia_internal";
-  const groups = buildPulseGroups({ isInternalUser });
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser
+  });
+  const groups = buildPulseGroups(visibility);
 
   return (
     <SignalReportShell
@@ -128,83 +133,97 @@ export default async function PulseOutputPage({
           title="Hooks, claims y tono para probar"
           sub="Ideas derivadas de señales con evidencia. Si la confianza es baja, se marca como prueba pequeña."
         />
-        <ContentCreativePanel signals={signals} moves={moves} performance={performance} />
+        <ContentCreativePanel signals={signals} moves={moves} performance={visibility.showPaidOrganic ? performance : {}} showPerformanceCreatives={visibility.showPaidOrganic} />
       </section>
 
-      <section className="signal-section pulse-section" data-signal-section="paid-organic" hidden id="paid-organic">
-        <PulseSectionHead
-          eyebrow="Paid y orgánico"
-          title="Conversación contra performance"
-          sub="Performance se lee desde registros estructurados por periodo, campaña y creatividad."
-        />
-        <PaidOrganicPanel periods={periods} performance={performance} signals={signals} />
-      </section>
+      {visibility.showPaidOrganic ? (
+        <section className="signal-section pulse-section" data-signal-section="paid-organic" hidden id="paid-organic">
+          <PulseSectionHead
+            eyebrow="Paid y orgánico"
+            title="Conversación contra performance"
+            sub="Performance se lee desde registros estructurados por periodo, campaña y creatividad."
+          />
+          <PaidOrganicPanel periods={periods} performance={performance} signals={signals} />
+        </section>
+      ) : null}
 
-      <section className="signal-section pulse-section" data-signal-section="competitive" hidden id="competitive">
-        <PulseSectionHead
-          eyebrow="Competencia y categoría"
-          title="Dónde la categoría está empujando la conversación"
-          sub="Lectura por señales y entidades cuando el corpus trae scope competitivo o de categoría."
-        />
-        <CompetitiveCategoryPanel signals={signals} evidence={evidence} />
-      </section>
+      {visibility.showCompetitive ? (
+        <section className="signal-section pulse-section" data-signal-section="competitive" hidden id="competitive">
+          <PulseSectionHead
+            eyebrow="Competencia y categoría"
+            title="Dónde la categoría está empujando la conversación"
+            sub="Lectura por señales y entidades cuando el corpus trae scope competitivo o de categoría."
+          />
+          <CompetitiveCategoryPanel signals={signals} evidence={evidence} />
+        </section>
+      ) : null}
 
-      {isInternalUser ? (
+      {visibility.showComposer || visibility.showCorpus ? (
         <>
-          <section className="signal-section pulse-section" data-signal-section="composer" hidden id="composer">
-            <PulseSectionHead
-              eyebrow="Composer"
-              title="Aprobar el corte editorial"
-              sub="Selecciona qué señales y evidencia quedan como corte vivo del reporte mensual."
-            />
-            <SignalLiveComposer outputId={output.id} variant="signal_pulse" />
-          </section>
+          {visibility.showComposer ? (
+            <section className="signal-section pulse-section" data-signal-section="composer" hidden id="composer">
+              <PulseSectionHead
+                eyebrow="Composer"
+                title="Aprobar el corte editorial"
+                sub="Selecciona qué señales y evidencia quedan como corte vivo del reporte mensual."
+              />
+              <SignalLiveComposer outputId={output.id} variant="signal_pulse" />
+            </section>
+          ) : null}
 
-          <section className="signal-section pulse-section" data-signal-section="corpus" hidden id="corpus">
-            <PulseSectionHead
-              eyebrow="Vista de corpus"
-              title="Explorar conversación y evidencia"
-              sub="Busca por señal, canal, entidad o fecha dentro del corpus autorizado."
-            />
-            <SignalCorpusExplorer mentions={evidence.map(evidenceToMention)} outputId={output.id} />
-          </section>
+          {visibility.showCorpus ? (
+            <section className="signal-section pulse-section" data-signal-section="corpus" hidden id="corpus">
+              <PulseSectionHead
+                eyebrow="Vista de corpus"
+                title="Explorar conversación y evidencia"
+                sub="Busca por señal, canal, entidad o fecha dentro del corpus autorizado."
+              />
+              <SignalCorpusExplorer mentions={evidence.map(evidenceToMention)} outputId={output.id} />
+            </section>
+          ) : null}
         </>
       ) : null}
 
-      <section className="signal-section pulse-section" data-signal-section="evidence" hidden id="evidence">
-        <PulseSectionHead
-          eyebrow="Evidencia"
-          title="Verbatims que sostienen la lectura"
-          sub="Cada cita conserva plataforma, fecha y rol dentro de la lectura."
-        />
-        <div className="pulse-evidence-list">
-          {evidence.length > 0 ? evidence.slice(0, 80).map((item) => (
-            <EvidenceRow item={item} signal={signals.find((signal) => stringValue(signal.id) === stringValue(item.signal_id))} key={stringValue(item.evidence_id)} />
-          )) : (
-            <PulseEmptyState title="Falta evidencia ligada" body="Las señales necesitan citas accesibles antes de presentarse como lectura fuerte." />
-          )}
-        </div>
-      </section>
+      {visibility.showEvidence ? (
+        <section className="signal-section pulse-section" data-signal-section="evidence" hidden id="evidence">
+          <PulseSectionHead
+            eyebrow="Evidencia"
+            title="Verbatims que sostienen la lectura"
+            sub="Cada cita conserva plataforma, fecha y rol dentro de la lectura."
+          />
+          <div className="pulse-evidence-list">
+            {evidence.length > 0 ? evidence.slice(0, 80).map((item) => (
+              <EvidenceRow item={item} signal={signals.find((signal) => stringValue(signal.id) === stringValue(item.signal_id))} key={stringValue(item.evidence_id)} />
+            )) : (
+              <PulseEmptyState title="Falta evidencia ligada" body="Las señales necesitan citas accesibles antes de presentarse como lectura fuerte." />
+            )}
+          </div>
+        </section>
+      ) : null}
 
-      {isInternalUser ? (
+      {visibility.showSources || visibility.showQuality ? (
         <>
-          <section className="signal-section pulse-section" data-signal-section="sources" hidden id="sources">
-            <PulseSectionHead
-              eyebrow="Fuentes"
-              title="Cobertura y huecos visibles"
-              sub="El corte muestra cuándo falta performance estructurada o algún mes no es comparable."
-            />
-            <SourceCoverage periods={periods} sources={sources} />
-          </section>
+          {visibility.showSources ? (
+            <section className="signal-section pulse-section" data-signal-section="sources" hidden id="sources">
+              <PulseSectionHead
+                eyebrow="Fuentes"
+                title="Cobertura y huecos visibles"
+                sub="El corte muestra cuándo falta performance estructurada o algún mes no es comparable."
+              />
+              <SourceCoverage periods={periods} sources={sources} />
+            </section>
+          ) : null}
 
-          <section className="signal-section pulse-section" data-signal-section="quality" hidden id="quality">
-            <PulseSectionHead
-              eyebrow="Calidad"
-              title="Controles antes de publicar"
-              sub="El reporte separa datos listos, límites visibles y checks pendientes antes de llegar a cliente."
-            />
-            <QualityGateTable gates={qualityGates} limitations={limitations} cost={cost} />
-          </section>
+          {visibility.showQuality ? (
+            <section className="signal-section pulse-section" data-signal-section="quality" hidden id="quality">
+              <PulseSectionHead
+                eyebrow="Calidad"
+                title="Controles antes de publicar"
+                sub="El reporte separa datos listos, límites visibles y checks pendientes antes de llegar a cliente."
+              />
+              <QualityGateTable gates={qualityGates} limitations={limitations} cost={cost} />
+            </section>
+          ) : null}
         </>
       ) : null}
     </SignalReportShell>
@@ -418,8 +437,18 @@ function SourceCoverage({ periods, sources }: { periods: JsonRecord[]; sources: 
   );
 }
 
-function ContentCreativePanel({ signals, moves, performance }: { signals: JsonRecord[]; moves: JsonRecord[]; performance: JsonRecord }) {
-  const creatives = arrayOfRecords(performance.creatives);
+function ContentCreativePanel({
+  signals,
+  moves,
+  performance,
+  showPerformanceCreatives
+}: {
+  signals: JsonRecord[];
+  moves: JsonRecord[];
+  performance: JsonRecord;
+  showPerformanceCreatives: boolean;
+}) {
+  const creatives = showPerformanceCreatives ? arrayOfRecords(performance.creatives) : [];
   const sourceSignals = signals.slice(0, 8);
   return (
     <div className="pulse-content-grid">
@@ -453,14 +482,19 @@ function ContentCreativePanel({ signals, moves, performance }: { signals: JsonRe
       <section className="pulse-source-panel">
         <PulseSectionHead eyebrow="Creatividades" title="Señales de performance" sub="Lectura estructurada de copies subidos en archivos Meta/TikTok." compact />
         <div className="pulse-source-table">
-          {creatives.length > 0 ? creatives.slice(0, 8).map((creative, index) => (
+          {showPerformanceCreatives && creatives.length > 0 ? creatives.slice(0, 8).map((creative, index) => (
             <div className="pulse-source-row" key={`${stringValue(creative.creative_text)}-${index}`}>
               <strong>{stringValue(creative.platform)} · {stringValue(creative.channel)}</strong>
               <span>{stringValue(creative.creative_text).slice(0, 120)}</span>
               <small>{fmtNumber(creative.impressions)} impresiones · USD {fmtMoney(creative.spend)}</small>
             </div>
           )) : (
-            <PulseEmptyState title="Sin copies de performance" body="Sube un export con creative_text para comparar conversación contra piezas activas." />
+            <PulseEmptyState
+              title={showPerformanceCreatives ? "Sin copies de performance" : "Performance cerrada"}
+              body={showPerformanceCreatives
+                ? "Sube un export con creative_text para comparar conversación contra piezas activas."
+                : "Los copies y métricas de pauta solo aparecen cuando el corte trae permiso de paid data."}
+            />
           )}
         </div>
       </section>
@@ -746,7 +780,7 @@ function PulseEmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-function buildPulseGroups({ isInternalUser }: { isInternalUser: boolean }): SignalShellGroup[] {
+function buildPulseGroups(visibility: SignalPulseResolvedVisibility): SignalShellGroup[] {
   return [
     {
       label: "Signal Pulse",
@@ -755,23 +789,21 @@ function buildPulseGroups({ isInternalUser }: { isInternalUser: boolean }): Sign
         { key: "signals", label: "Señales", icon: "sparkle" },
         { key: "moves", label: "Acciones", icon: "layers" },
         { key: "content", label: "Contenido", icon: "sparkle" },
-        { key: "paid-organic", label: "Paid y orgánico", icon: "wave" },
-        { key: "competitive", label: "Categoría", icon: "platform" }
-      ]
+        visibility.showPaidOrganic ? { key: "paid-organic", label: "Paid y orgánico", icon: "wave" } : null,
+        visibility.showCompetitive ? { key: "competitive", label: "Categoría", icon: "platform" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
     },
     {
       label: "Soporte",
       sections: [
-        { key: "evidence", label: "Evidencia", icon: "message" },
-        ...(isInternalUser ? [
-          { key: "composer", label: "Composer", icon: "layers" },
-          { key: "corpus", label: "Corpus", icon: "message" },
-          { key: "sources", label: "Fuentes", icon: "platform" },
-          { key: "quality", label: "Calidad", icon: "info" }
-        ] satisfies SignalShellGroup["sections"] : [])
-      ]
+        visibility.showEvidence ? { key: "evidence", label: "Evidencia", icon: "message" } : null,
+        visibility.showComposer ? { key: "composer", label: "Composer", icon: "layers" } : null,
+        visibility.showCorpus ? { key: "corpus", label: "Corpus", icon: "message" } : null,
+        visibility.showSources ? { key: "sources", label: "Fuentes", icon: "platform" } : null,
+        visibility.showQuality ? { key: "quality", label: "Calidad", icon: "info" } : null
+      ].filter(Boolean) as SignalShellGroup["sections"]
     }
-  ];
+  ].filter((group) => group.sections.length > 0);
 }
 
 function hookForSignal(signal: JsonRecord) {

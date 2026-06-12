@@ -4,10 +4,12 @@ import test from "node:test";
 import type { EngineMethodologyOption } from "@/lib/engine/methodology-options";
 import {
   SIGNAL_PULSE_RUNTIME_OPTION,
+  buildSignalPulseStoredVisibilityConfig,
   buildSignalPulseLaunchChecklist,
   buildSignalPulseLaunchPlan,
   buildRuntimeMethodologyOptions,
   enginePublishedOutputTypeForMethodology,
+  resolveSignalPulseVisibility,
   shouldLoadSelectedLensState
 } from "./runtime-contracts";
 
@@ -64,6 +66,46 @@ test("Signal Pulse skips selected-lens runtime state", () => {
 test("Signal Pulse reads and writes its dedicated published output type", () => {
   assert.equal(enginePublishedOutputTypeForMethodology("signal-pulse"), "signal_pulse_dashboard");
   assert.equal(enginePublishedOutputTypeForMethodology("narrative-ownership"), "narrative_dashboard");
+});
+
+test("Signal Pulse visibility closes paid data by default for clients", () => {
+  const stored = buildSignalPulseStoredVisibilityConfig();
+
+  assert.deepEqual(stored, {
+    client_default: true,
+    paid_data: false,
+    competitive: true,
+    evidence: true,
+    corpus_view: "limited",
+    sources: false,
+    composer: false,
+    quality: false,
+    raw_metadata: false
+  });
+
+  const client = resolveSignalPulseVisibility({ config: stored, isInternalUser: false });
+  assert.equal(client.showPaidOrganic, false);
+  assert.equal(client.showCompetitive, true);
+  assert.equal(client.showEvidence, true);
+  assert.equal(client.showSources, false);
+  assert.equal(client.showQuality, false);
+
+  const internal = resolveSignalPulseVisibility({ config: stored, isInternalUser: true });
+  assert.equal(internal.showPaidOrganic, true);
+  assert.equal(internal.showSources, true);
+  assert.equal(internal.showQuality, true);
+});
+
+test("Signal Pulse visibility allows explicit paid client permission", () => {
+  const client = resolveSignalPulseVisibility({
+    config: { paid_data: true, corpus_view: "full", sources: true },
+    isInternalUser: false
+  });
+
+  assert.equal(client.showPaidOrganic, true);
+  assert.equal(client.showCorpus, true);
+  assert.equal(client.showSources, true);
+  assert.equal(client.showComposer, false);
 });
 
 test("Signal Pulse launch plan exposes pre-run cost, budget cap and structured coverage", () => {

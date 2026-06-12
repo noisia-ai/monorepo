@@ -16,7 +16,7 @@ import { attachLiveIntelligenceLinksToPayload } from "@/lib/live-intelligence/pu
 import { buildEngineOutputManifestForMethodology } from "@/lib/engine/methodology-options";
 import { validateEnginePublishReadiness } from "@/lib/engine/publish-guards";
 import { validateSignalPulsePublishReadiness, type SignalPulseGate } from "@/lib/signal-pulse/publish-gates";
-import { enginePublishedOutputTypeForMethodology } from "@/lib/signal-pulse/runtime-contracts";
+import { buildSignalPulseStoredVisibilityConfig, enginePublishedOutputTypeForMethodology } from "@/lib/signal-pulse/runtime-contracts";
 import { buildEngineSignalPayload, normalizeSignalManifest } from "@/lib/signal/build";
 import { SIGNAL_PAYLOAD_VERSION, type CompetitiveOwnership, type TbConfidence } from "@/lib/signal/contracts";
 
@@ -319,6 +319,7 @@ async function upsertEngineOutput(args: {
   payload: unknown;
   userId: string;
   publish: boolean;
+  visibilityConfig?: unknown;
 }) {
   const result = await pool.query<{ id: string; status: string; title: string }>(
     `INSERT INTO published_outputs (
@@ -359,7 +360,7 @@ async function upsertEngineOutput(args: {
       args.summary,
       JSON.stringify(args.manifest),
       JSON.stringify(args.payload),
-      JSON.stringify(args.kind === "signal_pulse" ? { client_default: true, internal_quality: true } : {}),
+      JSON.stringify(args.kind === "signal_pulse" ? buildSignalPulseStoredVisibilityConfig(args.visibilityConfig) : {}),
       SIGNAL_PAYLOAD_VERSION,
       args.userId,
       args.publish ? args.userId : null,
@@ -414,7 +415,8 @@ async function handleSignalPulseOutput(args: {
     manifest,
     payload,
     userId: args.userId,
-    publish: args.isPublish
+    publish: args.isPublish,
+    visibilityConfig: args.manifest.visibility_config
   });
 
   if (output?.id) {

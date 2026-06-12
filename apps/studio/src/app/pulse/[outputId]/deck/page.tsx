@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { DeckRuntime } from "@/components/signal/deck/DeckRuntime";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import { resolveSignalPulseVisibility, type SignalPulseResolvedVisibility } from "@/lib/signal-pulse/runtime-contracts";
 
 import "../../../signal/[outputId]/deck/deck.css";
 import "./pulse-deck.css";
@@ -106,7 +107,11 @@ export default async function PulseDeckPage({
   const activePeriod = periods.at(-1);
   const brandLabel = (output.brandName ?? output.brandFallbackName ?? output.themeName ?? stringValue(report.title)) || "Signal Pulse";
   const dateLabel = stringValue(activePeriod?.label) || formatDate(output.publishedAt?.toISOString?.() ?? String(output.publishedAt ?? ""));
-  const confidence = qualityGates.some((gate) => gate.passed === false) ? "con límites visibles" : "listo para presentar";
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser: session.appUser.userType === "noisia_internal"
+  });
+  const confidence = visibility.showQuality && qualityGates.some((gate) => gate.passed === false) ? "con límites visibles" : "listo para presentar";
 
   return (
     <div className="deck-shell pulse-deck-shell">
@@ -116,7 +121,7 @@ export default async function PulseDeckPage({
         <MapSlide signals={signals} />
         <SignalsSlide signals={signals.slice(0, 5)} evidence={evidence} />
         <MovesSlide moves={moves.slice(0, 6)} signals={signals} />
-        <LimitsSlide periods={periods} sources={sources} gates={qualityGates} cost={cost} />
+        <LimitsSlide periods={periods} sources={sources} gates={qualityGates} cost={cost} visibility={visibility} />
       </DeckRuntime>
     </div>
   );
@@ -245,8 +250,23 @@ function MovesSlide({ moves, signals }: { moves: JsonRecord[]; signals: JsonReco
   );
 }
 
-function LimitsSlide({ cost, gates, periods, sources }: { cost: JsonRecord; gates: JsonRecord[]; periods: JsonRecord[]; sources: JsonRecord[] }) {
+function LimitsSlide({
+  cost,
+  gates,
+  periods,
+  sources,
+  visibility
+}: {
+  cost: JsonRecord;
+  gates: JsonRecord[];
+  periods: JsonRecord[];
+  sources: JsonRecord[];
+  visibility: SignalPulseResolvedVisibility;
+}) {
   const failed = gates.filter((gate) => gate.passed === false);
+  const visibleSources = visibility.showSources ? sources : [];
+  const visibleGates = visibility.showQuality ? gates : [];
+  const visibleFailed = visibility.showQuality ? failed : [];
   return (
     <section className="deck-slide" data-label="Coverage">
       <SlideFrame num="06" eyebrow="Cobertura y límites" title="Qué tan presentable es el corte">
@@ -254,25 +274,34 @@ function LimitsSlide({ cost, gates, periods, sources }: { cost: JsonRecord; gate
           <div className="deck-stack">
             <div className="deck-cards cols-2">
               <MetricCard label="Periodos" value={periods.length} detail={`${periods.filter((period) => period.comparable !== false).length} comparables`} />
-              <MetricCard label="Fuentes" value={sources.length} detail="conversación + performance" />
+              {visibility.showSources ? <MetricCard label="Fuentes" value={visibleSources.length} detail="conversación + performance" /> : null}
               <MetricCard label="Costo" value={`USD ${fmtMoney(cost.estimated_cost_usd)}`} detail={Number(cost.budget_cap_usd ?? 0) > 0 ? `tope USD ${fmtMoney(cost.budget_cap_usd)}` : "sin tope declarado"} />
-              <MetricCard label="Checks" value={failed.length === 0 ? "OK" : failed.length} detail={failed.length === 0 ? "sin bloqueos" : "con límites visibles"} />
+              {visibility.showQuality ? <MetricCard label="Checks" value={visibleFailed.length === 0 ? "OK" : visibleFailed.length} detail={visibleFailed.length === 0 ? "sin bloqueos" : "con límites visibles"} /> : null}
             </div>
           </div>
           <div className="deck-stack">
-            <article className="deck-card">
-              <span className="deck-card-eyebrow">Fuentes estructuradas</span>
-              {sources.slice(0, 4).map((source) => (
-                <p key={stringValue(source.id)}>{stringValue(source.name)} · {stringValue(source.provider)} · {fmtNumber(source.records_valid)} filas válidas</p>
-              ))}
-              {sources.length === 0 ? <p>Sin performance estructurada en este corte.</p> : null}
-            </article>
-            <article className="deck-card">
-              <span className="deck-card-eyebrow">Límites</span>
-              {(failed.length > 0 ? failed : gates.slice(0, 3)).map((gate) => (
-                <p key={stringValue(gate.id)}>{stringValue(gate.detail) || labelQualityGate(stringValue(gate.id))}</p>
-              ))}
-            </article>
+            {visibility.showSources ? (
+              <article className="deck-card">
+                <span className="deck-card-eyebrow">Fuentes estructuradas</span>
+                {visibleSources.slice(0, 4).map((source) => (
+                  <p key={stringValue(source.id)}>{stringValue(source.name)} · {stringValue(source.provider)} · {fmtNumber(source.records_valid)} filas válidas</p>
+                ))}
+                {visibleSources.length === 0 ? <p>Sin performance estructurada en este corte.</p> : null}
+              </article>
+            ) : null}
+            {visibility.showQuality ? (
+              <article className="deck-card">
+                <span className="deck-card-eyebrow">Límites</span>
+                {(visibleFailed.length > 0 ? visibleFailed : visibleGates.slice(0, 3)).map((gate) => (
+                  <p key={stringValue(gate.id)}>{stringValue(gate.detail) || labelQualityGate(stringValue(gate.id))}</p>
+                ))}
+              </article>
+            ) : (
+              <article className="deck-card">
+                <span className="deck-card-eyebrow">Lectura cliente</span>
+                <p>Este deck conserva la lectura accionable y deja la auditoría técnica para el equipo Noisia.</p>
+              </article>
+            )}
           </div>
         </div>
       </SlideFrame>

@@ -141,6 +141,7 @@ async function selectSignalOutputForUserRow(
       summary: publishedOutputs.summary,
       manifest: publishedOutputs.manifest,
       payload: publishedOutputs.payload,
+      visibilityConfig: publishedOutputs.visibilityConfig,
       kind: publishedOutputs.kind,
       version: publishedOutputs.version,
       publishedAt: publishedOutputs.publishedAt,

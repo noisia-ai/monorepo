@@ -67,6 +67,74 @@ export type SignalPulseLaunchChecklistItem = {
   detail: string;
 };
 
+export type SignalPulseStoredVisibilityConfig = {
+  client_default: boolean;
+  paid_data: boolean;
+  competitive: boolean;
+  evidence: boolean;
+  corpus_view: "hidden" | "limited" | "full";
+  sources: boolean;
+  composer: boolean;
+  quality: boolean;
+  raw_metadata: boolean;
+};
+
+export type SignalPulseResolvedVisibility = {
+  showPaidOrganic: boolean;
+  showCompetitive: boolean;
+  showEvidence: boolean;
+  showComposer: boolean;
+  showCorpus: boolean;
+  showSources: boolean;
+  showQuality: boolean;
+  showRawMetadata: boolean;
+};
+
+export function buildSignalPulseStoredVisibilityConfig(input?: unknown): SignalPulseStoredVisibilityConfig {
+  const config = asRecord(input);
+  return {
+    client_default: booleanValue(config.client_default, true),
+    paid_data: booleanValue(config.paid_data ?? config.paidData, false),
+    competitive: booleanValue(config.competitive, true),
+    evidence: booleanValue(config.evidence, true),
+    corpus_view: corpusViewValue(config.corpus_view ?? config.corpusView, "limited"),
+    sources: booleanValue(config.sources, false),
+    composer: booleanValue(config.composer, false),
+    quality: booleanValue(config.quality ?? config.internal_quality, false),
+    raw_metadata: booleanValue(config.raw_metadata ?? config.rawMetadata, false)
+  };
+}
+
+export function resolveSignalPulseVisibility(args: {
+  config?: unknown;
+  isInternalUser: boolean;
+}): SignalPulseResolvedVisibility {
+  if (args.isInternalUser) {
+    return {
+      showPaidOrganic: true,
+      showCompetitive: true,
+      showEvidence: true,
+      showComposer: true,
+      showCorpus: true,
+      showSources: true,
+      showQuality: true,
+      showRawMetadata: true
+    };
+  }
+
+  const config = buildSignalPulseStoredVisibilityConfig(args.config);
+  return {
+    showPaidOrganic: config.paid_data,
+    showCompetitive: config.competitive,
+    showEvidence: config.evidence,
+    showComposer: config.composer,
+    showCorpus: config.corpus_view === "full",
+    showSources: config.sources,
+    showQuality: config.quality,
+    showRawMetadata: config.raw_metadata
+  };
+}
+
 export function buildSignalPulseLaunchPlan(args: {
   analysisPlan?: unknown;
   targetWindowMonths?: unknown;
@@ -157,6 +225,20 @@ function positiveInteger(value: unknown, fallback: number) {
 function wholeNumber(value: unknown) {
   const number = Math.trunc(Number(value ?? 0));
   return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "si", "sí"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function corpusViewValue(value: unknown, fallback: SignalPulseStoredVisibilityConfig["corpus_view"]) {
+  return value === "hidden" || value === "limited" || value === "full" ? value : fallback;
 }
 
 function formatWhole(value: number) {
