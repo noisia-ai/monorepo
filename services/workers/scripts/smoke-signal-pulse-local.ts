@@ -15,7 +15,16 @@ process.env.REDIS_URL ||= process.env.NOISIA_SIGNAL_PULSE_SMOKE_REDIS_URL ?? DEF
 process.env.NOISIA_ENGINE_INLINE_SMOKE = "true";
 
 type Row = Record<string, unknown>;
-type StepName = "sp_readiness" | "sp_periods" | "sp_cluster" | "sp_name_signals" | "sp_metrics";
+type StepName =
+  | "sp_readiness"
+  | "sp_periods"
+  | "sp_cluster"
+  | "sp_name_signals"
+  | "sp_metrics"
+  | "sp_interpret"
+  | "sp_moves"
+  | "sp_charts"
+  | "sp_gates";
 type SmokeIds = {
   analysisId: string;
   brandId: string;
@@ -407,7 +416,11 @@ async function runSignalPulsePipeline(client: pg.Client, engineAnalysisId: strin
     signalPulsePeriodsJob,
     signalPulseClusterJob,
     signalPulseNameSignalsJob,
-    signalPulseMetricsJob
+    signalPulseMetricsJob,
+    signalPulseInterpretJob,
+    signalPulseMovesJob,
+    signalPulseChartsJob,
+    signalPulseGatesJob
   } = await import("../src/workers/signal-pulse-steps.js");
 
   const first = await one<{ id: string }>(
@@ -422,6 +435,10 @@ async function runSignalPulsePipeline(client: pg.Client, engineAnalysisId: strin
   await signalPulseClusterJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_cluster")));
   await signalPulseNameSignalsJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_name_signals")));
   await signalPulseMetricsJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_metrics")));
+  await signalPulseInterpretJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_interpret")));
+  await signalPulseMovesJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_moves")));
+  await signalPulseChartsJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_charts")));
+  await signalPulseGatesJob(mockJob(engineAnalysisId, await nextStep(client, engineAnalysisId, "sp_gates")));
 }
 
 async function publishSignalPulseSmokeOutput(client: pg.Client, ids: SmokeIds) {
@@ -690,6 +707,7 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
   const topMove = moves.rows[0] ?? {};
   const meta = (analysis.rows[0]?.meta_json ?? {}) as Record<string, unknown>;
   const signalPulseMeta = (meta.signal_pulse ?? {}) as Record<string, unknown>;
+  const interpretation = (signalPulseMeta.interpretation ?? {}) as Record<string, unknown>;
   const readiness = (signalPulseMeta.readiness ?? {}) as Record<string, unknown>;
   return {
     kind: "signal_pulse",
@@ -702,9 +720,9 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
       generated_from_engine_analysis_id: ids.analysisId
     },
     executive_read: {
-      headline: topSignal.title ? `${String(topSignal.title)} concentra la prioridad del corte.` : "Todavia no hay senales suficientes.",
-      body: topSignal.volume ? `Tiene ${Number(topSignal.volume)} menciones en el periodo mas reciente y confianza ${String(topSignal.confidence ?? "baja")}.` : "Amplia cobertura antes de mover marketing.",
-      action: String(topMove.action_text ?? "Revisar senales con mayor impacto antes de mover presupuesto.")
+      headline: String(interpretation.headline ?? (topSignal.title ? `${String(topSignal.title)} concentra la prioridad del corte.` : "Todavia no hay senales suficientes.")),
+      body: String(interpretation.body ?? (topSignal.volume ? `Tiene ${Number(topSignal.volume)} menciones en el periodo mas reciente y confianza ${String(topSignal.confidence ?? "baja")}.` : "Amplia cobertura antes de mover marketing.")),
+      action: String(interpretation.action ?? topMove.action_text ?? "Revisar senales con mayor impacto antes de mover presupuesto.")
     },
     periods: periods.rows,
     signals: signals.rows,
@@ -727,6 +745,8 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
 async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outputId: string }) {
   const result = await one<{
     analysis_status: string;
+    current_step: string;
+    completed_steps: number;
     signals: number;
     periods: number;
     metrics: number;
@@ -752,6 +772,14 @@ async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outpu
     `
       SELECT
         (SELECT status FROM engine_analyses WHERE id = $1) AS analysis_status,
+        (SELECT current_step FROM engine_analyses WHERE id = $1) AS current_step,
+        (
+          SELECT COUNT(*)::int
+          FROM engine_pipeline_steps
+          WHERE engine_analysis_id = $1
+            AND step = ANY(ARRAY['sp_readiness','sp_periods','sp_cluster','sp_name_signals','sp_metrics','sp_interpret','sp_moves','sp_charts','sp_gates'])
+            AND status = 'completed'
+        ) AS completed_steps,
         (SELECT COUNT(*)::int FROM canonical_signals WHERE study_corpus_id = $2 AND methodology_slug = 'signal-pulse') AS signals,
         (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $2) AS periods,
         (SELECT COUNT(*)::int FROM signal_period_metrics WHERE study_corpus_id = $2) AS metrics,
@@ -798,6 +826,8 @@ async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outpu
 
   const failures = [
     result.analysis_status !== "needs_review" ? `analysis_status=${result.analysis_status}` : null,
+    result.current_step !== "sp_gates" ? `current_step=${result.current_step}` : null,
+    result.completed_steps !== 9 ? `completed_steps=${result.completed_steps}` : null,
     result.signals < 3 ? `signals=${result.signals}` : null,
     result.periods < 12 ? `periods=${result.periods}` : null,
     result.metrics <= 0 ? `metrics=${result.metrics}` : null,

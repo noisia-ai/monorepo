@@ -100,15 +100,24 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       [ctx.study_corpus_id]
     )).rows;
 
+    const readinessReasons = [
+      Number(coverage?.conversation_mentions ?? 0) <= 0 ? "missing_conversation" : null,
+      Number(coverage?.signal_pulse_mentions ?? 0) <= 0 ? "missing_signal_pulse_query_pack_coverage" : null,
+      Number(coverage?.performance_records ?? 0) <= 0 ? "missing_structured_performance" : null,
+      Number(coverage?.query_packs ?? 0) <= 0 ? "missing_signal_pulse_query_pack" : null
+    ].filter(Boolean);
+    const estimatedCostUsd = estimateSignalPulseRunCostUsd(Number(coverage?.signal_pulse_mentions ?? 0));
+    if (estimatedCostUsd > budgetCapUsd) readinessReasons.push("estimated_cost_exceeds_budget_cap");
     const readiness = {
       conversation_mentions: Number(coverage?.conversation_mentions ?? 0),
       signal_pulse_mentions: Number(coverage?.signal_pulse_mentions ?? 0),
       performance_records: Number(coverage?.performance_records ?? 0),
       query_packs: Number(coverage?.query_packs ?? 0),
       budget_cap_usd: budgetCapUsd,
-      estimated_cost_usd: estimateSignalPulseRunCostUsd(Number(coverage?.signal_pulse_mentions ?? 0)),
+      estimated_cost_usd: estimatedCostUsd,
       cluster_first: true,
-      status: Number(coverage?.conversation_mentions ?? 0) > 0 ? "ready" : "blocked"
+      status: readinessReasons.length === 0 ? "ready" : "blocked",
+      reasons: readinessReasons
     };
 
     await mergeMeta(engineAnalysisId, { signal_pulse: { readiness } });
@@ -121,6 +130,9 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       estimatedCostUsd: readiness.estimated_cost_usd,
       metadata: readiness
     });
+    if (readiness.status === "blocked") {
+      throw new Error(`Signal Pulse readiness blocked: ${readinessReasons.join(", ")}`);
+    }
     await markEngineStepCompleted({ pipelineStepId, resultSummary: readiness });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_periods" });
     return { ...readiness, next_step_job_id: next.jobId };
@@ -520,7 +532,7 @@ export async function signalPulseGatesJob(job: Job<SignalPulseStepJobData>) {
     await pool.query(
       `UPDATE engine_analyses
        SET status = 'needs_review',
-           current_step = 'sp_metrics',
+           current_step = 'sp_gates',
            updated_at = NOW()
        WHERE id = $1`,
       [engineAnalysisId]

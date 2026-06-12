@@ -156,6 +156,7 @@ export function buildSignalPulseLaunchPlan(args: {
   if (normalizedCoverage.performanceRecords === 0) warnings.push("Sube performance estructurada de 12 meses antes de leer paid/organic.");
   if (normalizedCoverage.queryPacks === 0) warnings.push("Materializa el query pack Signal Pulse antes de correr.");
   const estimatedCostUsd = estimateSignalPulseRunCostUsd(normalizedCoverage.signalPulseMentions);
+  if (estimatedCostUsd > budgetCapUsd) warnings.push(`El costo estimado USD ${formatMoney(estimatedCostUsd)} rebasa el tope USD ${formatMoney(budgetCapUsd)}.`);
 
   return {
     budgetCapUsd,

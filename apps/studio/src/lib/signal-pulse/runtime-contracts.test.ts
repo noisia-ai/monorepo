@@ -174,3 +174,23 @@ test("Signal Pulse launch plan blocks incomplete paid organic coverage", () => {
   assert.equal(plan.status, "blocked");
   assert.match(plan.warnings.join(" "), /performance estructurada/);
 });
+
+test("Signal Pulse launch plan blocks runs that exceed the visible budget cap", () => {
+  const plan = buildSignalPulseLaunchPlan({
+    analysisPlan: { budget_cap_usd: 0.1 },
+    targetWindowMonths: 12,
+    coverage: {
+      conversationMentions: 1300,
+      signalPulseMentions: 820,
+      performanceRecords: 144,
+      queryPacks: 3
+    }
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.estimatedCostUsd, 0.315);
+  assert.match(plan.warnings.join(" "), /rebasa el tope/);
+
+  const checklist = buildSignalPulseLaunchChecklist(plan);
+  assert.equal(checklist.find((item) => item.id === "budget")?.passed, false);
+});
