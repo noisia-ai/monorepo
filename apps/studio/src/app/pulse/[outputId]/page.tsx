@@ -527,7 +527,7 @@ function PaidOrganicPanel({ periods, performance }: { periods: JsonRecord[]; per
               <small>USD {fmtMoney(campaign.spend)} · {fmtNumber(campaign.clicks)} clicks · {formatDate(stringValue(campaign.first_seen))} - {formatDate(stringValue(campaign.last_seen))}</small>
             </div>
           )) : (
-            <PulseEmptyState title="Needs data" body="Sube performance estructurada de 12 meses para activar campaña vs señal." />
+            <PulseEmptyState title="Falta performance" body="Sube el archivo estructurado de 12 meses para comparar campañas contra señales." />
           )}
         </div>
       </section>

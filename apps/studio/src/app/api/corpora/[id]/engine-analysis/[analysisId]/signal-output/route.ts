@@ -15,6 +15,7 @@ import {
 import { attachLiveIntelligenceLinksToPayload } from "@/lib/live-intelligence/published-output";
 import { buildEngineOutputManifestForMethodology } from "@/lib/engine/methodology-options";
 import { validateEnginePublishReadiness } from "@/lib/engine/publish-guards";
+import { validateSignalPulsePublishReadiness, type SignalPulseGate } from "@/lib/signal-pulse/publish-gates";
 import { enginePublishedOutputTypeForMethodology } from "@/lib/signal-pulse/runtime-contracts";
 import { buildEngineSignalPayload, normalizeSignalManifest } from "@/lib/signal/build";
 import { SIGNAL_PAYLOAD_VERSION, type CompetitiveOwnership, type TbConfidence } from "@/lib/signal/contracts";
@@ -671,59 +672,17 @@ function signalPulseLimitations(metaJson: unknown) {
   const gates = Array.isArray(asRecord(metaJson).quality_gates) ? asRecord(metaJson).quality_gates as Array<Record<string, unknown>> : [];
   return gates
     .filter((gate) => gate.passed !== true)
-    .map((gate) => String(gate.detail ?? gate.id ?? "Limitacion pendiente"))
+    .map((gate) => String(gate.detail ?? gate.id ?? "Limitación pendiente"))
     .slice(0, 8);
 }
 
-function normalizeSignalPulseManifest(input: Record<string, unknown>, checks: Array<{ id: string; passed: boolean; detail: string }>) {
+function normalizeSignalPulseManifest(input: Record<string, unknown>, checks: SignalPulseGate[]) {
   return {
     kind: "signal_pulse",
     version: 1,
     modules: ["overview", "signals", "marketing_moves", "evidence", "corpus_view", "composer", "quality_settings"],
     quality_gates: checks,
     ...input
-  };
-}
-
-function validateSignalPulsePublishReadiness(metaJson: unknown):
-  | { ok: true; checks: Array<{ id: string; passed: boolean; detail: string }> }
-  | { ok: false; error: "signal_pulse_gates_failed" | "signal_pulse_gates_missing"; message: string; failedChecks: Array<{ id: string; detail: string }>; checks: Array<{ id: string; passed: boolean; detail: string }> } {
-  const checks = Array.isArray(asRecord(metaJson).quality_gates)
-    ? (asRecord(metaJson).quality_gates as unknown[]).map(normalizeSignalPulseGate).filter((gate): gate is { id: string; passed: boolean; detail: string } => Boolean(gate))
-    : [];
-  if (checks.length === 0) {
-    return {
-      ok: false,
-      error: "signal_pulse_gates_missing",
-      message: "Faltan quality gates de Signal Pulse antes de publicar.",
-      failedChecks: [],
-      checks
-    };
-  }
-  const blockers = new Set(["source_presence", "signal_min_evidence", "chart_data_available", "move_has_signal", "cost_within_budget", "no_invented_numbers"]);
-  const failedChecks = checks
-    .filter((gate) => blockers.has(gate.id) && !gate.passed)
-    .map((gate) => ({ id: gate.id, detail: gate.detail }));
-  if (failedChecks.length > 0) {
-    return {
-      ok: false,
-      error: "signal_pulse_gates_failed",
-      message: "Signal Pulse no puede publicarse con blockers activos.",
-      failedChecks,
-      checks
-    };
-  }
-  return { ok: true, checks };
-}
-
-function normalizeSignalPulseGate(value: unknown) {
-  const gate = asRecord(value);
-  const id = typeof gate.id === "string" ? gate.id : "";
-  if (!id) return null;
-  return {
-    id,
-    passed: gate.passed === true,
-    detail: typeof gate.detail === "string" ? gate.detail : ""
   };
 }
 

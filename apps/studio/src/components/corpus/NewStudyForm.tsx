@@ -1291,35 +1291,35 @@ function SignalPulseBriefPanel({
       <div className="study-lens-plan-intro">
         <div>
           <p className="vitals-eyebrow">Signal Pulse</p>
-          <h3>Reporte tactico mensual</h3>
+          <h3>Reporte táctico mensual</h3>
           <p>
-            Signal Pulse usa el corpus vivo para detectar senales por cluster, periodizarlas y convertirlas en moves de marketing.
-            El costo se confirma antes de correr y Claude solo nombra/interpreta clusters.
+            Signal Pulse lee la conversación viva por clusters, la compara por mes y la convierte en decisiones concretas para marketing.
+            El costo queda visible antes de correr; Claude sólo ayuda a nombrar e interpretar los clusters.
           </p>
         </div>
         <div className="study-lens-summary">
           <span>${Number(draft.runBudgetUsd || 0).toFixed(0)}</span>
-          <small>budget cap</small>
+          <small>tope de corrida</small>
         </div>
       </div>
       <div className="new-study-grid">
         <TextAreaField
           compact
-          label="Campanas o territorios activos"
+          label="Campañas o territorios activos"
           value={draft.activeCampaigns}
           onChange={(value) => onChange("activeCampaigns", value)}
           placeholder="Ej. Back to school, creators de snack, territorios de picante extremo"
         />
         <TextAreaField
           compact
-          label="Claims permitidos"
+          label="Claims que sí se pueden usar"
           value={draft.allowedClaims}
           onChange={(value) => onChange("allowedClaims", value)}
-          placeholder="Claims o temas que Marketing si puede activar"
+          placeholder="Claims o temas que Marketing sí puede activar"
         />
         <TextAreaField
           compact
-          label="Claims prohibidos / legal"
+          label="Claims prohibidos o legales"
           value={draft.prohibitedClaims}
           onChange={(value) => onChange("prohibitedClaims", value)}
           placeholder="No-go claims, riesgos regulatorios o territorios sensibles"
