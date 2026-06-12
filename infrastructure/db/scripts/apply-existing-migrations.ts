@@ -15,7 +15,8 @@ const MIGRATIONS_TO_APPLY = [
   "0030_monthly_cut_and_composer.sql",
   "0031_study_analysis_plan.sql",
   "0032_import_batch_query_pack_link.sql",
-  "0033_engine_run_mention_map.sql"
+  "0033_engine_run_mention_map.sql",
+  "0034_signal_pulse_foundation.sql"
 ];
 
 async function applyMigration(client: pg.Client, migrationPath: string) {
@@ -33,7 +34,7 @@ async function applyMigration(client: pg.Client, migrationPath: string) {
 async function main() {
   const databaseUrl = requireEnv("DATABASE_URL");
   requireSafeDatabaseWriteTarget(databaseUrl, {
-    operation: "apply existing DB migrations 0025-0033",
+    operation: "apply existing DB migrations 0025-0034",
     allowRemoteEnv: "NOISIA_DB_APPLY_EXISTING_ALLOW_REMOTE"
   });
 

@@ -29,6 +29,14 @@ export async function enqueueEngineStep(args: {
   ).rows;
   if (!stepRow) throw new Error("Could not create engine pipeline step row");
 
+  if (process.env.NOISIA_ENGINE_INLINE_SMOKE === "true") {
+    await pool.query(
+      `UPDATE engine_pipeline_steps SET bullmq_job_id = $1 WHERE id = $2`,
+      [`inline-smoke:${args.step}`, stepRow.id]
+    );
+    return { jobId: `inline-smoke:${args.step}`, pipelineStepId: stepRow.id };
+  }
+
   const job = await getEngineQueue().add(
     ENGINE_STEP_JOB_NAME[args.step],
     { engineAnalysisId: args.engineAnalysisId, pipelineStepId: stepRow.id },

@@ -85,7 +85,14 @@ async function verifySchema(client: pg.Client) {
     "mention_query_sources",
     "canonical_signals",
     "signal_observations",
-    "signal_observation_evidence"
+    "signal_observation_evidence",
+    "data_sources",
+    "source_sync_runs",
+    "report_periods",
+    "signal_period_metrics",
+    "marketing_moves",
+    "chart_aggregates",
+    "performance_records"
   ];
   const requiredIndexes = [
     "idx_engine_analyses_corpus",
@@ -96,7 +103,12 @@ async function verifySchema(client: pg.Client) {
     "idx_canonical_signals_brand",
     "idx_signal_observations_corpus",
     "uq_signal_observation_signal_tb_analysis",
-    "uq_signal_observation_signal_engine_analysis"
+    "uq_signal_observation_signal_engine_analysis_window",
+    "idx_report_periods_corpus_window",
+    "idx_signal_period_metrics_corpus_period",
+    "idx_marketing_moves_engine",
+    "idx_chart_aggregates_lookup",
+    "idx_performance_records_date"
   ];
 
   const tables = await client.query<{ table_name: string }>(

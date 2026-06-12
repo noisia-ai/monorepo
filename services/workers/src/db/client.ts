@@ -4,6 +4,13 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required.");
 }
 
+const SSL_DISABLED_VALUES = new Set(["0", "false", "no", "off", "disable", "disabled"]);
+
+function databaseSslConfig() {
+  const value = process.env.DATABASE_SSL?.trim().toLowerCase();
+  return value && SSL_DISABLED_VALUES.has(value) ? false : { rejectUnauthorized: false };
+}
+
 // TODO mejora-futura: extraer este cliente a paquete compartido con tracing,
 // retry y healthcheck para Studio + workers.
 //
@@ -17,6 +24,6 @@ if (!process.env.DATABASE_URL) {
 // the worker uses the direct host.
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: databaseSslConfig(),
   statement_timeout: 600_000
 });

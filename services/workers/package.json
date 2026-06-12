@@ -8,6 +8,7 @@
     "build": "tsc --noEmit",
     "start": "tsx src/index.ts",
     "lint": "echo \"No lint configured for workers yet\"",
+    "smoke:signal-pulse:local": "tsx scripts/smoke-signal-pulse-local.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx src/workers/*.test.ts"
   },
