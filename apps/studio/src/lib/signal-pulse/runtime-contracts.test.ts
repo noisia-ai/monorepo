@@ -7,6 +7,7 @@ import {
   buildSignalPulseStoredVisibilityConfig,
   buildSignalPulseLaunchChecklist,
   buildSignalPulseLaunchPlan,
+  buildSignalPulseRunParams,
   buildRuntimeMethodologyOptions,
   enginePublishedOutputTypeForMethodology,
   resolveSignalPulseVisibility,
@@ -193,4 +194,43 @@ test("Signal Pulse launch plan blocks runs that exceed the visible budget cap", 
 
   const checklist = buildSignalPulseLaunchChecklist(plan);
   assert.equal(checklist.find((item) => item.id === "budget")?.passed, false);
+});
+
+test("Signal Pulse launch plan honors request run params before queueing", () => {
+  const plan = buildSignalPulseLaunchPlan({
+    analysisPlan: { budget_cap_usd: 5 },
+    requestParams: { budget_cap_usd: 0.1, window_months: 6 },
+    targetWindowMonths: 12,
+    coverage: {
+      conversationMentions: 1300,
+      signalPulseMentions: 820,
+      performanceRecords: 144,
+      queryPacks: 3
+    }
+  });
+
+  assert.equal(plan.budgetCapUsd, 0.1);
+  assert.equal(plan.windowMonths, 6);
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.warnings.join(" "), /rebasa el tope/);
+});
+
+test("Signal Pulse run params are sanitized and match launch-plan precedence", () => {
+  assert.deepEqual(
+    buildSignalPulseRunParams({
+      analysisPlan: { budget_cap_usd: 5 },
+      requestParams: { budget_cap_usd: 7, window_months: 3 },
+      targetWindowMonths: 12
+    }),
+    { budget_cap_usd: 7, window_months: 3 }
+  );
+
+  assert.deepEqual(
+    buildSignalPulseRunParams({
+      analysisPlan: { budget_cap_usd: 4 },
+      requestParams: { budget_cap_usd: -1, window_months: "bad" },
+      targetWindowMonths: 9
+    }),
+    { budget_cap_usd: 4, window_months: 9 }
+  );
 });

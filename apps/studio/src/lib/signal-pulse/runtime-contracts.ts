@@ -59,6 +59,11 @@ export type SignalPulseLaunchPlan = {
   warnings: string[];
 };
 
+export type SignalPulseRunParams = {
+  budget_cap_usd: number;
+  window_months: number;
+};
+
 export type SignalPulseLaunchChecklistItem = {
   id: "conversation" | "query_pack" | "performance" | "budget";
   label: string;
@@ -137,13 +142,18 @@ export function resolveSignalPulseVisibility(args: {
 
 export function buildSignalPulseLaunchPlan(args: {
   analysisPlan?: unknown;
+  requestParams?: unknown;
   targetWindowMonths?: unknown;
   coverage?: SignalPulseLaunchCoverage | null;
 }): SignalPulseLaunchPlan {
-  const analysisPlan = asRecord(args.analysisPlan);
   const coverage = args.coverage ?? {};
-  const budgetCapUsd = positiveNumber(analysisPlan.budget_cap_usd, 5);
-  const windowMonths = positiveInteger(args.targetWindowMonths, 12);
+  const runParams = buildSignalPulseRunParams({
+    analysisPlan: args.analysisPlan,
+    requestParams: args.requestParams,
+    targetWindowMonths: args.targetWindowMonths
+  });
+  const budgetCapUsd = runParams.budget_cap_usd;
+  const windowMonths = runParams.window_months;
   const normalizedCoverage = {
     conversationMentions: wholeNumber(coverage.conversationMentions),
     signalPulseMentions: wholeNumber(coverage.signalPulseMentions),
@@ -166,6 +176,21 @@ export function buildSignalPulseLaunchPlan(args: {
     status: warnings.length === 0 ? "ready" : "blocked",
     coverage: normalizedCoverage,
     warnings
+  };
+}
+
+export function buildSignalPulseRunParams(args: {
+  analysisPlan?: unknown;
+  requestParams?: unknown;
+  targetWindowMonths?: unknown;
+}): SignalPulseRunParams {
+  const analysisPlan = asRecord(args.analysisPlan);
+  const requestParams = asRecord(args.requestParams);
+  const plannedBudgetCap = positiveNumber(analysisPlan.budget_cap_usd, 5);
+  const plannedWindowMonths = positiveInteger(args.targetWindowMonths, 12);
+  return {
+    budget_cap_usd: positiveNumber(requestParams.budget_cap_usd, plannedBudgetCap),
+    window_months: positiveInteger(requestParams.window_months ?? requestParams.target_window_months, plannedWindowMonths)
   };
 }
 

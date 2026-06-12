@@ -21,7 +21,7 @@ import { validateEngineLaunchRequest } from "@/lib/engine/launch-guards";
 import { ENGINE_BETA_METHODOLOGY_OPTIONS, buildEngineMethodologyOptions } from "@/lib/engine/methodology-options";
 import { validateEngineQueryPackCoverage } from "@/lib/engine/query-pack-validation";
 import { getEngineAnalysisQueue } from "@/lib/queue/engine-analysis";
-import { buildSignalPulseLaunchPlan } from "@/lib/signal-pulse/runtime-contracts";
+import { buildSignalPulseLaunchPlan, buildSignalPulseRunParams } from "@/lib/signal-pulse/runtime-contracts";
 
 const startEngineSchema = z.object({
   methodology_slug: z.string().min(1).optional(),
@@ -293,6 +293,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const signalPulseLaunchPlan = await loadSignalPulseLaunchPlan({
         corpusId: corpus.id,
         analysisPlan: corpus.analysisPlan,
+        requestParams: parsed.data.params,
         targetWindowMonths: corpus.targetWindowMonths
       });
       if (signalPulseLaunchPlan.status === "blocked") {
@@ -323,10 +324,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ? corpus.analysisPlan as Record<string, unknown>
       : {};
     const signalPulseParams = isSignalPulseRequested
-      ? {
-          budget_cap_usd: Number(analysisPlan.budget_cap_usd ?? parsed.data.params?.budget_cap_usd ?? 5),
-          window_months: Number(corpus.targetWindowMonths ?? parsed.data.params?.window_months ?? 12)
-        }
+      ? buildSignalPulseRunParams({
+          analysisPlan,
+          requestParams: parsed.data.params,
+          targetWindowMonths: corpus.targetWindowMonths
+        })
       : {};
     const [analysis] = await db
       .insert(engineAnalyses)
@@ -341,8 +343,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         businessQuestion: corpus.businessQuestion,
         params: {
           ...inheritedEngineParams,
-          ...signalPulseParams,
-          ...(parsed.data.params ?? {})
+          ...(parsed.data.params ?? {}),
+          ...signalPulseParams
         },
         metaJson: {
           launch: {
@@ -405,6 +407,7 @@ async function loadLatestTbMeta(corpusId: string) {
 async function loadSignalPulseLaunchPlan(args: {
   corpusId: string;
   analysisPlan: unknown;
+  requestParams?: unknown;
   targetWindowMonths: unknown;
 }) {
   const client = await pool.connect();
@@ -434,6 +437,7 @@ async function loadSignalPulseLaunchPlan(args: {
 
     return buildSignalPulseLaunchPlan({
       analysisPlan: args.analysisPlan,
+      requestParams: args.requestParams,
       targetWindowMonths: args.targetWindowMonths,
       coverage: {
         conversationMentions: coverage?.conversation_mentions,
