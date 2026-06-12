@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOrganicPaidCandidates, summarizePulsePerformance } from "./performance-summary";
+import { alignPulsePerformancePeriods, buildOrganicPaidCandidates, summarizePulsePerformance } from "./performance-summary";
 
 test("summarizePulsePerformance calculates totals and paid efficiency from structured rows", () => {
   const summary = summarizePulsePerformance({
@@ -61,6 +61,24 @@ test("summarizePulsePerformance matches performance rows by report period id", (
   assert.equal(summary.totals.impressions, 9000);
   assert.equal(summary.coverage.conversationWithoutSpend, 1);
   assert.equal(summary.coverage.periodsWithPerformance, 1);
+});
+
+test("alignPulsePerformancePeriods matches the visible rows by id or label", () => {
+  const rows = alignPulsePerformancePeriods({
+    periods: [
+      { id: "rp_1", label: "2026-01", coverage: { conversation: 10 } },
+      { id: "rp_2", label: "2026-02", coverage: { conversation: 20 } },
+      { id: "rp_3", label: "2026-03", coverage: { conversation: 30 } }
+    ],
+    performancePeriods: [
+      { label: "2026-01", spend: 10, impressions: 1000 },
+      { period_id: "rp_2", label: "wrong-label", spend: 20, impressions: 2000 }
+    ]
+  });
+
+  assert.equal(rows[0]?.performance.spend, 10);
+  assert.equal(rows[1]?.performance.spend, 20);
+  assert.deepEqual(rows[2]?.performance, {});
 });
 
 test("buildOrganicPaidCandidates ranks organic signals for bounded paid tests", () => {

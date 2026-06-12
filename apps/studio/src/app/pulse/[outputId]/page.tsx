@@ -12,7 +12,7 @@ import {
 import { Icon } from "@/components/ui/Icon";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
-import { buildOrganicPaidCandidates, summarizePulsePerformance } from "@/lib/signal-pulse/performance-summary";
+import { alignPulsePerformancePeriods, buildOrganicPaidCandidates, summarizePulsePerformance } from "@/lib/signal-pulse/performance-summary";
 
 export const dynamic = "force-dynamic";
 
@@ -464,8 +464,7 @@ function PaidOrganicPanel({ periods, performance, signals }: { periods: JsonReco
   const campaigns = arrayOfRecords(performance.campaigns);
   const summary = summarizePulsePerformance({ periods, performancePeriods });
   const organicPaidCandidates = buildOrganicPaidCandidates({ signals, campaigns, limit: 5 });
-  const byPeriod = new Map(performancePeriods.map((item) => [stringValue(item.period_id), item]));
-  const rows = periods.map((period) => ({ period, performance: byPeriod.get(stringValue(period.id)) ?? {} }));
+  const rows = alignPulsePerformancePeriods({ periods, performancePeriods });
   return (
     <div className="pulse-source-stack">
       <section className="pulse-source-panel">

@@ -77,11 +77,19 @@ export type PulsePerformanceSummary = {
   alerts: string[];
 };
 
+export type PulsePerformancePeriodAlignment = {
+  period: PulseReportPeriodInput;
+  performance: PulsePerformancePeriodInput;
+};
+
 export function summarizePulsePerformance(args: {
   periods: PulseReportPeriodInput[];
   performancePeriods: PulsePerformancePeriodInput[];
 }): PulsePerformanceSummary {
-  const performanceByKey = indexPerformancePeriods(args.performancePeriods);
+  const alignedPeriods = alignPulsePerformancePeriods({
+    periods: args.periods,
+    performancePeriods: args.performancePeriods
+  });
   const totals = {
     conversation: 0,
     spend: 0,
@@ -96,8 +104,7 @@ export function summarizePulsePerformance(args: {
   let spendWithoutConversation = 0;
   let conversationWithoutSpend = 0;
 
-  for (const period of args.periods) {
-    const performance = performanceByKey.get(stringValue(period.id)) ?? performanceByKey.get(stringValue(period.label)) ?? {};
+  for (const { period, performance } of alignedPeriods) {
     const coverage = asRecord(period.coverage);
     const conversation = numberFrom(coverage.conversation);
     const spend = numberFrom(performance.spend);
@@ -155,6 +162,17 @@ export function buildOrganicPaidCandidates(args: {
     .filter((candidate): candidate is PulseOrganicPaidCandidate & { score: number } => Boolean(candidate))
     .sort((a, b) => b.score - a.score || b.impact - a.impact || b.volume - a.volume);
   return scored.slice(0, Math.max(1, args.limit ?? 5)).map(stripCandidateScore);
+}
+
+export function alignPulsePerformancePeriods(args: {
+  periods: PulseReportPeriodInput[];
+  performancePeriods: PulsePerformancePeriodInput[];
+}): PulsePerformancePeriodAlignment[] {
+  const performanceByKey = indexPerformancePeriods(args.performancePeriods);
+  return args.periods.map((period) => ({
+    period,
+    performance: performanceByKey.get(stringValue(period.id)) ?? performanceByKey.get(stringValue(period.label)) ?? {}
+  }));
 }
 
 function indexPerformancePeriods(periods: PulsePerformancePeriodInput[]) {
