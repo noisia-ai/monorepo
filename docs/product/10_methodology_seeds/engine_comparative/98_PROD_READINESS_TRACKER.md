@@ -1,5 +1,8 @@
 # Engine Multimétodo — Prod Readiness Tracker
 
+> ⏸️ **PAUSADO (2026-06-09)** por cambio de dirección: nueva metodología en diseño.
+> Fuente de verdad para reanudar: **[Issue #2](https://github.com/noisia-ai/website/issues/2)** (estado, pendientes con checkboxes y runbook de reanudación).
+>
 > Última actualización: 2026-06-09 (sesión de estabilización con Takis).
 > Regla: nada de esta lista se considera cerrado hasta tener commit + prueba. Actualizar este doc en cada sesión.
 
