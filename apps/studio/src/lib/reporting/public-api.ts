@@ -401,6 +401,10 @@ export function resolveReportingV2Section(section: string | null | undefined): R
 }
 
 export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset) {
+  if (output.kind === "signal_pulse" || output.methodologySlug === "signal-pulse") {
+    return buildSignalPulseReportingDataset(output, dataset);
+  }
+
   const payload = asRecord(output.payload);
   const report = asRecord(payload.report);
   const metrics = asRecord(payload.metrics);
@@ -647,6 +651,143 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
       is_protagonist: Boolean(row.is_protagonist)
     };
   });
+}
+
+function buildSignalPulseReportingDataset(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset) {
+  const payload = asRecord(output.payload);
+  const report = asRecord(payload.report);
+  const executiveRead = asRecord(payload.executive_read);
+  const periods = arrayValue(payload.periods).map(asRecord);
+  const signals = arrayValue(payload.signals).map(asRecord);
+  const moves = arrayValue(payload.marketing_moves).map(asRecord);
+  const evidence = arrayValue(payload.evidence).map(asRecord);
+  const subjectName = reportSubjectName(output, report);
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser: false
+  });
+
+  if (dataset === "summary") {
+    return [
+      {
+        output_id: output.outputId,
+        report_version: output.version,
+        brand_name: subjectName,
+        methodology: output.methodologyName,
+        methodology_slug: output.methodologySlug,
+        business_question: stringValue(report.business_question),
+        headline: stringValue(executiveRead.headline) || output.headline,
+        summary: stringValue(executiveRead.body) || output.summary,
+        generated_at: stringValue(payload.generated_at) || output.generatedAt?.toISOString() || null,
+        published_at: output.publishedAt?.toISOString() ?? null,
+        corpus_total_mentions: signals.reduce((total, signal) => total + numberValue(signal.volume), 0),
+        window_start: stringValue(periods[0]?.period_start),
+        window_end: stringValue(periods.at(-1)?.period_end),
+        window_months: periods.length
+      }
+    ];
+  }
+
+  if (dataset === "kpis") {
+    return [
+      ["signals_total", "Signals total", signals.length],
+      ["moves_total", "Marketing moves", moves.length],
+      ["periods_total", "Report periods", periods.length],
+      ["evidence_total", visibility.showEvidence ? evidence.length : 0]
+    ].map(([metricKey, metricLabel, metricValue]) => ({
+      output_id: output.outputId,
+      metric_key: metricKey,
+      metric_label: metricLabel,
+      metric_value: numberValue(metricValue)
+    }));
+  }
+
+  if (dataset === "findings") {
+    return signals.map((signal) => ({
+      output_id: output.outputId,
+      finding_id: stringValue(signal.id),
+      finding_name: stringValue(signal.title),
+      polarity: stringValue(signal.polarity_bucket),
+      layer: stringValue(signal.signal_type),
+      mobility: stringValue(signal.lifecycle_state),
+      confidence: stringValue(signal.confidence),
+      frequency_mentions: numberValue(signal.volume),
+      intensity_score: numberValue(signal.impact_v1),
+      predictive_capacity: 0,
+      composite_score: numberValue(signal.impact_v1),
+      citation_count: numberValue(signal.evidence_count),
+      period_start: stringValue(periods.at(-1)?.period_start),
+      period_end: stringValue(periods.at(-1)?.period_end),
+      public_quote: ""
+    }));
+  }
+
+  if (dataset === "recommendations") {
+    return moves.map((move, index) => ({
+      output_id: output.outputId,
+      recommendation_id: stringValue(move.id),
+      finding_id: stringArray(move.signal_refs)[0] ?? "",
+      finding_ids: stringArray(move.signal_refs).join(","),
+      finding_name: stringValue(move.move_type),
+      kind: stringValue(move.move_type),
+      target_team: stringValue(move.owner_suggestion),
+      recommendation_text: stringValue(move.action_text),
+      rationale: "",
+      intervention_type: stringValue(move.timing),
+      estimated_effort: "",
+      estimated_impact: "",
+      success_signal: stringValue(move.measurement_suggestion),
+      suggested_owner: stringValue(move.owner_suggestion),
+      recommended_medium: "",
+      recommended_tone: "",
+      confidence: stringValue(move.confidence),
+      priority_rank: index + 1
+    }));
+  }
+
+  if (dataset === "time-series-monthly") {
+    return periods.map((period) => {
+      const coverage = asRecord(period.coverage);
+      return {
+        output_id: output.outputId,
+        month: stringValue(period.label),
+        mention_count: numberValue(coverage.conversation)
+      };
+    });
+  }
+
+  if (dataset === "platform-distribution") {
+    const counts = new Map<string, number>();
+    for (const period of periods) {
+      const bySource = asRecord(asRecord(period.coverage).by_source);
+      for (const [platform, count] of Object.entries(bySource)) {
+        counts.set(platform, (counts.get(platform) ?? 0) + numberValue(count));
+      }
+    }
+    const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+    return Array.from(counts.entries()).map(([platform, count]) => ({
+      output_id: output.outputId,
+      platform,
+      mention_count: count,
+      share_pct: total > 0 ? Math.round((count / total) * 10000) / 100 : 0
+    }));
+  }
+
+  if (dataset === "evidence-sample") {
+    if (!visibility.showEvidence) return [];
+    return evidence.slice(0, 80).map((row) => ({
+      output_id: output.outputId,
+      mention_id: stringValue(row.mention_id),
+      finding_id: stringValue(row.signal_id),
+      finding_name: "",
+      text: stringValue(row.quote),
+      platform: stringValue(row.platform),
+      published_at: stringValue(row.published_at),
+      is_protagonist: Boolean(row.is_protagonist)
+    }));
+  }
+
+  return [];
 }
 
 export function jsonDatasetResponse(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset, rows: Array<Record<string, unknown>>) {

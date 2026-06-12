@@ -281,6 +281,65 @@ test("public reporting uses theme name for brandless industry reports", () => {
   assert.equal(report.brand_name, "Telefonía Móvil México");
 });
 
+test("public v1 Signal Pulse datasets expose safe legacy rows", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: {},
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse", business_question: "Que movemos?" },
+      executive_read: { headline: "Mover el claim principal", body: "Hay traccion." },
+      periods: [
+        { label: "2026-05", period_start: "2026-05-01", period_end: "2026-05-31", coverage: { conversation: 42, by_source: { tiktok: 30, instagram: 12 }, performance: 18 } }
+      ],
+      signals: [{ id: "s1", title: "Confianza en entrega", signal_type: "opportunity", lifecycle_state: "accelerating", impact_v1: "71", volume: 42, evidence_count: 3, confidence: "alta" }],
+      marketing_moves: [{ id: "m1", move_type: "amplify", action_text: "Probar claim de entrega", signal_refs: ["s1"], owner_suggestion: "Brand", confidence: "alta", measurement_suggestion: "CTR" }],
+      evidence: [{ evidence_id: "e1", mention_id: "mention-1", signal_id: "s1", quote: "Llego rapido", platform: "tiktok", is_protagonist: true }],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] }
+    }
+  };
+
+  const summary = publicApi.buildReportingDataset(signalPulseOutput as never, "summary");
+  const findings = publicApi.buildReportingDataset(signalPulseOutput as never, "findings");
+  const recommendations = publicApi.buildReportingDataset(signalPulseOutput as never, "recommendations");
+  const timeline = publicApi.buildReportingDataset(signalPulseOutput as never, "time-series-monthly");
+  const summaryRow = summary[0] as Record<string, unknown>;
+  const findingRow = findings[0] as Record<string, unknown>;
+  const recommendationRow = recommendations[0] as Record<string, unknown>;
+
+  assert.equal(summaryRow.headline, "Mover el claim principal");
+  assert.equal(findingRow.finding_name, "Confianza en entrega");
+  assert.equal(recommendationRow.recommendation_text, "Probar claim de entrega");
+  assert.deepEqual(timeline, [{ output_id: "out_123", month: "2026-05", mention_count: 42 }]);
+});
+
+test("public v1 Signal Pulse evidence obeys client visibility", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: { evidence: false },
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse" },
+      periods: [],
+      signals: [],
+      marketing_moves: [],
+      evidence: [{ evidence_id: "e1", quote: "No deberia salir" }]
+    }
+  };
+
+  const evidence = publicApi.buildReportingDataset(signalPulseOutput as never, "evidence-sample");
+
+  assert.deepEqual(evidence, []);
+});
+
 test("public v2 document exposes engine methodology sections", () => {
   const engineOutput = {
     ...output,
