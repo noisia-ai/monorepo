@@ -111,6 +111,7 @@ export function EngineMethodologyBetaPanel({
   const [isStartingSelected, setIsStartingSelected] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const latest = state?.latest ?? null;
   const schemaUnavailable = state?.unavailable === true;
   const runtimeDisabled = state?.runtimeEnabled === false || (!isSignalPulseCorpus && selectedLensState?.runtimeEnabled === false);
@@ -182,6 +183,7 @@ export function EngineMethodologyBetaPanel({
   async function startAnalysis() {
     setIsStarting(true);
     setError(null);
+    setNotice(null);
     try {
       const response = await fetch(`/api/corpora/${corpusId}/engine-analysis`, {
         method: "POST",
@@ -205,6 +207,7 @@ export function EngineMethodologyBetaPanel({
   async function startSelectedLenses(force = false) {
     setIsStartingSelected(true);
     setError(null);
+    setNotice(null);
     try {
       const response = await fetch(`/api/corpora/${corpusId}/engine-analysis/selected`, {
         method: "POST",
@@ -231,6 +234,7 @@ export function EngineMethodologyBetaPanel({
     if (!latest) return;
     setIsSaving(true);
     setError(null);
+    setNotice(null);
     try {
       const response = await fetch(`/api/corpora/${corpusId}/engine-analysis/${latest.id}/signal-output`, {
         method: "POST",
@@ -246,10 +250,16 @@ export function EngineMethodologyBetaPanel({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message ?? (latest.methodologySlug === "signal-pulse" ? "No se pudo guardar Signal Pulse." : "No se pudo guardar el output engine."));
       await loadState(false);
-      if (latest.methodologySlug === "signal-pulse" && payload.output?.id) {
+      if (latest.methodologySlug === "signal-pulse" && action === "publish" && payload.output?.id) {
         router.push(`/pulse/${payload.output.id}`);
         return;
       }
+      setNotice(action === "publish"
+        ? "Reporte publicado."
+        : latest.methodologySlug === "signal-pulse"
+          ? "Draft guardado. Cuando lo publiques se abrirá el Pulse para lectura."
+          : "Draft guardado."
+      );
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar el reporte.");
@@ -475,6 +485,7 @@ export function EngineMethodologyBetaPanel({
         </div>
       ) : null}
 
+      {notice ? <p className="success-copy">{notice}</p> : null}
       {error ? <p className="error-copy">{error}</p> : null}
     </section>
   );

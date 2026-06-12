@@ -1377,6 +1377,7 @@ p {
 }
 
 .helper-copy { color: var(--neutral-10); font-size: 14px; }
+.success-copy { color: var(--signal); font-size: 14px; }
 .error-copy  { color: var(--tension);    font-size: 14px; }
 
 /* ── Buttons & links ─────────────────────────────────────── */
