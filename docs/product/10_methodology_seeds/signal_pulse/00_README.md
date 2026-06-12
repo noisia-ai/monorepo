@@ -53,8 +53,9 @@ Este paquete fue auditado contra la rama real (`codex/live-intelligence-store`).
 - `43_TECHNICAL_AUDIT_CLAUDE.md` — veredicto, 9 gaps críticos resueltos, decisiones cerradas.
 - `44_DATA_CONTRACT_AND_SCHEMA_MAPPING.md` — tablas/columnas/APIs concretas contra el schema existente.
 - `45_PRODUCTION_CUT_1.md` — alcance del primer corte que sale a prod y secuencia de PRs.
+- `46_INSIGHTS_MANAGER_JOURNEY.md` — journey end-to-end validado contra el código; cierra brief, queries, fuentes y deck.
 
-Codex: lee `34` → `43` → `44` → `45` antes que el resto.
+Codex: lee `34` → `43` → `44` → `45` → `46` antes que el resto.
 
 ## Cómo usar este paquete
 

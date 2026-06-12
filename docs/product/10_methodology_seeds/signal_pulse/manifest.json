@@ -1,9 +1,9 @@
 {
   "package": "noisia_signal_pulse_prod_spec_pack",
-  "version": "2.2-claude-audited",
+  "version": "2.3-journey-validated",
   "generated_at": "2026-06-12",
   "purpose": "Production-ready product/design/context specifications for Signal Pulse",
-  "file_count": 47,
+  "file_count": 48,
   "files": [
     "00_README.md",
     "01_EXECUTIVE_CONTEXT_DECISIONS.md",
@@ -51,7 +51,8 @@
     "manifest.json",
     "43_TECHNICAL_AUDIT_CLAUDE.md",
     "44_DATA_CONTRACT_AND_SCHEMA_MAPPING.md",
-    "45_PRODUCTION_CUT_1.md"
+    "45_PRODUCTION_CUT_1.md",
+    "46_INSIGHTS_MANAGER_JOURNEY.md"
   ],
   "screens": [
     "Overview",
