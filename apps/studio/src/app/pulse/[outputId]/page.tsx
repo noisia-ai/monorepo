@@ -31,9 +31,11 @@ export default async function PulseOutputPage({
   const signals = arrayOfRecords(payload.signals);
   const moves = arrayOfRecords(payload.marketing_moves);
   const evidence = arrayOfRecords(payload.evidence);
+  const sources = arrayOfRecords(payload.sources);
   const chartRefs = asRecord(payload.chart_refs);
   const qualityGates = arrayOfRecords(payload.quality_gates);
   const limitations = arrayValue(payload.limitations).map(String);
+  const cost = asRecord(payload.cost);
   const brandLabel = output.brandName ?? output.brandFallbackName ?? output.themeName ?? stringValue(report.title) ?? "Signal Pulse";
   const activePeriod = periods.at(-1);
   const defaultDateFrom = stringValue(periods[0]?.period_start);
@@ -76,6 +78,7 @@ export default async function PulseOutputPage({
           periods={periods.length}
           signals={signals.length}
           moves={moves.length}
+          cost={cost}
         />
         <PulseChartGrid chartRefs={chartRefs} signals={signals} periods={periods} />
         <PulseTopSignals signals={signals.slice(0, 6)} />
@@ -86,13 +89,13 @@ export default async function PulseOutputPage({
         <PulseSectionHead
           eyebrow="Señales"
           title="Qué merece atención este mes"
-          sub="Cada señal tiene volumen, impacto, confianza y evidencia. Si una lectura no tiene soporte, se ve como límite."
+          sub="Cada señal muestra volumen, impacto, confianza y evidencia. Cuando falta soporte, queda declarado como límite."
         />
         <div className="pulse-signal-library">
           {signals.length > 0 ? signals.map((signal) => (
             <SignalCard key={stringValue(signal.id)} signal={signal} />
           )) : (
-            <PulseEmptyState title="Aún no hay señales" body="Corre Signal Pulse con conversación incluida para materializar señales canónicas." />
+            <PulseEmptyState title="Aún no hay señales" body="Falta conversación suficiente para sostener una lectura publicable." />
           )}
         </div>
       </section>
@@ -107,7 +110,7 @@ export default async function PulseOutputPage({
           {moves.length > 0 ? moves.map((move) => (
             <MoveCard key={stringValue(move.id)} move={move} signals={signals} />
           )) : (
-            <PulseEmptyState title="Sin moves todavía" body="Cuando existan señales con evidencia, el engine propone acciones para claim, pauta, contenido o monitoreo." />
+            <PulseEmptyState title="Sin moves todavía" body="Cuando existan señales con evidencia, el reporte propondrá acciones para claim, pauta, contenido o monitoreo." />
           )}
         </div>
       </section>
@@ -116,13 +119,13 @@ export default async function PulseOutputPage({
         <PulseSectionHead
           eyebrow="Evidencia"
           title="Verbatims que sostienen la lectura"
-          sub="La evidencia viene de menciones ligadas a señales. Cada cita mantiene plataforma, fecha y rol dentro del pack."
+          sub="Cada cita conserva plataforma, fecha y rol dentro de la lectura."
         />
         <div className="pulse-evidence-list">
           {evidence.length > 0 ? evidence.slice(0, 80).map((item) => (
             <EvidenceRow item={item} signal={signals.find((signal) => stringValue(signal.id) === stringValue(item.signal_id))} key={stringValue(item.evidence_id)} />
           )) : (
-            <PulseEmptyState title="Falta evidencia ligada" body="Las señales no se publican como lectura fuerte hasta tener evidence refs accesibles." />
+            <PulseEmptyState title="Falta evidencia ligada" body="Las señales necesitan citas accesibles antes de presentarse como lectura fuerte." />
           )}
         </div>
       </section>
@@ -133,16 +136,16 @@ export default async function PulseOutputPage({
           title="Cobertura y huecos visibles"
           sub="El corte muestra cuándo falta performance estructurada o algún mes no es comparable."
         />
-        <SourceCoverage periods={periods} />
+        <SourceCoverage periods={periods} sources={sources} />
       </section>
 
       <section className="signal-section pulse-section" data-signal-section="quality" hidden id="quality">
         <PulseSectionHead
-          eyebrow="Quality"
-          title="Gates antes de publicar"
-          sub="Publicar certifica datos, evidencia, límites y permisos. Guardar draft no alcanza."
+          eyebrow="Calidad"
+          title="Controles antes de publicar"
+          sub="El reporte separa datos listos, límites visibles y checks pendientes antes de llegar a cliente."
         />
-        <QualityGateTable gates={qualityGates} limitations={limitations} />
+        <QualityGateTable gates={qualityGates} limitations={limitations} cost={cost} />
       </section>
     </SignalReportShell>
   );
@@ -154,7 +157,8 @@ function PulseHeader({
   action,
   periods,
   signals,
-  moves
+  moves,
+  cost
 }: {
   headline: string;
   body: string;
@@ -162,7 +166,10 @@ function PulseHeader({
   periods: number;
   signals: number;
   moves: number;
+  cost: JsonRecord;
 }) {
+  const estimatedCost = Number(cost.estimated_cost_usd ?? 0);
+  const budgetCap = Number(cost.budget_cap_usd ?? 0);
   return (
     <header className="pulse-hero">
       <div>
@@ -173,6 +180,11 @@ function PulseHeader({
       <aside className="pulse-hero-action">
         <span>Move sugerido</span>
         <strong>{action || "Revisar señales con mayor impacto antes de mover presupuesto."}</strong>
+        <div className="pulse-run-cost">
+          <span>Costo de corrida</span>
+          <strong>USD {fmtMoney(estimatedCost)}</strong>
+          <small>{budgetCap > 0 ? `Tope USD ${fmtMoney(budgetCap)}` : "Sin tope declarado"}</small>
+        </div>
       </aside>
       <div className="pulse-kpi-strip">
         <PulseKpi label="Periodos" value={periods} />
@@ -211,7 +223,7 @@ function PulseChartGrid({
         <CoverageStrip rows={coverageRows.length ? coverageRows : periods} />
       </div>
       <div className="pulse-chart pulse-chart--galaxy">
-        <ChartTitle title="Signal galaxy v1" sub="Mapa estático de señales top. Sin física hasta Cut 2." />
+        <ChartTitle title="Mapa semántico de señales" sub="Agrupa señales cercanas por lenguaje y evidencia." />
         <GalaxySvg rows={galaxyRows.length ? galaxyRows : signals} />
       </div>
     </div>
@@ -221,7 +233,7 @@ function PulseChartGrid({
 function PulseTopSignals({ signals }: { signals: JsonRecord[] }) {
   return (
     <section className="pulse-band">
-      <PulseSectionHead eyebrow="Top signals" title="Lecturas que merecen reunión" sub="Ordenadas por impacto y volumen reciente." compact />
+      <PulseSectionHead eyebrow="Señales clave" title="Lecturas que merecen decisión" sub="Ordenadas por impacto y volumen reciente." compact />
       <div className="pulse-top-list">
         {signals.map((signal, index) => (
           <div className="pulse-top-row" key={stringValue(signal.id)}>
@@ -238,7 +250,7 @@ function PulseTopSignals({ signals }: { signals: JsonRecord[] }) {
 function PulseMovesPreview({ moves }: { moves: JsonRecord[] }) {
   return (
     <section className="pulse-band">
-      <PulseSectionHead eyebrow="Next moves" title="Qué haría Marketing después" sub="Acciones cortas, con medición y límite cuando la confianza es baja." compact />
+      <PulseSectionHead eyebrow="Siguientes moves" title="Qué haría Marketing después" sub="Acciones cortas, con medición y límite cuando la confianza es baja." compact />
       <div className="pulse-move-preview">
         {moves.map((move) => (
           <article key={stringValue(move.id)}>
@@ -260,7 +272,7 @@ function SignalCard({ signal }: { signal: JsonRecord }) {
         <span className="pulse-state">{labelLifecycle(stringValue(signal.lifecycle_state))}</span>
         <strong>{stringValue(signal.title)}</strong>
       </div>
-      <p>{stringValue(signal.description) || stringValue(dimensions.marketing_read) || "Señal materializada desde conversación con evidencia ligada."}</p>
+      <p>{stringValue(signal.description) || stringValue(dimensions.marketing_read) || "Señal construida desde conversación con evidencia ligada."}</p>
       <dl>
         <div><dt>Impacto</dt><dd>{fmtNumber(signal.impact_v1)}</dd></div>
         <div><dt>Volumen</dt><dd>{fmtNumber(signal.volume)}</dd></div>
@@ -304,38 +316,65 @@ function EvidenceRow({ item, signal }: { item: JsonRecord; signal?: JsonRecord }
   );
 }
 
-function SourceCoverage({ periods }: { periods: JsonRecord[] }) {
+function SourceCoverage({ periods, sources }: { periods: JsonRecord[]; sources: JsonRecord[] }) {
   return (
-    <div className="pulse-source-table">
-      {periods.map((period) => {
-        const coverage = asRecord(period.coverage);
-        return (
-          <div className="pulse-source-row" key={stringValue(period.id)}>
-            <strong>{stringValue(period.label)}</strong>
-            <span>{fmtNumber(coverage.conversation)} conversación</span>
-            <span>{fmtNumber(coverage.performance)} performance</span>
-            <small>{period.comparable === false ? "No comparable" : stringValue(period.confidence) || "comparable"}</small>
-          </div>
-        );
-      })}
+    <div className="pulse-source-stack">
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Conectores" title="Fuentes estructuradas" sub="Performance entra como registros, no como texto de contexto." compact />
+        <div className="pulse-source-cards">
+          {sources.length > 0 ? sources.map((source) => (
+            <article key={stringValue(source.id)}>
+              <span>{stringValue(source.source_type) || "source"}</span>
+              <strong>{stringValue(source.name)}</strong>
+              <p>{stringValue(source.provider)} · {stringValue(source.connection_method)} · {stringValue(source.sync_status) || stringValue(source.status)}</p>
+              <small>
+                {formatDate(stringValue(source.coverage_start))} - {formatDate(stringValue(source.coverage_end))}
+                {" · "}
+                {fmtNumber(source.records_valid)} filas válidas
+              </small>
+            </article>
+          )) : (
+            <PulseEmptyState title="Sin fuentes estructuradas" body="Este corte no tiene performance registrada." />
+          )}
+        </div>
+      </section>
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Periodos" title="Comparabilidad mensual" sub="Conversación y performance por mes disponible." compact />
+        <div className="pulse-source-table">
+          {periods.map((period) => {
+            const coverage = asRecord(period.coverage);
+            return (
+              <div className="pulse-source-row" key={stringValue(period.id)}>
+                <strong>{stringValue(period.label)}</strong>
+                <span>{fmtNumber(coverage.conversation)} conversación</span>
+                <span>{fmtNumber(coverage.performance)} performance</span>
+                <small>{period.comparable === false ? "No comparable" : stringValue(period.confidence) || "comparable"}</small>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
 
-function QualityGateTable({ gates, limitations }: { gates: JsonRecord[]; limitations: string[] }) {
+function QualityGateTable({ gates, limitations, cost }: { gates: JsonRecord[]; limitations: string[]; cost: JsonRecord }) {
+  const estimatedCost = Number(cost.estimated_cost_usd ?? 0);
+  const budgetCap = Number(cost.budget_cap_usd ?? 0);
   return (
     <div className="pulse-quality-grid">
       <div className="pulse-gate-list">
         {gates.map((gate) => (
           <div className="pulse-gate-row" data-passed={gate.passed === true} key={stringValue(gate.id)}>
             <Icon name={gate.passed === true ? "check" : "alert"} size={15} />
-            <strong>{stringValue(gate.id).replace(/_/g, " ")}</strong>
+            <strong>{labelQualityGate(stringValue(gate.id))}</strong>
             <span>{stringValue(gate.detail)}</span>
           </div>
         ))}
       </div>
       <aside className="pulse-limitations">
         <span>Límites visibles</span>
+        <p>Costo estimado: USD {fmtMoney(estimatedCost)}{budgetCap > 0 ? ` de USD ${fmtMoney(budgetCap)}` : ""}.</p>
         {limitations.length > 0 ? limitations.map((item) => <p key={item}>{item}</p>) : <p>Sin blockers visibles en este corte.</p>}
       </aside>
     </div>
@@ -412,7 +451,7 @@ function GalaxySvg({ rows }: { rows: JsonRecord[] }) {
     size: Number(row.size ?? 10)
   }));
   return (
-    <svg className="pulse-galaxy" role="img" aria-label="Mapa estático de señales" viewBox="0 0 100 100">
+    <svg className="pulse-galaxy" role="img" aria-label="Mapa semántico de señales" viewBox="0 0 100 100">
       {nodes.map((node, index) => (
         <g key={node.id}>
           <circle cx={clamp(node.x, 6, 94)} cy={clamp(node.y, 6, 94)} r={clamp(node.size / 3, 2.5, 10)} />
@@ -505,6 +544,21 @@ function labelLifecycle(value: string) {
   return labels[value] ?? "Observada";
 }
 
+function labelQualityGate(value: string) {
+  const labels: Record<string, string> = {
+    source_presence: "Fuentes presentes",
+    period_coverage: "Periodos listos",
+    period_comparability: "Meses comparables",
+    signal_min_evidence: "Evidencia ligada",
+    chart_data_available: "Charts con datos",
+    move_has_signal: "Moves con señal",
+    cost_within_budget: "Costo en budget",
+    no_invented_numbers: "Números calculados",
+    humanizer_passed: "Copy publicable"
+  };
+  return labels[value] ?? value.replace(/_/g, " ");
+}
+
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
@@ -524,6 +578,11 @@ function stringValue(value: unknown) {
 function fmtNumber(value: unknown) {
   const number = Number(value ?? 0);
   return new Intl.NumberFormat("es-MX", { maximumFractionDigits: number >= 10 ? 0 : 1 }).format(Number.isFinite(number) ? number : 0);
+}
+
+function fmtMoney(value: unknown) {
+  const number = Number(value ?? 0);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4, minimumFractionDigits: number > 0 && number < 1 ? 4 : 2 }).format(Number.isFinite(number) ? number : 0);
 }
 
 function formatDate(value: string) {

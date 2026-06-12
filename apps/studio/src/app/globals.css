@@ -46,7 +46,7 @@
   max-width: 920px;
   margin: 0;
   color: #101828;
-  font-size: clamp(34px, 4vw, 58px);
+  font-size: 54px;
   line-height: 0.98;
   letter-spacing: 0;
 }
@@ -95,6 +95,24 @@
   color: #172033;
   font-size: 22px;
   line-height: 1.18;
+}
+
+.pulse-run-cost {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid rgba(15, 23, 42, 0.1);
+  padding-top: 16px;
+}
+
+.pulse-run-cost strong {
+  color: #155e75;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 18px;
+}
+
+.pulse-run-cost small {
+  color: #667085;
+  font-size: 12px;
 }
 
 .pulse-kpi-strip {
@@ -268,6 +286,54 @@
 .pulse-source-table,
 .pulse-gate-list {
   display: grid;
+}
+
+.pulse-source-stack {
+  display: grid;
+  gap: 24px;
+}
+
+.pulse-source-panel {
+  min-width: 0;
+}
+
+.pulse-source-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pulse-source-cards article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 18px;
+}
+
+.pulse-source-cards span {
+  width: fit-content;
+  border: 1px solid rgba(21, 94, 117, 0.2);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #155e75;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pulse-source-cards strong {
+  color: #101828;
+  font-size: 17px;
+}
+
+.pulse-source-cards p,
+.pulse-source-cards small {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .pulse-top-row {
@@ -462,8 +528,13 @@
   .pulse-quality-grid,
   .pulse-move-preview,
   .pulse-signal-library,
-  .pulse-move-board {
+  .pulse-move-board,
+  .pulse-source-cards {
     grid-template-columns: 1fr;
+  }
+
+  .pulse-hero h1 {
+    font-size: 40px;
   }
 
   .pulse-top-row,
@@ -475,6 +546,22 @@
 
   .pulse-evidence-row small {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .pulse-hero h1 {
+    font-size: 32px;
+  }
+
+  .pulse-kpi-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .pulse-kpi-strip div + div {
+    border-left: 0;
+    border-top: 1px solid rgba(15, 23, 42, 0.1);
+    padding-left: 0;
   }
 }
 

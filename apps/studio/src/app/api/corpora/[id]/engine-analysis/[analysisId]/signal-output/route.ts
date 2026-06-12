@@ -420,7 +420,7 @@ async function buildSignalPulsePublishedPayload(
   analysis: EngineAnalysisRow,
   corpus: NonNullable<Awaited<ReturnType<typeof getCorpusForUser>>>
 ) {
-  const [periods, signals, moves, charts, evidence, cost] = await Promise.all([
+  const [periods, signals, moves, charts, evidence, sources, cost] = await Promise.all([
     pool.query(
       `SELECT id::text, label, period_start::text, period_end::text, coverage, comparable, confidence, known_gaps
        FROM report_periods
@@ -502,6 +502,39 @@ async function buildSignalPulsePublishedPayload(
       [corpus.id, analysis.id]
     ),
     pool.query(
+      `
+        SELECT
+          ds.id::text,
+          ds.source_type,
+          ds.provider,
+          ds.connection_method,
+          ds.name,
+          ds.status,
+          ds.visibility,
+          ds.mapping_version,
+          ds.role,
+          latest_sync.status AS sync_status,
+          latest_sync.records_total,
+          latest_sync.records_valid,
+          latest_sync.records_duplicate,
+          latest_sync.records_failed,
+          latest_sync.coverage_start::text,
+          latest_sync.coverage_end::text,
+          latest_sync.finished_at::text
+        FROM data_sources ds
+        LEFT JOIN LATERAL (
+          SELECT ssr.*
+          FROM source_sync_runs ssr
+          WHERE ssr.data_source_id = ds.id
+          ORDER BY ssr.created_at DESC
+          LIMIT 1
+        ) latest_sync ON true
+        WHERE ds.study_corpus_id = $1
+        ORDER BY ds.source_type, ds.created_at
+      `,
+      [corpus.id]
+    ),
+    pool.query(
       `SELECT COALESCE(SUM(estimated_cost_usd), 0)::text AS estimated_cost_usd
        FROM engine_cost_events
        WHERE engine_analysis_id = $1`,
@@ -527,6 +560,7 @@ async function buildSignalPulsePublishedPayload(
     marketing_moves: moves.rows,
     chart_refs: chartMap,
     evidence: evidence.rows,
+    sources: sources.rows,
     quality_gates: Array.isArray((analysis.meta_json ?? {}).quality_gates) ? (analysis.meta_json ?? {}).quality_gates : [],
     cost: {
       estimated_cost_usd: Number(cost.rows[0]?.estimated_cost_usd ?? 0),
