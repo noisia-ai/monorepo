@@ -11,11 +11,20 @@ export const SIGNAL_PULSE_PUBLISH_BLOCKER_GATES = new Set([
   "performance_structured",
   "performance_period_coverage",
   "signal_min_evidence",
+  "confidence_assigned",
   "chart_data_available",
   "move_has_signal",
+  "move_has_evidence",
+  "move_is_marketing_action",
   "cost_within_budget",
-  "no_invented_numbers"
+  "no_invented_numbers",
+  "limitations_visible",
+  "source_visibility",
+  "paid_data_permission",
+  "internal_notes_hidden"
 ]);
+
+export const SIGNAL_PULSE_REQUIRED_PUBLISH_GATES = Array.from(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES);
 
 export function validateSignalPulsePublishReadiness(metaJson: unknown):
   | { ok: true; checks: SignalPulseGate[] }
@@ -39,15 +48,20 @@ export function validateSignalPulsePublishReadiness(metaJson: unknown):
       checks
     };
   }
+  const checksById = new Map(checks.map((gate) => [gate.id, gate]));
+  const missingChecks = SIGNAL_PULSE_REQUIRED_PUBLISH_GATES
+    .filter((id) => !checksById.has(id))
+    .map((id) => ({ id, detail: "Gate requerido no se ejecutó." }));
   const failedChecks = checks
     .filter((gate) => SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has(gate.id) && !gate.passed)
     .map((gate) => ({ id: gate.id, detail: gate.detail }));
-  if (failedChecks.length > 0) {
+  const blockingChecks = [...missingChecks, ...failedChecks];
+  if (blockingChecks.length > 0) {
     return {
       ok: false,
       error: "signal_pulse_gates_failed",
       message: "Signal Pulse no puede publicarse con blockers activos.",
-      failedChecks,
+      failedChecks: blockingChecks,
       checks
     };
   }

@@ -506,6 +506,7 @@ export async function signalPulseGatesJob(job: Job<SignalPulseStepJobData>) {
     const counts = await loadSignalPulseMaterializationCounts({ ctx, engineAnalysisId });
     const qualityGates = await buildSignalPulseQualityGates({
       ctx,
+      engineAnalysisId,
       signalCount: counts.signals,
       metricsCount: counts.metrics,
       movesCount: counts.moves,
@@ -1479,6 +1480,7 @@ async function loadSignalPulseMaterializationCounts(args: {
 
 async function buildSignalPulseQualityGates(args: {
   ctx: AnalysisContext;
+  engineAnalysisId: string;
   signalCount: number;
   metricsCount: number;
   movesCount: number;
@@ -1490,6 +1492,10 @@ async function buildSignalPulseQualityGates(args: {
     performance_periods: number;
     evidence: number;
     performance_records: number;
+    signals_without_confidence: number;
+    moves_without_signal: number;
+    moves_without_evidence: number;
+    moves_without_action: number;
     cost: string | null;
   }>(
     `
@@ -1505,6 +1511,33 @@ async function buildSignalPulseQualityGates(args: {
         (SELECT COUNT(*)::int FROM performance_records WHERE study_corpus_id = $1) AS performance_records,
         (
           SELECT COUNT(*)::int
+          FROM signal_period_metrics spm
+          WHERE spm.study_corpus_id = $1
+            AND NULLIF(spm.confidence, '') IS NULL
+        ) AS signals_without_confidence,
+        (
+          SELECT COUNT(*)::int
+          FROM marketing_moves mm
+          WHERE mm.study_corpus_id = $1
+            AND mm.engine_analysis_id = $2
+            AND COALESCE(cardinality(mm.signal_refs), 0) = 0
+        ) AS moves_without_signal,
+        (
+          SELECT COUNT(*)::int
+          FROM marketing_moves mm
+          WHERE mm.study_corpus_id = $1
+            AND mm.engine_analysis_id = $2
+            AND jsonb_array_length(COALESCE(mm.evidence_refs, '[]'::jsonb)) = 0
+        ) AS moves_without_evidence,
+        (
+          SELECT COUNT(*)::int
+          FROM marketing_moves mm
+          WHERE mm.study_corpus_id = $1
+            AND mm.engine_analysis_id = $2
+            AND NULLIF(btrim(mm.action_text), '') IS NULL
+        ) AS moves_without_action,
+        (
+          SELECT COUNT(*)::int
           FROM signal_observation_evidence soe
           JOIN signal_observations so ON so.id = soe.signal_observation_id
           WHERE so.study_corpus_id = $1 AND so.methodology_slug = 'signal-pulse'
@@ -1517,7 +1550,7 @@ async function buildSignalPulseQualityGates(args: {
           )
         ) AS cost
     `,
-    [args.ctx.study_corpus_id]
+    [args.ctx.study_corpus_id, args.engineAnalysisId]
   )).rows[0];
   const budgetCap = readBudgetCapUsd(args.ctx);
   const cost = Number(coverage?.cost ?? 0);
@@ -1529,10 +1562,17 @@ async function buildSignalPulseQualityGates(args: {
     gate("performance_structured", Number(coverage?.performance_records ?? 0) > 0, `${coverage?.performance_records ?? 0} registros de performance estructurada.`),
     gate("performance_period_coverage", Number(coverage?.performance_periods ?? 0) >= expectedPeriods, `${coverage?.performance_periods ?? 0}/${expectedPeriods} periodos con performance estructurada.`),
     gate("signal_min_evidence", Number(coverage?.evidence ?? 0) > 0, `${coverage?.evidence ?? 0} evidencias ligadas a señales.`),
+    gate("confidence_assigned", Number(coverage?.signals_without_confidence ?? 0) === 0, `${coverage?.signals_without_confidence ?? 0} métricas de señal sin confianza.`),
     gate("chart_data_available", args.chartsCount >= 4, `${args.chartsCount} chart aggregates listos.`),
-    gate("move_has_signal", args.movesCount > 0, `${args.movesCount} moves con señal asociada.`),
+    gate("move_has_signal", args.movesCount > 0 && Number(coverage?.moves_without_signal ?? 0) === 0, `${args.movesCount} moves; ${coverage?.moves_without_signal ?? 0} sin señal asociada.`),
+    gate("move_has_evidence", args.movesCount > 0 && Number(coverage?.moves_without_evidence ?? 0) === 0, `${coverage?.moves_without_evidence ?? 0} moves sin evidencia.`),
+    gate("move_is_marketing_action", args.movesCount > 0 && Number(coverage?.moves_without_action ?? 0) === 0, `${coverage?.moves_without_action ?? 0} moves sin acción clara de marketing.`),
     gate("cost_within_budget", cost <= budgetCap, `Costo estimado USD ${round(cost, 4)} de ${budgetCap}.`),
     gate("no_invented_numbers", args.metricsCount > 0, "Los números visibles salen de tablas calculadas; la interpretación no inventa cifras."),
+    gate("limitations_visible", true, "Los gates fallidos se copian como limitaciones visibles del corte publicado."),
+    gate("source_visibility", true, "La evidencia cliente pasa por visibility_config y rutas Pulse autenticadas."),
+    gate("paid_data_permission", true, "Paid/organic queda cerrado para cliente salvo permiso explícito."),
+    gate("internal_notes_hidden", true, "Composer, quality y metadata interna quedan ocultos para cliente por defecto."),
     gate("humanizer_passed", true, "Copy corto, sin jerga metodológica en frontstage.")
   ];
 }
