@@ -484,7 +484,7 @@ async function publishSignalPulseSmokeOutput(client: pg.Client, ids: SmokeIds) {
 }
 
 async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
-  const [analysis, corpus, periods, signals, moves, charts, evidence, sources, cost] = await Promise.all([
+  const [analysis, corpus, periods, signals, moves, charts, evidence, sources, performance, cost] = await Promise.all([
     q(client, `SELECT id::text, meta_json FROM engine_analyses WHERE id = $1`, [ids.analysisId]),
     q(client, `SELECT id::text, name, business_question FROM study_corpora WHERE id = $1`, [ids.corpusId]),
     q(
@@ -607,6 +607,79 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
     ),
     q(
       client,
+      `
+        WITH period_performance AS (
+          SELECT
+            rp.id::text AS period_id,
+            rp.label,
+            rp.period_start::text,
+            rp.period_end::text,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.reach), 0)::bigint AS reach,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.video_views), 0)::bigint AS video_views,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            COALESCE(SUM(pr.conversions), 0)::float AS conversions,
+            COUNT(DISTINCT pr.external_id)::int AS entities,
+            COUNT(pr.id)::int AS records
+          FROM report_periods rp
+          LEFT JOIN performance_records pr
+            ON pr.study_corpus_id = rp.study_corpus_id
+           AND pr.record_date >= rp.period_start
+           AND pr.record_date <= rp.period_end
+          WHERE rp.study_corpus_id = $1
+            AND rp.granularity = 'month'
+          GROUP BY rp.id, rp.label, rp.period_start, rp.period_end
+          ORDER BY rp.period_start
+        ),
+        campaign_rows AS (
+          SELECT
+            pr.external_id,
+            COALESCE(pr.entity_name, pr.external_id) AS entity_name,
+            pr.entity_kind,
+            pr.platform,
+            pr.channel,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            MIN(pr.record_date)::text AS first_seen,
+            MAX(pr.record_date)::text AS last_seen,
+            COUNT(*)::int AS records
+          FROM performance_records pr
+          WHERE pr.study_corpus_id = $1
+          GROUP BY pr.external_id, pr.entity_name, pr.entity_kind, pr.platform, pr.channel
+          ORDER BY COALESCE(SUM(pr.spend), 0) DESC, COALESCE(SUM(pr.impressions), 0) DESC
+          LIMIT 40
+        ),
+        creative_rows AS (
+          SELECT
+            pr.creative_text,
+            pr.platform,
+            pr.channel,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            COUNT(*)::int AS records
+          FROM performance_records pr
+          WHERE pr.study_corpus_id = $1
+            AND NULLIF(trim(pr.creative_text), '') IS NOT NULL
+          GROUP BY pr.creative_text, pr.platform, pr.channel
+          ORDER BY COALESCE(SUM(pr.impressions), 0) DESC, COALESCE(SUM(pr.engagement), 0) DESC
+          LIMIT 30
+        )
+        SELECT jsonb_build_object(
+          'periods', COALESCE((SELECT jsonb_agg(period_performance) FROM period_performance), '[]'::jsonb),
+          'campaigns', COALESCE((SELECT jsonb_agg(campaign_rows) FROM campaign_rows), '[]'::jsonb),
+          'creatives', COALESCE((SELECT jsonb_agg(creative_rows) FROM creative_rows), '[]'::jsonb)
+        ) AS payload
+      `,
+      [ids.corpusId]
+    ),
+    q(
+      client,
       `SELECT COALESCE(SUM(estimated_cost_usd), 0)::text AS estimated_cost_usd
        FROM engine_cost_events
        WHERE engine_analysis_id = $1`,
@@ -639,6 +712,7 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
     chart_refs: Object.fromEntries(charts.rows.map((row) => [String(row.chart_key), row.payload])),
     evidence: evidence.rows,
     sources: sources.rows,
+    performance: performance.rows[0]?.payload ?? { periods: [], campaigns: [], creatives: [] },
     quality_gates: Array.isArray(meta.quality_gates) ? meta.quality_gates : [],
     cost: {
       estimated_cost_usd: Number(cost.rows[0]?.estimated_cost_usd ?? 0),
@@ -669,6 +743,9 @@ async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outpu
     payload_moves: number;
     payload_charts: number;
     payload_evidence: number;
+    payload_performance_periods: number;
+    payload_performance_campaigns: number;
+    payload_performance_creatives: number;
     failed_gates: number;
   }>(
     client,
@@ -706,6 +783,9 @@ async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outpu
           WHERE po.id = $3
         ) AS payload_charts,
         (SELECT jsonb_array_length(COALESCE(payload->'evidence', '[]'::jsonb))::int FROM published_outputs WHERE id = $3) AS payload_evidence,
+        (SELECT jsonb_array_length(COALESCE(payload->'performance'->'periods', '[]'::jsonb))::int FROM published_outputs WHERE id = $3) AS payload_performance_periods,
+        (SELECT jsonb_array_length(COALESCE(payload->'performance'->'campaigns', '[]'::jsonb))::int FROM published_outputs WHERE id = $3) AS payload_performance_campaigns,
+        (SELECT jsonb_array_length(COALESCE(payload->'performance'->'creatives', '[]'::jsonb))::int FROM published_outputs WHERE id = $3) AS payload_performance_creatives,
         (
           SELECT COUNT(*)::int
           FROM engine_analyses ea,
@@ -734,6 +814,9 @@ async function verifySignalPulseSmoke(client: pg.Client, ids: SmokeIds & { outpu
     result.payload_moves <= 0 ? `payload_moves=${result.payload_moves}` : null,
     result.payload_charts < 4 ? `payload_charts=${result.payload_charts}` : null,
     result.payload_evidence <= 0 ? `payload_evidence=${result.payload_evidence}` : null,
+    result.payload_performance_periods < 12 ? `payload_performance_periods=${result.payload_performance_periods}` : null,
+    result.payload_performance_campaigns <= 0 ? `payload_performance_campaigns=${result.payload_performance_campaigns}` : null,
+    result.payload_performance_creatives <= 0 ? `payload_performance_creatives=${result.payload_performance_creatives}` : null,
     result.failed_gates > 0 ? `failed_gates=${result.failed_gates}` : null
   ].filter(Boolean);
 
