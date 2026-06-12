@@ -78,13 +78,38 @@ type SelectedLensState = {
   statuses: SelectedLensStatus[];
 };
 
-export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId: string; corpusName: string }) {
+const SIGNAL_PULSE_OPTION: EngineMethodologyOption = {
+  slug: "signal-pulse",
+  label: "Signal Pulse",
+  shortLabel: "Signal Pulse",
+  priority: "SP",
+  runtimeKind: "engine",
+  seeded: true,
+  status: "beta",
+  version: "0.1",
+  runnable: true
+};
+
+export function EngineMethodologyBetaPanel({
+  corpusId,
+  corpusName,
+  primaryMethodologySlug
+}: {
+  corpusId: string;
+  corpusName: string;
+  primaryMethodologySlug?: string | null;
+}) {
   const router = useRouter();
   const [state, setState] = useState<EngineState | null>(null);
   const [selectedLensState, setSelectedLensState] = useState<SelectedLensState | null>(null);
   const fallbackOptions = useMemo(() => buildEngineMethodologyOptions(), []);
-  const methodologyOptions = state?.methodologyOptions?.length ? state.methodologyOptions : fallbackOptions;
-  const [methodologySlug, setMethodologySlug] = useState(getDefaultEngineMethodologySlug(fallbackOptions));
+  const isSignalPulseCorpus = primaryMethodologySlug === "signal-pulse";
+  const methodologyOptions = useMemo(() => {
+    const base = state?.methodologyOptions?.length ? state.methodologyOptions : fallbackOptions;
+    if (!isSignalPulseCorpus) return base;
+    return [SIGNAL_PULSE_OPTION, ...base.filter((option) => option.slug !== "signal-pulse")];
+  }, [fallbackOptions, isSignalPulseCorpus, state?.methodologyOptions]);
+  const [methodologySlug, setMethodologySlug] = useState(isSignalPulseCorpus ? "signal-pulse" : getDefaultEngineMethodologySlug(fallbackOptions));
   const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
   const [isStartingSelected, setIsStartingSelected] = useState(false);
@@ -130,6 +155,10 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
     if (!selectedMethodology || selectedMethodology.runnable) return;
     setMethodologySlug(getDefaultEngineMethodologySlug(methodologyOptions));
   }, [methodologyOptions, selectedMethodology]);
+
+  useEffect(() => {
+    if (isSignalPulseCorpus) setMethodologySlug("signal-pulse");
+  }, [isSignalPulseCorpus]);
 
   async function loadState(showSpinner = true) {
     if (showSpinner) setIsLoading(true);
@@ -219,6 +248,10 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message ?? "No se pudo guardar el output engine.");
       await loadState(false);
+      if (latest.methodologySlug === "signal-pulse" && payload.output?.id) {
+        router.push(`/pulse/${payload.output.id}`);
+        return;
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar el output engine.");
@@ -240,15 +273,17 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
       <header>
         <div>
           <p className="eyebrow">Engine beta</p>
-          <h2>Panel técnico de metodologías</h2>
+          <h2>{isSignalPulseCorpus ? "Signal Pulse runtime" : "Panel técnico de metodologías"}</h2>
           <p>
-            T&B corre primero en el flujo normal. Al terminar, los lentes seleccionados en el wizard se lanzan sobre el
-            corpus aprobado; este panel queda para monitorear, revisar y reintentar sin repetir SentiOne.
+            {isSignalPulseCorpus
+              ? "Corre el pipeline cluster-first, confirma costo contra budget cap y publica el reporte táctico mensual."
+              : "T&B corre primero en el flujo normal. Al terminar, los lentes seleccionados en el wizard se lanzan sobre el corpus aprobado; este panel queda para monitorear, revisar y reintentar sin repetir SentiOne."}
           </p>
         </div>
         <span>{isLoading ? "cargando" : progressLabel}</span>
       </header>
 
+      {!isSignalPulseCorpus && (
       <div className="engine-selected-lenses">
         <div className="engine-selected-lenses__head">
           <div>
@@ -292,6 +327,7 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
           </div>
         ) : null}
       </div>
+      )}
 
       <div className="engine-beta-controls">
         <label>
@@ -306,7 +342,7 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
         </label>
         <button className="wizard-cta" disabled={isLoading || isStarting || schemaUnavailable || runtimeDisabled || methodologyNotRunnable} onClick={startAnalysis} type="button">
           {isStarting ? <Icon name="spinner" size={16} /> : <Icon name="play" size={16} />}
-          {runtimeDisabled ? "Runtime off" : methodologyNotRunnable ? "Not runnable" : "Run beta lens"}
+          {runtimeDisabled ? "Runtime off" : methodologyNotRunnable ? "Not runnable" : isSignalPulseCorpus ? "Correr Signal Pulse" : "Run beta lens"}
         </button>
       </div>
 
@@ -373,7 +409,7 @@ export function EngineMethodologyBetaPanel({ corpusId, corpusName }: { corpusId:
             </button>
             <button className="wizard-cta" disabled={isSaving} onClick={() => saveOutput("publish")} type="button">
               {isSaving ? <Icon name="spinner" size={16} /> : <Icon name="play" size={16} />}
-              Publicar beta Signal
+              {latest.methodologySlug === "signal-pulse" ? "Publicar Pulse" : "Publicar beta Signal"}
             </button>
           </div>
         </div>

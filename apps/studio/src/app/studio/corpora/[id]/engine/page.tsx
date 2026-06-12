@@ -32,7 +32,8 @@ export default async function CorpusEnginePage({
   const latestAnalysis = await getTbAnalysisForCorpus(corpus.id);
   const entities = await listCorpusEntitiesForCorpus(corpus.id);
   const brand = corpus.brandId ? await getBrandDetailForUser(session.appUser, corpus.brandId) : null;
-  const showEngineBeta = process.env.NOISIA_SHOW_ENGINE_BETA_PANEL === "true" || query.engineBeta === "1";
+  const isSignalPulseCorpus = corpus.methodologySlug === "signal-pulse";
+  const showEngineBeta = isSignalPulseCorpus || process.env.NOISIA_SHOW_ENGINE_BETA_PANEL === "true" || query.engineBeta === "1";
   const selectedLensCount = normalizeStudyAnalysisPlan(corpus.analysisPlan, corpus.methodologySlug ?? undefined).selected_lenses.length;
 
   return (
@@ -58,17 +59,20 @@ export default async function CorpusEnginePage({
         competitors={brand?.competitors ?? []}
         entities={entities}
       />
-      <TbAnalysisRunPanel
-        corpusId={corpus.id}
-        corpusApproved={state.isApproved}
-        includedCount={state.corpus.included}
-        assessment={state.assessment as never}
-        latestState={latestAnalysis}
-      />
+      {!isSignalPulseCorpus && (
+        <TbAnalysisRunPanel
+          corpusId={corpus.id}
+          corpusApproved={state.isApproved}
+          includedCount={state.corpus.included}
+          assessment={state.assessment as never}
+          latestState={latestAnalysis}
+        />
+      )}
       {showEngineBeta ? (
         <EngineMethodologyBetaPanel
           corpusId={corpus.id}
           corpusName={corpus.name ?? corpus.brandName ?? corpus.themeName ?? "Corpus"}
+          primaryMethodologySlug={corpus.methodologySlug}
         />
       ) : (
         <section className="engine-technical-entry">
