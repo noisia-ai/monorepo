@@ -134,6 +134,44 @@ const steps = [
 const LAST_STEP_INDEX = steps.length - 1;
 const MAX_KNOWLEDGE_FILES = 20;
 const KNOWLEDGE_ACCEPT = ".xlsx,.xls,.csv,.tsv,.txt,.json,.md,text/plain,text/csv,application/json,text/markdown,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const PERFORMANCE_ACCEPT = ".csv,text/csv,application/vnd.ms-excel";
+const PERFORMANCE_MAPPING_FIELDS = [
+  ["record_date", "Fecha"],
+  ["external_id", "ID"],
+  ["entity_name", "Nombre"],
+  ["entity_kind", "Nivel"],
+  ["platform", "Plataforma"],
+  ["channel", "Paid / organic"],
+  ["spend", "Spend"],
+  ["impressions", "Impresiones"],
+  ["reach", "Reach"],
+  ["clicks", "Clicks"],
+  ["engagement", "Engagement"],
+  ["conversions", "Conversiones"],
+  ["ctr", "CTR"],
+  ["cpm", "CPM"],
+  ["cpc", "CPC"],
+  ["creative_text", "Copy"],
+  ["creative_asset_ref", "Asset / URL"]
+] as const;
+
+type PerformanceMappingField = (typeof PERFORMANCE_MAPPING_FIELDS)[number][0];
+type PerformanceMapping = Partial<Record<PerformanceMappingField, string>>;
+type PerformancePreview = {
+  mapping?: PerformanceMapping;
+  stats?: {
+    records_total?: number;
+    records_valid?: number;
+    records_failed?: number;
+    duplicate_keys?: number;
+    coverage_start?: string | null;
+    coverage_end?: string | null;
+    records_inserted?: number;
+  };
+  warnings?: string[];
+  data_source_id?: string;
+  source_sync_run_id?: string;
+};
 
 export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, defaultBrandId }: NewStudyFormProps) {
   const t = useTranslations("NewStudy");
@@ -195,6 +233,12 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   const [files, setFiles] = useState<File[]>([]);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
+  const [performanceFile, setPerformanceFile] = useState<File | null>(null);
+  const [performanceHeaders, setPerformanceHeaders] = useState<string[]>([]);
+  const [performanceMapping, setPerformanceMapping] = useState<PerformanceMapping>({});
+  const [performancePreview, setPerformancePreview] = useState<PerformancePreview | null>(null);
+  const [performanceStatus, setPerformanceStatus] = useState<"idle" | "previewing" | "ready" | "imported" | "error">("idle");
+  const [performanceError, setPerformanceError] = useState<string | null>(null);
   const [engineUrl, setEngineUrl] = useState<string | null>(null);
   const [createdCorpusId, setCreatedCorpusId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -332,6 +376,57 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
     setFileNotice(null);
   }
 
+  async function onPerformanceFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+    setPerformanceFile(file);
+    setPerformancePreview(null);
+    setPerformanceMapping({});
+    setPerformanceError(null);
+    setPerformanceStatus("previewing");
+    try {
+      const text = await file.text();
+      setPerformanceHeaders(parseCsvHeader(text));
+      const preview = await previewPerformanceFile(file, {});
+      setPerformancePreview(preview);
+      setPerformanceMapping(preview.mapping ?? {});
+      setPerformanceStatus("ready");
+    } catch (err) {
+      setPerformanceStatus("error");
+      setPerformanceError(err instanceof Error ? err.message : "No se pudo previsualizar el CSV de performance.");
+    }
+  }
+
+  function removePerformanceFile() {
+    setPerformanceFile(null);
+    setPerformanceHeaders([]);
+    setPerformanceMapping({});
+    setPerformancePreview(null);
+    setPerformanceStatus("idle");
+    setPerformanceError(null);
+  }
+
+  function updatePerformanceMapping(field: PerformanceMappingField, value: string) {
+    setPerformanceMapping((current) => ({ ...current, [field]: value }));
+    setPerformanceStatus((current) => current === "imported" ? "ready" : current);
+  }
+
+  async function refreshPerformancePreview() {
+    if (!performanceFile) return;
+    setPerformanceError(null);
+    setPerformanceStatus("previewing");
+    try {
+      const preview = await previewPerformanceFile(performanceFile, performanceMapping);
+      setPerformancePreview(preview);
+      setPerformanceMapping(preview.mapping ?? performanceMapping);
+      setPerformanceStatus("ready");
+    } catch (err) {
+      setPerformanceStatus("error");
+      setPerformanceError(err instanceof Error ? err.message : "No se pudo previsualizar el CSV de performance.");
+    }
+  }
+
   function validateThroughStep(maxStep: number) {
     const errors: FieldErrors = {};
     let firstInvalidStep = maxStep;
@@ -461,6 +556,9 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
       if (files.length > 0) {
         await uploadKnowledgeFiles(corpusId);
       }
+      if (isSignalPulseStudy && performanceFile) {
+        await uploadPerformanceFile(corpusId);
+      }
 
       setStep(LAST_STEP_INDEX);
       setProgressLabel(t("progress.readyEngine"));
@@ -498,6 +596,14 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
     }
     const sources = await fetchKnowledgeSources(corpusId, t("progress.fallbackKnowledgeReadError"));
     setKnowledgeSources(sources);
+  }
+
+  async function uploadPerformanceFile(corpusId: string) {
+    if (!performanceFile) return;
+    setProgressLabel(t("progress.uploadingPerformance"));
+    const imported = await importPerformanceFile(corpusId, performanceFile, performanceMapping);
+    setPerformancePreview(imported);
+    setPerformanceStatus("imported");
   }
 
   async function retryKnowledgeUpload() {
@@ -849,6 +955,20 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
                 ))
               )}
             </div>
+            {isSignalPulseStudy && (
+              <PerformanceSourcePanel
+                file={performanceFile}
+                headers={performanceHeaders}
+                mapping={performanceMapping}
+                preview={performancePreview}
+                status={performanceStatus}
+                error={performanceError}
+                onFile={onPerformanceFile}
+                onRemove={removePerformanceFile}
+                onMappingChange={updatePerformanceMapping}
+                onPreview={refreshPerformancePreview}
+              />
+            )}
           </WizardPanel>
         )}
 
@@ -859,6 +979,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
               subjectLabel={subjectLabel}
               methodology={selectedMethodology?.name ?? "Triggers & Barriers"}
               files={files}
+              performanceFile={performanceFile}
               subjectType={subjectType}
               lensLabels={selectedLensLabels}
               isSignalPulseStudy={isSignalPulseStudy}
@@ -1215,11 +1336,114 @@ function SignalPulseBriefPanel({
   );
 }
 
+function PerformanceSourcePanel({
+  file,
+  headers,
+  mapping,
+  preview,
+  status,
+  error,
+  onFile,
+  onRemove,
+  onMappingChange,
+  onPreview
+}: {
+  file: File | null;
+  headers: string[];
+  mapping: PerformanceMapping;
+  preview: PerformancePreview | null;
+  status: "idle" | "previewing" | "ready" | "imported" | "error";
+  error: string | null;
+  onFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  onRemove: () => void;
+  onMappingChange: (field: PerformanceMappingField, value: string) => void;
+  onPreview: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const stats = preview?.stats;
+  return (
+    <section className="performance-source-panel" aria-label="Performance 12 meses">
+      <header className="performance-source-head">
+        <div>
+          <p className="vitals-eyebrow">Signal Pulse evidence</p>
+          <h3>Performance 12 meses</h3>
+          <p>Meta, TikTok u orgánico entran estructurados a performance_records; nunca como menciones.</p>
+        </div>
+        <button className="new-study-file-button" type="button" onClick={() => inputRef.current?.click()}>
+          <Icon name="upload" size={15} /> {file ? "Cambiar CSV" : "Cargar CSV"}
+        </button>
+        <input
+          ref={inputRef}
+          className="new-study-file-input"
+          type="file"
+          accept={PERFORMANCE_ACCEPT}
+          onChange={onFile}
+        />
+      </header>
+
+      {file ? (
+        <div className="performance-source-file">
+          <Icon name={status === "previewing" ? "spinner" : status === "imported" ? "check" : "upload"} size={15} />
+          <span>{file.name}</span>
+          <code>{formatBytes(file.size)}</code>
+          <button type="button" className="knowledge-file-remove" onClick={onRemove} aria-label={`Quitar ${file.name}`}>
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      ) : (
+        <p className="performance-source-empty">Opcional para crear el estudio, obligatorio para charts paid/organic de producción.</p>
+      )}
+
+      {file && (
+        <>
+          <div className="performance-mapping-grid">
+            {PERFORMANCE_MAPPING_FIELDS.map(([field, label]) => (
+              <label className="performance-mapping-field" key={field}>
+                <span>{label}</span>
+                <select
+                  className="filter-input new-study-input"
+                  value={mapping[field] ?? ""}
+                  onChange={(event) => onMappingChange(field, event.target.value)}
+                >
+                  <option value="">No mapear</option>
+                  {headers.map((header) => (
+                    <option key={`${field}-${header}`} value={header}>{header}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="performance-source-actions">
+            <button className="wizard-cta wizard-cta--secondary" type="button" onClick={onPreview} disabled={status === "previewing"}>
+              <Icon name={status === "previewing" ? "spinner" : "refresh"} size={14} /> Revisar mapping
+            </button>
+            {stats && (
+              <div className="performance-source-stats">
+                <span>{stats.records_valid ?? 0} validas</span>
+                <span>{stats.records_failed ?? 0} fallidas</span>
+                <span>{stats.duplicate_keys ?? 0} duplicadas</span>
+                {stats.coverage_start && stats.coverage_end && <span>{stats.coverage_start} / {stats.coverage_end}</span>}
+              </div>
+            )}
+          </div>
+          {preview?.warnings && preview.warnings.length > 0 && (
+            <ul className="performance-source-warnings">
+              {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+            </ul>
+          )}
+          {error && <p className="new-study-field-error">{error}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
 function BriefPreview({
   draft,
   subjectLabel,
   methodology,
   files,
+  performanceFile,
   subjectType,
   lensLabels,
   isSignalPulseStudy
@@ -1228,6 +1452,7 @@ function BriefPreview({
   subjectLabel: string;
   methodology: string;
   files: File[];
+  performanceFile: File | null;
   subjectType: "brand" | "theme";
   lensLabels: string[];
   isSignalPulseStudy: boolean;
@@ -1243,7 +1468,8 @@ function BriefPreview({
       ["Budget cap", draft.runBudgetUsd ? `$${draft.runBudgetUsd}` : ""],
       ["Campanas activas", draft.activeCampaigns],
       ["Claims permitidos", draft.allowedClaims],
-      ["Claims prohibidos", draft.prohibitedClaims]
+      ["Claims prohibidos", draft.prohibitedClaims],
+      ["Performance estructurado", performanceFile?.name ?? ""]
     ] : []),
     [t("question"), draft.businessQuestion],
     [t("decision"), draft.decisionToInform],
@@ -1367,6 +1593,95 @@ async function fetchKnowledgeSources(corpusId: string, fallback: string): Promis
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message ?? fallback);
   return Array.isArray(json.data) ? json.data : [];
+}
+
+async function previewPerformanceFile(file: File, mapping: PerformanceMapping): Promise<PerformancePreview> {
+  return sendPerformanceFile("", file, mapping, "preview");
+}
+
+async function importPerformanceFile(corpusId: string, file: File, mapping: PerformanceMapping): Promise<PerformancePreview> {
+  return sendPerformanceFile(corpusId, file, mapping, "import");
+}
+
+async function sendPerformanceFile(
+  corpusId: string,
+  file: File,
+  mapping: PerformanceMapping,
+  mode: "preview" | "import"
+): Promise<PerformancePreview> {
+  const params = new URLSearchParams({
+    mode,
+    provider: inferPerformanceProvider(file.name),
+    source_label: file.name.replace(/\.[^.]+$/, "") || "Performance export",
+    file_name: file.name,
+    mapping: JSON.stringify(mapping)
+  });
+  const path = mode === "preview"
+    ? `/api/corpora/preview/sources/performance-upload?${params.toString()}`
+    : `/api/corpora/${corpusId}/sources/performance-upload?${params.toString()}`;
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "text/csv; charset=utf-8" },
+    body: await file.text()
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.message ?? "No se pudo procesar el CSV de performance.");
+  }
+  return json;
+}
+
+function parseCsvHeader(input: string) {
+  const text = input.replace(/^\uFEFF/, "");
+  const delimiter = detectCsvDelimiter(text);
+  const headers: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (!inQuotes && char === delimiter) {
+      headers.push(normalizePerformanceHeader(cell));
+      cell = "";
+      continue;
+    }
+    if (!inQuotes && (char === "\n" || char === "\r")) break;
+    cell += char ?? "";
+  }
+  headers.push(normalizePerformanceHeader(cell));
+  return headers.filter(Boolean);
+}
+
+function detectCsvDelimiter(input: string) {
+  const firstLine = input.split(/\r?\n/, 1)[0] ?? "";
+  return (firstLine.match(/;/g) ?? []).length > (firstLine.match(/,/g) ?? []).length ? ";" : ",";
+}
+
+function normalizePerformanceHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function inferPerformanceProvider(fileName: string) {
+  const normalized = fileName.toLowerCase();
+  if (normalized.includes("tiktok")) return "tiktok";
+  if (normalized.includes("meta") || normalized.includes("facebook") || normalized.includes("instagram")) return "meta";
+  if (normalized.includes("google")) return "google";
+  return "file";
 }
 
 async function waitForJob(

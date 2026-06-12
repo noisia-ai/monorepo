@@ -426,6 +426,7 @@
       "creatingTheme": "Creando theme...",
       "creatingStudy": "Creando estudio...",
       "uploadingKnowledge": "Subiendo Knowledge Base...",
+      "uploadingPerformance": "Importando performance estructurado...",
       "readyEngine": "Listo para lanzar Engine.",
       "knowledgeReady": "Knowledge Base listo.",
       "analyzingKnowledge": "Analizando Knowledge Base... {progress}%",
