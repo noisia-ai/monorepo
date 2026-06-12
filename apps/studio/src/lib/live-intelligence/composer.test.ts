@@ -11,6 +11,7 @@ import {
   isComposerOpportunity,
   isComposerRisk,
   normalizeComposerRow,
+  reusableComposerEngineAnalysisSql,
   type ComposerRow
 } from "./composer";
 
@@ -65,6 +66,17 @@ test("composer normalizes numeric fields without losing dimensions", () => {
   assert.equal(normalized.evidence_examples.length, 1);
   assert.equal(normalized.evidence_examples[0]?.mention_id, "mention-1");
   assert.equal(normalized.evidence_examples[0]?.is_protagonist, true);
+});
+
+test("composer reusable analysis SQL admits gated Signal Pulse without per-mention coding", () => {
+  const predicate = reusableComposerEngineAnalysisSql("live_ea");
+
+  assert.match(predicate, /live_ea\.methodology_slug = 'signal-pulse'/);
+  assert.match(predicate, /source_presence/);
+  assert.match(predicate, /signal_min_evidence/);
+  assert.match(predicate, /no_invented_numbers/);
+  assert.match(predicate, /live_ea\.meta_json->'engine_coding'->>'provider' = 'anthropic'/);
+  assert.match(predicate, /live_ea\.methodology_slug <> 'signal-pulse'/);
 });
 
 test("composer dedupes repeated semantic signals across methodologies", () => {

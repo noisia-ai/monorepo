@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 
 import { SessionBadge } from "@/components/layout/SessionBadge";
+import { SignalCorpusExplorer } from "@/components/signal/SignalCorpusExplorer";
+import { SignalLiveComposer } from "@/components/signal/SignalLiveComposer";
 import {
   SignalGlobalDateFilter,
   SignalReportShell,
@@ -32,6 +34,7 @@ export default async function PulseOutputPage({
   const moves = arrayOfRecords(payload.marketing_moves);
   const evidence = arrayOfRecords(payload.evidence);
   const sources = arrayOfRecords(payload.sources);
+  const performance = asRecord(payload.performance);
   const chartRefs = asRecord(payload.chart_refs);
   const qualityGates = arrayOfRecords(payload.quality_gates);
   const limitations = arrayValue(payload.limitations).map(String);
@@ -113,6 +116,51 @@ export default async function PulseOutputPage({
             <PulseEmptyState title="Sin moves todavía" body="Cuando existan señales con evidencia, el reporte propondrá acciones para claim, pauta, contenido o monitoreo." />
           )}
         </div>
+      </section>
+
+      <section className="signal-section pulse-section" data-signal-section="content" hidden id="content">
+        <PulseSectionHead
+          eyebrow="Content & Creative"
+          title="Hooks, claims y tono para probar"
+          sub="Ideas derivadas de señales con evidencia. Si la confianza es baja, se marca como prueba pequeña."
+        />
+        <ContentCreativePanel signals={signals} moves={moves} performance={performance} />
+      </section>
+
+      <section className="signal-section pulse-section" data-signal-section="paid-organic" hidden id="paid-organic">
+        <PulseSectionHead
+          eyebrow="Paid / Organic"
+          title="Conversación contra performance"
+          sub="Performance se lee desde registros estructurados por periodo, campaña y creatividad."
+        />
+        <PaidOrganicPanel periods={periods} performance={performance} />
+      </section>
+
+      <section className="signal-section pulse-section" data-signal-section="competitive" hidden id="competitive">
+        <PulseSectionHead
+          eyebrow="Competitive & Category"
+          title="Dónde la categoría está empujando la conversación"
+          sub="Lectura por señales y entidades cuando el corpus trae scope competitivo o de categoría."
+        />
+        <CompetitiveCategoryPanel signals={signals} evidence={evidence} />
+      </section>
+
+      <section className="signal-section pulse-section" data-signal-section="composer" hidden id="composer">
+        <PulseSectionHead
+          eyebrow="Composer"
+          title="Aprobar el corte editorial"
+          sub="Selecciona qué señales y evidencia quedan como corte vivo del reporte mensual."
+        />
+        <SignalLiveComposer outputId={output.id} variant="signal_pulse" />
+      </section>
+
+      <section className="signal-section pulse-section" data-signal-section="corpus" hidden id="corpus">
+        <PulseSectionHead
+          eyebrow="Corpus View"
+          title="Explorar conversación y evidencia"
+          sub="Busca por señal, canal, entidad o fecha dentro del corpus autorizado."
+        />
+        <SignalCorpusExplorer mentions={evidence.map(evidenceToMention)} outputId={output.id} />
       </section>
 
       <section className="signal-section pulse-section" data-signal-section="evidence" hidden id="evidence">
@@ -358,6 +406,140 @@ function SourceCoverage({ periods, sources }: { periods: JsonRecord[]; sources: 
   );
 }
 
+function ContentCreativePanel({ signals, moves, performance }: { signals: JsonRecord[]; moves: JsonRecord[]; performance: JsonRecord }) {
+  const creatives = arrayOfRecords(performance.creatives);
+  const sourceSignals = signals.slice(0, 8);
+  return (
+    <div className="pulse-content-grid">
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Hooks" title="Ángulos de contenido" sub="Usa estas señales como briefs de pieza, no como claims finales." compact />
+        <div className="pulse-content-cards">
+          {sourceSignals.length > 0 ? sourceSignals.map((signal) => (
+            <article key={stringValue(signal.id)}>
+              <span>{labelLifecycle(stringValue(signal.lifecycle_state))}</span>
+              <strong>{hookForSignal(signal)}</strong>
+              <p>{stringValue(signal.description) || "Convertir la señal en una pieza corta con prueba visible."}</p>
+              <small>{fmtNumber(signal.volume)} menciones · confianza {stringValue(signal.confidence) || "baja"}</small>
+            </article>
+          )) : (
+            <PulseEmptyState title="Sin hooks todavía" body="Las ideas creativas aparecen cuando existen señales con evidencia." />
+          )}
+        </div>
+      </section>
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Claims" title="Qué probar y qué evitar" sub="Cada claim se mantiene como experimento hasta validar performance." compact />
+        <div className="pulse-source-table">
+          {moves.slice(0, 8).map((move) => (
+            <div className="pulse-source-row" key={stringValue(move.id)}>
+              <strong>{labelMoveType(stringValue(move.move_type))}</strong>
+              <span>{stringValue(move.action_text)}</span>
+              <small>{stringValue(move.no_go_notes) || "Medir antes de escalar."}</small>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Creatividades" title="Señales de performance" sub="Lectura estructurada de copies subidos en archivos Meta/TikTok." compact />
+        <div className="pulse-source-table">
+          {creatives.length > 0 ? creatives.slice(0, 8).map((creative, index) => (
+            <div className="pulse-source-row" key={`${stringValue(creative.creative_text)}-${index}`}>
+              <strong>{stringValue(creative.platform)} · {stringValue(creative.channel)}</strong>
+              <span>{stringValue(creative.creative_text).slice(0, 120)}</span>
+              <small>{fmtNumber(creative.impressions)} impresiones · USD {fmtMoney(creative.spend)}</small>
+            </div>
+          )) : (
+            <PulseEmptyState title="Sin copies de performance" body="Sube un export con creative_text para comparar conversación contra piezas activas." />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PaidOrganicPanel({ periods, performance }: { periods: JsonRecord[]; performance: JsonRecord }) {
+  const performancePeriods = arrayOfRecords(performance.periods);
+  const campaigns = arrayOfRecords(performance.campaigns);
+  const byPeriod = new Map(performancePeriods.map((item) => [stringValue(item.period_id), item]));
+  const rows = periods.map((period) => ({ period, performance: byPeriod.get(stringValue(period.id)) ?? {} }));
+  return (
+    <div className="pulse-source-stack">
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Periodo" title="Conversación vs inversión" sub="La conversación viene de mentions; spend e impresiones vienen de performance_records." compact />
+        <div className="pulse-paid-bars">
+          {rows.map(({ period, performance: perf }) => {
+            const coverage = asRecord(period.coverage);
+            const conversation = Number(coverage.conversation ?? 0);
+            const spend = Number(perf.spend ?? 0);
+            const maxConversation = Math.max(1, ...rows.map((row) => Number(asRecord(row.period.coverage).conversation ?? 0)));
+            const maxSpend = Math.max(1, ...rows.map((row) => Number(row.performance.spend ?? 0)));
+            return (
+              <div key={stringValue(period.id)}>
+                <strong>{stringValue(period.label)}</strong>
+                <span><i style={{ width: `${Math.max(4, (conversation / maxConversation) * 100)}%` }} />{fmtNumber(conversation)} menciones</span>
+                <span><i style={{ width: `${Math.max(4, (spend / maxSpend) * 100)}%` }} />USD {fmtMoney(spend)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Campañas" title="Entidades de performance" sub="Tabla inicial para alinear campañas con señales en Composer." compact />
+        <div className="pulse-source-table">
+          {campaigns.length > 0 ? campaigns.slice(0, 12).map((campaign) => (
+            <div className="pulse-source-row" key={`${stringValue(campaign.external_id)}-${stringValue(campaign.channel)}`}>
+              <strong>{stringValue(campaign.entity_name)}</strong>
+              <span>{stringValue(campaign.platform)} · {stringValue(campaign.channel)} · {fmtNumber(campaign.impressions)} impresiones</span>
+              <small>USD {fmtMoney(campaign.spend)} · {fmtNumber(campaign.clicks)} clicks · {formatDate(stringValue(campaign.first_seen))} - {formatDate(stringValue(campaign.last_seen))}</small>
+            </div>
+          )) : (
+            <PulseEmptyState title="Needs data" body="Sube performance estructurada de 12 meses para activar campaña vs señal." />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CompetitiveCategoryPanel({ signals, evidence }: { signals: JsonRecord[]; evidence: JsonRecord[] }) {
+  const entityCounts = new Map<string, number>();
+  for (const item of evidence) {
+    const key = stringValue(item.platform) || "fuente";
+    entityCounts.set(key, (entityCounts.get(key) ?? 0) + 1);
+  }
+  const rows = Array.from(entityCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  return (
+    <div className="pulse-source-stack">
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Señales" title="Territorios de categoría" sub="Señales ordenadas para detectar dónde competir, amplificar o evitar." compact />
+        <div className="pulse-content-cards">
+          {signals.slice(0, 9).map((signal) => (
+            <article key={stringValue(signal.id)}>
+              <span>{stringValue(signal.signal_type) || "signal"}</span>
+              <strong>{stringValue(signal.title)}</strong>
+              <p>{stringValue(asRecord(signal.dimensions).marketing_read) || stringValue(signal.description)}</p>
+              <small>Impacto {fmtNumber(signal.impact_v1)} · {stringValue(signal.polarity_bucket) || "sin polaridad"}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="pulse-source-panel">
+        <PulseSectionHead eyebrow="Cobertura" title="Dónde está la evidencia" sub="V1 usa fuente/plataforma como proxy honesto hasta tener entity mapping más fino." compact />
+        <div className="pulse-source-table">
+          {rows.length > 0 ? rows.map(([label, count]) => (
+            <div className="pulse-source-row" key={label}>
+              <strong>{label}</strong>
+              <span>{fmtNumber(count)} evidencias publicadas</span>
+              <small>Usar filtros del Corpus View para abrir la lectura.</small>
+            </div>
+          )) : (
+            <PulseEmptyState title="Sin cobertura competitiva" body="El corpus no trae evidencia suficiente para una lectura comparativa." />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function QualityGateTable({ gates, limitations, cost }: { gates: JsonRecord[]; limitations: string[]; cost: JsonRecord }) {
   const estimatedCost = Number(cost.estimated_cost_usd ?? 0);
   const budgetCap = Number(cost.budget_cap_usd ?? 0);
@@ -507,18 +689,41 @@ function buildPulseGroups(): SignalShellGroup[] {
       sections: [
         { key: "overview", label: "Overview", icon: "wave" },
         { key: "signals", label: "Signals", icon: "sparkle" },
-        { key: "moves", label: "Marketing Moves", icon: "layers" }
+        { key: "moves", label: "Marketing Moves", icon: "layers" },
+        { key: "content", label: "Content & Creative", icon: "sparkle" },
+        { key: "paid-organic", label: "Paid / Organic", icon: "wave" },
+        { key: "competitive", label: "Competitive", icon: "platform" }
       ]
     },
     {
       label: "Evidence",
       sections: [
+        { key: "composer", label: "Composer", icon: "layers" },
+        { key: "corpus", label: "Corpus View", icon: "message" },
         { key: "evidence", label: "Evidence", icon: "message" },
         { key: "sources", label: "Sources", icon: "platform" },
         { key: "quality", label: "Quality", icon: "info" }
       ]
     }
   ];
+}
+
+function hookForSignal(signal: JsonRecord) {
+  const title = stringValue(signal.title).toLowerCase();
+  if (!title) return "Probar un hook basado en la señal dominante";
+  return `Abrir con ${title}`;
+}
+
+function evidenceToMention(item: JsonRecord) {
+  return {
+    mention_id: stringValue(item.mention_id),
+    text: stringValue(item.quote),
+    platform: stringValue(item.platform),
+    published_at: stringValue(item.published_at),
+    canonical_signal_id: stringValue(item.signal_id),
+    canonical_signal_title: stringValue(item.signal_title),
+    evidence_role: stringValue(item.evidence_role)
+  };
 }
 
 function labelMoveType(value: string) {

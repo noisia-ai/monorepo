@@ -427,7 +427,7 @@ async function buildSignalPulsePublishedPayload(
   analysis: EngineAnalysisRow,
   corpus: NonNullable<Awaited<ReturnType<typeof getCorpusForUser>>>
 ) {
-  const [periods, signals, moves, charts, evidence, sources, cost] = await Promise.all([
+  const [periods, signals, moves, charts, evidence, sources, performance, cost] = await Promise.all([
     pool.query(
       `SELECT id::text, label, period_start::text, period_end::text, coverage, comparable, confidence, known_gaps
        FROM report_periods
@@ -542,6 +542,78 @@ async function buildSignalPulsePublishedPayload(
       [corpus.id]
     ),
     pool.query(
+      `
+        WITH period_performance AS (
+          SELECT
+            rp.id::text AS period_id,
+            rp.label,
+            rp.period_start::text,
+            rp.period_end::text,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.reach), 0)::bigint AS reach,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.video_views), 0)::bigint AS video_views,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            COALESCE(SUM(pr.conversions), 0)::float AS conversions,
+            COUNT(DISTINCT pr.external_id)::int AS entities,
+            COUNT(pr.id)::int AS records
+          FROM report_periods rp
+          LEFT JOIN performance_records pr
+            ON pr.study_corpus_id = rp.study_corpus_id
+           AND pr.record_date >= rp.period_start
+           AND pr.record_date <= rp.period_end
+          WHERE rp.study_corpus_id = $1
+            AND rp.granularity = 'month'
+          GROUP BY rp.id, rp.label, rp.period_start, rp.period_end
+          ORDER BY rp.period_start
+        ),
+        campaign_rows AS (
+          SELECT
+            pr.external_id,
+            COALESCE(pr.entity_name, pr.external_id) AS entity_name,
+            pr.entity_kind,
+            pr.platform,
+            pr.channel,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            MIN(pr.record_date)::text AS first_seen,
+            MAX(pr.record_date)::text AS last_seen,
+            COUNT(*)::int AS records
+          FROM performance_records pr
+          WHERE pr.study_corpus_id = $1
+          GROUP BY pr.external_id, pr.entity_name, pr.entity_kind, pr.platform, pr.channel
+          ORDER BY COALESCE(SUM(pr.spend), 0) DESC, COALESCE(SUM(pr.impressions), 0) DESC
+          LIMIT 40
+        ),
+        creative_rows AS (
+          SELECT
+            pr.creative_text,
+            pr.platform,
+            pr.channel,
+            COALESCE(SUM(pr.spend), 0)::float AS spend,
+            COALESCE(SUM(pr.impressions), 0)::bigint AS impressions,
+            COALESCE(SUM(pr.clicks), 0)::bigint AS clicks,
+            COALESCE(SUM(pr.engagement), 0)::bigint AS engagement,
+            COUNT(*)::int AS records
+          FROM performance_records pr
+          WHERE pr.study_corpus_id = $1
+            AND NULLIF(trim(pr.creative_text), '') IS NOT NULL
+          GROUP BY pr.creative_text, pr.platform, pr.channel
+          ORDER BY COALESCE(SUM(pr.impressions), 0) DESC, COALESCE(SUM(pr.engagement), 0) DESC
+          LIMIT 30
+        )
+        SELECT jsonb_build_object(
+          'periods', COALESCE((SELECT jsonb_agg(period_performance) FROM period_performance), '[]'::jsonb),
+          'campaigns', COALESCE((SELECT jsonb_agg(campaign_rows) FROM campaign_rows), '[]'::jsonb),
+          'creatives', COALESCE((SELECT jsonb_agg(creative_rows) FROM creative_rows), '[]'::jsonb)
+        ) AS payload
+      `,
+      [corpus.id]
+    ),
+    pool.query(
       `SELECT COALESCE(SUM(estimated_cost_usd), 0)::text AS estimated_cost_usd
        FROM engine_cost_events
        WHERE engine_analysis_id = $1`,
@@ -568,6 +640,7 @@ async function buildSignalPulsePublishedPayload(
     chart_refs: chartMap,
     evidence: evidence.rows,
     sources: sources.rows,
+    performance: performance.rows[0]?.payload ?? { periods: [], campaigns: [], creatives: [] },
     quality_gates: Array.isArray((analysis.meta_json ?? {}).quality_gates) ? (analysis.meta_json ?? {}).quality_gates : [],
     cost: {
       estimated_cost_usd: Number(cost.rows[0]?.estimated_cost_usd ?? 0),

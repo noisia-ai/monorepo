@@ -73,10 +73,44 @@ export type ComposerModuleLike = {
   top_signals?: ComposerSignalLike[];
 };
 
+const SIGNAL_PULSE_COMPOSER_BLOCKERS = [
+  "source_presence",
+  "signal_min_evidence",
+  "chart_data_available",
+  "move_has_signal",
+  "cost_within_budget",
+  "no_invented_numbers"
+];
+
 export type ComposerEditorialState = {
   selection?: Record<string, unknown> | null;
   draft?: Record<string, unknown> | null;
 } | null;
+
+export function reusableComposerEngineAnalysisSql(alias = "live_ea") {
+  return `(
+    (
+      ${alias}.methodology_slug = 'signal-pulse'
+      AND ${alias}.status IN ('needs_review', 'approved')
+      AND (
+        SELECT COUNT(DISTINCT gate->>'id')::int
+        FROM jsonb_array_elements(COALESCE(${alias}.meta_json->'quality_gates', '[]'::jsonb)) gate
+        WHERE gate->>'id' = ANY(ARRAY[${SIGNAL_PULSE_COMPOSER_BLOCKERS.map((gate) => `'${gate}'`).join(", ")}])
+          AND gate->>'passed' = 'true'
+      ) = ${SIGNAL_PULSE_COMPOSER_BLOCKERS.length}
+    )
+    OR (
+      ${alias}.methodology_slug <> 'signal-pulse'
+      AND CASE
+        WHEN COALESCE(${alias}.meta_json->'retrieval'->>'retrieved_units', '') ~ '^[0-9]+$'
+        THEN (${alias}.meta_json->'retrieval'->>'retrieved_units')::int
+        ELSE 0
+      END > 0
+      AND ${alias}.meta_json->'engine_coding'->>'provider' = 'anthropic'
+      AND COALESCE((${alias}.meta_json->'engine_coding'->>'fixture')::boolean, true) = false
+    )
+  )`;
+}
 
 export function normalizeComposerRow(row: ComposerRow) {
   return {

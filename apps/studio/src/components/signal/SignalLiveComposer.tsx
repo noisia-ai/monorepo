@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { useSignalDateRange, useSignalUiLanguage } from "@/components/signal/SignalReportShell";
+import { useSignalDateRange, useSignalUiLanguage, type SignalUiLanguage } from "@/components/signal/SignalReportShell";
 import { Icon } from "@/components/ui/Icon";
 import { buildComposerEditorialDraft, composerChartKey, composerChartKeysForModule } from "@/lib/live-intelligence/composer";
 import { labelForLens } from "@/lib/multimethod/analysis-plan";
@@ -300,10 +300,53 @@ const copy = {
   }
 };
 
-export function SignalLiveComposer({ outputId }: { outputId: string }) {
+const signalPulseComposerCopy = {
+  en: {
+    eyebrow: "Pulse Composer",
+    title: "Monthly editorial cut",
+    body: "Approve which signals, moves and evidence belong in the tactical marketing read.",
+    modules: "pulse modules",
+    modulesHelp: "Signal Pulse groups live signals into one tactical module. Use it to keep or remove the signals that should appear in the monthly read.",
+    allMethods: "All Pulse signals",
+    selectedMethods: "selected Pulse modules",
+    plannedLenses: "Pulse plan",
+    lensHealth: "Pulse health",
+    narrativeBeta: "Open Signal Pulse run",
+    narrativeBetaHelp: "Open the internal Signal Pulse runtime for this corpus.",
+    editorTitle: "Pulse selection",
+    editorBody: "Choose the signals and evidence that should remain in the published monthly cut. This is the editorial approval layer, not a new analysis run.",
+    saveDraft: "Save Pulse draft"
+  },
+  es: {
+    eyebrow: "Pulse Composer",
+    title: "Corte editorial mensual",
+    body: "Aprueba qué señales, moves y evidencia quedan dentro de la lectura táctica de marketing.",
+    modules: "módulos Pulse",
+    modulesHelp: "Signal Pulse agrupa señales vivas en un módulo táctico. Úsalo para conservar o quitar las señales que entran al corte mensual.",
+    allMethods: "Todas las señales Pulse",
+    selectedMethods: "módulos Pulse seleccionados",
+    plannedLenses: "Plan Pulse",
+    lensHealth: "Salud del Pulse",
+    narrativeBeta: "Abrir corrida Signal Pulse",
+    narrativeBetaHelp: "Abre el runtime interno de Signal Pulse para este corpus.",
+    editorTitle: "Selección Pulse",
+    editorBody: "Elige las señales y evidencia que deben permanecer en el corte mensual publicado. Es aprobación editorial, no una corrida nueva.",
+    saveDraft: "Guardar draft Pulse"
+  }
+} satisfies Record<SignalUiLanguage, Partial<typeof copy.en>>;
+
+export function SignalLiveComposer({
+  outputId,
+  variant = "signal"
+}: {
+  outputId: string;
+  variant?: "signal" | "signal_pulse";
+}) {
   const { uiLanguage } = useSignalUiLanguage();
   const { dateFrom, dateTo, queryString } = useSignalDateRange();
-  const t = copy[uiLanguage];
+  const t = variant === "signal_pulse"
+    ? { ...copy[uiLanguage], ...signalPulseComposerCopy[uiLanguage] }
+    : copy[uiLanguage];
   const [payload, setPayload] = useState<ComposerPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -524,7 +567,7 @@ export function SignalLiveComposer({ outputId }: { outputId: string }) {
         {payload?.editorial?.updated_at ? (
           <small>{t.savedAt}: {formatSavedAt(payload.editorial.updated_at)}</small>
         ) : null}
-        {payload?.scope.study_corpus_id ? (
+        {payload?.scope.study_corpus_id && variant !== "signal_pulse" ? (
           <a
             href={`/studio/corpora/${payload.scope.study_corpus_id}/engine?engineBeta=1&methodology=narrative-ownership`}
             title={t.narrativeBetaHelp}

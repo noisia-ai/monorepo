@@ -19,6 +19,7 @@ import {
   isComposerOpportunity,
   isComposerRisk,
   normalizeComposerRow,
+  reusableComposerEngineAnalysisSql,
   type ComposerRow
 } from "@/lib/live-intelligence/composer";
 import { normalizeStudyAnalysisPlan } from "@/lib/multimethod/analysis-plan";
@@ -93,18 +94,12 @@ export async function GET(request: Request, context: { params: Promise<{ outputI
             AND (
               so.engine_analysis_id IS NULL
               OR EXISTS (
-                SELECT 1
-                FROM engine_analyses live_ea
-                WHERE live_ea.id = so.engine_analysis_id
-                  AND CASE
-                    WHEN COALESCE(live_ea.meta_json->'retrieval'->>'retrieved_units', '') ~ '^[0-9]+$'
-                    THEN (live_ea.meta_json->'retrieval'->>'retrieved_units')::int
-                    ELSE 0
-                  END > 0
-                  AND live_ea.meta_json->'engine_coding'->>'provider' = 'anthropic'
-                  AND COALESCE((live_ea.meta_json->'engine_coding'->>'fixture')::boolean, true) = false
-              )
+              SELECT 1
+              FROM engine_analyses live_ea
+              WHERE live_ea.id = so.engine_analysis_id
+                AND ${reusableComposerEngineAnalysisSql("live_ea")}
             )
+          )
             AND (
               so.published_output_id IS NULL
               OR (po.status = 'published' AND po.archived_at IS NULL)
@@ -390,13 +385,7 @@ async function loadComposerCandidateState(args: {
               SELECT 1
             FROM engine_analyses live_ea
             WHERE live_ea.id = so.engine_analysis_id
-              AND CASE
-                WHEN COALESCE(live_ea.meta_json->'retrieval'->>'retrieved_units', '') ~ '^[0-9]+$'
-                THEN (live_ea.meta_json->'retrieval'->>'retrieved_units')::int
-                ELSE 0
-              END > 0
-              AND live_ea.meta_json->'engine_coding'->>'provider' = 'anthropic'
-              AND COALESCE((live_ea.meta_json->'engine_coding'->>'fixture')::boolean, true) = false
+              AND ${reusableComposerEngineAnalysisSql("live_ea")}
             )
           )
           AND (
