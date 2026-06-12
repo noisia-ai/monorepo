@@ -12,7 +12,8 @@ const REQUIRED_MIGRATIONS = [
   "0030_monthly_cut_and_composer",
   "0031_study_analysis_plan",
   "0032_import_batch_query_pack_link",
-  "0033_engine_run_mention_map"
+  "0033_engine_run_mention_map",
+  "0034_signal_pulse_foundation"
 ];
 
 const REQUIRED_ENGINE_METHODOLOGIES = [
@@ -31,6 +32,10 @@ const REQUIRED_ENGINE_METHODOLOGIES = [
   "audience-segment-lens",
   "trust-risk-benchmark",
   "evidence-confidence-layer"
+];
+
+const REQUIRED_NON_ENGINE_BETA_METHODOLOGIES = [
+  "signal-pulse"
 ];
 
 const SAFE_DEFAULTS = [
@@ -98,8 +103,12 @@ async function verifyMethodologySeeds(repoRoot: string) {
     REQUIRED_ENGINE_METHODOLOGIES.filter((slug) => !betaSeeds.has(slug))
   );
   assertEmpty(
+    "Missing non-engine beta methodology seeds",
+    REQUIRED_NON_ENGINE_BETA_METHODOLOGIES.filter((slug) => !betaSeeds.has(slug))
+  );
+  assertEmpty(
     "Unexpected beta methodology seeds",
-    [...betaSeeds.keys()].filter((slug) => !REQUIRED_ENGINE_METHODOLOGIES.includes(slug))
+    [...betaSeeds.keys()].filter((slug) => ![...REQUIRED_ENGINE_METHODOLOGIES, ...REQUIRED_NON_ENGINE_BETA_METHODOLOGIES].includes(slug))
   );
 }
 
@@ -124,6 +133,7 @@ async function main() {
     checked: {
       migrations: REQUIRED_MIGRATIONS.length,
       beta_methodologies: REQUIRED_ENGINE_METHODOLOGIES.length,
+      non_engine_beta_methodologies: REQUIRED_NON_ENGINE_BETA_METHODOLOGIES.length,
       safe_defaults: SAFE_DEFAULTS.length
     }
   }, null, 2));
