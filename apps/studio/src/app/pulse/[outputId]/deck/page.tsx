@@ -120,7 +120,7 @@ export default async function PulseDeckPage({
     <div className="deck-shell pulse-deck-shell">
       <DeckRuntime labels={LABELS[lang]} outputId={outputId} lang={lang}>
         <CoverSlide brandLabel={brandLabel} dateLabel={dateLabel} confidence={confidence} periods={periods.length} />
-        <ExecutiveSlide executiveRead={executiveRead} signals={signals} moves={moves} cost={cost} />
+        <ExecutiveSlide executiveRead={executiveRead} signals={signals} moves={moves} cost={cost} showCost={visibility.showQuality} />
         <MapSlide signals={signals} />
         <SignalsSlide signals={signals.slice(0, 5)} evidence={visibleEvidence} />
         <MovesSlide moves={moves.slice(0, 6)} signals={signals} />
@@ -154,7 +154,19 @@ function CoverSlide({ brandLabel, confidence, dateLabel, periods }: { brandLabel
   );
 }
 
-function ExecutiveSlide({ cost, executiveRead, moves, signals }: { cost: JsonRecord; executiveRead: JsonRecord; moves: JsonRecord[]; signals: JsonRecord[] }) {
+function ExecutiveSlide({
+  cost,
+  executiveRead,
+  moves,
+  showCost,
+  signals
+}: {
+  cost: JsonRecord;
+  executiveRead: JsonRecord;
+  moves: JsonRecord[];
+  showCost: boolean;
+  signals: JsonRecord[];
+}) {
   return (
     <section className="deck-slide" data-label="Executive Read">
       <SlideFrame num="02" eyebrow="Lectura ejecutiva" title={stringValue(executiveRead.headline) || "Qué cambió este mes"}>
@@ -169,8 +181,8 @@ function ExecutiveSlide({ cost, executiveRead, moves, signals }: { cost: JsonRec
           <div className="deck-metrics pulse-deck-metrics">
             <Metric label="Señales" value={signals.length} />
             <Metric label="Acciones" value={moves.length} />
-            <Metric label="Costo" value={`USD ${fmtMoney(cost.estimated_cost_usd)}`} />
-            <Metric label="Tope" value={Number(cost.budget_cap_usd ?? 0) > 0 ? `USD ${fmtMoney(cost.budget_cap_usd)}` : "sin tope"} />
+            {showCost ? <Metric label="Costo" value={`USD ${fmtMoney(cost.estimated_cost_usd)}`} /> : null}
+            {showCost ? <Metric label="Tope" value={Number(cost.budget_cap_usd ?? 0) > 0 ? `USD ${fmtMoney(cost.budget_cap_usd)}` : "sin tope"} /> : null}
           </div>
         </div>
       </SlideFrame>
@@ -278,7 +290,7 @@ function LimitsSlide({
             <div className="deck-cards cols-2">
               <MetricCard label="Periodos" value={periods.length} detail={`${periods.filter((period) => period.comparable !== false).length} comparables`} />
               {visibility.showSources ? <MetricCard label="Fuentes" value={visibleSources.length} detail="conversación + performance" /> : null}
-              <MetricCard label="Costo" value={`USD ${fmtMoney(cost.estimated_cost_usd)}`} detail={Number(cost.budget_cap_usd ?? 0) > 0 ? `tope USD ${fmtMoney(cost.budget_cap_usd)}` : "sin tope declarado"} />
+              {visibility.showQuality ? <MetricCard label="Costo" value={`USD ${fmtMoney(cost.estimated_cost_usd)}`} detail={Number(cost.budget_cap_usd ?? 0) > 0 ? `tope USD ${fmtMoney(cost.budget_cap_usd)}` : "sin tope declarado"} /> : null}
               {visibility.showQuality ? <MetricCard label="Checks" value={visibleFailed.length === 0 ? "OK" : visibleFailed.length} detail={visibleFailed.length === 0 ? "sin bloqueos" : "con límites visibles"} /> : null}
             </div>
           </div>

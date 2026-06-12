@@ -94,6 +94,7 @@ export default async function PulseOutputPage({
           signals={signals.length}
           moves={moves.length}
           cost={cost}
+          showCost={visibility.showQuality}
         />
         <PulseChartGrid chartRefs={chartRefs} signals={signals} periods={periods} />
         <PulseTopSignals signals={signals.slice(0, 6)} />
@@ -240,7 +241,8 @@ function PulseHeader({
   periods,
   signals,
   moves,
-  cost
+  cost,
+  showCost
 }: {
   headline: string;
   body: string;
@@ -249,6 +251,7 @@ function PulseHeader({
   signals: number;
   moves: number;
   cost: JsonRecord;
+  showCost: boolean;
 }) {
   const estimatedCost = Number(cost.estimated_cost_usd ?? 0);
   const budgetCap = Number(cost.budget_cap_usd ?? 0);
@@ -262,11 +265,13 @@ function PulseHeader({
       <aside className="pulse-hero-action">
         <span>Acción sugerida</span>
         <strong>{action || "Revisar señales con mayor impacto antes de mover presupuesto."}</strong>
-        <div className="pulse-run-cost">
-          <span>Costo de corrida</span>
-          <strong>USD {fmtMoney(estimatedCost)}</strong>
-          <small>{budgetCap > 0 ? `Tope USD ${fmtMoney(budgetCap)}` : "Sin tope declarado"}</small>
-        </div>
+        {showCost ? (
+          <div className="pulse-run-cost">
+            <span>Costo de corrida</span>
+            <strong>USD {fmtMoney(estimatedCost)}</strong>
+            <small>{budgetCap > 0 ? `Tope USD ${fmtMoney(budgetCap)}` : "Sin tope declarado"}</small>
+          </div>
+        ) : null}
       </aside>
       <div className="pulse-kpi-strip">
         <PulseKpi label="Periodos" value={periods} />
