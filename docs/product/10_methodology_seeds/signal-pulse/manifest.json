@@ -1,0 +1,57 @@
+{
+  "slug": "signal-pulse",
+  "name": "Signal Pulse",
+  "version": "1.0-product-spec",
+  "status": "product_design_ready",
+  "purpose": "Tactical live marketing intelligence report connected to Noisia corpus",
+  "primary_user": ["marketing", "agency", "data_intelligence"],
+  "not_primary_user": ["cx", "retail_ops", "product", "service_design"],
+  "screens": [
+    "Overview",
+    "Signals",
+    "Marketing Moves",
+    "Content & Creative",
+    "Paid / Organic",
+    "Competitive & Category",
+    "Evidence",
+    "Corpus View",
+    "Sources",
+    "Composer",
+    "Quality / Settings"
+  ],
+  "overview_charts": [
+    "Semantic Signal Galaxy",
+    "Emotional Density Map",
+    "Impact × Polarity Priority Map",
+    "Signal Momentum Stream"
+  ],
+  "source_types": [
+    "conversation_evidence",
+    "performance_evidence",
+    "entity_reference",
+    "knowledge_context"
+  ],
+  "non_negotiables": [
+    "pipeline_own_process_not_tb_adapter",
+    "live_corpus_not_static_snapshot",
+    "monthly_comparable_periods",
+    "marketing_first_actions",
+    "evidence_traceability",
+    "humanized_short_copy",
+    "sql_calculates_claude_interprets_renderer_charts",
+    "composer_before_publish"
+  ],
+  "docs": [
+    "00_README.md",
+    "01_CONTEXT_AND_DECISIONS.md",
+    "02_NAVIGATION_AND_SCREENS.md",
+    "03_LIVE_CORPUS_AND_PERIODIZATION.md",
+    "04_SOURCE_WIZARD_AND_EVIDENCE.md",
+    "05_PIPELINE_AND_OUTPUT_CONTRACT.md",
+    "06_OVERVIEW_SCREEN_CHARTS.md",
+    "07_SCREEN_SPECS.md",
+    "08_FILTERS_INTERACTIONS_STATES.md",
+    "09_COPY_UI_CHARTS_QUALITY.md",
+    "10_IMPLEMENTATION_HANDOFF.md"
+  ]
+}
