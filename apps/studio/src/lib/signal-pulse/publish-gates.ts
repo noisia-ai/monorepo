@@ -9,6 +9,7 @@ export const SIGNAL_PULSE_PUBLISH_BLOCKER_GATES = new Set([
   "period_coverage",
   "period_comparability",
   "performance_structured",
+  "performance_period_coverage",
   "signal_min_evidence",
   "chart_data_available",
   "move_has_signal",

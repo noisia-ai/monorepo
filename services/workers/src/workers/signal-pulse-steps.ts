@@ -997,6 +997,7 @@ async function buildSignalPulseQualityGates(args: {
   const coverage = (await pool.query<{
     periods: number;
     comparable_periods: number;
+    performance_periods: number;
     evidence: number;
     performance_records: number;
     cost: string | null;
@@ -1005,6 +1006,12 @@ async function buildSignalPulseQualityGates(args: {
       SELECT
         (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1) AS periods,
         (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1 AND comparable = true) AS comparable_periods,
+        (
+          SELECT COUNT(*)::int
+          FROM report_periods
+          WHERE study_corpus_id = $1
+            AND COALESCE((coverage->>'performance')::int, 0) > 0
+        ) AS performance_periods,
         (SELECT COUNT(*)::int FROM performance_records WHERE study_corpus_id = $1) AS performance_records,
         (
           SELECT COUNT(*)::int
@@ -1024,11 +1031,13 @@ async function buildSignalPulseQualityGates(args: {
   )).rows[0];
   const budgetCap = readBudgetCapUsd(args.ctx);
   const cost = Number(coverage?.cost ?? 0);
+  const expectedPeriods = Math.max(1, Math.min(36, Math.floor(readWindowMonths(args.ctx))));
   return [
     gate("source_presence", args.signalCount > 0, `${args.signalCount} señales materializadas desde conversación.`),
-    gate("period_coverage", Number(coverage?.periods ?? 0) >= 3, `${coverage?.periods ?? 0} periodos materializados.`),
-    gate("period_comparability", Number(coverage?.comparable_periods ?? 0) > 0, `${coverage?.comparable_periods ?? 0} periodos comparables.`),
+    gate("period_coverage", Number(coverage?.periods ?? 0) >= expectedPeriods, `${coverage?.periods ?? 0}/${expectedPeriods} periodos materializados.`),
+    gate("period_comparability", Number(coverage?.comparable_periods ?? 0) >= expectedPeriods, `${coverage?.comparable_periods ?? 0}/${expectedPeriods} periodos comparables.`),
     gate("performance_structured", Number(coverage?.performance_records ?? 0) > 0, `${coverage?.performance_records ?? 0} registros de performance estructurada.`),
+    gate("performance_period_coverage", Number(coverage?.performance_periods ?? 0) >= expectedPeriods, `${coverage?.performance_periods ?? 0}/${expectedPeriods} periodos con performance estructurada.`),
     gate("signal_min_evidence", Number(coverage?.evidence ?? 0) > 0, `${coverage?.evidence ?? 0} evidencias ligadas a señales.`),
     gate("chart_data_available", args.chartsCount >= 4, `${args.chartsCount} chart aggregates listos.`),
     gate("move_has_signal", args.movesCount > 0, `${args.movesCount} moves con señal asociada.`),
