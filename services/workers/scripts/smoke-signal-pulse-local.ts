@@ -209,7 +209,7 @@ async function seedSignalPulseCorpus(client: pg.Client) {
        )
        VALUES (
          'Aurora Snack - Signal Pulse Smoke', $1, $2, $3,
-         'Que senales mensuales deberia activar marketing para crecer sin prometer de mas?',
+         '¿Qué señales mensuales debería activar Marketing para crecer sin prometer de más?',
          'Priorizar claims, pauta y contenidos del siguiente mes.',
          'Compradores de snacks en Mexico', ARRAY['MX']::char(2)[],
          12, '{}'::jsonb, $4::jsonb, 'approved', 'signal_pulse_smoke_v1', $5, NOW()
@@ -252,7 +252,7 @@ async function seedSignalPulseCorpus(client: pg.Client) {
          evaluated_at, approved_at
        )
        VALUES ($1, $2, 'signal-pulse', 'marketing_signals', 'brand',
-         'Capturar senales mensuales accionables para marketing.',
+         'Capturar señales mensuales accionables para marketing.',
          'Aurora Snack ritual crujiente ingredientes precio',
          '{}'::jsonb, '{}'::jsonb, '{"smoke":true}'::jsonb, 'approved', 48,
          88, 0.72, 0.08, '{"estimated_usd":0}'::jsonb, $3, NOW(), NOW()
@@ -377,7 +377,7 @@ async function seedSignalPulseCorpus(client: pg.Client) {
          'queued', 'sp_readiness', $2, '{"budget_cap_usd":5,"window_months":12}'::jsonb,
          '{"smoke":true}'::jsonb, $3)
        RETURNING id::text`,
-      [corpus.id, "Que senales mensuales deberia activar marketing para crecer sin prometer de mas?", user.id]
+      [corpus.id, "¿Qué señales mensuales debería activar Marketing para crecer sin prometer de más?", user.id]
     );
 
     await client.query("COMMIT");
@@ -720,9 +720,9 @@ async function buildSmokePublishedPayload(client: pg.Client, ids: SmokeIds) {
       generated_from_engine_analysis_id: ids.analysisId
     },
     executive_read: {
-      headline: String(interpretation.headline ?? (topSignal.title ? `${String(topSignal.title)} concentra la prioridad del corte.` : "Todavia no hay senales suficientes.")),
-      body: String(interpretation.body ?? (topSignal.volume ? `Tiene ${Number(topSignal.volume)} menciones en el periodo mas reciente y confianza ${String(topSignal.confidence ?? "baja")}.` : "Amplia cobertura antes de mover marketing.")),
-      action: String(interpretation.action ?? topMove.action_text ?? "Revisar senales con mayor impacto antes de mover presupuesto.")
+      headline: String(interpretation.headline ?? (topSignal.title ? `${String(topSignal.title)} concentra la prioridad del corte.` : "Todavía no hay señales suficientes.")),
+      body: String(interpretation.body ?? (topSignal.volume ? `Tiene ${Number(topSignal.volume)} menciones en el periodo más reciente y confianza ${String(topSignal.confidence ?? "baja")}.` : "Amplía cobertura antes de mover marketing.")),
+      action: String(interpretation.action ?? topMove.action_text ?? "Revisar señales con mayor impacto antes de mover presupuesto.")
     },
     periods: periods.rows,
     signals: signals.rows,

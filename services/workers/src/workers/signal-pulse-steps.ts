@@ -644,7 +644,7 @@ async function materializeCanonicalSignals(args: {
   for (const [index, cluster] of args.clusters.entries()) {
     const title = titleForCluster(cluster.term);
     const signalType = signalTypeForCluster(cluster);
-    const description = `La conversacion esta agrupando menciones alrededor de ${title.toLowerCase()}.`;
+    const description = `La conversación se está concentrando alrededor de ${title.toLowerCase()}.`;
     const firstLast = await pool.query<{ first_seen: string | null; last_seen: string | null }>(
       `
         SELECT MIN(published_at)::text AS first_seen, MAX(published_at)::text AS last_seen
@@ -924,19 +924,19 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
 
   if (!row) {
     return {
-      headline: "Todavia no hay senales suficientes para mover marketing.",
-      body: "Falta conversacion materializada en signal_period_metrics antes de sostener una lectura.",
-      action: "Revisar cobertura de fuentes y volver a correr Signal Pulse."
+      headline: "Todavía no hay señales suficientes para tomar una decisión de marketing.",
+      body: "El corte necesita más conversación útil antes de convertir hallazgos en acciones publicables.",
+      action: "Revisar cobertura de fuentes, periodo y query pack antes de volver a correr Signal Pulse."
     };
   }
 
-  const posture = row.signal_type === "risk" ? "requiere contencion" : row.lifecycle_state === "accelerating" ? "esta acelerando" : "merece una prueba controlada";
+  const posture = row.signal_type === "risk" ? "requiere contención" : row.lifecycle_state === "accelerating" ? "está acelerando" : "merece una prueba controlada";
   return {
     headline: `${row.title} ${posture} este corte.`,
-    body: `La senal llega con ${Number(row.volume ?? 0)} menciones en el periodo mas reciente, impacto ${Number(row.impact ?? 0)} y confianza ${row.confidence ?? "baja"}.`,
+    body: `La señal llega con ${Number(row.volume ?? 0)} menciones en el periodo más reciente, impacto ${Number(row.impact ?? 0)} y confianza ${row.confidence ?? "baja"}.`,
     action: row.signal_type === "risk"
-      ? "Reducir la friccion en claims, piezas y pauta antes de amplificar el territorio."
-      : "Convertir la senal en un hook medible antes de mover presupuesto fuerte."
+      ? "Reducir la fricción en claims, piezas y pauta antes de amplificar el territorio."
+      : "Convertir la señal en un hook medible antes de mover presupuesto fuerte."
   };
 }
 
@@ -978,9 +978,9 @@ async function maybeApplyClaudeSignalNaming(args: {
   if (payload.length === 0) return { applied: false, updated: 0, reason: "no_clusters" };
 
   const prompt = [
-    "Eres editor de Signal Pulse para marketing. Nombra clusters de conversacion como senales accionables.",
-    "Reglas duras: no hagas coding por mencion; no inventes numeros; usa solo los numeros del JSON; conserva ids; espanol MX; copy corto y claro.",
-    "Devuelve SOLO JSON valido con forma:",
+    "Eres editor de Signal Pulse para marketing. Nombra clusters de conversación como señales accionables.",
+    "Reglas duras: no hagas coding por mención; no inventes números; usa solo los números del JSON; conserva ids; español MX; copy corto y claro.",
+    "Devuelve SOLO JSON válido con forma:",
     '{"signals":[{"id":"uuid","title":"Oportunidad: ...","description":"...","marketing_read":"...","action_hint":"..."}]}',
     "Clusters:",
     JSON.stringify(payload)
@@ -1080,8 +1080,8 @@ async function maybeApplyClaudeSignalPulseInterpretation(args: {
   const context = await loadSignalPulseInterpretationContext(args.ctx);
   const prompt = [
     "Eres editor senior de un reporte tactico para marketing.",
-    "Interpreta SOLO agregados SQL. No inventes numeros ni porcentajes; si mencionas cifras, deben venir del JSON.",
-    "Devuelve SOLO JSON valido: {\"headline\":\"...\",\"body\":\"...\",\"action\":\"...\"}.",
+    "Interpreta SOLO agregados SQL. No inventes números ni porcentajes; si mencionas cifras, deben venir del JSON.",
+    "Devuelve SOLO JSON válido: {\"headline\":\"...\",\"body\":\"...\",\"action\":\"...\"}.",
     "Contexto:",
     JSON.stringify(context)
   ].join("\n\n");
@@ -1532,7 +1532,7 @@ async function buildSignalPulseQualityGates(args: {
     gate("chart_data_available", args.chartsCount >= 4, `${args.chartsCount} chart aggregates listos.`),
     gate("move_has_signal", args.movesCount > 0, `${args.movesCount} moves con señal asociada.`),
     gate("cost_within_budget", cost <= budgetCap, `Costo estimado USD ${round(cost, 4)} de ${budgetCap}.`),
-    gate("no_invented_numbers", args.metricsCount > 0, "Los números visibles salen de report_periods, signal_period_metrics y chart_aggregates."),
+    gate("no_invented_numbers", args.metricsCount > 0, "Los números visibles salen de tablas calculadas; la interpretación no inventa cifras."),
     gate("humanizer_passed", true, "Copy corto, sin jerga metodológica en frontstage.")
   ];
 }
@@ -1855,7 +1855,7 @@ function emotionForSentiment(sentiment: number | null) {
   if (sentiment === null) return "sin_clasificar";
   if (sentiment > 0.35) return "afinidad";
   if (sentiment > 0.08) return "interes";
-  if (sentiment < -0.28) return "friccion";
+  if (sentiment < -0.28) return "fricción";
   if (sentiment < -0.08) return "duda";
   return "observacion";
 }

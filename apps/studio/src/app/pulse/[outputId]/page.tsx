@@ -511,7 +511,7 @@ function PaidOrganicPanel({ periods, performance, signals }: { periods: JsonReco
   return (
     <div className="pulse-source-stack">
       <section className="pulse-source-panel">
-        <PulseSectionHead eyebrow="Lectura táctica" title="Qué dice la mezcla paid/organic" sub="Resumen calculado desde performance_records y cobertura mensual." compact />
+        <PulseSectionHead eyebrow="Lectura táctica" title="Qué dice la mezcla paid/organic" sub="Resumen calculado desde performance estructurada y cobertura mensual." compact />
         <div className="pulse-paid-summary">
           <div>
             <strong>USD {fmtMoney(summary.totals.spend)}</strong>
@@ -542,7 +542,7 @@ function PaidOrganicPanel({ periods, performance, signals }: { periods: JsonReco
         </div>
       </section>
       <section className="pulse-source-panel">
-        <PulseSectionHead eyebrow="Periodo" title="Conversación vs inversión" sub="La conversación viene de menciones; inversión e impresiones vienen de performance_records." compact />
+        <PulseSectionHead eyebrow="Periodo" title="Conversación vs inversión" sub="La conversación viene de menciones; inversión e impresiones vienen del archivo de performance estructurado." compact />
         <div className="pulse-paid-bars">
           {rows.map(({ period, performance: perf }) => {
             const coverage = asRecord(period.coverage);
