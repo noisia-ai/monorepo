@@ -155,16 +155,23 @@ export function buildSignalPulseLaunchPlan(args: {
   if (normalizedCoverage.signalPulseMentions === 0) warnings.push("Falta cobertura atribuida al query pack de Signal Pulse.");
   if (normalizedCoverage.performanceRecords === 0) warnings.push("Sube performance estructurada de 12 meses antes de leer paid/organic.");
   if (normalizedCoverage.queryPacks === 0) warnings.push("Materializa el query pack Signal Pulse antes de correr.");
+  const estimatedCostUsd = estimateSignalPulseRunCostUsd(normalizedCoverage.signalPulseMentions);
 
   return {
     budgetCapUsd,
-    estimatedCostUsd: 0,
+    estimatedCostUsd,
     windowMonths,
     clusterFirst: true,
     status: warnings.length === 0 ? "ready" : "blocked",
     coverage: normalizedCoverage,
     warnings
   };
+}
+
+function estimateSignalPulseRunCostUsd(signalPulseMentions: number) {
+  const estimatedClusters = Math.max(1, Math.min(24, Math.ceil(signalPulseMentions / 80)));
+  const namingAndInterpretation = 0.15 + estimatedClusters * 0.015;
+  return Math.round(namingAndInterpretation * 10_000) / 10_000;
 }
 
 export function buildSignalPulseLaunchChecklist(plan: SignalPulseLaunchPlan): SignalPulseLaunchChecklistItem[] {

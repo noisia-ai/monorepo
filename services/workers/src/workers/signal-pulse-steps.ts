@@ -1,9 +1,13 @@
+import { anthropic } from "@ai-sdk/anthropic";
+import { generateText } from "ai";
 import type { Job } from "bullmq";
 
 import {
   buildMonthlyReportPeriods,
   calculateImpactV1,
-  classifySignalPulseLifecycle
+  classifySignalPulseLifecycle,
+  isEngineLlmEnabled,
+  isEngineModelAllowed
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
 import {
@@ -102,7 +106,7 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       performance_records: Number(coverage?.performance_records ?? 0),
       query_packs: Number(coverage?.query_packs ?? 0),
       budget_cap_usd: budgetCapUsd,
-      estimated_cost_usd: 0,
+      estimated_cost_usd: estimateSignalPulseRunCostUsd(Number(coverage?.signal_pulse_mentions ?? 0)),
       cluster_first: true,
       status: Number(coverage?.conversation_mentions ?? 0) > 0 ? "ready" : "blocked"
     };
@@ -114,7 +118,7 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       provider: "system",
       model: null,
       operation: "sp_readiness_estimate",
-      estimatedCostUsd: 0,
+      estimatedCostUsd: readiness.estimated_cost_usd,
       metadata: readiness
     });
     await markEngineStepCompleted({ pipelineStepId, resultSummary: readiness });
@@ -360,20 +364,32 @@ export async function signalPulseNameSignalsJob(job: Job<SignalPulseStepJobData>
         updated_signals: updated
       }
     });
+    const llmNaming = await maybeApplyClaudeSignalNaming({
+      ctx,
+      engineAnalysisId,
+      pipelineStepId,
+      candidates
+    });
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
         naming: {
           status: "materialized",
-          interpretation_source: "deterministic_marketing_read_v2",
+          interpretation_source: llmNaming.applied ? "claude_cluster_naming_v1" : "deterministic_marketing_read_v2",
           cluster_first: true,
           per_mention_coding: false,
-          updated_signals: updated
+          updated_signals: llmNaming.applied ? llmNaming.updated : updated,
+          fallback: llmNaming.applied ? false : llmNaming.reason
         }
       }
     });
     await markEngineStepCompleted({
       pipelineStepId,
-      resultSummary: { status: "materialized", updated_signals: updated, per_mention_coding: false }
+      resultSummary: {
+        status: "materialized",
+        updated_signals: llmNaming.applied ? llmNaming.updated : updated,
+        interpretation_source: llmNaming.applied ? "claude_cluster_naming_v1" : "deterministic_marketing_read_v2",
+        per_mention_coding: false
+      }
     });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_metrics" });
     return { status: "materialized", next_step_job_id: next.jobId };
@@ -412,12 +428,19 @@ export async function signalPulseInterpretJob(job: Job<SignalPulseStepJobData>) 
   return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
     const ctx = await loadSignalPulseContext(engineAnalysisId);
     assertSignalPulse(ctx);
-    const interpretation = await buildSignalPulseInterpretation(ctx);
+    const deterministicInterpretation = await buildSignalPulseInterpretation(ctx);
+    const llmInterpretation = await maybeApplyClaudeSignalPulseInterpretation({
+      ctx,
+      engineAnalysisId,
+      pipelineStepId,
+      fallback: deterministicInterpretation
+    });
+    const interpretation = llmInterpretation.interpretation;
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
         interpretation: {
           ...interpretation,
-          source: "sql_metric_interpretation_v1",
+          source: llmInterpretation.applied ? "claude_aggregate_interpretation_v1" : "sql_metric_interpretation_v1",
           numbers_source: "signal_period_metrics"
         }
       }
@@ -560,6 +583,12 @@ function readWindowMonths(ctx: AnalysisContext) {
 
 function readBudgetCapUsd(ctx: AnalysisContext) {
   return numberFrom(ctx.params?.budget_cap_usd) ?? numberFrom(ctx.analysis_plan?.budget_cap_usd) ?? 5;
+}
+
+function estimateSignalPulseRunCostUsd(signalPulseMentions: number) {
+  const estimatedClusters = Math.max(1, Math.min(MAX_SIGNAL_CLUSTERS, Math.ceil(signalPulseMentions / 80)));
+  const namingAndInterpretation = 0.15 + estimatedClusters * 0.015;
+  return Math.round(namingAndInterpretation * 10_000) / 10_000;
 }
 
 function numberFrom(value: unknown) {
@@ -897,6 +926,277 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
       ? "Reducir la friccion en claims, piezas y pauta antes de amplificar el territorio."
       : "Convertir la senal en un hook medible antes de mover presupuesto fuerte."
   };
+}
+
+async function maybeApplyClaudeSignalNaming(args: {
+  ctx: AnalysisContext;
+  engineAnalysisId: string;
+  pipelineStepId: string;
+  candidates: SignalPulseNamingRow[];
+}) {
+  const model = signalPulseLlmModel();
+  const unavailableReason = await signalPulseLlmUnavailableReason(args.ctx, args.engineAnalysisId, model);
+  if (unavailableReason) {
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_name_signals_skipped",
+      usage: null,
+      metadata: { reason: unavailableReason, cluster_first: true, per_mention_coding: false }
+    });
+    return { applied: false, updated: 0, reason: unavailableReason };
+  }
+
+  const payload = await Promise.all(args.candidates.slice(0, MAX_SIGNAL_CLUSTERS).map(async (candidate) => {
+    const dimensions = candidate.dimensions ?? {};
+    return {
+      id: candidate.id,
+      current_title: candidate.canonical_title,
+      signal_type: candidate.signal_type,
+      term: stringFrom(dimensions.term),
+      rank: candidate.position,
+      mention_count: Number(dimensions.mention_count ?? 0),
+      sentiment_avg: numberOrNull(dimensions.sentiment_avg),
+      platforms: stringArrayFrom(dimensions.platforms).slice(0, 5),
+      samples: await loadMentionSamples(stringArrayFrom(dimensions.sample_mention_ids).slice(0, 4))
+    };
+  }));
+  if (payload.length === 0) return { applied: false, updated: 0, reason: "no_clusters" };
+
+  const prompt = [
+    "Eres editor de Signal Pulse para marketing. Nombra clusters de conversacion como senales accionables.",
+    "Reglas duras: no hagas coding por mencion; no inventes numeros; usa solo los numeros del JSON; conserva ids; espanol MX; copy corto y claro.",
+    "Devuelve SOLO JSON valido con forma:",
+    '{"signals":[{"id":"uuid","title":"Oportunidad: ...","description":"...","marketing_read":"...","action_hint":"..."}]}',
+    "Clusters:",
+    JSON.stringify(payload)
+  ].join("\n\n");
+
+  try {
+    const response = await generateText({
+      model: anthropic(model),
+      prompt,
+      temperature: 0.2
+    });
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_name_signals",
+      usage: readAiSdkUsage(response),
+      metadata: { clusters: payload.length, cluster_first: true, per_mention_coding: false }
+    });
+    const parsed = parseJsonRecord(response.text);
+    const rows = arrayOfRecords(parsed.signals);
+    let updated = 0;
+    for (const row of rows) {
+      const id = stringFrom(row.id);
+      if (!id) continue;
+      const title = stringFrom(row.title).slice(0, 160);
+      const description = stringFrom(row.description).slice(0, 500);
+      const marketingRead = stringFrom(row.marketing_read).slice(0, 500);
+      const actionHint = stringFrom(row.action_hint).slice(0, 360);
+      if (!title || !description) continue;
+      const result = await pool.query(
+        `
+          UPDATE canonical_signals
+          SET
+            canonical_title = $2,
+            description = $3,
+            dimensions = dimensions || $4::jsonb,
+            updated_at = NOW()
+          WHERE id = $1
+            AND study_corpus_id = $5
+            AND methodology_slug = 'signal-pulse'
+        `,
+        [
+          id,
+          title,
+          description,
+          safeJsonStringifyForPostgres({
+            marketing_read: marketingRead,
+            action_hint: actionHint,
+            interpretation_source: "claude_cluster_naming_v1",
+            cluster_first: true,
+            per_mention_coding: false
+          }),
+          args.ctx.study_corpus_id
+        ]
+      );
+      updated += result.rowCount ?? 0;
+    }
+    return { applied: updated > 0, updated, reason: updated > 0 ? undefined : "empty_valid_claude_rows" };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_name_signals_failed",
+      usage: null,
+      metadata: { reason: reason.slice(0, 500), cluster_first: true, per_mention_coding: false }
+    });
+    return { applied: false, updated: 0, reason: reason.slice(0, 500) };
+  }
+}
+
+async function maybeApplyClaudeSignalPulseInterpretation(args: {
+  ctx: AnalysisContext;
+  engineAnalysisId: string;
+  pipelineStepId: string;
+  fallback: { headline: string; body: string; action: string };
+}) {
+  const model = signalPulseLlmModel();
+  const unavailableReason = await signalPulseLlmUnavailableReason(args.ctx, args.engineAnalysisId, model);
+  if (unavailableReason) {
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_interpret_skipped",
+      usage: null,
+      metadata: { reason: unavailableReason, numbers_source: "signal_period_metrics" }
+    });
+    return { applied: false, interpretation: args.fallback, reason: unavailableReason };
+  }
+
+  const context = await loadSignalPulseInterpretationContext(args.ctx);
+  const prompt = [
+    "Eres editor senior de un reporte tactico para marketing.",
+    "Interpreta SOLO agregados SQL. No inventes numeros ni porcentajes; si mencionas cifras, deben venir del JSON.",
+    "Devuelve SOLO JSON valido: {\"headline\":\"...\",\"body\":\"...\",\"action\":\"...\"}.",
+    "Contexto:",
+    JSON.stringify(context)
+  ].join("\n\n");
+
+  try {
+    const response = await generateText({
+      model: anthropic(model),
+      prompt,
+      temperature: 0.2
+    });
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_interpret",
+      usage: readAiSdkUsage(response),
+      metadata: { signals: context.signals.length, numbers_source: "signal_period_metrics" }
+    });
+    const parsed = parseJsonRecord(response.text);
+    const interpretation = {
+      headline: stringFrom(parsed.headline).slice(0, 180) || args.fallback.headline,
+      body: stringFrom(parsed.body).slice(0, 700) || args.fallback.body,
+      action: stringFrom(parsed.action).slice(0, 260) || args.fallback.action
+    };
+    return { applied: true, interpretation };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await recordEngineCostEvent({
+      engineAnalysisId: args.engineAnalysisId,
+      pipelineStepId: args.pipelineStepId,
+      provider: "anthropic",
+      model,
+      operation: "sp_interpret_failed",
+      usage: null,
+      metadata: { reason: reason.slice(0, 500), numbers_source: "signal_period_metrics" }
+    });
+    return { applied: false, interpretation: args.fallback, reason: reason.slice(0, 500) };
+  }
+}
+
+function signalPulseLlmModel() {
+  return process.env.ANTHROPIC_MODEL_SIGNAL_PULSE
+    ?? process.env.ANTHROPIC_MODEL_ENGINE_SYNTHESIS
+    ?? process.env.ANTHROPIC_MODEL_ENGINE
+    ?? process.env.ANTHROPIC_MODEL_DEFAULT
+    ?? "claude-sonnet-4-6";
+}
+
+async function signalPulseLlmUnavailableReason(ctx: AnalysisContext, engineAnalysisId: string, model: string) {
+  if (!process.env.ANTHROPIC_API_KEY) return "anthropic_key_missing";
+  if (!isEngineLlmEnabled()) return "engine_llm_disabled";
+  if (!isEngineModelAllowed(model)) return `model_blocked:${model}`;
+  const budgetCap = readBudgetCapUsd(ctx);
+  const cost = await readEngineCostTotal(engineAnalysisId);
+  if (cost >= budgetCap) return `budget_exhausted:${round(cost, 4)}/${budgetCap}`;
+  return null;
+}
+
+async function readEngineCostTotal(engineAnalysisId: string) {
+  const row = (await pool.query<{ cost: string | null }>(
+    `SELECT COALESCE(SUM(estimated_cost_usd), 0)::text AS cost
+     FROM engine_cost_events
+     WHERE engine_analysis_id = $1`,
+    [engineAnalysisId]
+  )).rows[0];
+  return Number(row?.cost ?? 0);
+}
+
+async function loadMentionSamples(mentionIds: string[]) {
+  if (mentionIds.length === 0) return [];
+  const rows = (await pool.query<{ text_clean: string; platform: string | null }>(
+    `SELECT text_clean, resolved_platform AS platform
+     FROM mentions
+     WHERE id = ANY($1::uuid[])
+     ORDER BY published_at DESC NULLS LAST
+     LIMIT 4`,
+    [mentionIds]
+  )).rows;
+  return rows.map((row) => ({
+    text: stringFrom(row.text_clean).slice(0, 240),
+    platform: stringFrom(row.platform)
+  }));
+}
+
+async function loadSignalPulseInterpretationContext(ctx: AnalysisContext) {
+  const signals = (await pool.query(
+    `
+      WITH latest AS (
+        SELECT DISTINCT ON (spm.canonical_signal_id)
+          spm.canonical_signal_id,
+          spm.volume,
+          spm.impact_v1::text AS impact,
+          spm.confidence,
+          spm.lifecycle_state,
+          spm.polarity_bucket
+        FROM signal_period_metrics spm
+        JOIN report_periods rp ON rp.id = spm.period_id
+        WHERE spm.study_corpus_id = $1
+        ORDER BY spm.canonical_signal_id, rp.period_start DESC
+      )
+      SELECT
+        cs.canonical_title AS title,
+        cs.signal_type,
+        latest.volume,
+        latest.impact,
+        latest.confidence,
+        latest.lifecycle_state,
+        latest.polarity_bucket
+      FROM latest
+      JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
+      WHERE cs.study_corpus_id = $1
+        AND cs.methodology_slug = 'signal-pulse'
+        AND cs.status <> 'archived'
+      ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
+      LIMIT 8
+    `,
+    [ctx.study_corpus_id]
+  )).rows;
+  const periods = (await pool.query(
+    `SELECT label, coverage, comparable, confidence
+     FROM report_periods
+     WHERE study_corpus_id = $1 AND granularity = 'month'
+     ORDER BY period_start`,
+    [ctx.study_corpus_id]
+  )).rows;
+  return { signals, periods };
 }
 
 async function materializeMarketingMoves(args: {
@@ -1591,6 +1891,42 @@ function stringFrom(value: unknown) {
 
 function stringArrayFrom(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+function parseJsonRecord(value: string) {
+  const trimmed = value.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  const source = fenced ?? trimmed;
+  try {
+    return asRecord(JSON.parse(source));
+  } catch {
+    const start = source.indexOf("{");
+    const end = source.lastIndexOf("}");
+    if (start >= 0 && end > start) return asRecord(JSON.parse(source.slice(start, end + 1)));
+    throw new Error("Signal Pulse Claude response was not valid JSON.");
+  }
+}
+
+function readAiSdkUsage(response: unknown) {
+  const usage = asRecord(asRecord(response).usage);
+  return {
+    inputTokens: tokenNumber(usage.inputTokens ?? usage.promptTokens),
+    outputTokens: tokenNumber(usage.outputTokens ?? usage.completionTokens),
+    totalTokens: tokenNumber(usage.totalTokens)
+  };
+}
+
+function tokenNumber(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : 0;
 }
 
 function numberOrNull(value: unknown) {
