@@ -10,7 +10,11 @@ import { engineScoreJob } from "../workers/engine-step-score";
 import { engineSynthesizeJob } from "../workers/engine-step-synthesize";
 import {
   signalPulseClusterJob,
+  signalPulseChartsJob,
+  signalPulseGatesJob,
+  signalPulseInterpretJob,
   signalPulseMetricsJob,
+  signalPulseMovesJob,
   signalPulseNameSignalsJob,
   signalPulsePeriodsJob,
   signalPulseReadinessJob
@@ -46,6 +50,14 @@ export function startEngineAnalysisWorker() {
           return signalPulseNameSignalsJob(job);
         case "engine_sp_metrics":
           return signalPulseMetricsJob(job);
+        case "engine_sp_interpret":
+          return signalPulseInterpretJob(job);
+        case "engine_sp_moves":
+          return signalPulseMovesJob(job);
+        case "engine_sp_charts":
+          return signalPulseChartsJob(job);
+        case "engine_sp_gates":
+          return signalPulseGatesJob(job);
         default:
           throw new Error(`Unsupported engine-analysis job: ${job.name}`);
       }

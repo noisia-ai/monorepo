@@ -40,7 +40,11 @@ export type EngineStepName =
   | "sp_periods"
   | "sp_cluster"
   | "sp_name_signals"
-  | "sp_metrics";
+  | "sp_metrics"
+  | "sp_interpret"
+  | "sp_moves"
+  | "sp_charts"
+  | "sp_gates";
 
 export const ENGINE_STEP_ORDER: EngineStepName[] = [
   "preflight",
@@ -62,7 +66,11 @@ export const ENGINE_STEP_JOB_NAME: Record<EngineStepName, string> = {
   sp_periods: "engine_sp_periods",
   sp_cluster: "engine_sp_cluster",
   sp_name_signals: "engine_sp_name_signals",
-  sp_metrics: "engine_sp_metrics"
+  sp_metrics: "engine_sp_metrics",
+  sp_interpret: "engine_sp_interpret",
+  sp_moves: "engine_sp_moves",
+  sp_charts: "engine_sp_charts",
+  sp_gates: "engine_sp_gates"
 };
 
 export function engineNextStep(current: EngineStepName): EngineStepName | null {

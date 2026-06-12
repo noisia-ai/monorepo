@@ -384,29 +384,102 @@ export async function signalPulseMetricsJob(job: Job<SignalPulseStepJobData>) {
   return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
     const ctx = await loadSignalPulseContext(engineAnalysisId);
     assertSignalPulse(ctx);
-    const signalResult = await pool.query<{ signal_count: number }>(
-      `SELECT COUNT(*)::int AS signal_count
-       FROM canonical_signals
-       WHERE study_corpus_id = $1
-         AND methodology_slug = 'signal-pulse'
-         AND status <> 'archived'`,
-      [ctx.study_corpus_id]
-    );
-    const signalCount = Number(signalResult.rows[0]?.signal_count ?? 0);
     const metrics = await materializePeriodMetrics({ ctx, engineAnalysisId });
-    const moves = await materializeMarketingMoves({ ctx, engineAnalysisId });
-    const charts = await materializeChartAggregates(ctx);
-    const qualityGates = await buildSignalPulseQualityGates({ ctx, signalCount, metricsCount: metrics.metrics, movesCount: moves.moves, chartsCount: charts.charts });
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
         metrics: {
-          signal_count: signalCount,
           period_metrics: metrics.metrics,
           observations: metrics.observations,
           evidence: metrics.evidence,
-          marketing_moves: moves.moves,
-          chart_aggregates: charts.charts,
           impact_formula: "impact_v1"
+        }
+      }
+    });
+    await markEngineStepCompleted({
+      pipelineStepId,
+      resultSummary: {
+        period_metrics: metrics.metrics,
+        observations: metrics.observations,
+        evidence: metrics.evidence
+      }
+    });
+    const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_interpret" });
+    return { ...metrics, next_step_job_id: next.jobId };
+  });
+}
+
+export async function signalPulseInterpretJob(job: Job<SignalPulseStepJobData>) {
+  return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
+    const ctx = await loadSignalPulseContext(engineAnalysisId);
+    assertSignalPulse(ctx);
+    const interpretation = await buildSignalPulseInterpretation(ctx);
+    await mergeMeta(engineAnalysisId, {
+      signal_pulse: {
+        interpretation: {
+          ...interpretation,
+          source: "sql_metric_interpretation_v1",
+          numbers_source: "signal_period_metrics"
+        }
+      }
+    });
+    await markEngineStepCompleted({ pipelineStepId, resultSummary: interpretation });
+    const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_moves" });
+    return { ...interpretation, next_step_job_id: next.jobId };
+  });
+}
+
+export async function signalPulseMovesJob(job: Job<SignalPulseStepJobData>) {
+  return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
+    const ctx = await loadSignalPulseContext(engineAnalysisId);
+    assertSignalPulse(ctx);
+    const moves = await materializeMarketingMoves({ ctx, engineAnalysisId });
+    await mergeMeta(engineAnalysisId, {
+      signal_pulse: {
+        moves: {
+          marketing_moves: moves.moves
+        }
+      }
+    });
+    await markEngineStepCompleted({ pipelineStepId, resultSummary: moves });
+    const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_charts" });
+    return { ...moves, next_step_job_id: next.jobId };
+  });
+}
+
+export async function signalPulseChartsJob(job: Job<SignalPulseStepJobData>) {
+  return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
+    const ctx = await loadSignalPulseContext(engineAnalysisId);
+    assertSignalPulse(ctx);
+    const charts = await materializeChartAggregates(ctx);
+    await mergeMeta(engineAnalysisId, {
+      signal_pulse: {
+        charts: {
+          chart_aggregates: charts.charts
+        }
+      }
+    });
+    await markEngineStepCompleted({ pipelineStepId, resultSummary: charts });
+    const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_gates" });
+    return { ...charts, next_step_job_id: next.jobId };
+  });
+}
+
+export async function signalPulseGatesJob(job: Job<SignalPulseStepJobData>) {
+  return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
+    const ctx = await loadSignalPulseContext(engineAnalysisId);
+    assertSignalPulse(ctx);
+    const counts = await loadSignalPulseMaterializationCounts({ ctx, engineAnalysisId });
+    const qualityGates = await buildSignalPulseQualityGates({
+      ctx,
+      signalCount: counts.signals,
+      metricsCount: counts.metrics,
+      movesCount: counts.moves,
+      chartsCount: counts.charts
+    });
+    await mergeMeta(engineAnalysisId, {
+      signal_pulse: {
+        gates: {
+          failed_gates: qualityGates.filter((gate) => !gate.passed).length
         }
       },
       quality_gates: qualityGates
@@ -414,10 +487,10 @@ export async function signalPulseMetricsJob(job: Job<SignalPulseStepJobData>) {
     await markEngineStepCompleted({
       pipelineStepId,
       resultSummary: {
-        signal_count: signalCount,
-        period_metrics: metrics.metrics,
-        marketing_moves: moves.moves,
-        chart_aggregates: charts.charts,
+        signal_count: counts.signals,
+        period_metrics: counts.metrics,
+        marketing_moves: counts.moves,
+        chart_aggregates: counts.charts,
         failed_gates: qualityGates.filter((gate) => !gate.passed).length
       }
     });
@@ -430,7 +503,7 @@ export async function signalPulseMetricsJob(job: Job<SignalPulseStepJobData>) {
       [engineAnalysisId]
     );
     await releaseEngineCorpusLock(engineAnalysisId);
-    return { signal_count: signalCount, status: "needs_review" };
+    return { signal_count: counts.signals, status: "needs_review" };
   });
 }
 
@@ -768,6 +841,64 @@ async function materializePeriodMetrics(args: {
   return { metrics: metricCount, observations: observationCount, evidence: evidenceCount };
 }
 
+async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
+  const row = (await pool.query<{
+    title: string;
+    signal_type: string;
+    volume: number;
+    impact: string | null;
+    confidence: string | null;
+    lifecycle_state: string | null;
+  }>(
+    `
+      WITH latest AS (
+        SELECT DISTINCT ON (spm.canonical_signal_id)
+          spm.canonical_signal_id,
+          spm.volume,
+          spm.impact_v1::text AS impact,
+          spm.confidence,
+          spm.lifecycle_state
+        FROM signal_period_metrics spm
+        JOIN report_periods rp ON rp.id = spm.period_id
+        WHERE spm.study_corpus_id = $1
+        ORDER BY spm.canonical_signal_id, rp.period_start DESC
+      )
+      SELECT
+        cs.canonical_title AS title,
+        cs.signal_type,
+        latest.volume,
+        latest.impact,
+        latest.confidence,
+        latest.lifecycle_state
+      FROM latest
+      JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
+      WHERE cs.study_corpus_id = $1
+        AND cs.methodology_slug = 'signal-pulse'
+        AND cs.status <> 'archived'
+      ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
+      LIMIT 1
+    `,
+    [ctx.study_corpus_id]
+  )).rows[0];
+
+  if (!row) {
+    return {
+      headline: "Todavia no hay senales suficientes para mover marketing.",
+      body: "Falta conversacion materializada en signal_period_metrics antes de sostener una lectura.",
+      action: "Revisar cobertura de fuentes y volver a correr Signal Pulse."
+    };
+  }
+
+  const posture = row.signal_type === "risk" ? "requiere contencion" : row.lifecycle_state === "accelerating" ? "esta acelerando" : "merece una prueba controlada";
+  return {
+    headline: `${row.title} ${posture} este corte.`,
+    body: `La senal llega con ${Number(row.volume ?? 0)} menciones en el periodo mas reciente, impacto ${Number(row.impact ?? 0)} y confianza ${row.confidence ?? "baja"}.`,
+    action: row.signal_type === "risk"
+      ? "Reducir la friccion en claims, piezas y pauta antes de amplificar el territorio."
+      : "Convertir la senal en un hook medible antes de mover presupuesto fuerte."
+  };
+}
+
 async function materializeMarketingMoves(args: {
   ctx: AnalysisContext;
   engineAnalysisId: string;
@@ -985,6 +1116,53 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
   }
   await pool.query("ANALYZE chart_aggregates");
   return { charts: charts.length };
+}
+
+async function loadSignalPulseMaterializationCounts(args: {
+  ctx: AnalysisContext;
+  engineAnalysisId: string;
+}) {
+  const counts = (await pool.query<{
+    signals: number;
+    metrics: number;
+    moves: number;
+    charts: number;
+  }>(
+    `
+      SELECT
+        (
+          SELECT COUNT(*)::int
+          FROM canonical_signals
+          WHERE study_corpus_id = $1
+            AND methodology_slug = 'signal-pulse'
+            AND status <> 'archived'
+        ) AS signals,
+        (
+          SELECT COUNT(*)::int
+          FROM signal_period_metrics
+          WHERE study_corpus_id = $1
+        ) AS metrics,
+        (
+          SELECT COUNT(*)::int
+          FROM marketing_moves
+          WHERE study_corpus_id = $1
+            AND engine_analysis_id = $2
+        ) AS moves,
+        (
+          SELECT COUNT(DISTINCT chart_key)::int
+          FROM chart_aggregates
+          WHERE study_corpus_id = $1
+        ) AS charts
+    `,
+    [args.ctx.study_corpus_id, args.engineAnalysisId]
+  )).rows[0];
+
+  return {
+    signals: Number(counts?.signals ?? 0),
+    metrics: Number(counts?.metrics ?? 0),
+    moves: Number(counts?.moves ?? 0),
+    charts: Number(counts?.charts ?? 0)
+  };
 }
 
 async function buildSignalPulseQualityGates(args: {

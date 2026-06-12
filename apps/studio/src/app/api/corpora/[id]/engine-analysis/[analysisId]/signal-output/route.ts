@@ -658,7 +658,7 @@ async function buildSignalPulsePublishedPayload(
       business_question: corpus.businessQuestion,
       generated_from_engine_analysis_id: analysis.id
     },
-    executive_read: buildSignalPulseExecutiveRead(signals.rows, moves.rows),
+    executive_read: readSignalPulseExecutiveRead(analysis.meta_json, signals.rows, moves.rows),
     periods: periods.rows,
     signals: signals.rows,
     marketing_moves: moves.rows,
@@ -690,6 +690,23 @@ function buildSignalPulseExecutiveRead(signals: Array<Record<string, unknown>>, 
     body: `Tiene ${Number(topSignal.volume ?? 0)} menciones en el periodo más reciente y confianza ${String(topSignal.confidence ?? "baja")}.`,
     action: String(topMove?.action_text ?? "Usarla como prueba controlada antes de mover presupuesto fuerte.")
   };
+}
+
+function readSignalPulseExecutiveRead(
+  metaJson: unknown,
+  signals: Array<Record<string, unknown>>,
+  moves: Array<Record<string, unknown>>
+) {
+  const interpretation = asRecord(asRecord(metaJson).signal_pulse).interpretation;
+  const read = asRecord(interpretation);
+  if (read.headline || read.body || read.action) {
+    return {
+      headline: stringValue(read.headline),
+      body: stringValue(read.body),
+      action: stringValue(read.action)
+    };
+  }
+  return buildSignalPulseExecutiveRead(signals, moves);
 }
 
 function signalPulseLimitations(metaJson: unknown) {
@@ -751,4 +768,8 @@ function coerceOwnership(value: unknown): CompetitiveOwnership | null {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
 }
