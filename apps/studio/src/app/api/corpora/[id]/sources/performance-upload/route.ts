@@ -4,6 +4,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { pool } from "@/lib/db";
 import {
+  decodePerformanceCsvInput,
   parsePerformanceCsv,
   type NormalizedPerformanceRecord,
   type PerformanceFieldMapping
@@ -29,7 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const defaultPlatform = cleanParam(url.searchParams.get("platform")) || provider;
   const defaultChannel = cleanParam(url.searchParams.get("channel")) || "paid";
   const mapping = parseMapping(url.searchParams.get("mapping"));
-  const text = await request.text();
+  const text = decodePerformanceCsvInput(await request.arrayBuffer());
   if (!text.trim()) {
     return Response.json(
       { error: "validation_error", message: "Performance CSV file is required." },
@@ -50,6 +51,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       mode,
       mapping: parsed.mapping,
       stats: parsed.stats,
+      diagnostics: parsed.diagnostics,
       warnings: parsed.warnings,
       preview: parsed.preview
     });
@@ -67,6 +69,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         message: "No valid performance rows found. Confirm date, entity and at least one metric mapping.",
         mapping: parsed.mapping,
         stats: parsed.stats,
+        diagnostics: parsed.diagnostics,
         warnings: parsed.warnings,
         preview: parsed.preview
       },
@@ -168,6 +171,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         records_inserted: inserted,
         duplicate_keys: duplicateCount
       },
+      diagnostics: parsed.diagnostics,
       warnings: parsed.warnings,
       preview: parsed.preview
     });
@@ -249,24 +253,24 @@ async function insertPerformanceRecords(args: {
         DO UPDATE SET
           data_source_id = EXCLUDED.data_source_id,
           entity_kind = EXCLUDED.entity_kind,
-          entity_name = EXCLUDED.entity_name,
-          parent_external_id = EXCLUDED.parent_external_id,
-          channel = EXCLUDED.channel,
-          objective = EXCLUDED.objective,
-          spend = EXCLUDED.spend,
-          impressions = EXCLUDED.impressions,
-          reach = EXCLUDED.reach,
-          clicks = EXCLUDED.clicks,
-          video_views = EXCLUDED.video_views,
-          engagement = EXCLUDED.engagement,
-          conversions = EXCLUDED.conversions,
-          ctr = EXCLUDED.ctr,
-          cpm = EXCLUDED.cpm,
-          cpc = EXCLUDED.cpc,
-          creative_text = EXCLUDED.creative_text,
-          creative_asset_ref = EXCLUDED.creative_asset_ref,
-          metrics = EXCLUDED.metrics,
-          raw_metadata = EXCLUDED.raw_metadata
+          entity_name = COALESCE(EXCLUDED.entity_name, performance_records.entity_name),
+          parent_external_id = COALESCE(EXCLUDED.parent_external_id, performance_records.parent_external_id),
+          channel = COALESCE(NULLIF(EXCLUDED.channel, 'unknown'), performance_records.channel),
+          objective = COALESCE(EXCLUDED.objective, performance_records.objective),
+          spend = COALESCE(EXCLUDED.spend, performance_records.spend),
+          impressions = COALESCE(EXCLUDED.impressions, performance_records.impressions),
+          reach = COALESCE(EXCLUDED.reach, performance_records.reach),
+          clicks = COALESCE(EXCLUDED.clicks, performance_records.clicks),
+          video_views = COALESCE(EXCLUDED.video_views, performance_records.video_views),
+          engagement = COALESCE(EXCLUDED.engagement, performance_records.engagement),
+          conversions = COALESCE(EXCLUDED.conversions, performance_records.conversions),
+          ctr = COALESCE(EXCLUDED.ctr, performance_records.ctr),
+          cpm = COALESCE(EXCLUDED.cpm, performance_records.cpm),
+          cpc = COALESCE(EXCLUDED.cpc, performance_records.cpc),
+          creative_text = COALESCE(EXCLUDED.creative_text, performance_records.creative_text),
+          creative_asset_ref = COALESCE(EXCLUDED.creative_asset_ref, performance_records.creative_asset_ref),
+          metrics = performance_records.metrics || EXCLUDED.metrics,
+          raw_metadata = performance_records.raw_metadata || EXCLUDED.raw_metadata
         RETURNING id
       `,
       values

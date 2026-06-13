@@ -135,6 +135,7 @@ const LAST_STEP_INDEX = steps.length - 1;
 const MAX_KNOWLEDGE_FILES = 20;
 const KNOWLEDGE_ACCEPT = ".xlsx,.xls,.csv,.tsv,.txt,.json,.md,text/plain,text/csv,application/json,text/markdown,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const PERFORMANCE_ACCEPT = ".csv,text/csv,application/vnd.ms-excel";
+const PERFORMANCE_RECOMMENDED_METRICS = ["spend", "impressions", "reach", "clicks", "engagement", "video_views", "conversions"];
 const PERFORMANCE_MAPPING_FIELDS = [
   ["record_date", "Fecha"],
   ["external_id", "ID"],
@@ -167,6 +168,16 @@ type PerformancePreview = {
     coverage_start?: string | null;
     coverage_end?: string | null;
     records_inserted?: number;
+  };
+  diagnostics?: {
+    format?: "tabular" | "single_metric_timeseries";
+    source_title?: string | null;
+    detected_metrics?: string[];
+    present_metrics?: string[];
+    missing_recommended_metrics?: string[];
+    coverage_days?: number;
+    coverage_months?: number;
+    messages?: string[];
   };
   warnings?: string[];
   data_source_id?: string;
@@ -233,7 +244,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   const [files, setFiles] = useState<File[]>([]);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSource[]>([]);
-  const [performanceFile, setPerformanceFile] = useState<File | null>(null);
+  const [performanceFiles, setPerformanceFiles] = useState<File[]>([]);
   const [performanceHeaders, setPerformanceHeaders] = useState<string[]>([]);
   const [performanceMapping, setPerformanceMapping] = useState<PerformanceMapping>({});
   const [performancePreview, setPerformancePreview] = useState<PerformancePreview | null>(null);
@@ -377,20 +388,21 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   }
 
   async function onPerformanceFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
+    const incoming = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!file) return;
-    setPerformanceFile(file);
+    if (incoming.length === 0) return;
+    setPerformanceFiles(incoming);
     setPerformancePreview(null);
     setPerformanceMapping({});
     setPerformanceError(null);
     setPerformanceStatus("previewing");
     try {
-      const text = await file.text();
-      setPerformanceHeaders(parseCsvHeader(text));
-      const preview = await previewPerformanceFile(file, {});
+      const firstText = await readPerformanceFileText(incoming[0] as File);
+      setPerformanceHeaders(incoming.length === 1 ? parseCsvHeader(firstText) : []);
+      const previews = await Promise.all(incoming.map((file) => previewPerformanceFile(file, {})));
+      const preview = aggregatePerformancePreviews(previews);
       setPerformancePreview(preview);
-      setPerformanceMapping(preview.mapping ?? {});
+      setPerformanceMapping(incoming.length === 1 ? preview.mapping ?? {} : {});
       setPerformanceStatus("ready");
     } catch (err) {
       setPerformanceStatus("error");
@@ -399,7 +411,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   }
 
   function removePerformanceFile() {
-    setPerformanceFile(null);
+    setPerformanceFiles([]);
     setPerformanceHeaders([]);
     setPerformanceMapping({});
     setPerformancePreview(null);
@@ -413,13 +425,17 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   }
 
   async function refreshPerformancePreview() {
-    if (!performanceFile) return;
+    if (performanceFiles.length === 0) return;
     setPerformanceError(null);
     setPerformanceStatus("previewing");
     try {
-      const preview = await previewPerformanceFile(performanceFile, performanceMapping);
+      const previews = await Promise.all(performanceFiles.map((file) => previewPerformanceFile(
+        file,
+        performanceFiles.length === 1 ? performanceMapping : {}
+      )));
+      const preview = aggregatePerformancePreviews(previews);
       setPerformancePreview(preview);
-      setPerformanceMapping(preview.mapping ?? performanceMapping);
+      setPerformanceMapping(performanceFiles.length === 1 ? preview.mapping ?? performanceMapping : {});
       setPerformanceStatus("ready");
     } catch (err) {
       setPerformanceStatus("error");
@@ -556,7 +572,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
       if (files.length > 0) {
         await uploadKnowledgeFiles(corpusId);
       }
-      if (isSignalPulseStudy && performanceFile) {
+      if (isSignalPulseStudy && performanceFiles.length > 0) {
         await uploadPerformanceFile(corpusId);
       }
 
@@ -599,10 +615,14 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   }
 
   async function uploadPerformanceFile(corpusId: string) {
-    if (!performanceFile) return;
+    if (performanceFiles.length === 0) return;
     setProgressLabel(t("progress.uploadingPerformance"));
-    const imported = await importPerformanceFile(corpusId, performanceFile, performanceMapping);
-    setPerformancePreview(imported);
+    const imported = await Promise.all(performanceFiles.map((file) => importPerformanceFile(
+      corpusId,
+      file,
+      performanceFiles.length === 1 ? performanceMapping : {}
+    )));
+    setPerformancePreview(aggregatePerformancePreviews(imported));
     setPerformanceStatus("imported");
   }
 
@@ -957,7 +977,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
             </div>
             {isSignalPulseStudy && (
               <PerformanceSourcePanel
-                file={performanceFile}
+                files={performanceFiles}
                 headers={performanceHeaders}
                 mapping={performanceMapping}
                 preview={performancePreview}
@@ -979,10 +999,10 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
               subjectLabel={subjectLabel}
               methodology={selectedMethodology?.name ?? "Triggers & Barriers"}
               files={files}
-              performanceFile={performanceFile}
               subjectType={subjectType}
               lensLabels={selectedLensLabels}
               isSignalPulseStudy={isSignalPulseStudy}
+              performanceFiles={performanceFiles}
             />
           </WizardPanel>
         )}
@@ -1337,7 +1357,7 @@ function SignalPulseBriefPanel({
 }
 
 function PerformanceSourcePanel({
-  file,
+  files,
   headers,
   mapping,
   preview,
@@ -1348,7 +1368,7 @@ function PerformanceSourcePanel({
   onMappingChange,
   onPreview
 }: {
-  file: File | null;
+  files: File[];
   headers: string[];
   mapping: PerformanceMapping;
   preview: PerformancePreview | null;
@@ -1361,6 +1381,8 @@ function PerformanceSourcePanel({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const stats = preview?.stats;
+  const hasFiles = files.length > 0;
+  const allowManualMapping = files.length === 1;
   return (
     <section className="performance-source-panel" aria-label="Performance 12 meses">
       <header className="performance-source-head">
@@ -1370,52 +1392,59 @@ function PerformanceSourcePanel({
           <p>Meta, TikTok u orgánico entran estructurados a performance_records; nunca como menciones.</p>
         </div>
         <button className="new-study-file-button" type="button" onClick={() => inputRef.current?.click()}>
-          <Icon name="upload" size={15} /> {file ? "Cambiar CSV" : "Cargar CSV"}
+          <Icon name="upload" size={15} /> {hasFiles ? "Cambiar CSVs" : "Cargar CSVs"}
         </button>
         <input
           ref={inputRef}
           className="new-study-file-input"
           type="file"
+          multiple
           accept={PERFORMANCE_ACCEPT}
           onChange={onFile}
         />
       </header>
 
-      {file ? (
-        <div className="performance-source-file">
-          <Icon name={status === "previewing" ? "spinner" : status === "imported" ? "check" : "upload"} size={15} />
-          <span>{file.name}</span>
-          <code>{formatBytes(file.size)}</code>
-          <button type="button" className="knowledge-file-remove" onClick={onRemove} aria-label={`Quitar ${file.name}`}>
-            <Icon name="x" size={13} />
-          </button>
+      {hasFiles ? (
+        <div className="performance-source-file-list">
+          {files.map((file) => (
+            <div className="performance-source-file" key={`${file.name}-${file.size}-${file.lastModified}`}>
+              <Icon name={status === "previewing" ? "spinner" : status === "imported" ? "check" : "upload"} size={15} />
+              <span>{file.name}</span>
+              <code>{formatBytes(file.size)}</code>
+              <button type="button" className="knowledge-file-remove" onClick={onRemove} aria-label="Quitar CSVs de performance">
+                <Icon name="x" size={13} />
+              </button>
+            </div>
+          ))}
         </div>
       ) : (
         <p className="performance-source-empty">Opcional para crear el estudio, obligatorio para charts paid/organic de producción.</p>
       )}
 
-      {file && (
+      {hasFiles && (
         <>
-          <div className="performance-mapping-grid">
-            {PERFORMANCE_MAPPING_FIELDS.map(([field, label]) => (
-              <label className="performance-mapping-field" key={field}>
-                <span>{label}</span>
-                <select
-                  className="filter-input new-study-input"
-                  value={mapping[field] ?? ""}
-                  onChange={(event) => onMappingChange(field, event.target.value)}
-                >
-                  <option value="">No mapear</option>
-                  {headers.map((header) => (
-                    <option key={`${field}-${header}`} value={header}>{header}</option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
+          {allowManualMapping && (
+            <div className="performance-mapping-grid">
+              {PERFORMANCE_MAPPING_FIELDS.map(([field, label]) => (
+                <label className="performance-mapping-field" key={field}>
+                  <span>{label}</span>
+                  <select
+                    className="filter-input new-study-input"
+                    value={mapping[field] ?? ""}
+                    onChange={(event) => onMappingChange(field, event.target.value)}
+                  >
+                    <option value="">No mapear</option>
+                    {headers.map((header) => (
+                      <option key={`${field}-${header}`} value={header}>{header}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
           <div className="performance-source-actions">
             <button className="wizard-cta wizard-cta--secondary" type="button" onClick={onPreview} disabled={status === "previewing"}>
-              <Icon name={status === "previewing" ? "spinner" : "refresh"} size={14} /> Revisar mapping
+              <Icon name={status === "previewing" ? "spinner" : "refresh"} size={14} /> Revisar datos
             </button>
             {stats && (
               <div className="performance-source-stats">
@@ -1426,6 +1455,23 @@ function PerformanceSourcePanel({
               </div>
             )}
           </div>
+          {preview?.diagnostics && (
+            <div className="performance-diagnostics">
+              <div>
+                <span>Tienes</span>
+                <p>{formatMetricList(preview.diagnostics.present_metrics)} · {preview.diagnostics.coverage_days ?? 0} dias / {preview.diagnostics.coverage_months ?? 0} meses</p>
+              </div>
+              <div>
+                <span>Te falta</span>
+                <p>{formatMetricList(preview.diagnostics.missing_recommended_metrics)}</p>
+              </div>
+            </div>
+          )}
+          {preview?.diagnostics?.messages && preview.diagnostics.messages.length > 0 && (
+            <ul className="performance-source-warnings performance-source-warnings--neutral">
+              {preview.diagnostics.messages.map((message) => <li key={message}>{message}</li>)}
+            </ul>
+          )}
           {preview?.warnings && preview.warnings.length > 0 && (
             <ul className="performance-source-warnings">
               {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
@@ -1443,7 +1489,7 @@ function BriefPreview({
   subjectLabel,
   methodology,
   files,
-  performanceFile,
+  performanceFiles,
   subjectType,
   lensLabels,
   isSignalPulseStudy
@@ -1452,7 +1498,7 @@ function BriefPreview({
   subjectLabel: string;
   methodology: string;
   files: File[];
-  performanceFile: File | null;
+  performanceFiles: File[];
   subjectType: "brand" | "theme";
   lensLabels: string[];
   isSignalPulseStudy: boolean;
@@ -1469,7 +1515,7 @@ function BriefPreview({
       ["Campanas activas", draft.activeCampaigns],
       ["Claims permitidos", draft.allowedClaims],
       ["Claims prohibidos", draft.prohibitedClaims],
-      ["Performance estructurado", performanceFile?.name ?? ""]
+      ["Performance estructurado", performanceFiles.length > 0 ? performanceFiles.map((file) => file.name).join(", ") : ""]
     ] : []),
     [t("question"), draft.businessQuestion],
     [t("decision"), draft.decisionToInform],
@@ -1621,8 +1667,8 @@ async function sendPerformanceFile(
     : `/api/corpora/${corpusId}/sources/performance-upload?${params.toString()}`;
   const res = await fetch(path, {
     method: "POST",
-    headers: { "Content-Type": "text/csv; charset=utf-8" },
-    body: await file.text()
+    headers: { "Content-Type": file.type || "text/csv" },
+    body: file
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -1631,15 +1677,88 @@ async function sendPerformanceFile(
   return json;
 }
 
+async function readPerformanceFileText(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+  }
+  const sample = bytes.subarray(0, Math.min(bytes.length, 400));
+  const nulCount = sample.reduce((count, byte) => count + (byte === 0 ? 1 : 0), 0);
+  if (nulCount > sample.length * 0.2) {
+    return new TextDecoder("utf-16le").decode(bytes);
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+function aggregatePerformancePreviews(previews: PerformancePreview[]): PerformancePreview {
+  if (previews.length === 1) return previews[0] as PerformancePreview;
+  const presentMetrics = unique(previews.flatMap((preview) => preview.diagnostics?.present_metrics ?? []));
+  const detectedMetrics = unique(previews.flatMap((preview) => preview.diagnostics?.detected_metrics ?? []));
+  const coverageStarts = previews.map((preview) => preview.stats?.coverage_start).filter(Boolean).sort() as string[];
+  const coverageEnds = previews.map((preview) => preview.stats?.coverage_end).filter(Boolean).sort() as string[];
+  const coverageDays = Math.max(...previews.map((preview) => preview.diagnostics?.coverage_days ?? 0), 0);
+  const coverageMonths = Math.max(...previews.map((preview) => preview.diagnostics?.coverage_months ?? 0), 0);
+  const missingRecommended = PERFORMANCE_RECOMMENDED_METRICS.filter((metric) => !presentMetrics.includes(metric));
+  return {
+    mapping: previews[0]?.mapping,
+    stats: {
+      records_total: sumPreviewStat(previews, "records_total"),
+      records_valid: sumPreviewStat(previews, "records_valid"),
+      records_failed: sumPreviewStat(previews, "records_failed"),
+      duplicate_keys: sumPreviewStat(previews, "duplicate_keys"),
+      records_inserted: sumPreviewStat(previews, "records_inserted"),
+      coverage_start: coverageStarts[0] ?? null,
+      coverage_end: coverageEnds.at(-1) ?? null
+    },
+    diagnostics: {
+      format: previews.every((preview) => preview.diagnostics?.format === "single_metric_timeseries") ? "single_metric_timeseries" : "tabular",
+      detected_metrics: detectedMetrics,
+      present_metrics: presentMetrics,
+      missing_recommended_metrics: missingRecommended,
+      coverage_days: coverageDays,
+      coverage_months: coverageMonths,
+      messages: [
+        `Tengo ${previews.length} archivos de performance.`,
+        `Tengo metricas: ${formatMetricList(presentMetrics)}.`,
+        missingRecommended.length > 0 ? `Faltan metricas recomendadas: ${missingRecommended.join(", ")}.` : "No faltan metricas recomendadas base."
+      ]
+    },
+    warnings: unique(previews.flatMap((preview) => preview.warnings ?? [])),
+    data_source_id: previews.map((preview) => preview.data_source_id).filter(Boolean).join(",") || undefined,
+    source_sync_run_id: previews.map((preview) => preview.source_sync_run_id).filter(Boolean).join(",") || undefined
+  };
+}
+
+function sumPreviewStat(previews: PerformancePreview[], key: keyof NonNullable<PerformancePreview["stats"]>) {
+  return previews.reduce((total, preview) => total + Number(preview.stats?.[key] ?? 0), 0);
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function formatMetricList(values: string[] | undefined) {
+  return values && values.length > 0 ? values.join(", ") : "ninguna";
+}
+
 function parseCsvHeader(input: string) {
-  const text = input.replace(/^\uFEFF/, "");
+  let text = input.replace(/^\uFEFF/, "").replace(/\0/g, "");
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (/^sep=./i.test(firstLine)) {
+    text = text.slice((text.match(/^.*(?:\r?\n|$)/)?.[0] ?? "").length);
+  }
   const delimiter = detectCsvDelimiter(text);
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const headerLine = lines.find((line) => {
+    const normalized = line.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return /\b(fecha|date|day)\b/.test(normalized) && (normalized.includes(delimiter) || normalized.includes("primary"));
+  }) ?? lines[0] ?? "";
   const headers: string[] = [];
   let cell = "";
   let inQuotes = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
+  for (let index = 0; index < headerLine.length; index += 1) {
+    const char = headerLine[index];
+    const next = headerLine[index + 1];
     if (char === "\"") {
       if (inQuotes && next === "\"") {
         cell += "\"";
@@ -1654,7 +1773,6 @@ function parseCsvHeader(input: string) {
       cell = "";
       continue;
     }
-    if (!inQuotes && (char === "\n" || char === "\r")) break;
     cell += char ?? "";
   }
   headers.push(normalizePerformanceHeader(cell));

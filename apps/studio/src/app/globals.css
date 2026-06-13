@@ -5957,6 +5957,11 @@ code {
   font-size: 13px;
 }
 
+.performance-source-file-list {
+  display: grid;
+  gap: 8px;
+}
+
 .performance-source-file span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6012,6 +6017,36 @@ code {
   font-weight: 800;
 }
 
+.performance-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.performance-diagnostics div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(35, 35, 39, 0.07);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.performance-diagnostics span {
+  color: var(--neutral-11);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.performance-diagnostics p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .performance-source-warnings {
   display: grid;
   gap: 5px;
@@ -6020,6 +6055,10 @@ code {
   color: #8a5b08;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.performance-source-warnings--neutral {
+  color: var(--neutral-11);
 }
 
 .brief-preview-row,
@@ -17190,6 +17229,9 @@ body:has(.signal-report)::before { display: none; }
     flex-direction: column;
   }
   .performance-mapping-grid {
+    grid-template-columns: 1fr;
+  }
+  .performance-diagnostics {
     grid-template-columns: 1fr;
   }
   .new-study-actions { flex-direction: column; align-items: stretch; }

@@ -1,7 +1,7 @@
 import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
-import { parsePerformanceCsv, type PerformanceFieldMapping } from "@/lib/signal-pulse/performance-import";
+import { decodePerformanceCsvInput, parsePerformanceCsv, type PerformanceFieldMapping } from "@/lib/signal-pulse/performance-import";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   const defaultPlatform = cleanParam(url.searchParams.get("platform")) || provider;
   const defaultChannel = cleanParam(url.searchParams.get("channel")) || "paid";
   const mapping = parseMapping(url.searchParams.get("mapping"));
-  const text = await request.text();
+  const text = decodePerformanceCsvInput(await request.arrayBuffer());
 
   if (!text.trim()) {
     return Response.json(
@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     mode: "preview",
     mapping: parsed.mapping,
     stats: parsed.stats,
+    diagnostics: parsed.diagnostics,
     warnings: parsed.warnings,
     preview: parsed.preview
   });
