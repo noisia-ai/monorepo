@@ -19,6 +19,7 @@ import {
   type SignalPulseMarketingRecordCandidate,
   type SignalPulseMarketingRecordMatch
 } from "./signal-pulse-marketing-record-match";
+import { buildSignalPulsePatternFlags, type SignalPulsePatternFlag } from "./signal-pulse-pattern-flags";
 
 type SignalPulseContextScope = {
   study_corpus_id: string;
@@ -137,6 +138,7 @@ export type SignalPulseInvestigationBrief = {
     top_campaigns: string[];
     top_matching_creatives: string[];
   }>;
+  pattern_flags: SignalPulsePatternFlag[];
   evidence_map: {
     sample_ids: string[];
     semantic_mention_ids: string[];
@@ -864,6 +866,14 @@ function buildClusterInvestigationBrief(args: {
     || record.match_basis.includes("repeated_marketing_language")
     || record.match_basis.includes("knowledge_or_brief_overlap")
   ));
+  const patternFlags = buildSignalPulsePatternFlags({
+    periodSeries: args.periodSeries,
+    weeklySeries: args.weeklySeries,
+    windowPattern: args.windowPattern,
+    weeklyPattern: args.weeklyPattern,
+    marketingIntersections,
+    hasDirectMarketingOverlap
+  });
   return {
     current_cut: current ? {
       period_label: current.label,
@@ -878,6 +888,7 @@ function buildClusterInvestigationBrief(args: {
     strongest_periods: strongestPeriods,
     weekly_pulses: weeklyPulses,
     marketing_intersections: marketingIntersections.slice(0, 8),
+    pattern_flags: patternFlags,
     evidence_map: {
       sample_ids: args.cluster.samples.map((sample) => sample.id).filter(Boolean).slice(0, 12),
       semantic_mention_ids: args.semanticMatches.conversation.map((match) => match.mention_id).filter(Boolean).slice(0, 12),

@@ -81,6 +81,7 @@ export type SignalPulseSynthesisValidationInput = {
     active_performance_months: number;
     direct_marketing_matches: number;
     synthesis_questions: number;
+    pattern_flags: number;
     active_periods: number;
     current_volume: number;
   }>;
@@ -192,6 +193,7 @@ export function validateSignalPulseSynthesis(input: SignalPulseSynthesisValidati
   if (numberFromContext(context.strongest_periods) < 1) reasons.push("missing_strongest_periods");
   if (numberFromContext(context.weekly_pulses) < 1) reasons.push("missing_weekly_pulses");
   if (numberFromContext(context.marketing_intersections) < 1) reasons.push("missing_marketing_intersection");
+  if (numberFromContext(context.pattern_flags) < 1) reasons.push("missing_pattern_flags");
   if (numberFromContext(context.evidence_sample_ids) < 1) reasons.push("missing_evidence_sample_ids");
   if (numberFromContext(context.synthesis_questions) < 2) reasons.push("missing_synthesis_questions");
 

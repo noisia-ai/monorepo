@@ -100,8 +100,11 @@ El nuevo `investigation_brief` evita que Claude tenga que descubrir la estructur
 - `weekly_pattern` y `weekly_pulses`: picos o caídas dentro del mes.
 - `strongest_periods`: meses con más tracción.
 - `marketing_intersections`: campaña/performance/match por periodo, con basis explícita.
+- `pattern_flags`: caso de inteligencia calculado antes de Claude (`new_in_cut`, `repeated_window`, `saturation_candidate`, `reactivated`, `accelerating`, `declining`, `inactive_in_cut`, `weekly_spike`, `marketing_overlap`, `temporal_marketing_context` o `conversation_only`), con severidad, periodos de evidencia y métricas.
 - `evidence_map`: sample ids, semantic mention ids y títulos de KB.
 - `synthesis_questions`: preguntas editoriales para decidir si la señal es fricción, oportunidad, riesgo creativo, territorio saturado, claim a testear, gap de pauta o no publicable.
+
+Esto transforma el flujo: Claude ya no recibe una serie mensual y tiene que adivinar si hay reactivación, saturación o anomalía. El worker clasifica esos patrones con números calculados y sólo después Claude decide cómo escribir la lectura de marketing. Si un cluster sólo tiene conversación sin patrón ni cruce marketing, llega como `conversation_only` y debe quedarse en review salvo que la síntesis humana lo vuelva publicable con evidencia.
 
 La respuesta de Claude ya no puede resolver una señal publicable sólo con `title`, `description` y `marketing_read`. Cada `publish_candidate` debe traer cuatro lecturas separadas:
 
@@ -124,6 +127,8 @@ Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensi
 - `strongest_periods`
 - `weekly_pulses`
 - `marketing_intersections`
+- `pattern_flags`
+- `pattern_flag_types`
 - `evidence_sample_ids`
 - `semantic_evidence_ids`
 - `active_performance_months`
@@ -217,7 +222,7 @@ Si una fila no cumple, el worker la conserva como `needs_human_review` con `synt
 - `contextual_synthesis_complete` bloquea si una señal publicable no viene de `claude_cluster_naming_v3_signal_pulse_rag`, no trae `marketing_read`, `action_hint`, `evidence_basis`, `confidence_rationale`, `signal_role` y `analysis_scope`, o no pasó `synthesis_validation`.
 - `marketing_intelligence_read` bloquea si una señal publicable no trae lectura separada de corte, ventana, hipótesis marketing y decisión medible para el siguiente mes.
 - `semantic_context_used` bloquea si una señal publicable no tiene samples suficientes, RAG semántico de conversación/KB, serie de periodo y performance activa asociada.
-- `signal_intelligence_case` bloquea si una señal publicable no trae `investigation_brief` materializado en `context_summary`: periodos fuertes, serie semanal, pulsos semanales, intersecciones de marketing/performance, evidence ids y preguntas de síntesis.
+- `signal_intelligence_case` bloquea si una señal publicable no trae `investigation_brief` materializado en `context_summary`: periodos fuertes, serie semanal, pulsos semanales, intersecciones de marketing/performance, `pattern_flags`, evidence ids y preguntas de síntesis.
 - `performance_connection_qualified` bloquea si `performance_connection` no empieza con `connected:`, `no_connection:` o `insufficient_data:`, o si declara `connected:` sin overlap directo (`evidence_overlap`, `knowledge_or_brief_overlap` o `repeated_marketing_language_overlap`) en los matches de marketing.
 - `traceable_evidence_basis` bloquea si una señal publicable no cita al menos un `mention_id` real en `evidence_basis`.
 - Las señales históricas sin volumen en el corte sirven para patrones de ventana, pero no bloquean publicación por sí mismas.

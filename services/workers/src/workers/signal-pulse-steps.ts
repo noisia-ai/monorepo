@@ -1638,6 +1638,8 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     strongest_periods: source.context.investigation_brief.strongest_periods.length,
     weekly_pulses: source.context.investigation_brief.weekly_pulses.length,
     marketing_intersections: source.context.investigation_brief.marketing_intersections.length,
+    pattern_flags: source.context.investigation_brief.pattern_flags.length,
+    pattern_flag_types: source.context.investigation_brief.pattern_flags.map((flag) => flag.type),
     evidence_sample_ids: source.context.investigation_brief.evidence_map.sample_ids.length,
     semantic_evidence_ids: source.context.investigation_brief.evidence_map.semantic_mention_ids.length,
     active_performance_months: source.context.performance_context.active_months.length,
@@ -2324,6 +2326,7 @@ async function buildSignalPulseQualityGates(args: {
               OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,weekly_series_points}', '')::int, 0) < 2
               OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,weekly_pulses}', '')::int, 0) < 1
               OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,marketing_intersections}', '')::int, 0) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,pattern_flags}', '')::int, 0) < 1
               OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,evidence_sample_ids}', '')::int, 0) < 1
               OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,synthesis_questions}', '')::int, 0) < 2
             )

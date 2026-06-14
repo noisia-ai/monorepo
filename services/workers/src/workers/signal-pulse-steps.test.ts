@@ -21,6 +21,7 @@ import { isActionableSignalPulseTerm, isRawKeywordSignalPhrase, validateSignalPu
 import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
 import { summarizeSignalPulseMarketingActivity } from "./signal-pulse-marketing-activity";
 import { rankSignalPulseMarketingRecordsForCluster } from "./signal-pulse-marketing-record-match";
+import { buildSignalPulsePatternFlags, type SignalPulsePatternSeriesPoint, type SignalPulsePatternWindow } from "./signal-pulse-pattern-flags";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
   const rows: EmbeddingNeighborhoodRow[] = [
@@ -209,6 +210,71 @@ test("Signal Pulse synthesis validation blocks connected performance claims with
 
   assert.equal(result.publishable, false);
   assert.ok(result.reasons.includes("connected_without_direct_marketing_overlap"));
+});
+
+test("Signal Pulse pattern flags classify window intelligence before Claude writes", () => {
+  const periodSeries: SignalPulsePatternSeriesPoint[] = [
+    periodPoint("2026-01", 12, null),
+    periodPoint("2026-02", 0, -12),
+    periodPoint("2026-03", 0, 0),
+    periodPoint("2026-04", 0, 0),
+    periodPoint("2026-05", 38, 38)
+  ];
+  const weeklySeries: SignalPulsePatternSeriesPoint[] = [
+    periodPoint("2026-W18", 2, null, "week"),
+    periodPoint("2026-W19", 4, 2, "week"),
+    periodPoint("2026-W20", 6, 2, "week"),
+    periodPoint("2026-W21", 26, 20, "week")
+  ];
+  const windowPattern: SignalPulsePatternWindow = {
+    current_period: "2026-05",
+    current_volume: 38,
+    previous_volume: 0,
+    delta_prev: 38,
+    active_periods: 2,
+    first_active_period: "2026-01",
+    last_active_period: "2026-05",
+    peak_period: "2026-05",
+    peak_volume: 38,
+    lifecycle_state: "reactivated"
+  };
+  const weeklyPattern: SignalPulsePatternWindow = {
+    current_period: "2026-W21",
+    current_volume: 26,
+    previous_volume: 6,
+    delta_prev: 20,
+    active_periods: 4,
+    first_active_period: "2026-W18",
+    last_active_period: "2026-W21",
+    peak_period: "2026-W21",
+    peak_volume: 26,
+    lifecycle_state: "accelerating"
+  };
+
+  const flags = buildSignalPulsePatternFlags({
+    periodSeries,
+    weeklySeries,
+    windowPattern,
+    weeklyPattern,
+    hasDirectMarketingOverlap: true,
+    marketingIntersections: [
+      {
+        period_label: "2026-05",
+        basis: "creative_or_campaign_language_overlaps_evidence",
+        campaign_count: 1,
+        matching_creative_count: 1,
+        performance_event_count: 1
+      }
+    ]
+  });
+
+  const types = flags.map((flag) => flag.type);
+  assert.ok(types.includes("reactivated"));
+  assert.ok(types.includes("accelerating"));
+  assert.ok(types.includes("weekly_spike"));
+  assert.ok(types.includes("marketing_overlap"));
+  assert.match(flags.find((flag) => flag.type === "reactivated")?.detail ?? "", /regresa/);
+  assert.deepEqual(flags.find((flag) => flag.type === "marketing_overlap")?.evidence_periods, ["2026-05"]);
 });
 
 test("Signal Pulse marketing moves reuse the signal action hint and define measurement", () => {
@@ -703,6 +769,32 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               top_matching_creatives: ["Seguro de auto con respuesta rapida"]
             }
           ],
+          pattern_flags: [
+            {
+              type: "accelerating",
+              severity: "high",
+              detail: "El corte actual crece contra el periodo previo; usar el delta para explicar si es pico real o continuidad de ventana.",
+              evidence_periods: ["2026-04", "2026-05"],
+              metrics: {
+                current_volume: 134,
+                previous_volume: 44,
+                delta_prev: 90,
+                active_periods: 2,
+                window_volume: 178
+              }
+            },
+            {
+              type: "marketing_overlap",
+              severity: "high",
+              detail: "Hay overlap directo entre evidencia de conversación y lenguaje/KB/creative de marketing; se puede formular hipótesis, no causalidad automática.",
+              evidence_periods: ["2026-05"],
+              metrics: {
+                matched_periods: 1,
+                matching_creatives: 1,
+                campaigns: 1
+              }
+            }
+          ],
           evidence_map: {
             sample_ids: ["11111111-1111-4111-8111-111111111111"],
             semantic_mention_ids: ["22222222-2222-4222-8222-222222222222"],
@@ -798,6 +890,9 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /conversation_matches/);
   assert.match(prompt, /investigation_brief/);
   assert.match(prompt, /marketing_intersections/);
+  assert.match(prompt, /pattern_flags/);
+  assert.match(prompt, /reactivated/);
+  assert.match(prompt, /marketing_overlap/);
   assert.match(prompt, /match_basis/);
   assert.match(prompt, /matched_terms/);
   assert.match(prompt, /performance_connection debe empezar exactamente/);
@@ -907,6 +1002,7 @@ function strongContextSummary(overrides: Record<string, number> = {}) {
     strongest_periods: 2,
     weekly_pulses: 1,
     marketing_intersections: 1,
+    pattern_flags: 2,
     evidence_sample_ids: 2,
     semantic_evidence_ids: 1,
     active_performance_months: 12,
@@ -915,6 +1011,20 @@ function strongContextSummary(overrides: Record<string, number> = {}) {
     active_periods: 3,
     current_volume: 96,
     ...overrides
+  };
+}
+
+function periodPoint(
+  label: string,
+  volume: number,
+  deltaPrev: number | null,
+  granularity: "month" | "week" = "month"
+): SignalPulsePatternSeriesPoint {
+  void granularity;
+  return {
+    label,
+    volume,
+    delta_prev: deltaPrev
   };
 }
 
