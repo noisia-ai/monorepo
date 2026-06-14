@@ -75,7 +75,10 @@ const STOPWORDS_ES_MX = new Set([
   "para", "pero", "como", "con", "que", "por", "una", "uno", "los", "las", "del", "este", "esta",
   "esto", "muy", "mas", "menos", "porque", "cuando", "todo", "toda", "todos", "todas", "solo", "bien",
   "mal", "sin", "hay", "son", "soy", "fue", "ser", "mis", "sus", "me", "mi", "ya", "no", "si",
-  "tambien", "marca", "producto", "personas", "gente", "hacer", "dice", "dicen", "video", "comentario"
+  "tambien", "marca", "producto", "personas", "gente", "hacer", "dice", "dicen", "video", "comentario",
+  "hasta", "siempre", "ellos", "ellas", "estan", "esta", "estas", "este", "estos", "tiene", "tienen",
+  "tener", "sera", "seria", "puede", "pueden", "donde", "quien", "cuando", "ahora", "aqui", "alla",
+  "algo", "cada", "mismo", "misma", "mismos", "mismas", "otro", "otra", "otros", "otras"
 ]);
 
 const MAX_SIGNAL_CLUSTERS = 24;
@@ -91,6 +94,8 @@ const NON_ACTIONABLE_CLUSTER_TERMS = new Set([
   "link", "links", "http", "https", "www", "click", "clic", "viral",
   "futbol", "partido", "gol", "equipo", "botana",
   "puto", "puta", "pendejo", "pendeja", "verga", "chingar",
+  "pinche", "hasta", "siempre", "ellos", "ellas", "estan", "esta", "estas", "este", "estos",
+  "manejar", "velocidad", "mejor", "nada", "tiene", "tienen", "tener",
   "morena", "amlo", "claudia", "elecciones", "diputado", "senador"
 ]);
 
@@ -273,8 +278,32 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
       client.release();
     }
 
-    await mergeMeta(engineAnalysisId, { signal_pulse: { periods: { count: periods.length, labels: periods.map((period) => period.label) } } });
-    await markEngineStepCompleted({ pipelineStepId, resultSummary: { periods: periods.length } });
+    const firstPeriod = periods[0];
+    const cutPeriod = periods.at(-1);
+    await mergeMeta(engineAnalysisId, {
+      signal_pulse: {
+        periods: { count: periods.length, labels: periods.map((period) => period.label) },
+        cut: cutPeriod ? {
+          label: cutPeriod.label,
+          period_start: cutPeriod.periodStart,
+          period_end: cutPeriod.periodEnd,
+          window_start: firstPeriod?.periodStart ?? cutPeriod.periodStart,
+          window_end: cutPeriod.periodEnd,
+          data_through: cutPeriod.periodEnd,
+          generated_at: new Date().toISOString(),
+          source_event_time_basis: "mentions.published_at/performance_records.record_date",
+          upload_time_is_operational_only: true
+        } : null
+      }
+    });
+    await markEngineStepCompleted({
+      pipelineStepId,
+      resultSummary: {
+        periods: periods.length,
+        cut_period: cutPeriod?.label ?? null,
+        data_through: cutPeriod?.periodEnd ?? null
+      }
+    });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_cluster" });
     return { periods: periods.length, next_step_job_id: next.jobId };
   });
@@ -950,6 +979,16 @@ async function materializePeriodMetrics(args: {
     const term = stringFrom(signal.dimensions?.term) || signal.canonical_title;
     const memberMentionIds = stringArrayFrom(signal.dimensions?.member_mention_ids);
     const previousVolumes: number[] = [];
+    const periodSeries: Array<{
+      period_id: string;
+      label: string;
+      period_start: string;
+      period_end: string;
+      volume: number;
+      impact_v1: number;
+      confidence: string;
+      lifecycle_state: string;
+    }> = [];
     for (const period of periods) {
       const periodMentions = await loadSignalPeriodMentions({
         corpusId: args.ctx.study_corpus_id,
@@ -977,6 +1016,16 @@ async function materializePeriodMetrics(args: {
         volatility: volatility(previousVolumes)
       });
       const confidence = volume >= 30 ? "alta" : volume >= 8 ? "media" : "baja";
+      periodSeries.push({
+        period_id: period.id,
+        label: period.label,
+        period_start: period.period_start,
+        period_end: period.period_end,
+        volume,
+        impact_v1: impact,
+        confidence,
+        lifecycle_state: lifecycle
+      });
       await pool.query(
         `
           INSERT INTO signal_period_metrics (
@@ -1048,6 +1097,39 @@ async function materializePeriodMetrics(args: {
         evidenceCount += await refreshSignalEvidence({ observationId, mentions: periodMentions.samples, term });
       }
     }
+    const currentPeriod = periodSeries.at(-1) ?? null;
+    const lastActivePeriod = periodSeries.slice().reverse().find((period) => period.volume > 0) ?? null;
+    const bestPeriod = periodSeries
+      .slice()
+      .sort((a, b) => b.impact_v1 - a.impact_v1 || b.volume - a.volume)[0] ?? null;
+    const windowVolume = periodSeries.reduce((sum, period) => sum + period.volume, 0);
+    await pool.query(
+      `
+        UPDATE canonical_signals
+        SET dimensions = dimensions || $2::jsonb,
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [
+        signal.id,
+        safeJsonStringifyForPostgres({
+          current_period_label: currentPeriod?.label ?? null,
+          current_period_start: currentPeriod?.period_start ?? null,
+          current_period_end: currentPeriod?.period_end ?? null,
+          current_period_volume: currentPeriod?.volume ?? 0,
+          current_period_impact_v1: currentPeriod?.impact_v1 ?? 0,
+          current_period_confidence: currentPeriod?.confidence ?? "baja",
+          window_volume: windowVolume,
+          active_periods: periodSeries.filter((period) => period.volume > 0).length,
+          last_seen_period: lastActivePeriod?.label ?? null,
+          last_seen_period_end: lastActivePeriod?.period_end ?? null,
+          best_period_label: bestPeriod?.label ?? null,
+          best_period_volume: bestPeriod?.volume ?? 0,
+          data_through: currentPeriod?.period_end ?? null,
+          monthly_series: periodSeries.slice(-12)
+        })
+      ]
+    );
   }
 
   await pool.query("ANALYZE signal_period_metrics");
@@ -1065,17 +1147,23 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
     lifecycle_state: string | null;
   }>(
     `
-      WITH latest AS (
-        SELECT DISTINCT ON (spm.canonical_signal_id)
+      WITH cut_period AS (
+        SELECT id, label
+        FROM report_periods
+        WHERE study_corpus_id = $1 AND granularity = 'month'
+        ORDER BY period_start DESC
+        LIMIT 1
+      ),
+      latest AS (
+        SELECT
           spm.canonical_signal_id,
           spm.volume,
           spm.impact_v1::text AS impact,
           spm.confidence,
           spm.lifecycle_state
         FROM signal_period_metrics spm
-        JOIN report_periods rp ON rp.id = spm.period_id
+        JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
-        ORDER BY spm.canonical_signal_id, rp.period_start DESC
       )
       SELECT
         cs.canonical_title AS title,
@@ -1089,6 +1177,7 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
       WHERE cs.study_corpus_id = $1
         AND cs.methodology_slug = 'signal-pulse'
         AND cs.status <> 'archived'
+        AND latest.volume > 0
       ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
       LIMIT 1
     `,
@@ -1357,8 +1446,15 @@ async function loadMentionSamples(mentionIds: string[]) {
 async function loadSignalPulseInterpretationContext(ctx: AnalysisContext) {
   const signals = (await pool.query(
     `
-      WITH latest AS (
-        SELECT DISTINCT ON (spm.canonical_signal_id)
+      WITH cut_period AS (
+        SELECT id
+        FROM report_periods
+        WHERE study_corpus_id = $1 AND granularity = 'month'
+        ORDER BY period_start DESC
+        LIMIT 1
+      ),
+      latest AS (
+        SELECT
           spm.canonical_signal_id,
           spm.volume,
           spm.impact_v1::text AS impact,
@@ -1366,9 +1462,8 @@ async function loadSignalPulseInterpretationContext(ctx: AnalysisContext) {
           spm.lifecycle_state,
           spm.polarity_bucket
         FROM signal_period_metrics spm
-        JOIN report_periods rp ON rp.id = spm.period_id
+        JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
-        ORDER BY spm.canonical_signal_id, rp.period_start DESC
       )
       SELECT
         cs.canonical_title AS title,
@@ -1383,6 +1478,7 @@ async function loadSignalPulseInterpretationContext(ctx: AnalysisContext) {
       WHERE cs.study_corpus_id = $1
         AND cs.methodology_slug = 'signal-pulse'
         AND cs.status <> 'archived'
+        AND latest.volume > 0
       ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
       LIMIT 8
     `,
@@ -1414,8 +1510,15 @@ async function materializeMarketingMoves(args: {
     evidence_refs: string[] | null;
   }>(
     `
-      WITH latest AS (
-        SELECT DISTINCT ON (spm.canonical_signal_id)
+      WITH cut_period AS (
+        SELECT id, period_start, period_end
+        FROM report_periods
+        WHERE study_corpus_id = $1 AND granularity = 'month'
+        ORDER BY period_start DESC
+        LIMIT 1
+      ),
+      latest AS (
+        SELECT
           spm.canonical_signal_id::text,
           spm.impact_v1::text AS impact,
           spm.volume,
@@ -1423,9 +1526,8 @@ async function materializeMarketingMoves(args: {
           spm.lifecycle_state,
           spm.period_id
         FROM signal_period_metrics spm
-        JOIN report_periods rp ON rp.id = spm.period_id
+        JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
-        ORDER BY spm.canonical_signal_id, rp.period_start DESC
       ),
       evidence AS (
         SELECT
@@ -1433,6 +1535,7 @@ async function materializeMarketingMoves(args: {
           array_remove(array_agg(soe.id::text ORDER BY soe.position), NULL) AS evidence_refs
         FROM signal_observations so
         JOIN signal_observation_evidence soe ON soe.signal_observation_id = so.id
+        JOIN cut_period cp ON cp.period_start = so.window_start AND cp.period_end = so.window_end
         WHERE so.study_corpus_id = $1
           AND so.engine_analysis_id = $2
         GROUP BY so.canonical_signal_id
@@ -1451,6 +1554,7 @@ async function materializeMarketingMoves(args: {
       JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id::uuid
       LEFT JOIN evidence ON evidence.canonical_signal_id = latest.canonical_signal_id
       WHERE cs.status = 'active'
+        AND latest.volume > 0
         AND COALESCE(cs.dimensions->>'review_status', '') <> 'excluded_from_signal_pulse'
         AND lower(cs.canonical_title) NOT LIKE '%señal débil%'
         AND lower(cs.canonical_title) NOT LIKE '%sin relevancia%'
@@ -1516,13 +1620,18 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
   ] = await Promise.all([
     pool.query(
       `
-        WITH latest AS (
-          SELECT DISTINCT ON (spm.canonical_signal_id)
-            spm.*
+        WITH cut_period AS (
+          SELECT id
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+          ORDER BY period_start DESC
+          LIMIT 1
+        ),
+        latest AS (
+          SELECT spm.*
           FROM signal_period_metrics spm
-          JOIN report_periods rp ON rp.id = spm.period_id
+          JOIN cut_period cp ON cp.id = spm.period_id
           WHERE spm.study_corpus_id = $1
-          ORDER BY spm.canonical_signal_id, rp.period_start DESC
         )
         SELECT
           cs.id::text AS signal_id,
@@ -1534,6 +1643,7 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
           latest.lifecycle_state
         FROM latest
         JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
+        WHERE latest.volume > 0
         ORDER BY latest.impact_v1 DESC NULLS LAST, latest.volume DESC
         LIMIT 80
       `,
@@ -1694,6 +1804,8 @@ async function buildSignalPulseQualityGates(args: {
     moves_without_action: number;
     signals_needing_human_review: number;
     weak_named_signals: number;
+    current_active_signals: number;
+    inactive_current_signals: number;
     cost: string | null;
   }>(
     `
@@ -1751,14 +1863,49 @@ async function buildSignalPulseQualityGates(args: {
             AND cs.methodology_slug = 'signal-pulse'
             AND cs.status = 'active'
             AND (
-              lower(cs.canonical_title) LIKE '%señal débil%'
+              COALESCE(cs.dimensions->>'review_status', '') IN ('needs_human_review', 'excluded_from_signal_pulse')
+              OR lower(cs.canonical_title) LIKE '%señal débil%'
               OR lower(cs.canonical_title) LIKE '%sin relevancia%'
               OR lower(cs.canonical_title) LIKE '%sin valor%'
               OR lower(cs.canonical_title) LIKE '%sin conexión%'
               OR lower(cs.canonical_title) LIKE '%sin conexion%'
               OR lower(cs.canonical_title) LIKE '%sin ancla%'
+              OR lower(cs.canonical_title) ~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada)$'
+              OR lower(COALESCE(cs.dimensions->>'term', '')) IN ('hasta', 'siempre', 'manejar', 'pinche', 'velocidad', 'mejor', 'nada')
             )
         ) AS weak_named_signals,
+        (
+          SELECT COUNT(DISTINCT cs.id)::int
+          FROM canonical_signals cs
+          JOIN signal_period_metrics spm ON spm.canonical_signal_id = cs.id
+          JOIN report_periods rp ON rp.id = spm.period_id
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND rp.granularity = 'month'
+            AND rp.period_start = (
+              SELECT MAX(period_start)
+              FROM report_periods
+              WHERE study_corpus_id = $1 AND granularity = 'month'
+            )
+            AND spm.volume > 0
+        ) AS current_active_signals,
+        (
+          SELECT COUNT(DISTINCT cs.id)::int
+          FROM canonical_signals cs
+          JOIN signal_period_metrics spm ON spm.canonical_signal_id = cs.id
+          JOIN report_periods rp ON rp.id = spm.period_id
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND rp.granularity = 'month'
+            AND rp.period_start = (
+              SELECT MAX(period_start)
+              FROM report_periods
+              WHERE study_corpus_id = $1 AND granularity = 'month'
+            )
+            AND spm.volume = 0
+        ) AS inactive_current_signals,
         (
           SELECT COUNT(*)::int
           FROM signal_observation_evidence soe
@@ -1787,6 +1934,7 @@ async function buildSignalPulseQualityGates(args: {
     gate("period_comparability", Number(coverage?.comparable_periods ?? 0) >= expectedPeriods, `${coverage?.comparable_periods ?? 0}/${expectedPeriods} periodos comparables.`),
     gate("performance_structured", Number(coverage?.performance_records ?? 0) > 0, `${coverage?.performance_records ?? 0} registros de performance estructurada.`),
     gate("performance_period_coverage", Number(coverage?.performance_periods ?? 0) >= expectedPeriods, `${coverage?.performance_periods ?? 0}/${expectedPeriods} periodos con performance estructurada.`),
+    gate("current_cut_signal_presence", Number(coverage?.current_active_signals ?? 0) > 0, `${coverage?.current_active_signals ?? 0} señales activas en el corte actual; ${coverage?.inactive_current_signals ?? 0} inactivas en el corte.`),
     gate("signal_min_evidence", Number(coverage?.evidence ?? 0) > 0, `${coverage?.evidence ?? 0} evidencias ligadas a señales.`),
     gate("confidence_assigned", Number(coverage?.signals_without_confidence ?? 0) === 0, `${coverage?.signals_without_confidence ?? 0} métricas de señal sin confianza.`),
     gate("chart_data_available", args.chartsCount >= 4, `${args.chartsCount} chart aggregates listos.`),
@@ -1947,7 +2095,7 @@ async function loadSignalPeriodMentions(args: {
           AND (
             (cardinality($5::uuid[]) > 0 AND m.id = ANY($5::uuid[]))
             OR
-            translate(lower(m.text_clean), 'áéíóúüñ', 'aeiouun') LIKE lower($4)
+            (cardinality($5::uuid[]) = 0 AND translate(lower(m.text_clean), 'áéíóúüñ', 'aeiouun') LIKE lower($4))
           )
       ),
       source_counts AS (
@@ -2127,6 +2275,9 @@ function isActionableSignalPulseCluster(cluster: TermCluster) {
   const term = cluster.term.trim().toLowerCase();
   if (!term || term.length < 4 || /^\d+$/.test(term)) return false;
   if (NON_ACTIONABLE_CLUSTER_TERMS.has(term)) return false;
+  const words = term.split(/\s+/).filter(Boolean);
+  if (words.length === 1 && (STOPWORDS_ES_MX.has(term) || NON_ACTIONABLE_CLUSTER_TERMS.has(term))) return false;
+  if (words.length > 0 && words.every((word) => STOPWORDS_ES_MX.has(word) || NON_ACTIONABLE_CLUSTER_TERMS.has(word))) return false;
   if (term.includes("http") || term.includes("www")) return false;
   const periodPeak = cluster.max_period_mention_count ?? cluster.mention_count;
   if (cluster.discovery_source === "period_first") return periodPeak >= 4;
@@ -2198,6 +2349,13 @@ function isNonActionableSignalCopy(input: {
   actionHint: string;
 }) {
   const source = `${input.title} ${input.description} ${input.marketingRead} ${input.actionHint}`.toLowerCase();
+  const normalizedTitle = input.title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (/^(friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada)$/.test(normalizedTitle)) {
+    return true;
+  }
   return [
     "señal débil",
     "sin relevancia",

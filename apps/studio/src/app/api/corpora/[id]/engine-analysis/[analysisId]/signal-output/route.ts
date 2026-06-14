@@ -462,23 +462,30 @@ async function buildSignalPulsePublishedPayload(
     ),
     pool.query(
       `
-        WITH latest AS (
-          SELECT DISTINCT ON (spm.canonical_signal_id)
-            spm.*
-          FROM signal_observations so
-          JOIN report_periods rp
-            ON rp.period_start = so.window_start
-           AND rp.period_end = so.window_end
-           AND rp.study_corpus_id = so.study_corpus_id
-           AND rp.granularity = 'month'
-          JOIN signal_period_metrics spm
-            ON spm.canonical_signal_id = so.canonical_signal_id
-           AND spm.period_id = rp.id
-           AND spm.study_corpus_id = so.study_corpus_id
-          WHERE so.study_corpus_id = $1
-            AND so.engine_analysis_id = $2
-            AND so.methodology_slug = 'signal-pulse'
-          ORDER BY spm.canonical_signal_id, rp.period_start DESC
+        WITH cut_period AS (
+          SELECT id, label, period_start, period_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+          ORDER BY period_start DESC
+          LIMIT 1
+        ),
+        current_metrics AS (
+          SELECT spm.*, cp.label AS cut_period_label, cp.period_start, cp.period_end
+          FROM signal_period_metrics spm
+          JOIN cut_period cp ON cp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+        ),
+        window_metrics AS (
+          SELECT
+            spm.canonical_signal_id,
+            COALESCE(SUM(spm.volume), 0)::int AS window_volume,
+            COUNT(*) FILTER (WHERE spm.volume > 0)::int AS active_periods,
+            (array_remove(array_agg(rp.label ORDER BY rp.period_start DESC) FILTER (WHERE spm.volume > 0), NULL))[1] AS last_seen_period
+          FROM signal_period_metrics spm
+          JOIN report_periods rp ON rp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+            AND rp.granularity = 'month'
+          GROUP BY spm.canonical_signal_id
         )
         SELECT
           cs.id::text AS id,
@@ -486,25 +493,41 @@ async function buildSignalPulsePublishedPayload(
           cs.description,
           cs.signal_type,
           cs.dimensions,
-          latest.volume,
-          latest.impact_v1::text AS impact_v1,
-          latest.sentiment_score::text AS sentiment_score,
-          latest.polarity_bucket,
-          latest.dominant_emotion,
-          latest.source_mix,
-          latest.evidence_count,
-          latest.confidence,
-          latest.delta_prev::text AS delta_prev,
-          latest.lifecycle_state
+          current_metrics.volume,
+          window_metrics.window_volume,
+          window_metrics.active_periods,
+          window_metrics.last_seen_period,
+          current_metrics.cut_period_label,
+          current_metrics.period_start::text AS cut_period_start,
+          current_metrics.period_end::text AS cut_period_end,
+          current_metrics.impact_v1::text AS impact_v1,
+          current_metrics.sentiment_score::text AS sentiment_score,
+          current_metrics.polarity_bucket,
+          current_metrics.dominant_emotion,
+          current_metrics.source_mix,
+          current_metrics.evidence_count,
+          current_metrics.confidence,
+          current_metrics.delta_prev::text AS delta_prev,
+          current_metrics.lifecycle_state
         FROM canonical_signals cs
-        JOIN latest ON latest.canonical_signal_id = cs.id
+        JOIN current_metrics ON current_metrics.canonical_signal_id = cs.id
+        LEFT JOIN window_metrics ON window_metrics.canonical_signal_id = cs.id
         WHERE cs.study_corpus_id = $1
           AND cs.methodology_slug = 'signal-pulse'
-          AND cs.status <> 'archived'
-        ORDER BY COALESCE(latest.impact_v1, 0) DESC, latest.volume DESC
+          AND cs.status = 'active'
+          AND current_metrics.volume > 0
+          AND COALESCE(cs.dimensions->>'review_status', '') <> 'excluded_from_signal_pulse'
+          AND lower(cs.canonical_title) NOT LIKE '%señal débil%'
+          AND lower(cs.canonical_title) NOT LIKE '%sin relevancia%'
+          AND lower(cs.canonical_title) NOT LIKE '%sin valor%'
+          AND lower(cs.canonical_title) NOT LIKE '%sin conexión%'
+          AND lower(cs.canonical_title) NOT LIKE '%sin conexion%'
+          AND lower(cs.canonical_title) NOT LIKE '%sin ancla%'
+          AND lower(cs.canonical_title) !~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada)$'
+        ORDER BY COALESCE(current_metrics.impact_v1, 0) DESC, current_metrics.volume DESC
         LIMIT 80
       `,
-      [corpus.id, analysis.id]
+      [corpus.id]
     ),
     pool.query(
       `SELECT id::text, move_type, action_text, signal_refs::text[], evidence_refs, owner_suggestion,
@@ -536,6 +559,13 @@ async function buildSignalPulsePublishedPayload(
         FROM signal_observations so
         JOIN signal_observation_evidence soe ON soe.signal_observation_id = so.id
         LEFT JOIN mentions m ON m.id = soe.mention_id
+        JOIN (
+          SELECT period_start, period_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+          ORDER BY period_start DESC
+          LIMIT 1
+        ) cut_period ON cut_period.period_start = so.window_start AND cut_period.period_end = so.window_end
         WHERE so.study_corpus_id = $1
           AND so.engine_analysis_id = $2
         ORDER BY so.rank NULLS LAST, soe.is_protagonist DESC, soe.position ASC

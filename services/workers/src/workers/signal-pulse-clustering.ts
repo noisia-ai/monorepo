@@ -33,7 +33,10 @@ const STOPWORDS_ES_MX = new Set([
   "para", "pero", "como", "con", "que", "por", "una", "uno", "los", "las", "del", "este", "esta",
   "esto", "muy", "mas", "menos", "porque", "cuando", "todo", "toda", "todos", "todas", "solo", "bien",
   "mal", "sin", "hay", "son", "soy", "fue", "ser", "mis", "sus", "me", "mi", "ya", "no", "si",
-  "tambien", "marca", "producto", "personas", "gente", "hacer", "dice", "dicen", "video", "comentario"
+  "tambien", "marca", "producto", "personas", "gente", "hacer", "dice", "dicen", "video", "comentario",
+  "hasta", "siempre", "ellos", "ellas", "estan", "esta", "estas", "este", "estos", "tiene", "tienen",
+  "tener", "sera", "seria", "puede", "pueden", "donde", "quien", "cuando", "ahora", "aqui", "alla",
+  "algo", "cada", "mismo", "misma", "mismos", "mismas", "otro", "otra", "otros", "otras"
 ]);
 
 export function buildEmbeddingNeighborhoodClusters(rows: EmbeddingNeighborhoodRow[]): TermCluster[] {

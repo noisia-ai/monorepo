@@ -327,10 +327,12 @@ function SignalPulseAnalysisReview({
   const qualityGates = arrayRecords(meta.quality_gates);
   const failedGates = qualityGates.filter((gate) => gate.passed === false);
   const noisySignals = state.signals.filter((signal) => looksNonActionableSignal(signal.title, signal.description, signal.dimensions));
+  const inactiveCutSignals = state.signals.filter((signal) => Number(signal.current_volume ?? signal.volume ?? 0) <= 0);
   const repeatedMoveCount = state.moves.filter((move) => move.action_text.includes("Bajarlo a una serie corta")).length;
   const reviewIssues = [
     ...failedGates.map((gate) => `Gate fallido: ${stringValue(gate.id) || "quality_gate"}`),
     ...noisySignals.slice(0, 6).map((signal) => `Señal requiere curaduría: ${signal.title}`),
+    inactiveCutSignals.length > 0 ? `${inactiveCutSignals.length} señales no tienen volumen en el corte actual.` : null,
     repeatedMoveCount >= 3 ? `${repeatedMoveCount} marketing moves repiten la misma fórmula.` : null
   ].filter((issue): issue is string => Boolean(issue));
   const publishBlocked = state.analysis.status !== "needs_review" && state.analysis.status !== "approved"
@@ -340,6 +342,11 @@ function SignalPulseAnalysisReview({
   const signalPulseMentions = Number(readiness.signal_pulse_mentions ?? 0);
   const sampledRows = Number(cluster.mentions_sampled ?? 0);
   const maxClaudeSamples = Math.min(state.signals.length, 24) * 4;
+  const cutMeta = asRecord(signalPulseMeta.cut);
+  const cutLabel = (state.cut?.label ?? stringValue(cutMeta.label)) || "Corte pendiente";
+  const dataThrough = (state.cut?.period_end ?? stringValue(cutMeta.data_through)) || null;
+  const windowStart = (state.cut?.window_start ?? stringValue(cutMeta.window_start)) || null;
+  const windowEnd = (state.cut?.window_end ?? stringValue(cutMeta.window_end)) || dataThrough;
   const defaultHeadline = stringValue(interpretation.headline) || `${corpus.brandName ?? corpus.themeName ?? "La marca"} necesita revisión editorial de señales antes de publicar.`;
   const defaultSummary = stringValue(interpretation.body) || "Revisa señales, evidencia, moves y gates antes de abrir el Pulse al cliente.";
 
@@ -371,10 +378,10 @@ function SignalPulseAnalysisReview({
       </section>
 
       <section className="analysis-review-vitals">
+        <MetricCard label="Corte" value={cutLabel} />
+        <MetricCard label="Data through" value={formatDateLabel(dataThrough)} />
         <MetricCard label="Menciones medidas" value={measuredMentions} />
         <MetricCard label="Menciones SP" value={signalPulseMentions} />
-        <MetricCard label="Signals candidatos" value={state.signals.length} />
-        <MetricCard label="Moves" value={state.moves.length} />
       </section>
 
       <section className="analysis-review-card">
@@ -388,7 +395,7 @@ function SignalPulseAnalysisReview({
           <ReadinessTile label="Cluster global sample" value={sampledRows || "n/d"} detail="Filas usadas para candidatos globales." />
           <ReadinessTile label="Candidatos por periodo" value={Number(cluster.period_first_candidate_clusters ?? 0)} detail="Clusters detectados mes a mes." />
           <ReadinessTile label="Claude nombró" value={state.signals.length} detail={`Hasta ${maxClaudeSamples} snippets cortos, no 60K menciones.`} />
-          <ReadinessTile label="Deep read" value="off" detail="Sin lectura cualitativa ampliada en esta corrida." />
+          <ReadinessTile label="Ventana" value={`${formatDateLabel(windowStart)} - ${formatDateLabel(windowEnd)}`} detail="Los comparativos usan la ventana; el publish usa el corte actual." />
         </div>
       </section>
 
@@ -412,13 +419,16 @@ function SignalPulseAnalysisReview({
         <div className="analysis-preview-list analysis-preview-list--two">
           {state.signals.slice(0, 24).map((signal, index) => {
             const needsReview = looksNonActionableSignal(signal.title, signal.description, signal.dimensions);
+            const currentVolume = Number(signal.current_volume ?? signal.volume ?? 0);
+            const windowVolume = Number(signal.window_volume ?? 0);
+            const bodyPrefix = `${currentVolume} menciones en ${signal.cut_period_label || cutLabel}; ${windowVolume} en ventana. Última actividad: ${signal.last_seen_period || "sin actividad en ventana"}.`;
             return (
               <PreviewItem
                 key={signal.id}
-                code={needsReview ? "REVIEW" : `${index + 1}`}
+                code={needsReview ? "REVIEW" : currentVolume <= 0 ? "INACTIVA EN CUT" : `${index + 1}`}
                 title={signal.title}
-                body={signal.description || stringValue(signal.dimensions.marketing_read) || "Sin lectura editorial guardada."}
-                meta={`${signal.volume} menciones · impacto ${signal.impact_v1 ?? 0}`}
+                body={`${bodyPrefix} ${signal.description || stringValue(signal.dimensions.marketing_read) || "Sin lectura editorial guardada."}`}
+                meta={`${signal.cut_period_label || cutLabel} · impacto SQL ${formatImpact(signal.impact_v1)} · confianza ${signal.confidence || "baja"}`}
               />
             );
           })}
@@ -495,7 +505,36 @@ async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
   )).rows[0];
   if (!analysis) return null;
 
-  const [signals, moves, cost, draft] = await Promise.all([
+  const [cut, signals, moves, cost, draft] = await Promise.all([
+    pool.query<{
+      id: string;
+      label: string;
+      period_start: string;
+      period_end: string;
+      window_start: string | null;
+      window_end: string | null;
+    }>(
+      `
+        WITH window_bounds AS (
+          SELECT MIN(period_start)::text AS window_start, MAX(period_end)::text AS window_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+        )
+        SELECT rp.id::text,
+               rp.label,
+               rp.period_start::text,
+               rp.period_end::text,
+               wb.window_start,
+               wb.window_end
+        FROM report_periods rp
+        CROSS JOIN window_bounds wb
+        WHERE rp.study_corpus_id = $1
+          AND rp.granularity = 'month'
+        ORDER BY rp.period_start DESC
+        LIMIT 1
+      `,
+      [corpusId]
+    ),
     pool.query<{
       id: string;
       title: string;
@@ -503,30 +542,44 @@ async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
       signal_type: string | null;
       dimensions: Record<string, unknown> | null;
       volume: number;
+      current_volume: number;
+      window_volume: number;
+      active_periods: number;
+      last_seen_period: string | null;
+      cut_period_label: string | null;
       impact_v1: string | null;
       confidence: string | null;
     }>(
       `
-        WITH latest AS (
-          SELECT DISTINCT ON (spm.canonical_signal_id)
+        WITH cut_period AS (
+          SELECT id, label
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+          ORDER BY period_start DESC
+          LIMIT 1
+        ),
+        current_metrics AS (
+          SELECT
             spm.canonical_signal_id,
             spm.volume,
             spm.impact_v1::text AS impact_v1,
-            spm.confidence
-          FROM signal_observations so
-          JOIN report_periods rp
-            ON rp.period_start = so.window_start
-           AND rp.period_end = so.window_end
-           AND rp.study_corpus_id = so.study_corpus_id
-           AND rp.granularity = 'month'
-          JOIN signal_period_metrics spm
-            ON spm.canonical_signal_id = so.canonical_signal_id
-           AND spm.period_id = rp.id
-           AND spm.study_corpus_id = so.study_corpus_id
-          WHERE so.study_corpus_id = $1
-            AND so.engine_analysis_id = $2
-            AND so.methodology_slug = 'signal-pulse'
-          ORDER BY spm.canonical_signal_id, rp.period_start DESC
+            spm.confidence,
+            cp.label AS cut_period_label
+          FROM signal_period_metrics spm
+          JOIN cut_period cp ON cp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+        ),
+        window_metrics AS (
+          SELECT
+            spm.canonical_signal_id,
+            COALESCE(SUM(spm.volume), 0)::int AS window_volume,
+            COUNT(*) FILTER (WHERE spm.volume > 0)::int AS active_periods,
+            (array_remove(array_agg(rp.label ORDER BY rp.period_start DESC) FILTER (WHERE spm.volume > 0), NULL))[1] AS last_seen_period
+          FROM signal_period_metrics spm
+          JOIN report_periods rp ON rp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+            AND rp.granularity = 'month'
+          GROUP BY spm.canonical_signal_id
         )
         SELECT
           cs.id::text AS id,
@@ -534,18 +587,26 @@ async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
           cs.description,
           cs.signal_type,
           cs.dimensions,
-          latest.volume,
-          latest.impact_v1,
-          latest.confidence
+          COALESCE(current_metrics.volume, 0)::int AS volume,
+          COALESCE(current_metrics.volume, 0)::int AS current_volume,
+          COALESCE(window_metrics.window_volume, 0)::int AS window_volume,
+          COALESCE(window_metrics.active_periods, 0)::int AS active_periods,
+          window_metrics.last_seen_period,
+          current_metrics.cut_period_label,
+          current_metrics.impact_v1,
+          current_metrics.confidence
         FROM canonical_signals cs
-        JOIN latest ON latest.canonical_signal_id = cs.id
+        LEFT JOIN current_metrics ON current_metrics.canonical_signal_id = cs.id
+        LEFT JOIN window_metrics ON window_metrics.canonical_signal_id = cs.id
         WHERE cs.study_corpus_id = $1
           AND cs.methodology_slug = 'signal-pulse'
           AND cs.status <> 'archived'
-        ORDER BY COALESCE(latest.impact_v1::numeric, 0) DESC, latest.volume DESC
+        ORDER BY (COALESCE(current_metrics.volume, 0) > 0) DESC,
+                 COALESCE(current_metrics.impact_v1::numeric, 0) DESC,
+                 COALESCE(window_metrics.window_volume, 0) DESC
         LIMIT 80
       `,
-      [corpusId, analysisId]
+      [corpusId]
     ),
     pool.query<{
       id: string;
@@ -594,10 +655,14 @@ async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
   const costRow = cost.rows[0];
   return {
     analysis,
+    cut: cut.rows[0] ?? null,
     signals: signals.rows.map((row) => ({
       ...row,
       dimensions: row.dimensions ?? {},
       volume: Number(row.volume ?? 0),
+      current_volume: Number(row.current_volume ?? 0),
+      window_volume: Number(row.window_volume ?? 0),
+      active_periods: Number(row.active_periods ?? 0),
       impact_v1: numberValue(row.impact_v1)
     })),
     moves: moves.rows,
@@ -809,12 +874,31 @@ function numberValue(value: unknown): number {
   return Number.isFinite(number) ? number : 0;
 }
 
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("es-MX", { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+function formatImpact(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(1) : "0.0";
+}
+
 function countClientReadyActions(actions: JsonRecord[]) {
   return actions.filter((action) => stringValue(action.action_text).trim().length > 20).length;
 }
 
 function looksNonActionableSignal(title: string, description: string | null, dimensions: JsonRecord) {
   const source = `${title} ${description ?? ""} ${stringValue(dimensions.marketing_read)} ${stringValue(dimensions.action_hint)}`.toLowerCase();
+  const normalizedTitle = title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (/^(friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada)$/.test(normalizedTitle)) {
+    return true;
+  }
   return [
     "señal débil",
     "sin relevancia",

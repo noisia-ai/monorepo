@@ -14,12 +14,14 @@ function passingGates(overrides: Array<{ id: string; passed: boolean; detail: st
     { id: "period_comparability", passed: true, detail: "12 periodos comparables." },
     { id: "performance_structured", passed: true, detail: "120 registros." },
     { id: "performance_period_coverage", passed: true, detail: "12 periodos con performance." },
+    { id: "current_cut_signal_presence", passed: true, detail: "8 señales activas en el corte." },
     { id: "signal_min_evidence", passed: true, detail: "24 evidencias." },
     { id: "confidence_assigned", passed: true, detail: "Todas las señales tienen confianza." },
     { id: "chart_data_available", passed: true, detail: "4 charts." },
     { id: "move_has_signal", passed: true, detail: "8 moves." },
     { id: "move_has_evidence", passed: true, detail: "8 moves con evidencia." },
     { id: "move_is_marketing_action", passed: true, detail: "Acciones movibles por Marketing." },
+    { id: "signal_actionability_review", passed: true, detail: "0 señales débiles." },
     { id: "cost_within_budget", passed: true, detail: "Dentro del tope." },
     { id: "no_invented_numbers", passed: true, detail: "SQL only." },
     { id: "limitations_visible", passed: true, detail: "Limitaciones visibles." },
@@ -78,6 +80,38 @@ test("Signal Pulse publish gates block incomplete performance period coverage", 
   if (!result.ok) {
     assert.deepEqual(result.failedChecks, [
       { id: "performance_period_coverage", detail: "7/12 periodos con performance estructurada." }
+    ]);
+  }
+});
+
+test("Signal Pulse publish gates block reports with no current cut signals", () => {
+  const result = validateSignalPulsePublishReadiness({
+    quality_gates: passingGates([
+      { id: "current_cut_signal_presence", passed: false, detail: "0 señales activas en el corte actual." }
+    ])
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("current_cut_signal_presence"), true);
+  if (!result.ok) {
+    assert.deepEqual(result.failedChecks, [
+      { id: "current_cut_signal_presence", detail: "0 señales activas en el corte actual." }
+    ]);
+  }
+});
+
+test("Signal Pulse publish gates block raw or weak signal names", () => {
+  const result = validateSignalPulsePublishReadiness({
+    quality_gates: passingGates([
+      { id: "signal_actionability_review", passed: false, detail: "2 señales se nombraron como débiles o no relevantes." }
+    ])
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("signal_actionability_review"), true);
+  if (!result.ok) {
+    assert.deepEqual(result.failedChecks, [
+      { id: "signal_actionability_review", detail: "2 señales se nombraron como débiles o no relevantes." }
     ]);
   }
 });
