@@ -327,8 +327,8 @@ async function upsertEngineOutput(args: {
        kind, output_type, status, title, headline, summary, manifest, payload, visibility_config, version,
        created_by_user_id, published_by_user_id, published_at, updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14,
-       $15, $16, CASE WHEN $17::boolean THEN NOW() ELSE NULL END, NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb,
+       $15, $16, $17, CASE WHEN $18::boolean THEN NOW() ELSE NULL END, NOW())
      ON CONFLICT (engine_analysis_id, output_type)
        WHERE engine_analysis_id IS NOT NULL
      DO UPDATE SET
@@ -342,7 +342,7 @@ async function upsertEngineOutput(args: {
        visibility_config = EXCLUDED.visibility_config,
        version = EXCLUDED.version,
        published_by_user_id = EXCLUDED.published_by_user_id,
-       published_at = CASE WHEN $17::boolean THEN NOW() ELSE published_outputs.published_at END,
+       published_at = CASE WHEN $18::boolean THEN NOW() ELSE published_outputs.published_at END,
        archived_at = NULL,
        updated_at = NOW()
      RETURNING id, status, title`,
