@@ -1299,6 +1299,8 @@ async function maybeApplyClaudeSignalNaming(args: {
     metadata: {
       knowledge_sources: marketingContext.knowledge_sources.length,
       performance_months: marketingContext.performance_window.length,
+      marketing_activity_months: marketingContext.marketing_activity_window.length,
+      repeated_marketing_language: marketingContext.repeated_marketing_language.length,
       source_inventory: marketingContext.source_inventory.length,
       semantic_available: marketingContext.rag.semantic_available,
       cluster_first: true,
@@ -1397,6 +1399,8 @@ async function applyClaudeSignalNamingBatch(args: {
           rag_context: {
             knowledge_sources: args.marketingContext.knowledge_sources.length,
             performance_months: args.marketingContext.performance_window.length,
+            marketing_activity_months: args.marketingContext.marketing_activity_window.length,
+            repeated_marketing_language: args.marketingContext.repeated_marketing_language.length,
             semantic_available: args.marketingContext.rag.semantic_available,
             embedding_model: args.marketingContext.rag.embedding_model
           },

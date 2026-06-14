@@ -11,6 +11,8 @@ Signal Pulse dejó de tratar el corte mensual como análisis aislado. El worker 
 - brief de marketing del wizard (`analysis_plan.marketing_brief`);
 - inventario de fuentes estructuradas (`data_sources`);
 - performance mensual de la ventana (`performance_records`);
+- mapa mensual de actividad de marketing (`marketing_activity_window`);
+- lenguaje/claims repetidos en piezas, campañas u objetivos (`repeated_marketing_language`);
 - serie mensual por cluster antes del naming;
 - serie semanal por cluster antes del naming cuando hay cobertura suficiente;
 - campañas/creativos/performance activos en los periodos donde vive el cluster;
@@ -40,6 +42,13 @@ Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también
 - `matching_creatives`: creativos cuyo texto sí matchea el territorio del cluster.
 
 Claude debe usar estos datos para interpretar o descartar conexión; no puede declarar causalidad si la evidencia no lo sostiene.
+
+Además, el contexto global de la corrida incluye:
+
+- `marketing_activity_window`: meses con performance, canales, objetivos, top campañas/piezas y ejemplos de creative text.
+- `repeated_marketing_language`: frases de 2-4 tokens repetidas en creativos/campañas/objetivos a lo largo de la ventana, con meses, gasto, impresiones, engagement y ejemplos.
+
+Esto permite detectar casos como "la marca lleva 5 meses empujando el mismo claim" o "la pauta habla de confianza pero la conversación pide claridad" sin convertir performance en mentions ni pedirle a Claude que invente números.
 
 Cada señal sintetizada guarda ahora `analysis_scope` en `canonical_signals.dimensions`:
 
@@ -132,4 +141,5 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 4. Revisar que cada señal mencione periodo actual o patrón de ventana cuando sea relevante.
 5. Revisar que `performance_connection` no fuerce causalidad.
 6. Revisar que `analysis_scope` distinga corte actual vs patrón de ventana.
-7. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.
+7. Revisar que `sp_rag_context` registre `marketing_activity_months` y `repeated_marketing_language` > 0 cuando haya performance/creativos.
+8. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.

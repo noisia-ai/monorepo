@@ -7,6 +7,12 @@ import {
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
 import { loadAnalysisRagContext } from "./analysis-rag-context";
+import {
+  summarizeSignalPulseMarketingActivity,
+  type SignalPulseMarketingActivityMonth,
+  type SignalPulseMarketingActivityRow,
+  type SignalPulseRepeatedMarketingLanguage
+} from "./signal-pulse-marketing-activity";
 
 type SignalPulseContextScope = {
   study_corpus_id: string;
@@ -44,6 +50,8 @@ export type SignalPulseMarketingContext = {
     platforms: string[];
     channels: string[];
   }>;
+  marketing_activity_window: SignalPulseMarketingActivityMonth[];
+  repeated_marketing_language: SignalPulseRepeatedMarketingLanguage[];
   rag: {
     semantic_available: boolean;
     embedding_model: string | null;
@@ -138,10 +146,11 @@ type ClusterContextInput = {
 };
 
 export async function loadSignalPulseMarketingContext(ctx: SignalPulseContextScope): Promise<SignalPulseMarketingContext> {
-  const [ragContext, sourceInventory, performanceWindow] = await Promise.all([
+  const [ragContext, sourceInventory, performanceWindow, marketingActivity] = await Promise.all([
     loadAnalysisRagContext(ctx.study_corpus_id, ctx.brand_id),
     loadSourceInventory(ctx.study_corpus_id),
-    loadPerformanceWindow(ctx.study_corpus_id)
+    loadPerformanceWindow(ctx.study_corpus_id),
+    loadMarketingActivityWindow(ctx.study_corpus_id)
   ]);
 
   return {
@@ -152,6 +161,8 @@ export async function loadSignalPulseMarketingContext(ctx: SignalPulseContextSco
       .map((source) => ({ type: source.type, content: compactRecord(source.content, 900) })),
     source_inventory: sourceInventory,
     performance_window: performanceWindow,
+    marketing_activity_window: marketingActivity.months,
+    repeated_marketing_language: marketingActivity.repeatedLanguage,
     rag: {
       semantic_available: hasEmbeddingProvider(),
       embedding_model: hasEmbeddingProvider() ? getEmbeddingModel() : null,
@@ -281,6 +292,59 @@ async function loadPerformanceWindow(corpusId: string): Promise<SignalPulseMarke
     platforms: row.platforms ?? [],
     channels: row.channels ?? []
   }));
+}
+
+async function loadMarketingActivityWindow(corpusId: string): Promise<{
+  months: SignalPulseMarketingActivityMonth[];
+  repeatedLanguage: SignalPulseRepeatedMarketingLanguage[];
+}> {
+  const rows = (await pool.query<{
+    month: string;
+    platform: string;
+    channel: string;
+    entity_kind: string;
+    entity_name: string | null;
+    objective: string | null;
+    spend: string | null;
+    impressions: string | null;
+    clicks: string | null;
+    engagement: string | null;
+    creative_text: string | null;
+  }>(
+    `
+      SELECT
+        to_char(date_trunc('month', record_date), 'YYYY-MM') AS month,
+        platform,
+        channel,
+        entity_kind,
+        COALESCE(entity_name, external_id) AS entity_name,
+        objective,
+        COALESCE(spend, 0)::text AS spend,
+        COALESCE(impressions, 0)::text AS impressions,
+        COALESCE(clicks, 0)::text AS clicks,
+        COALESCE(engagement, 0)::text AS engagement,
+        creative_text
+      FROM performance_records
+      WHERE study_corpus_id = $1
+      ORDER BY record_date DESC, COALESCE(spend, 0) DESC, COALESCE(impressions, 0) DESC, COALESCE(engagement, 0) DESC
+      LIMIT 1800
+    `,
+    [corpusId]
+  )).rows;
+
+  return summarizeSignalPulseMarketingActivity(rows.map((row): SignalPulseMarketingActivityRow => ({
+    month: row.month,
+    platform: row.platform,
+    channel: row.channel,
+    entity_kind: row.entity_kind,
+    entity_name: row.entity_name,
+    objective: row.objective,
+    spend: Number(row.spend ?? 0),
+    impressions: Number(row.impressions ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    engagement: Number(row.engagement ?? 0),
+    creative_text: row.creative_text
+  })));
 }
 
 async function loadClusterPeriodSeries(args: {

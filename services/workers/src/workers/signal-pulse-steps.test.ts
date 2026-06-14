@@ -19,6 +19,7 @@ import { buildSignalPulseDeterministicRead, buildSignalPulseMarketingMove } from
 import { splitSignalPulseMetaForMerge } from "./signal-pulse-meta";
 import { isActionableSignalPulseTerm, isRawKeywordSignalPhrase } from "./signal-pulse-actionability";
 import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
+import { summarizeSignalPulseMarketingActivity } from "./signal-pulse-marketing-activity";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
   const rows: EmbeddingNeighborhoodRow[] = [
@@ -223,6 +224,56 @@ test("Signal Pulse marketing moves prevent campaign causality when connection is
   assert.equal(move.ownerSuggestion, "Insights + Social");
 });
 
+test("Signal Pulse marketing activity summary surfaces repeated claims across months", () => {
+  const summary = summarizeSignalPulseMarketingActivity([
+    {
+      month: "2026-01",
+      platform: "meta",
+      channel: "paid",
+      entity_kind: "ad",
+      entity_name: "Confianza Auto Enero",
+      objective: "traffic",
+      spend: 100,
+      impressions: 10000,
+      clicks: 120,
+      engagement: 300,
+      creative_text: "Seguro de auto con respuesta rápida y atención clara"
+    },
+    {
+      month: "2026-02",
+      platform: "meta",
+      channel: "paid",
+      entity_kind: "ad",
+      entity_name: "Confianza Auto Febrero",
+      objective: "traffic",
+      spend: 140,
+      impressions: 12000,
+      clicks: 130,
+      engagement: 320,
+      creative_text: "Respuesta rápida para seguro de auto y atención clara"
+    },
+    {
+      month: "2026-02",
+      platform: "tiktok",
+      channel: "organic",
+      entity_kind: "post",
+      entity_name: "Consejo choque",
+      objective: "engagement",
+      spend: 0,
+      impressions: 3000,
+      clicks: 0,
+      engagement: 90,
+      creative_text: "Qué hacer en un choque en cadena"
+    }
+  ]);
+
+  assert.equal(summary.months.length, 2);
+  assert.equal(summary.months[1]?.month, "2026-02");
+  assert.equal(summary.months[1]?.top_entities[0]?.entity_name, "Confianza Auto Febrero");
+  assert.ok(summary.repeatedLanguage.some((item) => item.phrase === "seguro auto" && item.months.length === 2));
+  assert.ok(summary.repeatedLanguage.some((item) => item.phrase === "respuesta rapida" && item.records === 2));
+});
+
 test("Signal Pulse budget estimate stays cluster-first and bounded before running", () => {
   assert.equal(estimateSignalPulseNamingCostUsd(0), 0.015);
   assert.equal(estimateSignalPulseNamingCostUsd(100), 0.36);
@@ -419,6 +470,48 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
         channels: ["paid"]
       }
     ],
+    marketing_activity_window: [
+      {
+        month: "2026-05",
+        records: 42,
+        spend: 1200,
+        impressions: 88000,
+        clicks: 940,
+        engagement: 1800,
+        platforms: ["meta"],
+        channels: ["paid"],
+        objectives: ["traffic"],
+        top_entities: [
+          {
+            entity_kind: "campaign",
+            entity_name: "Confianza auto",
+            objective: "traffic",
+            platform: "meta",
+            channel: "paid",
+            records: 42,
+            spend: 1200,
+            impressions: 88000,
+            engagement: 1800
+          }
+        ],
+        top_creative_excerpts: ["Seguro de auto con respuesta rapida"]
+      }
+    ],
+    repeated_marketing_language: [
+      {
+        phrase: "respuesta rapida",
+        months: ["2026-04", "2026-05"],
+        first_month: "2026-04",
+        last_month: "2026-05",
+        records: 18,
+        spend: 2100,
+        impressions: 160000,
+        engagement: 3100,
+        platforms: ["meta"],
+        channels: ["paid"],
+        example_creatives: ["Seguro de auto con respuesta rapida"]
+      }
+    ],
     rag: {
       semantic_available: true,
       embedding_model: "voyage-4-large",
@@ -431,6 +524,8 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /analysis_scope/);
   assert.match(prompt, /ventana completa/);
   assert.match(prompt, /performance_records/);
+  assert.match(prompt, /repeated_marketing_language/);
+  assert.match(prompt, /respuesta rapida/);
   assert.match(prompt, /Riesgo creativo/);
   assert.match(prompt, /Gap de pauta/);
   assert.match(prompt, /Confianza auto/);
