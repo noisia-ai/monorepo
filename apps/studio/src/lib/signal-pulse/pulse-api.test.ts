@@ -43,6 +43,13 @@ const output: PulseOutputLike = {
         id: "s_1",
         title: "Rutina crujiente",
         signal_type: "opportunity",
+        period_read: "En el corte 2026-06 la rutina crujiente crece en TikTok y Facebook.",
+        window_read: "En la ventana de 12 meses pasa de señal emergente en mayo a nuevo pico en junio.",
+        marketing_hypothesis: "La campaña Back to school coincide con lenguaje de rutina y puede explicar recepción parcial sin asumir causalidad completa.",
+        next_month_decision: "Probar un hook de rutina crujiente y medir CTR, comentarios útiles y menciones orgánicas contra el control.",
+        marketing_read: "El aprendizaje movible es bajar la rutina a hook creativo, no sólo amplificar sabor.",
+        action_hint: "Testear rutina crujiente como claim y medir CTR contra el mensaje base.",
+        performance_connection: "connected: Back to school comparte lenguaje con evidencia y sube engagement.",
         lifecycle_state: "new",
         impact_v1: "82",
         volume: 140,
@@ -71,6 +78,13 @@ const output: PulseOutputLike = {
         id: "s_2",
         title: "Precio se siente alto",
         signal_type: "risk",
+        period_read: "En el corte 2026-06 suben quejas de precio en Facebook.",
+        window_read: "En la ventana aparece como aceleración del último mes, no como patrón saturado de todo el año.",
+        marketing_hypothesis: "La campaña Promo precio y el evento de CTR drop conviven con la fricción, pero requiere revisar piezas antes de atribuir causa.",
+        next_month_decision: "Auditar piezas de precio y medir sentimiento, CTR y dudas por creatividad antes de escalar.",
+        marketing_read: "La pauta de precio puede estar atrayendo atención equivocada si la conversación se queda en costo percibido.",
+        action_hint: "Comparar una variante de valor contra precio y medir CTR y comentarios de fricción.",
+        performance_connection: "connected: Promo precio comparte periodo y evidencia con caída de CTR.",
         lifecycle_state: "accelerating",
         impact_v1: "61",
         volume: 70,
@@ -95,6 +109,13 @@ const output: PulseOutputLike = {
         id: "s_3",
         title: "Educación para carretera",
         signal_type: "opportunity",
+        period_read: "En el corte 2026-06 no hay volumen activo de esta señal.",
+        window_read: "En la ventana el tema aparece en mayo y queda como patrón histórico aislado para monitoreo.",
+        marketing_hypothesis: "No hay campaña, pauta o performance conectada; la fuente de reviews sugiere oportunidad educativa independiente.",
+        next_month_decision: "Monitorear si reaparece y medir volumen, sentimiento y preguntas útiles antes de producir contenido.",
+        marketing_read: "Sirve como backlog de contenido educativo, no como prioridad del corte actual.",
+        action_hint: "Guardar como hipótesis para educación de carretera y validar si vuelve en el siguiente mes.",
+        performance_connection: "no_connection: no hay fuente estructurada conectada.",
         lifecycle_state: "inactive_in_cut",
         impact_v1: null,
         volume: 0,
@@ -185,6 +206,15 @@ test("Pulse overview returns tactical KPIs, chart refs and visible warnings", ()
     paid_campaign_alignment: "paid_campaign_alignment"
   });
   assert.equal(overview.top_signals[0]?.impact_v1, 82);
+  assert.deepEqual((overview.top_signals[0] as Record<string, unknown>).intelligence_read, {
+    period_read: "En el corte 2026-06 la rutina crujiente crece en TikTok y Facebook.",
+    window_read: "En la ventana de 12 meses pasa de señal emergente en mayo a nuevo pico en junio.",
+    marketing_hypothesis: "La campaña Back to school coincide con lenguaje de rutina y puede explicar recepción parcial sin asumir causalidad completa.",
+    next_month_decision: "Probar un hook de rutina crujiente y medir CTR, comentarios útiles y menciones orgánicas contra el control.",
+    marketing_read: "El aprendizaje movible es bajar la rutina a hook creativo, no sólo amplificar sabor.",
+    action_hint: "Testear rutina crujiente como claim y medir CTR contra el mensaje base.",
+    performance_connection: "connected: Back to school comparte lenguaje con evidencia y sube engagement."
+  });
   assert.match(overview.warnings.join(" "), /Performance parcial/);
 });
 
@@ -204,6 +234,8 @@ test("Pulse signals respect evidence visibility for clients", () => {
   assert.equal(signalList.count, 2);
   assert.equal((firstSignal.evidence as unknown[]).length, 0);
   assert.equal((detailSignal.evidence as unknown[]).length, 0);
+  assert.equal(((firstSignal.intelligence_read as Record<string, unknown>).marketing_hypothesis), "Hipótesis de marketing disponible sólo con permiso de paid/organic.");
+  assert.equal(((firstSignal.intelligence_read as Record<string, unknown>).performance_connection), "Conexión a performance disponible sólo con permiso de paid/organic.");
   assert.equal(buildPulseSignalsResponse({ ...context, signalId: "missing" }), null);
 });
 
@@ -216,6 +248,7 @@ test("Pulse signals expose evidence internally and moves group by status", () =>
   const detailSignal = detail.signal as Record<string, unknown>;
   assert.equal((detailSignal.evidence as unknown[]).length, 2);
   assert.equal((detailSignal.moves as unknown[]).length, 1);
+  assert.equal((detailSignal.intelligence_read as Record<string, unknown>).next_month_decision, "Probar un hook de rutina crujiente y medir CTR, comentarios útiles y menciones orgánicas contra el control.");
   assert.equal(moves.count, 2);
   assert.equal(moves.board.candidate?.length, 1);
   assert.equal(moves.board.approved?.length, 1);
@@ -322,6 +355,19 @@ test("Pulse filters cover campaigns, source type, scope and performance events",
   assert.deepEqual(campaignChart?.payload, {
     rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop" }]
   });
+});
+
+test("Pulse signal search includes intelligence reads, not only titles or metrics", () => {
+  const context = buildPulseApiContext({ output, isInternalUser: true });
+  const windowSearch = buildPulseSignalsResponse({ ...context, filters: { period: "all", q: "patrón histórico aislado" } });
+  const decisionSearch = buildPulseSignalsResponse({ ...context, filters: { period: "all", q: "comentarios útiles" } });
+
+  assert.ok(windowSearch && "signals" in windowSearch);
+  assert.ok(decisionSearch && "signals" in decisionSearch);
+  assert.equal(windowSearch.count, 1);
+  assert.equal((windowSearch.signals[0] as Record<string, unknown>).id, "s_3");
+  assert.equal(decisionSearch.count, 1);
+  assert.equal((decisionSearch.signals[0] as Record<string, unknown>).id, "s_1");
 });
 
 test("Pulse API parses dashboard filter query params", () => {

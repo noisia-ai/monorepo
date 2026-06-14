@@ -71,7 +71,7 @@ export function buildPulseOverviewResponse(args: {
   const qualityGates = arrayOfRecords(args.payload.quality_gates);
   const cost = asRecord(args.payload.cost);
   const activePeriod = findPeriod(periods, filters.period) ?? periods.at(-1) ?? null;
-  const topSignals = signals.slice(0, 8).map(compactSignal);
+  const topSignals = signals.slice(0, 8).map((signal) => compactSignal(signal, args.visibility));
   const topMoves = moves.slice(0, 6).map(compactMove);
 
   return {
@@ -129,7 +129,7 @@ export function buildPulseSignalsResponse(args: {
   const normalizedFilters = normalizePulseFilters({ ...args.filters, signalId: args.signalId ?? args.filters?.signalId });
   const filters = args.signalId ? normalizedFilters : withDefaultPulsePeriod(normalizedFilters, periods);
   const moves = arrayOfRecords(args.payload.marketing_moves);
-  const signals: JsonRecord[] = filterSignals(arrayOfRecords(args.payload.signals), filters).map((signal) => enrichSignal(signal, { periods, evidence, moves }));
+  const signals: JsonRecord[] = filterSignals(arrayOfRecords(args.payload.signals), filters).map((signal) => enrichSignal(signal, { periods, evidence, moves, visibility: args.visibility }));
 
   if (filters.signalId) {
     const signal = signals.find((item) => stringValue(item.id) === filters.signalId);
@@ -156,7 +156,7 @@ export function buildPulseMovesResponse(args: {
 }) {
   const filters = withDefaultPulsePeriod(normalizePulseFilters(args.filters), arrayOfRecords(args.payload.periods));
   const filteredSignals = filterSignals(arrayOfRecords(args.payload.signals), filters);
-  const signals = new Map(filteredSignals.map((signal) => [stringValue(signal.id), compactSignal(signal)]));
+  const signals = new Map(filteredSignals.map((signal) => [stringValue(signal.id), compactSignal(signal, args.visibility)]));
   const evidence = args.visibility.showEvidence ? arrayOfRecords(args.payload.evidence) : [];
   const moves: JsonRecord[] = filterMoves(arrayOfRecords(args.payload.marketing_moves), filteredSignals, filters).map((move) => {
     const refs = stringArray(move.signal_refs);
@@ -317,10 +317,11 @@ function findPeriod(periods: JsonRecord[], periodFilter?: string) {
   }) ?? null;
 }
 
-function enrichSignal(signal: JsonRecord, args: { periods: JsonRecord[]; evidence: JsonRecord[]; moves: JsonRecord[] }): JsonRecord {
+function enrichSignal(signal: JsonRecord, args: { periods: JsonRecord[]; evidence: JsonRecord[]; moves: JsonRecord[]; visibility: SignalPulseResolvedVisibility }): JsonRecord {
   const signalId = stringValue(signal.id);
   return {
     ...signal,
+    intelligence_read: signalIntelligenceRead(signal, args.visibility),
     evidence: args.evidence.filter((item) => stringValue(item.signal_id) === signalId),
     moves: args.moves.filter((move) => stringArray(move.signal_refs).includes(signalId)),
     period_summary: args.periods.map((period) => {
@@ -456,6 +457,17 @@ function signalMatchesQuery(signal: JsonRecord, query: string) {
     signal.signal_type,
     dimensions.signal_role,
     dimensions.marketing_read,
+    signal.period_read,
+    signal.window_read,
+    signal.marketing_hypothesis,
+    signal.next_month_decision,
+    signal.marketing_read,
+    signal.action_hint,
+    signal.performance_connection,
+    dimensions.period_read,
+    dimensions.window_read,
+    dimensions.marketing_hypothesis,
+    dimensions.next_month_decision,
     dimensions.action_hint,
     dimensions.performance_connection,
     dimensions.evidence_basis,
@@ -493,7 +505,7 @@ function rowMatchesText(row: JsonRecord, query: string, fields: string[]) {
   return fields.some((field) => normalizeFilterValue(row[field]).includes(query));
 }
 
-function compactSignal(signal: JsonRecord) {
+function compactSignal(signal: JsonRecord, visibility?: SignalPulseResolvedVisibility) {
   const dimensions = asRecord(signal.dimensions);
   return {
     id: stringValue(signal.id),
@@ -501,6 +513,7 @@ function compactSignal(signal: JsonRecord) {
     signal_type: stringValue(signal.signal_type),
     signal_role: stringValue(dimensions.signal_role),
     analysis_scope: stringValue(dimensions.analysis_scope),
+    intelligence_read: signalIntelligenceRead(signal, visibility),
     scope: stringValue(dimensions.scope || dimensions.entity_scope || signal.scope || signal.entity_scope),
     lifecycle_state: stringValue(signal.lifecycle_state),
     impact_v1: numberValue(signal.impact_v1),
@@ -511,6 +524,24 @@ function compactSignal(signal: JsonRecord) {
     dominant_emotion: stringValue(signal.dominant_emotion),
     confidence: stringValue(signal.confidence),
     evidence_count: numberValue(signal.evidence_count)
+  };
+}
+
+function signalIntelligenceRead(signal: JsonRecord, visibility?: SignalPulseResolvedVisibility) {
+  const dimensions = asRecord(signal.dimensions);
+  const marketingHypothesis = stringValue(signal.marketing_hypothesis || dimensions.marketing_hypothesis);
+  return {
+    period_read: stringValue(signal.period_read || dimensions.period_read),
+    window_read: stringValue(signal.window_read || dimensions.window_read),
+    marketing_hypothesis: visibility?.showPaidOrganic === false && marketingHypothesis
+      ? "Hipótesis de marketing disponible sólo con permiso de paid/organic."
+      : marketingHypothesis,
+    next_month_decision: stringValue(signal.next_month_decision || dimensions.next_month_decision),
+    marketing_read: stringValue(signal.marketing_read || dimensions.marketing_read),
+    action_hint: stringValue(signal.action_hint || dimensions.action_hint),
+    performance_connection: visibility?.showPaidOrganic === false && stringValue(signal.performance_connection || dimensions.performance_connection)
+      ? "Conexión a performance disponible sólo con permiso de paid/organic."
+      : stringValue(signal.performance_connection || dimensions.performance_connection)
   };
 }
 

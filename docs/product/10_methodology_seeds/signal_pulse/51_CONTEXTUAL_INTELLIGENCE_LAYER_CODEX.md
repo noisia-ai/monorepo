@@ -112,6 +112,8 @@ La respuesta de Claude ya no puede resolver una señal publicable sólo con `tit
 
 El worker persiste esos campos en `canonical_signals.dimensions` y los valida antes de permitir `review_status='publish_candidate'`. Si Claude entrega una lectura genérica o de último mes sin ventana, la señal queda en `needs_human_review`.
 
+El publish API también eleva esas lecturas al payload de Signal Pulse y los endpoints `/api/pulse/...` las exponen como `intelligence_read` por señal. El dashboard puede leer ese bloque sin depender de campos internos de `dimensions`, buscar dentro de esas lecturas y seguir aplicando filtros por periodo, campaña, fuente, plataforma, scope, `analysis_scope`, evento de performance y move. Si el cliente no tiene permiso explícito para paid/organic, la API redacta la hipótesis de marketing/performance sensible aunque conserva el resto de la lectura.
+
 Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensions`:
 
 - `samples`
