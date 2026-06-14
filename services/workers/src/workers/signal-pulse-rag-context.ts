@@ -13,6 +13,12 @@ import {
   type SignalPulseMarketingActivityRow,
   type SignalPulseRepeatedMarketingLanguage
 } from "./signal-pulse-marketing-activity";
+import {
+  marketingRecordSort,
+  rankSignalPulseMarketingRecordsForCluster,
+  type SignalPulseMarketingRecordCandidate,
+  type SignalPulseMarketingRecordMatch
+} from "./signal-pulse-marketing-record-match";
 
 type SignalPulseContextScope = {
   study_corpus_id: string;
@@ -94,6 +100,51 @@ export type SignalPulseWindowPattern = {
   lifecycle_state: string;
 };
 
+export type SignalPulseInvestigationBrief = {
+  current_cut: {
+    period_label: string;
+    volume: number;
+    delta_prev: number | null;
+    lifecycle_state: string;
+    sentiment_avg: number | null;
+    source_mix: Record<string, number>;
+  } | null;
+  window_pattern: SignalPulseWindowPattern;
+  weekly_pattern: SignalPulseWindowPattern | null;
+  strongest_periods: Array<{
+    period_label: string;
+    volume: number;
+    delta_prev: number | null;
+    lifecycle_state: string;
+    source_mix: Record<string, number>;
+  }>;
+  weekly_pulses: Array<{
+    period_label: string;
+    volume: number;
+    delta_prev: number | null;
+    lifecycle_state: string;
+    source_mix: Record<string, number>;
+  }>;
+  marketing_intersections: Array<{
+    period_label: string;
+    basis: string;
+    campaign_count: number;
+    matching_creative_count: number;
+    performance_event_count: number;
+    spend: number;
+    impressions: number;
+    engagement: number;
+    top_campaigns: string[];
+    top_matching_creatives: string[];
+  }>;
+  evidence_map: {
+    sample_ids: string[];
+    semantic_mention_ids: string[];
+    knowledge_titles: string[];
+  };
+  synthesis_questions: string[];
+};
+
 export type SignalPulseClusterPromptContext = {
   period_series: SignalPulsePeriodSeriesPoint[];
   weekly_series?: SignalPulsePeriodSeriesPoint[];
@@ -126,25 +177,14 @@ export type SignalPulseClusterPromptContext = {
       delta_pct: number | null;
       direction: "up" | "down" | "flat";
     }>;
-    matching_creatives: Array<{
-      record_date: string;
-      platform: string;
-      channel: string;
-      entity_kind: string;
-      entity_name: string | null;
-      objective: string | null;
-      spend: number;
-      impressions: number;
-      clicks: number;
-      engagement: number;
-      creative_text: string | null;
-    }>;
+    matching_creatives: SignalPulseMarketingRecordMatch[];
   };
   knowledge_matches: SignalPulseKnowledgeMatch[];
   conversation_matches: SignalPulseConversationMatch[];
+  investigation_brief: SignalPulseInvestigationBrief;
 };
 
-type ClusterContextInput = {
+export type ClusterContextInput = {
   id: string;
   term: string;
   currentTitle: string;
@@ -186,7 +226,7 @@ export async function loadSignalPulseClusterPromptContext(args: {
   marketingContext: SignalPulseMarketingContext;
   cluster: ClusterContextInput;
 }): Promise<SignalPulseClusterPromptContext> {
-  const [periodSeries, weeklySeries, semanticMatches, matchingCreatives] = await Promise.all([
+  const [periodSeries, weeklySeries, semanticMatches] = await Promise.all([
     loadClusterPeriodSeries({
       corpusId: args.ctx.study_corpus_id,
       term: args.cluster.term,
@@ -203,10 +243,6 @@ export async function loadSignalPulseClusterPromptContext(args: {
       ctx: args.ctx,
       cluster: args.cluster,
       marketingContext: args.marketingContext
-    }),
-    loadMatchingCreatives({
-      corpusId: args.ctx.study_corpus_id,
-      term: args.cluster.term
     })
   ]);
 
@@ -214,13 +250,31 @@ export async function loadSignalPulseClusterPromptContext(args: {
   const weeklyPattern = summarizeWindowPattern(weeklySeries);
   const activeMonthLabels = periodSeries.filter((period) => period.volume > 0).map((period) => period.label);
   const activeMonths = new Set(activeMonthLabels);
-  const [periodCampaigns, performanceEvents] = await Promise.all([
+  const [periodCampaigns, performanceEvents, matchingCreatives] = await Promise.all([
     loadPeriodCampaignContext({
       corpusId: args.ctx.study_corpus_id,
       periodLabels: activeMonthLabels
     }),
-    Promise.resolve(summarizePerformanceEvents(args.marketingContext.performance_window, activeMonthLabels))
+    Promise.resolve(summarizePerformanceEvents(args.marketingContext.performance_window, activeMonthLabels)),
+    loadRelevantMarketingRecords({
+      corpusId: args.ctx.study_corpus_id,
+      cluster: args.cluster,
+      periodLabels: activeMonthLabels,
+      semanticMatches,
+      marketingContext: args.marketingContext
+    })
   ]);
+  const investigationBrief = buildClusterInvestigationBrief({
+    cluster: args.cluster,
+    periodSeries,
+    weeklySeries,
+    windowPattern,
+    weeklyPattern,
+    periodCampaigns,
+    performanceEvents,
+    matchingCreatives,
+    semanticMatches
+  });
   return {
     period_series: periodSeries,
     weekly_series: weeklySeries,
@@ -233,7 +287,8 @@ export async function loadSignalPulseClusterPromptContext(args: {
       matching_creatives: matchingCreatives
     },
     knowledge_matches: semanticMatches.knowledge,
-    conversation_matches: semanticMatches.conversation
+    conversation_matches: semanticMatches.conversation,
+    investigation_brief: investigationBrief
   };
 }
 
@@ -568,15 +623,17 @@ async function retrieveSemanticMatches(args: {
   }
 }
 
-async function loadMatchingCreatives(args: {
+async function loadRelevantMarketingRecords(args: {
   corpusId: string;
-  term: string;
+  cluster: ClusterContextInput;
+  periodLabels: string[];
+  semanticMatches: { knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] };
+  marketingContext: SignalPulseMarketingContext;
 }): Promise<SignalPulseClusterPromptContext["performance_context"]["matching_creatives"]> {
-  const normalized = normalizeText(args.term);
-  if (normalized.length < 4) return [];
-  const pattern = `%${escapeLike(normalized)}%`;
+  const labels = Array.from(new Set(args.periodLabels.filter(Boolean))).slice(0, 12);
   const rows = (await pool.query<{
     record_date: string;
+    period_label: string | null;
     platform: string;
     channel: string;
     entity_kind: string;
@@ -590,27 +647,41 @@ async function loadMatchingCreatives(args: {
   }>(
     `
       SELECT
-        record_date::text,
-        platform,
-        channel,
-        entity_kind,
-        entity_name,
-        objective,
-        COALESCE(spend, 0)::text AS spend,
-        COALESCE(impressions, 0)::text AS impressions,
-        COALESCE(clicks, 0)::text AS clicks,
-        COALESCE(engagement, 0)::text AS engagement,
-        creative_text
-      FROM performance_records
-      WHERE study_corpus_id = $1
-        AND translate(lower(COALESCE(creative_text, '') || ' ' || COALESCE(entity_name, '') || ' ' || COALESCE(objective, '')), 'áéíóúüñ', 'aeiouun') LIKE $2
-      ORDER BY record_date DESC, COALESCE(engagement, 0) DESC, COALESCE(spend, 0) DESC
-      LIMIT 8
+        pr.record_date::text,
+        to_char(date_trunc('month', pr.record_date), 'YYYY-MM') AS period_label,
+        pr.platform,
+        pr.channel,
+        pr.entity_kind,
+        COALESCE(pr.entity_name, pr.external_id) AS entity_name,
+        pr.objective,
+        COALESCE(pr.spend, 0)::text AS spend,
+        COALESCE(pr.impressions, 0)::text AS impressions,
+        COALESCE(pr.clicks, 0)::text AS clicks,
+        COALESCE(pr.engagement, 0)::text AS engagement,
+        pr.creative_text
+      FROM performance_records pr
+      WHERE pr.study_corpus_id = $1
+        AND (
+          cardinality($2::text[]) = 0
+          OR to_char(date_trunc('month', pr.record_date), 'YYYY-MM') = ANY($2::text[])
+        )
+      ORDER BY
+        CASE
+          WHEN cardinality($2::text[]) > 0
+           AND to_char(date_trunc('month', pr.record_date), 'YYYY-MM') = ANY($2::text[])
+          THEN 0 ELSE 1
+        END,
+        pr.record_date DESC,
+        COALESCE(pr.engagement, 0) DESC,
+        COALESCE(pr.spend, 0) DESC,
+        COALESCE(pr.impressions, 0) DESC
+      LIMIT 600
     `,
-    [args.corpusId, pattern]
+    [args.corpusId, labels]
   )).rows;
-  return rows.map((row) => ({
+  const candidates = rows.map((row): SignalPulseMarketingRecordCandidate => ({
     record_date: row.record_date,
+    period_label: row.period_label,
     platform: row.platform,
     channel: row.channel,
     entity_kind: row.entity_kind,
@@ -620,8 +691,16 @@ async function loadMatchingCreatives(args: {
     impressions: Number(row.impressions ?? 0),
     clicks: Number(row.clicks ?? 0),
     engagement: Number(row.engagement ?? 0),
-    creative_text: row.creative_text ? row.creative_text.slice(0, 320) : null
+    creative_text: row.creative_text ? row.creative_text.slice(0, 360) : null
   }));
+  return rankSignalPulseMarketingRecordsForCluster({
+    cluster: args.cluster,
+    semanticMatches: args.semanticMatches,
+    marketingContext: args.marketingContext,
+    records: candidates,
+    periodLabels: labels,
+    limit: 10
+  });
 }
 
 async function loadPeriodCampaignContext(args: {
@@ -696,6 +775,148 @@ async function loadPeriodCampaignContext(args: {
     avg_ctr: numberOrNull(row.avg_ctr),
     records: Number(row.records ?? 0)
   }));
+}
+
+function buildClusterInvestigationBrief(args: {
+  cluster: ClusterContextInput;
+  periodSeries: SignalPulseClusterPromptContext["period_series"];
+  weeklySeries: SignalPulseClusterPromptContext["period_series"];
+  windowPattern: SignalPulseWindowPattern;
+  weeklyPattern: SignalPulseWindowPattern;
+  periodCampaigns: SignalPulseClusterPromptContext["performance_context"]["period_campaigns"];
+  performanceEvents: SignalPulseClusterPromptContext["performance_context"]["performance_events"];
+  matchingCreatives: SignalPulseMarketingRecordMatch[];
+  semanticMatches: { knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] };
+}): SignalPulseInvestigationBrief {
+  const current = args.periodSeries.at(-1) ?? null;
+  const strongestPeriods = args.periodSeries
+    .filter((period) => period.volume > 0)
+    .slice()
+    .sort((a, b) => b.volume - a.volume || b.engagement - a.engagement)
+    .slice(0, 4)
+    .map((period) => ({
+      period_label: period.label,
+      volume: period.volume,
+      delta_prev: period.delta_prev,
+      lifecycle_state: period.lifecycle_state,
+      source_mix: period.source_mix
+    }));
+  const weeklyPulses = args.weeklySeries
+    .filter((period) => period.volume > 0 || Math.abs(period.delta_prev ?? 0) > 0)
+    .slice()
+    .sort((a, b) => Math.abs(b.delta_prev ?? 0) - Math.abs(a.delta_prev ?? 0) || b.volume - a.volume)
+    .slice(0, 4)
+    .map((period) => ({
+      period_label: period.label,
+      volume: period.volume,
+      delta_prev: period.delta_prev,
+      lifecycle_state: period.lifecycle_state,
+      source_mix: period.source_mix
+    }));
+  const relevantPeriodLabels = Array.from(new Set([
+    ...strongestPeriods.map((period) => period.period_label),
+    current?.label,
+    ...args.matchingCreatives.map((record) => record.period_label)
+  ].filter((label): label is string => Boolean(label)))).slice(0, 8);
+  const marketingIntersections = relevantPeriodLabels.map((periodLabel) => {
+    const campaigns = args.periodCampaigns.filter((campaign) => campaign.period_label === periodLabel);
+    const matches = args.matchingCreatives.filter((record) => record.period_label === periodLabel);
+    const events = args.performanceEvents.filter((event) => event.month === periodLabel);
+    const basis = matches.some((record) => record.match_basis.includes("evidence_overlap"))
+      ? "creative_or_campaign_language_overlaps_evidence"
+      : matches.some((record) => record.match_basis.includes("repeated_marketing_language"))
+        ? "repeated_marketing_language_overlap"
+        : campaigns.length > 0 || events.length > 0
+          ? "same_period_marketing_activity"
+          : "conversation_only_period";
+    return {
+      period_label: periodLabel,
+      basis,
+      campaign_count: campaigns.length,
+      matching_creative_count: matches.length,
+      performance_event_count: events.length,
+      spend: round(campaigns.reduce((sum, campaign) => sum + campaign.spend, 0), 2),
+      impressions: round(campaigns.reduce((sum, campaign) => sum + campaign.impressions, 0), 2),
+      engagement: round(campaigns.reduce((sum, campaign) => sum + campaign.engagement, 0), 2),
+      top_campaigns: campaigns
+        .slice()
+        .sort((a, b) => b.spend - a.spend || b.engagement - a.engagement || b.impressions - a.impressions)
+        .map((campaign) => [campaign.entity_name, campaign.objective, campaign.platform, campaign.channel].filter(Boolean).join(" · "))
+        .filter(Boolean)
+        .slice(0, 4),
+      top_matching_creatives: matches
+        .slice()
+        .sort(marketingRecordSort)
+        .map((record) => record.creative_text || record.entity_name || record.objective)
+        .filter((value): value is string => Boolean(value))
+        .slice(0, 4)
+    };
+  }).filter((intersection) => (
+    intersection.campaign_count > 0
+    || intersection.matching_creative_count > 0
+    || intersection.performance_event_count > 0
+    || intersection.basis === "conversation_only_period"
+  ));
+  const currentCutVolume = current?.volume ?? 0;
+  const windowVolume = args.periodSeries.reduce((sum, period) => sum + period.volume, 0);
+  const hasDirectMarketingOverlap = args.matchingCreatives.some((record) => (
+    record.match_basis.includes("evidence_overlap")
+    || record.match_basis.includes("repeated_marketing_language")
+    || record.match_basis.includes("knowledge_or_brief_overlap")
+  ));
+  return {
+    current_cut: current ? {
+      period_label: current.label,
+      volume: current.volume,
+      delta_prev: current.delta_prev,
+      lifecycle_state: current.lifecycle_state,
+      sentiment_avg: current.sentiment_avg,
+      source_mix: current.source_mix
+    } : null,
+    window_pattern: args.windowPattern,
+    weekly_pattern: args.weeklySeries.length > 0 ? args.weeklyPattern : null,
+    strongest_periods: strongestPeriods,
+    weekly_pulses: weeklyPulses,
+    marketing_intersections: marketingIntersections.slice(0, 8),
+    evidence_map: {
+      sample_ids: args.cluster.samples.map((sample) => sample.id).filter(Boolean).slice(0, 8),
+      semantic_mention_ids: args.semanticMatches.conversation.map((match) => match.mention_id).filter(Boolean).slice(0, 12),
+      knowledge_titles: args.semanticMatches.knowledge
+        .map((match) => match.title || match.source_kind || null)
+        .filter((value): value is string => Boolean(value))
+        .slice(0, 8)
+    },
+    synthesis_questions: buildSynthesisQuestions({
+      currentCutVolume,
+      windowVolume,
+      hasDirectMarketingOverlap,
+      strongestPeriods,
+      marketingIntersections
+    })
+  };
+}
+
+function buildSynthesisQuestions(args: {
+  currentCutVolume: number;
+  windowVolume: number;
+  hasDirectMarketingOverlap: boolean;
+  strongestPeriods: SignalPulseInvestigationBrief["strongest_periods"];
+  marketingIntersections: SignalPulseInvestigationBrief["marketing_intersections"];
+}) {
+  const questions = [
+    "Qué cambia en el corte actual versus el patrón de la ventana completa?",
+    "Qué evidencia textual con mention_id sostiene una lectura humana y no sólo una keyword?",
+    "Hay conexión comprobable con campañas, claims, pauta u orgánico, o debe marcarse no_connection?"
+  ];
+  if (args.windowVolume > args.currentCutVolume && args.strongestPeriods.length > 1) {
+    questions.push("El aprendizaje principal es repetición, saturación, reactivación o anomalía histórica?");
+  }
+  if (args.hasDirectMarketingOverlap) {
+    questions.push("El overlap con piezas/campañas apunta a riesgo creativo, claim a testear o gap de pauta?");
+  } else if (args.marketingIntersections.some((item) => item.basis === "same_period_marketing_activity")) {
+    questions.push("Sólo hay coexistencia temporal con marketing; evitar causalidad si no hay overlap de lenguaje/evidencia.");
+  }
+  return questions.slice(0, 6);
 }
 
 function summarizePerformanceEvents(

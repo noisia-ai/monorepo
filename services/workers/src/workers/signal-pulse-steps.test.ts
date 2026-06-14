@@ -20,6 +20,7 @@ import { splitSignalPulseMetaForMerge } from "./signal-pulse-meta";
 import { isActionableSignalPulseTerm, isRawKeywordSignalPhrase } from "./signal-pulse-actionability";
 import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
 import { summarizeSignalPulseMarketingActivity } from "./signal-pulse-marketing-activity";
+import { rankSignalPulseMarketingRecordsForCluster } from "./signal-pulse-marketing-record-match";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
   const rows: EmbeddingNeighborhoodRow[] = [
@@ -274,6 +275,113 @@ test("Signal Pulse marketing activity summary surfaces repeated claims across mo
   assert.ok(summary.repeatedLanguage.some((item) => item.phrase === "respuesta rapida" && item.records === 2));
 });
 
+test("Signal Pulse marketing record matching prefers evidence overlap over raw keyword matches", () => {
+  const matches = rankSignalPulseMarketingRecordsForCluster({
+    cluster: {
+      id: "00000000-0000-4000-8000-000000000001",
+      term: "seguro",
+      currentTitle: "Territorio seguro",
+      mentionCount: 134,
+      platforms: ["facebook"],
+      discoveryPeriods: ["2026-05"],
+      memberMentionIds: ["11111111-1111-4111-8111-111111111111"],
+      samples: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          text: "No queda claro quien responde en un choque en cadena.",
+          platform: "facebook",
+          published_at: "2026-05-18"
+        }
+      ]
+    },
+    semanticMatches: {
+      knowledge: [
+        {
+          title: "Brief confianza",
+          source_kind: "brand_document",
+          text: "La campaña promete claridad ante responsabilidad legal.",
+          similarity: 0.81
+        }
+      ],
+      conversation: [
+        {
+          mention_id: "22222222-2222-4222-8222-222222222222",
+          text: "En choque en cadena nadie entiende quien paga o responde legalmente.",
+          platform: "facebook",
+          published_at: "2026-05-19",
+          period_label: "2026-05",
+          similarity: 0.88
+        }
+      ]
+    },
+    marketingContext: {
+      marketing_brief: { active_campaigns: ["Confianza auto"], allowed_claims: ["claridad ante choque"] },
+      knowledge_sources: [],
+      source_inventory: [],
+      performance_window: [],
+      marketing_activity_window: [],
+      repeated_marketing_language: [
+        {
+          phrase: "choque en cadena",
+          months: ["2026-04", "2026-05"],
+          first_month: "2026-04",
+          last_month: "2026-05",
+          records: 8,
+          spend: 500,
+          impressions: 40000,
+          engagement: 600,
+          platforms: ["meta"],
+          channels: ["paid"],
+          example_creatives: ["Qué hacer en un choque en cadena"]
+        }
+      ],
+      rag: {
+        semantic_available: true,
+        embedding_model: "voyage-4-large",
+        retrieval_scope: "brand_knowledge_sources + structured performance_records"
+      }
+    },
+    records: [
+      {
+        record_date: "2026-05-10",
+        period_label: "2026-05",
+        platform: "meta",
+        channel: "paid",
+        entity_kind: "ad",
+        entity_name: "Seguro Auto Always On",
+        objective: "traffic",
+        spend: 900,
+        impressions: 70000,
+        clicks: 800,
+        engagement: 900,
+        creative_text: "Seguro de auto para todos"
+      },
+      {
+        record_date: "2026-05-11",
+        period_label: "2026-05",
+        platform: "meta",
+        channel: "paid",
+        entity_kind: "ad",
+        entity_name: "Choque en cadena claridad",
+        objective: "engagement",
+        spend: 120,
+        impressions: 10000,
+        clicks: 80,
+        engagement: 240,
+        creative_text: "Qué hacer en un choque en cadena y quién responde"
+      }
+    ],
+    periodLabels: ["2026-05"]
+  });
+
+  assert.equal(matches[0]?.entity_name, "Choque en cadena claridad");
+  assert.match(matches[0]?.match_basis ?? "", /evidence_overlap/);
+  assert.match(matches[0]?.match_basis ?? "", /repeated_marketing_language_overlap/);
+  assert.ok(matches[0]?.matched_terms.includes("choque en cadena"));
+  assert.equal(matches.some((match) => match.entity_name === "Seguro Auto Always On"), true);
+  assert.ok((matches.find((match) => match.entity_name === "Seguro Auto Always On")?.relevance_score ?? 0) < (matches[0]?.relevance_score ?? 0));
+});
+
 test("Signal Pulse budget estimate stays cluster-first and bounded before running", () => {
   assert.equal(estimateSignalPulseNamingCostUsd(0), 0.015);
   assert.equal(estimateSignalPulseNamingCostUsd(100), 0.36);
@@ -427,6 +535,7 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
           matching_creatives: [
             {
               record_date: "2026-05-10",
+              period_label: "2026-05",
               platform: "meta",
               channel: "paid",
               entity_kind: "ad",
@@ -436,7 +545,10 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               impressions: 18000,
               clicks: 210,
               engagement: 330,
-              creative_text: "Seguro de auto con respuesta rapida"
+              creative_text: "Seguro de auto con respuesta rapida",
+              relevance_score: 8.4,
+              match_basis: "evidence_overlap+knowledge_or_brief_overlap+repeated_marketing_language_overlap+same_active_period",
+              matched_terms: ["respuesta rapida", "confianza", "choque en cadena"]
             }
           ]
         },
@@ -457,7 +569,82 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
             period_label: "2026-05",
             similarity: 0.86
           }
-        ]
+        ],
+        investigation_brief: {
+          current_cut: {
+            period_label: "2026-05",
+            volume: 134,
+            delta_prev: 90,
+            lifecycle_state: "rising",
+            sentiment_avg: -0.22,
+            source_mix: { facebook: 90, tiktok: 44 }
+          },
+          window_pattern: {
+            current_period: "2026-05",
+            current_volume: 134,
+            previous_volume: 44,
+            delta_prev: 90,
+            active_periods: 2,
+            first_active_period: "2026-04",
+            last_active_period: "2026-05",
+            peak_period: "2026-05",
+            peak_volume: 134,
+            lifecycle_state: "rising"
+          },
+          weekly_pattern: {
+            current_period: "2026-W21",
+            current_volume: 84,
+            previous_volume: 28,
+            delta_prev: 56,
+            active_periods: 2,
+            first_active_period: "2026-W20",
+            last_active_period: "2026-W21",
+            peak_period: "2026-W21",
+            peak_volume: 84,
+            lifecycle_state: "accelerating"
+          },
+          strongest_periods: [
+            {
+              period_label: "2026-05",
+              volume: 134,
+              delta_prev: 90,
+              lifecycle_state: "rising",
+              source_mix: { facebook: 90, tiktok: 44 }
+            }
+          ],
+          weekly_pulses: [
+            {
+              period_label: "2026-W21",
+              volume: 84,
+              delta_prev: 56,
+              lifecycle_state: "accelerating",
+              source_mix: { facebook: 52, tiktok: 32 }
+            }
+          ],
+          marketing_intersections: [
+            {
+              period_label: "2026-05",
+              basis: "creative_or_campaign_language_overlaps_evidence",
+              campaign_count: 1,
+              matching_creative_count: 1,
+              performance_event_count: 1,
+              spend: 1200,
+              impressions: 88000,
+              engagement: 1800,
+              top_campaigns: ["Confianza auto · traffic · meta · paid"],
+              top_matching_creatives: ["Seguro de auto con respuesta rapida"]
+            }
+          ],
+          evidence_map: {
+            sample_ids: ["11111111-1111-4111-8111-111111111111"],
+            semantic_mention_ids: ["22222222-2222-4222-8222-222222222222"],
+            knowledge_titles: ["Brief mayo"]
+          },
+          synthesis_questions: [
+            "Qué cambia en el corte actual versus el patrón de la ventana completa?",
+            "Hay conexión comprobable con campañas, claims, pauta u orgánico, o debe marcarse no_connection?"
+          ]
+        }
       }
     }
   ], {
@@ -541,6 +728,10 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /performance_records/);
   assert.match(prompt, /repeated_marketing_language/);
   assert.match(prompt, /conversation_matches/);
+  assert.match(prompt, /investigation_brief/);
+  assert.match(prompt, /marketing_intersections/);
+  assert.match(prompt, /match_basis/);
+  assert.match(prompt, /matched_terms/);
   assert.match(prompt, /respuesta rapida/);
   assert.match(prompt, /sample ids/);
   assert.match(prompt, /11111111-1111-4111-8111-111111111111/);

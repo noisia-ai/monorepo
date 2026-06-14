@@ -47,6 +47,7 @@ Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también
 - `matching_creatives`: creativos cuyo texto sí matchea el territorio del cluster.
 - `knowledge_matches`: chunks de KB recuperados semánticamente con el query del cluster + brief + actividad de marketing.
 - `conversation_matches`: menciones relacionadas recuperadas por embeddings, con `mention_id`, plataforma, fecha, periodo y similitud.
+- `investigation_brief`: síntesis pre-LLM del caso por cluster, separando corte actual, patrón de ventana, picos semanales, intersecciones de marketing/performance y mapa de evidencia.
 
 Claude debe usar estos datos para interpretar o descartar conexión; no puede declarar causalidad si la evidencia no lo sostiene.
 
@@ -61,6 +62,26 @@ Los snippets que llegan al naming incluyen `id`, `text`, `platform` y `published
 
 La query semántica ya no se arma sólo con `term`. Incluye título provisional, samples, brief de marketing, lenguaje repetido y últimos meses de actividad para recuperar contexto útil de marca/campaña/conversación. La keyword provisional sólo identifica el cluster; el prompt le prohíbe a Claude convertirla en título.
 
+`matching_creatives` ya no sale de `LIKE '%keyword%'`. El worker carga performance_records de los meses activos del cluster y rankea campañas/piezas contra:
+
+- snippets con `mention_id`;
+- conversation_matches semánticos;
+- knowledge_matches/brief;
+- repeated_marketing_language;
+- periodo activo y plataforma como señales débiles.
+
+Cada match llega con `relevance_score`, `match_basis` y `matched_terms`. `evidence_overlap`, `knowledge_or_brief_overlap` y `repeated_marketing_language_overlap` habilitan hipótesis de conexión; `same_active_period` por sí solo sólo significa coexistencia temporal y debe terminar en `performance_connection=no_connection` si no hay evidencia adicional.
+
+El nuevo `investigation_brief` evita que Claude tenga que descubrir la estructura del caso desde tablas crudas. Por cluster incluye:
+
+- `current_cut`: volumen, delta, lifecycle, sentimiento y mix de fuentes del corte publicable.
+- `window_pattern`: patrón completo de la ventana.
+- `weekly_pattern` y `weekly_pulses`: picos o caídas dentro del mes.
+- `strongest_periods`: meses con más tracción.
+- `marketing_intersections`: campaña/performance/match por periodo, con basis explícita.
+- `evidence_map`: sample ids, semantic mention ids y títulos de KB.
+- `synthesis_questions`: preguntas editoriales para decidir si la señal es fricción, oportunidad, riesgo creativo, territorio saturado, claim a testear, gap de pauta o no publicable.
+
 Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensions`:
 
 - `samples`
@@ -68,6 +89,11 @@ Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensi
 - `knowledge_matches`
 - `period_series_points`
 - `weekly_series_points`
+- `strongest_periods`
+- `weekly_pulses`
+- `marketing_intersections`
+- `evidence_sample_ids`
+- `semantic_evidence_ids`
 - `active_performance_months`
 - `period_campaigns`
 - `performance_events`
