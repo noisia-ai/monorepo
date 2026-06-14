@@ -24,6 +24,8 @@ function passingGates(overrides: Array<{ id: string; passed: boolean; detail: st
     { id: "signal_actionability_review", passed: true, detail: "0 señales débiles." },
     { id: "contextual_synthesis_complete", passed: true, detail: "Todas las señales tienen síntesis contextual." },
     { id: "semantic_context_used", passed: true, detail: "Todas las señales usaron RAG semántico y performance." },
+    { id: "signal_intelligence_case", passed: true, detail: "Todas las señales traen caso de inteligencia." },
+    { id: "performance_connection_qualified", passed: true, detail: "Todas las conexiones están calificadas." },
     { id: "traceable_evidence_basis", passed: true, detail: "Todas las señales citan mention_id." },
     { id: "cost_within_budget", passed: true, detail: "Dentro del tope." },
     { id: "no_invented_numbers", passed: true, detail: "SQL only." },
@@ -123,16 +125,22 @@ test("Signal Pulse publish gates block publishable signals without contextual in
   const result = validateSignalPulsePublishReadiness({
     quality_gates: passingGates([
       { id: "semantic_context_used", passed: false, detail: "2 señales sin RAG semántico." },
+      { id: "signal_intelligence_case", passed: false, detail: "1 señal sin caso de ventana/corte." },
+      { id: "performance_connection_qualified", passed: false, detail: "1 señal conectada sin overlap directo." },
       { id: "traceable_evidence_basis", passed: false, detail: "1 señal sin mention_id." }
     ])
   });
 
   assert.equal(result.ok, false);
   assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("semantic_context_used"), true);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("signal_intelligence_case"), true);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("performance_connection_qualified"), true);
   assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("traceable_evidence_basis"), true);
   if (!result.ok) {
     assert.deepEqual(result.failedChecks, [
       { id: "semantic_context_used", detail: "2 señales sin RAG semántico." },
+      { id: "signal_intelligence_case", detail: "1 señal sin caso de ventana/corte." },
+      { id: "performance_connection_qualified", detail: "1 señal conectada sin overlap directo." },
       { id: "traceable_evidence_basis", detail: "1 señal sin mention_id." }
     ]);
   }

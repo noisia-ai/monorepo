@@ -732,6 +732,9 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /marketing_intersections/);
   assert.match(prompt, /match_basis/);
   assert.match(prompt, /matched_terms/);
+  assert.match(prompt, /performance_connection debe empezar exactamente/);
+  assert.match(prompt, /connected:/);
+  assert.match(prompt, /no_connection:/);
   assert.match(prompt, /respuesta rapida/);
   assert.match(prompt, /sample ids/);
   assert.match(prompt, /11111111-1111-4111-8111-111111111111/);

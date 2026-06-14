@@ -167,6 +167,8 @@ Los prefijos `Barrera:` y `Trigger:` quedan tratados como no publicables en Revi
 - `signal_actionability_review` ya no falla por backlog de señales en `needs_human_review`; falla si una señal marcada como `publish_candidate` conserva naming débil/no publicable.
 - `contextual_synthesis_complete` bloquea si una señal publicable no viene de `claude_cluster_naming_v3_signal_pulse_rag` o no trae `marketing_read`, `action_hint`, `evidence_basis`, `confidence_rationale`, `signal_role` y `analysis_scope`.
 - `semantic_context_used` bloquea si una señal publicable no tiene samples suficientes, RAG semántico de conversación/KB, serie de periodo y performance activa asociada.
+- `signal_intelligence_case` bloquea si una señal publicable no trae `investigation_brief` materializado en `context_summary`: periodos fuertes, serie semanal, pulsos semanales, intersecciones de marketing/performance, evidence ids y preguntas de síntesis.
+- `performance_connection_qualified` bloquea si `performance_connection` no empieza con `connected:`, `no_connection:` o `insufficient_data:`, o si declara `connected:` sin overlap directo (`evidence_overlap`, `knowledge_or_brief_overlap` o `repeated_marketing_language_overlap`) en los matches de marketing.
 - `traceable_evidence_basis` bloquea si una señal publicable no cita al menos un `mention_id` real en `evidence_basis`.
 - Las señales históricas sin volumen en el corte sirven para patrones de ventana, pero no bloquean publicación por sí mismas.
 

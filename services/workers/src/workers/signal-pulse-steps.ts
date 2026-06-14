@@ -1564,6 +1564,18 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     period_campaigns: source.context.performance_context.period_campaigns.length,
     performance_events: source.context.performance_context.performance_events.length,
     matching_creatives: source.context.performance_context.matching_creatives.length,
+    direct_marketing_matches: source.context.performance_context.matching_creatives.filter((record) => (
+      record.match_basis.includes("evidence_overlap")
+      || record.match_basis.includes("repeated_marketing_language_overlap")
+      || record.match_basis.includes("knowledge_or_brief_overlap")
+    )).length,
+    same_period_marketing_context: source.context.performance_context.matching_creatives.filter((record) => (
+      record.match_basis.includes("same_active_period")
+      && !record.match_basis.includes("evidence_overlap")
+      && !record.match_basis.includes("repeated_marketing_language_overlap")
+      && !record.match_basis.includes("knowledge_or_brief_overlap")
+    )).length,
+    synthesis_questions: source.context.investigation_brief.synthesis_questions.length,
     current_period: source.context.window_pattern.current_period,
     current_volume: source.context.window_pattern.current_volume,
     active_periods: source.context.window_pattern.active_periods,
@@ -2088,6 +2100,8 @@ async function buildSignalPulseQualityGates(args: {
     weak_named_signals: number;
     signals_without_contextual_synthesis: number;
     signals_without_semantic_context: number;
+    signals_without_intelligence_case: number;
+    signals_with_unqualified_performance_connection: number;
     signals_without_traceable_evidence: number;
     current_active_signals: number;
     inactive_current_signals: number;
@@ -2204,6 +2218,37 @@ async function buildSignalPulseQualityGates(args: {
             AND cs.methodology_slug = 'signal-pulse'
             AND cs.status = 'active'
             AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+            AND (
+              COALESCE(NULLIF(cs.dimensions #>> '{context_summary,strongest_periods}', '')::int, 0) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,weekly_series_points}', '')::int, 0) < 2
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,weekly_pulses}', '')::int, 0) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,marketing_intersections}', '')::int, 0) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,evidence_sample_ids}', '')::int, 0) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,synthesis_questions}', '')::int, 0) < 2
+            )
+        ) AS signals_without_intelligence_case,
+        (
+          SELECT COUNT(*)::int
+          FROM canonical_signals cs
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+            AND (
+              COALESCE(cs.dimensions->>'performance_connection', '') !~* '^(connected|no_connection|insufficient_data):'
+              OR (
+                COALESCE(cs.dimensions->>'performance_connection', '') ~* '^connected:'
+                AND COALESCE(NULLIF(cs.dimensions #>> '{context_summary,direct_marketing_matches}', '')::int, 0) < 1
+              )
+            )
+        ) AS signals_with_unqualified_performance_connection,
+        (
+          SELECT COUNT(*)::int
+          FROM canonical_signals cs
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
             AND COALESCE(cs.dimensions->>'evidence_basis', '') !~* '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
         ) AS signals_without_traceable_evidence,
         (
@@ -2278,6 +2323,8 @@ async function buildSignalPulseQualityGates(args: {
     gate("signal_actionability_review", Number(coverage?.weak_named_signals ?? 0) === 0, `${coverage?.weak_named_signals ?? 0} señales se nombraron como débiles o no relevantes.`),
     gate("contextual_synthesis_complete", Number(coverage?.signals_without_contextual_synthesis ?? 0) === 0, `${coverage?.signals_without_contextual_synthesis ?? 0} señales publicables sin síntesis contextual Claude/RAG completa.`),
     gate("semantic_context_used", Number(coverage?.signals_without_semantic_context ?? 0) === 0, `${coverage?.signals_without_semantic_context ?? 0} señales publicables sin RAG semántico, samples, serie de periodo o performance activa.`),
+    gate("signal_intelligence_case", Number(coverage?.signals_without_intelligence_case ?? 0) === 0, `${coverage?.signals_without_intelligence_case ?? 0} señales publicables sin caso de inteligencia de ventana/corte/intersección/evidencia.`),
+    gate("performance_connection_qualified", Number(coverage?.signals_with_unqualified_performance_connection ?? 0) === 0, `${coverage?.signals_with_unqualified_performance_connection ?? 0} señales publicables con conexión a performance/marketing no calificada o sin overlap directo.`),
     gate("traceable_evidence_basis", Number(coverage?.signals_without_traceable_evidence ?? 0) === 0, `${coverage?.signals_without_traceable_evidence ?? 0} señales publicables sin mention_id trazable en evidence_basis.`),
     gate("human_review_surface", true, `${coverage?.signals_needing_human_review ?? 0} señales requieren validación editorial en Review antes de publicar.`),
     gate("cost_within_budget", cost <= budgetCap, `Costo estimado USD ${round(cost, 4)} de ${budgetCap}.`),
