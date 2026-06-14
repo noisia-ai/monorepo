@@ -59,7 +59,9 @@ El payload publicado conserva `period_metrics` por señal. Las señales con acti
 
 El worker también materializa `report_periods` semanales (`granularity='week'`) y pasa `weekly_series`/`weekly_pattern` al naming de Claude. Por ahora las métricas publicables (`signal_period_metrics`, charts y gates de publicación) siguen usando meses para mantener estable el corte mensual; el plano semanal sirve para explicar picos, reactivaciones y caídas dentro del mes.
 
-La detección period-first también usa clustering semántico cuando existen embeddings de menciones. Antes el global path podía usar `semantic_embedding_neighborhood_v1`, pero los candidatos por mes caían a `term_cluster_v2`; eso reabría la puerta a anclas como `seguro` o `choque`. Ahora cada mes intenta vecindarios semánticos con límites acotados. Si el mes tiene embeddings pero no forma un vecindario suficiente, no se inventa un candidato barato de keyword; el fallback de términos sólo queda para periodos sin embeddings disponibles.
+La detección period-first también usa clustering semántico cuando existen embeddings de menciones. Antes el global path podía usar `semantic_embedding_neighborhood_v1`, pero los candidatos por mes caían a `term_cluster_v2`; eso reabría la puerta a anclas como `seguro` o `choque`. Ahora el global path y cada mes intentan vecindarios semánticos con límites acotados. Si hay embeddings pero no se forma un vecindario suficiente, no se inventa un candidato barato de keyword; cero vecindarios semánticos significa cero candidatos, no permiso para términos. El fallback de términos sólo queda para corpus o periodos sin embeddings disponibles.
+
+La metadata de cluster también conserva `semantic_mention_embeddings`, `global_semantic_candidate_clusters`, `global_term_candidate_clusters`, `period_first_semantic_candidate_clusters` y `period_first_term_candidate_clusters`. Esto permite revisar cuántas menciones tenían cobertura semántica, cuántos candidatos nacieron por embeddings y si el worker tuvo que tocar el fallback legacy.
 
 Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también:
 

@@ -25,6 +25,7 @@ import {
 import { safeJsonStringifyForPostgres } from "./postgres-json";
 import {
   buildEmbeddingNeighborhoodClusters,
+  chooseSignalPulseCandidateClusters,
   selectPeriodFirstSignalPulseClusters,
   type EmbeddingNeighborhoodRow,
   type TermCluster
@@ -446,10 +447,18 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
       anchorLimit: EMBEDDING_ANCHOR_LIMIT,
       neighborLimit: EMBEDDING_NEIGHBORS_PER_ANCHOR
     })).clusters;
-    const rawGlobalClusters = (embeddingClusters.length > 0 ? embeddingClusters : buildCheapTermClusters(rows))
+    const coverage = await readSignalPulseCoverage(ctx.study_corpus_id);
+    const termGlobalClusters = coverage.semantic_mention_embeddings > 0 ? [] : buildCheapTermClusters(rows);
+    const globalChoice = chooseSignalPulseCandidateClusters({
+      semanticClusters: embeddingClusters,
+      termClusters: termGlobalClusters,
+      semanticMentionEmbeddings: coverage.semantic_mention_embeddings
+    });
+    const rawGlobalClusters = globalChoice.clusters
       .map((cluster) => ({ ...cluster, discovery_source: "global" as const }));
     const rawPeriodClusters = await loadPeriodFirstClusters(ctx.study_corpus_id);
     const semanticPeriodClusters = rawPeriodClusters.filter((cluster) => cluster.algorithm === "semantic_embedding_neighborhood_v1");
+    const termPeriodClusters = rawPeriodClusters.filter((cluster) => cluster.algorithm === "term_cluster_v2");
     const globalClusters = rawGlobalClusters.filter(isActionableSignalPulseCluster);
     const periodClusters = rawPeriodClusters.filter(isActionableSignalPulseCluster);
     const clusters = selectPeriodFirstSignalPulseClusters({
@@ -459,28 +468,36 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
       perPeriod: PERIOD_CLUSTERS_PER_PERIOD
     });
     const signals = await materializeCanonicalSignals({ ctx, engineAnalysisId, clusters });
-    const coverage = await readSignalPulseCoverage(ctx.study_corpus_id);
+    const clusterAlgorithm = signalPulseClusterAlgorithm({
+      globalSemanticClusters: embeddingClusters.length,
+      globalTermClusters: termGlobalClusters.length,
+      globalSemanticEmbeddings: coverage.semantic_mention_embeddings,
+      periodSemanticClusters: semanticPeriodClusters.length,
+      periodTermClusters: termPeriodClusters.length
+    });
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
         cluster: {
-          algorithm: signalPulseClusterAlgorithm({
-            globalSemanticClusters: embeddingClusters.length,
-            periodSemanticClusters: semanticPeriodClusters.length,
-            periodClusters: rawPeriodClusters.length
-          }),
-          fallback_used: embeddingClusters.length === 0 && semanticPeriodClusters.length === 0,
+          algorithm: clusterAlgorithm,
+          fallback_used: globalChoice.fallbackUsed || termPeriodClusters.length > 0,
+          global_term_fallback_used: globalChoice.fallbackUsed,
+          semantic_coverage_available: globalChoice.semanticCoverageAvailable,
           cluster_first: true,
           per_mention_coding: false,
           clusters,
           global_candidate_clusters: globalClusters.length,
+          global_semantic_candidate_clusters: embeddingClusters.length,
+          global_term_candidate_clusters: termGlobalClusters.length,
           period_first_candidate_clusters: periodClusters.length,
           period_first_semantic_candidate_clusters: semanticPeriodClusters.length,
+          period_first_term_candidate_clusters: termPeriodClusters.length,
           excluded_candidate_clusters: (rawGlobalClusters.length + rawPeriodClusters.length) - (globalClusters.length + periodClusters.length),
           materialized_signals: signals.length
         },
         analysis_truth: {
           measured_mentions: coverage.conversation_mentions,
           signal_pulse_mentions: coverage.signal_pulse_mentions,
+          semantic_mention_embeddings: coverage.semantic_mention_embeddings,
           global_cluster_row_limit: GLOBAL_CLUSTER_ROW_LIMIT,
           global_rows_sampled: rows.length,
           period_cluster_row_limit: PERIOD_CLUSTER_ROW_LIMIT,
@@ -498,22 +515,24 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
         materialized_signals: signals.length,
         mentions_sampled: rows.length,
         global_candidate_clusters: globalClusters.length,
+        global_semantic_candidate_clusters: embeddingClusters.length,
+        global_term_candidate_clusters: termGlobalClusters.length,
         period_first_candidate_clusters: periodClusters.length,
         period_first_semantic_candidate_clusters: semanticPeriodClusters.length,
+        period_first_term_candidate_clusters: termPeriodClusters.length,
         excluded_candidate_clusters: (rawGlobalClusters.length + rawPeriodClusters.length) - (globalClusters.length + periodClusters.length)
       }
     });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_name_signals" });
     return {
       clusters: clusters.length,
-      algorithm: signalPulseClusterAlgorithm({
-        globalSemanticClusters: embeddingClusters.length,
-        periodSemanticClusters: semanticPeriodClusters.length,
-        periodClusters: rawPeriodClusters.length
-      }),
+      algorithm: clusterAlgorithm,
       global_candidate_clusters: globalClusters.length,
+      global_semantic_candidate_clusters: embeddingClusters.length,
+      global_term_candidate_clusters: termGlobalClusters.length,
       period_first_candidate_clusters: periodClusters.length,
       period_first_semantic_candidate_clusters: semanticPeriodClusters.length,
+      period_first_term_candidate_clusters: termPeriodClusters.length,
       excluded_candidate_clusters: (rawGlobalClusters.length + rawPeriodClusters.length) - (globalClusters.length + periodClusters.length),
       materialized_signals: signals.length,
       next_step_job_id: next.jobId
@@ -830,13 +849,31 @@ async function readSignalPulseCoverage(corpusId: string) {
     signal_pulse_mentions: number;
     performance_records: number;
     query_packs: number;
+    semantic_mention_embeddings: number;
   }>(
     `
+      WITH report_bounds AS (
+        SELECT MIN(period_start) AS min_start, MAX(period_end) AS max_end
+        FROM report_periods
+        WHERE study_corpus_id = $1 AND granularity = 'month'
+      )
       SELECT
         COUNT(DISTINCT m.id)::int AS conversation_mentions,
         COUNT(DISTINCT m.id) FILTER (WHERE mqs.lens_slug = 'signal-pulse')::int AS signal_pulse_mentions,
         (SELECT COUNT(*)::int FROM performance_records pr WHERE pr.study_corpus_id = $1) AS performance_records,
-        (SELECT COUNT(*)::int FROM query_packs qp WHERE qp.study_corpus_id = $1 AND qp.lens_slug = 'signal-pulse') AS query_packs
+        (SELECT COUNT(*)::int FROM query_packs qp WHERE qp.study_corpus_id = $1 AND qp.lens_slug = 'signal-pulse') AS query_packs,
+        (
+          SELECT COUNT(DISTINCT se.mention_id)::int
+          FROM semantic_embeddings se
+          JOIN mentions sm ON sm.id = se.mention_id
+          CROSS JOIN report_bounds rb
+          WHERE se.study_corpus_id = $1
+            AND se.scope_type = 'mention'
+            AND sm.inclusion_status = 'included'
+            AND length(sm.text_clean) >= 24
+            AND (rb.min_start IS NULL OR sm.published_at >= rb.min_start)
+            AND (rb.max_end IS NULL OR sm.published_at < (rb.max_end + interval '1 day'))
+        ) AS semantic_mention_embeddings
       FROM mentions m
       LEFT JOIN mention_query_sources mqs ON mqs.mention_id = m.id
       WHERE m.study_corpus_id = $1
@@ -848,7 +885,8 @@ async function readSignalPulseCoverage(corpusId: string) {
     conversation_mentions: Number(row?.conversation_mentions ?? 0),
     signal_pulse_mentions: Number(row?.signal_pulse_mentions ?? 0),
     performance_records: Number(row?.performance_records ?? 0),
-    query_packs: Number(row?.query_packs ?? 0)
+    query_packs: Number(row?.query_packs ?? 0),
+    semantic_mention_embeddings: Number(row?.semantic_mention_embeddings ?? 0)
   };
 }
 
@@ -1010,7 +1048,14 @@ async function loadPeriodFirstClusters(corpusId: string): Promise<TermCluster[]>
         })));
       continue;
     }
-    if (semanticPeriod.neighborhoodRows > 0) {
+    const periodSemanticEmbeddings = semanticPeriod.neighborhoodRows > 0
+      ? semanticPeriod.neighborhoodRows
+      : await countSemanticMentionEmbeddings({
+        corpusId,
+        periodStart: period.period_start,
+        periodEnd: period.period_end
+      });
+    if (periodSemanticEmbeddings > 0) {
       continue;
     }
 
@@ -1061,6 +1106,28 @@ async function loadPeriodFirstClusters(corpusId: string): Promise<TermCluster[]>
     clusters.push(...periodClusters);
   }
   return clusters;
+}
+
+async function countSemanticMentionEmbeddings(args: {
+  corpusId: string;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+}) {
+  const row = (await pool.query<{ count: number }>(
+    `
+      SELECT COUNT(DISTINCT se.mention_id)::int AS count
+      FROM semantic_embeddings se
+      JOIN mentions m ON m.id = se.mention_id
+      WHERE se.study_corpus_id = $1
+        AND se.scope_type = 'mention'
+        AND m.inclusion_status = 'included'
+        AND length(m.text_clean) >= 24
+        AND ($2::date IS NULL OR m.published_at >= $2::date)
+        AND ($3::date IS NULL OR m.published_at < ($3::date + interval '1 day'))
+    `,
+    [args.corpusId, args.periodStart ?? null, args.periodEnd ?? null]
+  )).rows[0];
+  return Number(row?.count ?? 0);
 }
 
 async function materializePeriodMetrics(args: {
@@ -2924,13 +2991,17 @@ function averageDelta(current: number, values: number[]) {
 
 function signalPulseClusterAlgorithm(args: {
   globalSemanticClusters: number;
+  globalTermClusters: number;
+  globalSemanticEmbeddings: number;
   periodSemanticClusters: number;
-  periodClusters: number;
+  periodTermClusters: number;
 }) {
-  const global = args.globalSemanticClusters > 0 ? "semantic_embedding_neighborhood_v1" : "term_cluster_v2_sql_materialized";
-  const period = args.periodClusters > 0
-    ? args.periodSemanticClusters > 0 ? "period_first_semantic_candidates_v1" : "period_first_term_candidates_v1"
-    : null;
+  const global = args.globalSemanticEmbeddings > 0 || args.globalSemanticClusters > 0
+    ? "semantic_embedding_neighborhood_v1"
+    : args.globalTermClusters > 0 ? "term_cluster_v2_sql_materialized" : "no_global_candidates";
+  const period = args.periodSemanticClusters > 0
+    ? "period_first_semantic_candidates_v1"
+    : args.periodTermClusters > 0 ? "period_first_term_candidates_v1" : null;
   return period ? `${global}+${period}` : global;
 }
 

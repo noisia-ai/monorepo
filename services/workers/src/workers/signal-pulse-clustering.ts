@@ -29,6 +29,12 @@ export type SignalPulseClusterSelectionArgs = {
   perPeriod?: number;
 };
 
+export type SignalPulseCandidateChoice = {
+  clusters: TermCluster[];
+  fallbackUsed: boolean;
+  semanticCoverageAvailable: boolean;
+};
+
 const STOPWORDS_ES_MX = new Set([
   "para", "pero", "como", "con", "que", "por", "una", "uno", "los", "las", "del", "este", "esta",
   "esto", "muy", "mas", "menos", "porque", "cuando", "todo", "toda", "todos", "todas", "solo", "bien",
@@ -80,6 +86,33 @@ export function buildEmbeddingNeighborhoodClusters(rows: EmbeddingNeighborhoodRo
   return clusters
     .sort((a, b) => b.mention_count - a.mention_count || b.engagement_sum - a.engagement_sum || a.term.localeCompare(b.term))
     .slice(0, 120);
+}
+
+export function chooseSignalPulseCandidateClusters(args: {
+  semanticClusters: TermCluster[];
+  termClusters: TermCluster[];
+  semanticMentionEmbeddings: number;
+}): SignalPulseCandidateChoice {
+  const semanticCoverageAvailable = args.semanticMentionEmbeddings > 0 || args.semanticClusters.length > 0;
+  if (args.semanticClusters.length > 0) {
+    return {
+      clusters: args.semanticClusters,
+      fallbackUsed: false,
+      semanticCoverageAvailable
+    };
+  }
+  if (semanticCoverageAvailable) {
+    return {
+      clusters: [],
+      fallbackUsed: false,
+      semanticCoverageAvailable
+    };
+  }
+  return {
+    clusters: args.termClusters,
+    fallbackUsed: args.termClusters.length > 0,
+    semanticCoverageAvailable: false
+  };
 }
 
 export function selectPeriodFirstSignalPulseClusters(args: SignalPulseClusterSelectionArgs): TermCluster[] {

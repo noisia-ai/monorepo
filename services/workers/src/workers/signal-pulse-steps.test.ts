@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildEmbeddingNeighborhoodClusters,
+  chooseSignalPulseCandidateClusters,
   selectPeriodFirstSignalPulseClusters,
   selectSignalPulseClusterPhrase,
   type EmbeddingNeighborhoodRow
@@ -82,6 +83,44 @@ test("Signal Pulse period-first selection keeps a month-specific signal outside 
   assert.equal(selected.some((item) => item.term === "renovacion enero urgente"), true);
   assert.equal(selected.length, 4);
   assert.deepEqual(selected.find((item) => item.term === "renovacion enero urgente")?.discovery_periods, ["2025-01"]);
+});
+
+test("Signal Pulse cluster candidates do not fall back to terms when semantic coverage exists", () => {
+  const keywordCandidate = cluster({
+    term: "seguro",
+    mentionCount: 90,
+    memberIds: ["s1", "s2", "s3", "s4"],
+    source: "global"
+  });
+
+  const choice = chooseSignalPulseCandidateClusters({
+    semanticClusters: [],
+    termClusters: [keywordCandidate],
+    semanticMentionEmbeddings: 1200
+  });
+
+  assert.deepEqual(choice.clusters, []);
+  assert.equal(choice.fallbackUsed, false);
+  assert.equal(choice.semanticCoverageAvailable, true);
+});
+
+test("Signal Pulse cluster candidates only use term fallback without semantic coverage", () => {
+  const legacyCandidate = cluster({
+    term: "renovacion enero urgente",
+    mentionCount: 12,
+    memberIds: ["l1", "l2", "l3", "l4"],
+    source: "global"
+  });
+
+  const choice = chooseSignalPulseCandidateClusters({
+    semanticClusters: [],
+    termClusters: [legacyCandidate],
+    semanticMentionEmbeddings: 0
+  });
+
+  assert.deepEqual(choice.clusters, [legacyCandidate]);
+  assert.equal(choice.fallbackUsed, true);
+  assert.equal(choice.semanticCoverageAvailable, false);
 });
 
 test("Signal Pulse deterministic copy marks clusters as synthesis backlog, not client-ready insights", () => {
