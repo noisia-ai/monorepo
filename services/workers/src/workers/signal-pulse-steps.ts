@@ -89,6 +89,7 @@ const EMBEDDING_MIN_SIMILARITY = 0.74;
 const GLOBAL_CLUSTER_ROW_LIMIT = 6000;
 const PERIOD_CLUSTER_ROW_LIMIT = 1600;
 const PERIOD_CLUSTERS_PER_PERIOD = 2;
+const SIGNAL_PULSE_LLM_TIMEOUT_MS = 45_000;
 const NON_ACTIONABLE_CLUSTER_TERMS = new Set([
   "amen", "dios", "jesus", "gracias", "felicidades", "bendiciones", "saludos",
   "link", "links", "http", "https", "www", "click", "clic", "viral",
@@ -1251,11 +1252,14 @@ async function maybeApplyClaudeSignalNaming(args: {
   ].join("\n\n");
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SIGNAL_PULSE_LLM_TIMEOUT_MS);
     const response = await generateText({
       model: anthropic(model),
       prompt,
-      temperature: 0.2
-    });
+      temperature: 0.2,
+      abortSignal: controller.signal
+    }).finally(() => clearTimeout(timeout));
     await recordEngineCostEvent({
       engineAnalysisId: args.engineAnalysisId,
       pipelineStepId: args.pipelineStepId,
@@ -1357,11 +1361,14 @@ async function maybeApplyClaudeSignalPulseInterpretation(args: {
   ].join("\n\n");
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SIGNAL_PULSE_LLM_TIMEOUT_MS);
     const response = await generateText({
       model: anthropic(model),
       prompt,
-      temperature: 0.2
-    });
+      temperature: 0.2,
+      abortSignal: controller.signal
+    }).finally(() => clearTimeout(timeout));
     await recordEngineCostEvent({
       engineAnalysisId: args.engineAnalysisId,
       pipelineStepId: args.pipelineStepId,
