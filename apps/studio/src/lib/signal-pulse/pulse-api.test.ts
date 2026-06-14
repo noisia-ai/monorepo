@@ -64,9 +64,10 @@ const output: PulseOutputLike = {
         dimensions: {
           signal_role: "claim a testear",
           scope: "brand",
-          campaign_name: "Back to school",
-          performance_event: "engagement spike",
+          campaign_names: ["Back to school"],
+          performance_events: ["engagement spike", "engagement up"],
           source_types: ["organic"],
+          source_platforms: ["facebook", "tiktok"],
           platforms: ["facebook", "tiktok"],
           analysis_scope: "mixed",
           context_summary: {
@@ -98,9 +99,10 @@ const output: PulseOutputLike = {
         dimensions: {
           signal_role: "riesgo creativo",
           scope: "category",
-          campaign_name: "Promo precio",
-          performance_event: "ctr drop",
+          campaign_names: ["Promo precio"],
+          performance_events: ["ctr drop"],
           source_types: ["paid"],
+          source_platforms: ["facebook"],
           platforms: ["facebook"],
           analysis_scope: "current_cut",
           context_summary: {
@@ -215,6 +217,13 @@ test("Pulse overview returns tactical KPIs, chart refs and visible warnings", ()
     paid_campaign_alignment: "paid_campaign_alignment"
   });
   assert.equal(overview.top_signals[0]?.impact_v1, 82);
+  assert.deepEqual((overview.top_signals[0] as Record<string, unknown>).filter_metadata, {
+    campaign_names: ["Back to school"],
+    performance_events: ["engagement spike", "engagement up"],
+    source_types: ["organic"],
+    source_platforms: ["facebook", "tiktok"],
+    marketing_periods: []
+  });
   assert.deepEqual((overview.top_signals[0] as Record<string, unknown>).intelligence_read, {
     pattern_flags: ["accelerating", "marketing_overlap"],
     period_read: "En el corte 2026-06 la rutina crujiente crece en TikTok y Facebook.",

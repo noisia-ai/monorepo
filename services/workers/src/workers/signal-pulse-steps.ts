@@ -1554,6 +1554,7 @@ async function persistClaudeSignalNamingRows(args: {
     const actionability = normalizeActionability(row.actionability);
     if (!source) continue;
     const contextSummary = buildSignalPulseContextSummary(source);
+    const filterMetadata = buildSignalPulseFilterMetadata(source);
     const synthesisValidation = validateSignalPulseSynthesis({
       title,
       description,
@@ -1609,6 +1610,12 @@ async function persistClaudeSignalNamingRows(args: {
           performance_connection: performanceConnection,
           evidence_basis: evidenceBasis,
           confidence_rationale: confidenceRationale,
+          campaign_names: filterMetadata.campaign_names,
+          performance_events: filterMetadata.performance_events,
+          source_types: filterMetadata.source_types,
+          source_platforms: filterMetadata.source_platforms,
+          marketing_periods: filterMetadata.marketing_periods,
+          filter_metadata: filterMetadata,
           context_summary: contextSummary,
           synthesis_validation: {
             passed: synthesisValidation.publishable,
@@ -1662,6 +1669,50 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     current_volume: source.context.window_pattern.current_volume,
     active_periods: source.context.window_pattern.active_periods,
     lifecycle_state: source.context.window_pattern.lifecycle_state
+  };
+}
+
+function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload) {
+  const campaignNames = uniqueStrings([
+    ...source.context.investigation_brief.marketing_intersections.flatMap((intersection) => intersection.top_campaigns),
+    ...source.context.performance_context.period_campaigns.map((campaign) => campaign.entity_name),
+    ...source.context.performance_context.matching_creatives.map((record) => record.entity_name),
+    ...source.context.performance_context.matching_creatives.map((record) => record.objective)
+  ]).slice(0, 16);
+  const performanceEvents = uniqueStrings(source.context.performance_context.performance_events.flatMap((event) => [
+    event.metric,
+    `${event.metric} ${event.direction}`,
+    `${event.metric}_${event.direction}`,
+    event.direction === "down" ? `${event.metric} drop` : "",
+    event.direction === "down" ? `${event.metric} baja` : "",
+    event.direction === "up" ? `${event.metric} spike` : "",
+    event.direction === "up" ? `${event.metric} subida` : "",
+    event.month
+  ])).slice(0, 24);
+  const sourceTypes = uniqueStrings([
+    ...source.context.performance_context.period_campaigns.map((campaign) => campaign.channel),
+    ...source.context.performance_context.matching_creatives.map((record) => record.channel),
+    ...source.context.performance_context.active_months.flatMap((month) => month.channels)
+  ]).slice(0, 16);
+  const sourcePlatforms = uniqueStrings([
+    ...source.platforms,
+    ...source.context.performance_context.period_campaigns.map((campaign) => campaign.platform),
+    ...source.context.performance_context.matching_creatives.map((record) => record.platform),
+    ...source.context.performance_context.active_months.flatMap((month) => month.platforms)
+  ]).slice(0, 16);
+  const marketingPeriods = uniqueStrings([
+    ...source.context.investigation_brief.marketing_intersections.map((intersection) => intersection.period_label),
+    ...source.context.performance_context.period_campaigns.map((campaign) => campaign.period_label),
+    ...source.context.performance_context.matching_creatives.map((record) => record.period_label),
+    ...source.context.performance_context.performance_events.map((event) => event.month)
+  ]).slice(0, 24);
+
+  return {
+    campaign_names: campaignNames,
+    performance_events: performanceEvents,
+    source_types: sourceTypes,
+    source_platforms: sourcePlatforms,
+    marketing_periods: marketingPeriods
   };
 }
 
@@ -2952,6 +3003,20 @@ function stringFrom(value: unknown) {
 
 function stringArrayFrom(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function uniqueStrings(values: unknown[]) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const text = stringFrom(value).trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(text);
+  }
+  return output;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

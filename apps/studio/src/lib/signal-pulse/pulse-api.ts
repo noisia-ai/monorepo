@@ -328,6 +328,7 @@ function enrichSignal(signal: JsonRecord, args: { periods: JsonRecord[]; evidenc
     ...signal,
     pattern_flags: patternFlagsForSignal(signal),
     primary_pattern_flag: patternFlagsForSignal(signal)[0] ?? "",
+    filter_metadata: filterMetadataForSignal(signal),
     intelligence_read: signalIntelligenceRead(signal, args.visibility),
     evidence: args.evidence.filter((item) => stringValue(item.signal_id) === signalId),
     moves: args.moves.filter((move) => stringArray(move.signal_refs).includes(signalId)),
@@ -427,11 +428,17 @@ function signalMatchesPlatform(signal: JsonRecord, platform: string, period?: st
   const sourceMix = asRecord(metric?.source_mix ?? signal.source_mix);
   if (numberValue(sourceMix[platform]) > 0) return true;
   const dimensions = asRecord(signal.dimensions);
-  return stringArray(dimensions.platforms).map(normalizeFilterValue).includes(platform);
+  const filterMetadata = filterMetadataForSignal(signal);
+  return [
+    ...stringArray(dimensions.platforms),
+    ...stringArray(dimensions.source_platforms),
+    ...filterMetadata.source_platforms
+  ].map(normalizeFilterValue).includes(platform);
 }
 
 function signalMatchesSourceType(signal: JsonRecord, sourceType: string) {
   const dimensions = asRecord(signal.dimensions);
+  const filterMetadata = filterMetadataForSignal(signal);
   return [
     signal.source_type,
     signal.source_kind,
@@ -440,7 +447,8 @@ function signalMatchesSourceType(signal: JsonRecord, sourceType: string) {
     dimensions.source_kind,
     dimensions.data_source,
     ...stringArray(dimensions.source_types),
-    ...stringArray(dimensions.sources)
+    ...stringArray(dimensions.sources),
+    ...filterMetadata.source_types
   ].map(normalizeFilterValue).includes(sourceType);
 }
 
@@ -466,6 +474,7 @@ function signalMatchesPatternFlag(signal: JsonRecord, patternFlag: string) {
 function signalMatchesQuery(signal: JsonRecord, query: string) {
   const dimensions = asRecord(signal.dimensions);
   const contextSummary = asRecord(dimensions.context_summary);
+  const filterMetadata = filterMetadataForSignal(signal);
   const haystack = [
     signal.title,
     signal.description,
@@ -489,7 +498,14 @@ function signalMatchesQuery(signal: JsonRecord, query: string) {
     dimensions.analysis_scope,
     dimensions.campaign,
     dimensions.campaign_name,
+    ...stringArray(dimensions.campaign_names),
     dimensions.performance_event,
+    ...stringArray(dimensions.performance_events),
+    ...filterMetadata.campaign_names,
+    ...filterMetadata.performance_events,
+    ...filterMetadata.marketing_periods,
+    ...filterMetadata.source_types,
+    ...filterMetadata.source_platforms,
     dimensions.event,
     ...patternFlagsForSignal(signal),
     ...stringArray(contextSummary.pattern_flag_types)
@@ -537,6 +553,7 @@ function rowMatchesPatternFlag(row: JsonRecord, patternFlag: string) {
 function compactSignal(signal: JsonRecord, visibility?: SignalPulseResolvedVisibility) {
   const dimensions = asRecord(signal.dimensions);
   const patternFlags = patternFlagsForSignal(signal);
+  const filterMetadata = filterMetadataForSignal(signal);
   return {
     id: stringValue(signal.id),
     title: stringValue(signal.title),
@@ -545,6 +562,7 @@ function compactSignal(signal: JsonRecord, visibility?: SignalPulseResolvedVisib
     analysis_scope: stringValue(dimensions.analysis_scope),
     pattern_flags: patternFlags,
     primary_pattern_flag: patternFlags[0] ?? "",
+    filter_metadata: filterMetadata,
     intelligence_read: signalIntelligenceRead(signal, visibility),
     scope: stringValue(dimensions.scope || dimensions.entity_scope || signal.scope || signal.entity_scope),
     lifecycle_state: stringValue(signal.lifecycle_state),
@@ -592,6 +610,42 @@ function patternFlagsForSignal(signal: JsonRecord) {
     dimensions.pattern_flag_types,
     contextSummary.pattern_flag_types
   ]).map(normalizePatternFlagFilter).filter(Boolean)));
+}
+
+function filterMetadataForSignal(signal: JsonRecord) {
+  const dimensions = asRecord(signal.dimensions);
+  const nested = asRecord(dimensions.filter_metadata);
+  return {
+    campaign_names: uniqueNormalizedStrings([
+      ...stringArray(signal.campaign_names),
+      ...stringArray(dimensions.campaign_names),
+      ...stringArray(nested.campaign_names)
+    ]),
+    performance_events: uniqueNormalizedStrings([
+      ...stringArray(signal.performance_events),
+      ...stringArray(dimensions.performance_events),
+      ...stringArray(nested.performance_events)
+    ]),
+    source_types: uniqueNormalizedStrings([
+      ...stringArray(signal.source_types),
+      ...stringArray(dimensions.source_types),
+      ...stringArray(nested.source_types)
+    ]),
+    source_platforms: uniqueNormalizedStrings([
+      ...stringArray(signal.source_platforms),
+      ...stringArray(dimensions.source_platforms),
+      ...stringArray(nested.source_platforms)
+    ]),
+    marketing_periods: uniqueNormalizedStrings([
+      ...stringArray(signal.marketing_periods),
+      ...stringArray(dimensions.marketing_periods),
+      ...stringArray(nested.marketing_periods)
+    ])
+  };
+}
+
+function uniqueNormalizedStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function patternFlagValues(values: unknown[]): string[] {

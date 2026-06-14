@@ -147,6 +147,15 @@ Cada señal sintetizada guarda ahora `analysis_scope` en `canonical_signals.dime
 
 Esto deja un ancla para el dashboard filtrable y evita que el sistema trate todo como lectura de "último mes".
 
+Además, cada señal sintetizada guarda `filter_metadata` calculado desde el contexto estructurado, no desde el copy de Claude:
+
+- `campaign_names`: campañas/piezas/objetivos ligados a periodos activos o matches de marketing.
+- `performance_events`: métricas y direcciones detectadas en `performance_records` para los periodos de la señal.
+- `source_types` y `source_platforms`: canales/plataformas estructuradas asociadas.
+- `marketing_periods`: meses donde hubo intersección de conversación, campaña o performance.
+
+El Pulse API usa esos arrays para filtros de dashboard; el texto del reporte puede ayudar a búsqueda, pero no es la fuente primaria de navegabilidad. Los eventos de performance se guardan con alias operativos (`metric up/down`, `metric spike/drop`, `metric subida/baja`) para que Insights pueda buscar como habla el equipo sin depender de una frase redactada por Claude.
+
 Para exploración/dashboard, los endpoints publicados aceptan filtros:
 
 - `period=YYYY-MM`, `period=<report_period_id>` o `period=all`
