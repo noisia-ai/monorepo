@@ -26,6 +26,8 @@ const RAW_SIGNAL_KEYWORDS = new Set([
   "seguros", "situacion", "situación", "vehiculo", "vehículo", "vehiculos", "vehículos", "vieja"
 ]);
 
+export const RAW_SIGNAL_OUTPUT_TERMS = RAW_SIGNAL_KEYWORDS;
+
 export function normalizeSignalPhrase(value: string) {
   return value
     .toLowerCase()
@@ -61,7 +63,6 @@ export function isActionableSignalPulseTerm(term: string) {
   const normalized = normalizeSignalPhrase(term);
   if (!normalized || normalized.length < 4 || /^\d+$/.test(normalized)) return false;
   if (NON_ACTIONABLE_TERMS.has(normalized)) return false;
-  if (isRawKeywordSignalPhrase(normalized)) return false;
   if (normalized.includes("http") || normalized.includes("www")) return false;
   return true;
 }

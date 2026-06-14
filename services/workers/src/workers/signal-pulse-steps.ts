@@ -72,6 +72,20 @@ type SignalPulseNamingRow = {
   position: number;
 };
 
+type SignalPulseClusterNamingPayload = {
+  id: string;
+  current_title: string;
+  signal_type: string;
+  term: string;
+  rank: number;
+  mention_count: number;
+  sentiment_avg: number | null;
+  platforms: string[];
+  discovery_periods: string[];
+  max_period_mention_count: number;
+  samples: Array<{ text: string; platform: string; published_at: string | null }>;
+};
+
 const STOPWORDS_ES_MX = new Set([
   "para", "pero", "como", "con", "que", "por", "una", "uno", "los", "las", "del", "este", "esta",
   "esto", "muy", "mas", "menos", "porque", "cuando", "todo", "toda", "todos", "todas", "solo", "bien",
@@ -84,13 +98,15 @@ const STOPWORDS_ES_MX = new Set([
 
 const MAX_SIGNAL_CLUSTERS = 12;
 const MAX_EVIDENCE_PER_SIGNAL = 8;
+const MAX_CLAUDE_SAMPLES_PER_CLUSTER = 6;
+const CLAUDE_NAMING_BATCH_SIZE = 4;
 const EMBEDDING_ANCHOR_LIMIT = 220;
 const EMBEDDING_NEIGHBORS_PER_ANCHOR = 36;
 const EMBEDDING_MIN_SIMILARITY = 0.74;
 const GLOBAL_CLUSTER_ROW_LIMIT = 6000;
 const PERIOD_CLUSTER_ROW_LIMIT = 1600;
 const PERIOD_CLUSTERS_PER_PERIOD = 1;
-const SIGNAL_PULSE_LLM_TIMEOUT_MS = 45_000;
+const SIGNAL_PULSE_LLM_TIMEOUT_MS = 90_000;
 const NON_ACTIONABLE_CLUSTER_TERMS = new Set([
   "amen", "dios", "jesus", "gracias", "felicidades", "bendiciones", "saludos",
   "link", "links", "http", "https", "www", "click", "clic", "viral",
@@ -387,7 +403,7 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
           global_rows_sampled: rows.length,
           period_cluster_row_limit: PERIOD_CLUSTER_ROW_LIMIT,
           max_signal_clusters: MAX_SIGNAL_CLUSTERS,
-          max_claude_samples_per_cluster: 4,
+          max_claude_samples_per_cluster: MAX_CLAUDE_SAMPLES_PER_CLUSTER,
           review_mode: stringFrom(ctx.params?.review_mode) || "cluster_first",
           claude_did_not_read_all_mentions: true
         }
@@ -1229,7 +1245,7 @@ async function maybeApplyClaudeSignalNaming(args: {
     return { applied: false, updated: 0, reason: unavailableReason };
   }
 
-  const payload = await Promise.all(args.candidates.slice(0, MAX_SIGNAL_CLUSTERS).map(async (candidate) => {
+  const payload: SignalPulseClusterNamingPayload[] = await Promise.all(args.candidates.slice(0, MAX_SIGNAL_CLUSTERS).map(async (candidate) => {
     const dimensions = candidate.dimensions ?? {};
     return {
       id: candidate.id,
@@ -1242,108 +1258,188 @@ async function maybeApplyClaudeSignalNaming(args: {
       platforms: stringArrayFrom(dimensions.platforms).slice(0, 5),
       discovery_periods: stringArrayFrom(dimensions.discovery_periods).slice(0, 4),
       max_period_mention_count: Number(dimensions.max_period_mention_count ?? dimensions.mention_count ?? 0),
-      samples: await loadMentionSamples(stringArrayFrom(dimensions.sample_mention_ids).slice(0, 4))
+      samples: await loadMentionSamples(stringArrayFrom(dimensions.sample_mention_ids).slice(0, MAX_CLAUDE_SAMPLES_PER_CLUSTER))
     };
   }));
   if (payload.length === 0) return { applied: false, updated: 0, reason: "no_clusters" };
 
-  const prompt = [
-    "Eres editor de Signal Pulse para marketing. Nombra clusters de conversación como señales accionables.",
-    "Reglas duras: no hagas coding por mención; no inventes números; usa solo los números del JSON; conserva ids; español MX; copy corto y claro.",
-    "Un título publicable NO puede ser una keyword, categoría, entidad o token suelto. Debe expresar una tensión, oportunidad, barrera o aprendizaje humano inferido de las muestras.",
-    "Si el cluster sólo dice seguro, aseguradora, choque, auto, accidente, una marca/competidor, un insulto, política, religión, fútbol, links sin contexto o conversación sin vínculo claro con marca/categoría, marca actionability=\"exclude\".",
-    "Publica máximo 6 señales. El resto debe ser review o exclude. Mejor pocas señales buenas que muchas tarjetas genéricas.",
-    "Devuelve SOLO JSON válido con forma:",
-    '{"signals":[{"id":"uuid","title":"Oportunidad: ...","description":"...","marketing_read":"...","action_hint":"...","actionability":"publish|review|exclude"}]}',
-    "Clusters:",
-    JSON.stringify(payload)
-  ].join("\n\n");
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SIGNAL_PULSE_LLM_TIMEOUT_MS);
-    const response = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2,
-      abortSignal: controller.signal
-    }).finally(() => clearTimeout(timeout));
-    await recordEngineCostEvent({
+  let updated = 0;
+  const skippedReasons: string[] = [];
+  for (const [batchIndex, batch] of chunkArray(payload, CLAUDE_NAMING_BATCH_SIZE).entries()) {
+    const batchResult = await applyClaudeSignalNamingBatch({
+      ctx: args.ctx,
       engineAnalysisId: args.engineAnalysisId,
       pipelineStepId: args.pipelineStepId,
-      provider: "anthropic",
       model,
-      operation: "sp_name_signals",
-      usage: readAiSdkUsage(response),
-      metadata: { clusters: payload.length, cluster_first: true, per_mention_coding: false }
+      batch,
+      batchIndex
     });
-    const parsed = parseJsonRecord(response.text);
-    const rows = arrayOfRecords(parsed.signals);
-    let updated = 0;
-    for (const row of rows) {
-      const id = stringFrom(row.id);
-      if (!id) continue;
-      const sourceCandidate = args.candidates.find((candidate) => candidate.id === id);
-      const sourceDimensions = sourceCandidate?.dimensions ?? {};
-      const title = stringFrom(row.title).slice(0, 160);
-      const description = stringFrom(row.description).slice(0, 500);
-      const marketingRead = stringFrom(row.marketing_read).slice(0, 500);
-      const actionHint = stringFrom(row.action_hint).slice(0, 360);
-      const actionability = normalizeActionability(row.actionability);
-      const excluded = actionability === "exclude" || isNonActionableSignalCopy({
-        title,
-        description,
-        marketingRead,
-        actionHint,
-        term: stringFrom(sourceDimensions.term)
+    updated += batchResult.updated;
+    if (batchResult.reason) skippedReasons.push(batchResult.reason);
+  }
+  return {
+    applied: updated > 0,
+    updated,
+    reason: updated > 0 ? (skippedReasons.length > 0 ? `partial:${skippedReasons.join("|").slice(0, 240)}` : undefined) : (skippedReasons.join("|").slice(0, 500) || "empty_valid_claude_rows")
+  };
+}
+
+async function applyClaudeSignalNamingBatch(args: {
+  ctx: AnalysisContext;
+  engineAnalysisId: string;
+  pipelineStepId: string;
+  model: string;
+  batch: SignalPulseClusterNamingPayload[];
+  batchIndex: number;
+}) {
+  const prompt = buildClaudeSignalNamingPrompt(args.batch);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), SIGNAL_PULSE_LLM_TIMEOUT_MS);
+      const response = await generateText({
+        model: anthropic(args.model),
+        prompt,
+        temperature: 0.2,
+        abortSignal: controller.signal
+      }).finally(() => clearTimeout(timeout));
+      await recordEngineCostEvent({
+        engineAnalysisId: args.engineAnalysisId,
+        pipelineStepId: args.pipelineStepId,
+        provider: "anthropic",
+        model: args.model,
+        operation: "sp_name_signals",
+        usage: readAiSdkUsage(response),
+        metadata: {
+          batch_index: args.batchIndex,
+          attempt,
+          clusters: args.batch.length,
+          max_samples_per_cluster: MAX_CLAUDE_SAMPLES_PER_CLUSTER,
+          cluster_first: true,
+          per_mention_coding: false
+        }
       });
-      if (!title || !description) continue;
-      const result = await pool.query(
-        `
-          UPDATE canonical_signals
-          SET
-            canonical_title = $2,
-            description = $3,
-            dimensions = dimensions || $4::jsonb,
-            status = $6,
-            updated_at = NOW()
-          WHERE id = $1
-            AND study_corpus_id = $5
-            AND methodology_slug = 'signal-pulse'
-        `,
-        [
-          id,
-          title,
-          description,
-          safeJsonStringifyForPostgres({
-            marketing_read: marketingRead,
-            action_hint: actionHint,
-            actionability,
-            review_status: excluded ? "excluded_from_signal_pulse" : actionability === "review" ? "needs_human_review" : "publish_candidate",
-            interpretation_source: "claude_cluster_naming_v1",
+      const parsed = parseJsonRecord(response.text);
+      const rows = arrayOfRecords(parsed.signals);
+      const updated = await persistClaudeSignalNamingRows({
+        ctx: args.ctx,
+        rows,
+        batch: args.batch
+      });
+      return { updated, reason: updated > 0 ? undefined : `batch_${args.batchIndex}:empty_valid_claude_rows` };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (attempt < 2) {
+        await recordEngineCostEvent({
+          engineAnalysisId: args.engineAnalysisId,
+          pipelineStepId: args.pipelineStepId,
+          provider: "anthropic",
+          model: args.model,
+          operation: "sp_name_signals_retry",
+          usage: null,
+          metadata: {
+            batch_index: args.batchIndex,
+            attempt,
+            reason: reason.slice(0, 500),
             cluster_first: true,
             per_mention_coding: false
-          }),
-          args.ctx.study_corpus_id,
-          excluded ? "archived" : "active"
-        ]
-      );
-      updated += result.rowCount ?? 0;
+          }
+        });
+        continue;
+      }
+      await recordEngineCostEvent({
+        engineAnalysisId: args.engineAnalysisId,
+        pipelineStepId: args.pipelineStepId,
+        provider: "anthropic",
+        model: args.model,
+        operation: "sp_name_signals_failed",
+        usage: null,
+        metadata: {
+          batch_index: args.batchIndex,
+          attempt,
+          reason: reason.slice(0, 500),
+          cluster_first: true,
+          per_mention_coding: false
+        }
+      });
+      return { updated: 0, reason: `batch_${args.batchIndex}:${reason.slice(0, 160)}` };
     }
-    return { applied: updated > 0, updated, reason: updated > 0 ? undefined : "empty_valid_claude_rows" };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    await recordEngineCostEvent({
-      engineAnalysisId: args.engineAnalysisId,
-      pipelineStepId: args.pipelineStepId,
-      provider: "anthropic",
-      model,
-      operation: "sp_name_signals_failed",
-      usage: null,
-      metadata: { reason: reason.slice(0, 500), cluster_first: true, per_mention_coding: false }
-    });
-    return { applied: false, updated: 0, reason: reason.slice(0, 500) };
   }
+  return { updated: 0, reason: `batch_${args.batchIndex}:unknown_failure` };
+}
+
+function buildClaudeSignalNamingPrompt(batch: SignalPulseClusterNamingPayload[]) {
+  return [
+    "Eres editor senior de Noisia para Signal Pulse. Tu trabajo NO es nombrar keywords: es leer clusters como investigación cualitativa y convertirlos en señales de marketing.",
+    "Piensa como Triggers & Barriers: detecta la barrera, trigger, tensión, duda, motivación, momento de decisión o aprendizaje humano que aparece detrás del lenguaje del usuario.",
+    "Reglas duras: no hagas coding por mención; no inventes números; usa sólo números del JSON; conserva ids; español MX; copy corto y client-safe.",
+    "Un cluster puede tener term=\"seguro\" o term=\"choque\"; eso es sólo el ancla técnica. El título publicable debe expresar el insight humano, no repetir la keyword.",
+    "Buenos títulos: \"Barrera: La confianza se rompe cuando la cobertura se siente ambigua\", \"Trigger: Resolver rápido pesa más que la marca nacional\", \"Oportunidad: Educación sobre responsabilidad convierte confusión en utilidad\".",
+    "Malos títulos: \"Fricción: Seguro\", \"Choque\", \"Aseguradora\", \"Oportunidad: Excelente\".",
+    "Marca actionability=\"publish\" sólo si las muestras permiten una lectura humana clara y accionable para marketing. Usa \"review\" si hay una pista cualitativa pero falta evidencia. Usa \"exclude\" si es ruido, noticia, política, insulto sin aprendizaje, entidad suelta o conversación sin vínculo claro con la decisión.",
+    "Devuelve SOLO JSON válido con forma:",
+    '{"signals":[{"id":"uuid","title":"Barrera: ...","description":"Lectura cualitativa con números del JSON.","marketing_read":"Implicación para marketing.","action_hint":"Siguiente acción concreta.","actionability":"publish|review|exclude"}]}',
+    "Clusters:",
+    JSON.stringify(batch)
+  ].join("\n\n");
+}
+
+async function persistClaudeSignalNamingRows(args: {
+  ctx: AnalysisContext;
+  rows: Record<string, unknown>[];
+  batch: SignalPulseClusterNamingPayload[];
+}) {
+  let updated = 0;
+  for (const row of args.rows) {
+    const id = stringFrom(row.id);
+    if (!id) continue;
+    const source = args.batch.find((candidate) => candidate.id === id);
+    const title = stringFrom(row.title).slice(0, 160);
+    const description = stringFrom(row.description).slice(0, 500);
+    const marketingRead = stringFrom(row.marketing_read).slice(0, 500);
+    const actionHint = stringFrom(row.action_hint).slice(0, 360);
+    const actionability = normalizeActionability(row.actionability);
+    const excluded = actionability === "exclude" || isNonActionableSignalCopy({
+      title,
+      description,
+      marketingRead,
+      actionHint,
+      term: source?.term
+    });
+    if (!title || !description) continue;
+    const result = await pool.query(
+      `
+        UPDATE canonical_signals
+        SET
+          canonical_title = $2,
+          description = $3,
+          dimensions = dimensions || $4::jsonb,
+          status = $6,
+          updated_at = NOW()
+        WHERE id = $1
+          AND study_corpus_id = $5
+          AND methodology_slug = 'signal-pulse'
+      `,
+      [
+        id,
+        title,
+        description,
+        safeJsonStringifyForPostgres({
+          marketing_read: marketingRead,
+          action_hint: actionHint,
+          actionability,
+          review_status: excluded ? "excluded_from_signal_pulse" : actionability === "review" ? "needs_human_review" : "publish_candidate",
+          interpretation_source: "claude_cluster_naming_v2_batched_tb_read",
+          cluster_first: true,
+          per_mention_coding: false
+        }),
+        args.ctx.study_corpus_id,
+        excluded ? "archived" : "active"
+      ]
+    );
+    updated += result.rowCount ?? 0;
+  }
+  return updated;
 }
 
 async function maybeApplyClaudeSignalPulseInterpretation(args: {
@@ -1452,17 +1548,18 @@ async function readEngineCostTotal(engineAnalysisId: string) {
 
 async function loadMentionSamples(mentionIds: string[]) {
   if (mentionIds.length === 0) return [];
-  const rows = (await pool.query<{ text_clean: string; platform: string | null }>(
-    `SELECT text_clean, resolved_platform AS platform
+  const rows = (await pool.query<{ text_clean: string; platform: string | null; published_at: string | null }>(
+    `SELECT text_clean, resolved_platform AS platform, published_at::date::text AS published_at
      FROM mentions
      WHERE id = ANY($1::uuid[])
      ORDER BY published_at DESC NULLS LAST
-     LIMIT 4`,
+     LIMIT ${MAX_CLAUDE_SAMPLES_PER_CLUSTER}`,
     [mentionIds]
   )).rows;
   return rows.map((row) => ({
     text: stringFrom(row.text_clean).slice(0, 240),
-    platform: stringFrom(row.platform)
+    platform: stringFrom(row.platform),
+    published_at: row.published_at
   }));
 }
 
@@ -1589,7 +1686,6 @@ async function materializeMarketingMoves(args: {
         AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de síntesis:%'
         AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de sintesis:%'
         AND lower(cs.canonical_title) !~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|vehículo|qualitas|quálitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$'
-        AND lower(COALESCE(cs.dimensions->>'term', '')) NOT IN ('hasta', 'siempre', 'manejar', 'pinche', 'velocidad', 'mejor', 'nada', 'seguro', 'seguros', 'seguro auto', 'aseguradora', 'aseguradoras', 'choque', 'choques', 'accidente', 'accidentes', 'auto', 'autos', 'vehiculo', 'vehículo', 'vehiculos', 'vehículos', 'qualitas', 'quálitas', 'sabritas', 'gobernador', 'padrino', 'antojo', 'groseras', 'vieja', 'directo manicomio', 'actuan aseguradoras saber', 'alcanzo aseguradora particulares', 'aclarar situacion real')
       ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
       LIMIT 12
     `,
@@ -1908,7 +2004,6 @@ async function buildSignalPulseQualityGates(args: {
               OR lower(cs.canonical_title) LIKE 'cluster pendiente de síntesis:%'
               OR lower(cs.canonical_title) LIKE 'cluster pendiente de sintesis:%'
               OR lower(cs.canonical_title) ~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|vehículo|qualitas|quálitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$'
-              OR lower(COALESCE(cs.dimensions->>'term', '')) IN ('hasta', 'siempre', 'manejar', 'pinche', 'velocidad', 'mejor', 'nada', 'seguro', 'seguros', 'seguro auto', 'aseguradora', 'aseguradoras', 'choque', 'choques', 'accidente', 'accidentes', 'auto', 'autos', 'vehiculo', 'vehículo', 'vehiculos', 'vehículos', 'qualitas', 'quálitas', 'sabritas', 'gobernador', 'padrino', 'antojo', 'groseras', 'vieja', 'directo manicomio', 'actuan aseguradoras saber', 'alcanzo aseguradora particulares', 'aclarar situacion real')
             )
         ) AS weak_named_signals,
         (
@@ -2393,11 +2488,9 @@ function isNonActionableSignalCopy(input: {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-  const normalizedTerm = normalizeSignalPhrase(input.term ?? "");
   const titleWithoutPrefix = normalizeSignalPhrase(normalizedTitle.replace(/^(friccion|oportunidad|territorio|prioridad|cluster pendiente de sintesis):\s*/i, ""));
   if (
     /^cluster pendiente de sintesis:/.test(normalizedTitle)
-    || (normalizedTerm.length > 0 && isRawKeywordSignalPhrase(normalizedTerm))
     || isRawKeywordSignalPhrase(titleWithoutPrefix)
     || /^(friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada)$/.test(normalizedTitle)
   ) {
@@ -2437,6 +2530,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function parseJsonRecord(value: string) {

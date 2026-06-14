@@ -344,7 +344,7 @@ function SignalPulseAnalysisReview({
   const measuredMentions = Number(readiness.conversation_mentions ?? 0);
   const signalPulseMentions = Number(readiness.signal_pulse_mentions ?? 0);
   const sampledRows = Number(cluster.mentions_sampled ?? 0);
-  const maxClaudeSamples = Math.min(state.signals.length, 12) * 4;
+  const maxClaudeSamples = Math.min(state.signals.length, 12) * 6;
   const cutMeta = asRecord(signalPulseMeta.cut);
   const cutLabel = (state.cut?.label ?? stringValue(cutMeta.label)) || "Corte pendiente";
   const dataThrough = (state.cut?.period_end ?? stringValue(cutMeta.data_through)) || null;
@@ -632,7 +632,6 @@ async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
              AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de síntesis:%'
              AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de sintesis:%'
              AND lower(cs.canonical_title) !~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|vehículo|qualitas|quálitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$'
-             AND lower(COALESCE(cs.dimensions->>'term', '')) NOT IN ('hasta', 'siempre', 'manejar', 'pinche', 'velocidad', 'mejor', 'nada', 'seguro', 'seguros', 'seguro auto', 'aseguradora', 'aseguradoras', 'choque', 'choques', 'accidente', 'accidentes', 'auto', 'autos', 'vehiculo', 'vehículo', 'vehiculos', 'vehículos', 'qualitas', 'quálitas', 'sabritas', 'gobernador', 'padrino', 'antojo', 'groseras', 'vieja', 'directo manicomio', 'actuan aseguradoras saber', 'alcanzo aseguradora particulares', 'aclarar situacion real')
          )
        ORDER BY position NULLS LAST, created_at
        LIMIT 80`,
@@ -921,7 +920,7 @@ function isPublishableSignal(title: string, description: string | null, dimensio
   return isPublishCandidate(dimensions)
     && currentVolume > 0
     && !looksNonActionableSignal(title, description, dimensions)
-    && !looksRawKeywordSignal(title, dimensions);
+    && !looksRawKeywordSignal(title);
 }
 
 function looksNonActionableSignal(title: string, description: string | null, dimensions: JsonRecord) {
@@ -956,10 +955,9 @@ function looksNonActionableSignal(title: string, description: string | null, dim
   ].some((pattern) => source.includes(pattern));
 }
 
-function looksRawKeywordSignal(title: string, dimensions: JsonRecord) {
-  const term = normalizeReviewSignalPhrase(stringValue(dimensions.term));
+function looksRawKeywordSignal(title: string) {
   const titleTerm = normalizeReviewSignalPhrase(title.replace(/^(fricción|friccion|oportunidad|territorio|prioridad|cluster pendiente de síntesis|cluster pendiente de sintesis):\s*/i, ""));
-  return isRawReviewPhrase(term) || isRawReviewPhrase(titleTerm);
+  return isRawReviewPhrase(titleTerm);
 }
 
 function normalizeReviewSignalPhrase(value: string) {

@@ -15,7 +15,7 @@ import {
 } from "./signal-pulse-budget";
 import { buildSignalPulseDeterministicRead, buildSignalPulseMarketingMove } from "./signal-pulse-copy";
 import { splitSignalPulseMetaForMerge } from "./signal-pulse-meta";
-import { isActionableSignalPulseTerm } from "./signal-pulse-actionability";
+import { isActionableSignalPulseTerm, isRawKeywordSignalPhrase } from "./signal-pulse-actionability";
 import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
@@ -128,12 +128,15 @@ test("Signal Pulse deterministic copy never turns risk clusters into publishable
   assert.match(directional.actionHint, /sintetizar/);
 });
 
-test("Signal Pulse actionable cluster filter rejects raw keywords and keeps synthesized phrases", () => {
-  for (const term of ["seguro", "aseguradora", "choque", "antojo", "gobernador", "seguro auto"]) {
-    assert.equal(isActionableSignalPulseTerm(term), false, term);
+test("Signal Pulse accepts raw cluster anchors but still identifies raw output phrases", () => {
+  for (const term of ["seguro", "aseguradora", "choque", "seguro auto"]) {
+    assert.equal(isActionableSignalPulseTerm(term), true, term);
+    assert.equal(isRawKeywordSignalPhrase(term), true, term);
   }
 
   assert.equal(isActionableSignalPulseTerm("renovacion enero urgente"), true);
+  assert.equal(isRawKeywordSignalPhrase("renovacion enero urgente"), false);
+  assert.equal(isActionableSignalPulseTerm("morena"), false);
 });
 
 test("Signal Pulse marketing moves reuse the signal action hint and define measurement", () => {
