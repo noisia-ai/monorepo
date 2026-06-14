@@ -1,9 +1,11 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
 import type { Job } from "bullmq";
+import type { PoolClient } from "pg";
 
 import {
   buildMonthlyReportPeriods,
+  buildWeeklyReportPeriods,
   calculateImpactV1,
   classifySignalPulseLifecycle,
   isEngineLlmEnabled,
@@ -195,96 +197,36 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
           WHERE study_corpus_id = $1) AS max_performance_date`,
       [ctx.study_corpus_id]
     )).rows[0];
-    const periods = buildMonthlyReportPeriods({
-      windowEnd: chooseSignalPulseWindowEnd({
-        maxMentionDate: bounds?.max_mention_date,
-        maxPerformanceDate: bounds?.max_performance_date,
-        fallbackDate: new Date()
-      }),
+    const windowEnd = chooseSignalPulseWindowEnd({
+      maxMentionDate: bounds?.max_mention_date,
+      maxPerformanceDate: bounds?.max_performance_date,
+      fallbackDate: new Date()
+    });
+    const monthlyPeriods = buildMonthlyReportPeriods({
+      windowEnd,
       months: readWindowMonths(ctx)
+    });
+    const weeklyPeriods = buildWeeklyReportPeriods({
+      windowEnd,
+      weeks: readWindowWeeks(ctx)
     });
 
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("SET LOCAL statement_timeout = '120s'");
-      await client.query(
-        `DELETE FROM report_periods
-         WHERE study_corpus_id = $1
-           AND granularity = 'month'
-           AND NOT (period_start = ANY($2::date[]))`,
-        [ctx.study_corpus_id, periods.map((period) => period.periodStart)]
-      );
-      for (const period of periods) {
-        const coverage = (await client.query<{
-          conversation: number;
-          performance: number;
-          by_source: Record<string, number> | null;
-        }>(
-          `
-            WITH conversation AS (
-              SELECT
-                COALESCE(SUM(count), 0)::int AS conversation,
-                COALESCE(jsonb_object_agg(platform, count) FILTER (WHERE platform IS NOT NULL), '{}'::jsonb) AS by_source
-              FROM (
-                SELECT COALESCE(NULLIF(m.resolved_platform, ''), m.platform, 'unknown') AS platform,
-                       COUNT(DISTINCT m.id)::int AS count
-                FROM mentions m
-                WHERE m.study_corpus_id = $1
-                  AND m.inclusion_status = 'included'
-                  AND m.published_at >= $2::date
-                  AND m.published_at < ($3::date + interval '1 day')
-                GROUP BY 1
-              ) source_counts
-            ),
-            performance AS (
-              SELECT COUNT(*)::int AS performance
-              FROM performance_records pr
-              WHERE pr.study_corpus_id = $1
-                AND pr.record_date >= $2::date
-                AND pr.record_date <= $3::date
-            )
-            SELECT conversation.conversation, performance.performance, conversation.by_source
-            FROM conversation, performance
-          `,
-          [ctx.study_corpus_id, period.periodStart, period.periodEnd]
-        )).rows[0];
-        const coveragePayload = {
-          conversation: Number(coverage?.conversation ?? 0),
-          performance: Number(coverage?.performance ?? 0),
-          by_source: coverage?.by_source ?? {}
-        };
-        await client.query(
-          `
-            INSERT INTO report_periods (
-              study_corpus_id, granularity, period_start, period_end, label,
-              coverage, comparable, comparability_reasons, confidence, known_gaps, computed_at
-            )
-            VALUES ($1, 'month', $2::date, $3::date, $4, $5::jsonb, $6, $7::jsonb, $8, $9::jsonb, NOW())
-            ON CONFLICT (study_corpus_id, granularity, period_start)
-            DO UPDATE SET
-              period_end = EXCLUDED.period_end,
-              label = EXCLUDED.label,
-              coverage = EXCLUDED.coverage,
-              comparable = EXCLUDED.comparable,
-              comparability_reasons = EXCLUDED.comparability_reasons,
-              confidence = EXCLUDED.confidence,
-              known_gaps = EXCLUDED.known_gaps,
-              computed_at = NOW()
-          `,
-          [
-            ctx.study_corpus_id,
-            period.periodStart,
-            period.periodEnd,
-            period.label,
-            JSON.stringify(coveragePayload),
-            coveragePayload.conversation > 0,
-            JSON.stringify(coveragePayload.conversation > 0 ? [] : ["sin conversation evidence en el periodo"]),
-            coveragePayload.conversation >= 150 ? "alta" : coveragePayload.conversation >= 30 ? "media" : "baja",
-            JSON.stringify(coveragePayload.performance > 0 ? [] : ["sin performance estructurada"])
-          ]
-        );
-      }
+      await materializeReportPeriods({
+        client,
+        studyCorpusId: ctx.study_corpus_id,
+        granularity: "month",
+        periods: monthlyPeriods
+      });
+      await materializeReportPeriods({
+        client,
+        studyCorpusId: ctx.study_corpus_id,
+        granularity: "week",
+        periods: weeklyPeriods
+      });
       await client.query("ANALYZE report_periods");
       await client.query("COMMIT");
     } catch (error) {
@@ -294,11 +236,17 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
       client.release();
     }
 
-    const firstPeriod = periods[0];
-    const cutPeriod = periods.at(-1);
+    const firstPeriod = monthlyPeriods[0];
+    const cutPeriod = monthlyPeriods.at(-1);
+    const cutWeek = weeklyPeriods.at(-1);
     await mergeMeta(engineAnalysisId, {
       signal_pulse: {
-        periods: { count: periods.length, labels: periods.map((period) => period.label) },
+        periods: {
+          count: monthlyPeriods.length,
+          labels: monthlyPeriods.map((period) => period.label),
+          months: { count: monthlyPeriods.length, labels: monthlyPeriods.map((period) => period.label) },
+          weeks: { count: weeklyPeriods.length, labels: weeklyPeriods.map((period) => period.label) }
+        },
         cut: cutPeriod ? {
           label: cutPeriod.label,
           period_start: cutPeriod.periodStart,
@@ -306,6 +254,9 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
           window_start: firstPeriod?.periodStart ?? cutPeriod.periodStart,
           window_end: cutPeriod.periodEnd,
           data_through: cutPeriod.periodEnd,
+          week_label: cutWeek?.label ?? null,
+          week_start: cutWeek?.periodStart ?? null,
+          week_end: cutWeek?.periodEnd ?? null,
           generated_at: new Date().toISOString(),
           source_event_time_basis: "mentions.published_at/performance_records.record_date",
           upload_time_is_operational_only: true
@@ -315,14 +266,104 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
     await markEngineStepCompleted({
       pipelineStepId,
       resultSummary: {
-        periods: periods.length,
+        periods: monthlyPeriods.length,
+        weekly_periods: weeklyPeriods.length,
         cut_period: cutPeriod?.label ?? null,
+        cut_week: cutWeek?.label ?? null,
         data_through: cutPeriod?.periodEnd ?? null
       }
     });
     const next = await enqueueEngineStep({ engineAnalysisId, step: "sp_cluster" });
-    return { periods: periods.length, next_step_job_id: next.jobId };
+    return { periods: monthlyPeriods.length, weekly_periods: weeklyPeriods.length, next_step_job_id: next.jobId };
   });
+}
+
+async function materializeReportPeriods(args: {
+  client: PoolClient;
+  studyCorpusId: string;
+  granularity: "month" | "week";
+  periods: Array<{ periodStart: string; periodEnd: string; label: string }>;
+}) {
+  await args.client.query(
+    `DELETE FROM report_periods
+     WHERE study_corpus_id = $1
+       AND granularity = $2
+       AND NOT (period_start = ANY($3::date[]))`,
+    [args.studyCorpusId, args.granularity, args.periods.map((period) => period.periodStart)]
+  );
+  for (const period of args.periods) {
+    const coverage = (await args.client.query<{
+      conversation: number;
+      performance: number;
+      by_source: Record<string, number> | null;
+    }>(
+      `
+        WITH conversation AS (
+          SELECT
+            COALESCE(SUM(count), 0)::int AS conversation,
+            COALESCE(jsonb_object_agg(platform, count) FILTER (WHERE platform IS NOT NULL), '{}'::jsonb) AS by_source
+          FROM (
+            SELECT COALESCE(NULLIF(m.resolved_platform, ''), m.platform, 'unknown') AS platform,
+                   COUNT(DISTINCT m.id)::int AS count
+            FROM mentions m
+            WHERE m.study_corpus_id = $1
+              AND m.inclusion_status = 'included'
+              AND m.published_at >= $2::date
+              AND m.published_at < ($3::date + interval '1 day')
+            GROUP BY 1
+          ) source_counts
+        ),
+        performance AS (
+          SELECT COUNT(*)::int AS performance
+          FROM performance_records pr
+          WHERE pr.study_corpus_id = $1
+            AND pr.record_date >= $2::date
+            AND pr.record_date <= $3::date
+        )
+        SELECT conversation.conversation, performance.performance, conversation.by_source
+        FROM conversation, performance
+      `,
+      [args.studyCorpusId, period.periodStart, period.periodEnd]
+    )).rows[0];
+    const coveragePayload = {
+      conversation: Number(coverage?.conversation ?? 0),
+      performance: Number(coverage?.performance ?? 0),
+      by_source: coverage?.by_source ?? {}
+    };
+    const highConfidenceThreshold = args.granularity === "month" ? 150 : 40;
+    const mediumConfidenceThreshold = args.granularity === "month" ? 30 : 10;
+    await args.client.query(
+      `
+        INSERT INTO report_periods (
+          study_corpus_id, granularity, period_start, period_end, label,
+          coverage, comparable, comparability_reasons, confidence, known_gaps, computed_at
+        )
+        VALUES ($1, $2, $3::date, $4::date, $5, $6::jsonb, $7, $8::jsonb, $9, $10::jsonb, NOW())
+        ON CONFLICT (study_corpus_id, granularity, period_start)
+        DO UPDATE SET
+          period_end = EXCLUDED.period_end,
+          label = EXCLUDED.label,
+          coverage = EXCLUDED.coverage,
+          comparable = EXCLUDED.comparable,
+          comparability_reasons = EXCLUDED.comparability_reasons,
+          confidence = EXCLUDED.confidence,
+          known_gaps = EXCLUDED.known_gaps,
+          computed_at = NOW()
+      `,
+      [
+        args.studyCorpusId,
+        args.granularity,
+        period.periodStart,
+        period.periodEnd,
+        period.label,
+        JSON.stringify(coveragePayload),
+        coveragePayload.conversation > 0,
+        JSON.stringify(coveragePayload.conversation > 0 ? [] : ["sin conversation evidence en el periodo"]),
+        coveragePayload.conversation >= highConfidenceThreshold ? "alta" : coveragePayload.conversation >= mediumConfidenceThreshold ? "media" : "baja",
+        JSON.stringify(coveragePayload.performance > 0 ? [] : ["sin performance estructurada"])
+      ]
+    );
+  }
 }
 
 export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
@@ -721,6 +762,10 @@ function assertSignalPulse(ctx: AnalysisContext) {
 
 function readWindowMonths(ctx: AnalysisContext) {
   return numberFrom(ctx.params?.window_months) ?? numberFrom(ctx.analysis_plan?.target_window_months) ?? ctx.target_window_months ?? 12;
+}
+
+function readWindowWeeks(ctx: AnalysisContext) {
+  return Math.max(4, Math.min(156, Math.ceil(readWindowMonths(ctx) * 4.5)));
 }
 
 function readBudgetCapUsd(ctx: AnalysisContext) {
@@ -1989,12 +2034,13 @@ async function buildSignalPulseQualityGates(args: {
   }>(
     `
       SELECT
-        (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1) AS periods,
-        (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1 AND comparable = true) AS comparable_periods,
+        (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1 AND granularity = 'month') AS periods,
+        (SELECT COUNT(*)::int FROM report_periods WHERE study_corpus_id = $1 AND granularity = 'month' AND comparable = true) AS comparable_periods,
         (
           SELECT COUNT(*)::int
           FROM report_periods
           WHERE study_corpus_id = $1
+            AND granularity = 'month'
             AND COALESCE((coverage->>'performance')::int, 0) > 0
         ) AS performance_periods,
         (SELECT COUNT(*)::int FROM performance_records WHERE study_corpus_id = $1) AS performance_records,

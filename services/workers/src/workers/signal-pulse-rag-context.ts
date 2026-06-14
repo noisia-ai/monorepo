@@ -51,30 +51,37 @@ export type SignalPulseMarketingContext = {
   };
 };
 
+export type SignalPulsePeriodSeriesPoint = {
+  granularity?: "month" | "week";
+  label: string;
+  period_start: string;
+  period_end: string;
+  volume: number;
+  delta_prev: number | null;
+  engagement: number;
+  sentiment_avg: number | null;
+  source_mix: Record<string, number>;
+  lifecycle_state: string;
+};
+
+export type SignalPulseWindowPattern = {
+  current_period: string | null;
+  current_volume: number;
+  previous_volume: number;
+  delta_prev: number | null;
+  active_periods: number;
+  first_active_period: string | null;
+  last_active_period: string | null;
+  peak_period: string | null;
+  peak_volume: number;
+  lifecycle_state: string;
+};
+
 export type SignalPulseClusterPromptContext = {
-  period_series: Array<{
-    label: string;
-    period_start: string;
-    period_end: string;
-    volume: number;
-    delta_prev: number | null;
-    engagement: number;
-    sentiment_avg: number | null;
-    source_mix: Record<string, number>;
-    lifecycle_state: string;
-  }>;
-  window_pattern: {
-    current_period: string | null;
-    current_volume: number;
-    previous_volume: number;
-    delta_prev: number | null;
-    active_periods: number;
-    first_active_period: string | null;
-    last_active_period: string | null;
-    peak_period: string | null;
-    peak_volume: number;
-    lifecycle_state: string;
-  };
+  period_series: SignalPulsePeriodSeriesPoint[];
+  weekly_series?: SignalPulsePeriodSeriesPoint[];
+  window_pattern: SignalPulseWindowPattern;
+  weekly_pattern?: SignalPulseWindowPattern;
   performance_context: {
     active_months: Array<SignalPulseMarketingContext["performance_window"][number]>;
     matching_creatives: Array<{
@@ -133,11 +140,18 @@ export async function loadSignalPulseClusterPromptContext(args: {
   marketingContext: SignalPulseMarketingContext;
   cluster: ClusterContextInput;
 }): Promise<SignalPulseClusterPromptContext> {
-  const [periodSeries, knowledgeMatches, matchingCreatives] = await Promise.all([
+  const [periodSeries, weeklySeries, knowledgeMatches, matchingCreatives] = await Promise.all([
     loadClusterPeriodSeries({
       corpusId: args.ctx.study_corpus_id,
       term: args.cluster.term,
-      memberMentionIds: args.cluster.memberMentionIds
+      memberMentionIds: args.cluster.memberMentionIds,
+      granularity: "month"
+    }),
+    loadClusterPeriodSeries({
+      corpusId: args.ctx.study_corpus_id,
+      term: args.cluster.term,
+      memberMentionIds: args.cluster.memberMentionIds,
+      granularity: "week"
     }),
     retrieveKnowledgeMatches({
       ctx: args.ctx,
@@ -151,10 +165,13 @@ export async function loadSignalPulseClusterPromptContext(args: {
   ]);
 
   const windowPattern = summarizeWindowPattern(periodSeries);
+  const weeklyPattern = summarizeWindowPattern(weeklySeries);
   const activeMonths = new Set(periodSeries.filter((period) => period.volume > 0).map((period) => period.label));
   return {
     period_series: periodSeries,
+    weekly_series: weeklySeries,
     window_pattern: windowPattern,
+    weekly_pattern: weeklyPattern,
     performance_context: {
       active_months: args.marketingContext.performance_window.filter((month) => activeMonths.has(month.month)),
       matching_creatives: matchingCreatives
@@ -235,6 +252,7 @@ async function loadClusterPeriodSeries(args: {
   corpusId: string;
   term: string;
   memberMentionIds: string[];
+  granularity: "month" | "week";
 }): Promise<SignalPulseClusterPromptContext["period_series"]> {
   const pattern = `%${escapeLike(args.term)}%`;
   const rows = (await pool.query<{
@@ -250,7 +268,7 @@ async function loadClusterPeriodSeries(args: {
       WITH periods AS (
         SELECT label, period_start, period_end
         FROM report_periods
-        WHERE study_corpus_id = $1 AND granularity = 'month'
+        WHERE study_corpus_id = $1 AND granularity = $4
       ),
       matched AS (
         SELECT
@@ -302,7 +320,7 @@ async function loadClusterPeriodSeries(args: {
       GROUP BY p.label, p.period_start, p.period_end
       ORDER BY p.period_start
     `,
-    [args.corpusId, pattern, args.memberMentionIds]
+    [args.corpusId, pattern, args.memberMentionIds, args.granularity]
   )).rows;
 
   const volumes: number[] = [];
@@ -311,6 +329,7 @@ async function loadClusterPeriodSeries(args: {
     const volume = Number(row.volume ?? 0);
     volumes.push(volume);
     return {
+      granularity: args.granularity,
       label: row.label,
       period_start: row.period_start,
       period_end: row.period_end,

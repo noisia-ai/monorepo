@@ -37,6 +37,29 @@ export function buildMonthlyReportPeriods(args: {
   return periods;
 }
 
+export function buildWeeklyReportPeriods(args: {
+  windowEnd: string | Date;
+  weeks: number;
+}): SignalPulsePeriod[] {
+  const weeks = Math.max(1, Math.min(156, Math.floor(args.weeks)));
+  const end = toUtcDate(args.windowEnd);
+  const endWeekStart = startOfIsoWeek(end);
+  const periods: SignalPulsePeriod[] = [];
+
+  for (let index = weeks - 1; index >= 0; index -= 1) {
+    const start = addDays(endWeekStart, -7 * index);
+    const periodEnd = addDays(start, 6);
+    const isoWeek = isoWeekLabel(start);
+    periods.push({
+      periodStart: isoDate(start),
+      periodEnd: isoDate(periodEnd),
+      label: isoWeek
+    });
+  }
+
+  return periods;
+}
+
 export function calculateImpactV1(input: ImpactV1Input): number {
   const score = 100 * (
     0.35 * clamp01(input.volumeNorm) +
@@ -77,6 +100,26 @@ function toUtcDate(value: string | Date) {
 
 function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function startOfIsoWeek(date: Date) {
+  const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = normalized.getUTCDay();
+  const daysFromMonday = day === 0 ? 6 : day - 1;
+  return addDays(normalized, -daysFromMonday);
+}
+
+function isoWeekLabel(date: Date) {
+  const weekDate = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = weekDate.getUTCDay() || 7;
+  weekDate.setUTCDate(weekDate.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(weekDate.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((weekDate.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${weekDate.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
 function clamp01(value: number) {

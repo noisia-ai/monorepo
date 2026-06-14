@@ -210,6 +210,7 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
       context: {
         period_series: [
           {
+            granularity: "month",
             label: "2026-04",
             period_start: "2026-04-01",
             period_end: "2026-04-30",
@@ -221,6 +222,7 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
             lifecycle_state: "stable"
           },
           {
+            granularity: "month",
             label: "2026-05",
             period_start: "2026-05-01",
             period_end: "2026-05-31",
@@ -230,6 +232,32 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
             sentiment_avg: -0.22,
             source_mix: { facebook: 90, tiktok: 44 },
             lifecycle_state: "rising"
+          }
+        ],
+        weekly_series: [
+          {
+            granularity: "week",
+            label: "2026-W20",
+            period_start: "2026-05-11",
+            period_end: "2026-05-17",
+            volume: 28,
+            delta_prev: null,
+            engagement: 19,
+            sentiment_avg: -0.2,
+            source_mix: { facebook: 20, tiktok: 8 },
+            lifecycle_state: "new"
+          },
+          {
+            granularity: "week",
+            label: "2026-W21",
+            period_start: "2026-05-18",
+            period_end: "2026-05-24",
+            volume: 84,
+            delta_prev: 56,
+            engagement: 45,
+            sentiment_avg: -0.27,
+            source_mix: { facebook: 52, tiktok: 32 },
+            lifecycle_state: "accelerating"
           }
         ],
         window_pattern: {
@@ -243,6 +271,18 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
           peak_period: "2026-05",
           peak_volume: 134,
           lifecycle_state: "rising"
+        },
+        weekly_pattern: {
+          current_period: "2026-W21",
+          current_volume: 84,
+          previous_volume: 28,
+          delta_prev: 56,
+          active_periods: 2,
+          first_active_period: "2026-W20",
+          last_active_period: "2026-W21",
+          peak_period: "2026-W21",
+          peak_volume: 84,
+          lifecycle_state: "accelerating"
         },
         performance_context: {
           active_months: [
@@ -317,6 +357,7 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   });
 
   assert.match(prompt, /12 meses/);
+  assert.match(prompt, /serie semanal/);
   assert.match(prompt, /performance_records/);
   assert.match(prompt, /Riesgo creativo/);
   assert.match(prompt, /Gap de pauta/);

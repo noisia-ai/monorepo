@@ -12,6 +12,7 @@ Signal Pulse dejó de tratar el corte mensual como análisis aislado. El worker 
 - inventario de fuentes estructuradas (`data_sources`);
 - performance mensual de la ventana (`performance_records`);
 - serie mensual por cluster antes del naming;
+- serie semanal por cluster antes del naming cuando hay cobertura suficiente;
 - contexto de creativos/performance que matchean el territorio del cluster;
 - evidence snippets acotados por cluster.
 
@@ -25,6 +26,8 @@ Signal Pulse ahora separa dos planos:
 - **Ventana completa:** las señales, series mensuales y patrones de los 12 meses para explorar, comparar y explicar por qué algo sí/no debería activarse.
 
 El payload publicado conserva `period_metrics` por señal. Las señales con actividad histórica pueden existir en el payload aunque estén inactivas en el corte actual; el API publicado filtra por el mes más reciente por default para no contaminar el reporte mensual.
+
+El worker también materializa `report_periods` semanales (`granularity='week'`) y pasa `weekly_series`/`weekly_pattern` al naming de Claude. Por ahora las métricas publicables (`signal_period_metrics`, charts y gates de publicación) siguen usando meses para mantener estable el corte mensual; el plano semanal sirve para explicar picos, reactivaciones y caídas dentro del mes.
 
 Para exploración/dashboard, los endpoints publicados aceptan filtros:
 
@@ -45,7 +48,7 @@ Esto deja listo el backend para un dashboard filtrable sin cambiar todavía el U
 ## Archivos principales
 
 - `services/workers/src/workers/signal-pulse-rag-context.ts`
-  - Construye contexto de marketing, KB, RAG, performance y serie mensual por cluster.
+  - Construye contexto de marketing, KB, RAG, performance y series mensual/semanal por cluster.
 - `services/workers/src/workers/signal-pulse-prompts.ts`
   - Prompt puro de naming Signal Pulse, testeable sin DB.
 - `services/workers/src/workers/signal-pulse-steps.ts`

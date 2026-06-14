@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildMonthlyReportPeriods,
+  buildWeeklyReportPeriods,
   calculateImpactV1,
   classifySignalPulseLifecycle
 } from "./signal-pulse";
@@ -12,6 +13,14 @@ test("Signal Pulse periodization creates comparable monthly buckets", () => {
     { periodStart: "2026-04-01", periodEnd: "2026-04-30", label: "2026-04" },
     { periodStart: "2026-05-01", periodEnd: "2026-05-31", label: "2026-05" },
     { periodStart: "2026-06-01", periodEnd: "2026-06-30", label: "2026-06" }
+  ]);
+});
+
+test("Signal Pulse periodization creates ISO weekly buckets around the data window", () => {
+  assert.deepEqual(buildWeeklyReportPeriods({ windowEnd: "2026-06-12", weeks: 3 }), [
+    { periodStart: "2026-05-25", periodEnd: "2026-05-31", label: "2026-W22" },
+    { periodStart: "2026-06-01", periodEnd: "2026-06-07", label: "2026-W23" },
+    { periodStart: "2026-06-08", periodEnd: "2026-06-14", label: "2026-W24" }
   ]);
 });
 
