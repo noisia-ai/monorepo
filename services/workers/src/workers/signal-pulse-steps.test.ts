@@ -14,6 +14,8 @@ import {
   shouldSkipSignalPulseLlmForBudget
 } from "./signal-pulse-budget";
 import { buildSignalPulseDeterministicRead, buildSignalPulseMarketingMove } from "./signal-pulse-copy";
+import { splitSignalPulseMetaForMerge } from "./signal-pulse-meta";
+import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
 
 test("Signal Pulse embedding clusters group semantic neighborhoods without reusing mentions", () => {
   const rows: EmbeddingNeighborhoodRow[] = [
@@ -196,6 +198,36 @@ test("Signal Pulse LLM budget guard reserves the next cluster-level call", () =>
       estimatedNextCostUsd: 0.015
     }),
     { skip: true, reason: "budget_exhausted:0.5/0.5" }
+  );
+});
+
+test("Signal Pulse meta merge keeps root quality gates next to nested signal pulse data", () => {
+  const qualityGates = [{ id: "source_presence", passed: true, detail: "24 señales." }];
+  const { signalPulseMeta, rootMeta } = splitSignalPulseMetaForMerge({
+    signal_pulse: { gates: { failed_gates: 0 } },
+    quality_gates: qualityGates
+  });
+
+  assert.deepEqual(signalPulseMeta, { gates: { failed_gates: 0 } });
+  assert.deepEqual(rootMeta, { quality_gates: qualityGates });
+});
+
+test("Signal Pulse window closes on structured performance when conversation has a partial newer month", () => {
+  assert.equal(
+    chooseSignalPulseWindowEnd({
+      maxMentionDate: "2026-06-13",
+      maxPerformanceDate: "2026-05-31",
+      fallbackDate: "2026-06-14"
+    }),
+    "2026-05-31"
+  );
+  assert.equal(
+    chooseSignalPulseWindowEnd({
+      maxMentionDate: "2026-05-29",
+      maxPerformanceDate: "2026-05-31",
+      fallbackDate: "2026-06-14"
+    }),
+    "2026-05-29"
   );
 });
 

@@ -465,9 +465,19 @@ async function buildSignalPulsePublishedPayload(
         WITH latest AS (
           SELECT DISTINCT ON (spm.canonical_signal_id)
             spm.*
-          FROM signal_period_metrics spm
-          JOIN report_periods rp ON rp.id = spm.period_id
-          WHERE spm.study_corpus_id = $1
+          FROM signal_observations so
+          JOIN report_periods rp
+            ON rp.period_start = so.window_start
+           AND rp.period_end = so.window_end
+           AND rp.study_corpus_id = so.study_corpus_id
+           AND rp.granularity = 'month'
+          JOIN signal_period_metrics spm
+            ON spm.canonical_signal_id = so.canonical_signal_id
+           AND spm.period_id = rp.id
+           AND spm.study_corpus_id = so.study_corpus_id
+          WHERE so.study_corpus_id = $1
+            AND so.engine_analysis_id = $2
+            AND so.methodology_slug = 'signal-pulse'
           ORDER BY spm.canonical_signal_id, rp.period_start DESC
         )
         SELECT
@@ -494,7 +504,7 @@ async function buildSignalPulsePublishedPayload(
         ORDER BY COALESCE(latest.impact_v1, 0) DESC, latest.volume DESC
         LIMIT 80
       `,
-      [corpus.id]
+      [corpus.id, analysis.id]
     ),
     pool.query(
       `SELECT id::text, move_type, action_text, signal_refs::text[], evidence_refs, owner_suggestion,

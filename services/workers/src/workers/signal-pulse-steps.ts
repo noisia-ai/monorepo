@@ -25,6 +25,8 @@ import {
   type EmbeddingNeighborhoodRow,
   type TermCluster
 } from "./signal-pulse-clustering";
+import { splitSignalPulseMetaForMerge } from "./signal-pulse-meta";
+import { chooseSignalPulseWindowEnd } from "./signal-pulse-window";
 import {
   estimateSignalPulseNamingCostUsd,
   estimateSignalPulseRunCostUsd,
@@ -153,14 +155,22 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
   return runSignalPulseStep(job, async ({ engineAnalysisId, pipelineStepId }) => {
     const ctx = await loadSignalPulseContext(engineAnalysisId);
     assertSignalPulse(ctx);
-    const bounds = (await pool.query<{ max_date: string | null }>(
-      `SELECT max(published_at)::date::text AS max_date
-       FROM mentions
-       WHERE study_corpus_id = $1 AND inclusion_status = 'included'`,
+    const bounds = (await pool.query<{ max_mention_date: string | null; max_performance_date: string | null }>(
+      `SELECT
+         (SELECT max(published_at)::date::text
+          FROM mentions
+          WHERE study_corpus_id = $1 AND inclusion_status = 'included') AS max_mention_date,
+         (SELECT max(record_date)::date::text
+          FROM performance_records
+          WHERE study_corpus_id = $1) AS max_performance_date`,
       [ctx.study_corpus_id]
     )).rows[0];
     const periods = buildMonthlyReportPeriods({
-      windowEnd: bounds?.max_date ?? new Date(),
+      windowEnd: chooseSignalPulseWindowEnd({
+        maxMentionDate: bounds?.max_mention_date,
+        maxPerformanceDate: bounds?.max_performance_date,
+        fallbackDate: new Date()
+      }),
       months: readWindowMonths(ctx)
     });
 
@@ -168,6 +178,13 @@ export async function signalPulsePeriodsJob(job: Job<SignalPulseStepJobData>) {
     try {
       await client.query("BEGIN");
       await client.query("SET LOCAL statement_timeout = '120s'");
+      await client.query(
+        `DELETE FROM report_periods
+         WHERE study_corpus_id = $1
+           AND granularity = 'month'
+           AND NOT (period_start = ANY($2::date[]))`,
+        [ctx.study_corpus_id, periods.map((period) => period.periodStart)]
+      );
       for (const period of periods) {
         const coverage = (await client.query<{
           conversation: number;
@@ -266,6 +283,11 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
       engagement_score: string | null;
     }>(
       `
+        WITH report_bounds AS (
+          SELECT MIN(period_start) AS min_start, MAX(period_end) AS max_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+        )
         SELECT
           m.id::text,
           m.text_clean,
@@ -278,9 +300,12 @@ export async function signalPulseClusterJob(job: Job<SignalPulseStepJobData>) {
           END::text AS engagement_score
         FROM mentions m
         LEFT JOIN mention_query_sources mqs ON mqs.mention_id = m.id AND mqs.lens_slug = 'signal-pulse'
+        CROSS JOIN report_bounds rb
         WHERE m.study_corpus_id = $1
           AND m.inclusion_status = 'included'
           AND length(m.text_clean) >= 24
+          AND (rb.min_start IS NULL OR m.published_at >= rb.min_start)
+          AND (rb.max_end IS NULL OR m.published_at < (rb.max_end + interval '1 day'))
         ORDER BY CASE WHEN mqs.id IS NOT NULL THEN 0 ELSE 1 END, m.published_at DESC
         LIMIT ${GLOBAL_CLUSTER_ROW_LIMIT}
       `,
@@ -635,7 +660,7 @@ function numberFrom(value: unknown) {
 }
 
 async function mergeMeta(engineAnalysisId: string, meta: Record<string, unknown>) {
-  const signalPulseMeta = meta.signal_pulse;
+  const { signalPulseMeta, rootMeta } = splitSignalPulseMetaForMerge(meta);
   if (signalPulseMeta && typeof signalPulseMeta === "object" && !Array.isArray(signalPulseMeta)) {
     await pool.query(
       `UPDATE engine_analyses
@@ -649,6 +674,9 @@ async function mergeMeta(engineAnalysisId: string, meta: Record<string, unknown>
        WHERE id = $2`,
       [safeJsonStringifyForPostgres(signalPulseMeta), engineAnalysisId]
     );
+  }
+
+  if (Object.keys(rootMeta).length === 0) {
     return;
   }
 
@@ -657,7 +685,7 @@ async function mergeMeta(engineAnalysisId: string, meta: Record<string, unknown>
      SET meta_json = COALESCE(meta_json, '{}'::jsonb) || $1::jsonb,
          updated_at = NOW()
      WHERE id = $2`,
-    [safeJsonStringifyForPostgres(meta), engineAnalysisId]
+    [safeJsonStringifyForPostgres(rootMeta), engineAnalysisId]
   );
 }
 
@@ -822,6 +850,7 @@ async function materializePeriodMetrics(args: {
   ctx: AnalysisContext;
   engineAnalysisId: string;
 }) {
+  await pool.query(`DELETE FROM signal_observations WHERE engine_analysis_id = $1`, [args.engineAnalysisId]);
   const signalRows = (await pool.query<{
     id: string;
     canonical_title: string;
@@ -1538,16 +1567,18 @@ async function loadSignalPulseMaterializationCounts(args: {
     `
       SELECT
         (
-          SELECT COUNT(*)::int
-          FROM canonical_signals
+          SELECT COUNT(DISTINCT canonical_signal_id)::int
+          FROM signal_observations
           WHERE study_corpus_id = $1
             AND methodology_slug = 'signal-pulse'
-            AND status <> 'archived'
+            AND engine_analysis_id = $2
         ) AS signals,
         (
           SELECT COUNT(*)::int
-          FROM signal_period_metrics
+          FROM signal_observations
           WHERE study_corpus_id = $1
+            AND methodology_slug = 'signal-pulse'
+            AND engine_analysis_id = $2
         ) AS metrics,
         (
           SELECT COUNT(*)::int
@@ -1605,9 +1636,11 @@ async function buildSignalPulseQualityGates(args: {
         (SELECT COUNT(*)::int FROM performance_records WHERE study_corpus_id = $1) AS performance_records,
         (
           SELECT COUNT(*)::int
-          FROM signal_period_metrics spm
-          WHERE spm.study_corpus_id = $1
-            AND NULLIF(spm.confidence, '') IS NULL
+          FROM signal_observations so
+          WHERE so.study_corpus_id = $1
+            AND so.methodology_slug = 'signal-pulse'
+            AND so.engine_analysis_id = $2
+            AND NULLIF(so.confidence, '') IS NULL
         ) AS signals_without_confidence,
         (
           SELECT COUNT(*)::int
@@ -1634,7 +1667,9 @@ async function buildSignalPulseQualityGates(args: {
           SELECT COUNT(*)::int
           FROM signal_observation_evidence soe
           JOIN signal_observations so ON so.id = soe.signal_observation_id
-          WHERE so.study_corpus_id = $1 AND so.methodology_slug = 'signal-pulse'
+          WHERE so.study_corpus_id = $1
+            AND so.methodology_slug = 'signal-pulse'
+            AND so.engine_analysis_id = $2
         ) AS evidence,
         (
           SELECT COALESCE(SUM(estimated_cost_usd), 0)::text
@@ -1854,7 +1889,12 @@ async function loadEmbeddingNeighborhoodClusters(corpusId: string) {
     await client.query("SET LOCAL statement_timeout = '120s'");
     const rows = (await client.query<EmbeddingNeighborhoodRow>(
       `
-        WITH model_choice AS (
+        WITH report_bounds AS (
+          SELECT MIN(period_start) AS min_start, MAX(period_end) AS max_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+        ),
+        model_choice AS (
           SELECT se.embedding_model
           FROM semantic_embeddings se
           WHERE se.study_corpus_id = $1
@@ -1871,11 +1911,14 @@ async function loadEmbeddingNeighborhoodClusters(corpusId: string) {
           FROM semantic_embeddings se
           JOIN model_choice mc ON mc.embedding_model = se.embedding_model
           JOIN mentions m ON m.id = se.mention_id
+          CROSS JOIN report_bounds rb
           LEFT JOIN mention_query_sources mqs ON mqs.mention_id = m.id AND mqs.lens_slug = 'signal-pulse'
           WHERE se.study_corpus_id = $1
             AND se.scope_type = 'mention'
             AND m.inclusion_status = 'included'
             AND length(m.text_clean) >= 24
+            AND (rb.min_start IS NULL OR m.published_at >= rb.min_start)
+            AND (rb.max_end IS NULL OR m.published_at < (rb.max_end + interval '1 day'))
           ORDER BY CASE WHEN mqs.id IS NOT NULL THEN 0 ELSE 1 END, m.published_at DESC
           LIMIT $2
         )
@@ -1897,10 +1940,13 @@ async function loadEmbeddingNeighborhoodClusters(corpusId: string) {
           FROM semantic_embeddings se
           JOIN model_choice mc ON mc.embedding_model = se.embedding_model
           JOIN mentions m ON m.id = se.mention_id
+          CROSS JOIN report_bounds rb
           WHERE se.study_corpus_id = $1
             AND se.scope_type = 'mention'
             AND m.inclusion_status = 'included'
             AND length(m.text_clean) >= 24
+            AND (rb.min_start IS NULL OR m.published_at >= rb.min_start)
+            AND (rb.max_end IS NULL OR m.published_at < (rb.max_end + interval '1 day'))
           ORDER BY se.embedding <=> anchors.embedding
           LIMIT $3
         ) neighbor ON true
