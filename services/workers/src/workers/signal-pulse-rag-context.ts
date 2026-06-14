@@ -29,6 +29,15 @@ export type SignalPulseKnowledgeMatch = {
   similarity: number | null;
 };
 
+export type SignalPulseConversationMatch = {
+  mention_id: string;
+  text: string;
+  platform: string;
+  published_at: string | null;
+  period_label: string | null;
+  similarity: number | null;
+};
+
 export type SignalPulseMarketingContext = {
   marketing_brief: Record<string, unknown>;
   knowledge_sources: Array<{ type: string; content: Record<string, unknown> }>;
@@ -132,6 +141,7 @@ export type SignalPulseClusterPromptContext = {
     }>;
   };
   knowledge_matches: SignalPulseKnowledgeMatch[];
+  conversation_matches: SignalPulseConversationMatch[];
 };
 
 type ClusterContextInput = {
@@ -176,7 +186,7 @@ export async function loadSignalPulseClusterPromptContext(args: {
   marketingContext: SignalPulseMarketingContext;
   cluster: ClusterContextInput;
 }): Promise<SignalPulseClusterPromptContext> {
-  const [periodSeries, weeklySeries, knowledgeMatches, matchingCreatives] = await Promise.all([
+  const [periodSeries, weeklySeries, semanticMatches, matchingCreatives] = await Promise.all([
     loadClusterPeriodSeries({
       corpusId: args.ctx.study_corpus_id,
       term: args.cluster.term,
@@ -189,10 +199,10 @@ export async function loadSignalPulseClusterPromptContext(args: {
       memberMentionIds: args.cluster.memberMentionIds,
       granularity: "week"
     }),
-    retrieveKnowledgeMatches({
+    retrieveSemanticMatches({
       ctx: args.ctx,
       cluster: args.cluster,
-      marketingBrief: args.marketingContext.marketing_brief
+      marketingContext: args.marketingContext
     }),
     loadMatchingCreatives({
       corpusId: args.ctx.study_corpus_id,
@@ -222,7 +232,8 @@ export async function loadSignalPulseClusterPromptContext(args: {
       performance_events: performanceEvents,
       matching_creatives: matchingCreatives
     },
-    knowledge_matches: knowledgeMatches
+    knowledge_matches: semanticMatches.knowledge,
+    conversation_matches: semanticMatches.conversation
   };
 }
 
@@ -447,14 +458,14 @@ async function loadClusterPeriodSeries(args: {
   });
 }
 
-async function retrieveKnowledgeMatches(args: {
+async function retrieveSemanticMatches(args: {
   ctx: SignalPulseContextScope;
   cluster: ClusterContextInput;
-  marketingBrief: Record<string, unknown>;
-}): Promise<SignalPulseKnowledgeMatch[]> {
-  if (!hasEmbeddingProvider()) return [];
-  const query = buildClusterKnowledgeQuery(args.cluster, args.marketingBrief);
-  if (!query) return [];
+  marketingContext: SignalPulseMarketingContext;
+}): Promise<{ knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] }> {
+  if (!hasEmbeddingProvider()) return { knowledge: [], conversation: [] };
+  const query = buildClusterSemanticQuery(args.cluster, args.marketingContext);
+  if (!query) return { knowledge: [], conversation: [] };
   try {
     const embeddingModel = getEmbeddingModel();
     const [embedded] = await embedTexts({
@@ -463,48 +474,97 @@ async function retrieveKnowledgeMatches(args: {
       batchSize: 1,
       inputType: "query"
     });
-    if (!embedded) return [];
-    const rows = (await pool.query<{
-      title: string | null;
-      source_kind: string | null;
-      text: string;
-      similarity: string | null;
-    }>(
-      `
-        SELECT
-          COALESCE(bks.title, se.metadata->>'title') AS title,
-          COALESCE(bks.source_kind, se.metadata->>'source_kind') AS source_kind,
-          se.chunk_text AS text,
-          (1 - (se.embedding <=> $2::vector))::text AS similarity
-        FROM semantic_embeddings se
-        LEFT JOIN brand_knowledge_sources bks ON bks.id = se.source_id
-        WHERE se.scope_type = 'knowledge_source'
-          AND se.embedding_model = $3
-          AND (
-            se.study_corpus_id = $1
-            OR ($4::uuid IS NOT NULL AND se.brand_id = $4::uuid)
-            OR ($5::uuid IS NOT NULL AND se.organization_id = $5::uuid)
-          )
-        ORDER BY se.embedding <=> $2::vector
-        LIMIT 6
-      `,
-      [
-        args.ctx.study_corpus_id,
-        vectorLiteral(embedded.embedding),
-        embeddingModel,
-        args.ctx.brand_id,
-        args.ctx.organization_id
-      ]
-    )).rows;
-    return rows.map((row) => ({
-      title: row.title,
-      source_kind: row.source_kind,
-      text: row.text.slice(0, 900),
-      similarity: numberOrNull(row.similarity)
-    }));
+    if (!embedded) return { knowledge: [], conversation: [] };
+    const [knowledgeRows, conversationRows] = await Promise.all([
+      pool.query<{
+        title: string | null;
+        source_kind: string | null;
+        text: string;
+        similarity: string | null;
+      }>(
+        `
+          SELECT
+            COALESCE(bks.title, se.metadata->>'title') AS title,
+            COALESCE(bks.source_kind, se.metadata->>'source_kind') AS source_kind,
+            se.chunk_text AS text,
+            (1 - (se.embedding <=> $2::vector))::text AS similarity
+          FROM semantic_embeddings se
+          LEFT JOIN brand_knowledge_sources bks ON bks.id = se.source_id
+          WHERE se.scope_type = 'knowledge_source'
+            AND se.embedding_model = $3
+            AND (
+              se.study_corpus_id = $1
+              OR ($4::uuid IS NOT NULL AND se.brand_id = $4::uuid)
+              OR ($5::uuid IS NOT NULL AND se.organization_id = $5::uuid)
+            )
+          ORDER BY se.embedding <=> $2::vector
+          LIMIT 8
+        `,
+        [
+          args.ctx.study_corpus_id,
+          vectorLiteral(embedded.embedding),
+          embeddingModel,
+          args.ctx.brand_id,
+          args.ctx.organization_id
+        ]
+      ),
+      pool.query<{
+        mention_id: string;
+        text: string;
+        platform: string | null;
+        published_at: string | null;
+        period_label: string | null;
+        similarity: string | null;
+      }>(
+        `
+          SELECT
+            se.mention_id::text AS mention_id,
+            COALESCE(NULLIF(m.text_clean, ''), se.chunk_text) AS text,
+            COALESCE(NULLIF(m.resolved_platform, ''), NULLIF(m.platform, ''), se.metadata->>'platform', 'unknown') AS platform,
+            COALESCE(m.published_at::date::text, se.metadata->>'published_at') AS published_at,
+            rp.label AS period_label,
+            (1 - (se.embedding <=> $2::vector))::text AS similarity
+          FROM semantic_embeddings se
+          LEFT JOIN mentions m ON m.id = se.mention_id
+          LEFT JOIN report_periods rp
+            ON rp.study_corpus_id = $1
+           AND rp.granularity = 'month'
+           AND m.published_at >= rp.period_start
+           AND m.published_at < (rp.period_end + interval '1 day')
+          WHERE se.scope_type = 'mention'
+            AND se.study_corpus_id = $1
+            AND se.embedding_model = $3
+            AND se.mention_id IS NOT NULL
+            AND (m.id IS NULL OR m.inclusion_status = 'included')
+          ORDER BY se.embedding <=> $2::vector
+          LIMIT 16
+        `,
+        [
+          args.ctx.study_corpus_id,
+          vectorLiteral(embedded.embedding),
+          embeddingModel
+        ]
+      )
+    ]);
+    return {
+      knowledge: knowledgeRows.rows.map((row) => ({
+        title: row.title,
+        source_kind: row.source_kind,
+        text: row.text.slice(0, 900),
+        similarity: numberOrNull(row.similarity)
+      })),
+      conversation: conversationRows.rows.map((row) => ({
+        mention_id: row.mention_id,
+        text: row.text.slice(0, 420),
+        platform: row.platform ?? "unknown",
+        published_at: row.published_at,
+        period_label: row.period_label,
+        similarity: numberOrNull(row.similarity)
+      }))
+    };
   } catch (error) {
-    console.warn(`[signal-pulse-rag] knowledge retrieval skipped: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
+    console.warn(`[signal-pulse-rag] semantic retrieval skipped: ${error instanceof Error ? error.message : String(error)}`);
+    return { knowledge: [], conversation: [] };
   }
 }
 
@@ -682,15 +742,21 @@ function buildMarketingBrief(analysisPlan: Record<string, unknown> | null, param
   }, 1200);
 }
 
-function buildClusterKnowledgeQuery(cluster: ClusterContextInput, marketingBrief: Record<string, unknown>) {
+function buildClusterSemanticQuery(cluster: ClusterContextInput, marketingContext: SignalPulseMarketingContext) {
   return [
+    "Signal Pulse semantic retrieval query.",
+    "Retrieve brand, campaign, claim, performance and conversation evidence that explains the cluster. Avoid generic keyword-only matches.",
+    `provisional_term: ${cluster.term}`,
+    `provisional_title: ${cluster.currentTitle}`,
     cluster.term,
     cluster.currentTitle,
     cluster.platforms.join(" "),
     cluster.discoveryPeriods.join(" "),
-    ...cluster.samples.slice(0, 3).map((sample) => sample.text),
-    JSON.stringify(marketingBrief).slice(0, 1200)
-  ].filter(Boolean).join("\n").slice(0, 3600);
+    ...cluster.samples.slice(0, 6).map((sample) => `${sample.published_at ?? "sin_fecha"} ${sample.platform}: ${sample.text}`),
+    JSON.stringify(marketingContext.marketing_brief).slice(0, 1600),
+    JSON.stringify(marketingContext.repeated_marketing_language.slice(0, 8)).slice(0, 1600),
+    JSON.stringify(marketingContext.marketing_activity_window.slice(-6)).slice(0, 2200)
+  ].filter(Boolean).join("\n").slice(0, 5200);
 }
 
 function summarizeWindowPattern(series: SignalPulseClusterPromptContext["period_series"]): SignalPulseClusterPromptContext["window_pattern"] {

@@ -447,6 +447,16 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
             text: "La campaña de mayo empuja confianza y respuesta rapida.",
             similarity: 0.82
           }
+        ],
+        conversation_matches: [
+          {
+            mention_id: "22222222-2222-4222-8222-222222222222",
+            text: "La póliza promete confianza, pero no entiendo quién paga si el choque fue en cadena.",
+            platform: "facebook",
+            published_at: "2026-05-20",
+            period_label: "2026-05",
+            similarity: 0.86
+          }
         ]
       }
     }
@@ -530,9 +540,11 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /ventana completa/);
   assert.match(prompt, /performance_records/);
   assert.match(prompt, /repeated_marketing_language/);
+  assert.match(prompt, /conversation_matches/);
   assert.match(prompt, /respuesta rapida/);
   assert.match(prompt, /sample ids/);
   assert.match(prompt, /11111111-1111-4111-8111-111111111111/);
+  assert.match(prompt, /22222222-2222-4222-8222-222222222222/);
   assert.match(prompt, /Riesgo creativo/);
   assert.match(prompt, /Gap de pauta/);
   assert.match(prompt, /Confianza auto/);

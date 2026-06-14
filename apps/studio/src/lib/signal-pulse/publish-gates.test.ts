@@ -22,6 +22,9 @@ function passingGates(overrides: Array<{ id: string; passed: boolean; detail: st
     { id: "move_has_evidence", passed: true, detail: "8 moves con evidencia." },
     { id: "move_is_marketing_action", passed: true, detail: "Acciones movibles por Marketing." },
     { id: "signal_actionability_review", passed: true, detail: "0 señales débiles." },
+    { id: "contextual_synthesis_complete", passed: true, detail: "Todas las señales tienen síntesis contextual." },
+    { id: "semantic_context_used", passed: true, detail: "Todas las señales usaron RAG semántico y performance." },
+    { id: "traceable_evidence_basis", passed: true, detail: "Todas las señales citan mention_id." },
     { id: "cost_within_budget", passed: true, detail: "Dentro del tope." },
     { id: "no_invented_numbers", passed: true, detail: "SQL only." },
     { id: "limitations_visible", passed: true, detail: "Limitaciones visibles." },
@@ -112,6 +115,25 @@ test("Signal Pulse publish gates block raw or weak signal names", () => {
   if (!result.ok) {
     assert.deepEqual(result.failedChecks, [
       { id: "signal_actionability_review", detail: "2 señales se nombraron como débiles o no relevantes." }
+    ]);
+  }
+});
+
+test("Signal Pulse publish gates block publishable signals without contextual intelligence", () => {
+  const result = validateSignalPulsePublishReadiness({
+    quality_gates: passingGates([
+      { id: "semantic_context_used", passed: false, detail: "2 señales sin RAG semántico." },
+      { id: "traceable_evidence_basis", passed: false, detail: "1 señal sin mention_id." }
+    ])
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("semantic_context_used"), true);
+  assert.equal(SIGNAL_PULSE_PUBLISH_BLOCKER_GATES.has("traceable_evidence_basis"), true);
+  if (!result.ok) {
+    assert.deepEqual(result.failedChecks, [
+      { id: "semantic_context_used", detail: "2 señales sin RAG semántico." },
+      { id: "traceable_evidence_basis", detail: "1 señal sin mention_id." }
     ]);
   }
 });

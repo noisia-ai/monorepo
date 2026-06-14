@@ -7,7 +7,8 @@ Fecha: 2026-06-14
 Signal Pulse dejó de tratar el corte mensual como análisis aislado. El worker ahora prepara una capa de contexto para que Claude nombre e interprete clusters con:
 
 - knowledge base del estudio/marca (`brand_knowledge_sources`);
-- retrieval semántico sobre embeddings cuando hay provider disponible (`semantic_embeddings`, Voyage/OpenAI);
+- retrieval semántico sobre knowledge base cuando hay provider disponible (`semantic_embeddings`, Voyage/OpenAI);
+- retrieval semántico sobre menciones del corpus (`scope_type='mention'`) para que Claude vea conversación relacionada más allá de los 6 snippets iniciales;
 - brief de marketing del wizard (`analysis_plan.marketing_brief`);
 - inventario de fuentes estructuradas (`data_sources`);
 - performance mensual de la ventana (`performance_records`);
@@ -40,6 +41,8 @@ Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también
 - `period_campaigns`: campañas, ads o piezas con pauta/performance en los meses donde el cluster estuvo activo.
 - `performance_events`: cambios estructurados de spend, impressions, clicks, engagement y CTR contra el mes previo.
 - `matching_creatives`: creativos cuyo texto sí matchea el territorio del cluster.
+- `knowledge_matches`: chunks de KB recuperados semánticamente con el query del cluster + brief + actividad de marketing.
+- `conversation_matches`: menciones relacionadas recuperadas por embeddings, con `mention_id`, plataforma, fecha, periodo y similitud.
 
 Claude debe usar estos datos para interpretar o descartar conexión; no puede declarar causalidad si la evidencia no lo sostiene.
 
@@ -51,6 +54,23 @@ Además, el contexto global de la corrida incluye:
 Esto permite detectar casos como "la marca lleva 5 meses empujando el mismo claim" o "la pauta habla de confianza pero la conversación pide claridad" sin convertir performance en mentions ni pedirle a Claude que invente números.
 
 Los snippets que llegan al naming incluyen `id`, `text`, `platform` y `published_at`. El prompt exige que `evidence_basis` cite sample ids/periodos usados, para que la lectura cualitativa quede trazable contra evidencia real y no sólo contra paráfrasis del modelo.
+
+La query semántica ya no se arma sólo con `term`. Incluye título provisional, samples, brief de marketing, lenguaje repetido y últimos meses de actividad para recuperar contexto útil de marca/campaña/conversación. La keyword provisional sólo identifica el cluster; el prompt le prohíbe a Claude convertirla en título.
+
+Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensions`:
+
+- `samples`
+- `conversation_matches`
+- `knowledge_matches`
+- `period_series_points`
+- `weekly_series_points`
+- `active_performance_months`
+- `period_campaigns`
+- `performance_events`
+- `matching_creatives`
+- `current_period`, `current_volume`, `active_periods`, `lifecycle_state`
+
+Ese resumen deja auditable si la señal publicable salió del flujo rico de inteligencia o de una lectura débil.
 
 Cada señal sintetizada guarda ahora `analysis_scope` en `canonical_signals.dimensions`:
 
@@ -115,6 +135,9 @@ Los prefijos `Barrera:` y `Trigger:` quedan tratados como no publicables en Revi
 - `current_cut_signal_presence` bloquea sólo con 0 señales publicables en el corte actual.
 - El objetivo editorial de 3 señales sigue vivo, pero no es bloqueo técnico automático.
 - `signal_actionability_review` ya no falla por backlog de señales en `needs_human_review`; falla si una señal marcada como `publish_candidate` conserva naming débil/no publicable.
+- `contextual_synthesis_complete` bloquea si una señal publicable no viene de `claude_cluster_naming_v3_signal_pulse_rag` o no trae `marketing_read`, `action_hint`, `evidence_basis`, `confidence_rationale`, `signal_role` y `analysis_scope`.
+- `semantic_context_used` bloquea si una señal publicable no tiene samples suficientes, RAG semántico de conversación/KB, serie de periodo y performance activa asociada.
+- `traceable_evidence_basis` bloquea si una señal publicable no cita al menos un `mention_id` real en `evidence_basis`.
 - Las señales históricas sin volumen en el corte sirven para patrones de ventana, pero no bloquean publicación por sí mismas.
 
 ## Marketing moves
@@ -144,5 +167,7 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 5. Revisar que `performance_connection` no fuerce causalidad.
 6. Revisar que `analysis_scope` distinga corte actual vs patrón de ventana.
 7. Revisar que `sp_rag_context` registre `marketing_activity_months` y `repeated_marketing_language` > 0 cuando haya performance/creativos.
-8. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
-9. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.
+8. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
+9. Revisar que `context_summary` esté persistido en cada señal publicable.
+10. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
+11. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.

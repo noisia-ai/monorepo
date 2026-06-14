@@ -1401,6 +1401,8 @@ async function applyClaudeSignalNamingBatch(args: {
             performance_months: args.marketingContext.performance_window.length,
             marketing_activity_months: args.marketingContext.marketing_activity_window.length,
             repeated_marketing_language: args.marketingContext.repeated_marketing_language.length,
+            knowledge_matches: args.batch.reduce((sum, item) => sum + item.context.knowledge_matches.length, 0),
+            conversation_matches: args.batch.reduce((sum, item) => sum + item.context.conversation_matches.length, 0),
             semantic_available: args.marketingContext.rag.semantic_available,
             embedding_model: args.marketingContext.rag.embedding_model
           },
@@ -1477,12 +1479,14 @@ async function persistClaudeSignalNamingRows(args: {
     const evidenceBasis = stringFrom(row.evidence_basis).slice(0, 420);
     const confidenceRationale = stringFrom(row.confidence_rationale).slice(0, 360);
     const actionability = normalizeActionability(row.actionability);
+    if (!source) continue;
+    const contextSummary = buildSignalPulseContextSummary(source);
     const excluded = actionability === "exclude" || isNonActionableSignalCopy({
       title,
       description,
       marketingRead,
       actionHint,
-      term: source?.term
+      term: source.term
     });
     if (!title || !description) continue;
     const result = await pool.query(
@@ -1511,6 +1515,7 @@ async function persistClaudeSignalNamingRows(args: {
           performance_connection: performanceConnection,
           evidence_basis: evidenceBasis,
           confidence_rationale: confidenceRationale,
+          context_summary: contextSummary,
           review_status: excluded ? "excluded_from_signal_pulse" : actionability === "review" ? "needs_human_review" : "publish_candidate",
           interpretation_source: "claude_cluster_naming_v3_signal_pulse_rag",
           cluster_first: true,
@@ -1523,6 +1528,24 @@ async function persistClaudeSignalNamingRows(args: {
     updated += result.rowCount ?? 0;
   }
   return updated;
+}
+
+function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload) {
+  return {
+    samples: source.samples.length,
+    conversation_matches: source.context.conversation_matches.length,
+    knowledge_matches: source.context.knowledge_matches.length,
+    period_series_points: source.context.period_series.length,
+    weekly_series_points: source.context.weekly_series?.length ?? 0,
+    active_performance_months: source.context.performance_context.active_months.length,
+    period_campaigns: source.context.performance_context.period_campaigns.length,
+    performance_events: source.context.performance_context.performance_events.length,
+    matching_creatives: source.context.performance_context.matching_creatives.length,
+    current_period: source.context.window_pattern.current_period,
+    current_volume: source.context.window_pattern.current_volume,
+    active_periods: source.context.window_pattern.active_periods,
+    lifecycle_state: source.context.window_pattern.lifecycle_state
+  };
 }
 
 async function maybeApplyClaudeSignalPulseInterpretation(args: {
@@ -2040,6 +2063,9 @@ async function buildSignalPulseQualityGates(args: {
     moves_without_action: number;
     signals_needing_human_review: number;
     weak_named_signals: number;
+    signals_without_contextual_synthesis: number;
+    signals_without_semantic_context: number;
+    signals_without_traceable_evidence: number;
     current_active_signals: number;
     inactive_current_signals: number;
     cost: string | null;
@@ -2115,6 +2141,49 @@ async function buildSignalPulseQualityGates(args: {
             )
         ) AS weak_named_signals,
         (
+          SELECT COUNT(*)::int
+          FROM canonical_signals cs
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+            AND (
+              COALESCE(cs.dimensions->>'interpretation_source', '') <> 'claude_cluster_naming_v3_signal_pulse_rag'
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'marketing_read', '')), '') IS NULL
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'action_hint', '')), '') IS NULL
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'evidence_basis', '')), '') IS NULL
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'confidence_rationale', '')), '') IS NULL
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'signal_role', '')), '') IS NULL
+              OR NULLIF(btrim(COALESCE(cs.dimensions->>'analysis_scope', '')), '') IS NULL
+            )
+        ) AS signals_without_contextual_synthesis,
+        (
+          SELECT COUNT(*)::int
+          FROM canonical_signals cs
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+            AND (
+              COALESCE(NULLIF(cs.dimensions #>> '{context_summary,samples}', '')::int, 0) < 3
+              OR (
+                COALESCE(NULLIF(cs.dimensions #>> '{context_summary,conversation_matches}', '')::int, 0)
+                + COALESCE(NULLIF(cs.dimensions #>> '{context_summary,knowledge_matches}', '')::int, 0)
+              ) < 1
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,period_series_points}', '')::int, 0) < 2
+              OR COALESCE(NULLIF(cs.dimensions #>> '{context_summary,active_performance_months}', '')::int, 0) < 1
+            )
+        ) AS signals_without_semantic_context,
+        (
+          SELECT COUNT(*)::int
+          FROM canonical_signals cs
+          WHERE cs.study_corpus_id = $1
+            AND cs.methodology_slug = 'signal-pulse'
+            AND cs.status = 'active'
+            AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+            AND COALESCE(cs.dimensions->>'evidence_basis', '') !~* '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+        ) AS signals_without_traceable_evidence,
+        (
           SELECT COUNT(DISTINCT cs.id)::int
           FROM canonical_signals cs
           JOIN signal_period_metrics spm ON spm.canonical_signal_id = cs.id
@@ -2184,6 +2253,9 @@ async function buildSignalPulseQualityGates(args: {
     gate("move_has_evidence", args.movesCount > 0 && Number(coverage?.moves_without_evidence ?? 0) === 0, `${coverage?.moves_without_evidence ?? 0} moves sin evidencia.`),
     gate("move_is_marketing_action", args.movesCount > 0 && Number(coverage?.moves_without_action ?? 0) === 0, `${coverage?.moves_without_action ?? 0} moves sin acción clara de marketing.`),
     gate("signal_actionability_review", Number(coverage?.weak_named_signals ?? 0) === 0, `${coverage?.weak_named_signals ?? 0} señales se nombraron como débiles o no relevantes.`),
+    gate("contextual_synthesis_complete", Number(coverage?.signals_without_contextual_synthesis ?? 0) === 0, `${coverage?.signals_without_contextual_synthesis ?? 0} señales publicables sin síntesis contextual Claude/RAG completa.`),
+    gate("semantic_context_used", Number(coverage?.signals_without_semantic_context ?? 0) === 0, `${coverage?.signals_without_semantic_context ?? 0} señales publicables sin RAG semántico, samples, serie de periodo o performance activa.`),
+    gate("traceable_evidence_basis", Number(coverage?.signals_without_traceable_evidence ?? 0) === 0, `${coverage?.signals_without_traceable_evidence ?? 0} señales publicables sin mention_id trazable en evidence_basis.`),
     gate("human_review_surface", true, `${coverage?.signals_needing_human_review ?? 0} señales requieren validación editorial en Review antes de publicar.`),
     gate("cost_within_budget", cost <= budgetCap, `Costo estimado USD ${round(cost, 4)} de ${budgetCap}.`),
     gate("no_invented_numbers", args.metricsCount > 0, "Los números visibles salen de tablas calculadas; la interpretación no inventa cifras."),
