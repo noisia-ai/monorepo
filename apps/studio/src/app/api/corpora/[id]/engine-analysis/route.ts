@@ -300,7 +300,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         return Response.json(
           {
             error: "signal_pulse_not_ready",
-            message: "Completa menciones, query pack y performance estructurada antes de correr Signal Pulse.",
+            message: "Completa menciones, query pack, knowledge/brief y performance estructurada antes de correr Signal Pulse.",
             signalPulseLaunchPlan
           },
           { status: 422 }

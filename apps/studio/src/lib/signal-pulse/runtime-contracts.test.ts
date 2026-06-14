@@ -132,10 +132,12 @@ test("Signal Pulse launch plan exposes pre-run cost, budget cap and structured c
   assert.equal(plan.coverage.performanceRecords, 144);
   assert.equal(plan.coverage.semanticMentionEmbeddings, 1300);
   assert.equal(plan.coverage.semanticKnowledgeEmbeddings, 24);
+  assert.equal(plan.coverage.marketingBriefSignals, 0);
   assert.deepEqual(plan.warnings, []);
 
   const checklist = buildSignalPulseLaunchChecklist(plan);
-  assert.deepEqual(checklist.map((item) => item.passed), [true, true, true, true]);
+  assert.deepEqual(checklist.map((item) => item.passed), [true, true, true, true, true]);
+  assert.equal(checklist.find((item) => item.id === "knowledge")?.value, "4 fuentes · 0 señales de brief");
   assert.equal(checklist.find((item) => item.id === "performance")?.value, "144 registros");
   assert.match(checklist.find((item) => item.id === "budget")?.detail ?? "", /Cluster-first/);
 });
@@ -156,13 +158,68 @@ test("Signal Pulse launch plan warns before running when required coverage is mi
   assert.equal(plan.windowMonths, 12);
   assert.equal(plan.status, "blocked");
   assert.match(plan.warnings.join(" "), /menciones incluidas/);
+  assert.match(plan.warnings.join(" "), /knowledge base procesada/);
   assert.match(plan.warnings.join(" "), /performance estructurada/);
   assert.match(plan.warnings.join(" "), /query pack Signal Pulse/);
 
   const checklist = buildSignalPulseLaunchChecklist(plan);
-  assert.deepEqual(checklist.map((item) => item.passed), [false, false, false, true]);
+  assert.deepEqual(checklist.map((item) => item.passed), [false, false, false, false, true]);
   assert.match(checklist.find((item) => item.id === "conversation")?.detail ?? "", /Carga o aprueba menciones/);
+  assert.match(checklist.find((item) => item.id === "knowledge")?.detail ?? "", /knowledge base/);
   assert.match(checklist.find((item) => item.id === "performance")?.detail ?? "", /performance_records/);
+});
+
+test("Signal Pulse launch plan allows a rich marketing brief when no knowledge source has been processed", () => {
+  const plan = buildSignalPulseLaunchPlan({
+    analysisPlan: {
+      budget_cap_usd: 5,
+      business_question: "Entender si la campaña de renovación está abriendo dudas o fricciones de contratación.",
+      marketing_brief: {
+        objective: "Encontrar aprendizajes accionables para el siguiente corte de pauta.",
+        active_campaigns: ["Renovación seguros auto febrero 2026"],
+        allowed_claims: "Cercanía, servicio claro y atención personalizada."
+      }
+    },
+    targetWindowMonths: 12,
+    coverage: {
+      conversationMentions: 1200,
+      signalPulseMentions: 900,
+      performanceRecords: 144,
+      queryPacks: 3,
+      semanticMentionEmbeddings: 1200,
+      semanticKnowledgeEmbeddings: 0,
+      knowledgeSources: 0
+    }
+  });
+
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.coverage.marketingBriefSignals, 4);
+  assert.deepEqual(plan.warnings, []);
+  assert.equal(buildSignalPulseLaunchChecklist(plan).find((item) => item.id === "knowledge")?.passed, true);
+});
+
+test("Signal Pulse launch plan blocks sparse briefs when no knowledge source has been processed", () => {
+  const plan = buildSignalPulseLaunchPlan({
+    analysisPlan: {
+      budget_cap_usd: 5,
+      marketing_brief: { objective: "Defender presupuesto de pauta" }
+    },
+    targetWindowMonths: 12,
+    coverage: {
+      conversationMentions: 1200,
+      signalPulseMentions: 900,
+      performanceRecords: 144,
+      queryPacks: 3,
+      semanticMentionEmbeddings: 1200,
+      semanticKnowledgeEmbeddings: 0,
+      knowledgeSources: 0
+    }
+  });
+
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.coverage.marketingBriefSignals, 1);
+  assert.match(plan.warnings.join(" "), /brief de marketing suficiente/);
+  assert.equal(buildSignalPulseLaunchChecklist(plan).find((item) => item.id === "knowledge")?.passed, false);
 });
 
 test("Signal Pulse launch plan blocks incomplete paid organic coverage", () => {

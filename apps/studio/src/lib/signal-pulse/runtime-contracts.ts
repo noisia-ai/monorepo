@@ -1,4 +1,5 @@
 import type { EngineMethodologyOption } from "@/lib/engine/methodology-options";
+import { assessSignalPulseKnowledgeContext } from "@noisia/query-engine";
 
 export const SIGNAL_PULSE_SLUG = "signal-pulse";
 
@@ -61,6 +62,7 @@ export type SignalPulseLaunchPlan = {
     semanticMentionEmbeddings: number;
     semanticKnowledgeEmbeddings: number;
     knowledgeSources: number;
+    marketingBriefSignals: number;
   };
   warnings: string[];
 };
@@ -72,7 +74,7 @@ export type SignalPulseRunParams = {
 };
 
 export type SignalPulseLaunchChecklistItem = {
-  id: "conversation" | "query_pack" | "performance" | "budget";
+  id: "conversation" | "query_pack" | "knowledge" | "performance" | "budget";
   label: string;
   value: string;
   passed: boolean;
@@ -161,7 +163,7 @@ export function buildSignalPulseLaunchPlan(args: {
   });
   const budgetCapUsd = runParams.budget_cap_usd;
   const windowMonths = runParams.window_months;
-  const normalizedCoverage = {
+  const baseCoverage = {
     conversationMentions: wholeNumber(coverage.conversationMentions),
     signalPulseMentions: wholeNumber(coverage.signalPulseMentions),
     performanceRecords: wholeNumber(coverage.performanceRecords),
@@ -170,9 +172,21 @@ export function buildSignalPulseLaunchPlan(args: {
     semanticKnowledgeEmbeddings: wholeNumber(coverage.semanticKnowledgeEmbeddings),
     knowledgeSources: wholeNumber(coverage.knowledgeSources)
   };
+  const knowledgeContext = assessSignalPulseKnowledgeContext({
+    analysisPlan: args.analysisPlan,
+    requestParams: args.requestParams,
+    knowledgeSources: baseCoverage.knowledgeSources
+  });
+  const normalizedCoverage = {
+    ...baseCoverage,
+    marketingBriefSignals: knowledgeContext.marketingBriefSignals
+  };
   const warnings: string[] = [];
   if (normalizedCoverage.conversationMentions === 0) warnings.push("No hay menciones incluidas para clusterizar.");
   if (normalizedCoverage.signalPulseMentions === 0) warnings.push("Falta cobertura atribuida al query pack de Signal Pulse.");
+  if (!knowledgeContext.knowledgeContextReady) {
+    warnings.push("Falta knowledge base procesada o brief de marketing suficiente; Signal Pulse necesita marca, campañas, claims, audiencias o fechas clave para interpretar clusters.");
+  }
   if (normalizedCoverage.performanceRecords === 0) warnings.push("Sube performance estructurada de 12 meses antes de leer paid/organic.");
   if (normalizedCoverage.queryPacks === 0) warnings.push("Materializa el query pack Signal Pulse antes de correr.");
   if (normalizedCoverage.signalPulseMentions > 0 && normalizedCoverage.semanticMentionEmbeddings === 0) {
@@ -236,6 +250,15 @@ export function buildSignalPulseLaunchChecklist(plan: SignalPulseLaunchPlan): Si
       detail: plan.coverage.signalPulseMentions > 0 && plan.coverage.queryPacks > 0
         ? `${formatWhole(plan.coverage.queryPacks)} consultas materializadas para el corte.`
         : "Materializa el query pack Signal Pulse para atribuir la cobertura."
+    },
+    {
+      id: "knowledge",
+      label: "Knowledge context",
+      value: `${formatWhole(plan.coverage.knowledgeSources)} fuentes · ${formatWhole(plan.coverage.marketingBriefSignals)} señales de brief`,
+      passed: plan.coverage.knowledgeSources > 0 || plan.coverage.marketingBriefSignals >= 2,
+      detail: plan.coverage.knowledgeSources > 0 || plan.coverage.marketingBriefSignals >= 2
+        ? "Marca, campañas y brief disponibles para interpretar clusters."
+        : "Procesa knowledge base o completa brief con objetivo, campañas, claims, audiencias y fechas clave."
     },
     {
       id: "performance",

@@ -29,6 +29,19 @@ El pre-run ahora también valida que el RAG esté listo. Al aprobar un corpus, S
 
 El contrato mental queda explícito: Signal Pulse es una capa de inteligencia sobre 12 meses de actividad de marketing, performance y conversación; el reporte mensual es sólo una vista publicable. Si se cargan 12 meses, el sistema debe explotarlos para detectar repetición, saturación, reactivaciones, anomalías, ausencia de recepción, señales emergentes y conexiones/no-conexiones con acciones de marketing.
 
+Signal Pulse no es una versión light de Triggers & Barriers. Puede reutilizar el músculo cualitativo de Noisia (KB, RAG, contexto de marca, lenguaje del usuario y síntesis editorial), pero la promesa comercial es distinta: aplicar una capa de inteligencia sobre lo que el cliente publicó, pautó, midió y observó alrededor. El cliente ya puede tener dashboards de social, listening de crisis o performance; Noisia debe decir qué aprendió de la relación entre campaña, industria, marca, competencia, búsqueda/reviews/ecomm cuando existan, y conversación viva.
+
+Por eso el pre-run ahora exige **knowledge context**: al menos knowledge base procesada o un brief de marketing suficientemente lleno. Un objetivo suelto como "defender presupuesto de pauta" no basta. Sin KB, el brief debe aportar varias señales accionables (por ejemplo objetivo + campañas/territorios activos + claims permitidos/prohibidos + audiencias + fechas o eventos clave). Studio lo muestra en el checklist de corrida y `sp_readiness` lo bloquea con `missing_knowledge_context`.
+
+La lectura correcta es:
+
+- usar performance/brief como mapa de investigación, no como texto libre;
+- buscar conversación alrededor de campañas, caídas, picos, claims repetidos y fechas clave;
+- analizar mes a mes y también la ventana completa;
+- publicar un corte mensual filtrable sin perder patrones históricos;
+- no contar nada si no hay evidencia suficiente;
+- no vender causalidad si sólo hay coexistencia temporal.
+
 ## Corte actual vs ventana completa
 
 Signal Pulse ahora separa dos planos:
@@ -171,6 +184,7 @@ Los prefijos `Barrera:` y `Trigger:` quedan tratados como no publicables en Revi
 - `performance_connection_qualified` bloquea si `performance_connection` no empieza con `connected:`, `no_connection:` o `insufficient_data:`, o si declara `connected:` sin overlap directo (`evidence_overlap`, `knowledge_or_brief_overlap` o `repeated_marketing_language_overlap`) en los matches de marketing.
 - `traceable_evidence_basis` bloquea si una señal publicable no cita al menos un `mention_id` real en `evidence_basis`.
 - Las señales históricas sin volumen en el corte sirven para patrones de ventana, pero no bloquean publicación por sí mismas.
+- `sp_readiness` bloquea la corrida antes de gastar si no hay `knowledge_sources > 0` ni al menos dos señales sustantivas de brief (`missing_knowledge_context`).
 
 ## Marketing moves
 
@@ -195,14 +209,15 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 
 1. Correr Signal Pulse con workers activos y 12 meses de performance estructurada.
 2. Confirmar antes de correr que el launch plan trae `semanticMentionEmbeddings > 0` y, si hay KB procesada, `semanticKnowledgeEmbeddings > 0`.
-3. Confirmar en `sp_readiness` que no aparecen `missing_semantic_mention_embeddings`, `missing_semantic_knowledge_embeddings` ni `missing_embedding_provider`.
-4. Confirmar en el ledger evento `sp_rag_context` y eventos `sp_name_signals`.
-5. Revisar que las señales publicables no sean keywords crudas como `Seguro`, `Choque`, `Aseguradora`.
-6. Revisar que cada señal mencione periodo actual o patrón de ventana cuando sea relevante.
-7. Revisar que `performance_connection` no fuerce causalidad.
-8. Revisar que `analysis_scope` distinga corte actual vs patrón de ventana.
-9. Revisar que `sp_rag_context` registre `marketing_activity_months` y `repeated_marketing_language` > 0 cuando haya performance/creativos.
-10. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
-11. Revisar que `context_summary` esté persistido en cada señal publicable.
-12. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
-13. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.
+3. Confirmar que el launch plan marca `Knowledge context` como aprobado: KB procesada o brief suficiente.
+4. Confirmar en `sp_readiness` que no aparecen `missing_knowledge_context`, `missing_semantic_mention_embeddings`, `missing_semantic_knowledge_embeddings` ni `missing_embedding_provider`.
+5. Confirmar en el ledger evento `sp_rag_context` y eventos `sp_name_signals`.
+6. Revisar que las señales publicables no sean keywords crudas como `Seguro`, `Choque`, `Aseguradora`.
+7. Revisar que cada señal mencione periodo actual o patrón de ventana cuando sea relevante.
+8. Revisar que `performance_connection` no fuerce causalidad.
+9. Revisar que `analysis_scope` distinga corte actual vs patrón de ventana.
+10. Revisar que `sp_rag_context` registre `marketing_activity_months` y `repeated_marketing_language` > 0 cuando haya performance/creativos.
+11. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
+12. Revisar que `context_summary` esté persistido en cada señal publicable.
+13. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
+14. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.

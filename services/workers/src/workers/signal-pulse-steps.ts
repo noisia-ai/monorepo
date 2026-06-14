@@ -4,6 +4,7 @@ import type { Job } from "bullmq";
 import type { PoolClient } from "pg";
 
 import {
+  assessSignalPulseKnowledgeContext,
   buildMonthlyReportPeriods,
   buildWeeklyReportPeriods,
   calculateImpactV1,
@@ -154,9 +155,15 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       [ctx.study_corpus_id]
     )).rows;
 
+    const knowledgeContext = assessSignalPulseKnowledgeContext({
+      analysisPlan: ctx.analysis_plan,
+      requestParams: ctx.params,
+      knowledgeSources: coverage?.knowledge_sources
+    });
     const readinessReasons = [
       Number(coverage?.conversation_mentions ?? 0) <= 0 ? "missing_conversation" : null,
       Number(coverage?.signal_pulse_mentions ?? 0) <= 0 ? "missing_signal_pulse_query_pack_coverage" : null,
+      knowledgeContext.knowledgeContextReady ? null : "missing_knowledge_context",
       Number(coverage?.performance_records ?? 0) <= 0 ? "missing_structured_performance" : null,
       Number(coverage?.query_packs ?? 0) <= 0 ? "missing_signal_pulse_query_pack" : null,
       hasEmbeddingProvider() ? null : "missing_embedding_provider",
@@ -173,6 +180,9 @@ export async function signalPulseReadinessJob(job: Job<SignalPulseStepJobData>) 
       semantic_mention_embeddings: Number(coverage?.semantic_mention_embeddings ?? 0),
       semantic_knowledge_embeddings: Number(coverage?.semantic_knowledge_embeddings ?? 0),
       knowledge_sources: Number(coverage?.knowledge_sources ?? 0),
+      marketing_brief_signals: knowledgeContext.marketingBriefSignals,
+      knowledge_context_ready: knowledgeContext.knowledgeContextReady,
+      knowledge_context_reasons: knowledgeContext.reasons,
       budget_cap_usd: budgetCapUsd,
       estimated_cost_usd: estimatedCostUsd,
       cluster_first: true,
