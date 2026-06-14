@@ -63,6 +63,7 @@ export type SignalPulseLaunchPlan = {
     semanticKnowledgeEmbeddings: number;
     knowledgeSources: number;
     marketingBriefSignals: number;
+    marketingBriefCategories: string[];
   };
   warnings: string[];
 };
@@ -179,13 +180,14 @@ export function buildSignalPulseLaunchPlan(args: {
   });
   const normalizedCoverage = {
     ...baseCoverage,
-    marketingBriefSignals: knowledgeContext.marketingBriefSignals
+    marketingBriefSignals: knowledgeContext.marketingBriefSignals,
+    marketingBriefCategories: knowledgeContext.marketingBriefCategories
   };
   const warnings: string[] = [];
   if (normalizedCoverage.conversationMentions === 0) warnings.push("No hay menciones incluidas para clusterizar.");
   if (normalizedCoverage.signalPulseMentions === 0) warnings.push("Falta cobertura atribuida al query pack de Signal Pulse.");
   if (!knowledgeContext.knowledgeContextReady) {
-    warnings.push("Falta knowledge base procesada o brief de marketing suficiente; Signal Pulse necesita marca, campañas, claims, audiencias o fechas clave para interpretar clusters.");
+    warnings.push("Falta knowledge base procesada o brief de marketing suficiente; Signal Pulse necesita objetivo, marca/categoría, campañas/claims y audiencias, fechas o resultados para interpretar clusters.");
   }
   if (normalizedCoverage.performanceRecords === 0) warnings.push("Sube performance estructurada de 12 meses antes de leer paid/organic.");
   if (normalizedCoverage.queryPacks === 0) warnings.push("Materializa el query pack Signal Pulse antes de correr.");

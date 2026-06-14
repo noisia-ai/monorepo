@@ -17,7 +17,9 @@ export type SignalPulseLifecycle = "new" | "emerging" | "reappeared" | "accelera
 export type SignalPulseKnowledgeContextAssessment = {
   knowledgeSources: number;
   marketingBriefSignals: number;
+  marketingBriefCategories: string[];
   minimumBriefSignals: number;
+  minimumBriefCategories: number;
   knowledgeContextReady: boolean;
   reasons: string[];
 };
@@ -32,27 +34,81 @@ const SIGNAL_PULSE_BRIEF_SIGNAL_KEYS = new Set([
   "business_question",
   "campaign_results",
   "campaigns",
+  "campaign_calendar",
   "category_context",
   "claims",
+  "allowed_claims",
   "claims_allowed",
   "claims_prohibited",
   "competitive_context",
   "competitors",
   "context",
   "creative_territories",
+  "ecomm",
+  "ecommerce",
   "key_dates",
   "legal_constraints",
   "marketing_objective",
   "marketing_objectives",
+  "monthly_brief",
   "objective",
   "objectives",
+  "organic_activity",
+  "paid_activity",
   "performance_notes",
   "prohibited_claims",
+  "reviews",
   "results",
+  "sales",
+  "search",
+  "search_data",
   "target_audience",
   "territories",
   "tone"
 ]);
+
+const SIGNAL_PULSE_BRIEF_CATEGORY_KEYS: Record<string, string> = {
+  active_campaigns: "marketing_activity",
+  audience_segment: "audience_calendar_results",
+  audiences: "audience_calendar_results",
+  background: "brand_market_context",
+  brand_context: "brand_market_context",
+  brand_tone: "brand_market_context",
+  business_question: "business_objective",
+  campaign_calendar: "audience_calendar_results",
+  campaign_results: "audience_calendar_results",
+  campaigns: "marketing_activity",
+  category_context: "brand_market_context",
+  claims: "marketing_activity",
+  allowed_claims: "marketing_activity",
+  claims_allowed: "marketing_activity",
+  claims_prohibited: "marketing_activity",
+  competitive_context: "brand_market_context",
+  competitors: "brand_market_context",
+  context: "brand_market_context",
+  creative_territories: "marketing_activity",
+  ecomm: "audience_calendar_results",
+  ecommerce: "audience_calendar_results",
+  key_dates: "audience_calendar_results",
+  legal_constraints: "marketing_activity",
+  marketing_objective: "business_objective",
+  marketing_objectives: "business_objective",
+  monthly_brief: "business_objective",
+  objective: "business_objective",
+  objectives: "business_objective",
+  organic_activity: "marketing_activity",
+  paid_activity: "marketing_activity",
+  performance_notes: "audience_calendar_results",
+  prohibited_claims: "marketing_activity",
+  reviews: "audience_calendar_results",
+  results: "audience_calendar_results",
+  sales: "audience_calendar_results",
+  search: "audience_calendar_results",
+  search_data: "audience_calendar_results",
+  target_audience: "audience_calendar_results",
+  territories: "marketing_activity",
+  tone: "brand_market_context"
+};
 
 const SIGNAL_PULSE_BRIEF_IGNORED_KEYS = new Set([
   "budget_cap_usd",
@@ -144,20 +200,36 @@ export function assessSignalPulseKnowledgeContext(args: {
   requestParams?: unknown;
   knowledgeSources?: unknown;
   minimumBriefSignals?: unknown;
+  minimumBriefCategories?: unknown;
 }): SignalPulseKnowledgeContextAssessment {
   const knowledgeSources = wholeNumberValue(args.knowledgeSources);
-  const minimumBriefSignals = Math.max(1, wholeNumberValue(args.minimumBriefSignals) || 2);
+  const minimumBriefSignals = Math.max(1, wholeNumberValue(args.minimumBriefSignals) || 4);
+  const minimumBriefCategories = Math.max(1, wholeNumberValue(args.minimumBriefCategories) || 3);
   const marketingBriefSignals = countSignalPulseMarketingBriefSignals({
     analysisPlan: args.analysisPlan,
     requestParams: args.requestParams
   });
-  const knowledgeContextReady = knowledgeSources > 0 || marketingBriefSignals >= minimumBriefSignals;
+  const marketingBriefCategories = collectSignalPulseMarketingBriefCategories({
+    analysisPlan: args.analysisPlan,
+    requestParams: args.requestParams
+  });
+  const briefContextReady = marketingBriefSignals >= minimumBriefSignals
+    && marketingBriefCategories.length >= minimumBriefCategories;
+  const knowledgeContextReady = knowledgeSources > 0 || briefContextReady;
+  const reasons = [];
+  if (!knowledgeContextReady) {
+    reasons.push("missing_knowledge_context");
+    if (marketingBriefSignals < minimumBriefSignals) reasons.push("missing_marketing_brief_depth");
+    if (marketingBriefCategories.length < minimumBriefCategories) reasons.push("missing_marketing_brief_categories");
+  }
   return {
     knowledgeSources,
     marketingBriefSignals,
+    marketingBriefCategories,
     minimumBriefSignals,
+    minimumBriefCategories,
     knowledgeContextReady,
-    reasons: knowledgeContextReady ? [] : ["missing_knowledge_context"]
+    reasons
   };
 }
 
@@ -171,6 +243,17 @@ export function countSignalPulseMarketingBriefSignals(args: {
     count += countMarketingBriefSignalsFromRecord(asPlainRecord(source), seen, "root");
   }
   return count;
+}
+
+export function collectSignalPulseMarketingBriefCategories(args: {
+  analysisPlan?: unknown;
+  requestParams?: unknown;
+}): string[] {
+  const categories = new Set<string>();
+  for (const source of [args.analysisPlan, args.requestParams]) {
+    collectMarketingBriefCategoriesFromRecord(asPlainRecord(source), categories);
+  }
+  return Array.from(categories).sort();
 }
 
 function toUtcDate(value: string | Date) {
@@ -241,6 +324,22 @@ function countMarketingBriefObjectSignals(record: Record<string, unknown>, seen:
   }
 
   return count;
+}
+
+function collectMarketingBriefCategoriesFromRecord(record: Record<string, unknown>, categories: Set<string>) {
+  for (const [key, value] of Object.entries(record)) {
+    const normalizedKey = normalizeBriefKey(key);
+    if (!normalizedKey || SIGNAL_PULSE_BRIEF_IGNORED_KEYS.has(normalizedKey)) continue;
+
+    if (normalizedKey === "marketing_brief") {
+      collectMarketingBriefCategoriesFromRecord(asPlainRecord(value), categories);
+      continue;
+    }
+
+    if (!hasSubstantiveBriefValue(value)) continue;
+    const category = SIGNAL_PULSE_BRIEF_CATEGORY_KEYS[normalizedKey];
+    if (category) categories.add(category);
+  }
 }
 
 function addBriefSignal(seen: Set<string>, key: string, weight: number) {

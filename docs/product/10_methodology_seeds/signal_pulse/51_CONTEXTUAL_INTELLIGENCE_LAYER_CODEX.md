@@ -67,6 +67,8 @@ Las métricas por periodo y el contexto que recibe Claude también dejaron de de
 
 Para auditarlo, `canonical_signals.dimensions.monthly_series[*].match_strategy`, `canonical_signals.dimensions.period_metric_match_strategy`, `signal_observations.metrics.match_strategy` y `signal_observation_evidence.metadata.match_strategy` indican si el número salió de `semantic_neighborhood_v1`, `cluster_member_ids` o `term_like_fallback`.
 
+El preflight de conocimiento también quedó más estricto. Una knowledge base procesada sigue siendo suficiente, pero si el estudio intenta correr sólo con brief, el brief debe tener profundidad y diversidad: al menos 4 señales sustantivas y 3 familias entre `business_objective`, `brand_market_context`, `marketing_activity` y `audience_calendar_results`. Esto evita corridas con "objetivo + campaña" que luego fuerzan a Claude a escribir sin contexto real de marca, categoría, claims, audiencia, calendario o resultados. El readiness guarda `marketing_brief_signals`, `marketing_brief_categories`, `minimum_marketing_brief_signals` y `minimum_marketing_brief_categories` para auditar por qué bloqueó o pasó.
+
 Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también:
 
 - `period_campaigns`: campañas, ads o piezas con pauta/performance en los meses donde el cluster estuvo activo.

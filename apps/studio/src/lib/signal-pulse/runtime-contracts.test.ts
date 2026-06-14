@@ -176,8 +176,10 @@ test("Signal Pulse launch plan allows a rich marketing brief when no knowledge s
       business_question: "Entender si la campaña de renovación está abriendo dudas o fricciones de contratación.",
       marketing_brief: {
         objective: "Encontrar aprendizajes accionables para el siguiente corte de pauta.",
+        brand_context: "Aseguradora regional que necesita sostener confianza y claridad frente a competidores nacionales.",
         active_campaigns: ["Renovación seguros auto febrero 2026"],
-        allowed_claims: "Cercanía, servicio claro y atención personalizada."
+        allowed_claims: "Cercanía, servicio claro y atención personalizada.",
+        target_audience: "Personas renovando seguro de auto que comparan precio, cobertura y resolución."
       }
     },
     targetWindowMonths: 12,
@@ -193,7 +195,13 @@ test("Signal Pulse launch plan allows a rich marketing brief when no knowledge s
   });
 
   assert.equal(plan.status, "ready");
-  assert.equal(plan.coverage.marketingBriefSignals, 4);
+  assert.equal(plan.coverage.marketingBriefSignals, 6);
+  assert.deepEqual(plan.coverage.marketingBriefCategories, [
+    "audience_calendar_results",
+    "brand_market_context",
+    "business_objective",
+    "marketing_activity"
+  ]);
   assert.deepEqual(plan.warnings, []);
   assert.equal(buildSignalPulseLaunchChecklist(plan).find((item) => item.id === "knowledge")?.passed, true);
 });
@@ -218,6 +226,7 @@ test("Signal Pulse launch plan blocks sparse briefs when no knowledge source has
 
   assert.equal(plan.status, "blocked");
   assert.equal(plan.coverage.marketingBriefSignals, 1);
+  assert.deepEqual(plan.coverage.marketingBriefCategories, ["business_objective"]);
   assert.match(plan.warnings.join(" "), /brief de marketing suficiente/);
   assert.equal(buildSignalPulseLaunchChecklist(plan).find((item) => item.id === "knowledge")?.passed, false);
 });

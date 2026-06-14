@@ -7,6 +7,7 @@ import {
   buildWeeklyReportPeriods,
   calculateImpactV1,
   classifySignalPulseLifecycle,
+  collectSignalPulseMarketingBriefCategories,
   countSignalPulseMarketingBriefSignals
 } from "./signal-pulse";
 
@@ -53,6 +54,7 @@ test("Signal Pulse knowledge context is ready when processed knowledge base exis
   assert.equal(assessment.knowledgeContextReady, true);
   assert.equal(assessment.knowledgeSources, 3);
   assert.equal(assessment.marketingBriefSignals, 1);
+  assert.deepEqual(assessment.marketingBriefCategories, ["business_objective"]);
   assert.deepEqual(assessment.reasons, []);
 });
 
@@ -62,15 +64,24 @@ test("Signal Pulse knowledge context accepts a complete marketing brief without 
       business_question: "Entender qué señales activó la campaña de renovación en seguros de auto.",
       marketing_brief: {
         objective: "Defender la inversión mensual de pauta con aprendizajes accionables.",
+        brand_context: "Aseguradora regional que compite por cercanía, claridad y confianza frente a jugadores nacionales.",
         active_campaigns: ["Renovación 2026 en Facebook y TikTok"],
-        allowed_claims: "Cercanía, servicio personalizado y claridad al contratar."
+        allowed_claims: "Cercanía, servicio personalizado y claridad al contratar.",
+        target_audience: "Conductores que comparan cobertura, precio y velocidad de respuesta antes de renovar."
       }
     },
     knowledgeSources: 0
   });
 
   assert.equal(assessment.knowledgeContextReady, true);
-  assert.equal(assessment.marketingBriefSignals, 4);
+  assert.equal(assessment.marketingBriefSignals, 6);
+  assert.deepEqual(assessment.marketingBriefCategories, [
+    "audience_calendar_results",
+    "brand_market_context",
+    "business_objective",
+    "marketing_activity"
+  ]);
+  assert.deepEqual(assessment.reasons, []);
 });
 
 test("Signal Pulse knowledge context blocks objective-only briefs", () => {
@@ -81,7 +92,34 @@ test("Signal Pulse knowledge context blocks objective-only briefs", () => {
 
   assert.equal(assessment.knowledgeContextReady, false);
   assert.equal(assessment.marketingBriefSignals, 1);
-  assert.deepEqual(assessment.reasons, ["missing_knowledge_context"]);
+  assert.deepEqual(assessment.marketingBriefCategories, ["business_objective"]);
+  assert.deepEqual(assessment.reasons, [
+    "missing_knowledge_context",
+    "missing_marketing_brief_depth",
+    "missing_marketing_brief_categories"
+  ]);
+});
+
+test("Signal Pulse knowledge context requires diverse brief categories without knowledge sources", () => {
+  const assessment = assessSignalPulseKnowledgeContext({
+    analysisPlan: {
+      marketing_brief: {
+        active_campaigns: ["Always-on seguros auto"],
+        allowed_claims: "Cercanía y rapidez",
+        prohibited_claims: "No prometer ahorro garantizado",
+        paid_activity: "Pauta activa en Meta y TikTok con objetivo de tráfico."
+      }
+    },
+    knowledgeSources: 0
+  });
+
+  assert.equal(assessment.knowledgeContextReady, false);
+  assert.equal(assessment.marketingBriefSignals, 4);
+  assert.deepEqual(assessment.marketingBriefCategories, ["marketing_activity"]);
+  assert.deepEqual(assessment.reasons, [
+    "missing_knowledge_context",
+    "missing_marketing_brief_categories"
+  ]);
 });
 
 test("Signal Pulse brief signal count ignores placeholders and budget-only fields", () => {
@@ -103,5 +141,24 @@ test("Signal Pulse brief signal count ignores placeholders and budget-only field
       }
     }),
     2
+  );
+  assert.deepEqual(
+    collectSignalPulseMarketingBriefCategories({
+      analysisPlan: {
+        budget_cap_usd: 20,
+        marketing_brief: {
+          objective: "Prueba",
+          target_window_months: 12,
+          active_campaigns: [],
+          prohibited_claims: "No prometer ahorro garantizado."
+        }
+      },
+      requestParams: {
+        marketing_brief: {
+          key_dates: "Caída de engagement en marzo 2026 después de campaña de renovación."
+        }
+      }
+    }),
+    ["audience_calendar_results", "marketing_activity"]
   );
 });
