@@ -157,6 +157,7 @@ Para exploración/dashboard, los endpoints publicados aceptan filtros:
 - `source_type=organic|paid|reviews|search|...`
 - `scope=brand|competitor|category|...`
 - `analysis_scope=current_cut|window_pattern|mixed`
+- `pattern_flag=new_in_cut|repeated_window|saturation_candidate|reactivated|accelerating|declining|inactive_in_cut|weekly_spike|marketing_overlap|temporal_marketing_context|conversation_only`
 - `performance_event=...`
 - `move_type=...`
 - `status=...`

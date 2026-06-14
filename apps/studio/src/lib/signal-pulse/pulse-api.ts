@@ -30,6 +30,7 @@ export type PulseApiFilters = {
   sourceType?: string;
   scope?: string;
   analysisScope?: string;
+  patternFlag?: string;
   performanceEvent?: string;
   status?: string;
   q?: string;
@@ -213,6 +214,7 @@ export function pulseApiFiltersFromSearchParams(searchParams: URLSearchParams): 
     sourceType: queryValue(searchParams, "source_type", "source_kind", "data_source"),
     scope: queryValue(searchParams, "scope", "entity_scope"),
     analysisScope: queryValue(searchParams, "analysis_scope"),
+    patternFlag: queryValue(searchParams, "pattern_flag", "pattern", "signal_pattern"),
     performanceEvent: queryValue(searchParams, "performance_event", "event"),
     status: queryValue(searchParams, "status"),
     q: queryValue(searchParams, "q")
@@ -261,6 +263,7 @@ function normalizePulseFilters(filters: PulseApiFilters | null | undefined): Pul
     sourceType: normalizeFilterValue(filters?.sourceType),
     scope: normalizeFilterValue(filters?.scope),
     analysisScope: normalizeAnalysisScopeFilter(filters?.analysisScope),
+    patternFlag: normalizePatternFlagFilter(filters?.patternFlag),
     performanceEvent: normalizeFilterValue(filters?.performanceEvent),
     status: normalizeFilterValue(filters?.status),
     q: normalizeFilterValue(filters?.q)
@@ -285,6 +288,7 @@ function hasActivePulseFilters(filters: PulseApiFilters) {
     filters.sourceType ||
     filters.scope ||
     filters.analysisScope ||
+    filters.patternFlag ||
     filters.performanceEvent ||
     filters.status ||
     filters.q
@@ -304,6 +308,7 @@ function filtersForResponse(filters: PulseApiFilters) {
     source_type: filters.sourceType || null,
     scope: filters.scope || null,
     analysis_scope: filters.analysisScope || null,
+    pattern_flag: filters.patternFlag || null,
     performance_event: filters.performanceEvent || null,
     status: filters.status || null,
     q: filters.q || null
@@ -321,6 +326,8 @@ function enrichSignal(signal: JsonRecord, args: { periods: JsonRecord[]; evidenc
   const signalId = stringValue(signal.id);
   return {
     ...signal,
+    pattern_flags: patternFlagsForSignal(signal),
+    primary_pattern_flag: patternFlagsForSignal(signal)[0] ?? "",
     intelligence_read: signalIntelligenceRead(signal, args.visibility),
     evidence: args.evidence.filter((item) => stringValue(item.signal_id) === signalId),
     moves: args.moves.filter((move) => stringArray(move.signal_refs).includes(signalId)),
@@ -347,6 +354,7 @@ function filterSignals(signals: JsonRecord[], filters: PulseApiFilters): JsonRec
     if (filters.sourceType && !signalMatchesSourceType(signal, filters.sourceType)) return false;
     if (filters.scope && !signalMatchesScope(signal, filters.scope)) return false;
     if (filters.analysisScope && normalizeAnalysisScopeFilter(asRecord(signal.dimensions).analysis_scope) !== filters.analysisScope) return false;
+    if (filters.patternFlag && !signalMatchesPatternFlag(signal, filters.patternFlag)) return false;
     if (filters.campaign && !signalMatchesQuery(signal, filters.campaign)) return false;
     if (filters.performanceEvent && !signalMatchesQuery(signal, filters.performanceEvent)) return false;
     if (filters.q && !signalMatchesQuery(signal, filters.q)) return false;
@@ -366,6 +374,7 @@ function filterMoves(moves: JsonRecord[], filteredSignals: JsonRecord[], filters
     filters.sourceType ||
     filters.scope ||
     filters.analysisScope ||
+    filters.patternFlag ||
     filters.performanceEvent ||
     filters.q
   );
@@ -394,6 +403,7 @@ function filterChartPayload(chart: JsonRecord, filters: PulseApiFilters): JsonRe
       if (filters.sourceType && !rowMatchesText(row, filters.sourceType, ["source_type", "source_kind", "data_source", "provider", "channel"])) return false;
       if (filters.scope && !rowMatchesText(row, filters.scope, ["scope", "entity_scope", "query_scope", "brand_scope"])) return false;
       if (filters.analysisScope && normalizeAnalysisScopeFilter(row.analysis_scope) !== filters.analysisScope) return false;
+      if (filters.patternFlag && !rowMatchesPatternFlag(row, filters.patternFlag)) return false;
       if (filters.performanceEvent && !rowMatchesText(row, filters.performanceEvent, ["performance_event", "event", "metric", "metric_name", "event_name"])) return false;
       return true;
     })
@@ -449,8 +459,13 @@ function signalMatchesScope(signal: JsonRecord, scope: string) {
   ].map(normalizeFilterValue).includes(scope);
 }
 
+function signalMatchesPatternFlag(signal: JsonRecord, patternFlag: string) {
+  return patternFlagsForSignal(signal).includes(patternFlag);
+}
+
 function signalMatchesQuery(signal: JsonRecord, query: string) {
   const dimensions = asRecord(signal.dimensions);
+  const contextSummary = asRecord(dimensions.context_summary);
   const haystack = [
     signal.title,
     signal.description,
@@ -475,7 +490,9 @@ function signalMatchesQuery(signal: JsonRecord, query: string) {
     dimensions.campaign,
     dimensions.campaign_name,
     dimensions.performance_event,
-    dimensions.event
+    dimensions.event,
+    ...patternFlagsForSignal(signal),
+    ...stringArray(contextSummary.pattern_flag_types)
   ].map(stringValue).join(" ").toLowerCase();
   return haystack.includes(query);
 }
@@ -505,14 +522,29 @@ function rowMatchesText(row: JsonRecord, query: string, fields: string[]) {
   return fields.some((field) => normalizeFilterValue(row[field]).includes(query));
 }
 
+function rowMatchesPatternFlag(row: JsonRecord, patternFlag: string) {
+  return patternFlagValues([
+    row.pattern_flag,
+    row.primary_pattern_flag,
+    row.pattern_flags,
+    row.pattern_flag_types,
+    asRecord(row.dimensions).pattern_flags,
+    asRecord(row.dimensions).pattern_flag_types,
+    asRecord(asRecord(row.dimensions).context_summary).pattern_flag_types
+  ]).map(normalizePatternFlagFilter).includes(patternFlag);
+}
+
 function compactSignal(signal: JsonRecord, visibility?: SignalPulseResolvedVisibility) {
   const dimensions = asRecord(signal.dimensions);
+  const patternFlags = patternFlagsForSignal(signal);
   return {
     id: stringValue(signal.id),
     title: stringValue(signal.title),
     signal_type: stringValue(signal.signal_type),
     signal_role: stringValue(dimensions.signal_role),
     analysis_scope: stringValue(dimensions.analysis_scope),
+    pattern_flags: patternFlags,
+    primary_pattern_flag: patternFlags[0] ?? "",
     intelligence_read: signalIntelligenceRead(signal, visibility),
     scope: stringValue(dimensions.scope || dimensions.entity_scope || signal.scope || signal.entity_scope),
     lifecycle_state: stringValue(signal.lifecycle_state),
@@ -531,6 +563,7 @@ function signalIntelligenceRead(signal: JsonRecord, visibility?: SignalPulseReso
   const dimensions = asRecord(signal.dimensions);
   const marketingHypothesis = stringValue(signal.marketing_hypothesis || dimensions.marketing_hypothesis);
   return {
+    pattern_flags: patternFlagsForSignal(signal),
     period_read: stringValue(signal.period_read || dimensions.period_read),
     window_read: stringValue(signal.window_read || dimensions.window_read),
     marketing_hypothesis: visibility?.showPaidOrganic === false && marketingHypothesis
@@ -543,6 +576,31 @@ function signalIntelligenceRead(signal: JsonRecord, visibility?: SignalPulseReso
       ? "Conexión a performance disponible sólo con permiso de paid/organic."
       : stringValue(signal.performance_connection || dimensions.performance_connection)
   };
+}
+
+function patternFlagsForSignal(signal: JsonRecord) {
+  const dimensions = asRecord(signal.dimensions);
+  const contextSummary = asRecord(dimensions.context_summary);
+  return Array.from(new Set(patternFlagValues([
+    signal.pattern_flag,
+    signal.primary_pattern_flag,
+    signal.pattern_flags,
+    signal.pattern_flag_types,
+    dimensions.pattern_flag,
+    dimensions.primary_pattern_flag,
+    dimensions.pattern_flags,
+    dimensions.pattern_flag_types,
+    contextSummary.pattern_flag_types
+  ]).map(normalizePatternFlagFilter).filter(Boolean)));
+}
+
+function patternFlagValues(values: unknown[]): string[] {
+  return values.flatMap((value) => {
+    if (Array.isArray(value)) return patternFlagValues(value);
+    const record = asRecord(value);
+    if (record.type) return [stringValue(record.type)];
+    return [stringValue(value)];
+  }).filter(Boolean);
 }
 
 function compactMove(move: JsonRecord) {
@@ -658,5 +716,9 @@ function normalizeFilterValue(value: unknown) {
 }
 
 function normalizeAnalysisScopeFilter(value: unknown) {
+  return normalizeFilterValue(value).replace(/[\s-]+/g, "_");
+}
+
+function normalizePatternFlagFilter(value: unknown) {
   return normalizeFilterValue(value).replace(/[\s-]+/g, "_");
 }

@@ -69,6 +69,9 @@ const output: PulseOutputLike = {
           source_types: ["organic"],
           platforms: ["facebook", "tiktok"],
           analysis_scope: "mixed",
+          context_summary: {
+            pattern_flag_types: ["accelerating", "marketing_overlap"]
+          },
           performance_connection: "El engagement sube en el corte de junio."
         },
         confidence: "alta",
@@ -100,6 +103,9 @@ const output: PulseOutputLike = {
           source_types: ["paid"],
           platforms: ["facebook"],
           analysis_scope: "current_cut",
+          context_summary: {
+            pattern_flag_types: ["accelerating", "temporal_marketing_context"]
+          },
           performance_connection: "CTR cae mientras suben quejas por precio."
         },
         confidence: "media",
@@ -129,6 +135,9 @@ const output: PulseOutputLike = {
           source_types: ["reviews"],
           platforms: ["youtube"],
           analysis_scope: "window_pattern",
+          context_summary: {
+            pattern_flag_types: ["inactive_in_cut", "conversation_only"]
+          },
           performance_connection: "Sin conexión suficiente con performance."
         },
         confidence: "baja",
@@ -167,9 +176,9 @@ const output: PulseOutputLike = {
       impact_polarity_map: { rows: [{ signal_id: "s_1", impact: 82, signal_type: "opportunity" }] },
       signal_momentum_stream: {
         rows: [
-          { signal_id: "s_1", period_id: "rp_1", label: "2026-05", volume: 44, platform: "facebook" },
-          { signal_id: "s_1", period_id: "rp_2", label: "2026-06", volume: 140, platform: "tiktok", campaign: "Back to school", source_type: "organic", scope: "brand", analysis_scope: "mixed", performance_event: "engagement spike" },
-          { signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop" }
+          { signal_id: "s_1", period_id: "rp_1", label: "2026-05", volume: 44, platform: "facebook", pattern_flags: ["accelerating", "marketing_overlap"], primary_pattern_flag: "accelerating" },
+          { signal_id: "s_1", period_id: "rp_2", label: "2026-06", volume: 140, platform: "tiktok", campaign: "Back to school", source_type: "organic", scope: "brand", analysis_scope: "mixed", performance_event: "engagement spike", pattern_flags: ["accelerating", "marketing_overlap"], primary_pattern_flag: "accelerating" },
+          { signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop", pattern_flags: ["accelerating", "temporal_marketing_context"], primary_pattern_flag: "accelerating" }
         ]
       },
       source_coverage_strip: { rows: [{ period_id: "rp_2", label: "2026-06", coverage: { conversation: 140, performance: 30, spend: 1200 } }] },
@@ -207,6 +216,7 @@ test("Pulse overview returns tactical KPIs, chart refs and visible warnings", ()
   });
   assert.equal(overview.top_signals[0]?.impact_v1, 82);
   assert.deepEqual((overview.top_signals[0] as Record<string, unknown>).intelligence_read, {
+    pattern_flags: ["accelerating", "marketing_overlap"],
     period_read: "En el corte 2026-06 la rutina crujiente crece en TikTok y Facebook.",
     window_read: "En la ventana de 12 meses pasa de señal emergente en mayo a nuevo pico en junio.",
     marketing_hypothesis: "La campaña Back to school coincide con lenguaje de rutina y puede explicar recepción parcial sin asumir causalidad completa.",
@@ -332,7 +342,7 @@ test("Pulse moves and charts respect tactical filters", () => {
   assert.equal(approvedMoves.count, 1);
   assert.equal(approvedMoves.moves[0]?.id, "m_2");
   assert.deepEqual(momentum?.payload, {
-    rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop" }]
+    rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop", pattern_flags: ["accelerating", "temporal_marketing_context"], primary_pattern_flag: "accelerating" }]
   });
 });
 
@@ -353,7 +363,29 @@ test("Pulse filters cover campaigns, source type, scope and performance events",
   assert.equal(scopedMoves.count, 1);
   assert.equal(scopedMoves.moves[0]?.id, "m_2");
   assert.deepEqual(campaignChart?.payload, {
-    rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop" }]
+    rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop", pattern_flags: ["accelerating", "temporal_marketing_context"], primary_pattern_flag: "accelerating" }]
+  });
+});
+
+test("Pulse endpoints filter calculated 12-month pattern flags", () => {
+  const context = buildPulseApiContext({ output, isInternalUser: true });
+  const overlapSignals = buildPulseSignalsResponse({ ...context, filters: { period: "all", patternFlag: "marketing overlap" } });
+  const temporalMoves = buildPulseMovesResponse({ ...context, filters: { patternFlag: "temporal_marketing_context" } });
+  const temporalChart = buildPulseChartResponse({
+    payload: context.payload,
+    dataRef: "momentum",
+    visibility: context.visibility,
+    filters: { patternFlag: "temporal marketing context" }
+  });
+
+  assert.ok(overlapSignals && "signals" in overlapSignals);
+  assert.equal(overlapSignals.count, 1);
+  assert.equal((overlapSignals.signals[0] as Record<string, unknown>).id, "s_1");
+  assert.deepEqual((overlapSignals.signals[0] as Record<string, unknown>).pattern_flags, ["accelerating", "marketing_overlap"]);
+  assert.equal(temporalMoves.count, 1);
+  assert.equal(temporalMoves.moves[0]?.id, "m_2");
+  assert.deepEqual(temporalChart?.payload, {
+    rows: [{ signal_id: "s_2", period_id: "rp_2", label: "2026-06", volume: 70, platform: "facebook", campaign: "Promo precio", source_type: "paid", scope: "category", analysis_scope: "current_cut", performance_event: "ctr drop", pattern_flags: ["accelerating", "temporal_marketing_context"], primary_pattern_flag: "accelerating" }]
   });
 });
 
@@ -371,7 +403,7 @@ test("Pulse signal search includes intelligence reads, not only titles or metric
 });
 
 test("Pulse API parses dashboard filter query params", () => {
-  const filters = pulseApiFiltersFromSearchParams(new URLSearchParams("period=2026-06&platform=TikTok&campaign=Back%20to%20school&source_type=Organic&scope=Brand&analysis_scope=Window%20Pattern&performance_event=Spike&move_type=test_claim&q=Crujiente"));
+  const filters = pulseApiFiltersFromSearchParams(new URLSearchParams("period=2026-06&platform=TikTok&campaign=Back%20to%20school&source_type=Organic&scope=Brand&analysis_scope=Window%20Pattern&pattern_flag=Marketing%20Overlap&performance_event=Spike&move_type=test_claim&q=Crujiente"));
 
   assert.deepEqual(filters, {
     period: "2026-06",
@@ -384,6 +416,7 @@ test("Pulse API parses dashboard filter query params", () => {
     sourceType: "organic",
     scope: "brand",
     analysisScope: "window_pattern",
+    patternFlag: "marketing_overlap",
     performanceEvent: "spike",
     status: "",
     q: "crujiente"

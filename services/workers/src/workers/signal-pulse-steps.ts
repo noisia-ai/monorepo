@@ -2009,7 +2009,11 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
           latest.sentiment_score::float AS sentiment,
           latest.volume,
           latest.confidence,
-          latest.lifecycle_state
+          latest.lifecycle_state,
+          cs.signal_type,
+          cs.dimensions->>'analysis_scope' AS analysis_scope,
+          COALESCE(cs.dimensions #> '{context_summary,pattern_flag_types}', '[]'::jsonb) AS pattern_flags,
+          COALESCE(cs.dimensions #>> '{context_summary,pattern_flag_types,0}', '') AS primary_pattern_flag
         FROM latest
         JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
         WHERE latest.volume > 0
@@ -2030,7 +2034,11 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
           rp.period_start::text AS period_start,
           spm.volume,
           spm.impact_v1::float AS impact,
-          spm.lifecycle_state
+          spm.lifecycle_state,
+          cs.signal_type,
+          cs.dimensions->>'analysis_scope' AS analysis_scope,
+          COALESCE(cs.dimensions #> '{context_summary,pattern_flag_types}', '[]'::jsonb) AS pattern_flags,
+          COALESCE(cs.dimensions #>> '{context_summary,pattern_flag_types,0}', '') AS primary_pattern_flag
         FROM signal_period_metrics spm
         JOIN canonical_signals cs ON cs.id = spm.canonical_signal_id
         JOIN report_periods rp ON rp.id = spm.period_id
@@ -2066,7 +2074,11 @@ async function materializeChartAggregates(ctx: AnalysisContext) {
           COALESCE((cs.dimensions->>'mention_count')::int, 0) AS mention_count,
           COALESCE((cs.dimensions->>'sentiment_avg')::float, 0) AS sentiment,
           COALESCE((cs.dimensions->>'engagement_sum')::float, 0) AS engagement,
-          cs.dimensions->'platforms' AS platforms
+          cs.dimensions->'platforms' AS platforms,
+          cs.signal_type,
+          cs.dimensions->>'analysis_scope' AS analysis_scope,
+          COALESCE(cs.dimensions #> '{context_summary,pattern_flag_types}', '[]'::jsonb) AS pattern_flags,
+          COALESCE(cs.dimensions #>> '{context_summary,pattern_flag_types,0}', '') AS primary_pattern_flag
         FROM canonical_signals cs
         WHERE cs.study_corpus_id = $1
           AND cs.methodology_slug = 'signal-pulse'
