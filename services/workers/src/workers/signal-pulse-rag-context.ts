@@ -72,6 +72,13 @@ export type SignalPulseStructuredSourceEvent = {
   direction: "up" | "down" | "flat";
 };
 
+export type SignalPulseStructuredSourceMatch = SignalPulseStructuredSourceMonth & {
+  relevance_score: number;
+  match_basis: string;
+  period_relation: "same_active_period" | "window_only";
+  matched_terms: string[];
+};
+
 export type SignalPulseMarketingContext = {
   marketing_brief: Record<string, unknown>;
   knowledge_sources: Array<{ type: string; content: Record<string, unknown> }>;
@@ -165,7 +172,9 @@ export type SignalPulseInvestigationBrief = {
     engagement: number;
     top_campaigns: string[];
     top_matching_creatives: string[];
+    matching_structured_source_count?: number;
     structured_source_event_count?: number;
+    top_matching_structured_sources?: string[];
     top_structured_sources?: string[];
   }>;
   pattern_flags: SignalPulsePatternFlag[];
@@ -211,6 +220,7 @@ export type SignalPulseClusterPromptContext = {
     }>;
     structured_sources: SignalPulseStructuredSourceMonth[];
     structured_source_events: SignalPulseStructuredSourceEvent[];
+    matching_structured_sources: SignalPulseStructuredSourceMatch[];
     matching_creatives: SignalPulseMarketingRecordMatch[];
   };
   knowledge_matches: SignalPulseKnowledgeMatch[];
@@ -291,6 +301,13 @@ export async function loadSignalPulseClusterPromptContext(args: {
     .filter((month) => activeMonths.has(month.month))
     .sort((a, b) => b.records - a.records || totalMetricValue(b.metrics) - totalMetricValue(a.metrics))
     .slice(0, 24);
+  const matchingStructuredSources = rankStructuredSourcesForCluster({
+    cluster: args.cluster,
+    semanticMatches,
+    marketingContext: args.marketingContext,
+    structuredSources: args.marketingContext.structured_source_window,
+    periodLabels: activeMonthLabels
+  });
   const [periodCampaigns, performanceEvents, matchingCreatives] = await Promise.all([
     loadPeriodCampaignContext({
       corpusId: args.ctx.study_corpus_id,
@@ -315,6 +332,7 @@ export async function loadSignalPulseClusterPromptContext(args: {
     performanceEvents,
     structuredSources: activeStructuredSources,
     structuredSourceEvents,
+    matchingStructuredSources,
     matchingCreatives,
     semanticMatches
   });
@@ -329,6 +347,7 @@ export async function loadSignalPulseClusterPromptContext(args: {
       performance_events: performanceEvents,
       structured_sources: activeStructuredSources,
       structured_source_events: structuredSourceEvents,
+      matching_structured_sources: matchingStructuredSources,
       matching_creatives: matchingCreatives
     },
     knowledge_matches: semanticMatches.knowledge,
@@ -1028,6 +1047,7 @@ function buildClusterInvestigationBrief(args: {
   performanceEvents: SignalPulseClusterPromptContext["performance_context"]["performance_events"];
   structuredSources: SignalPulseStructuredSourceMonth[];
   structuredSourceEvents: SignalPulseStructuredSourceEvent[];
+  matchingStructuredSources: SignalPulseStructuredSourceMatch[];
   matchingCreatives: SignalPulseMarketingRecordMatch[];
   semanticMatches: { knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] };
 }): SignalPulseInvestigationBrief {
@@ -1067,13 +1087,20 @@ function buildClusterInvestigationBrief(args: {
     const events = args.performanceEvents.filter((event) => event.month === periodLabel);
     const sourceEvents = args.structuredSourceEvents.filter((event) => event.month === periodLabel);
     const structuredSources = args.structuredSources.filter((source) => source.month === periodLabel);
+    const structuredMatches = args.matchingStructuredSources.filter((source) => source.month === periodLabel);
     const basis = matches.some((record) => record.match_basis.includes("evidence_overlap"))
       ? "creative_or_campaign_language_overlaps_evidence"
+      : structuredMatches.some((source) => source.match_basis.includes("evidence_overlap"))
+        ? "structured_source_overlaps_evidence"
       : matches.some((record) => record.match_basis.includes("repeated_marketing_language"))
-        ? "repeated_marketing_language_overlap"
-        : campaigns.length > 0 || events.length > 0 || sourceEvents.length > 0 || structuredSources.length > 0
-          ? "same_period_marketing_activity"
-          : "conversation_only_period";
+        || structuredMatches.some((source) => source.match_basis.includes("repeated_marketing_language"))
+          ? "repeated_marketing_language_overlap"
+          : matches.some((record) => record.match_basis.includes("knowledge_or_brief_overlap"))
+          || structuredMatches.some((source) => source.match_basis.includes("knowledge_or_brief_overlap"))
+            ? "knowledge_or_brief_overlap"
+            : campaigns.length > 0 || events.length > 0 || sourceEvents.length > 0 || structuredSources.length > 0
+              ? "same_period_marketing_activity"
+              : "conversation_only_period";
     return {
       period_label: periodLabel,
       basis,
@@ -1095,7 +1122,13 @@ function buildClusterInvestigationBrief(args: {
         .map((record) => record.creative_text || record.entity_name || record.objective)
         .filter((value): value is string => Boolean(value))
         .slice(0, 4),
+      matching_structured_source_count: structuredMatches.length,
       structured_source_event_count: sourceEvents.length,
+      top_matching_structured_sources: structuredMatches
+        .slice()
+        .sort((a, b) => b.relevance_score - a.relevance_score || b.records - a.records)
+        .map(formatStructuredSourceLabel)
+        .slice(0, 4),
       top_structured_sources: structuredSources
         .slice()
         .sort((a, b) => b.records - a.records || totalMetricValue(b.metrics) - totalMetricValue(a.metrics))
@@ -1105,6 +1138,7 @@ function buildClusterInvestigationBrief(args: {
   }).filter((intersection) => (
     intersection.campaign_count > 0
     || intersection.matching_creative_count > 0
+    || (intersection.matching_structured_source_count ?? 0) > 0
     || intersection.performance_event_count > 0
     || (intersection.structured_source_event_count ?? 0) > 0
     || intersection.basis === "conversation_only_period"
@@ -1115,6 +1149,10 @@ function buildClusterInvestigationBrief(args: {
     record.match_basis.includes("evidence_overlap")
     || record.match_basis.includes("repeated_marketing_language")
     || record.match_basis.includes("knowledge_or_brief_overlap")
+  )) || args.matchingStructuredSources.some((source) => (
+    source.match_basis.includes("evidence_overlap")
+    || source.match_basis.includes("repeated_marketing_language")
+    || source.match_basis.includes("knowledge_or_brief_overlap")
   ));
   const patternFlags = buildSignalPulsePatternFlags({
     periodSeries: args.periodSeries,
@@ -1173,7 +1211,7 @@ function buildSynthesisQuestions(args: {
     questions.push("El aprendizaje principal es repetición, saturación, reactivación o anomalía histórica?");
   }
   if (args.hasDirectMarketingOverlap) {
-    questions.push("El overlap con piezas/campañas apunta a riesgo creativo, claim a testear o gap de pauta?");
+    questions.push("El overlap con piezas/campañas/fuentes apunta a riesgo creativo, claim a testear, gap de pauta u oportunidad de contenido?");
   } else if (args.marketingIntersections.some((item) => item.basis === "same_period_marketing_activity")) {
     questions.push("Sólo hay coexistencia temporal con marketing; evitar causalidad si no hay overlap de lenguaje/evidencia.");
   }
@@ -1262,6 +1300,102 @@ function summarizeStructuredSourceEvents(
   return events
     .sort((a, b) => Math.abs(b.delta_pct ?? b.delta_abs) - Math.abs(a.delta_pct ?? a.delta_abs))
     .slice(0, 24);
+}
+
+function rankStructuredSourcesForCluster(args: {
+  cluster: ClusterContextInput;
+  semanticMatches: { knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] };
+  marketingContext: SignalPulseMarketingContext;
+  structuredSources: SignalPulseStructuredSourceMonth[];
+  periodLabels: string[];
+}): SignalPulseStructuredSourceMatch[] {
+  const activePeriods = new Set(args.periodLabels.filter(Boolean));
+  const termWeights = new Map<string, { weight: number; sources: Set<string> }>();
+  const addTerm = (term: string, weight: number, source: string) => {
+    const normalized = normalizeStructuredMatchText(term).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    if (!normalized || STRUCTURED_SOURCE_MATCH_STOPWORDS.has(normalized)) return;
+    const adjustedWeight = GENERIC_STRUCTURED_SOURCE_TERMS.has(normalized) ? Math.min(weight, 0.75) : weight;
+    const existing = termWeights.get(normalized) ?? { weight: 0, sources: new Set<string>() };
+    existing.weight = Math.max(existing.weight, adjustedWeight);
+    existing.sources.add(source);
+    termWeights.set(normalized, existing);
+  };
+  const addText = (value: unknown, weight: number, source: string) => {
+    for (const token of tokenizeStructuredSourceText(String(value ?? ""))) {
+      addTerm(token, weight, source);
+    }
+    for (const phrase of extractStructuredSourcePhrases(String(value ?? "")).slice(0, 8)) {
+      addTerm(phrase, weight + 1.2, source);
+    }
+  };
+
+  addText(args.cluster.term, 0.35, "provisional_cluster_term");
+  addText(args.cluster.currentTitle, 0.35, "provisional_cluster_title");
+  for (const sample of args.cluster.samples.slice(0, 8)) addText(sample.text, 3.2, "sample_evidence");
+  for (const match of args.semanticMatches.conversation.slice(0, 12)) addText(match.text, 3.6, "semantic_conversation_match");
+  for (const match of args.semanticMatches.knowledge.slice(0, 8)) addText(`${match.title ?? ""} ${match.text}`, 1.6, "knowledge_match");
+  addText(JSON.stringify(args.marketingContext.marketing_brief), 0.8, "marketing_brief");
+  for (const language of args.marketingContext.repeated_marketing_language.slice(0, 16)) {
+    addText(language.phrase, 1.8, "repeated_marketing_language");
+  }
+
+  const scored: SignalPulseStructuredSourceMatch[] = args.structuredSources.map((source) => {
+    const sourceText = [
+      source.source_type,
+      source.provider,
+      source.channel,
+      ...source.entity_kinds,
+      ...source.objectives,
+      ...source.sample_entities,
+      ...source.sample_texts,
+      ...Object.keys(source.metrics)
+    ].filter(Boolean).join(" ");
+    const normalizedSourceText = normalizeStructuredMatchText(sourceText).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    const sourceTokens = new Set(tokenizeStructuredSourceText(sourceText));
+    let score = 0;
+    const matchedTerms = new Set<string>();
+    const sources = new Set<string>();
+    for (const token of sourceTokens) {
+      const weighted = termWeights.get(token);
+      if (!weighted) continue;
+      score += weighted.weight;
+      matchedTerms.add(token);
+      weighted.sources.forEach((basis) => sources.add(basis));
+    }
+    for (const [term, weighted] of termWeights.entries()) {
+      if (!term.includes(" ") || !normalizedSourceText.includes(term)) continue;
+      score += weighted.weight;
+      matchedTerms.add(term);
+      weighted.sources.forEach((basis) => sources.add(basis));
+    }
+    if (activePeriods.has(source.month)) {
+      score += matchedTerms.size > 0 ? 1 : 0.25;
+      sources.add("same_active_period");
+    }
+    const periodRelation: SignalPulseStructuredSourceMatch["period_relation"] = activePeriods.has(source.month)
+      ? "same_active_period"
+      : "window_only";
+    return {
+      ...source,
+      relevance_score: round(score, 3),
+      match_basis: structuredSourceMatchBasis(sources, matchedTerms.size),
+      period_relation: periodRelation,
+      matched_terms: Array.from(matchedTerms)
+        .sort((a, b) => b.split(" ").length - a.split(" ").length || a.localeCompare(b))
+        .slice(0, 10)
+    };
+  });
+
+  const directMatches = scored
+    .filter((source) => source.relevance_score >= 2 || source.matched_terms.length >= 2)
+    .sort(structuredSourceMatchSort);
+  const samePeriodContext = scored
+    .filter((source) => !directMatches.includes(source) && activePeriods.has(source.month))
+    .sort(structuredSourceMatchSort)
+    .slice(0, 4);
+  return [...directMatches, ...samePeriodContext]
+    .sort(structuredSourceMatchSort)
+    .slice(0, 10);
 }
 
 function buildMarketingBrief(analysisPlan: Record<string, unknown> | null, params: Record<string, unknown> | null) {
@@ -1380,9 +1514,146 @@ function formatStructuredSourceLabel(source: SignalPulseStructuredSourceMonth) {
   ].filter(Boolean).join(" · ");
 }
 
+function structuredSourceMatchSort(left: SignalPulseStructuredSourceMatch, right: SignalPulseStructuredSourceMatch) {
+  return right.relevance_score - left.relevance_score
+    || right.records - left.records
+    || totalMetricValue(right.metrics) - totalMetricValue(left.metrics)
+    || right.month.localeCompare(left.month);
+}
+
+function structuredSourceMatchBasis(sources: Set<string>, matchedTerms: number) {
+  const basis: string[] = [];
+  if ([...sources].some((source) => source.includes("sample") || source.includes("semantic_conversation"))) {
+    basis.push("evidence_overlap");
+  }
+  if ([...sources].some((source) => source.includes("knowledge") || source.includes("brief"))) {
+    basis.push("knowledge_or_brief_overlap");
+  }
+  if (sources.has("repeated_marketing_language")) {
+    basis.push("repeated_marketing_language_overlap");
+  }
+  if (sources.has("same_active_period")) {
+    basis.push("same_active_period");
+  }
+  if (basis.length === 0 && matchedTerms > 0) {
+    basis.push("low_confidence_overlap");
+  }
+  return basis.length > 0 ? basis.join("+") : "same_period_context";
+}
+
+function tokenizeStructuredSourceText(value: string) {
+  return normalizeStructuredMatchText(value)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4 && !STRUCTURED_SOURCE_MATCH_STOPWORDS.has(token) && !/^\d+$/.test(token));
+}
+
+function extractStructuredSourcePhrases(value: string) {
+  const tokens = tokenizeStructuredSourceText(value);
+  const phrases: string[] = [];
+  for (let size = 2; size <= 4; size += 1) {
+    for (let index = 0; index <= tokens.length - size; index += 1) {
+      const phrase = tokens.slice(index, index + size).join(" ");
+      if (phrase.length >= 10 && phrase.length <= 96 && !phrases.includes(phrase)) {
+        phrases.push(phrase);
+      }
+    }
+  }
+  return phrases.slice(0, 32);
+}
+
+function normalizeStructuredMatchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isStructuredMetricUseful(metric: string) {
   return !["records", "cpm", "cpc"].includes(metric);
 }
+
+const STRUCTURED_SOURCE_MATCH_STOPWORDS = new Set([
+  "para",
+  "pero",
+  "como",
+  "porque",
+  "cuando",
+  "donde",
+  "quien",
+  "cual",
+  "cuales",
+  "este",
+  "esta",
+  "estos",
+  "estas",
+  "todo",
+  "toda",
+  "todos",
+  "todas",
+  "algo",
+  "mucho",
+  "mucha",
+  "muchos",
+  "muchas",
+  "mismo",
+  "misma",
+  "mismos",
+  "mismas",
+  "solo",
+  "mas",
+  "menos",
+  "muy",
+  "hay",
+  "son",
+  "fue",
+  "ser",
+  "sin",
+  "con",
+  "por",
+  "una",
+  "uno",
+  "unos",
+  "unas",
+  "los",
+  "las",
+  "del",
+  "and",
+  "the",
+  "for",
+  "with",
+  "from",
+  "performance",
+  "social",
+  "paid",
+  "organic",
+  "organico",
+  "source",
+  "fuente"
+]);
+
+const GENERIC_STRUCTURED_SOURCE_TERMS = new Set([
+  "seguro",
+  "seguros",
+  "auto",
+  "autos",
+  "campana",
+  "campaña",
+  "marca",
+  "pauta",
+  "clicks",
+  "views",
+  "visitas",
+  "followers",
+  "seguidores",
+  "engagement",
+  "interacciones",
+  "impressions",
+  "impresiones"
+]);
 
 function round(value: number, digits = 2) {
   const factor = 10 ** digits;

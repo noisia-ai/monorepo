@@ -79,6 +79,10 @@ export type SignalPulseSynthesisValidationInput = {
     evidence_sample_ids: number;
     semantic_evidence_ids: number;
     active_performance_months: number;
+    structured_source_months: number;
+    structured_source_events: number;
+    matching_structured_sources: number;
+    direct_structured_source_matches: number;
     direct_marketing_matches: number;
     synthesis_questions: number;
     pattern_flags: number;
@@ -190,6 +194,12 @@ export function validateSignalPulseSynthesis(input: SignalPulseSynthesisValidati
   if (connection.startsWith("connected:") && numberFromContext(context.direct_marketing_matches) < 1) {
     reasons.push("connected_without_direct_marketing_overlap");
   }
+  if (numberFromContext(context.structured_source_months) > 0 && numberFromContext(context.structured_source_events) > 0) {
+    const structuredCopy = `${input.marketingHypothesis ?? ""} ${input.windowRead ?? ""} ${input.nextMonthDecision ?? ""}`;
+    if (!hasStructuredSourceLanguage(structuredCopy)) {
+      reasons.push("structured_source_context_unused");
+    }
+  }
 
   if (numberFromContext(context.samples) < 3) reasons.push("insufficient_cluster_samples");
   if (numberFromContext(context.conversation_matches) + numberFromContext(context.knowledge_matches) < 1) {
@@ -249,9 +259,13 @@ function hasMarketingSourceLanguage(value: string) {
   return /\b(campa[nñ]a|pauta|paid|org[aá]nico|brief|claim|promesa|creativ[oa]|pieza|performance|search|ecomm|venta|ventas|review|reviews|google business|fuente|fuentes|kb|knowledge|no_connection|sin evidencia|no hay evidencia|sin conexi[oó]n)\b/i.test(value);
 }
 
+function hasStructuredSourceLanguage(value: string) {
+  return /\b(fuente|fuentes|performance|search|ecomm|venta|ventas|review|reviews|google business|pauta|paid|org[aá]nico|social|meta|tiktok|ctr|engagement|interacci[oó]n|clic|click|visita|followers|seguidores|m[eé]trica|m[eé]tricas|estructurad[oa])\b/i.test(value);
+}
+
 function connectionMatchesMarketingHypothesis(marketingHypothesis: string, performanceConnection: string) {
   if (performanceConnection.startsWith("connected:")) {
-    return /\b(conecta|conexi[oó]n|cruza|overlap|comparte|match|matched|evidencia|campaña|campa[nñ]a|claim|promesa|pieza|creative|creativo|pauta|performance)\b/i.test(marketingHypothesis);
+    return /\b(conecta|conexi[oó]n|cruza|overlap|comparte|match|matched|evidencia|campaña|campa[nñ]a|claim|promesa|pieza|creative|creativo|pauta|performance|fuente|search|ecomm|venta|ventas|review|reviews|google business)\b/i.test(marketingHypothesis);
   }
   if (performanceConnection.startsWith("no_connection:")) {
     return /\b(no_connection|sin evidencia|no hay evidencia|sin conexi[oó]n|no hay conexi[oó]n|no se puede conectar|no atribuir|no vender causalidad|no hay overlap)\b/i.test(marketingHypothesis);

@@ -1560,6 +1560,7 @@ async function applyClaudeSignalNamingBatch(args: {
             performance_months: args.marketingContext.performance_window.length,
             structured_source_months: args.marketingContext.structured_source_window.length,
             structured_source_events: args.batch.reduce((sum, item) => sum + item.context.performance_context.structured_source_events.length, 0),
+            matching_structured_sources: args.batch.reduce((sum, item) => sum + item.context.performance_context.matching_structured_sources.length, 0),
             marketing_activity_months: args.marketingContext.marketing_activity_window.length,
             repeated_marketing_language: args.marketingContext.repeated_marketing_language.length,
             knowledge_matches: args.batch.reduce((sum, item) => sum + item.context.knowledge_matches.length, 0),
@@ -1744,14 +1745,27 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     active_performance_months: source.context.performance_context.active_months.length,
     structured_source_months: source.context.performance_context.structured_sources.length,
     structured_source_events: source.context.performance_context.structured_source_events.length,
+    matching_structured_sources: source.context.performance_context.matching_structured_sources.length,
     period_campaigns: source.context.performance_context.period_campaigns.length,
     performance_events: source.context.performance_context.performance_events.length,
     matching_creatives: source.context.performance_context.matching_creatives.length,
-    direct_marketing_matches: source.context.performance_context.matching_creatives.filter((record) => (
-      record.match_basis.includes("evidence_overlap")
-      || record.match_basis.includes("repeated_marketing_language_overlap")
-      || record.match_basis.includes("knowledge_or_brief_overlap")
+    direct_structured_source_matches: source.context.performance_context.matching_structured_sources.filter((sourceMatch) => (
+      sourceMatch.match_basis.includes("evidence_overlap")
+      || sourceMatch.match_basis.includes("repeated_marketing_language_overlap")
+      || sourceMatch.match_basis.includes("knowledge_or_brief_overlap")
     )).length,
+    direct_marketing_matches: (
+      source.context.performance_context.matching_creatives.filter((record) => (
+        record.match_basis.includes("evidence_overlap")
+        || record.match_basis.includes("repeated_marketing_language_overlap")
+        || record.match_basis.includes("knowledge_or_brief_overlap")
+      )).length
+      + source.context.performance_context.matching_structured_sources.filter((sourceMatch) => (
+        sourceMatch.match_basis.includes("evidence_overlap")
+        || sourceMatch.match_basis.includes("repeated_marketing_language_overlap")
+        || sourceMatch.match_basis.includes("knowledge_or_brief_overlap")
+      )).length
+    ),
     same_period_marketing_context: source.context.performance_context.matching_creatives.filter((record) => (
       record.match_basis.includes("same_active_period")
       && !record.match_basis.includes("evidence_overlap")
@@ -1769,9 +1783,12 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
 function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload) {
   const campaignNames = uniqueStrings([
     ...source.context.investigation_brief.marketing_intersections.flatMap((intersection) => intersection.top_campaigns),
+    ...source.context.investigation_brief.marketing_intersections.flatMap((intersection) => intersection.top_matching_structured_sources ?? []),
     ...source.context.performance_context.period_campaigns.map((campaign) => campaign.entity_name),
     ...source.context.performance_context.matching_creatives.map((record) => record.entity_name),
-    ...source.context.performance_context.matching_creatives.map((record) => record.objective)
+    ...source.context.performance_context.matching_creatives.map((record) => record.objective),
+    ...source.context.performance_context.matching_structured_sources.flatMap((sourceMatch) => sourceMatch.sample_entities),
+    ...source.context.performance_context.matching_structured_sources.flatMap((sourceMatch) => sourceMatch.objectives)
   ]).slice(0, 16);
   const performanceEvents = uniqueStrings([
     ...source.context.performance_context.performance_events.flatMap((event) => [
@@ -1803,6 +1820,8 @@ function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload)
     ...source.context.performance_context.active_months.flatMap((month) => month.channels),
     ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.source_type),
     ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.channel),
+    ...source.context.performance_context.matching_structured_sources.map((sourceMatch) => sourceMatch.source_type),
+    ...source.context.performance_context.matching_structured_sources.map((sourceMatch) => sourceMatch.channel),
     ...source.context.performance_context.structured_source_events.map((event) => event.source_type),
     ...source.context.performance_context.structured_source_events.map((event) => event.channel)
   ]).slice(0, 16);
@@ -1812,6 +1831,7 @@ function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload)
     ...source.context.performance_context.matching_creatives.map((record) => record.platform),
     ...source.context.performance_context.active_months.flatMap((month) => month.platforms),
     ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.provider),
+    ...source.context.performance_context.matching_structured_sources.map((sourceMatch) => sourceMatch.provider),
     ...source.context.performance_context.structured_source_events.map((event) => event.provider)
   ]).slice(0, 16);
   const marketingPeriods = uniqueStrings([
@@ -1820,6 +1840,7 @@ function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload)
     ...source.context.performance_context.matching_creatives.map((record) => record.period_label),
     ...source.context.performance_context.performance_events.map((event) => event.month),
     ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.month),
+    ...source.context.performance_context.matching_structured_sources.map((sourceMatch) => sourceMatch.month),
     ...source.context.performance_context.structured_source_events.map((event) => event.month)
   ]).slice(0, 24);
 
@@ -2476,7 +2497,7 @@ async function buildSignalPulseQualityGates(args: {
               OR COALESCE(cs.dimensions->>'next_month_decision', '') !~* '(probar|testear|medir|auditar|pausar|mover|monitorear|comparar|ajustar|revisar|contener|activar|desactivar|validar|publicar|no escalar|priorizar)'
               OR (
                 COALESCE(cs.dimensions->>'performance_connection', '') ~* '^connected:'
-                AND COALESCE(cs.dimensions->>'marketing_hypothesis', '') !~* '(conecta|conexi[oó]n|cruza|overlap|comparte|match|matched|evidencia|campa[nñ]a|claim|promesa|pieza|creative|creativo|pauta|performance)'
+                AND COALESCE(cs.dimensions->>'marketing_hypothesis', '') !~* '(conecta|conexi[oó]n|cruza|overlap|comparte|match|matched|evidencia|campa[nñ]a|claim|promesa|pieza|creative|creativo|pauta|performance|fuente|search|ecomm|venta|ventas|review|reviews|google business)'
               )
               OR (
                 COALESCE(cs.dimensions->>'performance_connection', '') ~* '^no_connection:'

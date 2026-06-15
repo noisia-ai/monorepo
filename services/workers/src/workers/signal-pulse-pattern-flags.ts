@@ -191,6 +191,8 @@ export function buildSignalPulsePatternFlags(args: {
 
   const directIntersections = args.marketingIntersections.filter((intersection) => (
     intersection.basis === "creative_or_campaign_language_overlaps_evidence"
+    || intersection.basis === "structured_source_overlaps_evidence"
+    || intersection.basis === "knowledge_or_brief_overlap"
     || intersection.basis === "repeated_marketing_language_overlap"
   ));
   if (args.hasDirectMarketingOverlap || directIntersections.length > 0) {

@@ -251,6 +251,60 @@ test("Signal Pulse synthesis validation blocks connected performance claims with
   assert.ok(result.reasons.includes("connected_without_direct_marketing_overlap"));
 });
 
+test("Signal Pulse synthesis validation accepts connected structured source overlap", () => {
+  const result = validateSignalPulseSynthesis({
+    title: "Oportunidad: Búsquedas de choque en cadena abren educación práctica",
+    description: "En 2026-05 la conversación y la fuente de search suben alrededor de dudas de choque en cadena, con pico semanal y evidencia trazable.",
+    marketingRead: "La oportunidad para Marketing no es prometer resolución total, sino convertir la confusión de búsqueda en contenido claro de responsabilidad legal.",
+    actionHint: "Probar contenido educativo sobre choque en cadena y medir búsquedas, dudas en comentarios, CTR y menciones de claridad",
+    signalRole: "content_opportunity",
+    analysisScope: "mixed",
+    periodRead: "En el corte 2026-05 suben dudas de choque en cadena y el pico semanal concentra preguntas trazables.",
+    windowRead: "En la ventana de 12 meses la señal reaparece en mayo y se combina con una subida de search estructurada.",
+    marketingHypothesis: "connected: la fuente de search y la conversación comparten evidencia sobre choque en cadena; se puede activar educación sin atribuirlo a pauta.",
+    nextMonthDecision: "El próximo mes hay que probar una pieza educativa y medir búsquedas, dudas en comentarios, CTR y menciones de claridad.",
+    performanceConnection: "connected: matching_structured_sources trae evidence_overlap entre search y conversación",
+    evidenceBasis: "Sample 55555555-5555-4555-8555-555555555555 y periodo 2026-05 sostienen la lectura.",
+    confidenceRationale: "Publicable porque cruza serie mensual, pico semanal, RAG conversacional y match directo con fuente estructurada.",
+    contextSummary: strongContextSummary({
+      direct_marketing_matches: 1,
+      direct_structured_source_matches: 1,
+      matching_structured_sources: 1,
+      structured_source_months: 12,
+      structured_source_events: 1
+    })
+  });
+
+  assert.equal(result.publishable, true);
+  assert.deepEqual(result.reasons, []);
+});
+
+test("Signal Pulse synthesis validation blocks ignoring structured source events", () => {
+  const result = validateSignalPulseSynthesis({
+    title: "Oportunidad: Educación práctica sobre choques en cadena reduce confusión operativa",
+    description: "En 2026-05 aparecen preguntas sobre choques en cadena con suficiente evidencia y una lectura útil para contenido educativo.",
+    marketingRead: "La oportunidad movible es convertir dudas operativas en contenido de servicio sin prometer resolución total.",
+    actionHint: "Probar un carrusel educativo y medir dudas, comentarios útiles y menciones de claridad frente al baseline",
+    signalRole: "content_opportunity",
+    analysisScope: "mixed",
+    periodRead: "En el corte 2026-05 las preguntas sobre choques en cadena crecen con evidencia trazable en el mes.",
+    windowRead: "En la ventana de 12 meses el tema aparece como señal emergente repetida y vuelve a concentrarse en mayo.",
+    marketingHypothesis: "La hipótesis marketing es contenido educativo porque la conversación pide claridad operativa.",
+    nextMonthDecision: "Probar contenido educativo y medir dudas, comentarios útiles y menciones de claridad contra control.",
+    performanceConnection: "no_connection: no hay overlap directo con campaña, brief o creative text.",
+    evidenceBasis: "Sample 66666666-6666-4666-8666-666666666666 y periodo 2026-05 sostienen la lectura.",
+    confidenceRationale: "Hay evidencia textual, RAG de conversación y serie mensual, pero no hay conexión de marketing demostrada.",
+    contextSummary: strongContextSummary({
+      direct_marketing_matches: 0,
+      structured_source_months: 12,
+      structured_source_events: 2
+    })
+  });
+
+  assert.equal(result.publishable, false);
+  assert.ok(result.reasons.includes("structured_source_context_unused"));
+});
+
 test("Signal Pulse synthesis validation requires marketing hypothesis to match connection status", () => {
   const result = validateSignalPulseSynthesis({
     title: "Oportunidad: Educación práctica sobre choques en cadena reduce confusión operativa",
@@ -346,9 +400,9 @@ test("Signal Pulse pattern flags classify window intelligence before Claude writ
     marketingIntersections: [
       {
         period_label: "2026-05",
-        basis: "creative_or_campaign_language_overlaps_evidence",
-        campaign_count: 1,
-        matching_creative_count: 1,
+        basis: "structured_source_overlaps_evidence",
+        campaign_count: 0,
+        matching_creative_count: 0,
         performance_event_count: 1
       }
     ]
@@ -786,6 +840,29 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               direction: "up"
             }
           ],
+          matching_structured_sources: [
+            {
+              month: "2026-05",
+              source_type: "social_performance",
+              provider: "meta",
+              channel: "paid",
+              records: 42,
+              metrics: {
+                spend: 1200,
+                impressions: 88000,
+                clicks: 940,
+                engagement: 1800
+              },
+              entity_kinds: ["campaign"],
+              objectives: ["traffic"],
+              sample_entities: ["Confianza auto"],
+              sample_texts: ["Seguro de auto con respuesta rapida"],
+              relevance_score: 7.2,
+              match_basis: "evidence_overlap+knowledge_or_brief_overlap+same_active_period",
+              period_relation: "same_active_period",
+              matched_terms: ["respuesta rapida", "confianza"]
+            }
+          ],
           matching_creatives: [
             {
               record_date: "2026-05-10",
@@ -1031,6 +1108,8 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /performance_records/);
   assert.match(prompt, /structured_source_window/);
   assert.match(prompt, /structured_source_events/);
+  assert.match(prompt, /matching_structured_sources/);
+  assert.match(prompt, /period_relation/);
   assert.match(prompt, /repeated_marketing_language/);
   assert.match(prompt, /conversation_matches/);
   assert.match(prompt, /investigation_brief/);
