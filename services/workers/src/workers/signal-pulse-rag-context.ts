@@ -921,10 +921,6 @@ async function loadRelevantMarketingRecords(args: {
         pr.creative_text
       FROM performance_records pr
       WHERE pr.study_corpus_id = $1
-        AND (
-          cardinality($2::text[]) = 0
-          OR to_char(date_trunc('month', pr.record_date), 'YYYY-MM') = ANY($2::text[])
-        )
       ORDER BY
         CASE
           WHEN cardinality($2::text[]) > 0
@@ -935,7 +931,7 @@ async function loadRelevantMarketingRecords(args: {
         COALESCE(pr.engagement, 0) DESC,
         COALESCE(pr.spend, 0) DESC,
         COALESCE(pr.impressions, 0) DESC
-      LIMIT 600
+      LIMIT 900
     `,
     [args.corpusId, labels]
   )).rows;

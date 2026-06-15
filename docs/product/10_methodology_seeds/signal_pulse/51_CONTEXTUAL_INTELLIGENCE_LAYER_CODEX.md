@@ -97,7 +97,7 @@ Los snippets que llegan al naming incluyen `id`, `text`, `platform` y `published
 
 La query semántica ya no se arma sólo con `term`. Incluye título provisional, samples, brief de marketing, inventario de fuentes, lenguaje repetido, últimos meses de actividad y ventana estructurada para recuperar contexto útil de marca/campaña/fuentes/conversación. La keyword provisional sólo identifica el cluster; el prompt le prohíbe a Claude convertirla en título.
 
-`matching_creatives` ya no sale de `LIKE '%keyword%'`. El worker carga performance_records de los meses activos del cluster y rankea campañas/piezas contra:
+`matching_creatives` ya no sale de `LIKE '%keyword%'`. El worker carga `performance_records` de la ventana estructurada, prioriza los meses activos del cluster y rankea campañas/piezas contra:
 
 - snippets con `mention_id`;
 - conversation_matches semánticos;
@@ -105,7 +105,7 @@ La query semántica ya no se arma sólo con `term`. Incluye título provisional,
 - repeated_marketing_language;
 - periodo activo y plataforma como señales débiles.
 
-Cada match llega con `relevance_score`, `match_basis` y `matched_terms`. `evidence_overlap`, `knowledge_or_brief_overlap` y `repeated_marketing_language_overlap` habilitan hipótesis de conexión; `same_active_period` por sí solo sólo significa coexistencia temporal y debe terminar en `performance_connection=no_connection` si no hay evidencia adicional.
+Cada match llega con `relevance_score`, `match_basis`, `period_relation` y `matched_terms`. `evidence_overlap`, `knowledge_or_brief_overlap` y `repeated_marketing_language_overlap` habilitan hipótesis de conexión; `same_active_period` por sí solo sólo significa coexistencia temporal y debe terminar en `performance_connection=no_connection` si no hay evidencia adicional. Si `period_relation=window_only`, la conexión puede explicar claim repetido, saturación, reactivación o antecedente histórico, pero no causalidad directa del corte mensual.
 
 El mismo contrato aplica a fuentes no-campaña: `matching_structured_sources` puede habilitar `connected:` si una fuente de search, ecomm, reviews, ventas, social orgánico/pauta u otro adapter trae overlap directo con evidencia/KB/brief. Si `period_relation=window_only`, la hipótesis debe presentarse como patrón de ventana, reactivación, saturación o antecedente histórico, no como efecto directo del corte mensual. Si la fuente sólo vive en el mismo mes o sólo marca un delta de métrica, el sistema debe redactarlo como contexto temporal o `no_connection`, no como causalidad.
 
@@ -152,6 +152,9 @@ Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensi
 - `structured_source_events`
 - `matching_structured_sources`
 - `direct_structured_source_matches`
+- `direct_marketing_matches`
+- `same_period_direct_marketing_matches`
+- `window_only_direct_marketing_matches`
 - `period_campaigns`
 - `performance_events`
 - `matching_creatives`
@@ -256,6 +259,7 @@ Si una fila no cumple, el worker la conserva como `needs_human_review` con `synt
 - `semantic_context_used` bloquea si una señal publicable no tiene samples suficientes, RAG semántico de conversación/KB, serie de periodo y performance activa asociada.
 - `signal_intelligence_case` bloquea si una señal publicable no trae `investigation_brief` materializado en `context_summary`: periodos fuertes, serie semanal, pulsos semanales, intersecciones de marketing/performance, `pattern_flags`, evidence ids y preguntas de síntesis.
 - `performance_connection_qualified` bloquea si `performance_connection` no empieza con `connected:`, `no_connection:` o `insufficient_data:`, o si declara `connected:` sin overlap directo (`evidence_overlap`, `knowledge_or_brief_overlap` o `repeated_marketing_language_overlap`) en los matches de marketing.
+- `window_only_connection_requires_window_scope` bloquea si una señal declara `connected:` sólo por matches históricos (`period_relation=window_only`) pero intenta publicarse como `analysis_scope=current_cut`.
 - `structured_source_context_unused` bloquea a nivel de síntesis si hay eventos de fuentes estructuradas y la lectura publicable no reconoce ese plano en hipótesis, ventana o decisión.
 - `traceable_evidence_basis` bloquea si una señal publicable no cita al menos un `mention_id` real en `evidence_basis`.
 - Las señales históricas sin volumen en el corte sirven para patrones de ventana, pero no bloquean publicación por sí mismas.
@@ -296,6 +300,6 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 12. Revisar que `sp_rag_context` registre `structured_source_months` y `structured_source_types` cuando haya fuentes estructuradas.
 13. Revisar que los eventos `sp_name_signals` registren `structured_source_events` cuando un cluster viva en meses con cambios de fuentes.
 14. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
-15. Revisar que `context_summary` esté persistido en cada señal publicable, incluyendo `structured_source_months`, `structured_source_events`, `matching_structured_sources` y `direct_structured_source_matches`.
+15. Revisar que `context_summary` esté persistido en cada señal publicable, incluyendo `structured_source_months`, `structured_source_events`, `matching_structured_sources`, `direct_structured_source_matches`, `same_period_direct_marketing_matches` y `window_only_direct_marketing_matches`.
 16. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
 17. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.

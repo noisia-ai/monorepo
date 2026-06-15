@@ -251,6 +251,33 @@ test("Signal Pulse synthesis validation blocks connected performance claims with
   assert.ok(result.reasons.includes("connected_without_direct_marketing_overlap"));
 });
 
+test("Signal Pulse synthesis validation blocks window-only marketing connections as current cut", () => {
+  const result = validateSignalPulseSynthesis({
+    title: "Riesgo creativo: La promesa de confianza acumula dudas sobre resolución",
+    description: "En 2026-05 la conversación vuelve a preguntar por resolución, pero el cruce directo con campañas aparece como antecedente de ventana y no como causa del corte.",
+    marketingRead: "Marketing debe leerlo como riesgo acumulado de claim: la promesa de confianza se repitió antes y la conversación vuelve a pedir pruebas operativas.",
+    actionHint: "Auditar el claim de confianza histórico y medir dudas, comentarios útiles, CTR y menciones de resolución antes de reactivarlo",
+    signalRole: "creative_risk",
+    analysisScope: "current_cut",
+    periodRead: "En el corte 2026-05 reaparecen preguntas sobre resolución con evidencia trazable del mes actual.",
+    windowRead: "En la ventana de 12 meses el claim de confianza funciona como antecedente histórico repetido y reaparece cerca del corte.",
+    marketingHypothesis: "connected: la campaña histórica de confianza comparte evidencia de ventana con la conversación, pero no prueba efecto directo del corte.",
+    nextMonthDecision: "El próximo mes hay que revisar si el claim vuelve a pauta, medir dudas, CTR y comentarios útiles antes de escalarlo.",
+    performanceConnection: "connected: matching_creatives trae evidence_overlap de ventana con el claim de confianza.",
+    evidenceBasis: "Sample 77777777-7777-4777-8777-777777777777 y periodo 2026-05 sostienen la lectura.",
+    confidenceRationale: "Hay evidencia textual, RAG conversacional y match directo histórico, pero el vínculo de marketing es de ventana.",
+    contextSummary: strongContextSummary({
+      direct_marketing_matches: 1,
+      same_period_direct_marketing_matches: 0,
+      window_only_direct_marketing_matches: 1,
+      pattern_flag_types: ["marketing_overlap"]
+    })
+  });
+
+  assert.equal(result.publishable, false);
+  assert.ok(result.reasons.includes("window_only_connection_requires_window_scope"));
+});
+
 test("Signal Pulse synthesis validation accepts connected structured source overlap", () => {
   const result = validateSignalPulseSynthesis({
     title: "Oportunidad: Búsquedas de choque en cadena abren educación práctica",
@@ -644,15 +671,31 @@ test("Signal Pulse marketing record matching prefers evidence overlap over raw k
         clicks: 80,
         engagement: 240,
         creative_text: "Qué hacer en un choque en cadena y quién responde"
+      },
+      {
+        record_date: "2026-03-15",
+        period_label: "2026-03",
+        platform: "meta",
+        channel: "paid",
+        entity_kind: "ad",
+        entity_name: "Antecedente choque en cadena",
+        objective: "engagement",
+        spend: 80,
+        impressions: 8000,
+        clicks: 60,
+        engagement: 180,
+        creative_text: "Guía de choque en cadena para entender quién responde legalmente"
       }
     ],
     periodLabels: ["2026-05"]
   });
 
-  assert.equal(matches[0]?.entity_name, "Choque en cadena claridad");
+  assert.notEqual(matches[0]?.entity_name, "Seguro Auto Always On");
   assert.match(matches[0]?.match_basis ?? "", /evidence_overlap/);
   assert.match(matches[0]?.match_basis ?? "", /repeated_marketing_language_overlap/);
   assert.ok(matches[0]?.matched_terms.includes("choque en cadena"));
+  assert.equal(matches.find((match) => match.entity_name === "Choque en cadena claridad")?.period_relation, "same_active_period");
+  assert.equal(matches.find((match) => match.entity_name === "Antecedente choque en cadena")?.period_relation, "window_only");
   assert.equal(matches.some((match) => match.entity_name === "Seguro Auto Always On"), true);
   assert.ok((matches.find((match) => match.entity_name === "Seguro Auto Always On")?.relevance_score ?? 0) < (matches[0]?.relevance_score ?? 0));
 });
@@ -879,6 +922,7 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               creative_text: "Seguro de auto con respuesta rapida",
               relevance_score: 8.4,
               match_basis: "evidence_overlap+knowledge_or_brief_overlap+repeated_marketing_language_overlap+same_active_period",
+              period_relation: "same_active_period",
               matched_terms: ["respuesta rapida", "confianza", "choque en cadena"]
             }
           ]
@@ -1233,6 +1277,8 @@ function strongContextSummary(overrides: Record<string, unknown> = {}) {
     semantic_evidence_ids: 1,
     active_performance_months: 12,
     direct_marketing_matches: 1,
+    same_period_direct_marketing_matches: 1,
+    window_only_direct_marketing_matches: 0,
     synthesis_questions: 4,
     active_periods: 3,
     current_volume: 96,

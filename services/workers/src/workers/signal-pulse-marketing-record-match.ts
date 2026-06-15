@@ -16,6 +16,7 @@ export type SignalPulseMarketingRecordCandidate = {
 export type SignalPulseMarketingRecordMatch = SignalPulseMarketingRecordCandidate & {
   relevance_score: number;
   match_basis: string;
+  period_relation: "same_active_period" | "window_only";
   matched_terms: string[];
 };
 
@@ -103,7 +104,7 @@ export function rankSignalPulseMarketingRecordsForCluster(args: {
   }
 
   const clusterPlatforms = new Set(args.cluster.platforms.map((platform) => normalizeText(platform)).filter(Boolean));
-  const scored = args.records.map((record) => {
+  const scored: SignalPulseMarketingRecordMatch[] = args.records.map((record) => {
     const recordText = [
       record.creative_text,
       record.entity_name,
@@ -138,10 +139,14 @@ export function rankSignalPulseMarketingRecordsForCluster(args: {
       score += 0.35;
       sources.add("same_platform");
     }
+    const periodRelation: SignalPulseMarketingRecordMatch["period_relation"] = record.period_label && activePeriods.has(record.period_label)
+      ? "same_active_period"
+      : "window_only";
     return {
       ...record,
       relevance_score: round(score, 3),
       match_basis: marketingMatchBasis(sources, matchedTerms.size),
+      period_relation: periodRelation,
       matched_terms: Array.from(matchedTerms)
         .sort((a, b) => b.split(" ").length - a.split(" ").length || a.localeCompare(b))
         .slice(0, 10)

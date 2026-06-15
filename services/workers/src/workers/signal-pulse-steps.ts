@@ -1729,6 +1729,24 @@ async function persistClaudeSignalNamingRows(args: {
 }
 
 function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload) {
+  const directCreativeMatches = source.context.performance_context.matching_creatives.filter((record) => (
+    record.match_basis.includes("evidence_overlap")
+    || record.match_basis.includes("repeated_marketing_language_overlap")
+    || record.match_basis.includes("knowledge_or_brief_overlap")
+  ));
+  const directStructuredSourceMatches = source.context.performance_context.matching_structured_sources.filter((sourceMatch) => (
+    sourceMatch.match_basis.includes("evidence_overlap")
+    || sourceMatch.match_basis.includes("repeated_marketing_language_overlap")
+    || sourceMatch.match_basis.includes("knowledge_or_brief_overlap")
+  ));
+  const samePeriodDirectMarketingMatches = (
+    directCreativeMatches.filter((record) => record.period_relation === "same_active_period").length
+    + directStructuredSourceMatches.filter((sourceMatch) => sourceMatch.period_relation === "same_active_period").length
+  );
+  const windowOnlyDirectMarketingMatches = (
+    directCreativeMatches.filter((record) => record.period_relation === "window_only").length
+    + directStructuredSourceMatches.filter((sourceMatch) => sourceMatch.period_relation === "window_only").length
+  );
   return {
     samples: source.samples.length,
     conversation_matches: source.context.conversation_matches.length,
@@ -1749,23 +1767,10 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     period_campaigns: source.context.performance_context.period_campaigns.length,
     performance_events: source.context.performance_context.performance_events.length,
     matching_creatives: source.context.performance_context.matching_creatives.length,
-    direct_structured_source_matches: source.context.performance_context.matching_structured_sources.filter((sourceMatch) => (
-      sourceMatch.match_basis.includes("evidence_overlap")
-      || sourceMatch.match_basis.includes("repeated_marketing_language_overlap")
-      || sourceMatch.match_basis.includes("knowledge_or_brief_overlap")
-    )).length,
-    direct_marketing_matches: (
-      source.context.performance_context.matching_creatives.filter((record) => (
-        record.match_basis.includes("evidence_overlap")
-        || record.match_basis.includes("repeated_marketing_language_overlap")
-        || record.match_basis.includes("knowledge_or_brief_overlap")
-      )).length
-      + source.context.performance_context.matching_structured_sources.filter((sourceMatch) => (
-        sourceMatch.match_basis.includes("evidence_overlap")
-        || sourceMatch.match_basis.includes("repeated_marketing_language_overlap")
-        || sourceMatch.match_basis.includes("knowledge_or_brief_overlap")
-      )).length
-    ),
+    direct_structured_source_matches: directStructuredSourceMatches.length,
+    direct_marketing_matches: directCreativeMatches.length + directStructuredSourceMatches.length,
+    same_period_direct_marketing_matches: samePeriodDirectMarketingMatches,
+    window_only_direct_marketing_matches: windowOnlyDirectMarketingMatches,
     same_period_marketing_context: source.context.performance_context.matching_creatives.filter((record) => (
       record.match_basis.includes("same_active_period")
       && !record.match_basis.includes("evidence_overlap")

@@ -84,6 +84,8 @@ export type SignalPulseSynthesisValidationInput = {
     matching_structured_sources: number;
     direct_structured_source_matches: number;
     direct_marketing_matches: number;
+    same_period_direct_marketing_matches: number;
+    window_only_direct_marketing_matches: number;
     synthesis_questions: number;
     pattern_flags: number;
     pattern_flag_types: string[];
@@ -194,6 +196,18 @@ export function validateSignalPulseSynthesis(input: SignalPulseSynthesisValidati
   if (connection.startsWith("connected:") && numberFromContext(context.direct_marketing_matches) < 1) {
     reasons.push("connected_without_direct_marketing_overlap");
   }
+  if (
+    connection.startsWith("connected:")
+    && numberFromContext(context.same_period_direct_marketing_matches) < 1
+    && numberFromContext(context.window_only_direct_marketing_matches) > 0
+  ) {
+    if (input.analysisScope === "current_cut") {
+      reasons.push("window_only_connection_requires_window_scope");
+    }
+    if (!hasWindowConnectionLanguage(`${input.marketingHypothesis ?? ""} ${input.windowRead ?? ""}`)) {
+      reasons.push("window_only_connection_missing_window_language");
+    }
+  }
   if (numberFromContext(context.structured_source_months) > 0 && numberFromContext(context.structured_source_events) > 0) {
     const structuredCopy = `${input.marketingHypothesis ?? ""} ${input.windowRead ?? ""} ${input.nextMonthDecision ?? ""}`;
     if (!hasStructuredSourceLanguage(structuredCopy)) {
@@ -261,6 +275,10 @@ function hasMarketingSourceLanguage(value: string) {
 
 function hasStructuredSourceLanguage(value: string) {
   return /\b(fuente|fuentes|performance|search|ecomm|venta|ventas|review|reviews|google business|pauta|paid|org[aá]nico|social|meta|tiktok|ctr|engagement|interacci[oó]n|clic|click|visita|followers|seguidores|m[eé]trica|m[eé]tricas|estructurad[oa])\b/i.test(value);
+}
+
+function hasWindowConnectionLanguage(value: string) {
+  return /\b(ventana|12 meses|hist[oó]ric[oa]|patr[oó]n|meses|repetid[oa]|saturaci[oó]n|reactivaci[oó]n|antecedente|desde|volvi[oó]|regres[oó]|se repite|reaparece)\b/i.test(value);
 }
 
 function connectionMatchesMarketingHypothesis(marketingHypothesis: string, performanceConnection: string) {
