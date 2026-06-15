@@ -539,6 +539,7 @@ test("Signal Pulse marketing record matching prefers evidence overlap over raw k
       knowledge_sources: [],
       source_inventory: [],
       performance_window: [],
+      structured_source_window: [],
       marketing_activity_window: [],
       repeated_marketing_language: [
         {
@@ -752,6 +753,39 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               direction: "up"
             }
           ],
+          structured_sources: [
+            {
+              month: "2026-05",
+              source_type: "social_performance",
+              provider: "meta",
+              channel: "paid",
+              records: 42,
+              metrics: {
+                spend: 1200,
+                impressions: 88000,
+                clicks: 940,
+                engagement: 1800
+              },
+              entity_kinds: ["campaign"],
+              objectives: ["traffic"],
+              sample_entities: ["Confianza auto"],
+              sample_texts: ["Seguro de auto con respuesta rapida"]
+            }
+          ],
+          structured_source_events: [
+            {
+              month: "2026-05",
+              source_type: "social_performance",
+              provider: "meta",
+              channel: "paid",
+              metric: "engagement",
+              current_value: 1800,
+              previous_value: 900,
+              delta_abs: 900,
+              delta_pct: 100,
+              direction: "up"
+            }
+          ],
           matching_creatives: [
             {
               record_date: "2026-05-10",
@@ -852,7 +886,9 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
               impressions: 88000,
               engagement: 1800,
               top_campaigns: ["Confianza auto · traffic · meta · paid"],
-              top_matching_creatives: ["Seguro de auto con respuesta rapida"]
+              top_matching_creatives: ["Seguro de auto con respuesta rapida"],
+              structured_source_event_count: 1,
+              top_structured_sources: ["social_performance · meta · paid · Confianza auto · engagement:1800"]
             }
           ],
           pattern_flags: [
@@ -918,6 +954,25 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
         channels: ["paid"]
       }
     ],
+    structured_source_window: [
+      {
+        month: "2026-05",
+        source_type: "social_performance",
+        provider: "meta",
+        channel: "paid",
+        records: 42,
+        metrics: {
+          spend: 1200,
+          impressions: 88000,
+          clicks: 940,
+          engagement: 1800
+        },
+        entity_kinds: ["campaign"],
+        objectives: ["traffic"],
+        sample_entities: ["Confianza auto"],
+        sample_texts: ["Seguro de auto con respuesta rapida"]
+      }
+    ],
     marketing_activity_window: [
       {
         month: "2026-05",
@@ -974,6 +1029,8 @@ test("Signal Pulse Claude naming prompt uses marketing-first RAG context, not T&
   assert.match(prompt, /analysis_scope/);
   assert.match(prompt, /ventana completa/);
   assert.match(prompt, /performance_records/);
+  assert.match(prompt, /structured_source_window/);
+  assert.match(prompt, /structured_source_events/);
   assert.match(prompt, /repeated_marketing_language/);
   assert.match(prompt, /conversation_matches/);
   assert.match(prompt, /investigation_brief/);

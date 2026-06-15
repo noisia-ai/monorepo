@@ -46,6 +46,32 @@ export type SignalPulseConversationMatch = {
   similarity: number | null;
 };
 
+export type SignalPulseStructuredSourceMonth = {
+  month: string;
+  source_type: string;
+  provider: string;
+  channel: string;
+  records: number;
+  metrics: Record<string, number>;
+  entity_kinds: string[];
+  objectives: string[];
+  sample_entities: string[];
+  sample_texts: string[];
+};
+
+export type SignalPulseStructuredSourceEvent = {
+  month: string;
+  source_type: string;
+  provider: string;
+  channel: string;
+  metric: string;
+  current_value: number;
+  previous_value: number;
+  delta_abs: number;
+  delta_pct: number | null;
+  direction: "up" | "down" | "flat";
+};
+
 export type SignalPulseMarketingContext = {
   marketing_brief: Record<string, unknown>;
   knowledge_sources: Array<{ type: string; content: Record<string, unknown> }>;
@@ -67,6 +93,7 @@ export type SignalPulseMarketingContext = {
     platforms: string[];
     channels: string[];
   }>;
+  structured_source_window: SignalPulseStructuredSourceMonth[];
   marketing_activity_window: SignalPulseMarketingActivityMonth[];
   repeated_marketing_language: SignalPulseRepeatedMarketingLanguage[];
   rag: {
@@ -138,6 +165,8 @@ export type SignalPulseInvestigationBrief = {
     engagement: number;
     top_campaigns: string[];
     top_matching_creatives: string[];
+    structured_source_event_count?: number;
+    top_structured_sources?: string[];
   }>;
   pattern_flags: SignalPulsePatternFlag[];
   evidence_map: {
@@ -180,6 +209,8 @@ export type SignalPulseClusterPromptContext = {
       delta_pct: number | null;
       direction: "up" | "down" | "flat";
     }>;
+    structured_sources: SignalPulseStructuredSourceMonth[];
+    structured_source_events: SignalPulseStructuredSourceEvent[];
     matching_creatives: SignalPulseMarketingRecordMatch[];
   };
   knowledge_matches: SignalPulseKnowledgeMatch[];
@@ -199,10 +230,11 @@ export type ClusterContextInput = {
 };
 
 export async function loadSignalPulseMarketingContext(ctx: SignalPulseContextScope): Promise<SignalPulseMarketingContext> {
-  const [ragContext, sourceInventory, performanceWindow, marketingActivity] = await Promise.all([
+  const [ragContext, sourceInventory, performanceWindow, structuredSourceWindow, marketingActivity] = await Promise.all([
     loadAnalysisRagContext(ctx.study_corpus_id, ctx.brand_id),
     loadSourceInventory(ctx.study_corpus_id),
     loadPerformanceWindow(ctx.study_corpus_id),
+    loadStructuredSourceWindow(ctx.study_corpus_id),
     loadMarketingActivityWindow(ctx.study_corpus_id)
   ]);
 
@@ -214,12 +246,13 @@ export async function loadSignalPulseMarketingContext(ctx: SignalPulseContextSco
       .map((source) => ({ type: source.type, content: compactRecord(source.content, 900) })),
     source_inventory: sourceInventory,
     performance_window: performanceWindow,
+    structured_source_window: structuredSourceWindow,
     marketing_activity_window: marketingActivity.months,
     repeated_marketing_language: marketingActivity.repeatedLanguage,
     rag: {
       semantic_available: hasEmbeddingProvider(),
       embedding_model: hasEmbeddingProvider() ? getEmbeddingModel() : null,
-      retrieval_scope: "brand_knowledge_sources + structured performance_records"
+      retrieval_scope: "brand_knowledge_sources + structured data_sources/performance_records"
     }
   };
 }
@@ -253,6 +286,11 @@ export async function loadSignalPulseClusterPromptContext(args: {
   const weeklyPattern = summarizeWindowPattern(weeklySeries);
   const activeMonthLabels = periodSeries.filter((period) => period.volume > 0).map((period) => period.label);
   const activeMonths = new Set(activeMonthLabels);
+  const structuredSourceEvents = summarizeStructuredSourceEvents(args.marketingContext.structured_source_window, activeMonthLabels);
+  const activeStructuredSources = args.marketingContext.structured_source_window
+    .filter((month) => activeMonths.has(month.month))
+    .sort((a, b) => b.records - a.records || totalMetricValue(b.metrics) - totalMetricValue(a.metrics))
+    .slice(0, 24);
   const [periodCampaigns, performanceEvents, matchingCreatives] = await Promise.all([
     loadPeriodCampaignContext({
       corpusId: args.ctx.study_corpus_id,
@@ -275,6 +313,8 @@ export async function loadSignalPulseClusterPromptContext(args: {
     weeklyPattern,
     periodCampaigns,
     performanceEvents,
+    structuredSources: activeStructuredSources,
+    structuredSourceEvents,
     matchingCreatives,
     semanticMatches
   });
@@ -287,6 +327,8 @@ export async function loadSignalPulseClusterPromptContext(args: {
       active_months: args.marketingContext.performance_window.filter((month) => activeMonths.has(month.month)),
       period_campaigns: periodCampaigns,
       performance_events: performanceEvents,
+      structured_sources: activeStructuredSources,
+      structured_source_events: structuredSourceEvents,
       matching_creatives: matchingCreatives
     },
     knowledge_matches: semanticMatches.knowledge,
@@ -361,6 +403,162 @@ async function loadPerformanceWindow(corpusId: string): Promise<SignalPulseMarke
     platforms: row.platforms ?? [],
     channels: row.channels ?? []
   }));
+}
+
+async function loadStructuredSourceWindow(corpusId: string): Promise<SignalPulseStructuredSourceMonth[]> {
+  const rows = (await pool.query<{
+    month: string;
+    source_type: string | null;
+    provider: string | null;
+    channel: string | null;
+    records: number;
+    spend: string | null;
+    impressions: string | null;
+    reach: string | null;
+    clicks: string | null;
+    video_views: string | null;
+    engagement: string | null;
+    conversions: string | null;
+    avg_ctr: string | null;
+    avg_cpm: string | null;
+    avg_cpc: string | null;
+    custom_metrics: Record<string, unknown> | null;
+    entity_kinds: string[] | null;
+    objectives: string[] | null;
+    sample_entities: string[] | null;
+    sample_texts: string[] | null;
+  }>(
+    `
+      WITH base AS (
+        SELECT
+          to_char(date_trunc('month', pr.record_date), 'YYYY-MM') AS month,
+          COALESCE(
+            NULLIF(
+              CASE
+                WHEN ds.source_type = 'performance' AND pr.channel IN ('paid', 'organic') THEN 'social_performance'
+                WHEN ds.source_type = 'performance' AND COALESCE(NULLIF(pr.channel, ''), 'unknown') NOT IN ('paid', 'organic', 'unknown') THEN pr.channel
+                ELSE ds.source_type
+              END,
+              ''
+            ),
+            CASE
+              WHEN pr.channel IN ('paid', 'organic') THEN 'social_performance'
+              ELSE COALESCE(NULLIF(pr.channel, ''), 'performance')
+            END
+          ) AS source_type,
+          COALESCE(NULLIF(ds.provider, ''), NULLIF(pr.platform, ''), 'unknown') AS provider,
+          COALESCE(NULLIF(pr.channel, ''), 'unknown') AS channel,
+          NULLIF(pr.entity_kind, '') AS entity_kind,
+          NULLIF(COALESCE(pr.entity_name, pr.external_id), '') AS entity_name,
+          NULLIF(pr.objective, '') AS objective,
+          NULLIF(left(regexp_replace(pr.creative_text, '\\s+', ' ', 'g'), 220), '') AS creative_text,
+          COALESCE(pr.spend, 0) AS spend,
+          COALESCE(pr.impressions, 0) AS impressions,
+          COALESCE(pr.reach, 0) AS reach,
+          COALESCE(pr.clicks, 0) AS clicks,
+          COALESCE(pr.video_views, 0) AS video_views,
+          COALESCE(pr.engagement, 0) AS engagement,
+          COALESCE(pr.conversions, 0) AS conversions,
+          pr.ctr,
+          pr.cpm,
+          pr.cpc,
+          COALESCE(pr.metrics, '{}'::jsonb) AS metrics
+        FROM performance_records pr
+        LEFT JOIN data_sources ds ON ds.id = pr.data_source_id
+        WHERE pr.study_corpus_id = $1
+      ),
+      known AS (
+        SELECT
+          month,
+          source_type,
+          provider,
+          channel,
+          COUNT(*)::int AS records,
+          COALESCE(SUM(spend), 0)::text AS spend,
+          COALESCE(SUM(impressions), 0)::text AS impressions,
+          COALESCE(SUM(reach), 0)::text AS reach,
+          COALESCE(SUM(clicks), 0)::text AS clicks,
+          COALESCE(SUM(video_views), 0)::text AS video_views,
+          COALESCE(SUM(engagement), 0)::text AS engagement,
+          COALESCE(SUM(conversions), 0)::text AS conversions,
+          AVG(ctr)::text AS avg_ctr,
+          AVG(cpm)::text AS avg_cpm,
+          AVG(cpc)::text AS avg_cpc,
+          array_remove(array_agg(DISTINCT entity_kind), NULL) AS entity_kinds,
+          array_remove(array_agg(DISTINCT objective), NULL) AS objectives,
+          array_remove(array_agg(DISTINCT entity_name), NULL) AS sample_entities,
+          array_remove(array_agg(DISTINCT creative_text), NULL) AS sample_texts
+        FROM base
+        GROUP BY month, source_type, provider, channel
+      ),
+      metric_sums AS (
+        SELECT
+          base.month,
+          base.source_type,
+          base.provider,
+          base.channel,
+          metric.key AS metric_key,
+          SUM(
+            CASE
+              WHEN metric.value ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN metric.value::numeric
+              ELSE 0
+            END
+          ) AS metric_sum
+        FROM base
+        JOIN LATERAL jsonb_each_text(base.metrics) metric(key, value) ON true
+        GROUP BY base.month, base.source_type, base.provider, base.channel, metric.key
+      ),
+      metric_totals AS (
+        SELECT
+          month,
+          source_type,
+          provider,
+          channel,
+          jsonb_object_agg(metric_key, metric_sum) AS custom_metrics
+        FROM metric_sums
+        GROUP BY month, source_type, provider, channel
+      )
+      SELECT
+        known.*,
+        COALESCE(metric_totals.custom_metrics, '{}'::jsonb) AS custom_metrics
+      FROM known
+      LEFT JOIN metric_totals
+        ON metric_totals.month = known.month
+       AND metric_totals.source_type = known.source_type
+       AND metric_totals.provider = known.provider
+       AND metric_totals.channel = known.channel
+      ORDER BY known.month DESC, known.records DESC
+      LIMIT 360
+    `,
+    [corpusId]
+  )).rows;
+
+  return rows
+    .map((row) => ({
+      month: row.month,
+      source_type: row.source_type ?? "performance",
+      provider: row.provider ?? "unknown",
+      channel: row.channel ?? "unknown",
+      records: Number(row.records ?? 0),
+      metrics: compactMetricRecord({
+        ...numericMetricsFromRecord(row.custom_metrics),
+        spend: Number(row.spend ?? 0),
+        impressions: Number(row.impressions ?? 0),
+        reach: Number(row.reach ?? 0),
+        clicks: Number(row.clicks ?? 0),
+        video_views: Number(row.video_views ?? 0),
+        engagement: Number(row.engagement ?? 0),
+        conversions: Number(row.conversions ?? 0),
+        ctr: numberOrNull(row.avg_ctr) ?? 0,
+        cpm: numberOrNull(row.avg_cpm) ?? 0,
+        cpc: numberOrNull(row.avg_cpc) ?? 0
+      }),
+      entity_kinds: (row.entity_kinds ?? []).filter(Boolean).slice(0, 8),
+      objectives: (row.objectives ?? []).filter(Boolean).slice(0, 8),
+      sample_entities: (row.sample_entities ?? []).filter(Boolean).slice(0, 8),
+      sample_texts: (row.sample_texts ?? []).filter(Boolean).slice(0, 5)
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month) || b.records - a.records);
 }
 
 async function loadMarketingActivityWindow(corpusId: string): Promise<{
@@ -828,6 +1026,8 @@ function buildClusterInvestigationBrief(args: {
   weeklyPattern: SignalPulseWindowPattern;
   periodCampaigns: SignalPulseClusterPromptContext["performance_context"]["period_campaigns"];
   performanceEvents: SignalPulseClusterPromptContext["performance_context"]["performance_events"];
+  structuredSources: SignalPulseStructuredSourceMonth[];
+  structuredSourceEvents: SignalPulseStructuredSourceEvent[];
   matchingCreatives: SignalPulseMarketingRecordMatch[];
   semanticMatches: { knowledge: SignalPulseKnowledgeMatch[]; conversation: SignalPulseConversationMatch[] };
 }): SignalPulseInvestigationBrief {
@@ -865,11 +1065,13 @@ function buildClusterInvestigationBrief(args: {
     const campaigns = args.periodCampaigns.filter((campaign) => campaign.period_label === periodLabel);
     const matches = args.matchingCreatives.filter((record) => record.period_label === periodLabel);
     const events = args.performanceEvents.filter((event) => event.month === periodLabel);
+    const sourceEvents = args.structuredSourceEvents.filter((event) => event.month === periodLabel);
+    const structuredSources = args.structuredSources.filter((source) => source.month === periodLabel);
     const basis = matches.some((record) => record.match_basis.includes("evidence_overlap"))
       ? "creative_or_campaign_language_overlaps_evidence"
       : matches.some((record) => record.match_basis.includes("repeated_marketing_language"))
         ? "repeated_marketing_language_overlap"
-        : campaigns.length > 0 || events.length > 0
+        : campaigns.length > 0 || events.length > 0 || sourceEvents.length > 0 || structuredSources.length > 0
           ? "same_period_marketing_activity"
           : "conversation_only_period";
     return {
@@ -877,7 +1079,7 @@ function buildClusterInvestigationBrief(args: {
       basis,
       campaign_count: campaigns.length,
       matching_creative_count: matches.length,
-      performance_event_count: events.length,
+      performance_event_count: events.length + sourceEvents.length,
       spend: round(campaigns.reduce((sum, campaign) => sum + campaign.spend, 0), 2),
       impressions: round(campaigns.reduce((sum, campaign) => sum + campaign.impressions, 0), 2),
       engagement: round(campaigns.reduce((sum, campaign) => sum + campaign.engagement, 0), 2),
@@ -892,12 +1094,19 @@ function buildClusterInvestigationBrief(args: {
         .sort(marketingRecordSort)
         .map((record) => record.creative_text || record.entity_name || record.objective)
         .filter((value): value is string => Boolean(value))
+        .slice(0, 4),
+      structured_source_event_count: sourceEvents.length,
+      top_structured_sources: structuredSources
+        .slice()
+        .sort((a, b) => b.records - a.records || totalMetricValue(b.metrics) - totalMetricValue(a.metrics))
+        .map(formatStructuredSourceLabel)
         .slice(0, 4)
     };
   }).filter((intersection) => (
     intersection.campaign_count > 0
     || intersection.matching_creative_count > 0
     || intersection.performance_event_count > 0
+    || (intersection.structured_source_event_count ?? 0) > 0
     || intersection.basis === "conversation_only_period"
   ));
   const currentCutVolume = current?.volume ?? 0;
@@ -1004,6 +1213,57 @@ function summarizePerformanceEvents(
     .slice(0, 12);
 }
 
+function summarizeStructuredSourceEvents(
+  structuredWindow: SignalPulseStructuredSourceMonth[],
+  periodLabels: string[]
+): SignalPulseStructuredSourceEvent[] {
+  const labels = new Set(periodLabels);
+  const grouped = new Map<string, Array<SignalPulseStructuredSourceMonth & { metric: string; value: number }>>();
+  for (const month of structuredWindow) {
+    for (const [metric, rawValue] of Object.entries(month.metrics)) {
+      if (!isStructuredMetricUseful(metric)) continue;
+      const value = Number(rawValue);
+      if (!Number.isFinite(value)) continue;
+      const key = [month.source_type, month.provider, month.channel, metric].join("|");
+      const entries = grouped.get(key) ?? [];
+      entries.push({ ...month, metric, value });
+      grouped.set(key, entries);
+    }
+  }
+
+  const events: SignalPulseStructuredSourceEvent[] = [];
+  for (const entries of grouped.values()) {
+    const sorted = entries.sort((a, b) => a.month.localeCompare(b.month));
+    for (let index = 0; index < sorted.length; index += 1) {
+      const current = sorted[index];
+      if (!current || !labels.has(current.month)) continue;
+      const previous = sorted[index - 1] ?? null;
+      const previousValue = Number(previous?.value ?? 0);
+      const currentValue = Number(current.value ?? 0);
+      if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) continue;
+      const deltaAbs = round(currentValue - previousValue, current.metric === "ctr" ? 5 : 2);
+      if (deltaAbs === 0) continue;
+      const deltaPct = previousValue !== 0 ? round((deltaAbs / previousValue) * 100, 2) : null;
+      events.push({
+        month: current.month,
+        source_type: current.source_type,
+        provider: current.provider,
+        channel: current.channel,
+        metric: current.metric,
+        current_value: currentValue,
+        previous_value: previousValue,
+        delta_abs: deltaAbs,
+        delta_pct: deltaPct,
+        direction: deltaAbs > 0 ? "up" : "down"
+      });
+    }
+  }
+
+  return events
+    .sort((a, b) => Math.abs(b.delta_pct ?? b.delta_abs) - Math.abs(a.delta_pct ?? a.delta_abs))
+    .slice(0, 24);
+}
+
 function buildMarketingBrief(analysisPlan: Record<string, unknown> | null, params: Record<string, unknown> | null) {
   const plan = recordValue(analysisPlan);
   const marketingBrief = recordValue(plan.marketing_brief);
@@ -1027,8 +1287,10 @@ function buildClusterSemanticQuery(cluster: ClusterContextInput, marketingContex
     cluster.discoveryPeriods.join(" "),
     ...cluster.samples.slice(0, 12).map((sample) => `${sample.published_at ?? "sin_fecha"} ${sample.platform}: ${sample.text}`),
     JSON.stringify(marketingContext.marketing_brief).slice(0, 1600),
+    JSON.stringify(marketingContext.source_inventory.slice(0, 12)).slice(0, 1200),
     JSON.stringify(marketingContext.repeated_marketing_language.slice(0, 8)).slice(0, 1600),
-    JSON.stringify(marketingContext.marketing_activity_window.slice(-6)).slice(0, 2200)
+    JSON.stringify(marketingContext.marketing_activity_window.slice(-6)).slice(0, 2200),
+    JSON.stringify(marketingContext.structured_source_window.slice(-18)).slice(0, 2600)
   ].filter(Boolean).join("\n").slice(0, 7000);
 }
 
@@ -1075,6 +1337,51 @@ function recordValue(value: unknown): Record<string, unknown> {
 function numberOrNull(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function numericMetricsFromRecord(value: Record<string, unknown> | null | undefined) {
+  const output: Record<string, number> = {};
+  for (const [key, item] of Object.entries(value ?? {})) {
+    const number = Number(item);
+    if (Number.isFinite(number)) output[key] = number;
+  }
+  return output;
+}
+
+function compactMetricRecord(value: Record<string, number>) {
+  const output: Record<string, number> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!Number.isFinite(item)) continue;
+    if (item === 0 && !["ctr", "cpm", "cpc"].includes(key)) continue;
+    output[key] = round(item, ["ctr", "cpm", "cpc"].includes(key) ? 5 : 2);
+  }
+  return output;
+}
+
+function totalMetricValue(metrics: Record<string, number>) {
+  return Object.entries(metrics)
+    .filter(([key]) => !["ctr", "cpm", "cpc"].includes(key))
+    .reduce((sum, [, value]) => sum + Math.max(0, Number(value) || 0), 0);
+}
+
+function formatStructuredSourceLabel(source: SignalPulseStructuredSourceMonth) {
+  const strongestMetrics = Object.entries(source.metrics)
+    .filter(([metric]) => isStructuredMetricUseful(metric))
+    .sort(([, a], [, b]) => Math.abs(Number(b) || 0) - Math.abs(Number(a) || 0))
+    .slice(0, 3)
+    .map(([metric, value]) => `${metric}:${round(Number(value) || 0, metric === "ctr" ? 5 : 2)}`)
+    .join(", ");
+  return [
+    source.source_type,
+    source.provider,
+    source.channel,
+    source.sample_entities[0],
+    strongestMetrics
+  ].filter(Boolean).join(" · ");
+}
+
+function isStructuredMetricUseful(metric: string) {
+  return !["records", "cpm", "cpc"].includes(metric);
 }
 
 function round(value: number, digits = 2) {

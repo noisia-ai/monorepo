@@ -1456,6 +1456,8 @@ async function maybeApplyClaudeSignalNaming(args: {
     metadata: {
       knowledge_sources: marketingContext.knowledge_sources.length,
       performance_months: marketingContext.performance_window.length,
+      structured_source_months: marketingContext.structured_source_window.length,
+      structured_source_types: uniqueStrings(marketingContext.structured_source_window.map((month) => month.source_type)).slice(0, 12),
       marketing_activity_months: marketingContext.marketing_activity_window.length,
       repeated_marketing_language: marketingContext.repeated_marketing_language.length,
       source_inventory: marketingContext.source_inventory.length,
@@ -1556,6 +1558,8 @@ async function applyClaudeSignalNamingBatch(args: {
           rag_context: {
             knowledge_sources: args.marketingContext.knowledge_sources.length,
             performance_months: args.marketingContext.performance_window.length,
+            structured_source_months: args.marketingContext.structured_source_window.length,
+            structured_source_events: args.batch.reduce((sum, item) => sum + item.context.performance_context.structured_source_events.length, 0),
             marketing_activity_months: args.marketingContext.marketing_activity_window.length,
             repeated_marketing_language: args.marketingContext.repeated_marketing_language.length,
             knowledge_matches: args.batch.reduce((sum, item) => sum + item.context.knowledge_matches.length, 0),
@@ -1738,6 +1742,8 @@ function buildSignalPulseContextSummary(source: SignalPulseClusterNamingPayload)
     evidence_sample_ids: source.context.investigation_brief.evidence_map.sample_ids.length,
     semantic_evidence_ids: source.context.investigation_brief.evidence_map.semantic_mention_ids.length,
     active_performance_months: source.context.performance_context.active_months.length,
+    structured_source_months: source.context.performance_context.structured_sources.length,
+    structured_source_events: source.context.performance_context.structured_source_events.length,
     period_campaigns: source.context.performance_context.period_campaigns.length,
     performance_events: source.context.performance_context.performance_events.length,
     matching_creatives: source.context.performance_context.matching_creatives.length,
@@ -1767,32 +1773,54 @@ function buildSignalPulseFilterMetadata(source: SignalPulseClusterNamingPayload)
     ...source.context.performance_context.matching_creatives.map((record) => record.entity_name),
     ...source.context.performance_context.matching_creatives.map((record) => record.objective)
   ]).slice(0, 16);
-  const performanceEvents = uniqueStrings(source.context.performance_context.performance_events.flatMap((event) => [
-    event.metric,
-    `${event.metric} ${event.direction}`,
-    `${event.metric}_${event.direction}`,
-    event.direction === "down" ? `${event.metric} drop` : "",
-    event.direction === "down" ? `${event.metric} baja` : "",
-    event.direction === "up" ? `${event.metric} spike` : "",
-    event.direction === "up" ? `${event.metric} subida` : "",
-    event.month
-  ])).slice(0, 24);
+  const performanceEvents = uniqueStrings([
+    ...source.context.performance_context.performance_events.flatMap((event) => [
+      event.metric,
+      `${event.metric} ${event.direction}`,
+      `${event.metric}_${event.direction}`,
+      event.direction === "down" ? `${event.metric} drop` : "",
+      event.direction === "down" ? `${event.metric} baja` : "",
+      event.direction === "up" ? `${event.metric} spike` : "",
+      event.direction === "up" ? `${event.metric} subida` : "",
+      event.month
+    ]),
+    ...source.context.performance_context.structured_source_events.flatMap((event) => [
+      event.metric,
+      `${event.source_type} ${event.metric}`,
+      `${event.provider} ${event.metric}`,
+      `${event.metric} ${event.direction}`,
+      `${event.metric}_${event.direction}`,
+      event.direction === "down" ? `${event.metric} drop` : "",
+      event.direction === "down" ? `${event.metric} baja` : "",
+      event.direction === "up" ? `${event.metric} spike` : "",
+      event.direction === "up" ? `${event.metric} subida` : "",
+      event.month
+    ])
+  ]).slice(0, 32);
   const sourceTypes = uniqueStrings([
     ...source.context.performance_context.period_campaigns.map((campaign) => campaign.channel),
     ...source.context.performance_context.matching_creatives.map((record) => record.channel),
-    ...source.context.performance_context.active_months.flatMap((month) => month.channels)
+    ...source.context.performance_context.active_months.flatMap((month) => month.channels),
+    ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.source_type),
+    ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.channel),
+    ...source.context.performance_context.structured_source_events.map((event) => event.source_type),
+    ...source.context.performance_context.structured_source_events.map((event) => event.channel)
   ]).slice(0, 16);
   const sourcePlatforms = uniqueStrings([
     ...source.platforms,
     ...source.context.performance_context.period_campaigns.map((campaign) => campaign.platform),
     ...source.context.performance_context.matching_creatives.map((record) => record.platform),
-    ...source.context.performance_context.active_months.flatMap((month) => month.platforms)
+    ...source.context.performance_context.active_months.flatMap((month) => month.platforms),
+    ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.provider),
+    ...source.context.performance_context.structured_source_events.map((event) => event.provider)
   ]).slice(0, 16);
   const marketingPeriods = uniqueStrings([
     ...source.context.investigation_brief.marketing_intersections.map((intersection) => intersection.period_label),
     ...source.context.performance_context.period_campaigns.map((campaign) => campaign.period_label),
     ...source.context.performance_context.matching_creatives.map((record) => record.period_label),
-    ...source.context.performance_context.performance_events.map((event) => event.month)
+    ...source.context.performance_context.performance_events.map((event) => event.month),
+    ...source.context.performance_context.structured_sources.map((sourceMonth) => sourceMonth.month),
+    ...source.context.performance_context.structured_source_events.map((event) => event.month)
   ]).slice(0, 24);
 
   return {

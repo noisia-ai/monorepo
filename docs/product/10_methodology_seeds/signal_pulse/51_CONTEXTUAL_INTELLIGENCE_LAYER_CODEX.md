@@ -12,12 +12,14 @@ Signal Pulse dejó de tratar el corte mensual como análisis aislado. El worker 
 - brief de marketing del wizard (`analysis_plan.marketing_brief`);
 - inventario de fuentes estructuradas (`data_sources`);
 - performance mensual de la ventana (`performance_records`);
+- ventana mensual normalizada de fuentes estructuradas (`structured_source_window` desde `data_sources` + `performance_records.metrics`);
 - mapa mensual de actividad de marketing (`marketing_activity_window`);
 - lenguaje/claims repetidos en piezas, campañas u objetivos (`repeated_marketing_language`);
 - serie mensual por cluster antes del naming;
 - serie semanal por cluster antes del naming cuando hay cobertura suficiente;
 - campañas/creativos/performance activos en los periodos donde vive el cluster;
 - eventos de performance calculados por delta contra el periodo previo;
+- eventos de fuentes estructuradas calculados por delta mensual (`structured_source_events`);
 - contexto de creativos/performance que matchean el territorio del cluster;
 - evidence snippets acotados por cluster, con `mention_id` visible para Claude.
 
@@ -73,6 +75,8 @@ Para evitar que el cruce dependa sólo de keywords, cada cluster recibe también
 
 - `period_campaigns`: campañas, ads o piezas con pauta/performance en los meses donde el cluster estuvo activo.
 - `performance_events`: cambios estructurados de spend, impressions, clicks, engagement y CTR contra el mes previo.
+- `structured_sources`: fuentes estructuradas activas en los meses de la señal, agrupadas por `source_type`, `provider` y `channel`.
+- `structured_source_events`: subidas/caídas mensuales por fuente y métrica, incluyendo métricas no estándar guardadas en `performance_records.metrics` como followers, visits, search/ecomm/reviews/ventas cuando existan adapters o mappings.
 - `matching_creatives`: creativos cuyo texto sí matchea el territorio del cluster.
 - `knowledge_matches`: chunks de KB recuperados semánticamente con el query del cluster + brief + actividad de marketing.
 - `conversation_matches`: menciones relacionadas recuperadas por embeddings, con `mention_id`, plataforma, fecha, periodo y similitud.
@@ -83,13 +87,14 @@ Claude debe usar estos datos para interpretar o descartar conexión; no puede de
 Además, el contexto global de la corrida incluye:
 
 - `marketing_activity_window`: meses con performance, canales, objetivos, top campañas/piezas y ejemplos de creative text.
+- `structured_source_window`: meses/fuentes/proveedores/canales con métricas normalizadas desde tablas estructuradas. No son mentions ni texto libre; son el mapa de dónde hubo pauta, orgánico, search, reviews, ecomm, ventas u otros datos operativos.
 - `repeated_marketing_language`: frases de 2-4 tokens repetidas en creativos/campañas/objetivos a lo largo de la ventana, con meses, gasto, impresiones, engagement y ejemplos.
 
 Esto permite detectar casos como "la marca lleva 5 meses empujando el mismo claim" o "la pauta habla de confianza pero la conversación pide claridad" sin convertir performance en mentions ni pedirle a Claude que invente números.
 
 Los snippets que llegan al naming incluyen `id`, `text`, `platform` y `published_at`. El prompt exige que `evidence_basis` cite sample ids/periodos usados, para que la lectura cualitativa quede trazable contra evidencia real y no sólo contra paráfrasis del modelo.
 
-La query semántica ya no se arma sólo con `term`. Incluye título provisional, samples, brief de marketing, lenguaje repetido y últimos meses de actividad para recuperar contexto útil de marca/campaña/conversación. La keyword provisional sólo identifica el cluster; el prompt le prohíbe a Claude convertirla en título.
+La query semántica ya no se arma sólo con `term`. Incluye título provisional, samples, brief de marketing, inventario de fuentes, lenguaje repetido, últimos meses de actividad y ventana estructurada para recuperar contexto útil de marca/campaña/fuentes/conversación. La keyword provisional sólo identifica el cluster; el prompt le prohíbe a Claude convertirla en título.
 
 `matching_creatives` ya no sale de `LIKE '%keyword%'`. El worker carga performance_records de los meses activos del cluster y rankea campañas/piezas contra:
 
@@ -107,7 +112,7 @@ El nuevo `investigation_brief` evita que Claude tenga que descubrir la estructur
 - `window_pattern`: patrón completo de la ventana.
 - `weekly_pattern` y `weekly_pulses`: picos o caídas dentro del mes.
 - `strongest_periods`: meses con más tracción.
-- `marketing_intersections`: campaña/performance/match por periodo, con basis explícita.
+- `marketing_intersections`: campaña/performance/fuente estructurada/match por periodo, con basis explícita. Si sólo coincide temporalmente, el basis queda en `same_period_marketing_activity` y no autoriza causalidad.
 - `pattern_flags`: caso de inteligencia calculado antes de Claude (`new_in_cut`, `repeated_window`, `saturation_candidate`, `reactivated`, `accelerating`, `declining`, `inactive_in_cut`, `weekly_spike`, `marketing_overlap`, `temporal_marketing_context` o `conversation_only`), con severidad, periodos de evidencia y métricas.
 - `evidence_map`: sample ids, semantic mention ids y títulos de KB.
 - `synthesis_questions`: preguntas editoriales para decidir si la señal es fricción, oportunidad, riesgo creativo, territorio saturado, claim a testear, gap de pauta o no publicable.
@@ -140,6 +145,8 @@ Cada señal sintetizada persiste `context_summary` en `canonical_signals.dimensi
 - `evidence_sample_ids`
 - `semantic_evidence_ids`
 - `active_performance_months`
+- `structured_source_months`
+- `structured_source_events`
 - `period_campaigns`
 - `performance_events`
 - `matching_creatives`
@@ -159,10 +166,10 @@ Además, cada señal sintetizada guarda `filter_metadata` calculado desde el con
 
 - `campaign_names`: campañas/piezas/objetivos ligados a periodos activos o matches de marketing.
 - `performance_events`: métricas y direcciones detectadas en `performance_records` para los periodos de la señal.
-- `source_types` y `source_platforms`: canales/plataformas estructuradas asociadas.
-- `marketing_periods`: meses donde hubo intersección de conversación, campaña o performance.
+- `source_types` y `source_platforms`: canales/plataformas/proveedores estructurados asociados, incluyendo `structured_sources`.
+- `marketing_periods`: meses donde hubo intersección de conversación, campaña, performance o fuente estructurada.
 
-El Pulse API usa esos arrays para filtros de dashboard; el texto del reporte puede ayudar a búsqueda, pero no es la fuente primaria de navegabilidad. Los eventos de performance se guardan con alias operativos (`metric up/down`, `metric spike/drop`, `metric subida/baja`) para que Insights pueda buscar como habla el equipo sin depender de una frase redactada por Claude.
+El Pulse API usa esos arrays para filtros de dashboard; el texto del reporte puede ayudar a búsqueda, pero no es la fuente primaria de navegabilidad. Los eventos de performance/fuentes se guardan con alias operativos (`metric up/down`, `metric spike/drop`, `metric subida/baja`, `source_type metric`, `provider metric`) para que Insights pueda buscar como habla el equipo sin depender de una frase redactada por Claude.
 
 Para exploración/dashboard, los endpoints publicados aceptan filtros:
 
@@ -185,7 +192,7 @@ Esto deja listo el backend para un dashboard filtrable sin cambiar todavía el U
 ## Archivos principales
 
 - `services/workers/src/workers/signal-pulse-rag-context.ts`
-  - Construye contexto de marketing, KB, RAG, performance y series mensual/semanal por cluster.
+  - Construye contexto de marketing, KB, RAG, performance, fuentes estructuradas y series mensual/semanal por cluster.
 - `services/workers/src/workers/signal-pulse-prompts.ts`
   - Prompt puro de naming Signal Pulse, testeable sin DB.
 - `services/workers/src/workers/signal-pulse-steps.ts`
@@ -280,7 +287,9 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 9. Revisar que `performance_connection` no fuerce causalidad.
 10. Revisar que `analysis_scope` distinga corte actual vs patrón de ventana.
 11. Revisar que `sp_rag_context` registre `marketing_activity_months` y `repeated_marketing_language` > 0 cuando haya performance/creativos.
-12. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
-13. Revisar que `context_summary` esté persistido en cada señal publicable.
-14. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
-15. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.
+12. Revisar que `sp_rag_context` registre `structured_source_months` y `structured_source_types` cuando haya fuentes estructuradas.
+13. Revisar que los eventos `sp_name_signals` registren `structured_source_events` cuando un cluster viva en meses con cambios de fuentes.
+14. Revisar que los eventos `sp_name_signals` registren `knowledge_matches` y/o `conversation_matches` > 0 cuando haya embeddings.
+15. Revisar que `context_summary` esté persistido en cada señal publicable, incluyendo `structured_source_months` y `structured_source_events`.
+16. Revisar que `evidence_basis` cite sample ids reales cuando Claude haya aplicado naming.
+17. Revisar que los moves salgan del `action_hint`, `signal_role` y `performance_connection`, no de plantilla genérica.
