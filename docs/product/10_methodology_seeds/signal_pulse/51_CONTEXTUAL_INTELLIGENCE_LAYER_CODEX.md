@@ -276,6 +276,8 @@ Los `marketing_moves` ya no se derivan sólo de lifecycle/impact. El materializa
 
 Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative, una de `creative_risk` no se amplifica automáticamente aunque tenga impacto alto, una de `saturation` pide ángulo alterno y una con `performance_connection=no_connection` bloquea vender causalidad de campaña. El move debe decir qué medir y qué no hacer con base en la evidencia, no con base en la keyword.
 
+El materializador de moves también respeta la arquitectura de ventana. Prioriza señales con volumen en el corte mensual actual, pero si una señal `publish_candidate` viene de `analysis_scope=window_pattern` o `mixed` y no tiene volumen en el corte, usa su último periodo con volumen y la evidencia de ese periodo. Así un aprendizaje de saturación, reactivación o antecedente histórico puede generar una decisión táctica sin fingir que ocurrió en el último mes. Las señales `current_cut` sin volumen actual no generan moves.
+
 ## Qué NO se cambió todavía
 
 - No se rediseñó el dashboard ni el reporte visual.

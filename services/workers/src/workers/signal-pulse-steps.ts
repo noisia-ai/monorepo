@@ -2071,17 +2071,66 @@ async function materializeMarketingMoves(args: {
         ORDER BY period_start DESC
         LIMIT 1
       ),
-      latest AS (
+      current_metrics AS (
         SELECT
           spm.canonical_signal_id::text,
           spm.impact_v1::text AS impact,
           spm.volume,
           spm.confidence,
           spm.lifecycle_state,
-          spm.period_id
+          spm.period_id,
+          cp.period_start,
+          cp.period_end,
+          true AS current_cut_metric
         FROM signal_period_metrics spm
         JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
+          AND spm.volume > 0
+      ),
+      window_metrics AS (
+        SELECT DISTINCT ON (spm.canonical_signal_id)
+          spm.canonical_signal_id::text,
+          spm.impact_v1::text AS impact,
+          spm.volume,
+          spm.confidence,
+          spm.lifecycle_state,
+          spm.period_id,
+          rp.period_start,
+          rp.period_end,
+          false AS current_cut_metric
+        FROM signal_period_metrics spm
+        JOIN report_periods rp ON rp.id = spm.period_id
+        WHERE spm.study_corpus_id = $1
+          AND rp.study_corpus_id = $1
+          AND rp.granularity = 'month'
+          AND spm.volume > 0
+        ORDER BY spm.canonical_signal_id, rp.period_start DESC
+      ),
+      chosen AS (
+        SELECT
+          cs.id::text AS canonical_signal_id,
+          COALESCE(cm.impact, wm.impact) AS impact,
+          COALESCE(cm.volume, wm.volume) AS volume,
+          COALESCE(cm.confidence, wm.confidence) AS confidence,
+          COALESCE(cm.lifecycle_state, wm.lifecycle_state) AS lifecycle_state,
+          COALESCE(cm.period_id, wm.period_id) AS period_id,
+          COALESCE(cm.period_start, wm.period_start) AS period_start,
+          COALESCE(cm.period_end, wm.period_end) AS period_end,
+          COALESCE(cm.current_cut_metric, wm.current_cut_metric, false) AS current_cut_metric
+        FROM canonical_signals cs
+        LEFT JOIN current_metrics cm ON cm.canonical_signal_id = cs.id::text
+        LEFT JOIN window_metrics wm ON wm.canonical_signal_id = cs.id::text
+        WHERE cs.study_corpus_id = $1
+          AND cs.methodology_slug = 'signal-pulse'
+          AND cs.status = 'active'
+          AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+          AND (
+            cm.canonical_signal_id IS NOT NULL
+            OR (
+              wm.canonical_signal_id IS NOT NULL
+              AND COALESCE(cs.dimensions->>'analysis_scope', '') IN ('window_pattern', 'mixed')
+            )
+          )
       ),
       evidence AS (
         SELECT
@@ -2089,26 +2138,27 @@ async function materializeMarketingMoves(args: {
           array_remove(array_agg(soe.id::text ORDER BY soe.position), NULL) AS evidence_refs
         FROM signal_observations so
         JOIN signal_observation_evidence soe ON soe.signal_observation_id = so.id
-        JOIN cut_period cp ON cp.period_start = so.window_start AND cp.period_end = so.window_end
+        JOIN chosen ON chosen.canonical_signal_id = so.canonical_signal_id::text
+          AND chosen.period_start = so.window_start
+          AND chosen.period_end = so.window_end
         WHERE so.study_corpus_id = $1
           AND so.engine_analysis_id = $2
         GROUP BY so.canonical_signal_id
       )
       SELECT
-        latest.canonical_signal_id,
+        chosen.canonical_signal_id,
         cs.canonical_title AS title,
         cs.signal_type,
         cs.dimensions,
-        latest.impact,
-        latest.volume,
-        latest.confidence,
-        latest.lifecycle_state,
+        chosen.impact,
+        chosen.volume,
+        chosen.confidence,
+        chosen.lifecycle_state,
         evidence.evidence_refs
-      FROM latest
-      JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id::uuid
-      LEFT JOIN evidence ON evidence.canonical_signal_id = latest.canonical_signal_id
+      FROM chosen
+      JOIN canonical_signals cs ON cs.id = chosen.canonical_signal_id::uuid
+      LEFT JOIN evidence ON evidence.canonical_signal_id = chosen.canonical_signal_id
       WHERE cs.status = 'active'
-        AND latest.volume > 0
         AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
         AND lower(cs.canonical_title) NOT LIKE '%señal débil%'
         AND lower(cs.canonical_title) NOT LIKE '%sin relevancia%'
@@ -2119,7 +2169,7 @@ async function materializeMarketingMoves(args: {
         AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de síntesis:%'
         AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de sintesis:%'
         AND lower(cs.canonical_title) !~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|vehículo|qualitas|quálitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$'
-      ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
+      ORDER BY chosen.current_cut_metric DESC, COALESCE(chosen.impact::numeric, 0) DESC, chosen.volume DESC
       LIMIT 12
     `,
     [args.ctx.study_corpus_id, args.engineAnalysisId]
