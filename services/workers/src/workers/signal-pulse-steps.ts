@@ -1365,41 +1365,86 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
     impact: string | null;
     confidence: string | null;
     lifecycle_state: string | null;
+    metric_period_label: string | null;
+    current_cut_metric: boolean;
+    analysis_scope: string | null;
   }>(
     `
       WITH cut_period AS (
-        SELECT id, label
+        SELECT id, label, period_start, period_end
         FROM report_periods
         WHERE study_corpus_id = $1 AND granularity = 'month'
         ORDER BY period_start DESC
         LIMIT 1
       ),
-      latest AS (
+      current_metrics AS (
         SELECT
           spm.canonical_signal_id,
           spm.volume,
           spm.impact_v1::text AS impact,
           spm.confidence,
-          spm.lifecycle_state
+          spm.lifecycle_state,
+          cp.label AS metric_period_label,
+          true AS current_cut_metric
         FROM signal_period_metrics spm
         JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
+          AND spm.volume > 0
+      ),
+      window_metrics AS (
+        SELECT DISTINCT ON (spm.canonical_signal_id)
+          spm.canonical_signal_id,
+          spm.volume,
+          spm.impact_v1::text AS impact,
+          spm.confidence,
+          spm.lifecycle_state,
+          rp.label AS metric_period_label,
+          false AS current_cut_metric
+        FROM signal_period_metrics spm
+        JOIN report_periods rp ON rp.id = spm.period_id
+        WHERE spm.study_corpus_id = $1
+          AND rp.study_corpus_id = $1
+          AND rp.granularity = 'month'
+          AND spm.volume > 0
+        ORDER BY spm.canonical_signal_id, rp.period_start DESC
+      ),
+      chosen AS (
+        SELECT
+          cs.id AS canonical_signal_id,
+          COALESCE(cm.volume, wm.volume) AS volume,
+          COALESCE(cm.impact, wm.impact) AS impact,
+          COALESCE(cm.confidence, wm.confidence) AS confidence,
+          COALESCE(cm.lifecycle_state, wm.lifecycle_state) AS lifecycle_state,
+          COALESCE(cm.metric_period_label, wm.metric_period_label) AS metric_period_label,
+          COALESCE(cm.current_cut_metric, wm.current_cut_metric, false) AS current_cut_metric
+        FROM canonical_signals cs
+        LEFT JOIN current_metrics cm ON cm.canonical_signal_id = cs.id
+        LEFT JOIN window_metrics wm ON wm.canonical_signal_id = cs.id
+        WHERE cs.study_corpus_id = $1
+          AND cs.methodology_slug = 'signal-pulse'
+          AND cs.status <> 'archived'
+          AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+          AND (
+            cm.canonical_signal_id IS NOT NULL
+            OR (
+              wm.canonical_signal_id IS NOT NULL
+              AND COALESCE(cs.dimensions->>'analysis_scope', '') IN ('window_pattern', 'mixed')
+            )
+          )
       )
       SELECT
         cs.canonical_title AS title,
         cs.signal_type,
-        latest.volume,
-        latest.impact,
-        latest.confidence,
-        latest.lifecycle_state
-      FROM latest
-      JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
-      WHERE cs.study_corpus_id = $1
-        AND cs.methodology_slug = 'signal-pulse'
-        AND cs.status <> 'archived'
-        AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
-        AND latest.volume > 0
-      ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
+        chosen.volume,
+        chosen.impact,
+        chosen.confidence,
+        chosen.lifecycle_state,
+        chosen.metric_period_label,
+        chosen.current_cut_metric,
+        cs.dimensions->>'analysis_scope' AS analysis_scope
+      FROM chosen
+      JOIN canonical_signals cs ON cs.id = chosen.canonical_signal_id
+      ORDER BY chosen.current_cut_metric DESC, COALESCE(chosen.impact::numeric, 0) DESC, chosen.volume DESC
       LIMIT 1
     `,
     [ctx.study_corpus_id]
@@ -1413,10 +1458,12 @@ async function buildSignalPulseInterpretation(ctx: AnalysisContext) {
     };
   }
 
+  const periodLabel = row.metric_period_label ?? "la ventana";
+  const scope = row.current_cut_metric ? "en el corte actual" : "como patrón de ventana";
   const posture = row.signal_type === "risk" ? "requiere contención" : row.lifecycle_state === "accelerating" ? "está acelerando" : "merece una prueba controlada";
   return {
-    headline: `${row.title} ${posture} este corte.`,
-    body: `La señal llega con ${Number(row.volume ?? 0)} menciones en el periodo más reciente, impacto ${Number(row.impact ?? 0)} y confianza ${row.confidence ?? "baja"}.`,
+    headline: `${row.title} ${posture} ${scope}.`,
+    body: `La señal llega con ${Number(row.volume ?? 0)} menciones en ${periodLabel}, impacto ${Number(row.impact ?? 0)} y confianza ${row.confidence ?? "baja"}. ${row.current_cut_metric ? "Úsala para decidir el Pulse mensual." : `Úsala como aprendizaje ${row.analysis_scope === "mixed" ? "mixto" : "histórico"} sin venderlo como hallazgo exclusivo del último mes.`}`,
     action: row.signal_type === "risk"
       ? "Reducir la fricción en claims, piezas y pauta antes de amplificar el territorio."
       : "Convertir la señal en un hook medible antes de mover presupuesto fuerte."
@@ -1884,6 +1931,7 @@ async function maybeApplyClaudeSignalPulseInterpretation(args: {
     "Eres editor senior de un reporte tactico para marketing.",
     "Interpreta SOLO agregados SQL, knowledge base y performance estructurada. No inventes números ni porcentajes; si mencionas cifras, deben venir del JSON.",
     "El reporte mensual es una vista publicable de una ventana de 12 meses: explica que cambio este corte, que patron de la ventana importa y que decision de Marketing se mueve.",
+    "En context.signals, current_cut_metric=true significa que el volumen corresponde al corte mensual actual. current_cut_metric=false significa que la señal es publicable como analysis_scope window_pattern/mixed y el volumen pertenece a metric_period_label dentro de la ventana; no la escribas como evento del último mes.",
     "No uses jerga metodologica ni nombres de metodologias pausadas. Usa lenguaje de Signal Pulse: friccion, oportunidad, riesgo creativo, territorio saturado, gap de pauta, claim a testear, monitoreo.",
     "Devuelve SOLO JSON válido: {\"headline\":\"...\",\"body\":\"...\",\"action\":\"...\"}.",
     "Contexto:",
@@ -1994,40 +2042,90 @@ async function loadSignalPulseInterpretationContext(ctx: AnalysisContext) {
     pool.query(
     `
       WITH cut_period AS (
-        SELECT id
+        SELECT id, label, period_start, period_end
         FROM report_periods
         WHERE study_corpus_id = $1 AND granularity = 'month'
         ORDER BY period_start DESC
         LIMIT 1
       ),
-      latest AS (
+      current_metrics AS (
         SELECT
           spm.canonical_signal_id,
           spm.volume,
           spm.impact_v1::text AS impact,
           spm.confidence,
           spm.lifecycle_state,
-          spm.polarity_bucket
+          spm.polarity_bucket,
+          cp.label AS metric_period_label,
+          true AS current_cut_metric
         FROM signal_period_metrics spm
         JOIN cut_period cp ON cp.id = spm.period_id
         WHERE spm.study_corpus_id = $1
+          AND spm.volume > 0
+      ),
+      window_metrics AS (
+        SELECT DISTINCT ON (spm.canonical_signal_id)
+          spm.canonical_signal_id,
+          spm.volume,
+          spm.impact_v1::text AS impact,
+          spm.confidence,
+          spm.lifecycle_state,
+          spm.polarity_bucket,
+          rp.label AS metric_period_label,
+          false AS current_cut_metric
+        FROM signal_period_metrics spm
+        JOIN report_periods rp ON rp.id = spm.period_id
+        WHERE spm.study_corpus_id = $1
+          AND rp.study_corpus_id = $1
+          AND rp.granularity = 'month'
+          AND spm.volume > 0
+        ORDER BY spm.canonical_signal_id, rp.period_start DESC
+      ),
+      chosen AS (
+        SELECT
+          cs.id AS canonical_signal_id,
+          COALESCE(cm.volume, wm.volume) AS volume,
+          COALESCE(cm.impact, wm.impact) AS impact,
+          COALESCE(cm.confidence, wm.confidence) AS confidence,
+          COALESCE(cm.lifecycle_state, wm.lifecycle_state) AS lifecycle_state,
+          COALESCE(cm.polarity_bucket, wm.polarity_bucket) AS polarity_bucket,
+          COALESCE(cm.metric_period_label, wm.metric_period_label) AS metric_period_label,
+          COALESCE(cm.current_cut_metric, wm.current_cut_metric, false) AS current_cut_metric
+        FROM canonical_signals cs
+        LEFT JOIN current_metrics cm ON cm.canonical_signal_id = cs.id
+        LEFT JOIN window_metrics wm ON wm.canonical_signal_id = cs.id
+        WHERE cs.study_corpus_id = $1
+          AND cs.methodology_slug = 'signal-pulse'
+          AND cs.status <> 'archived'
+          AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+          AND (
+            cm.canonical_signal_id IS NOT NULL
+            OR (
+              wm.canonical_signal_id IS NOT NULL
+              AND COALESCE(cs.dimensions->>'analysis_scope', '') IN ('window_pattern', 'mixed')
+            )
+          )
       )
       SELECT
         cs.canonical_title AS title,
         cs.signal_type,
-        latest.volume,
-        latest.impact,
-        latest.confidence,
-        latest.lifecycle_state,
-        latest.polarity_bucket
-      FROM latest
-      JOIN canonical_signals cs ON cs.id = latest.canonical_signal_id
-      WHERE cs.study_corpus_id = $1
-        AND cs.methodology_slug = 'signal-pulse'
-        AND cs.status <> 'archived'
-        AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
-        AND latest.volume > 0
-      ORDER BY COALESCE(latest.impact::numeric, 0) DESC, latest.volume DESC
+        chosen.volume,
+        chosen.impact,
+        chosen.confidence,
+        chosen.lifecycle_state,
+        chosen.polarity_bucket,
+        chosen.metric_period_label,
+        chosen.current_cut_metric,
+        cs.dimensions->>'analysis_scope' AS analysis_scope,
+        cs.dimensions->>'period_read' AS period_read,
+        cs.dimensions->>'window_read' AS window_read,
+        cs.dimensions->>'marketing_hypothesis' AS marketing_hypothesis,
+        cs.dimensions->>'next_month_decision' AS next_month_decision,
+        cs.dimensions->>'performance_connection' AS performance_connection,
+        COALESCE(cs.dimensions #> '{context_summary,pattern_flag_types}', '[]'::jsonb) AS pattern_flags
+      FROM chosen
+      JOIN canonical_signals cs ON cs.id = chosen.canonical_signal_id
+      ORDER BY chosen.current_cut_metric DESC, COALESCE(chosen.impact::numeric, 0) DESC, chosen.volume DESC
       LIMIT 8
     `,
     [ctx.study_corpus_id]

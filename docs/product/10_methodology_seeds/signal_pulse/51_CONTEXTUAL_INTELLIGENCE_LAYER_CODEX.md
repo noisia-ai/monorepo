@@ -278,6 +278,12 @@ Con eso, una señal de `paid_gap` produce una acción para Paid media + Creative
 
 El materializador de moves también respeta la arquitectura de ventana. Prioriza señales con volumen en el corte mensual actual, pero si una señal `publish_candidate` viene de `analysis_scope=window_pattern` o `mixed` y no tiene volumen en el corte, usa su último periodo con volumen y la evidencia de ese periodo. Así un aprendizaje de saturación, reactivación o antecedente histórico puede generar una decisión táctica sin fingir que ocurrió en el último mes. Las señales `current_cut` sin volumen actual no generan moves.
 
+## Interpretación ejecutiva
+
+El bloque global `headline/body/action` ya no mira únicamente el último mes. Usa la misma selección de ventana que los moves: primero señales con volumen del corte actual y, si no alcanzan, señales `publish_candidate` de `analysis_scope=window_pattern` o `mixed` con su último periodo real de volumen. El contexto que recibe Claude incluye `metric_period_label`, `current_cut_metric`, `analysis_scope`, `period_read`, `window_read`, `marketing_hypothesis`, `next_month_decision`, `performance_connection` y `pattern_flags`.
+
+Regla editorial: si `current_cut_metric=false`, la lectura puede aparecer como aprendizaje de ventana, saturación, reactivación o antecedente histórico, pero no como evento del último mes. El fallback determinístico aplica la misma regla para no volver a resúmenes que digan "este corte" cuando el dato visible viene de otro mes.
+
 ## Qué NO se cambió todavía
 
 - No se rediseñó el dashboard ni el reporte visual.
