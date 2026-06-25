@@ -1,0 +1,43 @@
+# CODEOWNERS — mandatory review routing for sensitive paths.
+# Any PR touching a path below REQUIRES review from the listed owner before merge.
+# Pair this with a branch protection rule / ruleset on `main`:
+#   - Require a pull request before merging
+#   - Require review from Code Owners
+#   - Require status checks to pass (the `ci` workflow)
+#   - Do not allow bypassing the above settings
+# See docs/AGENT_GUARDRAILS.md.
+#
+# Replace @noisia-ai with the real owner team/handles as the team grows.
+
+# Default owner for everything
+*                                   @noisia-ai
+
+# --- Security-critical: authentication & authorization (NEVER edit casually) ---
+/apps/studio/src/lib/auth/          @noisia-ai
+/apps/studio/src/middleware.ts      @noisia-ai
+
+# --- Database schema & migrations (irreversible in prod; drizzle meta is drifted) ---
+/infrastructure/db/                 @noisia-ai
+
+# --- Public-facing API (external contract + visibility redaction) ---
+/apps/studio/src/app/api/public/    @noisia-ai
+/apps/studio/src/lib/reporting/     @noisia-ai
+/docs/api/                          @noisia-ai
+
+# --- Team / privilege management (privilege-escalation surface) ---
+/apps/studio/src/app/api/team/      @noisia-ai
+/apps/studio/src/lib/data/team.ts   @noisia-ai
+
+# --- Money-spending pipelines (LLM cost) ---
+/apps/studio/src/app/api/corpora/   @noisia-ai
+/packages/query-engine/             @noisia-ai
+/services/workers/                  @noisia-ai
+
+# --- Agent config, CI, deploy, and the guardrails themselves ---
+/.github/                           @noisia-ai
+/AGENTS.md                          @noisia-ai
+/**/AGENTS.md                       @noisia-ai
+/docs/AGENT_GUARDRAILS.md           @noisia-ai
+/.gitignore                         @noisia-ai
+/supabase/config.toml               @noisia-ai
+/turbo.json                         @noisia-ai
