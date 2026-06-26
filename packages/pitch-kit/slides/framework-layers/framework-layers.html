@@ -1,0 +1,39 @@
+<!-- slide: framework-layers · Estructura interna de una metodología, con ejemplos · variants: light
+     For T&B: 4 layers (psicológico / personal / social / cultural), each with a trigger + barrier example.
+     Repeat the .layer-card block per layer; works for 3-4 layers. Examples from kb/01-methodologies/<slug>.md. -->
+<section class="slide" data-label="Capas">
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{METHOD_NAME}} · cómo funciona</span></div>
+    </div>
+    <h2 class="title" style="margin-bottom:var(--gap-title);">{{TITLE}}</h2>
+    <div style="display:grid; grid-template-columns:repeat({{N_LAYERS}},1fr); gap:32px; flex:1;">
+      <div class="col gap-item layer-card" style="border-top:3px solid var(--signal); padding-top:20px;">
+        <span class="eyebrow signal">· {{L1_NAME}}</span>
+        <p class="body" style="font-size:23px;">{{L1_DESC}}</p>
+        <p class="body" style="font-size:21px; color:var(--positive);">▲ {{L1_TRIGGER}}</p>
+        <p class="body" style="font-size:21px; color:var(--tension);">▼ {{L1_BARRIER}}</p>
+      </div>
+      <div class="col gap-item layer-card" style="border-top:3px solid var(--signal); padding-top:20px;">
+        <span class="eyebrow signal">· {{L2_NAME}}</span>
+        <p class="body" style="font-size:23px;">{{L2_DESC}}</p>
+        <p class="body" style="font-size:21px; color:var(--positive);">▲ {{L2_TRIGGER}}</p>
+        <p class="body" style="font-size:21px; color:var(--tension);">▼ {{L2_BARRIER}}</p>
+      </div>
+      <div class="col gap-item layer-card" style="border-top:3px solid var(--signal); padding-top:20px;">
+        <span class="eyebrow signal">· {{L3_NAME}}</span>
+        <p class="body" style="font-size:23px;">{{L3_DESC}}</p>
+        <p class="body" style="font-size:21px; color:var(--positive);">▲ {{L3_TRIGGER}}</p>
+        <p class="body" style="font-size:21px; color:var(--tension);">▼ {{L3_BARRIER}}</p>
+      </div>
+      <div class="col gap-item layer-card" style="border-top:3px solid var(--signal); padding-top:20px;">
+        <span class="eyebrow signal">· {{L4_NAME}}</span>
+        <p class="body" style="font-size:23px;">{{L4_DESC}}</p>
+        <p class="body" style="font-size:21px; color:var(--positive);">▲ {{L4_TRIGGER}}</p>
+        <p class="body" style="font-size:21px; color:var(--tension);">▼ {{L4_BARRIER}}</p>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

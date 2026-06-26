@@ -55,6 +55,69 @@
       "placeholders": ["EYEBROW", "METRIC", "METRIC_LABEL", "QUOTE", "QUOTE_SOURCE", "FOOTER_NN", "FOOTER_TOTAL"]
     },
     {
+      "id": "methodology-overview",
+      "name": "Qué responde una metodología",
+      "file": "slides/methodology-overview/methodology-overview.html",
+      "category": "methodology",
+      "when": "Explicar una metodología: la pregunta que responde + cuándo aplica / cuándo no. Contenido de kb/01-methodologies/<slug>.md.",
+      "variants": ["light"],
+      "placeholders": ["METHOD_NAME", "QUESTION", "WHEN_APPLIES", "WHEN_NOT", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "framework-layers",
+      "name": "Capas/estructura de una metodología (con ejemplos)",
+      "file": "slides/framework-layers/framework-layers.html",
+      "category": "methodology",
+      "when": "Enseñar cómo funciona una metodología por dentro con ejemplos. Para T&B: 4 capas (psicológico/personal/social/cultural) con trigger+barrier cada una.",
+      "variants": ["light"],
+      "placeholders": ["METHOD_NAME", "TITLE", "N_LAYERS", "L{1..4}_NAME", "L{1..4}_DESC", "L{1..4}_TRIGGER", "L{1..4}_BARRIER", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "study-scope",
+      "name": "Ficha del estudio propuesto",
+      "file": "slides/study-scope/study-scope.html",
+      "category": "proposal",
+      "when": "Propuesta de estudio nuevo: tipo, # marcas/competidores, mercados, metodologías, fuentes, window, modalidad. Maneja la cotización.",
+      "variants": ["light"],
+      "placeholders": ["TIER", "STUDY_TITLE", "BUSINESS_QUESTION", "STUDY_TYPE", "BRANDS", "MARKETS", "METHODOLOGIES", "SOURCES", "TIME_WINDOW", "MODALITY", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "deliverables",
+      "name": "Qué entregamos",
+      "file": "slides/deliverables/deliverables.html",
+      "category": "proposal",
+      "when": "Lista de entregables por tier. De kb/02-services/<tier>.md + delivery-format.md.",
+      "variants": ["light"],
+      "placeholders": ["TIER", "TITLE", "DELIVERABLES", "NOTE", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "timeline",
+      "name": "Tiempo de desarrollo / fases",
+      "file": "slides/timeline/timeline.html",
+      "category": "proposal",
+      "when": "Fases y duración. Foundation 4-6 sem · Intelligence 6-10 sem · Strategy retainer.",
+      "variants": ["light"],
+      "placeholders": ["TOTAL_TIME", "TITLE", "P{1..4}_WHEN", "P{1..4}_NAME", "P{1..4}_DESC", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "pricing-scope",
+      "name": "Cómo se cotiza (proyecto único vs retainer)",
+      "file": "slides/pricing-scope/pricing-scope.html",
+      "category": "proposal",
+      "when": "Explica la lógica de pricing y la modalidad (puntual vs retainer). NUNCA montos (regla de pricing-logic.md).",
+      "variants": ["light"],
+      "placeholders": ["TITLE", "SINGLE_TITLE", "SINGLE_DESC", "SINGLE_MILESTONES", "RETAINER_TITLE", "RETAINER_DESC", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "growth-ladder",
+      "name": "Cómo crecemos el negocio (OBLIGATORIA en propuestas)",
+      "file": "slides/growth-ladder/growth-ladder.html",
+      "category": "proposal",
+      "when": "Slide obligatoria en propuestas. El camino Foundation→Intelligence→Strategy (land & expand). De kb/02-services.",
+      "variants": ["dark"],
+      "placeholders": ["TITLE", "CTA_LINE", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
       "id": "legal",
       "name": "Aviso legal / Alcance",
       "file": "slides/legal/legal.html",

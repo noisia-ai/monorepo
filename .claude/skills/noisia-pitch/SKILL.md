@@ -10,13 +10,16 @@ You produce on-brand Noisia pitch decks and, crucially, **leave the kit better t
 Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` for the full rules.
 
 ## 1. Know what you have (read these first)
-- `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. This is how you know what's possible. Read it before proposing a structure.
-- `packages/kb/` — the Knowledge Base (methodologies, services, principles, cases). The *content* of a Noisia pitch comes from here; load `packages/kb/00-overview/principles.md` + the relevant `01-methodologies/<slug>.md` before writing claims. Don't reinvent positioning.
+- `packages/pitch-kit/slides/recipes.json` — **deck blueprints for common asks** (explain a methodology, propose/quote a study). Each recipe tells you what to ASK, what KB to LOAD, and which slides to use. Check here first — most requests match a recipe.
+- `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. How you know what's possible. Read it before proposing a structure.
+- `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md`; then the files the recipe lists.
 - `packages/pitch-kit/engine/` — the brand engine: `noisia-tokens.css` (palette/type), `deck.css` (slide layout), `deck-stage.js` (16:9 viewer + print/PPTX), `deck-template.html` (the shell).
 
 ## 2. Build the deck
-1. Ask (or infer) the brief: client, audience, the business decision, length, format (PDF / PPTX / both).
-2. Pick slides from `catalog.json` and order them. Typical arc: `cover → statement → finding ×N → signal-insight → three-up → legal → closing`.
+1. **Match a recipe** in `recipes.json` and **ask its qualifying questions before building.** Don't guess the answers — they change the deck:
+   - *Explain-a-methodology* (e.g. Triggers & Barriers): which methodology, which audience/category for the examples. Load the methodology's KB file; the examples (e.g. T&B's 4 layers with trigger+barrier) come from there, set in the client's category.
+   - *Study proposal / quote*: **is it a single project or a monthly retainer?** how many brands/competitors? how many markets? which sources & time window? any tight deadline? These set the tier (Foundation/Intelligence/Strategy) and the whole quote. The **growth-ladder slide ("cómo crecemos el negocio") is obligatory** in proposals, and **never put currency amounts on a slide** (pricing-logic rule — show the logic + modality, not numbers).
+2. Pull deliverables, timeline and tier facts from `packages/kb/02-services/<tier>.md` + `pricing-logic.md` + `delivery-format.md` — keep them consistent across the study-scope, deliverables and timeline slides. Then order the slides from the recipe (or `catalog.json` for a custom deck).
 3. Make a working folder **outside the repo** (or `packages/pitch-kit/examples/_local/`, which is gitignored) and assemble:
    - `cp packages/pitch-kit/engine/{noisia-tokens.css,deck.css,deck-stage.js} <work>/`
    - `cp packages/pitch-kit/assets/logo_norm.svg <work>/`

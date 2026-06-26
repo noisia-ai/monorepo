@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "updated": "2026-06-25",
+  "note": "Deck blueprints for common commercial scenarios. Each recipe tells the agent what to ASK, what KB context to LOAD, and which slides to assemble. Add a recipe when a new pitch type recurs (see ../AGENTS.md → contribution loop).",
+  "recipes": [
+    {
+      "id": "methodology-explainer",
+      "name": "Explicar una metodología (con ejemplos)",
+      "use_when": "El comercial pide una presentación que enseñe cómo funciona una metodología (ej. Triggers & Barriers), con ejemplos.",
+      "ask_first": [
+        "¿Qué metodología? (triggers-barriers, value-perception-matrix, journey-friction-mapping, cultural-codes-decoding, influence-architecture, decision-velocity)",
+        "¿Para qué audiencia y en qué categoría? (para aterrizar los ejemplos)",
+        "¿Es educativa pura o lleva a una propuesta? (si lleva a propuesta, encadena con study-proposal)"
+      ],
+      "load_kb": [
+        "packages/kb/00-overview/principles.md",
+        "packages/kb/01-methodologies/<slug>.md",
+        "packages/kb/05-ai-playbooks/run-<slug>.md"
+      ],
+      "slides": ["cover", "methodology-overview", "framework-layers", "finding", "deliverables", "closing"],
+      "notes": "framework-layers lleva los ejemplos (para T&B: 4 capas psicológico/personal/social/cultural con trigger+barrier cada una, sacados del .md). finding muestra cómo se ve un hallazgo real. Ejemplos siempre en la categoría del cliente."
+    },
+    {
+      "id": "study-proposal",
+      "name": "Propuesta / cotización de un estudio nuevo",
+      "use_when": "El comercial arma una propuesta de estudio nuevo, o le dieron una cotización a aterrizar.",
+      "ask_first": [
+        "¿Cuál es la pregunta de negocio y qué decisión desbloquea?",
+        "¿Proyecto único o capacidad continua? → define Foundation/Intelligence (puntual, fee a hitos) vs Strategy (retainer mensual). NO asumas: pregúntalo.",
+        "¿Cuántas marcas / competidores? ¿Cuántos mercados? (cada marca y cada mercado mueve el alcance y el precio)",
+        "¿Qué fuentes y qué window temporal?",
+        "¿Hay deadline contraído? (urgencia mueve el pricing)"
+      ],
+      "load_kb": [
+        "packages/kb/02-services/foundation.md",
+        "packages/kb/02-services/intelligence.md",
+        "packages/kb/02-services/strategy.md",
+        "packages/kb/02-services/pricing-logic.md",
+        "packages/kb/03-process/delivery-format.md"
+      ],
+      "slides": ["cover", "study-scope", "methodology-overview", "deliverables", "timeline", "pricing-scope", "growth-ladder", "legal", "closing"],
+      "rules": [
+        "growth-ladder es OBLIGATORIA (la slide 'cómo crecemos el negocio': Foundation→Intelligence→Strategy).",
+        "NUNCA pongas montos en las slides (regla dura de pricing-logic.md). La slide pricing-scope muestra la lógica y la modalidad, no cifras.",
+        "Define el tier (Foundation/Intelligence/Strategy) por # de metodologías y modalidad, y refléjalo en study-scope, deliverables y timeline de forma consistente.",
+        "Entregables y tiempos salen del tier en kb/02-services/<tier>.md — no los inventes."
+      ]
+    }
+  ]
+}
