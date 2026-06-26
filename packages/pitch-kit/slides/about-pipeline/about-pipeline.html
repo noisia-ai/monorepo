@@ -1,0 +1,56 @@
+<!-- slide: about-pipeline · Cómo funciona Noisia (2/3) · variants: light · READY (illustrative, public-safe)
+     The Toolstack pipeline from apps/website Home: sources -> 6 steps -> decisions. -->
+<section class="slide" data-label="Cómo funciona">
+  <style>
+    .np-pipe .np-grid { display:grid; grid-template-columns:0.62fr 1.38fr; gap:48px; flex:1; min-height:0; }
+    .np-pipe .np-sources { background:var(--surface-01); border-radius:24px; padding:32px; }
+    .np-pipe .np-srchead { display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:18px; color:var(--fg-secondary); font-weight:600; margin-bottom:18px; }
+    .np-pipe .np-chips { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .np-pipe .np-chip { background:var(--canvas); border:1px solid var(--border-subtle); border-radius:12px; padding:10px 14px; font-size:19px; font-weight:500; display:flex; align-items:center; gap:8px; }
+    .np-pipe .np-dot { width:9px; height:9px; border-radius:50%; background:var(--signal-dark); flex:none; }
+    .np-pipe .np-steps { display:flex; flex-direction:column; gap:14px; border-left:2px solid var(--signal); padding-left:0; }
+    .np-pipe .np-step { display:grid; grid-template-columns:64px 1fr 280px; align-items:center; gap:24px; background:var(--surface-01); border-radius:18px; padding:18px 28px; }
+    .np-pipe .np-num { font-size:22px; font-weight:600; color:var(--signal-dark); background:var(--canvas); border-radius:50%; width:52px; height:52px; display:flex; align-items:center; justify-content:center; }
+    .np-pipe .np-step h3 { font-size:27px; margin:0 0 4px; }
+    .np-pipe .np-step p { font-size:20px; margin:0; color:var(--fg-secondary); }
+    .np-pipe .np-metric { font-size:26px; font-weight:600; text-align:right; margin-bottom:8px; }
+    .np-pipe .np-bar { height:7px; border-radius:99px; background:var(--neutral-04); overflow:hidden; }
+    .np-pipe .np-fill { height:100%; border-radius:99px; background:linear-gradient(90deg, var(--signal-dark), var(--signal)); }
+  </style>
+  <div class="frame np-pipe">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>noisia.ai</span></div>
+    </div>
+    <span class="eyebrow signal">· cómo funciona</span>
+    <h2 class="title" style="font-size:52px; margin:var(--gap-item) 0 var(--gap-title);">De +214M señales a 12 decisiones.</h2>
+    <div class="np-grid">
+      <div class="np-sources">
+        <div class="np-srchead"><span>Fuentes VoC</span><span>Señales conectadas</span></div>
+        <div class="np-chips">
+          <div class="np-chip"><span class="np-dot"></span>TikTok</div>
+          <div class="np-chip"><span class="np-dot"></span>Instagram</div>
+          <div class="np-chip"><span class="np-dot"></span>X</div>
+          <div class="np-chip"><span class="np-dot"></span>YouTube</div>
+          <div class="np-chip"><span class="np-dot"></span>Reddit</div>
+          <div class="np-chip"><span class="np-dot"></span>Amazon</div>
+          <div class="np-chip"><span class="np-dot"></span>Mercado Libre</div>
+          <div class="np-chip"><span class="np-dot"></span>Google Reviews</div>
+          <div class="np-chip"><span class="np-dot"></span>Trustpilot</div>
+          <div class="np-chip"><span class="np-dot"></span>Salesforce</div>
+          <div class="np-chip"><span class="np-dot"></span>Zendesk</div>
+          <div class="np-chip"><span class="np-dot"></span>CRM</div>
+        </div>
+      </div>
+      <div class="np-steps">
+        <div class="np-step"><div class="np-num">01</div><div><h3>Escucha en México</h3><p>TikTok · Instagram · X · marketplaces · CRM</p></div><div><div class="np-metric">+214M señales</div><div class="np-bar"><div class="np-fill" style="width:100%"></div></div></div></div>
+        <div class="np-step"><div class="np-num">02</div><div><h3>Normalizando</h3><p>Duplicados fuera · contexto dentro · fuente clara</p></div><div><div class="np-metric">42.8M útiles</div><div class="np-bar"><div class="np-fill" style="width:82%"></div></div></div></div>
+        <div class="np-step"><div class="np-num">03</div><div><h3>Entendiendo</h3><p>Tono · intención · duda · experiencia · valor</p></div><div><div class="np-metric">8.6M expresiones</div><div class="np-bar"><div class="np-fill" style="width:64%"></div></div></div></div>
+        <div class="np-step"><div class="np-num">04</div><div><h3>Separando</h3><p>Lo que empuja · lo que frena</p></div><div><div class="np-metric">1.3M señales</div><div class="np-bar"><div class="np-fill" style="width:46%"></div></div></div></div>
+        <div class="np-step"><div class="np-num">05</div><div><h3>Priorizando</h3><p>Tamaño · urgencia · impacto</p></div><div><div class="np-metric">86,420 evidencias</div><div class="np-bar"><div class="np-fill" style="width:30%"></div></div></div></div>
+        <div class="np-step"><div class="np-num">06</div><div><h3>Traduciendo</h3><p>Lectura → movimiento recomendado</p></div><div><div class="np-metric">12 decisiones</div><div class="np-bar"><div class="np-fill" style="width:18%"></div></div></div></div>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

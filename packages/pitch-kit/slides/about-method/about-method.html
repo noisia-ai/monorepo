@@ -1,0 +1,67 @@
+<!-- slide: about-method · Cómo se ve el output / T&B en vivo (3/3) · variants: light · READY (illustrative, public-safe)
+     Drivers & frictions across the 4 T&B layers. Example data (auto category) — not a real client. -->
+<section class="slide" data-label="Triggers & Barriers">
+  <style>
+    .np-tb .np-stage { display:grid; grid-template-columns:1fr 0.9fr 1fr; gap:28px; align-items:center; flex:1; min-height:0; }
+    .np-tb .np-rings { position:relative; aspect-ratio:1; width:100%; max-width:420px; margin:0 auto; }
+    .np-tb .np-ring { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); border-radius:50%; display:flex; align-items:flex-start; justify-content:center; padding-top:14px; font-size:20px; font-weight:600; }
+    .np-tb .r1 { width:100%; height:100%; background:var(--surface-02); color:var(--fg-secondary); }
+    .np-tb .r2 { width:76%; height:76%; background:var(--surface-01); }
+    .np-tb .r3 { width:52%; height:52%; background:var(--canvas); }
+    .np-tb .r4 { width:28%; height:28%; background:var(--canvas); box-shadow:0 8px 40px rgba(0,0,0,0.08); align-items:center; padding-top:0; font-size:16px; }
+    .np-tb .np-card { border-radius:22px; padding:26px; }
+    .np-tb .np-card.driver { background:var(--positive-soft); }
+    .np-tb .np-card.friction { background:var(--tension-soft); }
+    .np-tb .np-tag { font-size:17px; font-weight:600; font-style:italic; margin-bottom:10px; }
+    .np-tb .driver .np-tag { color:var(--positive); }
+    .np-tb .friction .np-tag { color:var(--tension); }
+    .np-tb .np-card h3 { font-size:28px; margin:0 0 8px; }
+    .np-tb .np-quote { font-size:21px; color:var(--fg-primary); margin:0 0 16px; }
+    .np-tb .np-big { font-size:46px; font-weight:600; }
+    .np-tb .np-pct { font-size:24px; font-weight:600; }
+    .np-tb .driver .np-pct { color:var(--signal-dark); }
+    .np-tb .friction .np-pct { color:var(--tension); }
+    .np-tb .np-bubble { background:var(--canvas); border:1px solid var(--border-subtle); border-radius:18px; padding:16px 20px; font-size:19px; font-style:italic; color:var(--fg-secondary); margin-bottom:16px; }
+    .np-tb .np-who { font-size:16px; font-style:normal; font-weight:600; color:var(--fg-primary); margin-bottom:6px; }
+    .np-tb .np-donut { width:54px; height:54px; border-radius:50%; float:right; }
+    .np-tb .driver .np-donut { background:conic-gradient(var(--signal-dark) 0 41%, var(--neutral-04) 41% 100%); }
+    .np-tb .friction .np-donut { background:conic-gradient(var(--tension) 0 29%, var(--neutral-04) 29% 100%); }
+  </style>
+  <div class="frame np-tb">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>noisia.ai</span></div>
+    </div>
+    <span class="eyebrow signal">· triggers &amp; barriers · qué empuja y qué frena</span>
+    <h2 class="title" style="font-size:46px; margin:var(--gap-item) 0 24px;">Cada decisión vive en 4 capas. Las leemos todas.</h2>
+    <div class="np-stage">
+      <div>
+        <div class="np-bubble"><div class="np-who">Carlos M. · TikTok</div>"Por lo que pagué, ningún auto me daba esto. Le gané a todos los que me dijeron que no lo comprara."</div>
+        <div class="np-card driver">
+          <div class="np-donut"></div>
+          <div class="np-tag">driver detectado · personal</div>
+          <h3>Percepción de valor superior</h3>
+          <p class="np-quote">"Por lo que pagué, ningún auto me daba esto."</p>
+          <span class="np-big">3,235</span> <span class="np-pct">41%</span>
+        </div>
+      </div>
+      <div class="np-rings">
+        <div class="np-ring r1">cultural</div>
+        <div class="np-ring r2">social</div>
+        <div class="np-ring r3">personal</div>
+        <div class="np-ring r4">psicológico</div>
+      </div>
+      <div>
+        <div class="np-bubble"><div class="np-who">Juan C. Ramírez · Instagram</div>"Llevo 3 meses esperando una refacción. Ojalá hubiera investigado esto antes de comprarlo."</div>
+        <div class="np-card friction">
+          <div class="np-donut"></div>
+          <div class="np-tag">fricción detectada · psicológica</div>
+          <h3>Miedo al abandono posventa</h3>
+          <p class="np-quote">"¿Y si se descompone y no hay quién lo arregle?"</p>
+          <span class="np-big">2,180</span> <span class="np-pct">29%</span>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

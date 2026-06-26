@@ -134,6 +134,36 @@
       "when": "Última slide. Llamado a la acción + contacto.",
       "variants": ["dark"],
       "placeholders": ["STATEMENT", "CONTACT", "CTA_LABEL", "FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "about-noisia",
+      "name": "¿Qué es Noisia? — tesis (1/3)",
+      "file": "slides/about-noisia/about-noisia.html",
+      "category": "about",
+      "when": "Abrir el bloque 'qué es Noisia'. Tesis (inteligencia social, no listening) + 3 pilares. READY: ya rellena, jálala tal cual.",
+      "variants": ["dark"],
+      "ready": true,
+      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "about-pipeline",
+      "name": "Cómo funciona — pipeline 214M→12 (2/3)",
+      "file": "slides/about-pipeline/about-pipeline.html",
+      "category": "about",
+      "when": "Diagrama del toolstack: fuentes VoC + 6 pasos (Escucha→Traduciendo) con métricas. READY, datos ilustrativos del Home (públicos).",
+      "variants": ["light"],
+      "ready": true,
+      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+    },
+    {
+      "id": "about-method",
+      "name": "Cómo se ve el output — T&B en vivo (3/3)",
+      "file": "slides/about-method/about-method.html",
+      "category": "about",
+      "when": "Diagrama T&B: 4 capas concéntricas + card driver y card fricción con donuts. READY, ejemplo ilustrativo (no cliente real).",
+      "variants": ["light"],
+      "ready": true,
+      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
     }
   ]
 }

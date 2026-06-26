@@ -4,6 +4,18 @@
   "note": "Deck blueprints for common commercial scenarios. Each recipe tells the agent what to ASK, what KB context to LOAD, and which slides to assemble. Add a recipe when a new pitch type recurs (see ../AGENTS.md → contribution loop).",
   "recipes": [
     {
+      "id": "what-is-noisia",
+      "name": "¿Qué es Noisia? (3 slides, listas para jalar)",
+      "use_when": "El comercial necesita explicar qué es Noisia. Bloque de 3 slides ya armado con diagramas (datos ilustrativos del Home, públicos).",
+      "ask_first": [
+        "¿Va dentro de un pitch más grande o es standalone? (ajusta footer NN/TOTAL)",
+        "¿Quieres los ejemplos del diagrama T&B en la categoría del cliente? (por defecto: ejemplo automotriz ilustrativo)"
+      ],
+      "load_kb": ["packages/kb/00-overview/positioning.md", "packages/kb/00-overview/principles.md"],
+      "slides": ["about-noisia", "about-pipeline", "about-method"],
+      "notes": "Slides READY: jálalas tal cual, solo corrige los footers NN/TOTAL. Si cambias la categoría de los ejemplos en about-method, mantén los números coherentes y sin data de cliente real."
+    },
+    {
       "id": "methodology-explainer",
       "name": "Explicar una metodología (con ejemplos)",
       "use_when": "El comercial pide una presentación que enseñe cómo funciona una metodología (ej. Triggers & Barriers), con ejemplos.",
