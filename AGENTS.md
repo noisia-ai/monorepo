@@ -49,6 +49,7 @@ This repo separates **Canon** (current truth) from **History/Intent** (why thing
 - `docs/product/` — product & engineering docs. Key index: `00_README.md`, `01_PRODUCT_SPEC_MASTER.md`, `04_DATABASE_SCHEMA.md`, `06_TECHNICAL_DECISIONS.md`, `07_REPO_STRUCTURE.md`, `08_API_CONTRACTS.md`, `09_DEV_SETUP_GUIDE.md`. Methodology build specs live under `docs/product/10_methodology_seeds/` (`engine_comparative/` and `signal_pulse/`).
 - `docs/adr/` — **Architecture Decision Records** (numbered). Add a new one when you make a structural decision. Existing: monorepo structure, auth/Supabase boundary, external-service deltas, TS compat, methodology slug/version uniqueness, Kinde roles & Studio permissions.
 - `docs/api/` — public reporting API: `openapi.yaml`, `public-api-readme.md`.
+- `packages/pitch-kit/` — **Pitch Kit**: build Noisia sales/pitch decks (PDF + editable PPTX) from a shared engine, a slide library (`slides/catalog.json`) and deck recipes (`slides/recipes.json`). For the commercial team. Invoke the skill `.claude/skills/noisia-pitch/SKILL.md` (Claude Code auto-discovers it; in Codex, read `packages/pitch-kit/AGENTS.md`). To make a deck just ask, e.g. *"arma un pitch de qué es Noisia"* or *"haz una presentación de Triggers & Barriers"*.
 - The nested `AGENTS.md` files (this directory tree).
 
 **History / intent — why (do NOT treat as current state):**
