@@ -5,6 +5,9 @@ builders for PDF + editable PPTX, and a bridge to Signal insights. The invocable
 `.claude/skills/noisia-pitch/SKILL.md` — read it for the build flow. This file is the
 operative rulebook for anyone (human or agent) editing the kit itself.
 
+**Before building a deck, also read `LEARNINGS.md`** — field-tested copy, terminology,
+pricing and visual rules distilled from real client decks (política incluida).
+
 ## What's here
 - `engine/` — `noisia-tokens.css` (brand palette/type), `deck.css` (slide layout), `deck-components.css` (reusable layout components: bars, split bars, tables, T&B matrix, kanban, mirror, verbatim cards…), `deck-stage.js` (16:9 viewer + print→PDF + PPTX capture), `deck-template.html` (shell). **Single source of truth** — decks copy these, they don't fork them.
 - `CANON.md` — the contract for the whole system: the five deliverable families, the source hierarchy when two docs disagree, the cross-cutting hard rules, and the kit's own backlog. Start here, and keep it current: **a new handoff document is never the answer.** If you learned something reusable it belongs in the rulebook that owns that layer, referenced from the canon.
@@ -15,6 +18,7 @@ operative rulebook for anyone (human or agent) editing the kit itself.
 - `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX).
 - `signal/` — `fetch-insights.mjs` (pulls metrics/quotes from the Signal public reporting API).
 - `assets/` — brand logos/backgrounds. `examples/` — sanitized demo decks only.
+- `COPY_RULES.md` — every word passes through it. `LEARNINGS.md` — field-tested rules (copy, terminología política MX, pricing, iconografía, caveats).
 
 ## Rules
 1. **The repo is PUBLIC. No client data here — ever.** No client names, real numbers, findings, or third-party logos. Real decks live in a local working folder (or `examples/_local/`, gitignored). Templates are generic with `{{PLACEHOLDER}}`s.
