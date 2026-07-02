@@ -4,6 +4,8 @@
 > escribe simple, humano y client-ready. Adaptado del skill Humanizer
 > (github.com/alexdcd/Mafia-Claude-Skills) + reglas de Noisia. Esto es **obligatorio**:
 > el skill `noisia-pitch` corre todo el copy por aquí antes de renderizar.
+>
+> Ver también **`LEARNINGS.md`** (reglas de campo: terminología política MX, "jugadas"→estrategias, no nombrar herramientas, voz del público ≠ social listening, pricing, etc.).
 
 ## 0. Sanitización client-ready (lo más importante — regla dura)
 
