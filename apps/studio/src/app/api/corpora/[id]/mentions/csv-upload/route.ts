@@ -92,7 +92,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       : linkedEntity?.name ?? defaultEntityLabel(mentionType);
   const entityKind = linkedEntity?.entityKind ?? normalizeEntityKind(entityKindRaw, mentionType, competitorId, entityLabel);
   const resolvedCompetitorId = linkedEntity?.competitorId ?? competitorId;
-  const shouldQueueIngest = shouldUseWorkerIngest(request, query);
+  const shouldQueueIngest = shouldUseWorkerIngest(request, query, {
+    hasSharedCsvUploadDir: hasConfiguredCsvUploadDir()
+  });
 
   if (!request.body) {
     return Response.json(
@@ -212,10 +214,19 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   }
 }
 
-function shouldUseWorkerIngest(request: Request, query: URLSearchParams) {
+function shouldUseWorkerIngest(
+  request: Request,
+  query: URLSearchParams,
+  options: { hasSharedCsvUploadDir: boolean }
+) {
+  if (!options.hasSharedCsvUploadDir) return false;
   if (query.get("async") === "1") return true;
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   return Number.isFinite(contentLength) && contentLength >= WORKER_INGEST_THRESHOLD_BYTES;
+}
+
+function hasConfiguredCsvUploadDir() {
+  return typeof process.env.NOISIA_CSV_UPLOAD_DIR === "string" && process.env.NOISIA_CSV_UPLOAD_DIR.trim().length > 0;
 }
 
 async function persistRawUpload(stream: ReadableStream<Uint8Array>, storagePath: string) {
