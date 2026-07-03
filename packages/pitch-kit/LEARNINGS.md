@@ -39,6 +39,8 @@ En la slide de equipo: **datos primero, estratega al final** (Analista de datos 
 - **Badges de archivo**: rounded rects con texto — PDF (#e4462b), XLSX (#1d6f42).
 - **Ilustraciones Noisia**: siluetas con aberración cromática cian/rojo. Usa **PNG con fondo transparente** (evita bordes); si el PNG trae fondo blanco, monta con `mix-blend-mode: multiply`.
 - **Bug flexbox recurrente**: una imagen `flex:1` empuja caption/footer fuera del canvas → añade **`min-height:0`** al contenedor flex.
+- **Sombras en PDF**: `--print-to-pdf` (build-pdf.mjs) **rasteriza `box-shadow` y `backdrop-filter` como cuadros grises** detrás de cada card. Ya hay un `@media print` en `engine/deck.css` que aplana `.glass` a superficie sólida con borde solo para impresión (pantalla intacta). Si haces cards custom fuera de `.glass`, aplánalas igual (fondo sólido + borde, sin sombra) o hazlas de color pleno (p. ej. negro con iconos blancos).
+- **Verifica el PDF real, no el screenshot de pantalla.** El artefacto de sombras solo aparece en el print. Renderiza la página impresa: `pypdf` (extrae la página) → `sips -s format png` para inspeccionarla.
 
 ## Caveats honestos (siempre)
 - **Geo**: "La precisión de la geolocalización depende de la fuente de datos". El social listening mide **conversación digital, no presencia física** ni verdad de campo — verifica contra la agenda real antes de afirmar ausencia/silencio.
