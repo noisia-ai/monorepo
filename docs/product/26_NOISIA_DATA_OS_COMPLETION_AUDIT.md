@@ -38,6 +38,32 @@ preparacion productiva.
 | Review humano antes de cliente | `review-queue.json`, `review-sample.json`, review events de tag/assertion | Flujo implementado; requiere IDs revisados en staging |
 | Produccion por PR | PR template, CODEOWNERS, `release-gate.json` | Implementado; PR pendiente |
 
+## Checkpoint WIP (2026-07-20)
+
+El estado de trabajo se preservo en el commit `74bf11a` (`Checkpoint Data OS Cut 1
+implementation`) y se respaldo en
+`origin/codex/noisia-data-os-cut-1-wip`. Este checkpoint existe para recuperar y
+continuar el trabajo; no representa cierre funcional ni autorizacion para abrir una PR
+productiva.
+
+Validaciones ejecutadas sobre el checkpoint:
+
+- Gitleaks sobre el contenido staged: cero filtraciones;
+- monorepo typecheck: 11/11 paquetes verdes;
+- monorepo lint: cero errores y 10 warnings existentes en
+  `apps/studio/public/deck/deck-stage.js`;
+- DB: 41 pruebas verdes;
+- Query Engine: 138 pruebas verdes;
+- Studio: 218 pruebas verdes;
+- Workers: 112 pruebas verdes;
+- `git diff --check`: verde;
+- worktree limpio y sincronizado con la rama remota al cerrar el checkpoint.
+
+No se ejecutaron en este checkpoint `@noisia/studio build`, `data-os:verify`,
+`data-os:staging-check` ni `data-os:staging-shadow`. Los checks locales anteriores y la
+reconciliacion documentada mas abajo siguen siendo evidencia historica, no sustituyen
+una nueva corrida contra el estado final de la rama. Data OS Cut 1 permanece en WIP.
+
 ## Checks Locales Minimos
 
 Antes de pedir staging:

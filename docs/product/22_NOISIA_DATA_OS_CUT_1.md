@@ -1,6 +1,6 @@
 # 22 · Noisia Data OS Cut 1
 
-> Estado: spec productivo para rama `codex/noisia-data-os-prod`.
+> Estado: spec productivo para rama `codex/noisia-data-os-cut-1-wip`.
 > Base: partir de `codex/signal-pulse`, no de `main`.
 > Principio: el reporte publicado no es la base de datos.
 
@@ -1118,7 +1118,7 @@ El UI cliente no debe mostrar data sin contrato/visibilidad.
 
 ### Fase A: rama y docs
 
-- rama: `codex/noisia-data-os-prod`;
+- rama: `codex/noisia-data-os-cut-1-wip`;
 - ADR aceptado;
 - spec Cut 1 aprobado;
 - lista de migraciones y flags definida.

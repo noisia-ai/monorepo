@@ -1,6 +1,6 @@
 # Noisia Branch State
 
-> Current as of 2026-07-02. This is branch context for production-bound agent work;
+> Current as of 2026-07-20. This is branch context for production-bound agent work;
 > verify with `git branch -vv --all` before making release decisions.
 
 ## Production Branch
@@ -33,13 +33,16 @@
 
 ## Current Production-Bound Work
 
-### `codex/noisia-data-os-prod`
+### `codex/noisia-data-os-cut-1-wip`
 
 - Purpose: first production-bound Noisia Data OS cut.
 - Base: `codex/signal-pulse`.
-- Current fork point: `e329136` (`Add Signal Pulse source health context`), same commit
-  as local and remote `codex/signal-pulse` at the time this document was written.
-- Status: uncommitted working branch for PR preparation.
+- Fork point: `e329136` (`Add Signal Pulse source health context`), the tip of
+  `codex/signal-pulse` when Data OS Cut 1 work began.
+- Current checkpoint: `74bf11a` (`Checkpoint Data OS Cut 1 implementation`), pushed to
+  `origin/codex/noisia-data-os-cut-1-wip` as a recovery point.
+- Status: active WIP. The checkpoint is locally validated but does not claim feature
+  completion, staging readiness or production readiness. No PR is open.
 
 Cut 1 adds:
 
@@ -58,14 +61,16 @@ Cut 1 adds:
 
 ## Merge Order
 
-1. Finish Data OS local checks on `codex/noisia-data-os-prod`.
-2. Run staging/prod-shadow checklist in `docs/product/23_NOISIA_DATA_OS_STAGING_RUNBOOK.md`.
-3. Open PR from `codex/noisia-data-os-prod` to `main` only after staging/preview
+1. Continue Data OS Cut 1 implementation on `codex/noisia-data-os-cut-1-wip` with
+   focused commits by subsystem.
+2. Finish the complete local gate set on `codex/noisia-data-os-cut-1-wip`.
+3. Run staging/prod-shadow checklist in `docs/product/23_NOISIA_DATA_OS_STAGING_RUNBOOK.md`.
+4. Open PR from `codex/noisia-data-os-cut-1-wip` to `main` only after staging/preview
    evidence shows: `ready_for_live_api_shadow: true`,
    `ready_for_serving_shadow: true`, `ready_for_pr_review: true` and
    `release-gate.json` with `ready_for_production_review: true`,
    `database_format: "postgres_url"` and gate `database_format_postgres_url`.
-4. Keep live serving flags off for clients until internal shadow mode passes on a real
+5. Keep live serving flags off for clients until internal shadow mode passes on a real
    Signal Pulse corpus/output.
 
 ## Do Not Merge From

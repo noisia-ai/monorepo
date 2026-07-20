@@ -9,7 +9,7 @@ depender del contexto de chat.
 
 ## 1. Precondiciones
 
-- Rama base: `codex/noisia-data-os-prod`, derivada de `codex/signal-pulse`.
+- Rama base: `codex/noisia-data-os-cut-1-wip`, derivada de `codex/signal-pulse`.
 - No correr directo contra produccion sin PR, review y ventana de cambio.
 - Usar `scripts/data-os-staging-flight-card.example.sh` como flight card segura:
   copiar sus exports a una terminal local segura, reemplazar placeholders ahi y no
