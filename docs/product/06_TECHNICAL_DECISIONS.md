@@ -9,6 +9,7 @@
 | Capa | Decisión | Razón | Mejora futura |
 |---|---|---|---|
 | **Database** | **Supabase managed (Postgres 15+)** | Auth incluido, RLS nativo, storage, dashboard admin, costo previsible | Migrar a Postgres self-hosted si pasamos 100GB o 50M filas |
+| **Data foundation** | **Noisia Data OS Cut 1 sobre Postgres/Drizzle** | Signal Pulse necesita una base viva por cliente: catálogos de fuentes, Brand OS, Knowledge, taxonomías, tags, calidad, lineage y serving APIs. Ver ADR 007. | Evaluar lakehouse externo/dbt formal cuando el volumen o el equipo de datos lo justifique |
 | **Auth** | **Kinde** | Multi-org nativo (Org → Brand → User), soporta organizaciones múltiples por usuario, free hasta 7.5K MAU, $25/mes después | Evaluar SuperTokens self-hosted si Kinde sube precios |
 | **LLM provider** | **Anthropic Claude** vía **Vercel AI SDK** | Streaming, fallbacks gratis, switching de proveedor sin reescribir | Agregar OpenAI como fallback cuando llegue contrato grande |
 | **Pipeline workers** | **BullMQ + Redis** sobre Node 20 TypeScript | Mismo stack que website y studio (cero polyglot), Codex es senior TS, BullMQ tiene UI gratuita | Migrar a Temporal cuando pasen 50 jobs concurrentes o se necesiten workflows largos con state machines |
@@ -174,7 +175,48 @@ Semver sobre el monorepo completo. Cada release queda en GitHub Release con chan
 
 ---
 
-## 9. Stack final como tabla copy-paste
+## 9. Decisión: Data OS Cut 1, no CDP completo
+
+Noisia arranca Data OS como **Customer Intelligence Lakehouse con capacidades CDP-like**,
+no como un CDP completo. El benchmark de tecnologia/proceso queda en
+`docs/product/24_NOISIA_DATA_OS_TECH_BENCHMARK.md`.
+
+**Por qué:**
+
+- Signal Pulse necesita datos vivos, no solo `published_outputs.payload`.
+- Brand OS y Knowledge Base deben ser catálogos consultables, no solo texto de prompt.
+- Social listening, performance, briefs, campañas, menciones, señales y evidence deben
+  convivir en una misma base gobernada.
+- La resolución de identidad personal tipo CDP enterprise no es necesaria en Cut 1 y
+  ampliaría el alcance comercial/técnico antes de tiempo.
+
+**Decisión técnica:**
+
+- Mantener Postgres/Supabase + Drizzle como store primario en Cut 1.
+- Agregar tablas aditivas de catalog, quality, lineage, taxonomy, tags, feature store,
+  semantic layer y dashboard refs.
+- Versionar las reglas de tagging en `tagging_rule_sets` y ligar el
+  `tagging_model_versions` activo a ese rule set; ningún tag productivo debe quedar
+  sin diccionario/regla auditable.
+- Mantener `published_outputs.payload` como fallback/rollback lógico.
+- Activar serving live solo con flags y shadow mode.
+- Usar `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence` y
+  `data-os:release-gate` como gates antes de cualquier cambio cliente-visible; el
+  release gate productivo debe incluir `database_format_postgres_url`.
+- Mantener Postgres/Drizzle en Cut 1 y evaluar dbt, Dagster/Temporal,
+  OpenMetadata/DataHub, ClickHouse o Iceberg solo cuando se alcancen los umbrales
+  documentados en el benchmark.
+
+**No hacer en Cut 1:**
+
+- No prometer identidad 360 de consumidor final.
+- No reescribir el dashboard antes de estabilizar APIs vivas.
+- No ejecutar tagging LLM automático en producción sin nueva compuerta de costo/calidad.
+- No correr migraciones destructivas ni revertir schema para rollback.
+
+---
+
+## 10. Stack final como tabla copy-paste
 
 Para que Codex tenga la lista clara y ya:
 
@@ -199,6 +241,7 @@ database:
   primary: Supabase Postgres 15
   orm: Drizzle
   migrations: drizzle-kit
+  data_foundation: Noisia Data OS Cut 1 (catalogs, quality, lineage, taxonomy, tags, semantic layer)
   rls: enabled (multi-tenant)
 
 auth:

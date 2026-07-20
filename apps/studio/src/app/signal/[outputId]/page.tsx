@@ -8,6 +8,7 @@ import { FindingDetailWorkspace } from "@/components/signal/FindingDetailWorkspa
 import { SignalCorpusExplorer } from "@/components/signal/SignalCorpusExplorer";
 import { SignalDeckButton } from "@/components/signal/SignalDeckButton";
 import { SignalDashboardCharts } from "@/components/signal/SignalDashboardCharts";
+import { SignalDataOsTimeline } from "@/components/signal/SignalDataOsTimeline";
 import { SignalEmergingPatternsExplorer } from "@/components/signal/SignalEmergingPatternsExplorer";
 import { SignalHistoricalOverview } from "@/components/signal/SignalHistoricalOverview";
 import { SignalLiveComposer } from "@/components/signal/SignalLiveComposer";
@@ -28,10 +29,23 @@ import { canManageCorpus } from "@/lib/auth/roles";
 import { validateEnginePublishReadiness } from "@/lib/engine/publish-guards";
 import { pool } from "@/lib/db";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import {
+  loadPublishedSignalOverview,
+  mapPublishedSignalOpportunities,
+  type PublishedSignalOverview,
+} from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness,
+  type SignalServingReadinessIssue,
+} from "@/lib/data-os/signal-serving";
+import { loadSignalDataOsTimeline } from "@/lib/data-os/signal-timeline";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
 import { filterEngineBlocksForComposerSelection, type ComposerRenderSelection } from "@/lib/signal/composer-render";
 import type { EmergingPattern, EngineChart, EngineMethodologyBlock, PublicActionCard, PublicTbFinding, TbDecisionFieldNode } from "@/lib/signal/contracts";
 import { defaultSignalManifest, normalizeSignalDemoMode, signalModuleMeta, type SignalModuleKey } from "@/lib/signal/manifest";
+import { hasSignalServingContract } from "@/lib/signal/semantics";
+import { buildTbDecisionFieldNodes } from "@/lib/signal/tb-decision-field";
 
 export const dynamic = "force-dynamic";
 
@@ -54,25 +68,83 @@ export default async function SignalOutputPage({
   if (!output) notFound();
 
   const payload = asRecord(output.payload);
+  const manifest = asRecord(output.manifest);
+  const strictRelational = hasSignalServingContract(manifest);
+  let relationalOverview: PublishedSignalOverview | null = null;
+  let relationalIssues: SignalServingReadinessIssue[] = [];
+
+  if (strictRelational) {
+    if (!output.snapshotId || !output.tbAnalysisId) {
+      relationalIssues = [{
+        code: "published_snapshot_contract_incomplete",
+        message: "El output no tiene un snapshot y un analisis publicados.",
+      }];
+    } else {
+      try {
+        const readiness = await getSignalServingReadiness({
+          analysisId: output.tbAnalysisId,
+          outputId: output.id,
+          requireDataRefs: true,
+          snapshotId: output.snapshotId,
+        });
+        const assessment = assessSignalServingReadiness(readiness);
+        relationalIssues = assessment.hardBlocks;
+
+        if (assessment.ready) {
+          relationalOverview = await loadPublishedSignalOverview({
+            analysisId: output.tbAnalysisId,
+            corpusId: output.studyCorpusId,
+            outputId: output.id,
+            requireGovernedRef: true,
+            snapshotId: output.snapshotId,
+          });
+        }
+      } catch (error) {
+        console.error("[signal] relational serving failed", { error, outputId: output.id });
+        relationalIssues = [{
+          code: "relational_serving_failed",
+          message: "No fue posible cargar el corte publicado desde Data OS.",
+        }];
+      }
+    }
+  }
+
+  if (strictRelational && !relationalOverview) {
+    return <SignalServingUnavailable issues={relationalIssues} />;
+  }
+
   const rawViewModel = adaptTbSignalPayload(payload);
   const brandLabel = output.brandName ?? output.brandFallbackName ?? output.themeName ?? rawViewModel.report.brand_name;
+  const relationalFindings = relationalOverview?.findings ?? rawViewModel.findings;
   const viewModel = {
     ...rawViewModel,
+    decisionFieldNodes: relationalOverview
+      ? buildTbDecisionFieldNodes(relationalFindings)
+      : rawViewModel.decisionFieldNodes,
+    findings: relationalFindings,
     report: {
       ...rawViewModel.report,
       brand_name: brandLabel
-    }
+    },
+    strategicOpportunities: relationalOverview
+      ? mapPublishedSignalOpportunities(relationalOverview.opportunities)
+      : rawViewModel.strategicOpportunities,
   };
-  const manifest = asRecord(output.manifest);
-  const metrics = asRecord(payload.metrics);
+  const metrics = relationalOverview ? asRecord(relationalOverview.metrics) : asRecord(payload.metrics);
   const overview = asRecord(payload.overview);
   const actions = asRecord(payload.actions);
   const limitations = asRecord(payload.limitations);
   const aggregates = asRecord(payload.aggregates);
-  const barriers = arrayValue(payload.barriers).map(asRecord);
-  const triggers = arrayValue(payload.triggers).map(asRecord);
+  const barriers = relationalOverview
+    ? relationalOverview.findings.filter((finding) => finding.polarity === "barrier").map(asRecord)
+    : arrayValue(payload.barriers).map(asRecord);
+  const triggers = relationalOverview
+    ? relationalOverview.findings.filter((finding) => finding.polarity === "trigger").map(asRecord)
+    : arrayValue(payload.triggers).map(asRecord);
   const structuralNotes = arrayValue(actions.structural_notes).map(asRecord);
-  const topBarriers = arrayValue(overview.top_barriers).map(asRecord);
+  const topBarriers = relationalOverview
+    ? relationalOverview.top_barriers.map(asRecord)
+    : arrayValue(overview.top_barriers).map(asRecord);
   const hasV2Manifest = signalModuleMeta.some((module) => Object.prototype.hasOwnProperty.call(manifest, module.key));
   const moduleEnabled = (key: SignalModuleKey) => isSignalModuleEnabled(manifest, key, hasV2Manifest);
   const demoMode = normalizeSignalDemoMode(manifest.demo_mode);
@@ -80,6 +152,15 @@ export default async function SignalOutputPage({
   const demoLocked = (key: SignalModuleKey) => demoMode.enabled && moduleEnabled(key) && demoBlurredSections.has(key);
   const liveEngineBlocks = await getLiveEngineBlocks(output.studyCorpusId);
   const composerRenderSelection = await getComposerRenderSelection(output.id);
+  const dataOsTimeline = relationalOverview?.cross_source_timeline ?? (
+    strictRelational
+      ? null
+      : await loadSignalDataOsTimeline({
+          corpusId: output.studyCorpusId,
+          outputId: output.id,
+          requireGovernedRef: false,
+        })
+  );
   const engineBlocks = filterEngineBlocksForComposerSelection(mergeEngineBlocks([
     ...(viewModel.engineBlock ? [viewModel.engineBlock] : []),
     ...liveEngineBlocks
@@ -91,26 +172,52 @@ export default async function SignalOutputPage({
 
   // Aggregates (already calculated in data layer)
   const corpusAgg = asRecord(aggregates.corpus);
-  const corpusWindow = asRecord(corpusAgg.window);
-  const payloadCorpusTotal = Number(corpusAgg.total_mentions ?? 0);
-  const payloadWindowMonths = Number(corpusWindow.months ?? 0);
-  const liveBounds = await getLiveCorpusBounds([output.studyCorpusId, output.baseCorpusId].flatMap((id) => id ? [id] : []));
+  const corpusWindow = relationalOverview
+    ? asRecord(relationalOverview.corpus.window)
+    : asRecord(corpusAgg.window);
+  const payloadCorpusTotal = relationalOverview?.corpus.total_mentions ?? Number(corpusAgg.total_mentions ?? 0);
+  const payloadWindowMonths = relationalOverview
+    ? countMonthsInclusive(toDateInput(corpusWindow.start), toDateInput(corpusWindow.end))
+    : Number(corpusWindow.months ?? 0);
+  const liveBounds = strictRelational
+    ? null
+    : await getLiveCorpusBounds([output.studyCorpusId, output.baseCorpusId].flatMap((id) => id ? [id] : []));
   const defaultDateFrom = liveBounds?.start ?? toDateInput(corpusWindow.start);
   const defaultDateTo = liveBounds?.end ?? toDateInput(corpusWindow.end);
   const corpusTotal = liveBounds?.totalMentions ?? payloadCorpusTotal;
   const windowMonths = liveBounds?.months ?? payloadWindowMonths;
-  const polarityDist = arrayValue(aggregates.polarity_distribution).map(asRecord);
-  const layerDist = arrayValue(aggregates.layer_distribution).map(asRecord);
-  const mobilityDist = arrayValue(aggregates.mobility_distribution).map(asRecord);
-  const platformDist = arrayValue(aggregates.platform_distribution).map(asRecord);
-  const contentTypeDist = arrayValue(aggregates.content_type_distribution).map(asRecord);
-  const volumeTimeline = arrayValue(aggregates.volume_timeline).map(asRecord);
-  const findingTimeSeries = arrayValue(aggregates.finding_time_series).map(asRecord);
-  const polarityTimeSeries = arrayValue(aggregates.polarity_time_series).map(asRecord);
-  const findingsScatter = arrayValue(aggregates.findings_scatter).map(asRecord);
-  const topVoice = arrayValue(aggregates.top_findings_by_voice).map(asRecord);
-  const mentionsSample = arrayValue(aggregates.mentions_sample).map(asRecord);
-  const shellGroups = buildSignalShellGroups(moduleEnabled, engineBlocks, canManageLiveCorpus);
+  const polarityDist = relationalOverview
+    ? relationalOverview.polarity_distribution.map(asRecord)
+    : arrayValue(aggregates.polarity_distribution).map(asRecord);
+  const layerDist = relationalOverview
+    ? relationalOverview.layer_distribution.map(asRecord)
+    : arrayValue(aggregates.layer_distribution).map(asRecord);
+  const mobilityDist = relationalOverview
+    ? relationalOverview.mobility_distribution.map(asRecord)
+    : arrayValue(aggregates.mobility_distribution).map(asRecord);
+  const platformDist = relationalOverview
+    ? relationalOverview.platform_distribution.map(asRecord)
+    : arrayValue(aggregates.platform_distribution).map(asRecord);
+  const contentTypeDist = relationalOverview
+    ? relationalOverview.content_type_distribution.map(asRecord)
+    : arrayValue(aggregates.content_type_distribution).map(asRecord);
+  const volumeTimeline = relationalOverview
+    ? relationalOverview.volume_timeline.map(asRecord)
+    : arrayValue(aggregates.volume_timeline).map(asRecord);
+  const findingTimeSeries = relationalOverview
+    ? relationalOverview.finding_time_series.map(asRecord)
+    : arrayValue(aggregates.finding_time_series).map(asRecord);
+  const polarityTimeSeries = relationalOverview
+    ? relationalOverview.polarity_time_series.map(asRecord)
+    : arrayValue(aggregates.polarity_time_series).map(asRecord);
+  const findingsScatter = relationalOverview
+    ? relationalOverview.findings_scatter.map(asRecord)
+    : arrayValue(aggregates.findings_scatter).map(asRecord);
+  const topVoice = relationalOverview
+    ? relationalOverview.top_findings_by_voice.map(asRecord)
+    : arrayValue(aggregates.top_findings_by_voice).map(asRecord);
+  const mentionsSample = strictRelational ? [] : arrayValue(aggregates.mentions_sample).map(asRecord);
+  const shellGroups = buildSignalShellGroups(moduleEnabled, engineBlocks, canManageLiveCorpus, strictRelational);
   const defaultSection = shellGroups[0]?.sections[0]?.key ?? "overview";
 
   return (
@@ -136,11 +243,14 @@ export default async function SignalOutputPage({
               <Icon name="calendar" size={14} />
               {windowMonths > 0 ? (
                 <SignalLocalizedText
-                  en={`Live corpus · ${windowMonths} months`}
-                  es={`Corpus vivo · ${windowMonths} meses`}
+                  en={`${strictRelational ? "Published snapshot" : "Live corpus"} · ${windowMonths} months`}
+                  es={`${strictRelational ? "Snapshot publicado" : "Corpus vivo"} · ${windowMonths} meses`}
                 />
               ) : (
-                <SignalLocalizedText en="Live corpus" es="Corpus vivo" />
+                <SignalLocalizedText
+                  en={strictRelational ? "Published snapshot" : "Live corpus"}
+                  es={strictRelational ? "Snapshot publicado" : "Corpus vivo"}
+                />
               )}
             </span>
             <SignalGlobalDateFilter />
@@ -157,7 +267,7 @@ export default async function SignalOutputPage({
             </button>
           </div>
         </div>
-        <SignalReadingGuide canManageLiveCorpus={canManageLiveCorpus} />
+        <SignalReadingGuide canManageLiveCorpus={canManageLiveCorpus} strictRelational={strictRelational} />
 
         {moduleEnabled("overview") ? (
           <div className="signal-view-panel" data-signal-section="overview" id="overview">
@@ -174,6 +284,7 @@ export default async function SignalOutputPage({
                   barriersTotal: Number(metrics.barriers_total ?? 0),
                   triggersTotal: Number(metrics.triggers_total ?? 0),
                   movableTotal: Number(metrics.movable_total ?? 0),
+                  opportunitiesTotal: Number(metrics.opportunities_total ?? viewModel.strategicOpportunities.length),
                 }}
                 mobilityDist={mobilityDist}
                 platformDist={platformDist}
@@ -187,10 +298,11 @@ export default async function SignalOutputPage({
                 volumeTimeline={volumeTimeline}
                 windowLabel={
                   windowMonths > 0
-                    ? `${fmtDateRange(defaultDateFrom, defaultDateTo, "en-US")} · ${windowMonths} months`
-                    : "Live corpus"
+                    ? `${fmtDateRange(defaultDateFrom, defaultDateTo, "en-US")} · ${windowMonths} months${strictRelational ? " · published snapshot" : ""}`
+                    : strictRelational ? "Published snapshot" : "Live corpus"
                 }
               />
+              {dataOsTimeline ? <SignalDataOsTimeline model={dataOsTimeline} /> : null}
             </DemoModeSection>
           </div>
         ) : null}
@@ -425,7 +537,11 @@ export default async function SignalOutputPage({
               }
             />
             <DemoModeSection locked={demoLocked("corpus_view")} label="Corpus View">
-              <SignalCorpusExplorer mentions={mentionsSample} outputId={output.id} />
+              <SignalCorpusExplorer
+                mentions={mentionsSample}
+                outputId={output.id}
+                strictRelational={strictRelational}
+              />
             </DemoModeSection>
           </section>
         ) : null}
@@ -639,7 +755,7 @@ export default async function SignalOutputPage({
               <QualityBoundariesPanel
                 clientBoundaries={viewModel.clientBoundaries}
                 limitations={limitations}
-                publishedEvidenceCount={mentionsSample.length}
+                publishedEvidenceCount={relationalOverview?.evidence.finding_citations ?? mentionsSample.length}
                 totalMentions={corpusTotal}
               />
             </DemoModeSection>
@@ -657,8 +773,8 @@ export default async function SignalOutputPage({
               title={<SignalLocalizedText en="Add monthly data" es="Agregar nuevo corte mensual" />}
               sub={
                 <SignalLocalizedText
-                  en="Use this to append CSV data to the live corpus before QA. It does not run SentiOne or a costly analysis by itself."
-                  es="Úsalo para sumar CSVs al corpus vivo antes de QA. No corre SentiOne ni un análisis costoso por sí solo."
+                  en="Use this to append CSV data to the live corpus before QA. It does not query an external provider or run a costly analysis by itself."
+                  es="Úsalo para sumar CSVs al corpus vivo antes de QA. No consulta un proveedor externo ni corre un análisis costoso por sí solo."
                 />
               }
             />
@@ -679,7 +795,47 @@ export default async function SignalOutputPage({
    Sub-components
    ============================================================ */
 
-function SignalReadingGuide({ canManageLiveCorpus }: { canManageLiveCorpus: boolean }) {
+function SignalServingUnavailable({ issues }: { issues: SignalServingReadinessIssue[] }) {
+  const visibleIssues = issues.length > 0
+    ? issues
+    : [{ code: "signal_serving_unavailable", message: "El corte publicado no esta listo para servir desde Data OS." }];
+
+  return (
+    <main className="signal-report signal-report--unavailable">
+      <section className="signal-section signal-serving-unavailable">
+        <SectionHead
+          eyebrow="Data OS"
+          title={<SignalLocalizedText en="Published snapshot unavailable" es="Snapshot publicado no disponible" />}
+          sub={
+            <SignalLocalizedText
+              en="Signal stopped before rendering because the governed relational contract is incomplete. The legacy JSON was not used as a fallback."
+              es="Signal se detuvo antes de renderizar porque el contrato relacional gobernado esta incompleto. No se uso el JSON legado como fallback."
+            />
+          }
+        />
+        <div className="signal-serving-warning" role="alert">
+          <Icon name="alert" size={18} />
+          <div>
+            {visibleIssues.map((issue) => (
+              <p key={issue.code}>
+                <strong>{issue.message}</strong>
+                {issue.detail ? <span>{issue.detail}</span> : null}
+              </p>
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SignalReadingGuide({
+  canManageLiveCorpus,
+  strictRelational,
+}: {
+  canManageLiveCorpus: boolean;
+  strictRelational: boolean;
+}) {
   return (
     <section className="signal-reading-guide" aria-label="Signal reading flow">
       <div>
@@ -689,8 +845,12 @@ function SignalReadingGuide({ canManageLiveCorpus }: { canManageLiveCorpus: bool
       </div>
       <div>
         <span>2</span>
-        <strong>Corpus vivo</strong>
-        <small>Búsqueda real en DB: marca, baseline, fecha y evidencia.</small>
+        <strong>{strictRelational ? "Snapshot publicado" : "Corpus vivo"}</strong>
+        <small>
+          {strictRelational
+            ? "Menciones, dimensiones y evidencia del corte inmutable."
+            : "Búsqueda real en DB: marca, baseline, fecha y evidencia."}
+        </small>
       </div>
       <div>
         <span>3</span>
@@ -2749,14 +2909,17 @@ function findingAnchor(findingId: string) {
 function buildSignalShellGroups(
   moduleEnabled: (key: SignalModuleKey) => boolean,
   engineBlocks: EngineMethodologyBlock[] = [],
-  canManageLiveCorpus = false
+  canManageLiveCorpus = false,
+  strictRelational = false
 ): SignalShellGroup[] {
   const groups: SignalShellGroup[] = [
     {
       label: "Live Report",
       sections: [
         moduleEnabled("overview") ? { key: "overview", label: "Overview", icon: "platform" } : null,
-        moduleEnabled("corpus_view") ? { key: "corpus-view", label: "Live Corpus", icon: "message" } : null,
+        moduleEnabled("corpus_view")
+          ? { key: "corpus-view", label: strictRelational ? "Published Corpus" : "Live Corpus", icon: "message" }
+          : null,
         moduleEnabled("overview") ? { key: "signal-history", label: "Signal History", icon: "clock" } : null,
         moduleEnabled("live_composer") ? { key: "live-composer", label: "Composer", icon: "layers" } : null
       ].filter(Boolean) as SignalShellGroup["sections"]

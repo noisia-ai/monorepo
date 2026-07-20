@@ -1,3 +1,20 @@
+import {
+  PORTABLE_LISTEN_QUERY_DIALECT_VERSION,
+  validatePortableListenQuery,
+  type PortableListenQueryValidation
+} from "./listen-query-language";
+import {
+  buildQueryConstructionPlan,
+  resolveQueryConstructionMode,
+  validateConstructedQuery,
+  type QueryCompetitorEntity,
+  type QueryConstructionInput,
+  type QueryConstructionMode,
+  type QueryConstructionPlan,
+  type QueryConstructionScope,
+  type QuerySemanticValidation
+} from "./query-construction";
+
 export * from "./tb";
 export * from "./semantic-rag";
 export * from "./engine";
@@ -10,11 +27,24 @@ export * from "./engine-lens-budget";
 export * from "./lens-query-packs";
 export * from "./lens-coverage";
 export * from "./signal-pulse";
+export * from "./data-os";
+export * from "./source-observations";
+export * from "./source-materialization-contract";
+export * from "./listening-data-os";
+export * from "./data-os-capabilities";
+export * from "./tb-data-os-bridge-quality";
+export * from "./data-os-corpus-audit";
+export * from "./data-os-metric-catalog";
+export * from "./query-pack-evaluation";
+export * from "./listen-query-language";
+export * from "./query-construction";
+export * from "./corpus-assessment";
 export * from "./methodologies/registry";
 export * from "./methodologies/narrative-ownership";
 
 export const QUERY_ENGINE_QUEUE_NAME = "noisia-query-engine";
 export const QUERY_ENGINE_PIPELINE_VERSION = "query-engine-f2-1-mvp";
+/** @deprecated Runtime query-pack evaluation uses QUERY_PACK_EVALUATOR_PIPELINE_VERSION. */
 export const SAMPLE_EVALUATOR_PIPELINE_VERSION = "sample-evaluator-f2-2-mvp";
 /** Default / minimum sample size for the first few iterations. */
 export const SAMPLE_SIZE = 50;
@@ -27,6 +57,7 @@ export const SAMPLE_SIZE = 50;
  * Iter 4-6  → 250 mentions  (enough to distinguish signal from noise)
  * Iter 7+   → 500 mentions  (deep corpus diagnostic)
  */
+/** @deprecated Corpus certification and imported query-pack evidence own their sample policies. */
 export function getSampleSize(iterationNumber: number): number {
   if (iterationNumber >= 7) return 500;
   if (iterationNumber >= 4) return 250;
@@ -63,13 +94,46 @@ export type SampleEvaluatorInput = {
   sample: SampleMention[];
 };
 
+/**
+ * @deprecated Kept for historical fixtures only. The worker uses
+ * buildQueryPackEvaluatorPrompt(), persists mention-level classifications and
+ * lets deterministic code compute all scores.
+ */
 export function buildSampleEvaluatorPrompt(input: SampleEvaluatorInput): string {
+  const constructionMode = resolveQueryConstructionMode(input.methodology.slug);
+  const adjustmentRules = constructionMode === "exploratory"
+    ? [
+        "MODO EXPLORATORIO: esta evaluacion mide la evidencia importada por este query pack; no certifica el corpus completo.",
+        "No propongas agregar un AND obligatorio de trigger, barrier, emocion, journey o frase de decision. Eso sesga la ingesta y reduce recall.",
+        "Propone ajustes sobre ANCHOR y NOISE: aliases canonicos, producto+marca, homonimos, terminos ambiguos, frases exactas demasiado largas, idioma o fuente recomendada.",
+        "Triggers, barriers, experiences y comparisons se clasifican post-ingesta mediante el tag plan; pueden aparecer en el diagnostico, no como puerta obligatoria del boolean."
+      ]
+    : [
+        "MODO DETECTION: el query puede exigir un THEME porque el playbook busca una alerta o senal acotada.",
+        "Todo ajuste de THEME debe conservar lenguaje natural positivo y negativo en balance aproximado 40-60; nunca uses solo quejas.",
+        "Prefiere wildcard o proximidad a listas de frases literales largas y conserva ANCHOR + NOISE."
+      ];
+  const proposedAdjustments = constructionMode === "exploratory"
+    ? [
+        "Agregar AND NOT con 'Laika Studios', 'Coraline' y 'perra Laika' porque son homonimos observados.",
+        "Reemplazar el anchor ambiguo 'Laika' por aliases canonicos y combinaciones producto+marca sin exigir un tema.",
+        "Separar Petco y Maskota en query packs independientes para preservar identidad por competidor."
+      ]
+    : [
+        "Agregar AND NOT con homonimos observados sin alterar el anchor.",
+        "Reemplazar frases exactas largas por wildcard o proximidad portable.",
+        "Balancear el bloque THEME con lenguaje natural positivo y negativo."
+      ];
+
   return [
-    "Eres el Evaluador de Muestra del Engine de Noisia.",
-    "Tu funcion es diagnosticar si la muestra de menciones produce senal cultural interpretable o solo volumen de ruido.",
+    "Eres el Evaluador de Evidencia Importada por Query Pack del Engine de Noisia.",
+    "Tu funcion es clasificar si las menciones recuperadas por este query producen senal interpretable o ruido para su pack.",
+    "No apruebas el corpus, no predices el rendimiento de un query sin extraccion y no calculas los scores finales; codigo deterministico los calcula con tus clasificaciones.",
     "No expliques teoria. Devuelve solo JSON valido.",
     "",
     "PRINCIPIO CLAVE: volumen no es senal. Una mencion tiene valor cuando revela tension, emocion, friccion, percepcion o codigo cultural — no cuando solo menciona una palabra clave.",
+    `Modo de construccion: ${constructionMode}.`,
+    ...adjustmentRules,
     "",
     "Criterios de puntuacion (0-10):",
     "- quality_score: relevancia cultural para la pregunta de negocio (0=nada relevante, 10=alta densidad cultural)",
@@ -78,7 +142,7 @@ export function buildSampleEvaluatorPrompt(input: SampleEvaluatorInput): string 
     "- language_mx_pct: % de menciones en espanol mexicano informal (0-100)",
     "- geo_mx_pct: % de menciones con contexto geografico Mexico (0-100)",
     "- notes: diagnostico de 2-4 oraciones — que terminos del query capturan senal real, que causa el ruido, si la pregunta de negocio puede responderse con esta muestra",
-    "- proposed_adjustments: lista de ajustes concretos y ejecutables al query booleano. Cada ajuste debe ser una instruccion especifica como: 'Agregar AND (\"frase trigger\")' o 'Remover termino X porque causa ruido Y' o 'Separar en dos queries: uno para A y otro para B' o 'Cambiar a Pattern B (seeded): agregar marca AND senal'",
+    "- proposed_adjustments: lista de ajustes concretos y ejecutables compatibles con el modo de construccion. Cada ajuste debe indicar el bloque ANCHOR, THEME o NOISE, el termino y la evidencia que lo justifica.",
     "",
     "Formato JSON obligatorio:",
     JSON.stringify(
@@ -88,12 +152,8 @@ export function buildSampleEvaluatorPrompt(input: SampleEvaluatorInput): string 
         noise_score: 9,
         language_mx_pct: 80,
         geo_mx_pct: 60,
-        notes: "La muestra captura volumen pero no senal. El query es demasiado amplio: los brand seeds capturan menciones sin relacion con la pregunta de negocio. No se detectan triggers ni barriers de la categoria seguros. Se necesita anclar la query con frases de experiencia real de usuario.",
-        proposed_adjustments: [
-          "Agregar AND con frases de trigger: '(\"vale la pena\" OR \"me conviene\" OR \"sí cubre\" OR \"no cubre\")'",
-          "Agregar AND con frases de barrier: '(\"es caro\" OR \"no me alcanza\" OR \"no entiendo la poliza\")'",
-          "Remover terminos geograficos como 'Potosi' porque capturan ruido de San Luis Potosi y otras entidades no relacionadas con la marca"
-        ]
+        notes: "La evidencia importada contiene demasiado ruido de homonimos para este query pack. La recomendacion corrige identidad y exclusiones sin convertir temas exploratorios en filtros obligatorios.",
+        proposed_adjustments: proposedAdjustments
       },
       null,
       2
@@ -313,6 +373,7 @@ export type QueryComposerInput = {
     manifest: MethodologyManifest;
   };
   competitors: string[];
+  competitorEntities?: QueryCompetitorEntity[];
   brandSeeds: string[];
   knowledgeSources: MemoryRecord[];
   memoryIndustry: MemoryRecord[];
@@ -335,6 +396,7 @@ export type QueryStrategyBrief = {
 };
 
 export type MethodologyManifest = {
+  query_mode?: QueryConstructionMode;
   signal_phrases?: {
     triggers_generic?: string[];
     barriers_generic?: string[];
@@ -357,6 +419,11 @@ export type MemoryRecord = {
 
 export type ComposedQuery = {
   query_text: string;
+  /** First-class competitive queries. Every item represents exactly one governed entity. */
+  competitor_queries?: Array<{
+    entity: string;
+    query_text: string;
+  }>;
   /** Competitor/peer-set query — competitor seeds + same signal frame — for explicit competitive benchmarking. */
   competitor_query_text?: string;
   /** Broader industry/category query — no brand constraint — for context and benchmarking. */
@@ -370,6 +437,10 @@ export type ComposedQuery = {
     knowledge_query_language?: string[];
     knowledge_potential_triggers?: string[];
     knowledge_potential_barriers?: string[];
+    competitor_queries?: Array<{
+      entity: string;
+      query_text: string;
+    }>;
     global_exclusions: string[];
     knowledge_sources?: MemoryRecord[];
     query_strategy_brief?: QueryStrategyBrief | null;
@@ -378,76 +449,109 @@ export type ComposedQuery = {
     model?: string;
     fallback_used?: boolean;
     fallback_reason?: string;
+    generation_contract?: {
+      dialect_version: string;
+      validation_mode: "structural_pre_import" | "structural_plus_imported_evidence";
+      evidence_status: "awaiting_imported_mentions" | "validated_on_imported_mentions";
+      subject_os: "brand_os" | "theme_os";
+      rag_scopes: Array<"brand_os" | "theme_os" | "study_os">;
+      knowledge_source_types: string[];
+      knowledge_source_count: number;
+      strategy_brief_used: boolean;
+      required_scopes?: Array<"brand" | "competitors" | "category">;
+      /** Canonical query identities. Competitive keys use `competitor:<entity>`. */
+      required_query_keys?: string[];
+      queries: Record<string, PortableListenQueryValidation>;
+      semantic_queries: Record<string, QuerySemanticValidation>;
+      construction_plan: QueryConstructionPlan;
+      rejected_queries?: Record<string, PortableListenQueryValidation>;
+      rejected_semantic_queries?: Record<string, QuerySemanticValidation>;
+      fallback_scopes?: string[];
+    };
+    refinement?: {
+      source_iteration_id: string;
+      refined_pack_scopes: string[];
+      frozen_pack_scopes: string[];
+      refined_query_identities?: string[];
+      frozen_query_identities?: string[];
+      applied_at: string;
+    };
   };
 };
 
 export function buildQueryComposerPrompt(input: QueryComposerInput) {
-  const components = buildQueryComponents(input);
+  const constructionInput = buildQueryConstructionInput(input);
+  const plan = buildQueryConstructionPlan(constructionInput);
+  const subjectOs = input.subject.type === "brand" ? "Brand OS" : "Theme OS";
+  const governedRagLabel = `${subjectOs} + Study OS`;
+  const hasCompetitorScope = plan.anchors.competitor_entities.length > 0;
+  const hasCategoryScope = plan.anchors.category.length > 0;
+  const governedScopeCount = 1 + (hasCompetitorScope ? 1 : 0) + (hasCategoryScope ? 1 : 0);
+  const responseExample = {
+    query_text: plan.recommended_variant === "themed" && plan.themed
+      ? plan.themed.brand
+      : plan.permissive.brand,
+    ...(hasCompetitorScope
+      ? {
+          competitor_queries: plan.anchors.competitor_entities.map((competitor) => ({
+            entity: competitor.entity,
+            query_text: plan.recommended_variant === "themed" && plan.themed
+              ? plan.themed.competitor_entities.find((item) => item.entity === competitor.entity)?.query ?? ""
+              : plan.permissive.competitor_entities.find((item) => item.entity === competitor.entity)?.query ?? ""
+          }))
+        }
+      : {}),
+    ...(hasCategoryScope
+      ? {
+          industry_query_text: plan.recommended_variant === "themed" && plan.themed
+            ? plan.themed.category ?? ""
+            : plan.permissive.category ?? ""
+        }
+      : {})
+  };
 
   return [
-    "Eres el Engine de Validacion de Queries de Noisia.",
-    "Tu tarea es componer una query booleana para SentiOne que capture SENAL CULTURAL, no volumen.",
+    "Eres el constructor semantico de queries de Noisia.",
+    "Tu trabajo es enriquecer un contrato determinista gobernado por Data OS; no puedes cambiar su modo, entidades ni limites.",
+    `RAG gobernado: ${governedRagLabel}.`,
+    `Produce exactamente los ${governedScopeCount} scopes respaldados por Data OS.`,
+    "No inventes un scope opcional sin anchors canonicos.",
     "No expliques teoria. Devuelve solo JSON valido.",
     "",
-    "PRINCIPIO: las personas no buscan cultura, la viven. La query debe capturar el lenguaje que usan mientras la viven.",
-    "No maximices menciones. Maximiza menciones interpretables.",
+    `MODO: ${plan.mode.toUpperCase()}.`,
+    ...(plan.mode === "exploratory"
+      ? [
+          "REGLA CRITICA: captura la entidad o categoria con recall amplio y aplica THEME despues de la ingesta.",
+          "PROHIBIDO agregar AND con triggers, barriers, journey, valor o lenguaje de la pregunta de negocio.",
+          "Los terminos de senal viven en tag_plan; no deben filtrar el universo antes de observarlo."
+        ]
+      : [
+          "Este playbook permite THEME en la recuperacion.",
+          "Balancea lenguaje positivo y negativo: 40-60% de cada lado. No construyas una query solo de quejas."
+        ]),
     "",
-    "Knowledge Base:",
-    "- Puede incluir brief de estudio, documentos de marca, social archives, search data o exports de scrapers.",
-    "- Usalo como CONTEXTO para entender lenguaje, tensiones, competidores y ruido probable.",
-    "- No copies claims internos si no son lenguaje que un consumidor diria.",
-    "- Si la fuente sugiere frases buscables, traducelas a lenguaje real de plataforma antes de meterlas a la query.",
+    "CAPAS DEL CONTRATO:",
+    `- ANCHOR: conserva al menos un termino gobernado por ${subjectOs}. No inventes marcas, aliases ni handles.`,
+    "- NOISE: conserva el AND NOT preemptivo del perfil de dominio y solo suma homonimos respaldados por RAG.",
+    "- THEME: se usa solo cuando el modo lo permite. Prefiere lenguaje vivido a lenguaje de consultoria.",
+    "- CONFIG: idioma, mercado, periodo y fuentes son metadata; nunca los incrustes como operadores propietarios.",
+    "- COMPETENCIA: una query por entidad. Nunca unas dos competidores en el mismo OR.",
     "",
-    "Query Strategy Brief:",
-    "- Si existe, es la lectura priorizada del Knowledge Base. Usalo como brujula.",
-    "- Las tres queries deben responder roles distintos definidos ahi: marca = diagnostico, competencia = benchmark, industria = baseline cultural.",
-    "- No ignores exclusiones, hipotesis competitivas o temas prioritarios del strategy brief.",
+    "CALIDAD LINGUISTICA:",
+    "- Usa variantes naturales en los idiomas configurados, incluidas expresiones positivas, negativas y de resolucion.",
+    "- Usa frases exactas cortas; para coocurrencias flexibles usa proximidad \"frase\"~n.",
+    "- Usa wildcard final solo en raices no ambiguas: bloque*, clon*, hipotec*.",
+    "- Terminos ambiguos como PIX, Nu, Elo, bandeira, tarjeta o cartao nunca pueden aparecer solos.",
+    "- Comprime sinonimos redundantes, pero no reduzcas la query a cuatro frases genericas.",
     "",
-    "Escalera de traduccion cultural (aplica siempre):",
-    "Concepto estrategico → Espanol llano → Espanol mexicano informal → Expresion nativa de plataforma → Frase buscable",
-    "Ejemplo: 'barreras de adopcion de seguros' → 'no lo entienden' → 'para que me sirve' / 'es muy caro' → '¿para que me sirve el seguro?' → 'para que sirve' AND (marca OR seguro)",
+    BOOLEAN_LISTENING_QUERY_RULES,
     "",
-    "Patrones de query disponibles — elige el mas apropiado:",
-    "- Patron A (escucha cultural abierta): solo frases de senal, sin semilla de marca",
-    "- Patron B (seeded brand): (marcas) AND (frases de senal) — usa cuando toda mencion DEBE tener contexto de marca",
-    "- Patron C (categoria + senal): (terminos de categoria) AND (frases de senal) — cuando la lista de marcas es incompleta",
-    "- Patron D (con exclusion): (senal) AND (contexto) NOT (termino ruidoso) — solo agrega NOT despues de confirmar el ruido",
-    "- Patron E (evidencia): frases muy especificas de alta densidad — para mining de citas interpretables",
+    "CONTRATO DETERMINISTA DE ENTRADA:",
+    JSON.stringify(plan, null, 2),
     "",
-    "Reglas de construccion:",
-    "- Prefiere frases sobre palabras sueltas.",
-    "- No uses lenguaje de consultor en la query (pon 'no me alcanza', no 'barrera economica').",
-    "- Incluye variantes de acento y sin acento para la marca.",
-    "- Incluye handles sociales si existen.",
-    "- Los exclusions van SOLO cuando hay ruido real identificado.",
-    "- Si el nombre de la marca es ambiguo, agrega exclusiones geograficas o categoriales.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    "OBLIGATORIO — Produce SIEMPRE tres queries distintas. Si omites cualquiera, la respuesta sera RECHAZADA:",
-    "1. query_text (Query de Marca): incluye SOLO semillas de marca principal + frases de senal. Alta precision. Captura solo conversaciones donde la marca esta presente.",
-    "2. competitor_query_text (Query de Competencia): incluye SOLO competidores nombrados + mismas frases de senal. No incluye la marca principal. Captura comparacion y tensiones del peer set.",
-    "3. industry_query_text (Query de Industria): sin semillas de marca ni competidores. Usa solo terminos de categoria + frases de senal. Alta cobertura. Captura el contexto de la industria y el mercado total.",
-    "No son interchangeables. Marca diagnostica la marca, competencia benchmarkea el peer set, industria mide contexto cultural amplio.",
-    "",
-    "Formato JSON obligatorio:",
-    JSON.stringify(
-      {
-        query_text: "((\"Marca\" OR \"@Marca\")) AND ((\"frase senal\")) NOT (\"ruido\")",
-        competitor_query_text: "((\"Competidor 1\" OR \"Competidor 2\")) AND ((\"frase senal\")) NOT (\"ruido\")",
-        industry_query_text: "((\"categoria\" OR \"termino industria\")) AND ((\"frase senal\"))",
-        query_components: {
-          brand_seeds: ["..."],
-          competitor_seeds: ["..."],
-          category_seeds: ["..."],
-          trigger_phrases_tb: ["..."],
-          barrier_phrases_tb: ["..."],
-          global_exclusions: ["..."]
-        }
-      },
-      null,
-      2
-    ),
+    "Devuelve exactamente los scopes presentes en el ejemplo. El parser valida sintaxis Y semantica por scope; cualquier violacion se sustituye por el draft determinista.",
+    "Formato JSON obligatorio (puedes enriquecer lenguaje, no la estructura):",
+    JSON.stringify(responseExample, null, 2),
     "",
     "Input:",
     JSON.stringify(
@@ -462,7 +566,7 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
           version: input.methodology.version,
           engine_validation_prompt: input.methodology.manifest.engine_validation_prompt
         },
-        components
+        construction_plan: plan
       },
       null,
       2
@@ -471,24 +575,29 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
 }
 
 export function buildQueryStrategyBriefPrompt(input: QueryComposerInput): string {
+  const subjectOs = input.subject.type === "brand" ? "Brand OS" : "Theme OS";
+  const constructionPlan = buildQueryConstructionPlan(buildQueryConstructionInput(input));
+  const hasCompetitorScope = constructionPlan.anchors.competitor_entities.length > 0;
+  const hasCategoryScope = constructionPlan.anchors.category.length > 0;
   return [
     "Eres el Strategy Intake Engine de Noisia.",
-    "Tu tarea es leer el brief, Brand OS y Knowledge Base PRE-CORPUS para producir una estrategia de busqueda y analisis.",
+    `Tu tarea es leer Study OS, ${subjectOs} y Knowledge Sources PRE-CORPUS para producir una estrategia de búsqueda y análisis.`,
     "No generes queries booleanas aqui. Devuelve SOLO JSON valido.",
     "",
     "Objetivo:",
     "- Priorizar que debe buscar el engine.",
-    "- Separar diagnostico de marca, benchmark competitivo y baseline de industria.",
+    "- Separar diagnóstico del sujeto, benchmark competitivo y baseline de categoría cuando cada scope tenga datos canónicos.",
     "- Traducir lenguaje de brief/cliente a lenguaje real de usuario/plataforma.",
     "- Detectar ruido/exclusiones antes de componer queries.",
     "- Decir que necesita poder responder el output final.",
     "",
     "Reglas:",
-    "- No inventes competidores que no esten en input.",
+    "- No inventes competidores, categorías, mercados ni handles que no estén en el input gobernado.",
     "- No conviertas claims internos en verdad del consumidor.",
     "- Si el Knowledge Base trae customer service/social archive con lenguaje real, extrae frases buscables.",
     "- Si trae campañas/briefs, usalos como contexto e hipotesis, no como evidencia.",
     "- Si falta data competitiva suficiente, dilo como limitacion.",
+    "- Si un scope opcional no tiene semillas canónicas, devuelve su rol como cadena vacía.",
     "",
     "Formato JSON obligatorio:",
     JSON.stringify(
@@ -500,8 +609,12 @@ export function buildQueryStrategyBriefPrompt(input: QueryComposerInput): string
         query_language: ["..."],
         exclusions_or_noise: ["..."],
         brand_query_role: "Diagnosticar que triggers/barriers aparecen cuando la marca esta presente.",
-        competitor_query_role: "Benchmarkear si las mismas tensiones pertenecen al peer set o a competidores.",
-        industry_query_role: "Medir si la tension es de categoria aunque nadie mencione marcas.",
+        competitor_query_role: hasCompetitorScope
+          ? "Benchmarkear si las mismas tensiones pertenecen al peer set o a competidores."
+          : "",
+        industry_query_role: hasCategoryScope
+          ? "Medir si la tension es de categoria aunque nadie mencione marcas."
+          : "",
         must_answer: ["..."],
         limitations: ["..."]
       },
@@ -573,6 +686,8 @@ export type EvaluationHistoryEntry = {
 
 export function buildQueryRefinementPrompt(params: {
   previousQueryText: string;
+  previousCompetitorQueryText?: string;
+  previousIndustryQueryText?: string;
   proposedAdjustments: string[];
   evaluation: { quality_score: number; density_score: number; noise_score: number; notes: string };
   subject: QueryComposerInput["subject"];
@@ -585,44 +700,73 @@ export function buildQueryRefinementPrompt(params: {
   /** Optional free-form user instructions to apply on top of the diagnostic. */
   userComments?: string;
 }): string {
+  const mode = resolveQueryConstructionMode(params.methodology.slug);
+  const requiredScopeLines = [
+    "1. query_text: refina la query primaria del sujeto.",
+    ...(params.previousCompetitorQueryText
+      ? ["2. competitor_query_text: refina el benchmark competitivo sin introducir competidores nuevos."]
+      : []),
+    ...(params.previousIndustryQueryText
+      ? ["3. industry_query_text: refina el baseline de categoría sin introducir marcas."]
+      : [])
+  ];
+  const responseExample = {
+    query_text: mode === "exploratory"
+      ? '("Sujeto" OR @handle) AND NOT ("homonimo")'
+      : '("Sujeto" OR @handle) AND ("me resolvieron" OR "no me resolvieron") AND NOT ("homonimo")',
+    ...(params.previousCompetitorQueryText
+      ? {
+          competitor_query_text: mode === "exploratory"
+            ? '("Competidor") AND NOT ("homonimo")'
+            : '("Competidor") AND ("vale la pena" OR "no vale la pena") AND NOT ("homonimo")'
+        }
+      : {}),
+    ...(params.previousIndustryQueryText
+      ? {
+          industry_query_text: mode === "exploratory"
+            ? '("categoria" OR "lenguaje natural de categoria") AND NOT ("ruido")'
+            : '("categoria") AND ("me conviene" OR "no me conviene") AND NOT ("ruido")'
+        }
+      : {}),
+    query_components: {
+      brand_seeds: ["..."],
+      competitor_seeds: ["..."],
+      category_seeds: ["..."],
+      trigger_phrases_tb: ["..."],
+      barrier_phrases_tb: ["..."],
+      global_exclusions: ["..."]
+    }
+  };
   return [
     "Eres el Engine de Validacion de Queries de Noisia.",
-    "Tu tarea es refinar una query booleana de SentiOne a partir de los ajustes diagnosticados por el evaluador de muestra.",
-    "Esta es una iteracion de refinamiento (v2 precision o v3 evidencia). Reduce ruido, aumenta densidad de senal.",
+    "Tu tarea es refinar una hipotesis booleana portable a partir de evidencia importada, sin romper el contrato metodologico.",
+    `MODO GOBERNADO: ${mode.toUpperCase()}. No puedes cambiarlo.`,
     "No expliques teoria. Devuelve solo JSON valido.",
     "",
-    "PRINCIPIO: esta version debe tener MENOS terminos que la anterior, MEJOR anclados a senal cultural real.",
-    "No agregar keywords por si acaso. Cada termino debe sobrevivir la prueba de compresion.",
+    ...(mode === "exploratory"
+      ? [
+          "REGLA CRITICA: refina ANCHOR y NOISE; NO agregues un AND obligatorio con triggers, barriers, journey o lenguaje del brief.",
+          "Los hallazgos tematicos de la evidencia deben alimentar clasificacion y diagnostico post-ingesta, no reducir el universo recuperado."
+        ]
+      : [
+          "El modo detection permite THEME obligatorio, pero debe contener lenguaje positivo y negativo en una proporcion 40-60.",
+          "No conviertas la query en un inventario solo de quejas."
+        ]),
+    "Conserva el scope, las entidades gobernadas y las exclusiones defendibles. No inventes aliases, handles ni competidores.",
+    "Prefiere lenguaje vivido y variantes naturales. Usa proximidad para coocurrencias flexibles y wildcard final solo en raices no ambiguas.",
+    "No existe una meta artificial de hacer la siguiente version mas corta: debe ser mas precisa, auditable y suficientemente amplia.",
     "",
-    SENTIONE_LQL_RULES,
+    BOOLEAN_LISTENING_QUERY_RULES,
     "",
-    "Escalera de traduccion: concepto estrategico → espanol llano → espanol mexicano informal → frase buscable.",
-    "Aplica solo los ajustes propuestos. No reescribas todo si no es necesario.",
+    "Escalera de traduccion: concepto estrategico → lenguaje cotidiano local → variantes observables → expresion buscable.",
+    "Aplica ajustes compatibles con el modo. Si un ajuste propone theme-gating en modo exploratory, conviertelo en mejor NOISE o descartalo.",
     "",
-    "OBLIGATORIO — Produce SIEMPRE tres queries refinadas. Si omites cualquiera, la respuesta sera RECHAZADA:",
-    "1. query_text (Query de Marca): refinada con los ajustes aplicados. Mantiene semillas de marca + frases de señal.",
-    "2. competitor_query_text (Query de Competencia): usa competidores nombrados + la misma tematica/señal. NO incluye la marca principal.",
-    "3. industry_query_text (Query de Industria): MISMA tematica de la marca pero SIN semillas de marca ni competidores. Solo terminos de categoria + frases de señal. Captura el mercado total.",
-    "Las tres queries son independientes y miden cosas distintas — generar solo una invalida la iteracion.",
+    `OBLIGATORIO — Refina exactamente los ${requiredScopeLines.length} scopes presentes en la iteración:`,
+    ...requiredScopeLines,
+    "No inventes scopes ausentes ni cambies su función analítica.",
     "",
     "Formato JSON obligatorio — mismo schema:",
-    JSON.stringify(
-      {
-        query_text: "((\"Marca\")) AND ((\"frase senal\")) NOT (\"ruido\")",
-        competitor_query_text: "((\"Competidor\")) AND ((\"frase senal\")) NOT (\"ruido\")",
-        industry_query_text: "((\"categoria\")) AND ((\"frase senal\"))",
-        query_components: {
-          brand_seeds: ["..."],
-          competitor_seeds: ["..."],
-          category_seeds: ["..."],
-          trigger_phrases_tb: ["..."],
-          barrier_phrases_tb: ["..."],
-          global_exclusions: ["..."]
-        }
-      },
-      null,
-      2
-    ),
+    JSON.stringify(responseExample, null, 2),
     "",
     ...(params.evaluationHistory && params.evaluationHistory.length > 1
       ? [
@@ -645,6 +789,12 @@ export function buildQueryRefinementPrompt(params: {
       : []),
     "Query a refinar:",
     params.previousQueryText,
+    ...(params.previousCompetitorQueryText
+      ? ["", "Query competitiva a refinar:", params.previousCompetitorQueryText]
+      : []),
+    ...(params.previousIndustryQueryText
+      ? ["", "Query de categoría a refinar:", params.previousIndustryQueryText]
+      : []),
     "",
     "Diagnostico actual del evaluador:",
     JSON.stringify(params.evaluation, null, 2),
@@ -674,43 +824,37 @@ export function buildQueryRefinementPrompt(params: {
   ].join("\n");
 }
 
-/** Constraints reused by every prompt that emits a SentiOne LQL query. */
-export const SENTIONE_LQL_RULES = [
-  "REGLAS DE SINTAXIS SENTIONE LQL (CRITICAS — SentiOne RECHAZA queries que las violan):",
-  "- PROHIBIDO usar operadores de campo: NO uses 'country:', 'lang:', 'language:', 'platform:', 'site:', 'from:', 'date:', 'author:', 'url:'.",
-  "- NO uses 'AND (country:MX)' — SentiOne devuelve error de sintaxis. El filtro geografico va en la UI de SentiOne, no en la query.",
-  "- NO uses 'AND (lang:es)' por la misma razon. Para limitar a espanol mexicano, agrega frases idiomaticas mexicanas (ej. 'pinche', 'chinga', '¿que onda?', 'no manches', 'wey').",
-  "- La query SOLO debe contener: frases entre comillas dobles, operadores AND/OR/NOT en MAYUSCULAS, parentesis para agrupar.",
-  "- Usa el operador NEAR/n entre frases solo si es esencial (ej. 'seguro' NEAR/3 'caro').",
-  "- Si necesitas filtrar geografia/idioma, hazlo via terminos de la query (ej. menciones de ciudades mexicanas, modismos), no via operadores de campo."
+/** Provider-neutral constraints reused by every prompt that emits a listening query. */
+export const BOOLEAN_LISTENING_QUERY_RULES = [
+  `REGLAS DEL DIALECTO ${PORTABLE_LISTEN_QUERY_DIALECT_VERSION}:`,
+  "- Usa términos, frases exactas entre comillas dobles, AND, OR, NOT y paréntesis balanceados.",
+  "- Cada término o grupo debe estar conectado explícitamente con AND u OR; NOT niega el término o grupo siguiente.",
+  "- Usa proximidad \"frase flexible\"~n cuando dos o mas palabras deban aparecer cerca sin exigir una frase literal.",
+  "- * solo puede ir al final de un término y requiere al menos cuatro caracteres antes; ? sustituye un carácter y no puede ir al inicio.",
+  "- No combines comillas de frase exacta con comodines: \"mascota*\" es inválido.",
+  "- PROHIBIDO usar operadores de campo o sintaxis propietaria: country:, lang:, platform:, site:, from:, date:, author:, url:, NEAR/n u operadores equivalentes.",
+  "- Toda exclusión debe escribirse como AND NOT (...).",
+  "- Geografía, idioma, fechas y plataformas se configuran como metadata al ejecutar la extracción, no dentro de la expresión.",
+  "- Incluye solo términos defendibles por Brand OS, brief, Knowledge Base o evidencia importada.",
+  "- La expresión es una hipótesis portable: su calidad se evalúa después de importar una extracción ligada al query pack."
 ].join("\n");
 
 export function buildFallbackQuery(input: QueryComposerInput): ComposedQuery {
   const components = buildQueryComponents(input);
-  const brandClause = quoteAny([...components.brand_seeds, input.subject.name]);
-  const competitorClause = quoteAny(components.competitor_seeds);
-  const categoryClause = quoteAny(components.category_seeds);
-  const triggerClause = quoteAny(components.trigger_phrases_tb);
-  const barrierClause = quoteAny([...components.barrier_phrases_tb, ...(components.knowledge_query_language ?? [])]);
-  const exclusions = quoteAny(components.global_exclusions);
-
-  const subjectClause = brandClause.length > 0 ? `((${brandClause}))` : `((${categoryClause}))`;
-  const signalClause = `((${triggerClause}) OR (${barrierClause}))`;
-  const exclusionClause = exclusions.length > 0 ? ` NOT (${exclusions})` : "";
+  const constructionPlan = buildQueryConstructionPlan(buildQueryConstructionInput(input));
+  const canonical = queriesFromConstructionPlan(constructionPlan);
+  const competitorQueryText = constructionPlan.permissive.competitors_legacy_union;
 
   return {
-    query_text: `${subjectClause} AND ${signalClause}${exclusionClause}`,
-    competitor_query_text:
-      competitorClause.length > 0
-        ? `((${competitorClause})) AND ${signalClause}${exclusionClause}`
-        : undefined,
-    industry_query_text:
-      categoryClause.length > 0
-        ? `((${categoryClause})) AND ${signalClause}${exclusionClause}`
-        : undefined,
+    query_text: canonical.brand ?? constructionPlan.permissive.brand,
+    competitor_queries: canonicalCompetitorQueries(canonical),
+    competitor_query_text: competitorQueryText,
+    industry_query_text: canonical.category,
     query_components: {
       ...components,
-      fallback_used: true
+      competitor_queries: canonicalCompetitorQueries(canonical),
+      fallback_used: true,
+      generation_contract: buildGenerationContract(input, canonical)
     }
   };
 }
@@ -724,37 +868,215 @@ export function parseComposedQueryJson(raw: string, input: QueryComposerInput, m
     .trim();
   const parsed = JSON.parse(cleaned) as Partial<ComposedQuery>;
   const fallback = buildFallbackQuery(input);
+  const constructionInput = buildQueryConstructionInput(input);
+  const constructionPlan = buildQueryConstructionPlan(constructionInput);
+  const fallbackCandidates = queriesFromComposedQuery(fallback);
+  const suppliedCandidates = suppliedQueriesFromParsed(parsed, constructionPlan);
+  const candidateKeys = Object.keys(fallbackCandidates);
+  const rejectedQueries: Record<string, PortableListenQueryValidation> = {};
+  const rejectedSemanticQueries: Record<string, QuerySemanticValidation> = {};
+  const fallbackScopes: string[] = [];
+  const chosen: Record<string, string> = {};
 
-  if (!parsed.query_text || typeof parsed.query_text !== "string") {
-    return fallback;
+  for (const key of candidateKeys) {
+    const supplied = suppliedCandidates[key] ?? "";
+    const fallbackQuery = fallbackCandidates[key] ?? "";
+    const identity = queryIdentityFromKey(key);
+    const structural = validatePortableListenQuery(supplied);
+    const semantic = validateConstructedQuery({
+      query: supplied,
+      scope: identity.scope,
+      input: constructionInput,
+      plan: constructionPlan,
+      ...(identity.competitorEntity ? { competitorEntity: identity.competitorEntity } : {})
+    });
+    if (structural.valid && semantic.valid) {
+      chosen[key] = structural.normalized_query;
+      continue;
+    }
+    rejectedQueries[key] = structural;
+    rejectedSemanticQueries[key] = semantic;
+    fallbackScopes.push(key);
+    chosen[key] = fallbackQuery;
+  }
+
+  const competitorQueries = canonicalCompetitorQueries(chosen);
+  const legacyCompetitorUnion = constructionPlan.permissive.competitors_legacy_union;
+
+  return {
+    query_text: chosen.brand ?? fallback.query_text,
+    competitor_queries: competitorQueries,
+    competitor_query_text: legacyCompetitorUnion,
+    industry_query_text: chosen.category,
+    query_components: {
+      ...fallback.query_components,
+      competitor_queries: competitorQueries,
+      model,
+      fallback_used: fallbackScopes.length > 0,
+      fallback_reason: fallbackScopes.length > 0 ? `invalid_or_missing_scopes:${fallbackScopes.join(",")}` : undefined,
+      generation_contract: {
+        ...buildGenerationContract(input, chosen),
+        ...(fallbackScopes.length > 0
+          ? {
+              rejected_queries: rejectedQueries,
+              rejected_semantic_queries: rejectedSemanticQueries,
+              fallback_scopes: fallbackScopes
+            }
+          : {})
+      }
+    }
+  };
+}
+
+export function buildGenerationContract(
+  input: QueryComposerInput,
+  queries: Record<string, string | PortableListenQueryValidation>,
+  options: {
+    validationMode?: NonNullable<ComposedQuery["query_components"]["generation_contract"]>["validation_mode"];
+    evidenceStatus?: NonNullable<ComposedQuery["query_components"]["generation_contract"]>["evidence_status"];
+  } = {}
+): NonNullable<ComposedQuery["query_components"]["generation_contract"]> {
+  const subjectOs = input.subject.type === "brand" ? "brand_os" : "theme_os";
+  const constructionInput = buildQueryConstructionInput(input);
+  const constructionPlan = buildQueryConstructionPlan(constructionInput);
+  const requiredScopes: Array<"brand" | "competitors" | "category"> = [
+    "brand",
+    ...(constructionPlan.anchors.competitor_entities.length > 0 ? (["competitors"] as const) : []),
+    ...(constructionPlan.anchors.category.length > 0 ? (["category"] as const) : [])
+  ];
+  const requiredQueryKeys = [
+    "brand",
+    ...constructionPlan.anchors.competitor_entities.map((entity) => competitorQueryKey(entity.entity)),
+    ...(constructionPlan.anchors.category.length > 0 ? ["category"] : [])
+  ];
+  const scopedQueries = Object.fromEntries(requiredQueryKeys.map((key) => {
+    const query = queries[key];
+    return [key, typeof query === "string" ? validatePortableListenQuery(query) : query ?? validatePortableListenQuery("")];
+  })) as Record<string, PortableListenQueryValidation>;
+  const semanticQueries = Object.fromEntries(requiredQueryKeys.map((key) => {
+    const identity = queryIdentityFromKey(key);
+    const report = scopedQueries[key];
+    return [key, validateConstructedQuery({
+      query: report?.normalized_query ?? "",
+      scope: identity.scope,
+      input: constructionInput,
+      plan: constructionPlan,
+      ...(identity.competitorEntity ? { competitorEntity: identity.competitorEntity } : {})
+    })];
+  })) as Record<string, QuerySemanticValidation>;
+  return {
+    dialect_version: PORTABLE_LISTEN_QUERY_DIALECT_VERSION,
+    validation_mode: options.validationMode ?? "structural_pre_import",
+    evidence_status: options.evidenceStatus ?? "awaiting_imported_mentions",
+    subject_os: subjectOs,
+    rag_scopes: [subjectOs, "study_os"],
+    knowledge_source_types: unique(input.knowledgeSources.map((source) => source.type)),
+    knowledge_source_count: input.knowledgeSources.length,
+    strategy_brief_used: Boolean(input.queryStrategyBrief),
+    required_scopes: requiredScopes,
+    required_query_keys: requiredQueryKeys,
+    queries: scopedQueries,
+    semantic_queries: semanticQueries,
+    construction_plan: constructionPlan
+  };
+}
+
+export function queryValidationReports(queries: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(queries).map(([scope, query]) => [scope, validatePortableListenQuery(query)])
+  ) as Record<string, PortableListenQueryValidation>;
+}
+
+function queriesFromConstructionPlan(plan: QueryConstructionPlan): Record<string, string> {
+  const variant = plan.recommended_variant === "themed" && plan.themed
+    ? plan.themed
+    : plan.permissive;
+  return {
+    brand: variant.brand,
+    ...Object.fromEntries(
+      variant.competitor_entities.map((item) => [competitorQueryKey(item.entity), item.query])
+    ),
+    ...(variant.category ? { category: variant.category } : {})
+  };
+}
+
+function queriesFromComposedQuery(composed: ComposedQuery): Record<string, string> {
+  return {
+    brand: composed.query_text,
+    ...Object.fromEntries(
+      (composed.competitor_queries ?? []).map((item) => [competitorQueryKey(item.entity), item.query_text])
+    ),
+    ...(composed.industry_query_text ? { category: composed.industry_query_text } : {})
+  };
+}
+
+function suppliedQueriesFromParsed(
+  parsed: Partial<ComposedQuery>,
+  plan: QueryConstructionPlan
+): Record<string, string> {
+  const governedEntities = new Map(
+    plan.anchors.competitor_entities.map((item) => [normalizeQueryEntityName(item.entity), item.entity])
+  );
+  const competitors = Object.fromEntries(
+    (parsed.competitor_queries ?? []).flatMap((item) => {
+      if (!item || typeof item.entity !== "string" || typeof item.query_text !== "string") return [];
+      const governedEntity = governedEntities.get(normalizeQueryEntityName(item.entity));
+      return governedEntity ? [[competitorQueryKey(governedEntity), item.query_text] as const] : [];
+    })
+  );
+
+  if (
+    Object.keys(competitors).length === 0
+    && plan.anchors.competitor_entities.length === 1
+    && typeof parsed.competitor_query_text === "string"
+  ) {
+    const entity = plan.anchors.competitor_entities[0]?.entity;
+    if (entity) competitors[competitorQueryKey(entity)] = parsed.competitor_query_text;
   }
 
   return {
-    query_text: parsed.query_text,
-    competitor_query_text:
-      typeof parsed.competitor_query_text === "string" && parsed.competitor_query_text.length > 0
-        ? parsed.competitor_query_text
-        : fallback.competitor_query_text,
-    industry_query_text:
-      typeof parsed.industry_query_text === "string" && parsed.industry_query_text.length > 0
-        ? parsed.industry_query_text
-        : fallback.industry_query_text,
-    query_components: {
-      ...fallback.query_components,
-      ...(parsed.query_components ?? {}),
-      model,
-      fallback_used: false
-    }
+    ...(typeof parsed.query_text === "string" ? { brand: parsed.query_text } : {}),
+    ...competitors,
+    ...(typeof parsed.industry_query_text === "string" ? { category: parsed.industry_query_text } : {})
   };
+}
+
+function canonicalCompetitorQueries(queries: Record<string, string>) {
+  return Object.entries(queries).flatMap(([key, query]) => {
+    if (!key.startsWith("competitor:") || !query) return [];
+    return [{ entity: key.slice("competitor:".length), query_text: query }];
+  });
+}
+
+function competitorQueryKey(entity: string) {
+  return `competitor:${entity}`;
+}
+
+function queryIdentityFromKey(key: string): {
+  scope: QueryConstructionScope;
+  competitorEntity?: string;
+} {
+  if (key === "category") return { scope: "category" };
+  if (key.startsWith("competitor:")) {
+    return { scope: "competitors", competitorEntity: key.slice("competitor:".length) };
+  }
+  return { scope: "brand" };
+}
+
+function normalizeQueryEntityName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es-MX")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function buildQueryComponents(input: QueryComposerInput) {
   const signalPhrases = input.methodology.manifest.signal_phrases ?? {};
   const categorySeeds = compact([
     input.subject.industry,
-    input.subject.industrySub,
-    input.subject.industry ? `${input.subject.industry} mexico` : null,
-    input.subject.industry ? `${input.subject.industry} opiniones` : null
+    input.subject.industrySub
   ]);
   const memoryExclusions = extractMemoryStrings(input.memoryIndustry, "exclusion");
   const memoryBrandSeeds = extractMemoryStrings(input.memoryIndustry, "brand_seed");
@@ -779,6 +1101,39 @@ function buildQueryComponents(input: QueryComposerInput) {
     memory_industry: input.memoryIndustry,
     memory_brand: input.memoryBrand,
     query_strategy_brief: input.queryStrategyBrief ?? null
+  };
+}
+
+export function buildQueryConstructionInput(input: QueryComposerInput): QueryConstructionInput {
+  const components = buildQueryComponents(input);
+  return {
+    methodologySlug: input.methodology.slug,
+    ...(input.methodology.manifest.query_mode
+      ? { queryModeOverride: input.methodology.manifest.query_mode }
+      : {}),
+    subject: {
+      type: input.subject.type,
+      name: input.subject.name,
+      industry: input.subject.industry,
+      industrySub: input.subject.industrySub,
+      countries: input.subject.countries,
+      handles: input.subject.brandSeedHandles
+    },
+    brandSeeds: components.brand_seeds,
+    categorySeeds: components.category_seeds,
+    competitorEntities: input.competitorEntities,
+    competitorSeeds: components.competitor_seeds,
+    triggerTerms: unique([
+      ...components.trigger_phrases_tb,
+      ...(components.knowledge_potential_triggers ?? [])
+    ]),
+    barrierTerms: unique([
+      ...components.barrier_phrases_tb,
+      ...(components.knowledge_potential_barriers ?? [])
+    ]),
+    queryLanguage: components.knowledge_query_language,
+    exclusions: components.global_exclusions,
+    targetWindowMonths: input.corpus.targetWindowMonths
   };
 }
 
@@ -807,13 +1162,6 @@ function extractMemoryStrings(records: MemoryRecord[], key: string) {
 
     return [];
   });
-}
-
-function quoteAny(values: string[]) {
-  return unique(values)
-    .filter((value) => value.length > 0)
-    .map((value) => `"${value.replace(/"/g, '\\"')}"`)
-    .join(" OR ");
 }
 
 function unique(values: string[]) {

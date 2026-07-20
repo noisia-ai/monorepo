@@ -53,9 +53,9 @@ export const STUDY_LENS_OPTIONS: StudyLensOption[] = [
     label: "Narrative Ownership",
     shortLabel: "Narrative",
     description: "Mide que marcas o entidades poseen la narrativa de confianza, valor o categoria.",
-    status: "recommended",
+    status: "beta",
     category: "narrative",
-    defaultSelected: true,
+    defaultSelected: false,
     composerModules: ["live_composer", "narrative_ownership", "competitive_intelligence"]
   },
   {

@@ -132,7 +132,7 @@ sequenceDiagram
   participant Queue as BullMQ
   participant Worker as Engine Worker
   participant LLM as Claude (via Vercel AI SDK)
-  participant SentiOne as SentiOne API
+  participant Provider as Proveedor de listening
   participant DB as Supabase Postgres
 
   IM->>UI: Crear corpus (brand + methodology + business_question)
@@ -151,32 +151,48 @@ sequenceDiagram
   API->>Queue: enqueue("engine_validation", {corpus_id})
   API-->>UI: job_id (polling)
 
-  loop hasta corpus aprobado (max 5 iteraciones)
+  loop hasta queries listas para extracción completa
     Queue->>Worker: pick job
     Worker->>DB: SELECT context_form, methodology manifest
     Worker->>DB: SELECT memory_industry, memory_brand
     Worker->>LLM: prompt: "compose initial query"
     LLM-->>Worker: query_text + query_components
-    Worker->>SentiOne: search(query_text, sample=50)
-    SentiOne-->>Worker: 50 mentions sample
-    Worker->>LLM: prompt: "evaluate sample quality"
-    LLM-->>Worker: {density, balance, noise, score}
     Worker->>DB: INSERT query_iteration
+    Worker->>UI: notify "queries ready for extraction"
+    IM->>Provider: ejecutar query por pack
+    Provider-->>IM: export CSV por pack
+    IM->>UI: importar extracciones etiquetadas
+    UI->>API: POST /mentions/csv-upload con query_pack_id
+    API->>DB: INSERT mentions + import lineage
+    UI->>API: POST /query-iterations/:id/evaluate
+    API->>Queue: enqueue("evaluate_sample")
+    Queue->>Worker: pick evaluation job
+    Worker->>DB: SELECT imported mentions por query_pack_id
+    Worker->>LLM: clasificar evidencia importada
+    LLM-->>Worker: clasificación por mención
+    Worker->>DB: INSERT query_pack_validation_attempts
+    Worker->>DB: UPDATE query_pack metrics
+    Worker->>UI: notify "query evidence evaluated"
+    UI->>IM: mostrar densidad, cobertura, ruido y ajustes
 
-    alt score >= 85
-      Worker->>SentiOne: search(query_text, full)
-      SentiOne-->>Worker: full mentions corpus
-      Worker->>DB: bulk INSERT mentions (status=pending)
-      Worker->>UI: notify "corpus ready for review"
-    else score < 85
-      Worker->>LLM: prompt: "propose query adjustments"
-      LLM-->>Worker: ajustes
-      Worker->>UI: notify "needs analyst input on adjustments"
-      UI->>IM: muestra ajustes propuestos
-      IM->>UI: confirma/edita ajustes
-      UI->>API: PATCH iteration with analyst input
+    alt todos los packs cumplen gate
+      IM->>Provider: ejecutar extracción completa
+      Provider-->>IM: export corpus completo
+      IM->>UI: importar corpus completo
+    else requiere ajustes
+      IM->>UI: confirmar o editar ajustes
+      UI->>API: POST apply-adjustments
+      API->>DB: INSERT nueva iteración y nuevos pack IDs
+      Note over IM,DB: La nueva iteración no hereda evidencia anterior
     end
   end
+
+  IM->>UI: diagnosticar corpus completo
+  UI->>API: POST /api/corpora/:id/assess
+  API->>Queue: enqueue("assess_corpus")
+  Queue->>Worker: evaluar muestra amplia y estratificada del corpus
+  Worker->>DB: INSERT corpus assessment
+  Worker->>UI: notify "corpus diagnosis ready"
 
   IM->>UI: revisa corpus (browser de mentions)
   UI->>API: GET /api/corpora/:id/mentions?inclusion_status=pending
@@ -436,7 +452,7 @@ flowchart LR
     Kinde[(Kinde)]
     Anthropic[(Claude API)]
     Redis[(Upstash Redis)]
-    SentiOne[(SentiOne API)]
+    ListeningProvider[(Proveedor de listening)]
   end
 
   Website --> UI
@@ -455,8 +471,9 @@ flowchart LR
   Workers --> Methodologies
   Workers --> Humanizer
   Workers --> Anthropic
-  Workers --> SentiOne
   Workers --> Redis
+
+  Studio -. exportación e importación operada por usuario .-> ListeningProvider
 
   Blocks --> UI
   QueryEngine --> Types

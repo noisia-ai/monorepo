@@ -76,6 +76,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         file_understanding: stringValue(payload.file_understanding),
         dataset_inventory: stringArray(payload.dataset_inventory),
         query_language: stringArray(payload.query_language).slice(0, 8),
+        data_os_materialization: objectValue(payload.data_os_materialization),
+        source_profile: objectValue(payload.source_profile),
         created_at: row.createdAt
       };
     })
@@ -248,4 +250,8 @@ function stringValue(value: unknown) {
 
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }

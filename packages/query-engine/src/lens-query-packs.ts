@@ -1,4 +1,8 @@
 import type { ComposedQuery, QueryComposerInput } from "./index";
+import {
+  summarizePortableListenQueryErrors,
+  validatePortableListenQuery
+} from "./listen-query-language";
 
 export type QueryPackScope = "brand" | "competitors" | "category" | "baseline";
 
@@ -20,6 +24,9 @@ export type MaterializedLensQueryPack = {
   signalIntent: string;
   signalLabel: string;
   scope: QueryPackScope;
+  /** Stable identity within a scope. Competitors always materialize one pack per entity. */
+  entityKey: string | null;
+  entityLabel: string | null;
   objective: string;
   queryText: string;
   queryComponents: Record<string, unknown>;
@@ -56,7 +63,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "vale la pena",
       "no vale la pena"
     ],
-    sourceHints: ["SentiOne brand export", "reviews", "Zendesk", "social comments"],
+    sourceHints: ["brand listening export", "reviews", "Zendesk", "social comments"],
     required: true
   },
   {
@@ -74,7 +81,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "es peor que",
       "me quedo con"
     ],
-    sourceHints: ["SentiOne competitor export", "reviews comparativas", "social comments"],
+    sourceHints: ["competitor listening export", "reviews comparativas", "social comments"],
     required: true
   },
   {
@@ -92,7 +99,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "recomiendan",
       "qué conviene"
     ],
-    sourceHints: ["SentiOne category export", "forums", "search/social questions"],
+    sourceHints: ["category listening export", "forums", "search/social questions"],
     required: true
   },
   ...templatesForThreeScopes({
@@ -119,7 +126,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "promocion",
       "lo recomiendo"
     ],
-    sourceHints: ["SentiOne", "TikTok comments", "Apify social export", "reviews", "creator/community posts"]
+    sourceHints: ["social listening export", "TikTok comments", "Apify social export", "reviews", "creator/community posts"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "narrative-ownership",
@@ -137,7 +144,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "me da confianza",
       "me decepcionó"
     ],
-    sourceHints: ["SentiOne", "reviews", "community posts", "customer voice CSV"]
+    sourceHints: ["social listening export", "reviews", "community posts", "customer voice CSV"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "value-perception-matrix",
@@ -155,7 +162,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "me complica",
       "me conviene"
     ],
-    sourceHints: ["SentiOne", "reviews", "pricing feedback", "commerce/review CSV"]
+    sourceHints: ["social listening export", "reviews", "pricing feedback", "commerce/review CSV"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "brand-positioning-map",
@@ -173,7 +180,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "más barato",
       "más moderno"
     ],
-    sourceHints: ["SentiOne", "reviews", "brand perception CSV", "social comments"]
+    sourceHints: ["social listening export", "reviews", "brand perception CSV", "social comments"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "category-opportunity-map",
@@ -191,7 +198,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "sería bueno",
       "deberían"
     ],
-    sourceHints: ["SentiOne category export", "forums", "reviews", "search/social questions"]
+    sourceHints: ["category listening export", "forums", "reviews", "search/social questions"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "white-space-analysis",
@@ -209,7 +216,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "si existiera",
       "me encantaría"
     ],
-    sourceHints: ["SentiOne", "reviews", "category CSV", "community posts"]
+    sourceHints: ["social listening export", "reviews", "category CSV", "community posts"]
   }),
   {
     lensSlug: "journey-friction-mapping",
@@ -228,7 +235,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "me tardaron",
       "me cobraron"
     ],
-    sourceHints: ["SentiOne brand export", "Zendesk", "reviews", "app store"],
+    sourceHints: ["brand listening export", "Zendesk", "reviews", "app store"],
     required: true
   },
   {
@@ -248,7 +255,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "cobro",
       "garantía"
     ],
-    sourceHints: ["SentiOne category export", "Zendesk", "reviews", "app store"],
+    sourceHints: ["category listening export", "Zendesk", "reviews", "app store"],
     required: true
   },
   ...templatesForScopes({
@@ -268,7 +275,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "me resolvió",
       "me bloqueó"
     ],
-    sourceHints: ["SentiOne", "Zendesk", "reviews", "journey/support CSV"]
+    sourceHints: ["social listening export", "Zendesk", "reviews", "journey/support CSV"]
   }),
   ...templatesForScopes({
     lensSlug: "cultural-codes-decoding",
@@ -306,7 +313,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "me quedo con",
       "cámbiate a"
     ],
-    sourceHints: ["SentiOne", "reviews", "NPS/comments CSV", "social comments"]
+    sourceHints: ["social listening export", "reviews", "NPS/comments CSV", "social comments"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "trust-risk-benchmark",
@@ -324,7 +331,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "no cumplen",
       "riesgo"
     ],
-    sourceHints: ["SentiOne", "reviews", "complaints CSV", "support tickets"]
+    sourceHints: ["social listening export", "reviews", "complaints CSV", "support tickets"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "competitive-wave",
@@ -342,7 +349,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "más fuerte",
       "más débil"
     ],
-    sourceHints: ["SentiOne competitor export", "reviews comparativas", "benchmark CSV", "social comments"]
+    sourceHints: ["competitor listening export", "reviews comparativas", "benchmark CSV", "social comments"]
   }),
   ...templatesForScopes({
     lensSlug: "audience-segment-lens",
@@ -361,7 +368,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "para trabajar",
       "para viajar"
     ],
-    sourceHints: ["CRM/Zendesk CSV", "survey open ends", "reviews with metadata", "SentiOne"]
+    sourceHints: ["CRM/Zendesk CSV", "survey open ends", "reviews with metadata", "social listening export"]
   }),
   ...templatesForThreeScopes({
     lensSlug: "influence-architecture",
@@ -379,7 +386,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "trend",
       "viral"
     ],
-    sourceHints: ["social export with handles", "creator CSV", "community posts", "SentiOne author metadata"]
+    sourceHints: ["social export with handles", "creator CSV", "community posts", "listening author metadata"]
   }),
   ...templatesForScopes({
     lensSlug: "evidence-confidence-layer",
@@ -398,7 +405,7 @@ export const LENS_QUERY_PACK_TEMPLATES: LensQueryPackTemplate[] = [
       "comprobante",
       "caso real"
     ],
-    sourceHints: ["SentiOne", "Zendesk", "reviews", "evidence/support CSV"]
+    sourceHints: ["social listening export", "Zendesk", "reviews", "evidence/support CSV"]
   })
 ];
 
@@ -422,67 +429,86 @@ export function buildLensQueryPacks(params: {
   const selected = new Set(selectedLenses);
   const templates = LENS_QUERY_PACK_TEMPLATES.filter((template) => selected.has(template.lensSlug));
   const components = normalizeComponents(params.composed.query_components);
-  const knowledgeLanguage = arrayOfStrings(components.knowledge_query_language);
 
-  return templates.map((template) => {
-    const baseQuery = baseQueryForScope(params.composed, template.scope);
-    const queryText = template.lensSlug === PRIMARY_LENS
-      ? baseQuery
-      : buildLensQuery({
-          template,
-          baseQuery,
-          components,
-          knowledgeLanguage,
-          subjectName: params.input.subject.name
-        });
-    const scopeSeeds = seedsForScope(template.scope, components, params.input.subject.name);
-    return {
-      lensSlug: template.lensSlug,
-      lensLabel: template.lensLabel,
-      signalIntent: template.signalIntent,
-      signalLabel: template.signalLabel,
+  return templates.flatMap((template) =>
+    queryIdentitiesForScope({
       scope: template.scope,
-      objective: template.objective,
-      queryText,
-      queryComponents: {
-        source: "lens_query_pack_registry",
-        lens_slug: template.lensSlug,
-        signal_intent: template.signalIntent,
-        scope: template.scope,
-        base_query_text: baseQuery,
-        phrase_hints: template.phraseHints,
-        source_hints: template.sourceHints,
-        selected_lenses: selectedLenses,
-        shared_components: {
-          brand_seeds: arrayOfStrings(components.brand_seeds),
-          competitor_seeds: arrayOfStrings(components.competitor_seeds),
-          category_seeds: arrayOfStrings(components.category_seeds),
-          global_exclusions: arrayOfStrings(components.global_exclusions)
-        }
-      },
-      seeds: {
-        lens_slug: template.lensSlug,
-        lens_label: template.lensLabel,
-        signal_intent: template.signalIntent,
-        signal_label: template.signalLabel,
-        scope: template.scope,
-        scope_seeds: scopeSeeds,
-        phrase_hints: template.phraseHints,
-        source_hints: template.sourceHints,
-        required: template.required
-      },
-      evaluation: {
-        source: "planned_from_query_iteration",
-        status: "awaiting_csv",
-        coverage: "pending_upload"
-      },
-      status: "planned",
-      costBudget: {
-        source: "study_size_policy",
-        note: "Resolved by corpus package and worker runtime, not by hardcoded per-lens caps."
+      input: params.input,
+      composed: params.composed,
+      components
+    }).map((identity) => {
+      const structuralValidation = validatePortableListenQuery(identity.queryText);
+      if (!structuralValidation.valid) {
+        throw new Error(
+          `Query pack ${template.lensSlug}/${template.scope}/${identity.entityKey ?? "scope"} ` +
+          `violates the portable dialect: ${summarizePortableListenQueryErrors(structuralValidation)}`
+        );
       }
-    };
-  });
+      const queryText = structuralValidation.normalized_query;
+
+      return {
+        lensSlug: template.lensSlug,
+        lensLabel: template.lensLabel,
+        signalIntent: template.signalIntent,
+        signalLabel: identity.entityLabel
+          ? `${template.signalLabel}: ${identity.entityLabel}`
+          : template.signalLabel,
+        scope: template.scope,
+        entityKey: identity.entityKey,
+        entityLabel: identity.entityLabel,
+        objective: template.objective,
+        queryText,
+        queryComponents: {
+          source: "lens_query_pack_registry",
+          retrieval_policy: "canonical_entity_query",
+          classification_policy: "post_ingest",
+          lens_slug: template.lensSlug,
+          signal_intent: template.signalIntent,
+          scope: template.scope,
+          entity_key: identity.entityKey,
+          entity_label: identity.entityLabel,
+          query_identity: identity.queryIdentity,
+          base_query_text: queryText,
+          post_ingest_phrase_hints: template.phraseHints,
+          source_hints: template.sourceHints,
+          selected_lenses: selectedLenses,
+          generation_contract: components.generation_contract ?? null,
+          structural_validation: structuralValidation,
+          shared_components: {
+            brand_seeds: arrayOfStrings(components.brand_seeds),
+            competitor_seeds: arrayOfStrings(components.competitor_seeds),
+            category_seeds: arrayOfStrings(components.category_seeds),
+            global_exclusions: arrayOfStrings(components.global_exclusions)
+          }
+        },
+        seeds: {
+          lens_slug: template.lensSlug,
+          lens_label: template.lensLabel,
+          signal_intent: template.signalIntent,
+          signal_label: template.signalLabel,
+          scope: template.scope,
+          entity_key: identity.entityKey,
+          entity_label: identity.entityLabel,
+          scope_seeds: identity.scopeSeeds,
+          post_ingest_phrase_hints: template.phraseHints,
+          source_hints: template.sourceHints,
+          required: template.required
+        },
+        evaluation: {
+          source: "planned_from_query_iteration",
+          status: "awaiting_imported_evidence",
+          coverage: "pending_import",
+          structural_status: "valid",
+          evidence_status: "awaiting_imported_mentions"
+        },
+        status: "planned" as const,
+        costBudget: {
+          source: "study_size_policy",
+          note: "Resolved by corpus package and worker runtime, not by hardcoded per-lens caps."
+        }
+      };
+    })
+  );
 }
 
 function normalizeAnalysisPlan(analysisPlan: unknown, primarySlug: string): { selected_lenses: string[] } {
@@ -532,44 +558,75 @@ function templatesForScopes(params: {
   }));
 }
 
-function baseQueryForScope(composed: ComposedQuery, scope: QueryPackScope) {
-  if (scope === "competitors") return composed.competitor_query_text || composed.query_text;
-  if (scope === "category" || scope === "baseline") return composed.industry_query_text || composed.query_text;
-  return composed.query_text;
-}
+type QueryPackIdentity = {
+  queryIdentity: string;
+  entityKey: string | null;
+  entityLabel: string | null;
+  queryText: string;
+  scopeSeeds: string[];
+};
 
-function buildLensQuery(params: {
-  template: LensQueryPackTemplate;
-  baseQuery: string;
+function queryIdentitiesForScope(params: {
+  scope: QueryPackScope;
+  input: QueryComposerInput;
+  composed: ComposedQuery;
   components: Record<string, unknown>;
-  knowledgeLanguage: string[];
-  subjectName: string;
-}) {
-  const scopeSeeds = seedsForScope(params.template.scope, params.components, params.subjectName);
-  const signalSeeds = unique([
-    ...params.template.phraseHints,
-    ...params.knowledgeLanguage,
-    ...arrayOfStrings(params.components.knowledge_potential_triggers),
-    ...arrayOfStrings(params.components.knowledge_potential_barriers)
-  ]).slice(0, 28);
-  const exclusions = arrayOfStrings(params.components.global_exclusions).slice(0, 18);
-  const scopeClause = quoteAny(scopeSeeds);
-  const signalClause = quoteAny(signalSeeds);
-  const exclusionClause = quoteAny(exclusions);
+}): QueryPackIdentity[] {
+  if (params.scope === "competitors") {
+    const firstClass = params.composed.competitor_queries ?? [];
+    if (firstClass.length > 0) {
+      return firstClass.map((competitor) => {
+        const governed = params.input.competitorEntities?.find(
+          (entity) => normalizeEntityName(entity.name) === normalizeEntityName(competitor.entity)
+        );
+        return {
+          queryIdentity: `competitor:${entitySlug(competitor.entity)}`,
+          entityKey: `competitor:${entitySlug(competitor.entity)}`,
+          entityLabel: competitor.entity,
+          queryText: competitor.query_text,
+          scopeSeeds: unique([
+            competitor.entity,
+            ...(governed?.aliases ?? []),
+            ...(governed?.handles ?? [])
+          ]).slice(0, 80)
+        };
+      });
+    }
 
-  if (!scopeClause || !signalClause) {
-    return params.baseQuery;
+    if (params.composed.competitor_query_text) {
+      return [{
+        queryIdentity: "competitors:legacy-peer-set",
+        entityKey: null,
+        entityLabel: null,
+        queryText: params.composed.competitor_query_text,
+        scopeSeeds: arrayOfStrings(params.components.competitor_seeds).slice(0, 80)
+      }];
+    }
+    return [];
   }
 
-  return `((${
-    scopeClause
-  })) AND ((${signalClause}))${exclusionClause ? ` NOT (${exclusionClause})` : ""}`;
-}
+  if (params.scope === "category" || params.scope === "baseline") {
+    const queryText = params.composed.industry_query_text;
+    if (!queryText) return [];
+    return [{
+      queryIdentity: params.scope,
+      entityKey: params.scope,
+      entityLabel: null,
+      queryText,
+      scopeSeeds: arrayOfStrings(params.components.category_seeds).slice(0, 40)
+    }];
+  }
 
-function seedsForScope(scope: QueryPackScope, components: Record<string, unknown>, subjectName: string) {
-  if (scope === "competitors") return arrayOfStrings(components.competitor_seeds).slice(0, 80);
-  if (scope === "category" || scope === "baseline") return arrayOfStrings(components.category_seeds).slice(0, 40);
-  return unique([subjectName, ...arrayOfStrings(components.brand_seeds)]).slice(0, 60);
+  return [{
+    queryIdentity: "brand",
+    entityKey: "brand",
+    entityLabel: params.input.subject.name,
+    queryText: params.composed.query_text,
+    scopeSeeds: unique([
+      params.input.subject.name,
+      ...arrayOfStrings(params.components.brand_seeds)
+    ]).slice(0, 60)
+  }];
 }
 
 function normalizeComponents(value: unknown): Record<string, unknown> {
@@ -582,11 +639,14 @@ function arrayOfStrings(value: unknown) {
     : [];
 }
 
-function quoteAny(values: string[]) {
-  return unique(values)
-    .filter((value) => value.length > 0)
-    .map((value) => `"${value.replace(/"/g, '\\"')}"`)
-    .join(" OR ");
+function normalizeEntityName(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("es-MX");
+}
+
+function entitySlug(value: string) {
+  return normalizeEntityName(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "unknown";
 }
 
 function unique(values: string[]) {

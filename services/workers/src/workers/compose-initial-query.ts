@@ -4,11 +4,13 @@ import type { Job } from "bullmq";
 
 import {
   buildFallbackQuery,
+  buildGenerationContract,
   buildQueryComposerPrompt,
   parseComposedQueryJson,
+  queryValidationReports,
   QUERY_ENGINE_PIPELINE_VERSION,
-  SENTIONE_LQL_RULES,
   type ComposedQuery,
+  type QueryCompetitorEntity,
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
@@ -142,30 +144,33 @@ async function composeWithClaude(input: QueryComposerInput, model: string): Prom
       temperature: 0.2
     });
 
-    const composed = parseComposedQueryJson(result.text, input, model);
-
-    // Hard requirement: secondary queries should exist when possible. Retry focused
-    // derivations if Claude omitted either one.
-    if (!composed.competitor_query_text || composed.competitor_query_text.length === 0) {
-      console.warn(`[compose-initial] missing competitor_query — retrying`);
-      const competitor = await generateCompetitorQueryRetry({
-        brandQueryText: composed.query_text,
-        input,
-        model
+    let composed = parseComposedQueryJson(result.text, input, model);
+    const rejectedScopes = composed.query_components.generation_contract?.fallback_scopes ?? [];
+    if (rejectedScopes.length > 0) {
+      const repairResult = await generateText({
+        model: anthropic(model),
+        prompt: [
+          prompt,
+          "",
+          "REPARACION OBLIGATORIA DEL COMPILADOR:",
+          `Los scopes ${rejectedScopes.join(", ")} fueron rechazados por el compilador estructural y/o semantico.`,
+          "Corrige SOLO los errores reportados y conserva la intencion, la evidencia RAG y el modo de construccion.",
+          "En modo exploratory no agregues un AND tematico. En modo detection conserva THEME balanceado. No mezcles competidores.",
+          "Respuesta rechazada:",
+          result.text,
+          "Errores estructurales:",
+          JSON.stringify(composed.query_components.generation_contract?.rejected_queries ?? {}, null, 2),
+          "Errores semanticos:",
+          JSON.stringify(composed.query_components.generation_contract?.rejected_semantic_queries ?? {}, null, 2)
+        ].join("\n"),
+        temperature: 0
       });
-      if (competitor) composed.competitor_query_text = competitor;
-    }
-    if (!composed.industry_query_text || composed.industry_query_text.length === 0) {
-      console.warn(`[compose-initial] missing industry_query — retrying`);
-      const industry = await generateIndustryQueryRetry({
-        brandQueryText: composed.query_text,
-        input,
-        model
-      });
-      if (industry) return { ...composed, industry_query_text: industry };
+      const repaired = parseComposedQueryJson(repairResult.text, input, model);
+      const repairedFallbackScopes = repaired.query_components.generation_contract?.fallback_scopes ?? [];
+      if (repairedFallbackScopes.length < rejectedScopes.length) composed = repaired;
     }
 
-    return composed;
+    return refreshGenerationContract(composed, input);
   } catch (error) {
     // TODO mejora-futura: registrar errores LLM en tabla pipeline_logs y
     // alertar cuando fallback se use mas de N veces por dia.
@@ -179,66 +184,6 @@ async function composeWithClaude(input: QueryComposerInput, model: string): Prom
         fallback_reason: error instanceof Error ? error.message : "unknown_llm_error"
       }
     };
-  }
-}
-
-async function generateCompetitorQueryRetry(params: {
-  brandQueryText: string;
-  input: QueryComposerInput;
-  model: string;
-}): Promise<string | null> {
-  const { brandQueryText, input, model } = params;
-  const competitors = input.competitors.slice(0, 20);
-  if (competitors.length === 0) return null;
-  const prompt = [
-    "Tarea unica: derivar la version COMPETENCIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios.",
-    "La query de competencia debe contener SOLO competidores nombrados + las mismas frases de senal. NO incluyas la marca principal.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Competidores disponibles: ${competitors.join(", ")}`,
-    "",
-    `Query de marca:\n${brandQueryText}`,
-    "",
-    `Contexto: ${input.subject.type}/${input.subject.name}, industria=${input.subject.industry ?? "n/a"}.`,
-    "Devuelve la query de competencia ahora (una linea):"
-  ].join("\n");
-  try {
-    const r = await generateText({ model: anthropic(model), prompt, temperature: 0.2 });
-    const cleaned = r.text.trim().replace(/^```[a-z]*\s*/i, "").replace(/```$/i, "").replace(/^["']|["']$/g, "").trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    return cleaned;
-  } catch {
-    return null;
-  }
-}
-
-async function generateIndustryQueryRetry(params: {
-  brandQueryText: string;
-  input: QueryComposerInput;
-  model: string;
-}): Promise<string | null> {
-  const { brandQueryText, input, model } = params;
-  const prompt = [
-    "Tarea unica: derivar la version INDUSTRIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios.",
-    "La query de industria NO debe contener nombres de marca, handles ni competidores. Solo categoria + frases de señal.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Query de marca:\n${brandQueryText}`,
-    "",
-    `Contexto: ${input.subject.type}/${input.subject.name}, industria=${input.subject.industry ?? "n/a"}.`,
-    "Devuelve la query de industria ahora (una linea):"
-  ].join("\n");
-  try {
-    const r = await generateText({ model: anthropic(model), prompt, temperature: 0.2 });
-    const cleaned = r.text.trim().replace(/^```[a-z]*\s*/i, "").replace(/```$/i, "").replace(/^["']|["']$/g, "").trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    return cleaned;
-  } catch {
-    return null;
   }
 }
 
@@ -304,6 +249,13 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
     [row.brand_id]
   );
   const corpusEntitySeeds = await loadCorpusEntitySeeds([row.corpus_id, row.base_corpus_id]);
+  const competitorEntities = mergeCompetitorEntities(
+    competitors.rows.map((competitor) => ({
+      name: competitor.canonical_name,
+      aliases: competitor.aliases ?? []
+    })),
+    corpusEntitySeeds.competitorEntities
+  );
   const industryMemory = row.brand_industry
     ? await pool.query<MemoryRow>(
         `
@@ -357,10 +309,8 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
       version: row.methodology_version,
       manifest: row.manifest
     },
-    competitors: competitors.rows.flatMap((competitor) => [
-      competitor.canonical_name,
-      ...(competitor.aliases ?? [])
-    ]).concat(corpusEntitySeeds.competitors),
+    competitors: flattenCompetitorEntities(competitorEntities),
+    competitorEntities,
     brandSeeds: [
       row.brand_name ?? "",
       row.brand_display_name ?? "",
@@ -376,6 +326,8 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
 
 async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInput> {
   const corpusEntitySeeds = await loadCorpusEntitySeeds([row.corpus_id, row.base_corpus_id]);
+  const competitorEntities = mergeCompetitorEntities(corpusEntitySeeds.competitorEntities);
+  const ragContext = await loadAnalysisRagContext(row.corpus_id, null);
   return {
     corpus: {
       id: row.corpus_id,
@@ -403,19 +355,48 @@ async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInpu
       version: row.methodology_version,
       manifest: row.manifest
     },
-    competitors: corpusEntitySeeds.competitors,
+    competitors: flattenCompetitorEntities(competitorEntities),
+    competitorEntities,
     brandSeeds: [row.theme_name ?? "", ...corpusEntitySeeds.primaryBrand].filter(Boolean),
-    knowledgeSources: [],
-    queryStrategyBrief: undefined,
+    knowledgeSources: ragContext.knowledgeSources,
+    queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
     memoryIndustry: [],
     memoryBrand: []
+  };
+}
+
+function refreshGenerationContract(composed: ComposedQuery, input: QueryComposerInput): ComposedQuery {
+  const queries = queryValidationReports({
+    brand: composed.query_text,
+    ...Object.fromEntries(
+      (composed.competitor_queries ?? []).map((item) => [
+        `competitor:${item.entity}`,
+        item.query_text
+      ])
+    ),
+    ...(composed.industry_query_text ? { category: composed.industry_query_text } : {})
+  });
+  const previous = composed.query_components.generation_contract;
+  return {
+    ...composed,
+    query_components: {
+      ...composed.query_components,
+      generation_contract: {
+        ...buildGenerationContract(input, queries),
+        ...(previous?.rejected_queries ? { rejected_queries: previous.rejected_queries } : {}),
+        ...(previous?.rejected_semantic_queries
+          ? { rejected_semantic_queries: previous.rejected_semantic_queries }
+          : {}),
+        ...(previous?.fallback_scopes ? { fallback_scopes: previous.fallback_scopes } : {})
+      }
+    }
   };
 }
 
 async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
   const ids = Array.from(new Set(corpusIds.filter((id): id is string => Boolean(id))));
   if (ids.length === 0) {
-    return { competitors: [], primaryBrand: [] };
+    return { competitorEntities: [], primaryBrand: [] };
   }
   const result = await pool.query<{
     entity_kind: string;
@@ -434,7 +415,7 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
     [ids]
   );
 
-  const competitors: string[] = [];
+  const competitorEntities: QueryCompetitorEntity[] = [];
   const primaryBrand: string[] = [];
   for (const row of result.rows) {
     const seeds = [
@@ -443,14 +424,57 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
       ...(row.handles ?? []),
       ...(row.query_seeds ?? [])
     ].filter(Boolean);
-    if (row.entity_kind === "competitor") competitors.push(...seeds);
+    if (row.entity_kind === "competitor") {
+      competitorEntities.push({
+        name: row.name,
+        aliases: uniqueStrings([...(row.aliases ?? []), ...(row.query_seeds ?? [])]),
+        handles: uniqueStrings(row.handles ?? [])
+      });
+    }
     if (row.entity_kind === "primary_brand") primaryBrand.push(...seeds);
   }
 
   return {
-    competitors: Array.from(new Set(competitors)).slice(0, 80),
+    competitorEntities: mergeCompetitorEntities(competitorEntities),
     primaryBrand: Array.from(new Set(primaryBrand)).slice(0, 40)
   };
+}
+
+function mergeCompetitorEntities(...groups: QueryCompetitorEntity[][]): QueryCompetitorEntity[] {
+  const merged = new Map<string, QueryCompetitorEntity>();
+  for (const entity of groups.flat()) {
+    const name = entity.name.trim();
+    if (!name) continue;
+    const key = normalizeEntityName(name);
+    const current = merged.get(key);
+    merged.set(key, {
+      name: current?.name ?? name,
+      aliases: uniqueStrings([...(current?.aliases ?? []), ...(entity.aliases ?? [])])
+        .filter((value) => normalizeEntityName(value) !== key),
+      handles: uniqueStrings([...(current?.handles ?? []), ...(entity.handles ?? [])])
+    });
+  }
+  return Array.from(merged.values()).slice(0, 20);
+}
+
+function flattenCompetitorEntities(entities: QueryCompetitorEntity[]) {
+  return uniqueStrings(entities.flatMap((entity) => [
+    entity.name,
+    ...(entity.aliases ?? []),
+    ...(entity.handles ?? [])
+  ])).slice(0, 80);
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeEntityName(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 async function nextIterationNumber(corpusId: string) {

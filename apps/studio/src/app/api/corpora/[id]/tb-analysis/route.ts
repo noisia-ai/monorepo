@@ -1,20 +1,25 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 
-import { studyCorpora, tbAnalyses } from "@noisia/db";
-import { TB_METHODOLOGY_VERSION, TB_PIPELINE_VERSION } from "@noisia/query-engine";
+import { corpusSnapshots, studyCorpora, tbAnalyses } from "@noisia/db";
+import {
+  TB_METHODOLOGY_VERSION,
+  TB_PIPELINE_VERSION,
+  type DataOsCorpusAudit,
+  type ListeningDataOsReconciliation
+} from "@noisia/query-engine";
 import { forbidden, unauthorized } from "@/lib/api/responses";
 import { type AnalysisStudySize, resolveAnalysisStudyPlan } from "@/lib/analysis/study-size";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
-import { createCorpusSnapshot } from "@/lib/corpus/snapshots";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
+import { auditCorpusDataOs } from "@/lib/data-os/corpus-audit";
+import { reconcileCorpusListeningDataOs } from "@/lib/data-os/listening";
 import { db } from "@/lib/db";
 import { getTbAnalysisQueue } from "@/lib/queue/tb-analysis";
 
 const startBodySchema = z.object({
-  studySize: z.enum(["small", "medium", "large", "full_power"]).optional(),
-  confirmLowReadiness: z.boolean().optional()
+  studySize: z.enum(["small", "medium", "large", "full_power"]).optional()
 });
 
 type AssessmentPayload = {
@@ -49,8 +54,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
  * POST — launch a Triggers & Barriers analysis on the current corpus state.
  * Flow:
  *  1. Reject if corpus is already locked by another running analysis.
- *  2. Create an auto-snapshot ("Pre-análisis T&B [fecha]") so the pipeline
- *     reads from a frozen mention set.
+ *  2. Reuse the approval snapshot for the current corpus revision so the
+ *     pipeline reads exactly the mention set the analyst certified.
  *  3. Insert tb_analyses row in 'running' status.
  *  4. Lock the corpus pointing at this analysis.
  *  5. Enqueue tb_run_analysis on the tb-analysis BullMQ queue.
@@ -86,7 +91,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   let requestedStudySize: AnalysisStudySize | undefined;
-  let confirmLowReadiness = false;
   try {
     const body = await request.json();
     const parsed = startBodySchema.safeParse(body);
@@ -94,7 +98,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return Response.json({ error: "invalid_body", message: "Tamaño de estudio inválido." }, { status: 400 });
     }
     requestedStudySize = parsed.data.studySize;
-    confirmLowReadiness = parsed.data.confirmLowReadiness === true;
   } catch {
     requestedStudySize = undefined;
   }
@@ -102,43 +105,116 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const [readinessRow] = await db
     .select({
       latestAssessment: studyCorpora.latestAssessment,
-      latestAssessedAt: studyCorpora.latestAssessedAt
+      latestAssessedAt: studyCorpora.latestAssessedAt,
+      latestAssessedRevision: studyCorpora.latestAssessedRevision,
+      corpusRevision: studyCorpora.corpusRevision,
+      status: studyCorpora.status
     })
     .from(studyCorpora)
     .where(eq(studyCorpora.id, corpus.id))
     .limit(1);
   const latestAssessment = readAssessmentPayload(readinessRow?.latestAssessment);
-  const readyForStudy = latestAssessment?.ready_for_study;
-
-  if (readyForStudy === false && !confirmLowReadiness) {
+  const assessmentCurrent = Boolean(
+    latestAssessment &&
+    readinessRow?.latestAssessedRevision === readinessRow?.corpusRevision
+  );
+  if (readinessRow?.status !== "corpus_approved" || !assessmentCurrent) {
     return Response.json(
       {
-        error: "corpus_not_ready",
-        message: "El diagnóstico del corpus dice que aún no está listo para estudio. Confirma explícitamente si quieres correrlo de todos modos.",
+        error: "corpus_not_approved",
+        message: "Diagnostica y aprueba la revisión actual del corpus antes de iniciar el análisis.",
         assessment: latestAssessment,
-        assessed_at: readinessRow?.latestAssessedAt?.toISOString() ?? null
+        assessed_at: readinessRow?.latestAssessedAt?.toISOString() ?? null,
+        corpus_revision: readinessRow?.corpusRevision ?? null,
+        assessed_revision: readinessRow?.latestAssessedRevision ?? null
       },
       { status: 409 }
     );
   }
 
-  // 1. Snapshot for reproducibility
-  const snapshotLabel = `Pre-análisis T&B · ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
-  const snapshot = await createCorpusSnapshot({
-    corpusId: corpus.id,
-    label: snapshotLabel,
-    kind: "manual",
-    userId: session.appUser.id
+  let dataOs;
+  try {
+    dataOs = await reconcileCorpusListeningDataOs(corpus.id);
+  } catch (error) {
+    console.error("[data-os:listening] analysis reconciliation failed", error);
+    return Response.json(
+      {
+        error: "data_os_reconciliation_failed",
+        message: "No se pudo reconciliar el listening con Data OS. El análisis no fue creado ni enviado a workers."
+      },
+      { status: 503 }
+    );
+  }
+  if (!dataOs.quality.readyForAnalysis) {
+    return Response.json(
+      {
+        error: "data_os_listening_not_ready",
+        message: "El listening no cumple el contrato mínimo de texto, fecha y cobertura temporal para iniciar Claude.",
+        data_os: publicListeningDataOs(dataOs)
+      },
+      { status: 409 }
+    );
+  }
+
+  let dataOsAudit: DataOsCorpusAudit;
+  try {
+    dataOsAudit = await auditCorpusDataOs({
+      corpusId: corpus.id,
+      stage: "pre_analysis"
+    });
+  } catch (error) {
+    console.error("[data-os:audit] analysis preflight failed", error);
+    return Response.json(
+      {
+        error: "data_os_audit_failed",
+        message: "No se pudo comprobar el contrato Data OS. El análisis no fue creado ni enviado a workers."
+      },
+      { status: 503 }
+    );
+  }
+  if (!dataOsAudit.ready_for_claude) {
+    return Response.json(
+      {
+        error: "data_os_contract_blocked",
+        message: "Data OS no reconcilia todavía catálogo, listening, observaciones, calidad y lineage. Corrige los bloqueos antes de iniciar Claude.",
+        data_os: {
+          listening: publicListeningDataOs(dataOs),
+          audit: dataOsAudit
+        }
+      },
+      { status: 409 }
+    );
+  }
+
+  const approvalSnapshots = await db
+    .select({
+      id: corpusSnapshots.id,
+      mentionCount: corpusSnapshots.mentionCount,
+      scores: corpusSnapshots.scoresAtSnapshot
+    })
+    .from(corpusSnapshots)
+    .where(and(
+      eq(corpusSnapshots.studyCorpusId, corpus.id),
+      eq(corpusSnapshots.kind, "approval")
+    ))
+    .orderBy(desc(corpusSnapshots.createdAt));
+  const snapshot = approvalSnapshots.find((candidate) => {
+    const scores = candidate.scores;
+    if (!scores || typeof scores !== "object" || Array.isArray(scores)) return false;
+    return Number((scores as Record<string, unknown>).corpus_revision) === readinessRow.corpusRevision;
   });
   if (!snapshot) {
     return Response.json(
-      { error: "snapshot_failed", message: "No se pudo crear el snapshot pre-análisis." },
-      { status: 500 }
+      {
+        error: "approval_snapshot_missing",
+        message: "La revisión figura como aprobada, pero no existe su snapshot de aprobación. Vuelve a aprobarla antes de analizar."
+      },
+      { status: 409 }
     );
   }
 
   const studyPlan = resolveAnalysisStudyPlan({
-    corpusMentions: snapshot.mention_count,
+    corpusMentions: snapshot.mentionCount,
     requestedSize: requestedStudySize
   });
 
@@ -160,7 +236,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           resolved_study_size: studyPlan.size,
           label: studyPlan.label,
           strategy: studyPlan.isAutoFull ? "full_snapshot_auto" : "stratified_random",
-          snapshot_mentions: snapshot.mention_count,
+          snapshot_mentions: snapshot.mentionCount,
           target_mentions: studyPlan.estimatedMentions,
           coverage_pct: studyPlan.coveragePct,
           mention_limit: studyPlan.mentionLimit,
@@ -168,15 +244,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           cost_per_mention_usd: 0.00125,
           auto_full_threshold: 5000,
           is_auto_full: studyPlan.isAutoFull,
-          readiness_override: readyForStudy === false
-            ? {
-                confirmed: true,
-                confirmed_by_user_id: session.appUser.id,
-                assessed_at: readinessRow?.latestAssessedAt?.toISOString() ?? null,
-                score: latestAssessment?.score ?? null
-              }
-            : null
-        }
+          corpus_revision: readinessRow.corpusRevision,
+          approval_snapshot_id: snapshot.id,
+          approval_override: readApprovalOverride(snapshot.scores)
+        },
+        data_os_preflight: dataOsAudit
       },
       executedByUserId: session.appUser.id
     })
@@ -209,11 +281,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       tb_analysis_id: analysis.id,
       snapshot_id: snapshot.id,
       study_plan: studyPlan,
+      data_os: {
+        listening: publicListeningDataOs(dataOs),
+        audit: dataOsAudit
+      },
       bullmq_job_id: job.id,
       status: "running"
     },
     { status: 202 }
   );
+}
+
+function readApprovalOverride(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return (value as Record<string, unknown>).override === true;
+}
+
+function publicListeningDataOs(value: ListeningDataOsReconciliation) {
+  return {
+    quality: value.quality,
+    counts: value.counts,
+    coverage: value.coverage,
+    capabilities: value.capabilities
+  };
 }
 
 /**

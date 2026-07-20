@@ -1,5 +1,5 @@
 import type { EngineMethodologyOption } from "@/lib/engine/methodology-options";
-import { assessSignalPulseKnowledgeContext } from "@noisia/query-engine";
+import { assessSignalPulseKnowledgeContext } from "@noisia/query-engine/src/signal-pulse";
 
 export const SIGNAL_PULSE_SLUG = "signal-pulse";
 

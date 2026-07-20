@@ -6,6 +6,11 @@ import { canApproveAnalysis } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { db } from "@/lib/db";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness,
+  type SignalServingReadinessAssessment
+} from "@/lib/data-os/signal-serving";
 
 export async function POST(
   request: Request,
@@ -27,6 +32,7 @@ export async function POST(
   const [currentAnalysis] = await db
     .select({
       id: tbAnalyses.id,
+      snapshotId: tbAnalyses.snapshotId,
       limitations: tbAnalyses.limitations
     })
     .from(tbAnalyses)
@@ -49,23 +55,60 @@ export async function POST(
       eq(tbQualityGates.passed, false)
     ));
 
-  if (failedGates.length > 0 && !approveWithWarnings) {
+  const dataOsReadiness = currentAnalysis.snapshotId
+    ? await getSignalServingReadiness({
+        analysisId,
+        snapshotId: currentAnalysis.snapshotId
+      })
+    : null;
+  const dataOsAssessment: SignalServingReadinessAssessment = dataOsReadiness
+    ? assessSignalServingReadiness(dataOsReadiness)
+    : {
+        ready: false,
+        hardBlocks: [{
+          code: "snapshot_missing",
+          message: "El analisis no esta vinculado a un snapshot inmutable del corpus."
+        }],
+        warnings: []
+      };
+
+  if (!dataOsAssessment.ready) {
     return Response.json(
       {
-        error: "quality_gates_failed",
-        message: "Hay chequeos con advertencia. Confirma si quieres aprobar de todas formas.",
-        gates: failedGates
+        error: "data_os_readiness_failed",
+        message: "La sintesis no se puede aprobar porque su evidencia relacional esta incompleta.",
+        readiness: dataOsReadiness,
+        assessment: dataOsAssessment
       },
       { status: 409 }
     );
   }
 
-  const approvalLimitations = failedGates.length > 0
+  const dataOsWarnings = dataOsAssessment.warnings.map((warning) => ({
+    gateName: `data_os_${warning.code}`,
+    notes: warning.detail ? `${warning.message} ${warning.detail}` : warning.message
+  }));
+  const approvalWarnings = [...failedGates, ...dataOsWarnings];
+
+  if (approvalWarnings.length > 0 && !approveWithWarnings) {
+    return Response.json(
+      {
+        error: "quality_gates_failed",
+        message: "Hay chequeos con advertencia. Confirma si quieres aprobar de todas formas.",
+        gates: approvalWarnings,
+        readiness: dataOsReadiness,
+        assessment: dataOsAssessment
+      },
+      { status: 409 }
+    );
+  }
+
+  const approvalLimitations = approvalWarnings.length > 0
     ? normalizeLimitations(currentAnalysis.limitations).concat({
         source: "im_approval_override",
         level: "warning",
         message: "El Insights Manager aprobó la síntesis con chequeos de calidad pendientes.",
-        gates: failedGates,
+        gates: approvalWarnings,
         approved_at: new Date().toISOString(),
         approved_by_user_id: session.appUser.id
       })
@@ -88,7 +131,12 @@ export async function POST(
     return Response.json({ error: "not_found", message: "Analysis not found." }, { status: 404 });
   }
 
-  return Response.json({ ok: true, analysis: updated });
+  return Response.json({
+    ok: true,
+    analysis: updated,
+    dataOsReadiness,
+    dataOsAssessment
+  });
 }
 
 function normalizeLimitations(value: unknown) {

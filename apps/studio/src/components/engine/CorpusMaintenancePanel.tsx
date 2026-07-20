@@ -871,7 +871,7 @@ function HistoryTab({ corpusId, cleanups }: { corpusId: string; cleanups: Cleanu
   if (cleanups.length === 0) {
     return (
       <div className="history-empty">
-        <p className="empty-state">Sin acciones de limpieza. Cuando apliques una desde la pestaña <strong>Limpiar con AI</strong>, aparecerá aquí lista para revertir.</p>
+        <p className="empty-state">Sin acciones de limpieza. Las exclusiones manuales, asistidas o derivadas de un diagnóstico aparecerán aquí listas para revertir.</p>
       </div>
     );
   }
@@ -881,6 +881,13 @@ function HistoryTab({ corpusId, cleanups }: { corpusId: string; cleanups: Cleanu
       <ul className="cleanup-history">
         {cleanups.map((c) => {
           const patterns = Array.isArray(c.patterns) ? (c.patterns as string[]) : [];
+          const metadata = !Array.isArray(c.patterns) && c.patterns && typeof c.patterns === "object"
+            ? (c.patterns as Record<string, unknown>)
+            : null;
+          const diagnosticRevision = c.kind === "assessment_noise"
+            && typeof metadata?.corpus_revision === "number"
+              ? metadata.corpus_revision
+              : null;
           const isReverted = !!c.revertedAt;
           return (
             <li className={`cleanup-history-item${isReverted ? " cleanup-history-item--reverted" : ""}`} key={c.id}>
@@ -898,6 +905,9 @@ function HistoryTab({ corpusId, cleanups }: { corpusId: string; cleanups: Cleanu
                     <StatusPill tone="idle">Revertida</StatusPill>
                   ) : (
                     <StatusPill tone="warn">Activa</StatusPill>
+                  )}
+                  {diagnosticRevision !== null && (
+                    <StatusPill tone="idle">Diagnóstico r{diagnosticRevision}</StatusPill>
                   )}
                   <span className="cleanup-history-date">{fmtDate(c.createdAt)}</span>
                 </div>

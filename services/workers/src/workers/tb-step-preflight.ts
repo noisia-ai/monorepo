@@ -9,6 +9,7 @@ import {
   type PreflightResult
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { auditCorpusDataOs, persistCorpusDataOsAudit } from "./data-os-corpus-audit";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import { enqueueStep, markStepCompleted, markStepFailed, markStepRunning, releaseCorpusLock } from "./tb-shared";
 
@@ -35,6 +36,46 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
 
   try {
     const ctx = await loadAnalysisContext(tbAnalysisId);
+    const dataOsAudit = await auditCorpusDataOs({
+      corpusId: ctx.study_corpus_id,
+      stage: "pre_analysis",
+      tbAnalysisId
+    });
+    await persistCorpusDataOsAudit({ tbAnalysisId, audit: dataOsAudit });
+    await replaceLimitations(
+      tbAnalysisId,
+      "data_os_preflight",
+      dataOsAudit.warnings.map((warning) => `${warning.code}: ${warning.message}`)
+    );
+
+    if (!dataOsAudit.ready_for_claude) {
+      const blockers = dataOsAudit.blockers.map((blocker) => `${blocker.code}: ${blocker.message}`);
+      await markStepCompleted({
+        pipelineStepId,
+        resultSummary: {
+          decision: "ABORTAR_DATA_OS",
+          claude_called: false,
+          data_os_contract: dataOsAudit.contract,
+          data_os_status: dataOsAudit.status,
+          blockers,
+          warnings: dataOsAudit.warnings
+        }
+      });
+      await abortAnalysis({
+        tbAnalysisId,
+        prefix: "Data OS",
+        blockers
+      });
+      await releaseCorpusLock(tbAnalysisId);
+      await job.updateProgress(100);
+      return {
+        decision: "ABORTAR_DATA_OS",
+        claude_called: false,
+        blockers: dataOsAudit.blockers
+      };
+    }
+
+    await job.updateProgress(20);
     const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(25);
 
@@ -81,6 +122,9 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
       pipelineStepId,
       resultSummary: {
         decision: result.decision,
+        claude_called: true,
+        data_os_contract: dataOsAudit.contract,
+        data_os_status: dataOsAudit.status,
         passed: result.checks.filter((c) => c.result === "PASS").length,
         warned: result.checks.filter((c) => c.result === "WARN").length,
         failed: result.checks.filter((c) => c.result === "FAIL").length,
@@ -92,34 +136,15 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
     if (result.decision === "ABORTAR") {
       // Hard abort. The UI shows the failed gates + reasons so the IM can fix
       // the corpus and re-run.
-      await pool.query(
-        `UPDATE tb_analyses
-         SET status = 'aborted_preflight',
-             failed_at = NOW(),
-             failure_reason = $1
-         WHERE id = $2`,
-        [`Preflight: ${result.blockers.join(" | ").slice(0, 480) || "checks failed"}`, tbAnalysisId]
-      );
+      await replaceLimitations(tbAnalysisId, "preflight", result.warnings);
+      await abortAnalysis({ tbAnalysisId, prefix: "Preflight", blockers: result.blockers });
       await releaseCorpusLock(tbAnalysisId);
       await job.updateProgress(100);
       return { decision: "ABORTAR", blockers: result.blockers };
     }
 
-    // If we have warnings, persist them to limitations so they appear in the
-    // final output. Tag them as "preflight" so the renderer can group by origin.
-    if (result.decision === "PROCEDER_WITH_WARNINGS" && result.warnings.length > 0) {
-      const limitationEntries = result.warnings.map((w) => ({
-        source: "preflight",
-        text: w
-      }));
-      await pool.query(
-        `UPDATE tb_analyses
-         SET limitations = COALESCE(limitations, '[]'::jsonb) || $1::jsonb,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [JSON.stringify(limitationEntries), tbAnalysisId]
-      );
-    }
+    // Replace warnings from this origin so retries cannot duplicate caveats.
+    await replaceLimitations(tbAnalysisId, "preflight", result.warnings);
 
     // PROCEDER or PROCEDER_WITH_WARNINGS → enqueue step 1
     const next = await enqueueStep({ tbAnalysisId, step: "step1_open_pass" });
@@ -138,6 +163,51 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
     await releaseCorpusLock(tbAnalysisId);
     throw err;
   }
+}
+
+async function replaceLimitations(
+  tbAnalysisId: string,
+  source: string,
+  messages: string[]
+): Promise<void> {
+  const entries = messages.map((text) => ({ source, text }));
+  await pool.query(
+    `UPDATE tb_analyses
+     SET limitations = COALESCE(
+           (
+             SELECT jsonb_agg(item)
+             FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(COALESCE(limitations, '[]'::jsonb)) = 'array'
+                   THEN COALESCE(limitations, '[]'::jsonb)
+                 ELSE '[]'::jsonb
+               END
+             ) AS item
+             WHERE item->>'source' <> $2
+           ),
+           '[]'::jsonb
+         ) || $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [tbAnalysisId, source, JSON.stringify(entries)]
+  );
+}
+
+async function abortAnalysis(args: {
+  tbAnalysisId: string;
+  prefix: string;
+  blockers: string[];
+}): Promise<void> {
+  const reason = `${args.prefix}: ${args.blockers.join(" | ").slice(0, 480) || "checks failed"}`;
+  await pool.query(
+    `UPDATE tb_analyses
+     SET status = 'aborted_preflight',
+         failed_at = NOW(),
+         failure_reason = $1,
+         updated_at = NOW()
+     WHERE id = $2`,
+    [reason, args.tbAnalysisId]
+  );
 }
 
 async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContextRow> {

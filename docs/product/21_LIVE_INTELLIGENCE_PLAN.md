@@ -311,7 +311,7 @@ El composer arma reportes desde señales persistidas y observaciones:
 | Outputs baratos T&B | Implementado local | `#01 T&B Comparative Dashboard` y `#11 Competitive T&B Matrix` se construyen desde `comparative_brief` T&B, no corren engine nuevo, y ahora son módulos publicables/blurreables independientes en Signal. |
 | Deck live traceability | Implementado local | El deck sigue siendo snapshot congelado, pero si el payload tiene `live_intelligence` muestra un indicador discreto de señales/observaciones/evidencia en Quality & Boundaries. |
 | Signal Chat live evidence | Hardening local | La recuperación semántica ahora usa `published_outputs + study_corpora`, incluye `base_corpus_id`, prefiere evidencia viva ligada por `signal_observations.published_output_id` y cae al snapshot T&B legacy si el schema live no existe. LLM sigue apagado por default. |
-| Seed remoto safety | Implementado y testeado local | `db:seed` y `db:seed:methodologies` rechazan DB no local por default. Para una DB remota aislada/staging exigen `NOISIA_DB_SEED_ALLOW_REMOTE=true`; readiness confirma que el default documentado sigue apagado. |
+| Seed remoto safety | Implementado y testeado local | `db:seed` y `db:seed:methodologies` rechazan DB no local por default. Para una DB remota aislada/staging exigen `NOISIA_DB_SEED_ALLOW_REMOTE=true` y `NOISIA_REMOTE_DATABASE_TARGET=staging|throwaway|preview`; readiness confirma que los defaults documentados siguen apagados. |
 | Backfill/republish safety | Implementado local | Los scripts de republish preservan el bloque `live_intelligence` existente y `--embeddings --apply` no agenda embeddings salvo `--allow-costly` más `NOISIA_ALLOW_COSTLY_BACKFILL=true`. |
 | Readiness sin DB | Implementado y testeado local | `pnpm db:verify:readiness` valida sin conectar a DB que existan migraciones `0025`-`0029` en archivos y journal, que los 15 YAML beta esperados estén presentes y que `.env.example` mantenga flags caros apagados por default. |
 | DB smoke reproducible | Implementado local | Existe `pnpm db:smoke:migrations` y `pnpm db:smoke:local`; sólo corren contra DB local por default, soportan `DATABASE_SSL=false` y verifican tablas/índices live intelligence después de aplicar todas las migraciones. `db:smoke:local` levanta `postgres-smoke` con `pgvector` en Docker. |
@@ -387,9 +387,10 @@ y reset de schema. Para apagarlo:
 pnpm db:smoke:local:down
 ```
 
-`db:smoke:migrations` rehúsa hosts remotos salvo `NOISIA_DB_SMOKE_ALLOW_REMOTE=true` y exige
-schema vacío salvo `NOISIA_DB_SMOKE_RESET_SCHEMA=true`; esos overrides sólo deben usarse contra
-bases desechables.
+`db:smoke:migrations` rehúsa hosts remotos salvo `NOISIA_DB_SMOKE_ALLOW_REMOTE=true` y
+`NOISIA_REMOTE_DATABASE_TARGET=throwaway|preview|staging`; exige schema vacío salvo
+`NOISIA_DB_SMOKE_RESET_SCHEMA=true`. Esos overrides sólo deben usarse contra bases
+desechables.
 
 Estado actual de dry run local: tooling listo y testeado estáticamente. No se aplicaron
 migraciones contra Supabase ni contra ninguna DB compartida. En este entorno el cliente

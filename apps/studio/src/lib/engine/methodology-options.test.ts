@@ -9,7 +9,8 @@ import {
   buildEngineOutputManifestForMethodology,
   buildEngineMethodologyOptions,
   engineModuleKeyForMethodology,
-  getDefaultEngineMethodologySlug
+  getDefaultEngineMethodologySlug,
+  isEngineBetaPanelEnabled
 } from "./methodology-options";
 
 test("engine beta methodology UI exposes every runnable engine lens plus cheap outputs", () => {
@@ -47,15 +48,21 @@ test("all engine specs are accounted for and no runnable lens stays in shadow", 
   assert.equal([...ENGINE_METHODOLOGY_SLUGS].every((slug) => activeSlugs.has(slug)), true);
 });
 
-test("Narrative Ownership is the first runnable beta methodology", () => {
+test("technical beta defaults to the first runnable methodology, not Narrative Ownership", () => {
   const options = buildEngineMethodologyOptions([
     { slug: "narrative-ownership", status: "beta", version: "0.1" },
     { slug: "sentiment-advocacy-proxy", status: "beta", version: "0.1" },
     { slug: "competitive-tb-matrix", status: "beta", version: "0.1" }
   ]);
 
-  assert.equal(getDefaultEngineMethodologySlug(options), "narrative-ownership");
+  assert.equal(getDefaultEngineMethodologySlug(options), "sentiment-advocacy-proxy");
   assert.equal(options.find((option) => option.slug === "narrative-ownership")?.runnable, true);
+});
+
+test("technical beta panel stays unavailable in production even when its flag is set", () => {
+  assert.equal(isEngineBetaPanelEnabled({ NODE_ENV: "production", NOISIA_SHOW_ENGINE_BETA_PANEL: "true" }), false);
+  assert.equal(isEngineBetaPanelEnabled({ NODE_ENV: "development", NOISIA_SHOW_ENGINE_BETA_PANEL: "false" }), false);
+  assert.equal(isEngineBetaPanelEnabled({ NODE_ENV: "development", NOISIA_SHOW_ENGINE_BETA_PANEL: "true" }), true);
 });
 
 test("read-only T&B outputs and unseeded methods are not runnable from engine beta", () => {

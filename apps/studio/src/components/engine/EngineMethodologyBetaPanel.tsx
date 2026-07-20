@@ -299,7 +299,7 @@ export function EngineMethodologyBetaPanel({
           <p>
             {isSignalPulseCorpus
               ? "Detecta señales por clusters, calcula periodos y métricas en SQL, revisa costo contra el tope y publica un Pulse listo para lectura."
-              : "T&B corre primero en el flujo normal. Al terminar, los lentes seleccionados en el wizard se lanzan sobre el corpus aprobado; este panel queda para monitorear, revisar y reintentar sin repetir SentiOne."}
+              : "T&B corre primero en el flujo normal. Al terminar, los lentes seleccionados en el wizard se lanzan sobre el corpus aprobado; este panel queda para monitorear, revisar y reintentar sin repetir la extracción."}
           </p>
         </div>
         <span>{isLoading ? "cargando" : progressLabel}</span>

@@ -6,7 +6,7 @@ import { StudioNav } from "@/components/layout/StudioNav";
 import { Icon } from "@/components/ui/Icon";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { listBrandsForUser } from "@/lib/data/brands";
-import { listActiveMethodologies, listReusableIndustryCorporaForUser } from "@/lib/data/corpora";
+import { listActiveMethodologies, listReusableBaselineCorporaForUser } from "@/lib/data/corpora";
 import { listThemesForUser } from "@/lib/data/themes";
 import { getSearchParam, resolveSearchParams, type StudioSearchParams } from "@/lib/url/search";
 
@@ -22,7 +22,7 @@ export default async function NewStudyPage({ searchParams }: { searchParams?: St
     listBrandsForUser(session.appUser, { status: "active", pageSize: 500 }),
     listThemesForUser(session.appUser, { status: "active", pageSize: 500 }),
     listActiveMethodologies(),
-    listReusableIndustryCorporaForUser(session.appUser)
+    listReusableBaselineCorporaForUser(session.appUser)
   ]);
 
   return (

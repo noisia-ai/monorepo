@@ -282,6 +282,8 @@ export const studyCorpora = pgTable(
     firstPublishedAt: timestamp("first_published_at", { withTimezone: true }),
     latestAssessment: jsonb("latest_assessment"),
     latestAssessedAt: timestamp("latest_assessed_at", { withTimezone: true }),
+    corpusRevision: integer("corpus_revision").notNull().default(1),
+    latestAssessedRevision: integer("latest_assessed_revision"),
     /** Set during a T&B analysis run to freeze cleanup/upload. Force-unlock from UI. */
     lockedByAnalysisId: uuid("locked_by_analysis_id"),
     updatedAt: updatedAt()
@@ -326,13 +328,19 @@ export const queryIterations = pgTable(
     insightsManagerDecision: text("insights_manager_decision"),
     insightsManagerUserId: uuid("insights_manager_user_id").references(() => users.id),
     decisionAt: timestamp("decision_at", { withTimezone: true }),
+    // The migration owns these two FKs. Keeping them as UUIDs here avoids the
+    // circular TypeScript initializer query_iterations <-> validation_runs.
+    latestQueryValidationRunId: uuid("latest_query_validation_run_id"),
+    approvedQueryValidationRunId: uuid("approved_query_validation_run_id"),
     pipelineVersion: text("pipeline_version"),
     createdAt: now()
   },
   (table) => [
     unique("uq_query_iterations_corpus_iteration").on(table.studyCorpusId, table.iterationNumber),
     index("idx_qi_corpus").on(table.studyCorpusId),
-    index("idx_qi_created").on(table.createdAt)
+    index("idx_qi_created").on(table.createdAt),
+    index("idx_query_iterations_latest_validation").on(table.latestQueryValidationRunId),
+    index("idx_query_iterations_approved_validation").on(table.approvedQueryValidationRunId)
   ]
 );
 
@@ -350,6 +358,8 @@ export const queryPacks = pgTable(
     signalIntent: text("signal_intent").notNull(),
     /** brand | competitors | category | baseline | source */
     scope: text("scope").notNull(),
+    /** Stable retrieval identity inside the scope: brand, category, competitor:petco, etc. */
+    entityKey: text("entity_key"),
     objective: text("objective"),
     queryText: text("query_text"),
     queryComponents: jsonb("query_components").notNull().default(sql`'{}'::jsonb`),
@@ -372,13 +382,99 @@ export const queryPacks = pgTable(
     index("idx_query_packs_lens").on(table.studyCorpusId, table.lensSlug, table.signalIntent, table.scope),
     index("idx_query_packs_status").on(table.studyCorpusId, table.status),
     index("idx_query_packs_iteration").on(table.queryIterationId),
-    uniqueIndex("uq_query_packs_iteration_lens_intent_scope").on(
+    index("idx_query_packs_scope_entity").on(table.studyCorpusId, table.scope, table.entityKey),
+    uniqueIndex("uq_query_packs_iteration_lens_intent_scope_entity").on(
       table.studyCorpusId,
       sql`COALESCE(${table.queryIterationId}::text, '')`,
       table.lensSlug,
       table.signalIntent,
-      table.scope
+      table.scope,
+      sql`COALESCE(${table.entityKey}, '')`
     )
+  ]
+);
+
+export const queryValidationRuns = pgTable(
+  "query_validation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    queryIterationId: uuid("query_iteration_id")
+      .notNull()
+      .references(() => queryIterations.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("running"),
+    sourceSystem: text("source_system").notNull().default("imported_corpus"),
+    sourceProjectId: text("source_project_id"),
+    sampleSizePerPack: integer("sample_size_per_pack").notNull().default(100),
+    maxAttempts: integer("max_attempts").notNull().default(1),
+    summary: jsonb("summary").notNull().default(sql`'{}'::jsonb`),
+    pipelineVersion: text("pipeline_version").notNull(),
+    requestedByUserId: uuid("requested_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    index("idx_query_validation_runs_iteration").on(table.queryIterationId, table.startedAt),
+    index("idx_query_validation_runs_corpus").on(table.studyCorpusId, table.startedAt)
+  ]
+);
+
+export const queryValidationAttempts = pgTable(
+  "query_validation_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    queryValidationRunId: uuid("query_validation_run_id")
+      .notNull()
+      .references(() => queryValidationRuns.id, { onDelete: "cascade" }),
+    queryPackId: uuid("query_pack_id")
+      .notNull()
+      .references(() => queryPacks.id, { onDelete: "cascade" }),
+    attemptNumber: integer("attempt_number").notNull(),
+    queryText: text("query_text").notNull(),
+    sampleSize: integer("sample_size").notNull().default(0),
+    attemptKind: text("attempt_kind").notNull().default("refinement"),
+    uniqueSampleSize: integer("unique_sample_size").notNull().default(0),
+    status: text("status").notNull(),
+    metrics: jsonb("metrics").notNull().default(sql`'{}'::jsonb`),
+    notes: text("notes"),
+    proposedAdjustments: jsonb("proposed_adjustments").notNull().default(sql`'[]'::jsonb`),
+    model: text("model"),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("uq_query_validation_attempt").on(
+      table.queryValidationRunId,
+      table.queryPackId,
+      table.attemptNumber
+    ),
+    index("idx_query_validation_attempts_pack").on(table.queryPackId, table.evaluatedAt),
+    index("idx_query_validation_attempts_kind").on(
+      table.queryValidationRunId,
+      table.queryPackId,
+      table.attemptKind
+    )
+  ]
+);
+
+export const queryValidationMentions = pgTable(
+  "query_validation_mentions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    queryValidationAttemptId: uuid("query_validation_attempt_id")
+      .notNull()
+      .references(() => queryValidationAttempts.id, { onDelete: "cascade" }),
+    externalMentionId: text("external_mention_id").notNull(),
+    relevance: text("relevance").notNull(),
+    signalTypes: text("signal_types").array().notNull().default(emptyTextArray),
+    reason: text("reason"),
+    mentionMetadata: jsonb("mention_metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_query_validation_mention").on(table.queryValidationAttemptId, table.externalMentionId),
+    index("idx_query_validation_mentions_attempt").on(table.queryValidationAttemptId, table.relevance)
   ]
 );
 
@@ -476,6 +572,8 @@ export const importBatches = pgTable(
       .references(() => studyCorpora.id),
     queryIterationId: uuid("query_iteration_id").references(() => queryIterations.id),
     queryPackId: uuid("query_pack_id").references(() => queryPacks.id, { onDelete: "set null" }),
+    queryValidationRunId: uuid("query_validation_run_id")
+      .references(() => queryValidationRuns.id, { onDelete: "set null" }),
     /** 'brand' | 'competitor' | 'industry' | null — null = legacy/uncategorized */
     mentionType: text("mention_type"),
     competitorId: uuid("competitor_id").references(() => competitors.id),
@@ -500,6 +598,7 @@ export const importBatches = pgTable(
     index("idx_import_batches_corpus_entity").on(table.studyCorpusId, table.corpusEntityId),
     index("idx_import_batches_competitor").on(table.studyCorpusId, table.competitorId),
     index("idx_import_batches_query_pack").on(table.studyCorpusId, table.queryPackId),
+    index("idx_import_batches_validation_run").on(table.queryValidationRunId),
     index("idx_import_batches_status").on(table.status)
   ]
 );
@@ -551,7 +650,7 @@ export const cleanupActions = pgTable(
     studyCorpusId: uuid("study_corpus_id")
       .notNull()
       .references(() => studyCorpora.id),
-    /** 'claude_instruction' | 'manual_bulk'. */
+    /** 'claude_instruction' | 'manual_bulk' | 'assessment_noise'. */
     kind: text("kind").notNull(),
     instruction: text("instruction"),
     patterns: jsonb("patterns"),
@@ -614,6 +713,57 @@ export const mentions = pgTable(
     index("idx_mentions_corpus_inclusion").on(table.studyCorpusId, table.inclusionStatus),
     index("idx_mentions_published").on(table.publishedAt),
     index("idx_mentions_text_hash").on(table.textHash)
+  ]
+);
+
+export const corpusAssessments = pgTable(
+  "corpus_assessments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    corpusRevision: integer("corpus_revision").notNull(),
+    populationSize: integer("population_size").notNull(),
+    sampleSize: integer("sample_size").notNull(),
+    sampleStrategy: text("sample_strategy").notNull(),
+    status: text("status").notNull().default("running"),
+    readyForStudy: boolean("ready_for_study"),
+    confidence: numeric("confidence", { precision: 5, scale: 2 }),
+    verdict: text("verdict"),
+    metrics: jsonb("metrics").notNull().default(sql`'{}'::jsonb`),
+    findings: jsonb("findings").notNull().default(sql`'{}'::jsonb`),
+    model: text("model"),
+    pipelineVersion: text("pipeline_version").notNull(),
+    requestedByUserId: uuid("requested_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    index("idx_corpus_assessments_revision").on(table.studyCorpusId, table.corpusRevision, table.startedAt),
+    index("idx_corpus_assessments_status").on(table.studyCorpusId, table.status)
+  ]
+);
+
+export const corpusAssessmentMentions = pgTable(
+  "corpus_assessment_mentions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    corpusAssessmentId: uuid("corpus_assessment_id")
+      .notNull()
+      .references(() => corpusAssessments.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "cascade" }),
+    relevance: text("relevance").notNull(),
+    signalTypes: text("signal_types").array().notNull().default(emptyTextArray),
+    reason: text("reason"),
+    classificationMetadata: jsonb("classification_metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_corpus_assessment_mention").on(table.corpusAssessmentId, table.mentionId),
+    index("idx_corpus_assessment_mentions_assessment").on(table.corpusAssessmentId, table.relevance)
   ]
 );
 
@@ -827,6 +977,109 @@ export const tbRecommendations = pgTable(
   (table) => [
     index("idx_tb_recs_analysis").on(table.tbAnalysisId, table.kind, table.position),
     index("idx_tb_recs_finding").on(table.findingId)
+  ]
+);
+
+/**
+ * Strategic opportunities are decision objects synthesized from multiple findings.
+ * They are intentionally separate from tb_recommendations, which contains the
+ * operational activation/friction-removal playbook.
+ */
+export const tbStrategicOpportunities = pgTable(
+  "tb_strategic_opportunities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id")
+      .notNull()
+      .references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    opportunityId: text("opportunity_id").notNull(),
+    title: text("title").notNull(),
+    decision: text("decision").notNull(),
+    whyNow: text("why_now").notNull(),
+    level: text("level").notNull(),
+    sourceMix: text("source_mix").array().notNull().default(emptyTextArray),
+    evidenceSummary: text("evidence_summary").notNull(),
+    whatToDo: text("what_to_do").notNull(),
+    successSignal: text("success_signal").notNull(),
+    confidence: text("confidence").notNull(),
+    position: integer("position").notNull().default(0),
+    rawData: jsonb("raw_data").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_strategic_opportunities_analysis_id").on(table.tbAnalysisId, table.opportunityId),
+    index("idx_tb_strategic_opportunities_analysis").on(table.tbAnalysisId, table.position),
+    index("idx_tb_strategic_opportunities_level").on(table.tbAnalysisId, table.level, table.confidence)
+  ]
+);
+
+export const tbOpportunityFindings = pgTable(
+  "tb_opportunity_findings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    opportunityId: uuid("opportunity_id")
+      .notNull()
+      .references(() => tbStrategicOpportunities.id, { onDelete: "cascade" }),
+    findingId: uuid("finding_id")
+      .notNull()
+      .references(() => tbFindings.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(0),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_opportunity_findings_pair").on(table.opportunityId, table.findingId),
+    index("idx_tb_opportunity_findings_finding").on(table.findingId)
+  ]
+);
+
+/** Action Studio is the prioritized execution layer, not an analytical finding. */
+export const tbActionStudio = pgTable(
+  "tb_action_studio",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id")
+      .notNull()
+      .references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    actionId: text("action_id").notNull(),
+    targetTeam: text("target_team").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    primaryFindingId: uuid("primary_finding_id").references(() => tbFindings.id, { onDelete: "set null" }),
+    rationale: text("rationale").notNull(),
+    actionText: text("action_text").notNull(),
+    suggestedChannel: text("suggested_channel"),
+    suggestedFormat: text("suggested_format"),
+    successSignal: text("success_signal").notNull(),
+    estimatedEffort: text("estimated_effort").notNull(),
+    estimatedImpact: text("estimated_impact").notNull(),
+    confidence: text("confidence").notNull(),
+    priorityRank: integer("priority_rank").notNull().default(0),
+    rawData: jsonb("raw_data").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_action_studio_analysis_id").on(table.tbAnalysisId, table.actionId),
+    index("idx_tb_action_studio_analysis").on(table.tbAnalysisId, table.priorityRank),
+    index("idx_tb_action_studio_target").on(table.tbAnalysisId, table.targetTeam, table.kind)
+  ]
+);
+
+export const tbActionFindings = pgTable(
+  "tb_action_findings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actionId: uuid("action_id")
+      .notNull()
+      .references(() => tbActionStudio.id, { onDelete: "cascade" }),
+    findingId: uuid("finding_id")
+      .notNull()
+      .references(() => tbFindings.id, { onDelete: "cascade" }),
+    position: integer("position").notNull().default(0),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_action_findings_pair").on(table.actionId, table.findingId),
+    index("idx_tb_action_findings_finding").on(table.findingId)
   ]
 );
 
@@ -1435,6 +1688,937 @@ export const publishedOutputs = pgTable(
     uniqueIndex("uq_outputs_engine_analysis_type")
       .on(table.engineAnalysisId, table.outputType)
       .where(sql`${table.engineAnalysisId} IS NOT NULL`)
+  ]
+);
+
+export const dataAssets = pgTable(
+  "data_assets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "set null" }),
+    assetKind: text("asset_kind").notNull(),
+    layer: text("layer").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    ownerTeam: text("owner_team"),
+    sensitivity: text("sensitivity").notNull().default("internal"),
+    status: text("status").notNull().default("active"),
+    storageRef: text("storage_ref"),
+    rowCount: bigint("row_count", { mode: "number" }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_data_assets_scope").on(table.organizationId, table.brandId, table.studyCorpusId, table.layer),
+    index("idx_data_assets_source").on(table.dataSourceId, table.layer, table.status),
+    unique("uq_data_assets_scope_name_layer").on(table.studyCorpusId, table.name, table.layer)
+  ]
+);
+
+export const dataAssetFields = pgTable(
+  "data_asset_fields",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dataAssetId: uuid("data_asset_id")
+      .notNull()
+      .references(() => dataAssets.id, { onDelete: "cascade" }),
+    fieldName: text("field_name").notNull(),
+    fieldType: text("field_type"),
+    semanticType: text("semantic_type"),
+    nullable: boolean("nullable"),
+    description: text("description"),
+    examples: jsonb("examples").notNull().default(sql`'[]'::jsonb`),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [unique("uq_data_asset_fields_asset_field").on(table.dataAssetId, table.fieldName)]
+);
+
+export const dataAssetRecords = pgTable(
+  "data_asset_records",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "set null" }),
+    dataAssetId: uuid("data_asset_id")
+      .notNull()
+      .references(() => dataAssets.id, { onDelete: "cascade" }),
+    knowledgeSourceId: uuid("knowledge_source_id").references(() => brandKnowledgeSources.id, { onDelete: "set null" }),
+    sourceSyncRunId: uuid("source_sync_run_id").references(() => sourceSyncRuns.id, { onDelete: "set null" }),
+    datasetKey: text("dataset_key").notNull(),
+    datasetName: text("dataset_name"),
+    datasetRole: text("dataset_role"),
+    rowIndex: integer("row_index").notNull(),
+    recordHash: text("record_hash").notNull(),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    periodGrain: text("period_grain").notNull().default("unknown"),
+    periodSemantics: text("period_semantics").notNull().default("unknown"),
+    entityType: text("entity_type"),
+    entityKey: text("entity_key"),
+    entityLabel: text("entity_label"),
+    dimensions: jsonb("dimensions").notNull().default(sql`'{}'::jsonb`),
+    recordData: jsonb("record_data").notNull().default(sql`'{}'::jsonb`),
+    lineage: jsonb("lineage").notNull().default(sql`'{}'::jsonb`),
+    qualityStatus: text("quality_status").notNull().default("accepted"),
+    qualityIssues: jsonb("quality_issues").notNull().default(sql`'[]'::jsonb`),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_data_asset_records_asset_dataset_row").on(table.dataAssetId, table.datasetKey, table.rowIndex),
+    index("idx_data_asset_records_corpus_role").on(table.studyCorpusId, table.datasetRole, table.qualityStatus),
+    index("idx_data_asset_records_asset_dataset").on(table.dataAssetId, table.datasetKey),
+    index("idx_data_asset_records_entity").on(table.studyCorpusId, table.entityType, table.entityKey),
+    index("idx_data_asset_records_period").on(table.studyCorpusId, table.periodGrain, table.periodStart),
+    index("idx_data_asset_records_knowledge_source").on(table.knowledgeSourceId)
+  ]
+);
+
+export const dataContracts = pgTable(
+  "data_contracts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dataAssetId: uuid("data_asset_id")
+      .notNull()
+      .references(() => dataAssets.id, { onDelete: "cascade" }),
+    contractName: text("contract_name").notNull(),
+    version: integer("version").notNull().default(1),
+    status: text("status").notNull().default("draft"),
+    schemaContract: jsonb("schema_contract").notNull().default(sql`'{}'::jsonb`),
+    qualityContract: jsonb("quality_contract").notNull().default(sql`'{}'::jsonb`),
+    freshnessContract: jsonb("freshness_contract").notNull().default(sql`'{}'::jsonb`),
+    semanticContract: jsonb("semantic_contract").notNull().default(sql`'{}'::jsonb`),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_data_contracts_asset_status").on(table.dataAssetId, table.status),
+    unique("uq_data_contracts_asset_name_version").on(table.dataAssetId, table.contractName, table.version)
+  ]
+);
+
+export const dataQualityRules = pgTable(
+  "data_quality_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dataContractId: uuid("data_contract_id").references(() => dataContracts.id, { onDelete: "cascade" }),
+    ruleKey: text("rule_key").notNull(),
+    ruleType: text("rule_type").notNull(),
+    severity: text("severity").notNull().default("warning"),
+    definition: jsonb("definition").notNull().default(sql`'{}'::jsonb`),
+    active: boolean("active").notNull().default(true),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_data_quality_rules_contract").on(table.dataContractId, table.active),
+    unique("uq_data_quality_rules_contract_key").on(table.dataContractId, table.ruleKey)
+  ]
+);
+
+export const dataQualityResults = pgTable(
+  "data_quality_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dataQualityRuleId: uuid("data_quality_rule_id").references(() => dataQualityRules.id, { onDelete: "set null" }),
+    dataAssetId: uuid("data_asset_id").references(() => dataAssets.id, { onDelete: "cascade" }),
+    sourceSyncRunId: uuid("source_sync_run_id").references(() => sourceSyncRuns.id, { onDelete: "set null" }),
+    engineAnalysisId: uuid("engine_analysis_id").references(() => engineAnalyses.id, { onDelete: "set null" }),
+    resultKey: text("result_key").notNull().default("default"),
+    status: text("status").notNull(),
+    observedValue: jsonb("observed_value").notNull().default(sql`'{}'::jsonb`),
+    expectedValue: jsonb("expected_value").notNull().default(sql`'{}'::jsonb`),
+    sampleRefs: jsonb("sample_refs").notNull().default(sql`'[]'::jsonb`),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("idx_data_quality_results_asset").on(table.dataAssetId, table.checkedAt),
+    index("idx_data_quality_results_run").on(table.sourceSyncRunId, table.status),
+    index("idx_data_quality_results_engine").on(table.engineAnalysisId, table.status),
+    unique("uq_data_quality_results_asset_key").on(table.dataAssetId, table.resultKey)
+  ]
+);
+
+export const dataObservations = pgTable(
+  "data_observations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "set null" }),
+    dataAssetId: uuid("data_asset_id").references(() => dataAssets.id, { onDelete: "set null" }),
+    knowledgeSourceId: uuid("knowledge_source_id").references(() => brandKnowledgeSources.id, { onDelete: "set null" }),
+    sourceSyncRunId: uuid("source_sync_run_id").references(() => sourceSyncRuns.id, { onDelete: "set null" }),
+    datasetKey: text("dataset_key").notNull(),
+    datasetName: text("dataset_name"),
+    datasetRole: text("dataset_role"),
+    rowIndex: integer("row_index"),
+    recordHash: text("record_hash").notNull(),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    periodGrain: text("period_grain").notNull().default("unknown"),
+    entityType: text("entity_type"),
+    entityKey: text("entity_key"),
+    entityLabel: text("entity_label"),
+    metricKey: text("metric_key").notNull(),
+    metricFamily: text("metric_family").notNull(),
+    metricValue: numeric("metric_value").notNull(),
+    metricUnit: text("metric_unit"),
+    metricCurrencyCode: text("metric_currency_code"),
+    periodSemantics: text("period_semantics").notNull().default("unknown"),
+    dimensions: jsonb("dimensions").notNull().default(sql`'{}'::jsonb`),
+    rawRecord: jsonb("raw_record").notNull().default(sql`'{}'::jsonb`),
+    lineage: jsonb("lineage").notNull().default(sql`'{}'::jsonb`),
+    qualityStatus: text("quality_status").notNull().default("accepted"),
+    qualityIssues: jsonb("quality_issues").notNull().default(sql`'[]'::jsonb`),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_data_observations_source_metric_row").on(
+      table.dataSourceId,
+      table.dataAssetId,
+      table.datasetKey,
+      table.rowIndex,
+      table.metricKey
+    ),
+    index("idx_data_observations_corpus_period_metric").on(
+      table.studyCorpusId,
+      table.periodGrain,
+      table.periodStart,
+      table.metricKey
+    ),
+    index("idx_data_observations_brand_metric_period").on(table.brandId, table.metricKey, table.periodStart),
+    index("idx_data_observations_asset").on(table.dataAssetId, table.datasetKey),
+    index("idx_data_observations_knowledge_source").on(table.knowledgeSourceId),
+    index("idx_data_observations_entity").on(table.studyCorpusId, table.entityType, table.entityKey),
+    index("idx_data_observations_corpus_quality").on(table.studyCorpusId, table.qualityStatus, table.datasetRole),
+    index("idx_data_observations_currency").on(table.studyCorpusId, table.metricCurrencyCode, table.periodStart)
+  ]
+);
+
+export const brandOsProfiles = pgTable(
+  "brand_os_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    version: integer("version").notNull().default(1),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("brand_os_profile_has_subject", sql`${table.brandId} IS NOT NULL OR ${table.themeId} IS NOT NULL`),
+    index("idx_brand_os_profiles_scope").on(table.organizationId, table.brandId, table.themeId, table.status),
+    uniqueIndex("uq_brand_os_profiles_brand_version")
+      .on(table.brandId, table.version)
+      .where(sql`${table.brandId} IS NOT NULL`),
+    uniqueIndex("uq_brand_os_profiles_theme_version")
+      .on(table.themeId, table.version)
+      .where(sql`${table.themeId} IS NOT NULL`)
+  ]
+);
+
+export const brandOsObjectives = pgTable(
+  "brand_os_objectives",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    objectiveType: text("objective_type").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    successCriteria: jsonb("success_criteria").notNull().default(sql`'{}'::jsonb`),
+    priority: integer("priority"),
+    activeFrom: date("active_from"),
+    activeTo: date("active_to"),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_objectives_profile").on(table.brandOsProfileId, table.status, table.priority),
+    unique("uq_brand_os_objectives_profile_type_name").on(table.brandOsProfileId, table.objectiveType, table.name)
+  ]
+);
+
+export const brandOsBriefs = pgTable(
+  "brand_os_briefs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    objectiveId: uuid("objective_id").references(() => brandOsObjectives.id, { onDelete: "set null" }),
+    knowledgeSourceId: uuid("knowledge_source_id").references(() => brandKnowledgeSources.id, { onDelete: "set null" }),
+    briefType: text("brief_type").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    sourceKind: text("source_kind"),
+    status: text("status").notNull().default("active"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_brand_os_briefs_profile").on(table.brandOsProfileId, table.briefType, table.status),
+    index("idx_brand_os_briefs_objective").on(table.objectiveId, table.status),
+    index("idx_brand_os_briefs_source")
+      .on(table.knowledgeSourceId)
+      .where(sql`${table.knowledgeSourceId} IS NOT NULL`),
+    unique("uq_brand_os_briefs_profile_corpus_type_title").on(
+      table.brandOsProfileId,
+      table.studyCorpusId,
+      table.briefType,
+      table.title
+    )
+  ]
+);
+
+export const brandOsAudiences = pgTable(
+  "brand_os_audiences",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    attributes: jsonb("attributes").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_audiences_profile").on(table.brandOsProfileId, table.status),
+    unique("uq_brand_os_audiences_profile_name").on(table.brandOsProfileId, table.name)
+  ]
+);
+
+export const brandOsProducts = pgTable(
+  "brand_os_products",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    productType: text("product_type"),
+    description: text("description"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_products_profile").on(table.brandOsProfileId, table.status),
+    unique("uq_brand_os_products_profile_name").on(table.brandOsProfileId, table.name)
+  ]
+);
+
+export const brandOsClaims = pgTable(
+  "brand_os_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    claimText: text("claim_text").notNull(),
+    claimType: text("claim_type"),
+    status: text("status").notNull().default("active"),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_claims_profile").on(table.brandOsProfileId, table.status, table.claimType),
+    unique("uq_brand_os_claims_profile_text").on(table.brandOsProfileId, table.claimText)
+  ]
+);
+
+export const brandOsCampaigns = pgTable(
+  "brand_os_campaigns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    externalId: text("external_id"),
+    campaignType: text("campaign_type"),
+    channelMix: jsonb("channel_mix").notNull().default(sql`'{}'::jsonb`),
+    activeFrom: date("active_from"),
+    activeTo: date("active_to"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_campaigns_profile").on(table.brandOsProfileId, table.activeFrom, table.activeTo),
+    unique("uq_brand_os_campaigns_external").on(table.brandOsProfileId, table.externalId)
+  ]
+);
+
+export const brandOsCompetitors = pgTable(
+  "brand_os_competitors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    competitorName: text("competitor_name").notNull(),
+    competitorBrandSeedId: uuid("competitor_brand_seed_id").references(() => brandSeeds.id, { onDelete: "set null" }),
+    role: text("role"),
+    priority: integer("priority"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_competitors_profile").on(table.brandOsProfileId, table.priority),
+    unique("uq_brand_os_competitors_profile_name").on(table.brandOsProfileId, table.competitorName)
+  ]
+);
+
+export const brandOsEvents = pgTable(
+  "brand_os_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    eventType: text("event_type"),
+    eventDate: date("event_date"),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [index("idx_brand_os_events_profile_date").on(table.brandOsProfileId, table.eventDate)]
+);
+
+export const brandOsSeedSets = pgTable(
+  "brand_os_seed_sets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    seedSetType: text("seed_set_type").notNull(),
+    objectiveId: uuid("objective_id").references(() => brandOsObjectives.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("active"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_seed_sets_profile").on(table.brandOsProfileId, table.seedSetType, table.status),
+    unique("uq_brand_os_seed_sets_profile_type_name").on(table.brandOsProfileId, table.seedSetType, table.name)
+  ]
+);
+
+export const brandOsSeedTerms = pgTable(
+  "brand_os_seed_terms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    seedSetId: uuid("seed_set_id")
+      .notNull()
+      .references(() => brandOsSeedSets.id, { onDelete: "cascade" }),
+    term: text("term").notNull(),
+    termType: text("term_type").notNull().default("keyword"),
+    brandSeedId: uuid("brand_seed_id").references(() => brandSeeds.id, { onDelete: "set null" }),
+    weight: numeric("weight"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [unique("uq_brand_os_seed_terms_set_term").on(table.seedSetId, table.term)]
+);
+
+export const brandOsLinks = pgTable(
+  "brand_os_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    brandOsProfileId: uuid("brand_os_profile_id")
+      .notNull()
+      .references(() => brandOsProfiles.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    relationType: text("relation_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_brand_os_links_source").on(table.sourceType, table.sourceId),
+    index("idx_brand_os_links_target").on(table.targetType, table.targetId),
+    unique("uq_brand_os_links_relation").on(table.sourceType, table.sourceId, table.targetType, table.targetId, table.relationType)
+  ]
+);
+
+export const knowledgeChunks = pgTable(
+  "knowledge_chunks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeSourceId: uuid("knowledge_source_id")
+      .notNull()
+      .references(() => brandKnowledgeSources.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    chunkText: text("chunk_text").notNull(),
+    tokenCount: integer("token_count"),
+    embeddingStatus: text("embedding_status").notNull().default("pending"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_knowledge_chunks_source").on(table.knowledgeSourceId, table.chunkIndex),
+    unique("uq_knowledge_chunks_source_index").on(table.knowledgeSourceId, table.chunkIndex)
+  ]
+);
+
+export const knowledgeAssertions = pgTable(
+  "knowledge_assertions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeSourceId: uuid("knowledge_source_id").references(() => brandKnowledgeSources.id, { onDelete: "set null" }),
+    assertionText: text("assertion_text").notNull(),
+    assertionType: text("assertion_type").notNull(),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+    confidence: text("confidence"),
+    status: text("status").notNull().default("candidate"),
+    evidence: jsonb("evidence").notNull().default(sql`'[]'::jsonb`),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_knowledge_assertions_source").on(table.knowledgeSourceId, table.status, table.assertionType),
+    unique("uq_knowledge_assertions_source_type_text").on(table.knowledgeSourceId, table.assertionType, table.assertionText)
+  ]
+);
+
+export const knowledgeAssertionLinks = pgTable(
+  "knowledge_assertion_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeAssertionId: uuid("knowledge_assertion_id")
+      .notNull()
+      .references(() => knowledgeAssertions.id, { onDelete: "cascade" }),
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    relationType: text("relation_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_knowledge_assertion_links_target").on(table.targetType, table.targetId),
+    unique("uq_knowledge_assertion_links_relation").on(table.knowledgeAssertionId, table.targetType, table.targetId, table.relationType)
+  ]
+);
+
+export const knowledgeAssertionReviewEvents = pgTable(
+  "knowledge_assertion_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeAssertionId: uuid("knowledge_assertion_id").references(() => knowledgeAssertions.id, { onDelete: "cascade" }),
+    reviewerUserId: uuid("reviewer_user_id").references(() => users.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    previousValue: jsonb("previous_value").notNull().default(sql`'{}'::jsonb`),
+    nextValue: jsonb("next_value").notNull().default(sql`'{}'::jsonb`),
+    notes: text("notes"),
+    createdAt: now()
+  },
+  (table) => [index("idx_knowledge_assertion_review_events_assertion").on(table.knowledgeAssertionId, table.createdAt)]
+);
+
+export const knowledgeUsageEvents = pgTable(
+  "knowledge_usage_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeSourceId: uuid("knowledge_source_id").references(() => brandKnowledgeSources.id, { onDelete: "set null" }),
+    knowledgeChunkId: uuid("knowledge_chunk_id").references(() => knowledgeChunks.id, { onDelete: "set null" }),
+    knowledgeAssertionId: uuid("knowledge_assertion_id").references(() => knowledgeAssertions.id, { onDelete: "set null" }),
+    engineAnalysisId: uuid("engine_analysis_id").references(() => engineAnalyses.id, { onDelete: "set null" }),
+    usageType: text("usage_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_knowledge_usage_analysis").on(table.engineAnalysisId, table.usageType),
+    index("idx_knowledge_usage_source").on(table.knowledgeSourceId, table.createdAt)
+  ]
+);
+
+export const taxonomies = pgTable(
+  "taxonomies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taxonomyKey: text("taxonomy_key").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description"),
+    scope: text("scope").notNull().default("global"),
+    methodologySlug: text("methodology_slug"),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [index("idx_taxonomies_scope").on(table.scope, table.methodologySlug, table.status)]
+);
+
+export const taxonomyTerms = pgTable(
+  "taxonomy_terms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taxonomyId: uuid("taxonomy_id")
+      .notNull()
+      .references(() => taxonomies.id, { onDelete: "cascade" }),
+    termKey: text("term_key").notNull(),
+    label: text("label").notNull(),
+    description: text("description"),
+    parentTermId: uuid("parent_term_id").references((): AnyPgColumn => taxonomyTerms.id, { onDelete: "set null" }),
+    sortOrder: integer("sort_order"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_taxonomy_terms_taxonomy_parent").on(table.taxonomyId, table.parentTermId, table.status),
+    unique("uq_taxonomy_terms_taxonomy_key").on(table.taxonomyId, table.termKey)
+  ]
+);
+
+export const taxonomyTermEdges = pgTable(
+  "taxonomy_term_edges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fromTermId: uuid("from_term_id")
+      .notNull()
+      .references(() => taxonomyTerms.id, { onDelete: "cascade" }),
+    toTermId: uuid("to_term_id")
+      .notNull()
+      .references(() => taxonomyTerms.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`)
+  },
+  (table) => [unique("uq_taxonomy_term_edges_relation").on(table.fromTermId, table.toTermId, table.relationType)]
+);
+
+export const methodologyTaxonomyBindings = pgTable(
+  "methodology_taxonomy_bindings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    methodologySlug: text("methodology_slug").notNull(),
+    taxonomyId: uuid("taxonomy_id")
+      .notNull()
+      .references(() => taxonomies.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    required: boolean("required").notNull().default(false),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`)
+  },
+  (table) => [unique("uq_methodology_taxonomy_bindings_role").on(table.methodologySlug, table.taxonomyId, table.role)]
+);
+
+export const taggingRuleSets = pgTable(
+  "tagging_rule_sets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ruleSetKey: text("rule_set_key").notNull(),
+    version: integer("version").notNull().default(1),
+    methodologySlug: text("methodology_slug"),
+    subjectType: text("subject_type").notNull().default("mention"),
+    scope: text("scope").notNull().default("global"),
+    taxonomyId: uuid("taxonomy_id").references(() => taxonomies.id, { onDelete: "set null" }),
+    rules: jsonb("rules").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_tagging_rule_sets_scope").on(table.scope, table.methodologySlug, table.subjectType, table.status),
+    index("idx_tagging_rule_sets_taxonomy").on(table.taxonomyId, table.status),
+    unique("uq_tagging_rule_sets_key_version").on(table.ruleSetKey, table.version)
+  ]
+);
+
+export const taggingModelVersions = pgTable(
+  "tagging_model_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    modelKey: text("model_key").notNull(),
+    provider: text("provider"),
+    version: text("version").notNull(),
+    methodologySlug: text("methodology_slug"),
+    taggingRuleSetId: uuid("tagging_rule_set_id").references(() => taggingRuleSets.id, { onDelete: "set null" }),
+    promptHash: text("prompt_hash"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [unique("uq_tagging_model_versions_key_version").on(table.modelKey, table.version)]
+);
+
+export const intelligenceEntities = pgTable(
+  "intelligence_entities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "cascade" }),
+    entityType: text("entity_type").notNull(),
+    canonicalName: text("canonical_name").notNull(),
+    externalId: text("external_id"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    index("idx_intelligence_entities_scope").on(table.organizationId, table.brandId, table.entityType, table.status),
+    uniqueIndex("uq_intelligence_entities_type_external")
+      .on(table.entityType, table.externalId)
+      .where(sql`${table.externalId} IS NOT NULL`)
+  ]
+);
+
+export const entityAliases = pgTable(
+  "entity_aliases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => intelligenceEntities.id, { onDelete: "cascade" }),
+    alias: text("alias").notNull(),
+    aliasType: text("alias_type"),
+    source: text("source"),
+    confidence: numeric("confidence"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_entity_aliases_alias").on(table.alias),
+    unique("uq_entity_aliases_entity_alias").on(table.entityId, table.alias)
+  ]
+);
+
+export const entityLinks = pgTable(
+  "entity_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceEntityId: uuid("source_entity_id")
+      .notNull()
+      .references(() => intelligenceEntities.id, { onDelete: "cascade" }),
+    targetEntityId: uuid("target_entity_id")
+      .notNull()
+      .references(() => intelligenceEntities.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [unique("uq_entity_links_relation").on(table.sourceEntityId, table.targetEntityId, table.relationType)]
+);
+
+export const recordEntityLinks = pgTable(
+  "record_entity_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => intelligenceEntities.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    confidence: text("confidence"),
+    evidence: jsonb("evidence").notNull().default(sql`'[]'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_record_entity_links_subject").on(table.subjectType, table.subjectId),
+    index("idx_record_entity_links_entity").on(table.entityId, table.relationType),
+    unique("uq_record_entity_links_subject_entity_relation").on(table.subjectType, table.subjectId, table.entityId, table.relationType)
+  ]
+);
+
+export const recordTags = pgTable(
+  "record_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    taxonomyTermId: uuid("taxonomy_term_id")
+      .notNull()
+      .references(() => taxonomyTerms.id, { onDelete: "cascade" }),
+    value: text("value"),
+    score: numeric("score"),
+    confidence: text("confidence"),
+    evidence: jsonb("evidence").notNull().default(sql`'[]'::jsonb`),
+    source: text("source").notNull().default("system"),
+    modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "set null" }),
+    tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    reviewStatus: text("review_status").notNull().default("unreviewed"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_record_tags_scope").on(table.studyCorpusId, table.subjectType, table.taxonomyTermId),
+    index("idx_record_tags_subject").on(table.subjectType, table.subjectId),
+    index("idx_record_tags_review").on(table.studyCorpusId, table.reviewStatus),
+    index("idx_record_tags_tb_analysis").on(table.tbAnalysisId, table.subjectType, table.taxonomyTermId),
+    unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source)
+  ]
+);
+
+export const recordFeatureValues = pgTable(
+  "record_feature_values",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    featureKey: text("feature_key").notNull(),
+    featureValue: jsonb("feature_value").notNull(),
+    valueType: text("value_type"),
+    confidence: text("confidence"),
+    source: text("source").notNull().default("system"),
+    modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "set null" }),
+    tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_record_feature_values_scope").on(table.studyCorpusId, table.subjectType, table.featureKey),
+    index("idx_record_feature_values_tb_analysis").on(table.tbAnalysisId, table.subjectType, table.featureKey),
+    unique("uq_record_feature_values_subject_key_source").on(table.subjectType, table.subjectId, table.featureKey, table.source)
+  ]
+);
+
+export const tagReviewEvents = pgTable(
+  "tag_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    recordTagId: uuid("record_tag_id").references(() => recordTags.id, { onDelete: "cascade" }),
+    reviewerUserId: uuid("reviewer_user_id").references(() => users.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    previousValue: jsonb("previous_value").notNull().default(sql`'{}'::jsonb`),
+    nextValue: jsonb("next_value").notNull().default(sql`'{}'::jsonb`),
+    notes: text("notes"),
+    createdAt: now()
+  },
+  (table) => [index("idx_tag_review_events_tag").on(table.recordTagId, table.createdAt)]
+);
+
+export const lineageEdges = pgTable(
+  "lineage_edges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceType: text("source_type").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    relationType: text("relation_type").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_lineage_edges_source").on(table.sourceType, table.sourceId),
+    index("idx_lineage_edges_target").on(table.targetType, table.targetId),
+    unique("uq_lineage_edges_relation").on(table.sourceType, table.sourceId, table.targetType, table.targetId, table.relationType)
+  ]
+);
+
+export const metricDefinitions = pgTable(
+  "metric_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    metricKey: text("metric_key").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description"),
+    grain: text("grain").notNull(),
+    unit: text("unit"),
+    definition: jsonb("definition").notNull(),
+    dimensions: jsonb("dimensions").notNull().default(sql`'[]'::jsonb`),
+    ownerTeam: text("owner_team"),
+    status: text("status").notNull().default("active"),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [index("idx_metric_definitions_status").on(table.status, table.grain)]
+);
+
+export const semanticModels = pgTable(
+  "semantic_models",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    modelKey: text("model_key").notNull().unique(),
+    name: text("name").notNull(),
+    baseAssetId: uuid("base_asset_id").references(() => dataAssets.id, { onDelete: "set null" }),
+    entities: jsonb("entities").notNull().default(sql`'[]'::jsonb`),
+    dimensions: jsonb("dimensions").notNull().default(sql`'[]'::jsonb`),
+    measures: jsonb("measures").notNull().default(sql`'[]'::jsonb`),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("active"),
+    createdAt: now()
+  },
+  (table) => [index("idx_semantic_models_status").on(table.status)]
+);
+
+export const metricMaterializations = pgTable(
+  "metric_materializations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    metricDefinitionId: uuid("metric_definition_id")
+      .notNull()
+      .references(() => metricDefinitions.id, { onDelete: "cascade" }),
+    semanticModelId: uuid("semantic_model_id").references(() => semanticModels.id, { onDelete: "set null" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    periodId: uuid("period_id").references(() => reportPeriods.id, { onDelete: "set null" }),
+    filtersHash: text("filters_hash").notNull().default("default"),
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+    staleAfter: timestamp("stale_after", { withTimezone: true })
+  },
+  (table) => [
+    index("idx_metric_materializations_lookup").on(table.studyCorpusId, table.metricDefinitionId, table.periodId),
+    unique("uq_metric_materializations_ref").on(table.metricDefinitionId, table.studyCorpusId, table.periodId, table.filtersHash)
+  ]
+);
+
+export const dashboardDataRefs = pgTable(
+  "dashboard_data_refs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outputId: uuid("output_id").references(() => publishedOutputs.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    refKey: text("ref_key").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceId: uuid("source_id"),
+    filters: jsonb("filters").notNull().default(sql`'{}'::jsonb`),
+    visibility: jsonb("visibility").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_dashboard_data_refs_corpus").on(table.studyCorpusId, table.refKey),
+    unique("uq_dashboard_data_refs_output_key").on(table.outputId, table.refKey)
   ]
 );
 

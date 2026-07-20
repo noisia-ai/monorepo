@@ -1,0 +1,58 @@
+# CODEOWNERS — mandatory review routing for sensitive paths.
+# Any PR touching a path below REQUIRES review from the listed owner before merge.
+# Pair this with a branch protection rule / ruleset on `main`:
+#   - Require a pull request before merging
+#   - Require review from Code Owners
+#   - Require status checks to pass (the `ci` workflow)
+#   - Do not allow bypassing the above settings
+# See docs/AGENT_GUARDRAILS.md.
+#
+# Replace @noisia-ai with the real owner team/handles as the team grows.
+
+# Default owner for everything
+*                                   @noisia-ai
+
+# --- Security-critical: authentication & authorization (NEVER edit casually) ---
+/apps/studio/src/lib/auth/          @noisia-ai
+/apps/studio/src/middleware.ts      @noisia-ai
+
+# --- Database schema & migrations (irreversible in prod; drizzle meta is drifted) ---
+/infrastructure/db/                 @noisia-ai
+
+# --- Data OS and live serving (shadow/serving gates + payload fallback) ---
+/apps/studio/src/app/api/data-os/   @noisia-ai
+/apps/studio/src/lib/data-os/       @noisia-ai
+/apps/studio/src/lib/queue/data-os.ts @noisia-ai
+/apps/studio/scripts/data-os-serving-smoke.ts @noisia-ai
+/docs/product/22_NOISIA_DATA_OS_CUT_1.md @noisia-ai
+/docs/product/23_NOISIA_DATA_OS_STAGING_RUNBOOK.md @noisia-ai
+/docs/adr/007-noisia-data-os-cut-1.md @noisia-ai
+
+# --- Public-facing API (external contract + visibility redaction) ---
+/apps/studio/src/app/api/public/    @noisia-ai
+/apps/studio/src/lib/reporting/     @noisia-ai
+/docs/api/                          @noisia-ai
+
+# --- Team / privilege management (privilege-escalation surface) ---
+/apps/studio/src/app/api/team/      @noisia-ai
+/apps/studio/src/lib/data/team.ts   @noisia-ai
+
+# --- Money-spending pipelines (LLM cost) ---
+/apps/studio/src/app/api/corpora/   @noisia-ai
+/packages/query-engine/             @noisia-ai
+/services/workers/                  @noisia-ai
+
+# --- Pitch kit: engine/builders need review; the slide library is open to the
+#     commercial team so they can contribute slides without waiting on a review.
+#     (slides/** still passes CI + secret-scan; a no-owner line removes the gate.)
+/packages/pitch-kit/                @noisia-ai
+/packages/pitch-kit/slides/
+
+# --- Agent config, CI, deploy, and the guardrails themselves ---
+/.github/                           @noisia-ai
+/AGENTS.md                          @noisia-ai
+/**/AGENTS.md                       @noisia-ai
+/docs/AGENT_GUARDRAILS.md           @noisia-ai
+/.gitignore                         @noisia-ai
+/supabase/config.toml               @noisia-ai
+/turbo.json                         @noisia-ai

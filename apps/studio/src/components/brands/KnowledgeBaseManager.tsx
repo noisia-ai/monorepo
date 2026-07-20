@@ -95,69 +95,88 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
-      <form className="knowledge-editor-card" onSubmit={addSource}>
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{t("fieldTitle")}</span>
-            <input className="filter-input new-study-input" name="title" placeholder={t("fieldTitlePlaceholder")} required />
+      <details className="knowledge-add-shell">
+        <summary>
+          <span>{t("addNew")}</span>
+          <Icon name="chevron-down" size={14} />
+        </summary>
+        <form className="knowledge-editor-card knowledge-editor-card--new" onSubmit={addSource}>
+          <div className="new-study-grid">
+            <label className="new-study-field">
+              <span>{t("fieldTitle")}</span>
+              <input className="filter-input new-study-input" name="title" placeholder={t("fieldTitlePlaceholder")} required />
+            </label>
+            <label className="new-study-field">
+              <span>{t("type")}</span>
+              <select className="filter-input new-study-input" name="source_kind" defaultValue="brand_brief">
+                <option value="brand_brief">Brand brief</option>
+                <option value="campaign_brief">Campaign brief</option>
+                <option value="market_notes">Market notes</option>
+                <option value="competitive_notes">Competitive notes</option>
+                <option value="always_on_context">Always-on context</option>
+              </select>
+            </label>
+          </div>
+          <label className="new-study-field new-study-field--wide">
+            <span>{t("content")}</span>
+            <textarea className="filter-input new-study-textarea" name="raw_text" required placeholder={t("contentPlaceholder")} rows={4} />
           </label>
-          <label className="new-study-field">
-            <span>{t("type")}</span>
-            <select className="filter-input new-study-input" name="source_kind" defaultValue="brand_brief">
-              <option value="brand_brief">Brand brief</option>
-              <option value="campaign_brief">Campaign brief</option>
-              <option value="market_notes">Market notes</option>
-              <option value="competitive_notes">Competitive notes</option>
-              <option value="always_on_context">Always-on context</option>
-            </select>
-          </label>
-        </div>
-        <label className="new-study-field new-study-field--wide">
-          <span>{t("content")}</span>
-          <textarea className="filter-input new-study-textarea" name="raw_text" required placeholder={t("contentPlaceholder")} />
-        </label>
-        <div className="knowledge-editor-actions">
-          <button className="wizard-cta wizard-cta--secondary" type="submit" disabled={isAdding}>
-            <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
-          </button>
-        </div>
-      </form>
+          <div className="knowledge-editor-actions">
+            <button className="brand-os-action brand-os-action--secondary" type="submit" disabled={isAdding}>
+              <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
+            </button>
+          </div>
+        </form>
+      </details>
 
       <div className="knowledge-editor-list">
         {sources.length === 0 ? (
           <p className="new-study-helper">{t("empty")}</p>
         ) : (
           sources.map((source) => (
-            <form className="knowledge-editor-card" key={source.id} onSubmit={(event) => saveSource(event, source.id)}>
-              <div className="new-study-grid">
-                <label className="new-study-field">
-                  <span>{t("fieldTitle")}</span>
-                  <input className="filter-input new-study-input" name="title" defaultValue={source.title} required />
+            <details className="knowledge-source-card" key={source.id}>
+              <summary>
+                <span>
+                  <strong>{source.title}</strong>
+                  <small>{source.sourceKind} · {source.status}</small>
+                </span>
+                <Icon name="chevron-down" size={14} />
+              </summary>
+              <p className="knowledge-source-preview">{source.rawText ? compactText(source.rawText) : t("emptySource")}</p>
+              <form className="knowledge-source-edit" onSubmit={(event) => saveSource(event, source.id)}>
+                <div className="new-study-grid">
+                  <label className="new-study-field">
+                    <span>{t("fieldTitle")}</span>
+                    <input className="filter-input new-study-input" name="title" defaultValue={source.title} required />
+                  </label>
+                  <label className="new-study-field">
+                    <span>{t("type")}</span>
+                    <input className="filter-input new-study-input" name="source_kind" defaultValue={source.sourceKind} required />
+                  </label>
+                </div>
+                <label className="new-study-field new-study-field--wide">
+                  <span>{t("content")}</span>
+                  <textarea className="filter-input new-study-textarea" name="raw_text" defaultValue={source.rawText ?? ""} required rows={5} />
                 </label>
-                <label className="new-study-field">
-                  <span>{t("type")}</span>
-                  <input className="filter-input new-study-input" name="source_kind" defaultValue={source.sourceKind} required />
-                </label>
-              </div>
-              <label className="new-study-field new-study-field--wide">
-                <span>{t("content")}</span>
-                <textarea className="filter-input new-study-textarea" name="raw_text" defaultValue={source.rawText ?? ""} required />
-              </label>
-              <div className="knowledge-editor-actions">
-                <span>{source.status}</span>
-                <button className="wizard-cta wizard-cta--ghost" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
-                  <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}
-                </button>
-                <button className="wizard-cta" type="submit" disabled={pendingId === source.id}>
-                  <Icon name={pendingId === source.id ? "spinner" : "check"} size={13} /> {t("save")}
-                </button>
-              </div>
-            </form>
+                <div className="knowledge-editor-actions">
+                  <button className="brand-os-action brand-os-action--tertiary brand-os-action--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
+                    <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}
+                  </button>
+                  <button className="brand-os-action brand-os-action--primary" type="submit" disabled={pendingId === source.id}>
+                    <Icon name={pendingId === source.id ? "spinner" : "check"} size={13} /> {t("save")}
+                  </button>
+                </div>
+              </form>
+            </details>
           ))
         )}
       </div>
     </section>
   );
+}
+
+function compactText(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 380);
 }
 
 function payloadFromForm(form: FormData) {

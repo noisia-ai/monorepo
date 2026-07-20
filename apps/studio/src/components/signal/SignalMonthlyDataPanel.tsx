@@ -55,7 +55,7 @@ const copy = {
   en: {
     eyebrow: "Admin only",
     title: "Add monthly data",
-    body: "Upload a SentiOne CSV into the live corpus. Corpus Explorer updates immediately; signals, history and composer update after the next analysis/backfill labels the new mentions.",
+    body: "Upload a social-listening CSV into the live corpus. Corpus Explorer updates immediately; signals, history and composer update after the next analysis/backfill labels the new mentions.",
     period: "Month",
     target: "Where should this CSV live?",
     studyTarget: "Brand / study corpus",
@@ -88,7 +88,7 @@ const copy = {
   es: {
     eyebrow: "Sólo admin",
     title: "Agregar data mensual",
-    body: "Sube un CSV de SentiOne al corpus vivo. Corpus Explorer se actualiza de inmediato; signals, history y composer se actualizan cuando el siguiente análisis/backfill etiquete esas menciones.",
+    body: "Sube un CSV de listening al corpus vivo. Corpus Explorer se actualiza de inmediato; signals, history y composer se actualizan cuando el siguiente análisis/backfill etiquete esas menciones.",
     period: "Mes",
     target: "¿Dónde vive este CSV?",
     studyTarget: "Corpus de marca / estudio",

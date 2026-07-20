@@ -43,7 +43,7 @@ const [batch] = await db
     entityLabel,
     corpusEntityId: corpusEntityId || undefined,
     competitorId: competitorId || undefined,
-    sourceSystem: "sentione_csv",
+    sourceSystem: "listening_csv",
     sourceFileName,
     sourceFileHash: "pending",
     status: "processing"

@@ -5,12 +5,23 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { pool } from "@/lib/db";
 import { isUndefinedTableError } from "@/lib/db/errors";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import { getPublishedCorpusExplorer } from "@/lib/data-os/published-corpus-explorer";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
 import { buildCorpusExplorerSql } from "@/lib/live-intelligence/corpus-explorer";
+import {
+  hasSignalServingContract,
+  SIGNAL_SERVING_CONTRACT_VERSION
+} from "@/lib/signal/semantics";
 
 const querySchema = z.object({
   q: z.string().max(500).optional().default(""),
   platform: z.string().max(80).optional().default(""),
   finding: z.string().max(80).optional().default(""),
+  tag: z.string().max(160).optional().default(""),
+  feature: z.string().max(160).optional().default(""),
   lens: z.string().max(120).optional().default(""),
   signalIntent: z.string().max(120).optional().default(""),
   entity: z.string().max(160).optional().default(""),
@@ -61,6 +72,78 @@ export async function handleCorpusExplorerRequest(
     ...parsed.data,
     lens: options.forcedLensSlug ?? parsed.data.lens
   };
+
+  if (options.canonicalMethodologySlug !== "signal-pulse") {
+    if (!output.snapshotId || !output.tbAnalysisId) {
+      return Response.json(
+        {
+          error: "published_contract_incomplete",
+          message: "This Signal output has no approved snapshot or reviewed analysis.",
+          contract_version: SIGNAL_SERVING_CONTRACT_VERSION,
+          missing: [
+            ...(!output.snapshotId ? ["snapshot_id"] : []),
+            ...(!output.tbAnalysisId ? ["tb_analysis_id"] : [])
+          ]
+        },
+        { status: 409, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    try {
+      if (hasSignalServingContract(output.manifest)) {
+        const readiness = await getSignalServingReadiness({
+          analysisId: output.tbAnalysisId,
+          snapshotId: output.snapshotId,
+          outputId,
+          requireDataRefs: true
+        });
+        const assessment = assessSignalServingReadiness(readiness);
+        if (!assessment.ready) {
+          return Response.json(
+            {
+              error: "signal_serving_not_ready",
+              message: "The published Signal output does not satisfy its relational serving contract.",
+              contract_version: SIGNAL_SERVING_CONTRACT_VERSION,
+              hard_blocks: assessment.hardBlocks,
+              warnings: assessment.warnings,
+              readiness
+            },
+            { status: 409, headers: { "Cache-Control": "no-store" } }
+          );
+        }
+      }
+
+      const explorer = await getPublishedCorpusExplorer({
+        snapshotId: output.snapshotId,
+        analysisId: output.tbAnalysisId,
+        filters: {
+          q: filters.q,
+          platform: filters.platform,
+          finding: filters.finding,
+          tag: filters.tag,
+          feature: filters.feature,
+          entity: filters.entity,
+          evidenceRole: filters.evidenceRole,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          sort: filters.sort,
+          page: filters.page,
+          limit: filters.limit
+        }
+      });
+      return Response.json(explorer, { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      if (!isUndefinedTableError(error)) throw error;
+      return Response.json(
+        {
+          error: "data_os_schema_missing",
+          message: options.schemaMissingMessage ?? "The published Data OS serving schema is not available yet."
+        },
+        { status: 503, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+  }
+
   const scopedCorpusIds = Array.from(new Set([output.studyCorpusId, output.baseCorpusId].flatMap((id) => id ? [id] : [])));
   const corpusSql = buildCorpusExplorerSql({ scopedCorpusIds, filters });
   const canonicalSignalIdSelect = options.canonicalMethodologySlug === "signal-pulse"

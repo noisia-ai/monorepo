@@ -50,6 +50,7 @@ type ImportBatchProvenanceRow = {
   query_pack_lens_slug: string | null;
   query_pack_signal_intent: string | null;
   query_pack_scope: string | null;
+  query_pack_entity_key: string | null;
   query_pack_query_text: string | null;
   query_pack_query_components: Record<string, unknown> | null;
   query_pack_seeds: Record<string, unknown> | null;
@@ -297,7 +298,7 @@ function toInsertValue(
   return {
     studyCorpusId: params.corpusId,
     externalId: `${params.corpusId}:${m.externalId}`.slice(0, 500),
-    sourceSystem: "sentione_csv",
+    sourceSystem: "listening_csv",
     sourceFileId: params.importBatchId,
     textHash: m.textHash,
     textRaw: m.textRaw,
@@ -428,6 +429,7 @@ async function attachMentionQueryProvenance(params: {
         qp.lens_slug AS query_pack_lens_slug,
         qp.signal_intent AS query_pack_signal_intent,
         qp.scope AS query_pack_scope,
+        qp.entity_key AS query_pack_entity_key,
         qp.query_text AS query_pack_query_text,
         qp.query_components AS query_pack_query_components,
         qp.seeds AS query_pack_seeds,
@@ -459,10 +461,14 @@ async function attachMentionQueryProvenance(params: {
   const scope = batch.query_pack_scope || resolveQueryScope(batch);
   const signalIntent = batch.query_pack_signal_intent || resolveSignalIntent(batch, scope);
   const lensSlug = batch.query_pack_lens_slug || batch.methodology_slug || "triggers-barriers";
+  const entityKey = batch.query_pack_id
+    ? batch.query_pack_entity_key
+    : batch.query_pack_entity_key || resolveQueryPackEntityKey(batch, scope);
   const queryPackId = batch.query_pack_id ?? (await getOrCreateQueryPack(batch, {
     lensSlug,
     scope,
     signalIntent,
+    entityKey,
     queryText: batch.query_pack_query_text || resolveQueryText(batch, scope)
   }));
   if (!queryPackId) {
@@ -479,21 +485,26 @@ async function attachMentionQueryProvenance(params: {
     query_pack_lens_slug: batch.query_pack_lens_slug,
     query_pack_signal_intent: batch.query_pack_signal_intent,
     query_pack_scope: batch.query_pack_scope,
-    fanout_strategy: "same_iteration_same_scope"
+    query_pack_entity_key: entityKey,
+    fanout_strategy: entityKey ? "same_iteration_same_entity" : "primary_pack_only"
   };
 
   await pool.query(
     `
       WITH target_packs AS (
-        SELECT id, query_iteration_id, lens_slug, signal_intent, scope
+        SELECT id, query_iteration_id, lens_slug, signal_intent, scope, entity_key
         FROM query_packs
         WHERE study_corpus_id = $2::uuid
           AND scope = $6
           AND (
             id = $3::uuid
             OR (
-              (query_iteration_id IS NULL AND $4::uuid IS NULL)
-              OR query_iteration_id = $4::uuid
+              $10::text IS NOT NULL
+              AND entity_key = $10
+              AND (
+                (query_iteration_id IS NULL AND $4::uuid IS NULL)
+                OR query_iteration_id = $4::uuid
+              )
             )
           )
       ),
@@ -556,19 +567,21 @@ async function attachMentionQueryProvenance(params: {
       scope,
       batch.corpus_entity_id,
       resolveEntityId(batch, scope),
-      JSON.stringify(metadata)
+      JSON.stringify(metadata),
+      entityKey
     ]
   );
 }
 
 async function getOrCreateQueryPack(
   batch: ImportBatchProvenanceRow,
-  input: { lensSlug: string; scope: string; signalIntent: string; queryText: string | null }
+  input: { lensSlug: string; scope: string; signalIntent: string; entityKey: string | null; queryText: string | null }
 ) {
   const existing = await findQueryPack(batch, input);
   if (existing) return existing;
 
   const seeds = {
+    ...(batch.query_pack_seeds ?? {}),
     source: "csv_ingest",
     mention_type: batch.mention_type,
     entity_kind: batch.entity_kind,
@@ -590,6 +603,7 @@ async function getOrCreateQueryPack(
         lens_slug,
         signal_intent,
         scope,
+        entity_key,
         objective,
         query_text,
         query_components,
@@ -612,17 +626,18 @@ async function getOrCreateQueryPack(
         $5,
         $6,
         $7,
-        $8::jsonb,
+        $8,
         $9::jsonb,
         $10::jsonb,
+        $11::jsonb,
         'imported',
         0,
-        $11::numeric,
         $12::numeric,
         $13::numeric,
-        $14::uuid,
-        $15::timestamptz,
-        $15::timestamptz
+        $14::numeric,
+        $15::uuid,
+        $16::timestamptz,
+        $16::timestamptz
       )
       ON CONFLICT DO NOTHING
       RETURNING id
@@ -633,9 +648,10 @@ async function getOrCreateQueryPack(
       input.lensSlug,
       input.signalIntent,
       input.scope,
+      input.entityKey,
       `Imported CSV provenance for ${input.scope} / ${input.signalIntent}`,
       input.queryText,
-      JSON.stringify(batch.query_components ?? {}),
+      JSON.stringify(batch.query_pack_query_components ?? batch.query_components ?? {}),
       JSON.stringify(seeds),
       JSON.stringify(evaluation),
       batch.quality_score,
@@ -651,7 +667,7 @@ async function getOrCreateQueryPack(
 
 async function findQueryPack(
   batch: ImportBatchProvenanceRow,
-  input: { lensSlug: string; scope: string; signalIntent: string }
+  input: { lensSlug: string; scope: string; signalIntent: string; entityKey: string | null }
 ) {
   const existing = await pool.query<{ id: string }>(
     `
@@ -661,13 +677,14 @@ async function findQueryPack(
         AND lens_slug = $3
         AND signal_intent = $4
         AND scope = $5
+        AND COALESCE(entity_key, '') = COALESCE($6, '')
         AND (
           (query_iteration_id IS NULL AND $2::uuid IS NULL)
           OR query_iteration_id = $2::uuid
         )
       LIMIT 1
     `,
-    [batch.study_corpus_id, batch.query_iteration_id, input.lensSlug, input.signalIntent, input.scope]
+    [batch.study_corpus_id, batch.query_iteration_id, input.lensSlug, input.signalIntent, input.scope, input.entityKey]
   );
 
   return existing.rows[0]?.id ?? null;
@@ -691,9 +708,20 @@ function resolveSignalIntent(_batch: ImportBatchProvenanceRow, scope: string) {
 }
 
 function resolveQueryText(batch: ImportBatchProvenanceRow, scope: string) {
+  if (batch.query_pack_query_text?.trim()) return batch.query_pack_query_text.trim();
   if (scope === "competitors") return batch.competitor_query_text || batch.query_text;
   if (scope === "category") return batch.industry_query_text || batch.query_text;
   return batch.query_text;
+}
+
+function resolveQueryPackEntityKey(batch: ImportBatchProvenanceRow, scope: string) {
+  const componentKey = batch.query_pack_query_components?.entity_key
+    ?? batch.query_components?.entity_key;
+  if (typeof componentKey === "string" && componentKey.trim()) return componentKey.trim();
+  if (scope === "brand") return "brand";
+  if (scope === "category" || scope === "baseline") return scope;
+  if (scope === "competitors" && batch.entity_label) return `competitor:${slugify(batch.entity_label)}`;
+  return null;
 }
 
 function resolveEntityId(batch: ImportBatchProvenanceRow, scope: string) {

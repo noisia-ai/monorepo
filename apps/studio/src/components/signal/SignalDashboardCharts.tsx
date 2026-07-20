@@ -36,6 +36,7 @@ type SignalDashboardChartsProps = {
     barriersTotal: number;
     triggersTotal: number;
     movableTotal: number;
+    opportunitiesTotal: number;
   };
   polarityDist: ChartRecord[];
   layerDist: ChartRecord[];
@@ -106,6 +107,7 @@ const chartCopy = {
     unavailable: "Dashboard temporarily unavailable",
     unavailableBody: "The report is still loaded; a visualization failed in the browser.",
     unavailableHint: "Refresh and try again. If it persists, the team can inspect the console without blocking the rest of Signal.",
+    relationalRefreshFailed: "The governed view could not refresh. The last relational server cut remains visible.",
     contextAria: "Analysis context",
     publishedMentions: "published mentions",
     cutSummary: "Live corpus summary",
@@ -115,7 +117,7 @@ const chartCopy = {
     clientSafeFindings: "Client-safe findings",
     triggersOfFindings: "of findings",
     opportunities: "Opportunities",
-    movableByBrand: "movable by brand",
+    structuredRecommendations: "Structured recommendations",
     confidence: "Confidence",
     signalsOverTime: "Signals over time",
     temporalFilter: "Date filter",
@@ -175,6 +177,7 @@ const chartCopy = {
     unavailable: "Dashboard temporalmente no disponible",
     unavailableBody: "El reporte sigue cargado; una visualización falló en el navegador.",
     unavailableHint: "Reintenta con refresh. Si persiste, el equipo puede revisar la consola sin bloquear el resto del Signal.",
+    relationalRefreshFailed: "No se pudo actualizar la vista gobernada. Se mantiene visible el último corte relacional del servidor.",
     contextAria: "Contexto del análisis",
     publishedMentions: "menciones del corpus",
     cutSummary: "Resumen vivo del corpus",
@@ -184,7 +187,7 @@ const chartCopy = {
     clientSafeFindings: "Hallazgos client-safe",
     triggersOfFindings: "de hallazgos",
     opportunities: "Oportunidades",
-    movableByBrand: "movibles por marca",
+    structuredRecommendations: "Recomendaciones estructuradas",
     confidence: "Confianza",
     signalsOverTime: "Señales en el tiempo",
     temporalFilter: "Filtro temporal",
@@ -309,21 +312,27 @@ function SignalDashboardChartsInner({
   const copy = chartCopy[uiLanguage];
   const [livePayload, setLivePayload] = useState<LiveOverviewPayload | null>(null);
   const [isLiveLoading, setIsLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!outputId) return;
     const controller = new AbortController();
     setIsLiveLoading(true);
+    setLiveError(null);
     fetch(`/api/signal/${outputId}/overview${queryString ? `?${queryString}` : ""}`, { cache: "no-store", signal: controller.signal })
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Overview request failed: ${res.status}`)))
-      .then((data) => setLivePayload(normalizeLiveOverview(data)))
+      .then((data) => {
+        setLivePayload(normalizeLiveOverview(data));
+        setLiveError(null);
+      })
       .catch((error) => {
         if (error instanceof Error && error.name === "AbortError") return;
         setLivePayload(null);
+        setLiveError(copy.relationalRefreshFailed);
       })
       .finally(() => setIsLiveLoading(false));
     return () => controller.abort();
-  }, [outputId, queryString]);
+  }, [copy.relationalRefreshFailed, outputId, queryString]);
 
   const live = livePayload?.ok ? livePayload : null;
   const activeCorpusTotal = live?.corpus.total_mentions ?? corpusTotal;
@@ -350,7 +359,6 @@ function SignalDashboardChartsInner({
   const polarity = normalizePolarityData(activePolarityDist, uiLanguage);
   const triggerPct = Math.round((activeMetrics.triggersTotal / Math.max(1, activeMetrics.findingsTotal)) * 100);
   const barrierPct = Math.round((activeMetrics.barriersTotal / Math.max(1, activeMetrics.findingsTotal)) * 100);
-  const movablePct = Math.round((activeMetrics.movableTotal / Math.max(1, activeMetrics.findingsTotal)) * 100);
   const markers = buildTimelineMarkers(timeline, [...topBarriers, ...activeTopVoice].slice(0, 4), uiLanguage);
   const filteredMentionTotal = timeline.reduce((sum, row) => sum + row.mentions, 0);
   const topTemporalFindings = buildTopTemporalFindings(filteredFindingSeries);
@@ -371,6 +379,13 @@ function SignalDashboardChartsInner({
         <span>{liveWindowLabel}</span>
         <span>{formatNumber(activeCorpusTotal)} {copy.publishedMentions}{isLiveLoading ? " · live..." : ""}</span>
       </div>
+
+      {liveError ? (
+        <div className="signal-serving-warning" role="status">
+          <Activity aria-hidden="true" size={15} />
+          <span>{liveError}</span>
+        </div>
+      ) : null}
 
       <div className="signal-kpi-row signal-kpi-row--six" aria-label={copy.cutSummary}>
         <KpiCard
@@ -403,11 +418,9 @@ function SignalDashboardChartsInner({
         />
         <KpiCard
           label={copy.opportunities}
-          value={formatNumber(activeMetrics.movableTotal)}
-          sub={`${movablePct}% ${copy.movableByBrand}`}
-          radialValue={movablePct}
+          value={formatNumber(activeMetrics.opportunitiesTotal)}
+          sub={copy.structuredRecommendations}
           icon={<MessageCircle size={15} />}
-          radialTone="signal"
         />
         <KpiCard
           label={copy.confidence}
@@ -989,7 +1002,8 @@ function normalizeLiveOverview(input: unknown): LiveOverviewPayload {
       findingsTotal: numberValue(metrics.findings_total ?? metrics.findingsTotal),
       barriersTotal: numberValue(metrics.barriers_total ?? metrics.barriersTotal),
       triggersTotal: numberValue(metrics.triggers_total ?? metrics.triggersTotal),
-      movableTotal: numberValue(metrics.movable_total ?? metrics.movableTotal)
+      movableTotal: numberValue(metrics.movable_total ?? metrics.movableTotal),
+      opportunitiesTotal: numberValue(metrics.opportunities_total ?? metrics.opportunitiesTotal)
     },
     polarity_distribution: arrayValue(value.polarity_distribution),
     layer_distribution: arrayValue(value.layer_distribution),

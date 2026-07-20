@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getDatabaseSslConfig } from "../seeds/connection.js";
+import { getDatabaseSslConfig, requireRemoteDatabaseTarget } from "../seeds/connection.js";
 import { requireEnv } from "../seeds/env.js";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -13,6 +13,9 @@ function requireLocalDatabase(databaseUrl: string) {
   const allowRemote = process.env.NOISIA_DB_SMOKE_ALLOW_REMOTE === "true";
 
   if (allowRemote || LOCAL_HOSTS.has(parsed.hostname)) {
+    if (allowRemote && !LOCAL_HOSTS.has(parsed.hostname)) {
+      requireRemoteDatabaseTarget(databaseUrl, "db:smoke:migrations");
+    }
     return;
   }
 
@@ -92,7 +95,29 @@ async function verifySchema(client: pg.Client) {
     "signal_period_metrics",
     "marketing_moves",
     "chart_aggregates",
-    "performance_records"
+    "performance_records",
+    "data_assets",
+    "data_contracts",
+    "data_quality_results",
+    "brand_os_profiles",
+    "brand_os_objectives",
+    "brand_os_campaigns",
+    "knowledge_chunks",
+    "knowledge_assertions",
+    "knowledge_assertion_review_events",
+    "taxonomies",
+    "taxonomy_terms",
+    "tagging_rule_sets",
+    "tagging_model_versions",
+    "intelligence_entities",
+    "record_entity_links",
+    "record_tags",
+    "record_feature_values",
+    "lineage_edges",
+    "metric_definitions",
+    "semantic_models",
+    "metric_materializations",
+    "dashboard_data_refs"
   ];
   const requiredIndexes = [
     "idx_engine_analyses_corpus",
@@ -108,7 +133,19 @@ async function verifySchema(client: pg.Client) {
     "idx_signal_period_metrics_corpus_period",
     "idx_marketing_moves_engine",
     "idx_chart_aggregates_lookup",
-    "idx_performance_records_date"
+    "idx_performance_records_date",
+    "idx_data_assets_scope",
+    "idx_data_quality_results_asset",
+    "idx_brand_os_profiles_scope",
+    "idx_knowledge_chunks_source",
+    "idx_taxonomies_scope",
+    "idx_taxonomy_terms_taxonomy_parent",
+    "idx_tagging_rule_sets_scope",
+    "idx_intelligence_entities_scope",
+    "idx_record_tags_subject",
+    "idx_lineage_edges_source",
+    "idx_metric_materializations_lookup",
+    "idx_dashboard_data_refs_corpus"
   ];
 
   const tables = await client.query<{ table_name: string }>(

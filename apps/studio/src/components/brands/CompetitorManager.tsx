@@ -80,15 +80,18 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
   }
 
   return (
-    <section className="dash-section">
-      <header className="dash-section-head competitor-manager-head">
+    <section className="brand-os-module competitor-manager">
+      <header className="brand-os-module-head competitor-manager-head">
         <div>
+          <p className="vitals-eyebrow">{t("eyebrow")}</p>
           <h2>{t("title", { count: competitors.length })}</h2>
           <p>{t("subtitle")}</p>
         </div>
-        <button className="wizard-cta wizard-cta--ghost" type="button" onClick={clearAll} disabled={isClearing || competitors.length === 0}>
-          <Icon name={isClearing ? "spinner" : "x"} size={13} /> {t("clear")}
-        </button>
+        {competitors.length > 0 ? (
+          <button className="brand-os-action brand-os-action--tertiary brand-os-action--danger" type="button" onClick={clearAll} disabled={isClearing}>
+            <Icon name={isClearing ? "spinner" : "x"} size={13} /> {t("clear")}
+          </button>
+        ) : null}
       </header>
       {error && (
         <p className="new-study-error competitor-manager-error">
@@ -101,36 +104,41 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
           <textarea
             className="filter-input new-study-textarea new-study-textarea--short"
             name="competitors"
-            placeholder={"Ulta Beauty\nLiverpool\nPalacio de Hierro"}
+            placeholder={t("addPlaceholder")}
+            rows={2}
           />
           <small className="new-study-hint">{t("hint")}</small>
         </label>
-        <button className="wizard-cta wizard-cta--secondary" type="submit" disabled={isAdding}>
+        <button className="brand-os-action brand-os-action--secondary" type="submit" disabled={isAdding}>
           <Icon name={isAdding ? "spinner" : "tag"} size={13} /> {t("add")}
         </button>
       </form>
-      <div className="competitor-chips competitor-chips--managed">
-        {competitors.map((competitor) => (
-          <div className="competitor-chip competitor-chip--managed" key={competitor.id}>
-            <span className="competitor-chip-rank">#{competitor.priority ?? "—"}</span>
-            <span className="competitor-chip-name">{competitor.canonicalName}</span>
-            {(competitor.vertical || competitor.subVertical) && (
-              <span className="competitor-chip-vertical">
-                {[competitor.vertical, competitor.subVertical].filter(Boolean).join(" / ")}
-              </span>
-            )}
-            <button
-              className="competitor-chip-remove"
-              type="button"
-              aria-label={t("deleteAria", { name: competitor.canonicalName })}
-              onClick={() => removeOne(competitor.id)}
-              disabled={pendingId === competitor.id || isClearing}
-            >
-              <Icon name={pendingId === competitor.id ? "spinner" : "x"} size={12} />
-            </button>
-          </div>
-        ))}
-      </div>
+      {competitors.length === 0 ? (
+        <div className="brand-os-empty-state">
+          <Icon name="info" size={18} />
+          <p>{t("empty")}</p>
+        </div>
+      ) : (
+        <ul className="competitor-grid">
+          {competitors.map((competitor) => (
+            <li key={competitor.id}>
+              <article className="competitor-card">
+                <span className="competitor-card-rank">#{competitor.priority ?? "—"}</span>
+                <strong title={competitor.canonicalName}>{competitor.canonicalName}</strong>
+                <button
+                  className="competitor-chip-remove"
+                  type="button"
+                  aria-label={t("deleteAria", { name: competitor.canonicalName })}
+                  onClick={() => removeOne(competitor.id)}
+                  disabled={pendingId === competitor.id || isClearing}
+                >
+                  <Icon name={pendingId === competitor.id ? "spinner" : "x"} size={12} />
+                </button>
+              </article>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

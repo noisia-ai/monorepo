@@ -128,7 +128,9 @@ node -v && pnpm -v && docker -v && git --version
 
 ### 1.9 Cuentas pendientes (para después)
 
-- **SentiOne API:** comprar después de validar MVP funcional con CSV. Pricing on-request directo con SentiOne (típicamente $500-2000/mes).
+- **APIs de proveedores de listening:** diferidas. El flujo productivo actual genera queries
+  provider-neutral, recibe exportaciones CSV por query pack y valida la evidencia importada.
+  Una integración futura deberá ser por conector/proyecto y no cambiar este contrato.
 - **Datashake:** post-MVP. Pricing por volumen.
 - **Apify:** post-MVP cuando necesitemos integraciones one-off. $49/mes plan starter.
 - **Twilio o Meta Business:** postpuesto con WhatsApp.

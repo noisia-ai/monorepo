@@ -9,6 +9,14 @@ import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { getDraftSignalOutput } from "@/lib/data/signal";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
+import {
+  loadPublishedSignalOverview,
+  mapPublishedSignalOpportunities
+} from "@/lib/data-os/published-signal-overview";
 import { pool } from "@/lib/db";
 import { buildSignalPayload } from "@/lib/signal/build";
 
@@ -37,6 +45,42 @@ export default async function TbAnalysisReviewPage({
 
   const { analysis, recommendations, gates, findingSummary } = state;
   const draftOutput = await getDraftSignalOutput(analysis.id);
+  let relationalOverview = null;
+  let relationalOverviewError: string | null = null;
+
+  if (analysis.snapshotId) {
+    try {
+      relationalOverview = await loadPublishedSignalOverview({
+        snapshotId: analysis.snapshotId,
+        analysisId: analysis.id,
+        corpusId: corpus.id,
+        outputId: draftOutput?.id ?? undefined,
+        requireGovernedRef: draftOutput?.status === "published"
+      });
+    } catch (error) {
+      console.error("[analysis-review] Failed to load the relational Signal contract", error);
+      relationalOverviewError = "Review no pudo resolver el contrato relacional del snapshot.";
+    }
+  }
+
+  const signalServingReadiness = analysis.snapshotId
+    ? await getSignalServingReadiness({
+        analysisId: analysis.id,
+        snapshotId: analysis.snapshotId,
+        outputId: draftOutput?.id ?? null,
+        requireDataRefs: draftOutput?.status === "published"
+      })
+    : null;
+  const signalServingAssessment = signalServingReadiness
+    ? assessSignalServingReadiness(signalServingReadiness)
+    : {
+        ready: false,
+        hardBlocks: [{
+          code: "snapshot_missing",
+          message: "El análisis no tiene un snapshot inmutable que pueda gobernar Review y Signal."
+        }],
+        warnings: []
+      };
   const signalDraft = draftOutput
     ? {
         id: draftOutput.id,
@@ -62,21 +106,48 @@ export default async function TbAnalysisReviewPage({
   });
   const knowledgeImpact = asRecord(signalPreview.knowledge_impact);
   const knowledgeSources = arrayRecords(knowledgeImpact.sources_used);
-  const opportunities = arrayRecords(signalPreview.strategic_opportunities);
+  const opportunities = relationalOverview
+    ? mapPublishedSignalOpportunities(relationalOverview.opportunities)
+        .map((row) => row as unknown as JsonRecord)
+    : [];
   const emergingPatterns = arrayRecords(signalPreview.emerging_patterns);
   const actionCards = arrayRecords(signalPreview.action_cards);
   const competitive = asRecord(signalPreview.competitive);
   const competitiveEntities = arrayRecords(competitive.entities);
   const boundaries = asRecord(signalPreview.client_boundaries);
-  const publicFindings = arrayRecords(signalPreview.findings);
+  const publicFindings = relationalOverview?.findings
+    .map((row) => row as unknown as JsonRecord) ?? [];
   const activation = asRecord(analysis.activationPlaybook);
   const triggerRecs = recommendations.filter((rec) => rec.kind === "activation");
   const frictionRecs = recommendations.filter((rec) => rec.kind === "friction_removal");
   const structuralNotes = recommendations.filter((rec) => rec.kind === "structural_note");
-  const canApprove = analysis.status === "needs_review";
-  const failedPostGates = gates
+  const canApprove = analysis.status === "needs_review"
+    && signalServingAssessment.ready
+    && Boolean(relationalOverview)
+    && !relationalOverviewError;
+  const failedPostGates = [
+    ...gates
     .filter((gate) => gate.gateName.startsWith("post_") && !gate.passed)
-    .map((gate) => ({ gateName: gate.gateName, notes: gate.notes }));
+    .map((gate) => ({ gateName: gate.gateName, notes: gate.notes })),
+    ...signalServingAssessment.hardBlocks.map((issue) => ({
+      gateName: `data_os_${issue.code}`,
+      notes: issue.detail ? `${issue.message} ${issue.detail}` : issue.message
+    })),
+    ...signalServingAssessment.warnings.map((warning) => ({
+      gateName: `data_os_${warning.code}`,
+      notes: warning.detail ? `${warning.message} ${warning.detail}` : warning.message
+    })),
+    ...(relationalOverviewError
+      ? [{ gateName: "data_os_relational_contract", notes: relationalOverviewError }]
+      : [])
+  ];
+
+  const reviewMetrics = relationalOverview?.metrics ?? {
+    findings_total: findingSummary.total,
+    barriers_total: findingSummary.barriers,
+    triggers_total: findingSummary.triggers,
+    movable_total: findingSummary.movable
+  };
 
   return (
     <div className="studio-page analysis-review-page">
@@ -114,10 +185,10 @@ export default async function TbAnalysisReviewPage({
       </section>
 
       <section className="analysis-review-vitals">
-        <MetricCard label="Hallazgos" value={findingSummary.total} />
-        <MetricCard label="Barreras" value={findingSummary.barriers} />
-        <MetricCard label="Señales positivas" value={findingSummary.triggers} />
-        <MetricCard label="Accionables" value={findingSummary.movable} />
+        <MetricCard label="Hallazgos" value={reviewMetrics.findings_total} />
+        <MetricCard label="Barreras" value={reviewMetrics.barriers_total} />
+        <MetricCard label="Señales positivas" value={reviewMetrics.triggers_total} />
+        <MetricCard label="Accionables" value={reviewMetrics.movable_total} />
       </section>
 
       <section className="analysis-review-card analysis-review-brief">
@@ -156,9 +227,74 @@ export default async function TbAnalysisReviewPage({
 
       <section className="analysis-review-card">
         <div className="analysis-section-head">
-          <SectionTitle icon="check" eyebrow="Signal readiness" title="Componentes que sí llegarán al dashboard" />
+          <SectionTitle icon="layers" eyebrow="Data OS · fuente de verdad" title="Readiness relacional del Signal" />
+          <span>{signalServingReadiness?.contractVersion ?? "sin snapshot"}</span>
+        </div>
+        <EmptyCard text="Estos conteos salen del snapshot y de las tablas relacionales del análisis. Snapshot, evidencia y dimensiones gobernadas son un gate de Review. Las refs del dashboard pertenecen al output y se vuelven obligatorias al publicar." />
+        {signalServingReadiness ? (
+          <>
+            <div className="analysis-readiness-grid">
+              <ReadinessTile label="Menciones del snapshot" value={signalServingReadiness.counts.mentions} detail="Población inmutable en corpus_snapshot_mentions" />
+              <ReadinessTile label="Hallazgos" value={signalServingReadiness.counts.findings} detail={`${signalServingReadiness.counts.findingsWithEvidence}/${signalServingReadiness.counts.findings} con evidencia del snapshot`} />
+              <ReadinessTile label="Oportunidades" value={signalServingReadiness.counts.opportunities} detail="Activation + friction removal" />
+              <ReadinessTile label="Citas" value={signalServingReadiness.counts.citationLinks} detail={`${signalServingReadiness.counts.citations} menciones únicas citadas`} />
+              <ReadinessTile label="Tags" value={signalServingReadiness.counts.tags} detail={`${signalServingReadiness.counts.tagTerms} términos taxonómicos`} />
+              <ReadinessTile label="Features" value={signalServingReadiness.counts.features} detail={`${signalServingReadiness.counts.featureKeys} feature keys`} />
+              <ReadinessTile
+                label="Refs requeridas"
+                value={`${signalServingReadiness.dataRefs.required.length - signalServingReadiness.dataRefs.missing.length}/${signalServingReadiness.dataRefs.required.length}`}
+                detail={signalServingReadiness.dataRefs.complete
+                  ? "Contrato de serving completo para el output"
+                  : draftOutput?.status === "published"
+                    ? "Output publicado con refs incompletas"
+                    : "Pendientes permitidas antes de publicar"}
+              />
+            </div>
+            <div className="quality-gate-list">
+              {signalServingAssessment.hardBlocks.map((issue) => (
+                <div className="quality-gate-row" key={issue.code}>
+                  <span className="quality-gate-icon quality-gate-icon--warn">
+                    <Icon name="alert" size={15} />
+                  </span>
+                  <strong>{issue.code}</strong>
+                  <span>{issue.message}{issue.detail ? ` ${issue.detail}` : ""}</span>
+                </div>
+              ))}
+              {signalServingAssessment.warnings.map((issue) => (
+                <div className="quality-gate-row" key={issue.code}>
+                  <span className="quality-gate-icon quality-gate-icon--warn">
+                    <Icon name="info" size={15} />
+                  </span>
+                  <strong>{issue.code}</strong>
+                  <span>{issue.message}{issue.detail ? ` ${issue.detail}` : ""}</span>
+                </div>
+              ))}
+              {signalServingReadiness.dataRefs.required.map((refKey) => {
+                const present = signalServingReadiness.dataRefs.present.includes(refKey);
+                const publishedMissing = !present && draftOutput?.status === "published";
+                return (
+                  <div className="quality-gate-row" key={refKey}>
+                    <span className={`quality-gate-icon${present ? " quality-gate-icon--ok" : publishedMissing ? " quality-gate-icon--warn" : ""}`}>
+                      <Icon name={present ? "check" : publishedMissing ? "alert" : "info"} size={15} />
+                    </span>
+                    <strong>{refKey}</strong>
+                    <span>{dataRefReadinessDetail(present, draftOutput?.status)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <EmptyCard text="El análisis todavía no tiene snapshot inmutable. Review queda bloqueado porque Signal no tendría una población reproducible ni evidencia verificable que publicar." />
+        )}
+      </section>
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="check" eyebrow="Proyección narrativa / JSON" title="Bloques derivados para presentación" />
           <span>{signalPreview.schema_version}</span>
         </div>
+        <EmptyCard text="Esta narrativa y su payload JSON son una proyección de compatibilidad y presentación, no la fuente de verdad. El dashboard debe resolver métricas y evidencia desde el contrato relacional mostrado arriba." />
         <div className="analysis-readiness-grid">
           <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
           <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
@@ -900,6 +1036,13 @@ function formatImpact(value: unknown) {
 
 function countClientReadyActions(actions: JsonRecord[]) {
   return actions.filter((action) => stringValue(action.action_text).trim().length > 20).length;
+}
+
+function dataRefReadinessDetail(present: boolean, outputStatus: string | null | undefined) {
+  if (present) return "Disponible en dashboard_data_refs para este output.";
+  if (outputStatus === "published") return "Falta en un output publicado; debe corregirse antes de servir el dashboard.";
+  if (outputStatus) return "Pendiente en el draft; se valida al publicar y no bloquea la aprobación del análisis.";
+  return "Se crea con el draft/output y no bloquea la aprobación del análisis.";
 }
 
 const RAW_SIGNAL_REVIEW_TERMS = new Set([

@@ -12,6 +12,14 @@ import {
 import { Icon } from "@/components/ui/Icon";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import {
+  getDataOsReviewQueue,
+  getPulseLiveData,
+  isDataOsServingEnabled,
+  isSignalPulseLiveApiEnabled,
+  isSignalPulseLiveRenderEnabled,
+  listPulseLiveMetrics
+} from "@/lib/data-os/serving";
 import { alignPulsePerformancePeriods, buildOrganicPaidCandidates, summarizePulsePerformance } from "@/lib/signal-pulse/performance-summary";
 import { sanitizePulseChartRefsForVisibility, sanitizePulsePeriodsForVisibility } from "@/lib/signal-pulse/pulse-api";
 import { resolveSignalPulseVisibility, type SignalPulseResolvedVisibility } from "@/lib/signal-pulse/runtime-contracts";
@@ -19,6 +27,60 @@ import { resolveSignalPulseVisibility, type SignalPulseResolvedVisibility } from
 export const dynamic = "force-dynamic";
 
 type JsonRecord = Record<string, unknown>;
+type PulseDataOsCounts = {
+  periods: number;
+  signals: number;
+  dashboardRefs: number;
+};
+
+type PulseDataOsShadowDrift = PulseDataOsCounts & {
+  hasDrift: boolean;
+  liveBehindPayload: boolean;
+};
+
+type PulseRenderMode = "payload_fallback" | "data_os_live_shadow";
+
+type PulseRenderData = {
+  chartRefs: JsonRecord;
+  mode: PulseRenderMode;
+  periods: JsonRecord[];
+  signals: JsonRecord[];
+};
+
+type PulseDataOsShadowSummary =
+  | {
+    status: "live" | "warning";
+    periods: number;
+    signals: number;
+    dashboardRefs: number;
+    sourceAssets: number;
+    failedQuality: number;
+    payloadCounts: PulseDataOsCounts;
+    drift: PulseDataOsShadowDrift;
+    renderMode: PulseRenderMode;
+    renderFallbackReason: string | null;
+    renderData: PulseRenderData | null;
+    reviewQueue: PulseDataOsReviewSummary;
+  }
+  | {
+    status: "degraded";
+    message: string;
+  };
+
+type PulseDataOsReviewSummary = {
+  readyForHumanReview: boolean;
+  requiredBeforeClientVisible: boolean;
+  recordTagsTotal: number;
+  recordTagsUnreviewed: number;
+  recordTagsWithEvidence: number;
+  recordTagTaxonomies: number;
+  tagReviewEvents: number;
+  knowledgeAssertionsCandidate: number;
+  knowledgeAssertionsWithEvidence: number;
+  knowledgeAssertionReviewEvents: number;
+  tags: JsonRecord[];
+  assertions: JsonRecord[];
+};
 
 export default async function PulseOutputPage({
   params
@@ -34,7 +96,7 @@ export default async function PulseOutputPage({
   const report = asRecord(payload.report);
   const executiveRead = asRecord(payload.executive_read);
   const rawPeriods = arrayOfRecords(payload.periods);
-  const signals = arrayOfRecords(payload.signals);
+  const payloadSignals = arrayOfRecords(payload.signals);
   const moves = arrayOfRecords(payload.marketing_moves);
   const evidence = arrayOfRecords(payload.evidence);
   const sources = arrayOfRecords(payload.sources);
@@ -49,8 +111,28 @@ export default async function PulseOutputPage({
     config: output.visibilityConfig,
     isInternalUser
   });
-  const periods = sanitizePulsePeriodsForVisibility(rawPeriods, visibility);
-  const chartRefs = sanitizePulseChartRefsForVisibility(rawChartRefs, visibility);
+  const payloadPeriods = sanitizePulsePeriodsForVisibility(rawPeriods, visibility);
+  const payloadChartRefs = sanitizePulseChartRefsForVisibility(rawChartRefs, visibility);
+  const dataOsShadow = await loadPulseDataOsShadowSummary({
+    enabled: isInternalUser,
+    outputId: output.id,
+    corpusId: output.studyCorpusId,
+    payloadCounts: {
+      periods: payloadPeriods.length,
+      signals: payloadSignals.length,
+      dashboardRefs: Object.keys(payloadChartRefs).length
+    }
+  });
+  const renderData = resolvePulseRenderData({
+    chartRefs: payloadChartRefs,
+    mode: "payload_fallback",
+    periods: payloadPeriods,
+    signals: payloadSignals
+  }, dataOsShadow);
+  const periods = renderData.periods;
+  const signals = renderData.signals;
+  const chartRefs = renderData.chartRefs;
+  const payloadLinkedSignals = renderData.mode === "data_os_live_shadow" ? payloadSignals : signals;
   const activePeriod = periods.at(-1);
   const defaultDateFrom = stringValue(periods[0]?.period_start);
   const defaultDateTo = stringValue(activePeriod?.period_end);
@@ -75,6 +157,7 @@ export default async function PulseOutputPage({
           </div>
         </div>
         <div className="signal-topbar-right">
+          <PulseDataOsShadowBadge summary={dataOsShadow} />
           <span className="signal-period-pill">
             <Icon name="calendar" size={14} />
             {periods.length > 0 ? `${periods.length} periodos comparables` : "Sin periodos"}
@@ -124,7 +207,7 @@ export default async function PulseOutputPage({
         />
         <div className="pulse-move-board">
           {moves.length > 0 ? moves.map((move) => (
-            <MoveCard key={stringValue(move.id)} move={move} signals={signals} />
+            <MoveCard key={stringValue(move.id)} move={move} signals={payloadLinkedSignals} />
           )) : (
             <PulseEmptyState title="Sin acciones todavía" body="Cuando existan señales con evidencia, el reporte propondrá acciones para claim, pauta, contenido o monitoreo." />
           )}
@@ -200,7 +283,7 @@ export default async function PulseOutputPage({
               <EvidenceRow
                 item={item}
                 key={pulseEvidenceKey(item, index)}
-                signal={signals.find((signal) => stringValue(signal.id) === stringValue(item.signal_id))}
+                signal={payloadLinkedSignals.find((signal) => stringValue(signal.id) === stringValue(item.signal_id))}
               />
             )) : (
               <PulseEmptyState title="Falta evidencia ligada" body="Las señales necesitan citas accesibles antes de presentarse como lectura fuerte." />
@@ -229,12 +312,325 @@ export default async function PulseOutputPage({
                 title="Controles antes de publicar"
                 sub="El reporte separa datos listos, límites visibles y checks pendientes antes de llegar a cliente."
               />
+              <PulseDataOsOperationsPanel summary={dataOsShadow} />
               <QualityGateTable gates={qualityGates} limitations={limitations} cost={cost} />
             </section>
           ) : null}
         </>
       ) : null}
     </SignalReportShell>
+  );
+}
+
+async function loadPulseDataOsShadowSummary(args: {
+  enabled: boolean;
+  outputId: string;
+  corpusId: string;
+  payloadCounts: PulseDataOsCounts;
+}): Promise<PulseDataOsShadowSummary | null> {
+  if (!args.enabled || !isDataOsServingEnabled() || !isSignalPulseLiveApiEnabled()) {
+    return null;
+  }
+
+  try {
+    const live = await getPulseLiveData(args.outputId, args.corpusId);
+    const metrics = await listPulseLiveMetrics(args.corpusId, { limit: 500 });
+    const reviewQueue = await getDataOsReviewQueue(args.corpusId, { limit: 3 });
+    const sourceHealth = asRecord(live.source_health);
+    const reviewSummary = asRecord(reviewQueue.summary);
+    const failedQuality = numberValue(sourceHealth.failed);
+    const liveCounts = {
+      periods: live.periods.length,
+      signals: live.signals.length,
+      dashboardRefs: live.dashboard_data_refs.length
+    };
+    const drift = buildPulseDataOsDrift(liveCounts, args.payloadCounts);
+    const renderFallbackReason = liveRenderFallbackReason({ drift, failedQuality, liveCounts });
+    const canRenderLive = renderFallbackReason === null && isSignalPulseLiveRenderEnabled();
+    const renderData = canRenderLive
+      ? buildPulseLiveRenderData({
+        metrics: arrayOfRecords(metrics.metrics),
+        periods: arrayOfRecords(live.periods),
+        signals: arrayOfRecords(live.signals)
+      })
+      : null;
+    return {
+      status: failedQuality > 0 || drift.liveBehindPayload ? "warning" : "live",
+      periods: liveCounts.periods,
+      signals: liveCounts.signals,
+      dashboardRefs: liveCounts.dashboardRefs,
+      sourceAssets: numberValue(sourceHealth.assets),
+      failedQuality,
+      payloadCounts: args.payloadCounts,
+      drift,
+      renderMode: renderData ? "data_os_live_shadow" : "payload_fallback",
+      renderFallbackReason: renderData ? null : renderFallbackReason ?? "live_render_flag_disabled",
+      renderData,
+      reviewQueue: {
+        readyForHumanReview: reviewSummary.ready_for_human_review === true,
+        requiredBeforeClientVisible: reviewSummary.required_before_client_visible === true,
+        recordTagsTotal: numberValue(reviewSummary.record_tags_total),
+        recordTagsUnreviewed: numberValue(reviewSummary.record_tags_unreviewed),
+        recordTagsWithEvidence: numberValue(reviewSummary.record_tags_with_evidence),
+        recordTagTaxonomies: numberValue(reviewSummary.record_tag_taxonomies),
+        tagReviewEvents: numberValue(reviewSummary.tag_review_events),
+        knowledgeAssertionsCandidate: numberValue(reviewSummary.knowledge_assertions_candidate),
+        knowledgeAssertionsWithEvidence: numberValue(reviewSummary.knowledge_assertions_with_evidence),
+        knowledgeAssertionReviewEvents: numberValue(reviewSummary.knowledge_assertion_review_events),
+        tags: arrayOfRecords(reviewQueue.tags).slice(0, 3),
+        assertions: arrayOfRecords(reviewQueue.assertions).slice(0, 3)
+      }
+    };
+  } catch (error) {
+    return {
+      status: "degraded",
+      message: error instanceof Error ? error.message : "Data OS live read failed."
+    };
+  }
+}
+
+function resolvePulseRenderData(payloadData: PulseRenderData, summary: PulseDataOsShadowSummary | null): PulseRenderData {
+  if (summary && summary.status !== "degraded" && summary.renderMode === "data_os_live_shadow" && summary.renderData) {
+    return summary.renderData;
+  }
+  return payloadData;
+}
+
+function buildPulseDataOsDrift(live: PulseDataOsCounts, payloadCounts: PulseDataOsCounts): PulseDataOsShadowDrift {
+  const drift = {
+    periods: live.periods - payloadCounts.periods,
+    signals: live.signals - payloadCounts.signals,
+    dashboardRefs: live.dashboardRefs - payloadCounts.dashboardRefs
+  };
+  return {
+    ...drift,
+    hasDrift: drift.periods !== 0 || drift.signals !== 0 || drift.dashboardRefs !== 0,
+    liveBehindPayload: drift.periods < 0 || drift.signals < 0 || drift.dashboardRefs < 0
+  };
+}
+
+function liveRenderFallbackReason(args: {
+  drift: PulseDataOsShadowDrift;
+  failedQuality: number;
+  liveCounts: PulseDataOsCounts;
+}) {
+  if (args.drift.liveBehindPayload) return "live_db_behind_payload";
+  if (args.failedQuality > 0) return "source_quality_failed";
+  if (args.liveCounts.periods === 0) return "live_periods_empty";
+  if (args.liveCounts.signals === 0) return "live_signals_empty";
+  return null;
+}
+
+function buildPulseLiveRenderData(args: {
+  metrics: JsonRecord[];
+  periods: JsonRecord[];
+  signals: JsonRecord[];
+}): PulseRenderData {
+  const periods = args.periods.map(adaptPulseLivePeriod);
+  const signals = args.signals.map(adaptPulseLiveSignal);
+  return {
+    chartRefs: buildPulseLiveChartRefs({ metrics: args.metrics, periods, signals }),
+    mode: "data_os_live_shadow",
+    periods,
+    signals
+  };
+}
+
+function adaptPulseLivePeriod(period: JsonRecord): JsonRecord {
+  return {
+    ...period,
+    id: stringValue(period.id),
+    label: stringValue(period.label),
+    coverage: asRecord(period.coverage),
+    comparable: period.comparable !== false,
+    confidence: stringValue(period.confidence)
+  };
+}
+
+function adaptPulseLiveSignal(signal: JsonRecord): JsonRecord {
+  const dimensions = asRecord(signal.dimensions);
+  return {
+    ...signal,
+    id: stringValue(signal.id),
+    title: stringValue(signal.canonical_title) || stringValue(signal.title),
+    description: stringValue(signal.description) || stringValue(dimensions.marketing_read),
+    impact_v1: numberValue(signal.impact_v1),
+    volume: numberValue(signal.volume),
+    evidence_count: numberValue(signal.evidence_count),
+    lifecycle_state: stringValue(signal.lifecycle_state),
+    source_mix: asRecord(signal.source_mix)
+  };
+}
+
+function buildPulseLiveChartRefs(args: {
+  metrics: JsonRecord[];
+  periods: JsonRecord[];
+  signals: JsonRecord[];
+}): JsonRecord {
+  return {
+    impact_polarity_map: {
+      source: "data_os_live",
+      rows: args.signals.map((signal) => ({
+        signal_id: stringValue(signal.id),
+        title: stringValue(signal.title),
+        impact: numberValue(signal.impact_v1),
+        sentiment: numberValue(signal.sentiment_score),
+        signal_type: stringValue(signal.signal_type),
+        volume: numberValue(signal.volume)
+      }))
+    },
+    signal_momentum_stream: {
+      source: "data_os_live",
+      rows: args.metrics.map((metric) => ({
+        signal_id: stringValue(metric.canonical_signal_id),
+        title: stringValue(metric.canonical_title),
+        period_id: stringValue(metric.period_id),
+        label: stringValue(metric.period_label),
+        volume: numberValue(metric.volume),
+        impact: numberValue(metric.impact_v1),
+        lifecycle_state: stringValue(metric.lifecycle_state)
+      }))
+    },
+    source_coverage_strip: {
+      source: "data_os_live",
+      rows: args.periods.map((period) => ({
+        period_id: stringValue(period.id),
+        id: stringValue(period.id),
+        label: stringValue(period.label),
+        coverage: asRecord(period.coverage),
+        comparable: period.comparable !== false
+      }))
+    },
+    semantic_signal_galaxy: {
+      source: "data_os_live",
+      rows: args.signals.map((signal, index) => ({
+        id: stringValue(signal.id),
+        title: stringValue(signal.title),
+        signal_type: stringValue(signal.signal_type),
+        x: 50 + Math.cos(index * 1.7) * 35,
+        y: 50 + Math.sin(index * 1.7) * 32,
+        size: 8 + Math.min(26, Math.sqrt(numberValue(signal.volume)) * 1.8)
+      }))
+    }
+  };
+}
+
+function PulseDataOsShadowBadge({ summary }: { summary: PulseDataOsShadowSummary | null }) {
+  if (!summary) return null;
+  if (summary.status === "degraded") {
+    return (
+      <span className="pulse-data-os-badge pulse-data-os-badge--degraded" title={summary.message}>
+        Data OS shadow
+        <small>degraded</small>
+      </span>
+    );
+  }
+
+  return (
+    <span className={`pulse-data-os-badge pulse-data-os-badge--${summary.status}`}>
+      Data OS shadow
+      <small>
+        {summary.renderMode === "data_os_live_shadow" ? "render live" : "payload fallback"} · {summary.periods}p · {summary.signals}s · {summary.dashboardRefs} refs · {summary.sourceAssets} assets{summary.drift.hasDrift ? " · drift" : ""}
+      </small>
+    </span>
+  );
+}
+
+function PulseDataOsOperationsPanel({ summary }: { summary: PulseDataOsShadowSummary | null }) {
+  if (!summary) return null;
+
+  if (summary.status === "degraded") {
+    return (
+      <section className="pulse-data-os-panel pulse-data-os-panel--degraded">
+        <PulseSectionHead eyebrow="Data OS" title="Shadow read degradado" sub={summary.message} compact />
+      </section>
+    );
+  }
+
+  const reviewQueue = summary.reviewQueue;
+  const humanSampleReady = reviewQueue.tagReviewEvents >= 1 && reviewQueue.knowledgeAssertionReviewEvents >= 1;
+  const payloadParityReady = !summary.drift.liveBehindPayload;
+  const payloadParityLabel = summary.drift.liveBehindPayload
+    ? "Live DB debajo del payload publicado"
+    : summary.drift.hasDrift
+      ? "Live DB arriba del payload publicado"
+      : "Live DB en paridad con payload";
+  const renderSourceReady = summary.renderMode === "data_os_live_shadow";
+  const statusLabel = humanSampleReady ? "Muestra humana completa" : "Muestra humana pendiente";
+  return (
+    <section className="pulse-data-os-panel">
+      <div className="pulse-data-os-panel-head">
+        <PulseSectionHead
+          eyebrow="Data OS"
+          title="Shadow, catálogo y review queue"
+          sub={`${summary.periods} periodos · ${summary.signals} señales · ${summary.dashboardRefs} refs · ${summary.sourceAssets} assets`}
+          compact
+        />
+        <span data-ready={humanSampleReady}>{statusLabel}</span>
+      </div>
+      <p className="pulse-data-os-drift" data-drift={summary.drift.liveBehindPayload ? "behind" : summary.drift.hasDrift ? "ahead" : "parity"}>
+        {payloadParityLabel}
+      </p>
+
+      <div className="pulse-data-os-readiness">
+        <DataOsReadinessMetric label="Render source" value={renderSourceReady ? "live API" : `payload fallback · ${summary.renderFallbackReason ?? "safe default"}`} ready={renderSourceReady} />
+        <DataOsReadinessMetric label="Payload parity" value={`${summary.periods}/${summary.payloadCounts.periods}p · ${summary.signals}/${summary.payloadCounts.signals}s · ${summary.dashboardRefs}/${summary.payloadCounts.dashboardRefs} refs`} ready={payloadParityReady} />
+        <DataOsReadinessMetric label="Quality failed" value={summary.failedQuality} ready={summary.failedQuality === 0} />
+        <DataOsReadinessMetric label="Tags con evidencia" value={`${fmtNumber(reviewQueue.recordTagsWithEvidence)}/${fmtNumber(reviewQueue.recordTagsTotal)}`} ready={reviewQueue.recordTagsWithEvidence >= reviewQueue.recordTagsTotal && reviewQueue.recordTagsTotal > 0} />
+        <DataOsReadinessMetric label="Taxonomías" value={reviewQueue.recordTagTaxonomies} ready={reviewQueue.recordTagTaxonomies >= 5} />
+        <DataOsReadinessMetric label="Review events" value={`${fmtNumber(reviewQueue.tagReviewEvents)} tags · ${fmtNumber(reviewQueue.knowledgeAssertionReviewEvents)} assertions`} ready={humanSampleReady} />
+      </div>
+
+      <div className="pulse-data-os-review-grid">
+        <div>
+          <strong>Tags por revisar</strong>
+          <span>{fmtNumber(reviewQueue.recordTagsUnreviewed)} pendientes · {reviewQueue.readyForHumanReview ? "cola lista" : "cola incompleta"}</span>
+          <DataOsReviewSamples items={reviewQueue.tags} kind="tag" />
+        </div>
+        <div>
+          <strong>Assertions por revisar</strong>
+          <span>{fmtNumber(reviewQueue.knowledgeAssertionsCandidate)} candidatas · {fmtNumber(reviewQueue.knowledgeAssertionsWithEvidence)} con evidencia</span>
+          <DataOsReviewSamples items={reviewQueue.assertions} kind="assertion" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DataOsReadinessMetric({ label, value, ready }: { label: string; value: number | string; ready: boolean }) {
+  return (
+    <div data-ready={ready}>
+      <Icon name={ready ? "check" : "alert"} size={15} />
+      <span>{label}</span>
+      <strong>{typeof value === "number" ? fmtNumber(value) : value}</strong>
+    </div>
+  );
+}
+
+function DataOsReviewSamples({ items, kind }: { items: JsonRecord[]; kind: "tag" | "assertion" }) {
+  if (items.length === 0) {
+    return <p className="pulse-data-os-empty">Sin muestra disponible.</p>;
+  }
+
+  return (
+    <ul className="pulse-data-os-samples">
+      {items.map((item, index) => {
+        const id = stringValue(item.id);
+        const primary = kind === "tag"
+          ? `${stringValue(item.taxonomy_key) || "tag"} · ${stringValue(item.term_label) || stringValue(item.value)}`
+          : `${stringValue(item.assertion_type) || "assertion"} · ${stringValue(item.confidence) || "sin confianza"}`;
+        const body = kind === "tag"
+          ? stringValue(item.mention_preview) || stringValue(item.value)
+          : stringValue(item.assertion_text);
+        return (
+          <li key={id || `${kind}-${index}`}>
+            <strong>{primary}</strong>
+            <p>{body || "Sin preview disponible."}</p>
+            <code>{id}</code>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -898,6 +1294,11 @@ function arrayOfRecords(value: unknown): JsonRecord[] {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function numberValue(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function fmtNumber(value: unknown) {

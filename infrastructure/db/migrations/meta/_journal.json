@@ -246,6 +246,83 @@
       "when": 1780643220000,
       "tag": "0034_signal_pulse_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1782929400000,
+      "tag": "0035_data_os_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1782929460000,
+      "tag": "0036_data_os_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1783969200000,
+      "tag": "0037_engine_validation_separation",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784055600000,
+      "tag": "0038_query_validation_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784142000000,
+      "tag": "0039_query_validation_imported_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1784228400000,
+      "tag": "0040_data_os_semantic_observation_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1784314800000,
+      "tag": "0041_tb_data_os_coding_bridge",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1784401200000,
+      "tag": "0042_data_os_static_catalog_semantics",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1784487600000,
+      "tag": "0043_data_os_asset_records_metric_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1784574000000,
+      "tag": "0044_query_pack_entity_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1784660400000,
+      "tag": "0045_signal_serving_entities",
+      "breakpoints": true
     }
   ]
 }

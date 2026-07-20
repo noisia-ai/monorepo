@@ -147,7 +147,12 @@ export function buildEngineMethodologyOptions(rows: EngineMethodologySeedRow[] =
 }
 
 export function getDefaultEngineMethodologySlug(options: EngineMethodologyOption[] = buildEngineMethodologyOptions()) {
-  return options.find((option) => option.slug === "narrative-ownership" && option.runnable)?.slug
-    ?? options.find((option) => option.runnable)?.slug
-    ?? "narrative-ownership";
+  return options.find((option) => option.runnable)?.slug ?? "competitive-wave";
+}
+
+export function isEngineBetaPanelEnabled(env: {
+  NODE_ENV?: string;
+  NOISIA_SHOW_ENGINE_BETA_PANEL?: string;
+} = process.env): boolean {
+  return env.NODE_ENV !== "production" && env.NOISIA_SHOW_ENGINE_BETA_PANEL === "true";
 }

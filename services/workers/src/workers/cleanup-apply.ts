@@ -1,6 +1,7 @@
 import type { Job } from "bullmq";
 
 import { pool } from "../db/client";
+import { advanceCorpusRevision } from "./corpus-revision";
 
 type CleanupApplyJobData = {
   corpusId: string;
@@ -60,11 +61,16 @@ export async function cleanupApplyJob(job: Job<CleanupApplyJobData>) {
     [totalExcluded, cleanupActionId]
   );
 
+  const corpusRevision = totalExcluded > 0
+    ? await advanceCorpusRevision(corpusId)
+    : null;
+
   await job.updateProgress(100);
 
   return {
     excluded_count: totalExcluded,
     cleanup_action_id: cleanupActionId,
-    patterns_processed: total
+    patterns_processed: total,
+    corpus_revision: corpusRevision
   };
 }

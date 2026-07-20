@@ -1,26 +1,28 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useSignalUiLanguage } from "@/components/signal/SignalReportShell";
 import type { PublicTbFinding, StrategicOpportunity } from "@/lib/signal/contracts";
 
 type SignalOpportunitiesExplorerProps = {
-  findings: PublicTbFinding[];
+  findings?: PublicTbFinding[];
   opportunities: StrategicOpportunity[];
 };
 
 export function SignalOpportunitiesExplorer({
-  findings,
+  findings = [],
   opportunities,
 }: SignalOpportunitiesExplorerProps) {
   const { uiLanguage } = useSignalUiLanguage();
-  const visible = useMemo(
-    () => opportunities.length > 0 ? opportunities : fallbackOpportunities(findings, uiLanguage),
-    [findings, opportunities, uiLanguage]
-  );
+  const visible = opportunities;
   const [selectedId, setSelectedId] = useState(visible[0]?.opportunity_id ?? "");
   const selected = visible.find((item) => item.opportunity_id === selectedId) ?? visible[0];
+  const relatedFindings = selected
+    ? selected.related_finding_ids
+        .map((findingId) => findings.find((finding) => finding.finding_id === findingId))
+        .filter((finding): finding is PublicTbFinding => Boolean(finding))
+    : [];
 
   if (!selected) {
     return (
@@ -63,7 +65,14 @@ export function SignalOpportunitiesExplorer({
         <dl>
           <div><dt>{uiLanguage === "en" ? "Confidence" : "Confianza"}</dt><dd>{confidenceLabel(selected.confidence, uiLanguage)}</dd></div>
           <div><dt>{uiLanguage === "en" ? "Evidence mix" : "Mezcla de evidencia"}</dt><dd>{friendlySources(selected.source_mix).join(", ") || "Corpus"}</dd></div>
-          <div><dt>Findings</dt><dd>{selected.related_finding_ids.join(", ") || "No direct finding"}</dd></div>
+          <div>
+            <dt>Findings</dt>
+            <dd>
+              {relatedFindings.length > 0
+                ? relatedFindings.map((finding) => `${finding.finding_name} (${finding.evidence_count})`).join(", ")
+                : selected.related_finding_ids.join(", ") || (uiLanguage === "en" ? "No direct finding" : "Sin hallazgo directo")}
+            </dd>
+          </div>
           <div><dt>{uiLanguage === "en" ? "Success signal" : "Senal de exito"}</dt><dd>{truncate(selected.success_signal, 88)}</dd></div>
         </dl>
         <div className="opportunity-verbatims">
@@ -77,22 +86,6 @@ export function SignalOpportunitiesExplorer({
       </article>
     </div>
   );
-}
-
-function fallbackOpportunities(findings: PublicTbFinding[], uiLanguage: "en" | "es"): StrategicOpportunity[] {
-  return findings.slice(0, 6).map((finding, index) => ({
-    opportunity_id: `OP-${index + 1}`,
-    title: finding.finding_name,
-    decision: uiLanguage === "en" ? "Turn this finding into a clear business decision." : "Convertir este hallazgo en una decision accionable.",
-    why_now: `${finding.evidence_count} evidence points connected to the finding.`,
-    level: finding.mobility === "estructural" ? "category" : "content",
-    source_mix: ["findings", "corpus"],
-    related_finding_ids: [finding.finding_id],
-    evidence_summary: finding.public_quote ?? "",
-    what_to_do: uiLanguage === "en" ? "Review the finding detail before activating." : "Revisar el detalle del finding antes de activar.",
-    success_signal: uiLanguage === "en" ? "Define the success metric before execution." : "Definir metrica de cambio antes de ejecutar.",
-    confidence: finding.confidence
-  }));
 }
 
 function opportunityTone(opportunity: StrategicOpportunity) {

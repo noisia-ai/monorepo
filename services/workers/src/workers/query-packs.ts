@@ -32,6 +32,7 @@ export async function materializeQueryPacksForIteration(params: {
           lens_slug,
           signal_intent,
           scope,
+          entity_key,
           objective,
           query_text,
           query_components,
@@ -49,19 +50,21 @@ export async function materializeQueryPacksForIteration(params: {
           $5,
           $6,
           $7,
-          $8::jsonb,
+          $8,
           $9::jsonb,
           $10::jsonb,
-          $11,
-          $12::jsonb,
-          $13::uuid
+          $11::jsonb,
+          $12,
+          $13::jsonb,
+          $14::uuid
         )
         ON CONFLICT (
           study_corpus_id,
           (COALESCE(query_iteration_id::text, '')),
           lens_slug,
           signal_intent,
-          scope
+          scope,
+          (COALESCE(entity_key, ''))
         )
         DO UPDATE SET
           objective = EXCLUDED.objective,
@@ -82,6 +85,7 @@ export async function materializeQueryPacksForIteration(params: {
         pack.lensSlug,
         pack.signalIntent,
         pack.scope,
+        pack.entityKey,
         pack.objective,
         pack.queryText,
         JSON.stringify(pack.queryComponents),

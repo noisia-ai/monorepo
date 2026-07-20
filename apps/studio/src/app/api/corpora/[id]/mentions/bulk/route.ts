@@ -4,6 +4,7 @@ import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
+import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { pool } from "@/lib/db";
 
 const bulkMentionSchema = z.object({
@@ -73,13 +74,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         "UPDATE cleanup_actions SET mention_count = $1 WHERE id = $2::uuid",
         [updated.rowCount ?? 0, actionId]
       );
+      const corpusRevision = (updated.rowCount ?? 0) > 0
+        ? await advanceCorpusRevision(corpus.id, client)
+        : null;
       await client.query("COMMIT");
 
       return Response.json({
         ok: true,
         cleanup_action_id: actionId,
         requested_count: body.mention_ids.length,
-        excluded_count: updated.rowCount ?? 0
+        excluded_count: updated.rowCount ?? 0,
+        corpus_revision: corpusRevision
       });
     } catch (error) {
       await client.query("ROLLBACK");

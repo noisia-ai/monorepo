@@ -1,14 +1,21 @@
 import "./env/load";
 
-import { isEngineRuntimeEnabled } from "@noisia/query-engine";
+import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
 import { pool } from "./db/client";
-import { redisConnection, startQueryEngineHeartbeat, startQueryEngineWorker } from "./queues/query-engine";
+import {
+  closeQueryEngineProducer,
+  redisConnection,
+  startQueryEngineHeartbeat,
+  startQueryEngineWorker
+} from "./queues/query-engine";
+import { startDataOsWorker } from "./queues/data-os";
 import { startEngineAnalysisWorker } from "./queues/engine-analysis";
 import { startTbAnalysisWorker } from "./queues/tb-analysis";
 
 const queryEngineWorker = startQueryEngineWorker();
 const tbAnalysisWorker = startTbAnalysisWorker();
 const engineAnalysisWorker = isEngineRuntimeEnabled() ? startEngineAnalysisWorker() : null;
+const dataOsWorker = isDataOsWorkerEnabled() ? startDataOsWorker() : null;
 const heartbeat = startQueryEngineHeartbeat();
 const keepAlive = setInterval(() => undefined, 60_000);
 
@@ -37,12 +44,25 @@ if (engineAnalysisWorker) {
   console.log("Engine methodology worker disabled. Set NOISIA_ENGINE_RUNTIME_ENABLED=true to consume beta jobs.");
 }
 
+if (dataOsWorker) {
+  dataOsWorker.on("completed", (job) => {
+    console.log(`Data OS job completed: ${job.name} ${job.id}`);
+  });
+  dataOsWorker.on("failed", (job, error) => {
+    console.error(`Data OS job failed: ${job?.name} ${job?.id}`, error);
+  });
+} else {
+  console.log("Data OS worker disabled. Set NOISIA_DATA_OS_WORKER_ENABLED=true only for approved shadow runs.");
+}
+
 async function shutdown() {
   clearInterval(keepAlive);
   clearInterval(heartbeat);
   await queryEngineWorker.close();
   await tbAnalysisWorker.close();
   await engineAnalysisWorker?.close();
+  await dataOsWorker?.close();
+  await closeQueryEngineProducer();
   await redisConnection.quit();
   await pool.end();
   process.exit(0);
@@ -51,4 +71,6 @@ async function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-console.log(`Noisia workers running (query-engine + tb-analysis${engineAnalysisWorker ? " + engine-analysis" : ""}).`);
+console.log(
+  `Noisia workers running (query-engine + tb-analysis${engineAnalysisWorker ? " + engine-analysis" : ""}${dataOsWorker ? " + data-os" : ""}).`
+);

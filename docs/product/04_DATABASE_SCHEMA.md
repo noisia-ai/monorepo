@@ -1066,6 +1066,233 @@ Cada `brand_methodology_corpora` puede tener flag `nda_strict = true`. Cuando es
 
 ---
 
+## 16. Data OS Cut 1 - esquema vivo por cliente
+
+Data OS es una extensión aditiva del schema actual. No borra `published_outputs.payload`
+ni reemplaza las tablas live de Signal Pulse; las gobierna como una base viva por
+cliente, marca/tema y corpus. La migración canónica es
+`infrastructure/db/migrations/0035_data_os_foundation.sql`; la especificación completa
+vive en `22_NOISIA_DATA_OS_CUT_1.md`.
+
+### 16.1 Data Catalog
+
+Registra fuentes, assets, contratos, calidad y lineage. Es el punto donde un CSV,
+conector, upload o materialización deja de ser "archivo usado por Claude" y se vuelve
+dataset auditable.
+
+Tablas:
+
+- `data_assets`
+- `data_asset_fields`
+- `data_observations`
+- `data_contracts`
+- `data_quality_rules`
+- `data_quality_results`
+- `lineage_edges`
+
+Relaciones principales:
+
+- `data_sources` y `source_sync_runs` siguen describiendo la fuente operacional y sus
+  ejecuciones.
+- `data_assets` describe datasets lógicos o físicos por `organization_id`, `brand_id`,
+  `theme_id`, `study_corpus_id` y `data_source_id`.
+- `data_asset_fields` describe campos críticos por asset: tipo físico, semantic type,
+  nulabilidad, ejemplos y metadata de catálogo.
+- `data_observations` es la tabla fact canónica para uploads y fuentes
+  estructuradas. Guarda observaciones normalizadas por `study_corpus_id`,
+  `data_source_id`, `data_asset_id`, `dataset_key`, `period_start`,
+  `period_grain`, `entity_*`, `metric_key`, `metric_value`, `dimensions`,
+  `raw_record` y `lineage`. Esta es la unión que permite cruzar
+  `mentions_monthly` contra `sales_monthly` en Signal sin convertir archivos en
+  texto muerto.
+- La prioridad de fuentes para Data OS no es "ventas únicamente": ventas ecomm y
+  catálogo de producto son la primera ancla de negocio, pero el mismo contrato
+  materializa GA4/web analytics, search demand, customer service, Meta organic,
+  paid media, CRM/email/SMS/WhatsApp, reviews & ratings, pricing/promos/stock e
+  inteligencia competitiva. Todas esas fuentes deben llegar como observaciones
+  con periodo, entidad, métrica, dimensión, `raw_record` y lineage para que
+  Signal pueda cruzar negocio, demanda, conversación y fricción operativa.
+- Familias iniciales de métricas normalizadas: `sales`, `units`, `orders`,
+  `average_order_value`, `discount`, `returns`, `margin`, `mentions`,
+  `sentiment`, `sessions`, `product_views`, `add_to_cart`, `checkout`,
+  `conversion_rate`, `search_volume`, `search_position`, `support_tickets`,
+  `spend`, `impressions`, `clicks`, `likes`, `comments`, `shares`, `saves`,
+  `engagement`, `conversions`, `email_opens`, `unsubscribes`, `reviews`,
+  `score`, `price`, `stock`, `share_of_voice` y `share_of_search`.
+- `data_quality_results` se liga a `data_assets` y permite bloquear live serving si hay
+  resultados `failed`.
+- `lineage_edges` registra cómo un source/sync/import/knowledge asset alimenta
+  datasets, cómo esos datasets alimentan materializaciones, y cómo las
+  `dashboard_data_refs` alimentan `published_outputs`.
+
+### 16.2 Brand OS Catalog
+
+Convierte Brand OS de texto contextual a catálogo consultable. Cut 1 debe guardar al
+menos perfil, objetivos, audiencias y seeds; productos, claims, campañas, competidores
+y eventos quedan listos para el siguiente corte.
+
+Tablas:
+
+- `brand_os_profiles`
+- `brand_os_objectives`
+- `brand_os_briefs`
+- `brand_os_audiences`
+- `brand_os_products`
+- `brand_os_claims`
+- `brand_os_campaigns`
+- `brand_os_competitors`
+- `brand_os_events`
+- `brand_os_seed_sets`
+- `brand_os_seed_terms`
+- `brand_os_links`
+
+Regla: un brief, objetivo, audiencia o seed importante no debe vivir solo dentro de
+`study_corpora.context_form`, `analysis_plan` o un prompt. Debe poder ligarse a corpus,
+fuentes, knowledge, entidades, taxonomías y outputs. `brand_os_briefs` guarda el intake
+del estudio y los briefs subidos como `brand_knowledge_sources` para poder analizar
+después qué tipo de brief produjo qué queries, ruido, tags, assertions y outputs.
+
+### 16.3 Knowledge Catalog
+
+Separa documento, chunk, assertion y uso. La Knowledge Base deja de ser solo contexto
+para el LLM y se vuelve memoria citada, versionable y reusable.
+
+Tablas:
+
+- `knowledge_chunks`
+- `knowledge_assertions`
+- `knowledge_assertion_links`
+- `knowledge_assertion_review_events`
+- `knowledge_usage_events`
+
+Relaciones principales:
+
+- `brand_knowledge_sources` sigue siendo el documento/upload fuente.
+- `knowledge_chunks` guarda unidades recuperables.
+- `knowledge_assertions` guarda claims estructurados con confidence y vigencia.
+- `knowledge_assertion_links` conecta assertions con Brand OS, entidades, taxonomías o
+  records analíticos.
+- `knowledge_assertion_review_events` registra aprobaciones, rechazos o solicitudes de
+  nueva revisión humana sobre assertions antes de activación cliente-visible.
+- `knowledge_usage_events` registra cuándo un chunk/assertion fue usado por un run,
+  output o serving flow.
+
+### 16.4 Taxonomy, Entity y Feature Store
+
+No se agregan columnas infinitas a `mentions`. Las dimensiones como triggers,
+barriers, journey, value perception, audiencias, demográficos, emotion, lifecycle y
+marketing moves viven en vocabularios controlados y tags versionados.
+
+Tablas:
+
+- `taxonomies`
+- `taxonomy_terms`
+- `taxonomy_term_edges`
+- `methodology_taxonomy_bindings`
+- `tagging_rule_sets`
+- `tagging_model_versions`
+- `intelligence_entities`
+- `entity_aliases`
+- `entity_links`
+- `record_entity_links`
+- `record_tags`
+- `record_feature_values`
+- `tag_review_events`
+
+Reglas:
+
+- `record_tags.subject_type` permite etiquetar `mention`, `performance_record`,
+  `knowledge_chunk`, `canonical_signal`, `signal_observation` u otros records.
+- `tagging_rule_sets` versiona los diccionarios/reglas determinísticas o asistidas por
+  modelo que producen tags. En Cut 1 existe `data_os_cut_1_deterministic_mentions`
+  v1 y debe estar ligado desde `tagging_model_versions.tagging_rule_set_id`.
+- Cada tag guarda `taxonomy_term_id`, `value`, `score`, `confidence`, `evidence`,
+  `source`, `model_version_id` y `review_status`.
+- Cut 1 escribe tags determinísticos de mención para `trigger`, `barrier`,
+  `journey_stage`, `value_perception`, `audience`, `emotion`, `sentiment_polarity`,
+  `source_type` y `content_format`; esos tags nacen `unreviewed` y con evidencia de
+  keyword/regla. No dependen de LLM.
+- `record_feature_values` guarda contexto operacional por mención, incluyendo fuente,
+  formato, plataforma, inclusion status, scores y resumen de tags.
+- `intelligence_entities` resuelve entidades de marketing e inteligencia, no identidad
+  personal de consumidor final en Cut 1.
+
+### 16.5 Semantic Layer y Dashboard Refs
+
+El dashboard no debe inventar métricas ni depender solamente del JSON publicado. Lee
+métricas y refs gobernadas, manteniendo fallback al snapshot publicado durante shadow
+mode.
+
+Tablas:
+
+- `metric_definitions`
+- `semantic_models`
+- `metric_materializations`
+- `dashboard_data_refs`
+
+Reglas:
+
+- `metric_definitions` define cálculo, grain, unidad y dimensiones.
+- `semantic_models` define entidades, dimensiones y medidas.
+- `metric_materializations` guarda agregados listos para serving.
+- `dashboard_data_refs` conecta un output publicado con datasets vivos como `sources`,
+  `metrics`, `corpus` y `chart_aggregates`.
+- Cada `dashboard_data_ref.source_id` debe apuntar al `data_asset` que sirve esa
+  sección para que el dashboard tenga lineage auditable.
+
+### 16.6 Serving y rollout
+
+Las APIs internas de Cut 1 viven bajo `/api/data-os/*` y requieren flags:
+
+- `NOISIA_DATA_OS_ENABLED=true`
+- `NOISIA_DATA_OS_SERVING_ENABLED=true`
+- `NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED=true` para rutas `/pulse/*`
+- `NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false` durante el primer shadow rollout
+- `NOISIA_DATA_OS_SHADOW_MODE=true` durante el rollout
+
+Rutas por corpus incluyen fuentes, health, Data Catalog, lineage, taxonomías, tags,
+Brand OS y Knowledge Catalog. Data Catalog expone assets/fields/contracts/quality;
+lineage expone edges filtrables por tipo de nodo o relación. Brand OS y Knowledge deben
+poder alimentar UI/engine como datos estructurados; Knowledge no expone `raw_text`
+completo por default.
+
+Si las flags están apagadas, las rutas responden con fallback explícito a
+`published_outputs.payload`. La publicación legacy sigue siendo el rollback lógico.
+
+Compuertas operativas:
+
+- `corepack pnpm data-os:verify`
+- `corepack pnpm data-os:candidates`
+- `corepack pnpm data-os:shadow-run`
+- `corepack pnpm data-os:serving-smoke`
+- `corepack pnpm data-os:evidence`
+- `corepack pnpm data-os:release-gate` para producción/cliente-visible, con
+  `database_format_postgres_url`
+
+No activar live API para clientes hasta que `data-os:shadow-run`,
+`data-os:serving-smoke`, `data-os:evidence` y `data-os:release-gate` estén verdes
+contra un corpus/output real de staging o prod-shadow.
+El render live de Signal Pulse requiere un segundo switch interno explícito con
+`NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=true`; el primer corte productivo debe dejarlo
+apagado y conservar fallback a `published_outputs.payload`.
+
+### 16.7 Engine validation lineage
+
+La validación del Engine se divide en dos familias de evidencia:
+
+- `query_validation_runs`, `query_validation_attempts` y
+  `query_validation_mentions` guardan la prueba pre-extracción de cada query pack en
+  SentiOne.
+- `corpus_assessments` y `corpus_assessment_mentions` guardan la certificación del
+  corpus importado.
+- `study_corpora.corpus_revision` cambia con cada mutación de menciones y
+  `latest_assessed_revision` identifica la revisión certificada.
+
+Un score de query no puede actualizar `latest_assessed_revision`; una evaluación de
+corpus no puede cerrar queries. Ver `28_CORPUS_ENGINE_VALIDATION_CONTRACT.md`.
+
+---
+
 ## Cierre
 
 Este schema es la base operativa. Cualquier feature nueva (multi-país, nueva metodología, integración nueva) debe poder mapearse a estas tablas o documentar por qué necesita extensión.

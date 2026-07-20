@@ -7,16 +7,17 @@ import { getDatabaseSslConfig, requireSafeDatabaseWriteTarget } from "../seeds/c
 import { requireEnv } from "../seeds/env.js";
 
 const MIGRATIONS_TO_APPLY = [
-  "0025_engine_methodologies.sql",
-  "0026_live_intelligence_store.sql",
-  "0027_query_pack_provenance_backfill.sql",
-  "0028_signal_observation_run_uniqueness.sql",
-  "0029_engine_cost_ledger.sql",
-  "0030_monthly_cut_and_composer.sql",
-  "0031_study_analysis_plan.sql",
-  "0032_import_batch_query_pack_link.sql",
-  "0033_engine_run_mention_map.sql",
-  "0034_signal_pulse_foundation.sql"
+  "0035_data_os_foundation.sql",
+  "0036_data_os_observations.sql",
+  "0037_engine_validation_separation.sql",
+  "0038_query_validation_lineage.sql",
+  "0039_query_validation_imported_evidence.sql",
+  "0040_data_os_semantic_observation_contract.sql",
+  "0041_tb_data_os_coding_bridge.sql",
+  "0042_data_os_static_catalog_semantics.sql",
+  "0043_data_os_asset_records_metric_catalog.sql",
+  "0044_query_pack_entity_identity.sql",
+  "0045_signal_serving_entities.sql"
 ];
 
 async function applyMigration(client: pg.Client, migrationPath: string) {
@@ -34,7 +35,7 @@ async function applyMigration(client: pg.Client, migrationPath: string) {
 async function main() {
   const databaseUrl = requireEnv("DATABASE_URL");
   requireSafeDatabaseWriteTarget(databaseUrl, {
-    operation: "apply existing DB migrations 0025-0034",
+    operation: "apply Data OS DB migrations 0035-0045",
     allowRemoteEnv: "NOISIA_DB_APPLY_EXISTING_ALLOW_REMOTE"
   });
 

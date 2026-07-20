@@ -1,0 +1,152 @@
+# 26 · Noisia Data OS Completion Audit
+
+Matriz para decidir si el Goal de **Noisia Data OS Cut 1** puede marcarse completo.
+Este documento no sustituye `data-os:release-gate`; lo vuelve legible para producto,
+engineering y review.
+
+## Regla De Cierre
+
+El Goal no esta completo hasta que exista un evidence pack de `staging` o `preview`
+con:
+
+- `release-gate.json`;
+- `"ready_for_production_review": true`;
+- `database_format: "postgres_url"` en `evidence-pack-validation.json` y
+  `release-gate.json`;
+- `data-os:completion-audit` con `"ready_for_goal_completion": true`;
+- `completion-audit.json` guardado dentro del evidence pack;
+- `requirement_checks` sin ningun item con `"ok": false`;
+- `pr-summary.md` libre de UUIDs, DB URLs, API keys y tokens;
+- `evidence.md` listo para PR con IDs redactados;
+- plan de flags y rollback.
+
+Un smoke local o una DB `throwaway` pueden demostrar preflight tecnico, pero no prueban
+preparacion productiva.
+
+## Matriz
+
+| Requisito | Evidencia autoritativa | Estado actual |
+|---|---|---|
+| Partir de `codex/signal-pulse` | `data-os:verify` `branch_lineage`, `docs/BRANCHES.md`, fork point | Verificado por `git merge-base` cuando la ref existe; verificar antes de PR |
+| Data Catalog vivo | Migracion `0035_data_os_foundation.sql`, Drizzle schema, `data-os:verify`, `serving-smoke.json` | Implementado local; requiere staging counts |
+| Brand OS catalogado | Tablas `brand_os_*`, backfill, `brand_os_briefs >= 1`, `brand_os_links >= 3` | Implementado local; requiere staging evidence |
+| Knowledge Base como datos | `knowledge_chunks`, `knowledge_assertions`, links y usage events | Implementado local; requiere staging evidence |
+| Taxonomias y tags versionados | `taxonomies`, `taxonomy_terms`, `record_tags`, `tagging_model_versions` | Implementado local; requiere staging evidence |
+| Calidad y lineage | `data_quality_results`, `lineage_edges`, zero failed quality | Implementado local; requiere staging evidence |
+| APIs de serving | `/api/data-os/*`, `data-os:serving-smoke`, fallback checks | Build local verde; requiere remote serving smoke |
+| Shadow mode seguro | `NOISIA_DATA_OS_SHADOW_MODE=true`, live render false, fallback payload | Implementado; requiere staging release gate |
+| Review humano antes de cliente | `review-queue.json`, `review-sample.json`, review events de tag/assertion | Flujo implementado; requiere IDs revisados en staging |
+| Produccion por PR | PR template, CODEOWNERS, `release-gate.json` | Implementado; PR pendiente |
+
+## Checks Locales Minimos
+
+Antes de pedir staging:
+
+```bash
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm test
+corepack pnpm --filter @noisia/studio build
+corepack pnpm data-os:verify
+```
+
+## Evidencia Que Completa El Goal
+
+Desde terminal segura:
+
+```bash
+corepack pnpm data-os:staging-check
+corepack pnpm data-os:staging-shadow
+# si el wrapper se detiene para review humano:
+corepack pnpm data-os:staging-finalize
+NOISIA_DATA_OS_EVIDENCE_PACK_DIR=.data/data-os-evidence/<timestamp> \
+corepack pnpm data-os:completion-audit
+```
+
+El paquete final debe contener:
+
+- `staging-check.txt` con `DATABASE_URL_FORMAT=postgres_url`,
+  `DATABASE_URL_ENVIRONMENT=remote_redacted` y `ready_for_staging_shadow=true`;
+- `candidates.json` con candidato recomendado sin failures;
+- `shadow-run.log` con `ready_for_live_api_shadow: true`;
+- `analyze.json` con `ready_for_serving_reads: true`;
+- `serving-smoke.json` con `ready_for_serving_shadow: true`, fallback checks y
+  visibility checks;
+- `review-queue.json` redactado;
+- `review-sample.json` con `ready_for_release_review_sample: true`;
+- `evidence-pack-validation.json` con manifest SHA-256;
+- `release-gate.json` con `ready_for_production_review: true`;
+- `release-gate.json` con gate `database_format_postgres_url`;
+- `completion-audit.json` con `ready_for_goal_completion: true`;
+- `completion-audit.json` con `requirement_checks` cubriendo todos los gates de
+  `release-gate.json`, incluyendo catalogo, Brand OS, Knowledge Base, taxonomias,
+  review humano, serving shadow, fallback, verifier local, formato Postgres,
+  flags seguros y manifest SHA-256;
+- `pr-summary.md` listo para PR, incluyendo `Database format: postgres_url`.
+
+## Evidencia De Reconciliacion Del Corpus Real (2026-07-15)
+
+Se ejecuto `data-os:reconcile-sources` contra el corpus de validacion de Laika en
+staging, sin invocar Claude. Esta corrida valida el contrato de datos previo al ETL;
+no reemplaza el shadow de serving ni autoriza produccion.
+
+| Control | Resultado |
+|---|---|
+| Listening canonico | 4,581 menciones: 3,331 incluidas y 1,250 excluidas |
+| Deduplicacion de ingesta | 5,235 duplicados colapsados antes de materializar |
+| Cobertura listening | 13 meses, 16 plataformas, cero menciones sin fecha |
+| Fuentes cargadas | 13/13 procesadas, cero pendientes y cero fallidas |
+| Registros canonicos | 5,999 aceptados, cero en review y cero rechazados |
+| Observaciones gobernadas | 19,541 aceptadas; 16 en review; cero rechazadas |
+| Lineage del workbook principal | 4,898/4,898 filas con lineage completo |
+| Listening mensual | 39 observaciones temporales aceptadas |
+| Ventas e-commerce | 204 observaciones temporales, 8 meses |
+| Catalogo de producto | 3,730 identidades estaticas y 18,664 observaciones snapshot aceptadas |
+| Search demand | 634 observaciones snapshot y 1,004 registros snapshot aceptados |
+| Auditoria previa a Claude | `ready_with_warnings`, `ready_for_claude: true`, cero blockers |
+
+El contrato de materializacion es `v3`. Para una fuente mixta distingue por dataset:
+
+- registros temporales que requieren periodo real;
+- registros snapshot que requieren fecha de captura;
+- identidades estaticas que no deben fingir una serie temporal;
+- observaciones numericas snapshot que conservan fecha de captura aunque su entidad
+  de catalogo sea estatica.
+
+El workbook principal prueba el caso mixto: ventas conserva 8 meses reales, las
+identidades de producto permanecen estaticas y precio/costo/margen quedan como
+observaciones snapshot. Ya no se estampa todo el catalogo como si hubiera ocurrido en
+la fecha de carga.
+
+Las 16 observaciones en review corresponden a `front_margin_snapshot` con escala
+ambigua en valores negativos. Se excluyen de evidencia puntuada y del contexto de
+Claude hasta revision humana; no se convierten silenciosamente a porcentaje.
+
+Dominios opcionales sin fuente —web analytics, customer service, organic social,
+paid media, CRM, reviews, pricing/inventory y competitive intelligence— se exponen
+como `unknown`, nunca como cero. El puente `tb_mention_codings` hacia `record_tags` y
+`record_feature_values` se exige despues del coding T&B; antes del primer analisis se
+reporta correctamente como no aplicable.
+
+Estado de gates locales de esta evidencia:
+
+- DB typecheck y 41 pruebas: verde;
+- Studio typecheck, 202 pruebas, lint sin errores y build de produccion: verde;
+- Query Engine: 123 pruebas y typecheck verdes;
+- Workers: 112 pruebas y typecheck verdes;
+- `data-os:verify`: verde, con DB remota omitida;
+- `data-os:staging-check`: bloqueado porque no estan exportados los cinco valores
+  operativos del shadow, incluido el output de preview.
+
+Por lo tanto, el corpus esta listo para una prueba controlada de Claude, pero Data OS
+Cut 1 **no esta listo para PR de produccion** hasta obtener el evidence pack y
+`ready_for_production_review: true` descritos arriba.
+
+## No Cuenta Como Completo
+
+- `data-os:verify` local verde sin staging/preview.
+- `data-os:local-smoke` verde sin release gate.
+- Evidence pack `throwaway`.
+- `evidence.json` crudo pegado en PR o chat.
+- Live render encendido antes del gate.
+- Review queue sin eventos humanos auditables.

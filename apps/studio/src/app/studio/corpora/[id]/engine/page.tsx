@@ -3,24 +3,21 @@ import { notFound } from "next/navigation";
 import { TbAnalysisRunPanel } from "@/components/analysis/TbAnalysisRunPanel";
 import { EngineMethodologyBetaPanel } from "@/components/engine/EngineMethodologyBetaPanel";
 import { EngineWizard } from "@/components/engine/EngineWizard";
-import { Icon } from "@/components/ui/Icon";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getBrandDetailForUser } from "@/lib/data/brands";
 import { getCorpusEngineState, getCorpusForUser, getTbAnalysisForCorpus, listCorpusEntitiesForCorpus } from "@/lib/data/corpora";
-import { normalizeStudyAnalysisPlan } from "@/lib/multimethod/analysis-plan";
+import { getDataOsCorpusReadiness } from "@/lib/data-os/readiness";
+import { isEngineBetaPanelEnabled } from "@/lib/engine/methodology-options";
 
 export const dynamic = "force-dynamic";
 
 export default async function CorpusEnginePage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
   const session = await requireStudioUser(`/studio/corpora/${id}/engine`);
-  const query = searchParams ? await searchParams : {};
 
   const corpus = await getCorpusForUser(session.appUser, id);
 
@@ -33,8 +30,9 @@ export default async function CorpusEnginePage({
   const entities = await listCorpusEntitiesForCorpus(corpus.id);
   const brand = corpus.brandId ? await getBrandDetailForUser(session.appUser, corpus.brandId) : null;
   const isSignalPulseCorpus = corpus.methodologySlug === "signal-pulse";
-  const showEngineBeta = isSignalPulseCorpus || process.env.NOISIA_SHOW_ENGINE_BETA_PANEL === "true" || query.engineBeta === "1";
-  const selectedLensCount = normalizeStudyAnalysisPlan(corpus.analysisPlan, corpus.methodologySlug ?? undefined).selected_lenses.length;
+  const showEngineBeta = isEngineBetaPanelEnabled();
+  const selectedLensCount = 1;
+  const dataOsReadiness = await getDataOsCorpusReadiness(corpus.id);
 
   return (
     <div className="studio-page">
@@ -48,12 +46,17 @@ export default async function CorpusEnginePage({
         batches={state.batches}
         queryPacks={state.queryPacks}
         selectedLensCount={selectedLensCount}
+        dataOsReadiness={dataOsReadiness}
         current={state.current}
         activeStep={state.activeStep}
         isApproved={state.isApproved}
-        readyToApprove={state.readyToApprove}
+        queryReady={state.queryReady}
+        queryValidation={state.queryValidation}
         assessment={state.assessment as never}
         assessedAt={state.assessedAt}
+        corpusRevision={state.corpusRevision}
+        latestAssessedRevision={state.latestAssessedRevision}
+        assessmentCurrent={state.assessmentCurrent}
         snapshots={state.snapshots}
         cleanups={state.cleanups}
         competitors={brand?.competitors ?? []}
@@ -68,27 +71,12 @@ export default async function CorpusEnginePage({
           latestState={latestAnalysis}
         />
       )}
-      {showEngineBeta ? (
+      {showEngineBeta && (
         <EngineMethodologyBetaPanel
           corpusId={corpus.id}
           corpusName={corpus.name ?? corpus.brandName ?? corpus.themeName ?? "Corpus"}
           primaryMethodologySlug={corpus.methodologySlug}
         />
-      ) : (
-        <section className="engine-technical-entry">
-          <div>
-            <p className="eyebrow">Panel técnico</p>
-            <h2>Los lentes metodológicos viven en el panel técnico</h2>
-            <p>
-              El wizard genera query packs por lente y T&B corre primero. Abre este panel para monitorear
-              los lentes seleccionados, revisar bloqueos o reintentar análisis sin repetir el corpus.
-            </p>
-          </div>
-          <a className="wizard-cta wizard-cta--ghost" href={`/studio/corpora/${corpus.id}/engine?engineBeta=1`}>
-            <Icon name="sparkle" size={15} />
-            Abrir beta técnico
-          </a>
-        </section>
       )}
     </div>
   );

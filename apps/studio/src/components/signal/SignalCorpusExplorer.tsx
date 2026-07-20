@@ -9,6 +9,17 @@ import { SourceToken } from "@/components/ui/SourceIcon";
 
 type Mention = Record<string, unknown>;
 
+type GovernedTag = {
+  taxonomyKey: string;
+  termKey: string;
+  label: string;
+};
+
+type GovernedFeature = {
+  key: string;
+  value: unknown;
+};
+
 type CorpusMention = {
   mentionId: string;
   findingId: string;
@@ -24,6 +35,8 @@ type CorpusMention = {
   canonicalSignalId: string;
   canonicalSignalTitle: string;
   evidenceRole: string;
+  tags: GovernedTag[];
+  features: GovernedFeature[];
 };
 
 type CorpusFacets = {
@@ -32,6 +45,8 @@ type CorpusFacets = {
   lenses: Array<{ lens_slug: string; signal_intent: string; count: number }>;
   entities: Array<{ entity_id: string; entity_label: string; count: number }>;
   signals: Array<{ id: string; title: string; count: number }>;
+  tags: Array<{ id: string; taxonomy_key: string; term_key: string; label: string; count: number }>;
+  features: Array<{ feature_key: string; count: number }>;
 };
 
 const corpusCopy = {
@@ -58,6 +73,11 @@ const corpusCopy = {
     allEntities: "All entities",
     signal: "Signal",
     allSignals: "All signals",
+    taxonomy: "Taxonomy term",
+    allTaxonomy: "All taxonomy terms",
+    feature: "Feature",
+    allFeatures: "All features",
+    governedDimensions: "Governed dimensions",
     evidence: "Evidence",
     allEvidence: "All evidence",
     protagonistOnly: "Protagonist only",
@@ -87,6 +107,7 @@ const corpusCopy = {
     previous: "Previous",
     next: "Next",
     filterSort: "Filter & Sort",
+    relationalUnavailable: "The governed corpus could not be loaded. Embedded report samples are disabled for this output.",
   },
   es: {
     title: "Explorador del corpus",
@@ -111,6 +132,11 @@ const corpusCopy = {
     allEntities: "Todas las entidades",
     signal: "Señal",
     allSignals: "Todas las señales",
+    taxonomy: "Término de taxonomía",
+    allTaxonomy: "Todos los términos",
+    feature: "Feature",
+    allFeatures: "Todos los features",
+    governedDimensions: "Dimensiones gobernadas",
     evidence: "Evidencia",
     allEvidence: "Toda la evidencia",
     protagonistOnly: "Sólo protagonista",
@@ -140,6 +166,7 @@ const corpusCopy = {
     previous: "Anterior",
     next: "Siguiente",
     filterSort: "Filter & Sort",
+    relationalUnavailable: "No se pudo cargar el corpus gobernado. Las muestras embebidas del reporte están desactivadas para este output.",
   },
 } satisfies Record<SignalUiLanguage, Record<string, string>>;
 
@@ -184,11 +211,13 @@ export function SignalCorpusExplorer({
   apiBasePath = "/api/signal",
   mentions,
   outputId,
+  strictRelational = false,
   variant = "signal"
 }: {
   apiBasePath?: "/api/signal" | "/api/pulse";
   mentions: Mention[];
   outputId?: string;
+  strictRelational?: boolean;
   variant?: "signal" | "signal_pulse";
 }) {
   const { uiLanguage } = useSignalUiLanguage();
@@ -202,6 +231,8 @@ export function SignalCorpusExplorer({
   const [signalIntent, setSignalIntent] = useState("");
   const [entity, setEntity] = useState("");
   const [signal, setSignal] = useState("");
+  const [tag, setTag] = useState("");
+  const [feature, setFeature] = useState("");
   const [localDateFrom, setLocalDateFrom] = useState("");
   const [localDateTo, setLocalDateTo] = useState("");
   const [evidenceRole, setEvidenceRole] = useState("");
@@ -211,18 +242,25 @@ export function SignalCorpusExplorer({
   const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [serverFacets, setServerFacets] = useState<CorpusFacets | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [serverError, setServerError] = useState(strictRelational && !outputId);
 
-  const fallbackRows = useMemo(() => mentions.map(normalizeMention).filter((mention) => mention.text), [mentions]);
+  const fallbackRows = useMemo(
+    () => strictRelational ? [] : mentions.map(normalizeMention).filter((mention) => mention.text),
+    [mentions, strictRelational]
+  );
   const rows = serverRows ?? fallbackRows;
   const dateFrom = localDateFrom || globalDateFrom;
   const dateTo = localDateTo || globalDateTo;
 
   useEffect(() => {
     setPage(1);
-  }, [dateFrom, dateTo, entity, evidenceRole, finding, lens, platform, query, signal, signalIntent, sort]);
+  }, [dateFrom, dateTo, entity, evidenceRole, feature, finding, lens, platform, query, signal, signalIntent, sort, tag]);
 
   useEffect(() => {
-    if (!outputId) return;
+    if (!outputId) {
+      setServerError(strictRelational);
+      return;
+    }
     const controller = new AbortController();
     const params = new URLSearchParams({
       q: query,
@@ -232,6 +270,8 @@ export function SignalCorpusExplorer({
       signalIntent,
       entity,
       signal,
+      tag,
+      feature,
       evidenceRole,
       dateFrom,
       dateTo,
@@ -240,22 +280,25 @@ export function SignalCorpusExplorer({
       limit: String(PAGE_SIZE)
     });
     setIsLoading(true);
+    setServerError(false);
     fetch(`${apiBasePath}/${outputId}/corpus?${params.toString()}`, { cache: "no-store", signal: controller.signal })
       .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Corpus request failed: ${res.status}`)))
       .then((payload) => {
         setServerRows(Array.isArray(payload.rows) ? payload.rows.map(normalizeMention).filter((mention: CorpusMention) => mention.text) : []);
         setServerTotal(Number(payload.total ?? 0));
         setServerFacets(normalizeFacets(payload.facets));
+        setServerError(false);
       })
       .catch((err) => {
         if (err instanceof Error && err.name === "AbortError") return;
-        setServerRows(null);
-        setServerTotal(null);
+        setServerRows(strictRelational ? [] : null);
+        setServerTotal(strictRelational ? 0 : null);
         setServerFacets(null);
+        setServerError(true);
       })
       .finally(() => setIsLoading(false));
     return () => controller.abort();
-  }, [apiBasePath, dateFrom, dateTo, entity, evidenceRole, finding, lens, outputId, page, platform, query, signal, signalIntent, sort]);
+  }, [apiBasePath, dateFrom, dateTo, entity, evidenceRole, feature, finding, lens, outputId, page, platform, query, signal, signalIntent, sort, strictRelational, tag]);
 
   const platforms = useMemo(
     () => serverFacets?.platforms.map((item) => item.platform).filter(Boolean) ?? Array.from(new Set(rows.map((mention) => mention.platform).filter(Boolean))).sort(),
@@ -285,6 +328,14 @@ export function SignalCorpusExplorer({
     () => serverFacets?.signals.filter((item) => item.id && item.title) ?? [],
     [serverFacets]
   );
+  const tags = useMemo(
+    () => serverFacets?.tags.filter((item) => item.id && item.label) ?? [],
+    [serverFacets]
+  );
+  const features = useMemo(
+    () => serverFacets?.features.filter((item) => item.feature_key) ?? [],
+    [serverFacets]
+  );
   const scored = useMemo(() => {
     if (serverRows) {
       return rows
@@ -307,6 +358,8 @@ export function SignalCorpusExplorer({
         if (signalIntent && mention.signalIntent !== signalIntent) return false;
         if (entity && mention.entityId !== entity) return false;
         if (signal && mention.canonicalSignalId !== signal) return false;
+        if (tag && !mention.tags.some((item) => item.termKey === tag || `${item.taxonomyKey}:${item.termKey}` === tag)) return false;
+        if (feature && !mention.features.some((item) => item.key === feature)) return false;
         if (evidenceRole === "protagonist" && !mention.isProtagonist) return false;
         if (evidenceRole === "support" && mention.evidenceRole === "counter") return false;
         if (evidenceRole === "support" && mention.isProtagonist) return false;
@@ -320,10 +373,10 @@ export function SignalCorpusExplorer({
         if (sort === "oldest") return dateValue(a.mention.publishedAt) - dateValue(b.mention.publishedAt);
         return b.score - a.score || Number(b.mention.isProtagonist) - Number(a.mention.isProtagonist) || dateValue(b.mention.publishedAt) - dateValue(a.mention.publishedAt);
       });
-  }, [dateFrom, dateTo, entity, evidenceRole, finding, lens, platform, query, rows, serverRows, signal, signalIntent, sort]);
+  }, [dateFrom, dateTo, entity, evidenceRole, feature, finding, lens, platform, query, rows, serverRows, signal, signalIntent, sort, tag]);
 
   const filtered = scored.map((item) => item.mention);
-  const activeFilters = [query, platform, finding, lens, signalIntent, entity, signal, localDateFrom, localDateTo, evidenceRole].filter(Boolean).length;
+  const activeFilters = [query, platform, finding, lens, signalIntent, entity, signal, tag, feature, localDateFrom, localDateTo, evidenceRole].filter(Boolean).length;
   const topChannels = serverFacets
     ? serverFacets.platforms.slice(0, 6).map((item) => ({ platform: item.platform, count: item.count }))
     : summarizePlatforms(filtered);
@@ -338,6 +391,8 @@ export function SignalCorpusExplorer({
     setSignalIntent("");
     setEntity("");
     setSignal("");
+    setTag("");
+    setFeature("");
     setLocalDateFrom("");
     setLocalDateTo("");
     setEvidenceRole("");
@@ -376,6 +431,13 @@ export function SignalCorpusExplorer({
           <Metric label={copy.channels} value={String(new Set(filtered.map((mention) => mention.platform).filter(Boolean)).size)} />
         </div>
       </header>
+
+      {serverError ? (
+        <div className="signal-serving-warning" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{copy.relationalUnavailable}</span>
+        </div>
+      ) : null}
 
       <div className="signal-corpus-toolbar">
         <span>{serverTotal ?? rows.length} {copy.filteredTotal}</span>
@@ -437,6 +499,26 @@ export function SignalCorpusExplorer({
           <option value="">{copy.allSignals}</option>
           {signals.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
         </SelectBox>
+        {!isSignalPulse ? (
+          <SelectBox label={copy.taxonomy} value={tag} onChange={setTag}>
+            <option value="">{copy.allTaxonomy}</option>
+            {tags.map((item) => (
+              <option key={`${item.taxonomy_key}:${item.id}`} value={item.id}>
+                {prettifyKey(item.taxonomy_key)} · {item.label} ({item.count})
+              </option>
+            ))}
+          </SelectBox>
+        ) : null}
+        {!isSignalPulse ? (
+          <SelectBox label={copy.feature} value={feature} onChange={setFeature}>
+            <option value="">{copy.allFeatures}</option>
+            {features.map((item) => (
+              <option key={item.feature_key} value={item.feature_key}>
+                {prettifyKey(item.feature_key)} ({item.count})
+              </option>
+            ))}
+          </SelectBox>
+        ) : null}
         <SelectBox label={copy.evidence} value={evidenceRole} onChange={setEvidenceRole}>
           <option value="">{copy.allEvidence}</option>
           <option value="protagonist">{copy.protagonistOnly}</option>
@@ -509,6 +591,12 @@ export function SignalCorpusExplorer({
                   {mention.canonicalSignalTitle ? <span>{mention.canonicalSignalTitle}</span> : null}
                 </footer>
               ) : null}
+              {!isSignalPulse && (mention.tags.length > 0 || mention.features.length > 0) ? (
+                <div className="signal-corpus-governed-dimensions" title={copy.governedDimensions}>
+                  <Icon name="layers" size={12} />
+                  <span>{formatGovernedDimensions(mention)}</span>
+                </div>
+              ) : null}
             </article>
           )) : (
             <div className="signal-corpus-empty">
@@ -573,20 +661,29 @@ function corpusMentionKey(mention: CorpusMention, index: number) {
 
 function normalizeMention(mention: Mention): CorpusMention {
   return {
-    mentionId: stringValue(mention.mention_id),
-    findingId: stringValue(mention.finding_id),
-    findingName: stringValue(mention.finding_name),
-    text: stringValue(mention.text),
-    platform: stringValue(mention.platform),
-    publishedAt: stringValue(mention.published_at),
-    isProtagonist: Boolean(mention.is_protagonist),
-    lensSlug: stringValue(mention.lens_slug),
-    signalIntent: stringValue(mention.signal_intent),
-    queryScope: stringValue(mention.query_scope),
-    entityId: stringValue(mention.source_entity_id),
-    canonicalSignalId: stringValue(mention.canonical_signal_id),
-    canonicalSignalTitle: stringValue(mention.canonical_signal_title),
-    evidenceRole: stringValue(mention.evidence_role)
+    mentionId: stringValue(firstValue(mention, "mentionId", "mention_id")),
+    findingId: stringValue(firstValue(mention, "findingId", "finding_id")),
+    findingName: stringValue(firstValue(mention, "findingName", "finding_name")),
+    text: stringValue(firstValue(mention, "text", "text_clean", "text_raw")),
+    platform: stringValue(firstValue(mention, "platform")),
+    publishedAt: stringValue(firstValue(mention, "publishedAt", "published_at")),
+    isProtagonist: Boolean(firstValue(mention, "isProtagonist", "is_protagonist")),
+    lensSlug: stringValue(firstValue(mention, "lensSlug", "lens_slug")),
+    signalIntent: stringValue(firstValue(mention, "signalIntent", "signal_intent")),
+    queryScope: stringValue(firstValue(mention, "queryScope", "query_scope")),
+    entityId: stringValue(firstValue(mention, "entityId", "source_entity_id")),
+    canonicalSignalId: stringValue(firstValue(mention, "canonicalSignalId", "canonical_signal_id")),
+    canonicalSignalTitle: stringValue(firstValue(mention, "canonicalSignalTitle", "canonical_signal_title")),
+    evidenceRole: stringValue(firstValue(mention, "evidenceRole", "evidence_role")),
+    tags: arrayValue(firstValue(mention, "tags")).map((item) => ({
+      taxonomyKey: stringValue(firstValue(item, "taxonomyKey", "taxonomy_key")),
+      termKey: stringValue(firstValue(item, "termKey", "term_key")),
+      label: stringValue(firstValue(item, "label", "value"))
+    })),
+    features: arrayValue(firstValue(mention, "features")).map((item) => ({
+      key: stringValue(firstValue(item, "key", "feature_key")),
+      value: firstValue(item, "value", "feature_value")
+    }))
   };
 }
 
@@ -622,8 +719,33 @@ function normalizeFacets(input: unknown): CorpusFacets {
       id: stringValue(item.id),
       title: stringValue(item.title),
       count: numberValue(item.count)
+    })),
+    tags: arrayValue(value.tags).map((item) => ({
+      id: stringValue(item.id),
+      taxonomy_key: stringValue(item.taxonomy_key),
+      term_key: stringValue(item.term_key),
+      label: stringValue(item.label),
+      count: numberValue(item.count)
+    })),
+    features: arrayValue(value.features).map((item) => ({
+      feature_key: stringValue(item.feature_key),
+      count: numberValue(item.count)
     }))
   };
+}
+
+function formatGovernedDimensions(mention: CorpusMention) {
+  const tags = mention.tags
+    .map((item) => item.label || item.termKey)
+    .filter(Boolean)
+    .slice(0, 3);
+  const features = mention.features
+    .map((item) => item.key)
+    .filter(Boolean)
+    .slice(0, 2);
+  const values = [...tags, ...features.map((item) => prettifyKey(item))];
+  const remaining = mention.tags.length + mention.features.length - values.length;
+  return `${values.join(" · ")}${remaining > 0 ? ` · +${remaining}` : ""}`;
 }
 
 function sourceDisplayLabel(value: string, uiLanguage: SignalUiLanguage) {
@@ -736,6 +858,14 @@ function arrayValue(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
     : [];
+}
+
+function firstValue(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== null && value !== undefined) return value;
+  }
+  return undefined;
 }
 
 function stringValue(value: unknown) {

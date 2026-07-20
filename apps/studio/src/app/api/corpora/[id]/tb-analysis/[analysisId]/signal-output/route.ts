@@ -7,15 +7,24 @@ import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { db, pool } from "@/lib/db";
+import { persistDataOsOutputRefs } from "@/lib/data-os/output-refs";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness,
+  type SignalServingReadinessAssessment
+} from "@/lib/data-os/signal-serving";
 import {
   explicitCompositeEngineLensesFromPlan,
   validateCompositeEnginePublishReadiness,
   type CompositeEngineLensAnalysis
 } from "@/lib/engine/composite-publish-guards";
+import { ACTIVE_ENGINE_RUNTIME_SLUGS, engineModuleKeyForMethodology } from "@/lib/engine/methodology-options";
 import { attachLiveIntelligenceLinksToPayload } from "@/lib/live-intelligence/published-output";
 import { persistTbSignalObservations } from "@/lib/live-intelligence/tb-observations";
 import { buildSignalPayload, normalizeSignalManifest } from "@/lib/signal/build";
 import { SIGNAL_PAYLOAD_VERSION } from "@/lib/signal/contracts";
+import { attachSignalServingContract } from "@/lib/signal/semantics";
 
 const bodySchema = z.object({
   title: z.string().min(3).max(140),
@@ -59,7 +68,37 @@ export async function POST(
     );
   }
 
-  const manifest = normalizeSignalManifest(parsed.data.manifest);
+  const allowBetaLenses = process.env.NOISIA_SHOW_ENGINE_BETA_PANEL === "true";
+  const requestedManifest = normalizeSignalManifest(parsed.data.manifest);
+  const manifest = allowBetaLenses ? requestedManifest : productionSignalManifest(requestedManifest);
+  const snapshotId = state.analysis.snapshotId;
+  const isPublish = parsed.data.action === "publish";
+  let signalServingReadiness = snapshotId
+    ? await getSignalServingReadiness({
+        analysisId: state.analysis.id,
+        snapshotId
+      })
+    : null;
+  let signalServingAssessment: SignalServingReadinessAssessment = signalServingReadiness
+    ? assessSignalServingReadiness(signalServingReadiness)
+    : {
+        ready: false,
+        hardBlocks: [{
+          code: "snapshot_missing",
+          message: "El analisis no esta vinculado a un snapshot inmutable del corpus."
+        }],
+        warnings: []
+      };
+  const draftManifest = signalServingReadiness
+    ? {
+        ...manifest,
+        data_os_readiness: {
+          contract_version: signalServingReadiness.contractVersion,
+          counts: signalServingReadiness.counts,
+          warnings: signalServingAssessment.warnings.map((warning) => warning.code)
+        }
+      }
+    : manifest;
   const payload = buildSignalPayload({
     state,
     corpus,
@@ -67,9 +106,29 @@ export async function POST(
     headline: parsed.data.headline,
     summary: parsed.data.summary
   });
-  const isPublish = parsed.data.action === "publish";
   if (isPublish) {
-    const selectedEngineLenses = explicitCompositeEngineLensesFromPlan(corpus.analysisPlan);
+    if (!snapshotId) {
+      return Response.json(
+        {
+          error: "published_signal_requires_snapshot",
+          message: "El analisis no tiene un snapshot inmutable. Vuelve a aprobar el corpus antes de publicar Signal."
+        },
+        { status: 409 }
+      );
+    }
+    if (!signalServingAssessment.ready) {
+      return Response.json(
+        {
+          error: "data_os_readiness_failed",
+          message: "Signal no se puede publicar porque faltan datos relacionales verificables.",
+          readiness: signalServingReadiness,
+          assessment: signalServingAssessment
+        },
+        { status: 409 }
+      );
+    }
+
+    const selectedEngineLenses = allowBetaLenses ? explicitCompositeEngineLensesFromPlan(corpus.analysisPlan) : [];
     const compositeReadiness = validateCompositeEnginePublishReadiness({
       analysisPlan: corpus.analysisPlan,
       manifest,
@@ -90,8 +149,8 @@ export async function POST(
     }
   }
 
-  // TODO mejora-futura: versionar cada publish como snapshot inmutable.
-  // MVP mantiene un output narrativo por analisis y actualiza el payload.
+  // Publishing is intentionally staged. The row stays draft until its immutable
+  // snapshot and relational serving references have been persisted and verified.
   const [output] = await db
     .insert(publishedOutputs)
     .values({
@@ -101,30 +160,30 @@ export async function POST(
       themeId: corpus.themeId,
       methodologySlug: corpus.methodologySlug ?? "triggers-barriers",
       outputType: "narrative_dashboard",
-      status: isPublish ? "published" : "draft",
+      status: "draft",
       title: parsed.data.title,
       headline: parsed.data.headline,
       summary: parsed.data.summary,
-      manifest,
+      manifest: draftManifest,
       payload,
       version: SIGNAL_PAYLOAD_VERSION,
       createdByUserId: session.appUser.id,
-      publishedByUserId: isPublish ? session.appUser.id : null,
-      publishedAt: isPublish ? new Date() : null,
+      publishedByUserId: null,
+      publishedAt: null,
       updatedAt: new Date()
     })
     .onConflictDoUpdate({
       target: [publishedOutputs.tbAnalysisId, publishedOutputs.outputType],
       set: {
-        status: isPublish ? "published" : "draft",
+        status: "draft",
         title: parsed.data.title,
         headline: parsed.data.headline,
         summary: parsed.data.summary,
-        manifest,
+        manifest: draftManifest,
         payload,
         version: SIGNAL_PAYLOAD_VERSION,
-        publishedByUserId: isPublish ? session.appUser.id : null,
-        publishedAt: isPublish ? new Date() : null,
+        publishedByUserId: null,
+        publishedAt: null,
         archivedAt: null,
         updatedAt: new Date()
       }
@@ -136,6 +195,144 @@ export async function POST(
     });
 
   let liveIntelligence: Awaited<ReturnType<typeof persistTbSignalObservations>> | null = null;
+  const dataOsReferences = output?.id
+    ? await persistDataOsOutputRefs({
+        outputId: output.id,
+        corpusId: corpus.id,
+        analysisId: state.analysis.id,
+        snapshotId,
+        required: isPublish
+      })
+    : {
+        status: "skipped" as const,
+        refs: 0,
+        lineageEdges: 0,
+        contractVersion: "signal-serving-v1",
+        presentRefs: [],
+        missingRefs: [],
+        reason: "output_not_created"
+      };
+
+  if (isPublish && dataOsReferences.status !== "ok") {
+    return Response.json(
+      {
+        error: "signal_serving_contract_incomplete",
+        message: "Signal no se publico porque faltan referencias verificables al snapshot y al analisis.",
+        output,
+        dataOsReferences
+      },
+      { status: 409 }
+    );
+  }
+
+  let relationalVerification: {
+    mentions: number;
+    findings: number;
+    opportunities: number;
+  } | null = null;
+  let publishedManifest: Record<string, unknown> = { ...draftManifest };
+
+  if (isPublish && output?.id && snapshotId) {
+    signalServingReadiness = await getSignalServingReadiness({
+      analysisId: state.analysis.id,
+      snapshotId,
+      outputId: output.id,
+      requireDataRefs: true
+    });
+    signalServingAssessment = assessSignalServingReadiness(signalServingReadiness);
+
+    if (!signalServingAssessment.ready) {
+      return Response.json(
+        {
+          error: "data_os_readiness_failed_after_refs",
+          message: "Signal quedo como draft porque el contrato relacional no paso la verificacion posterior a sus referencias.",
+          output,
+          readiness: signalServingReadiness,
+          assessment: signalServingAssessment,
+          dataOsReferences
+        },
+        { status: 409 }
+      );
+    }
+
+    try {
+      const overview = await loadPublishedSignalOverview({
+        outputId: output.id,
+        corpusId: corpus.id,
+        snapshotId,
+        analysisId: state.analysis.id,
+        requireGovernedRef: true
+      });
+      const mismatch = compareRelationalServingCounts(overview, signalServingReadiness);
+      if (mismatch.length > 0) {
+        return Response.json(
+          {
+            error: "signal_relational_serving_mismatch",
+            message: "Signal quedo como draft porque la lectura relacional no coincide con el contrato de publicacion.",
+            output,
+            mismatch,
+            readiness: signalServingReadiness,
+            dataOsReferences
+          },
+          { status: 409 }
+        );
+      }
+      relationalVerification = {
+        mentions: overview.corpus.total_mentions,
+        findings: overview.metrics.findings_total,
+        opportunities: overview.metrics.opportunities_total
+      };
+    } catch (error) {
+      return Response.json(
+        {
+          error: "signal_relational_serving_failed",
+          message: "Signal quedo como draft porque no fue posible servir el snapshot relacional publicado.",
+          output,
+          detail: error instanceof Error ? error.message : "unknown_relational_serving_error",
+          readiness: signalServingReadiness,
+          dataOsReferences
+        },
+        { status: 409 }
+      );
+    }
+
+    if (!relationalVerification) {
+      return Response.json(
+        {
+          error: "signal_relational_verification_missing",
+          message: "Signal quedo como draft porque no se pudo conservar la evidencia de reconciliacion relacional.",
+          output,
+          readiness: signalServingReadiness,
+          dataOsReferences
+        },
+        { status: 409 }
+      );
+    }
+
+    publishedManifest = attachSignalServingContract({
+      ...manifest,
+      data_os_readiness: {
+        contract_version: signalServingReadiness.contractVersion,
+        counts: signalServingReadiness.counts,
+        warnings: signalServingAssessment.warnings.map((warning) => warning.code)
+      },
+      relational_verification: {
+        status: "verified",
+        contract_version: signalServingReadiness.contractVersion,
+        verified_at: new Date().toISOString(),
+        mentions: relationalVerification.mentions,
+        findings: relationalVerification.findings,
+        opportunities: relationalVerification.opportunities,
+        payload_role: "manifest_only",
+        payload_preserved: true
+      }
+    }, {
+      analysisId: state.analysis.id,
+      snapshotId
+    });
+  }
+
+  let finalPayload = payload;
   if (isPublish && output?.id) {
     try {
       liveIntelligence = await persistTbSignalObservations({
@@ -143,13 +340,7 @@ export async function POST(
         publishedOutputId: output.id
       });
       if (liveIntelligence.status === "ok" && liveIntelligence.mappings.length > 0) {
-        await db
-          .update(publishedOutputs)
-          .set({
-            payload: attachLiveIntelligenceLinksToPayload(payload, liveIntelligence),
-            updatedAt: new Date()
-          })
-          .where(eq(publishedOutputs.id, output.id));
+        finalPayload = attachLiveIntelligenceLinksToPayload(payload, liveIntelligence);
       }
     } catch (error) {
       liveIntelligence = {
@@ -161,9 +352,29 @@ export async function POST(
         mappings: []
       };
     }
+
+    await db
+      .update(publishedOutputs)
+      .set({
+        status: "published",
+        manifest: publishedManifest,
+        payload: finalPayload,
+        publishedByUserId: session.appUser.id,
+        publishedAt: new Date(),
+        updatedAt: new Date()
+      })
+      .where(eq(publishedOutputs.id, output.id));
   }
 
-  return Response.json({ ok: true, output, liveIntelligence });
+  return Response.json({
+    ok: true,
+    output: output ? { ...output, status: isPublish ? "published" : "draft" } : output,
+    liveIntelligence,
+    dataOsReferences,
+    relationalVerification,
+    signalServingReadiness,
+    signalServingAssessment
+  });
 }
 
 export async function GET(
@@ -195,6 +406,34 @@ export async function GET(
     .limit(1);
 
   return Response.json({ output: output ?? null });
+}
+
+function productionSignalManifest(manifest: ReturnType<typeof normalizeSignalManifest>) {
+  const production = { ...manifest, engine_methodology: false };
+  for (const slug of ACTIVE_ENGINE_RUNTIME_SLUGS) {
+    const moduleKey = engineModuleKeyForMethodology(slug);
+    if (moduleKey) production[moduleKey] = false;
+  }
+  return production;
+}
+
+function compareRelationalServingCounts(
+  overview: Awaited<ReturnType<typeof loadPublishedSignalOverview>>,
+  readiness: Awaited<ReturnType<typeof getSignalServingReadiness>>
+) {
+  const mismatches: string[] = [];
+  const pairs = [
+    ["mentions", overview.corpus.total_mentions, readiness.counts.mentions],
+    ["findings", overview.metrics.findings_total, readiness.counts.findings],
+    ["opportunities", overview.metrics.opportunities_total, readiness.counts.opportunities]
+  ] as const;
+
+  for (const [name, served, expected] of pairs) {
+    if (served !== expected) {
+      mismatches.push(`${name}: served=${served}, expected=${expected}`);
+    }
+  }
+  return mismatches;
 }
 
 async function loadLatestCompositeEngineAnalyses(

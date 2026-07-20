@@ -14,6 +14,13 @@ import {
   type TbLayer
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import {
+  assertCorpusDataOsAuditReady,
+  auditCorpusDataOs,
+  persistCorpusDataOsAudit,
+  summarizeCorpusDataOsAudit
+} from "./data-os-corpus-audit";
+import { materializeTbCodingDataOs } from "./tb-data-os-bridge";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
@@ -116,6 +123,18 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
 
     // Propagate codings to every tb_mention_codings row.
     const updateStats = await propagateCodings({ tbAnalysisId, tagMap });
+    const dataOsBridge = await materializeTbCodingDataOs({
+      tbAnalysisId,
+      stage: "step2_coding",
+      model
+    });
+    const dataOsAudit = await auditCorpusDataOs({
+      corpusId: dataOsBridge.study_corpus_id,
+      stage: "post_coding",
+      tbAnalysisId
+    });
+    await persistCorpusDataOsAudit({ tbAnalysisId, audit: dataOsAudit });
+    assertCorpusDataOsAuditReady(dataOsAudit, "T&B coding bridge");
     await job.updateProgress(92);
 
     // Persist step result summary with the coded vocabulary so step 3 can
@@ -128,6 +147,8 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
         mentions_updated: updateStats.updated,
         mentions_unmatched: updateStats.unmatched,
         mentions_ambiguous: updateStats.ambiguous,
+        data_os_coding_bridge: dataOsBridge,
+        data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
         polarity_distribution: coding.polarity_distribution,
         layer_distribution: coding.layer_distribution,
         // Keep full coded vocab inline for step 3 (it's small — ~120 entries)
@@ -143,6 +164,8 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
       coded_tags: coding.coded_tags.length,
       mentions_updated: updateStats.updated,
       mentions_ambiguous: updateStats.ambiguous,
+      data_os_coding_bridge: dataOsBridge,
+      data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
       next_step_job_id: next.jobId
     };
   } catch (err) {

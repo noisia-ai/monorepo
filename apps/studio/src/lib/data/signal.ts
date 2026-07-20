@@ -126,6 +126,7 @@ async function selectSignalOutputForUserRow(
     .select({
       id: publishedOutputs.id,
       tbAnalysisId: publishedOutputs.tbAnalysisId,
+      snapshotId: tbAnalyses.snapshotId,
       engineAnalysisId: options.includeEngineAnalysis
         ? publishedOutputs.engineAnalysisId
         : sql<string | null>`NULL`,

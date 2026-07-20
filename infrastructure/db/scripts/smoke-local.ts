@@ -60,7 +60,7 @@ async function main() {
 
   await waitForDatabase(databaseUrl);
 
-  await run("pnpm", ["exec", "tsx", "scripts/smoke-migrations.ts"], {
+  await run("corepack", ["pnpm", "exec", "tsx", "scripts/smoke-migrations.ts"], {
     cwd: dbRoot,
     env: {
       ...process.env,

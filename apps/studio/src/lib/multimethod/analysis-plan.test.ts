@@ -9,8 +9,8 @@ import {
   STUDY_LENS_OPTIONS
 } from "./analysis-plan";
 
-test("defaultStudyLensSlugs keeps T&B and Narrative selected", () => {
-  assert.deepEqual(defaultStudyLensSlugs(), ["triggers-barriers", "narrative-ownership"]);
+test("defaultStudyLensSlugs keeps only the production methodology selected", () => {
+  assert.deepEqual(defaultStudyLensSlugs(), ["triggers-barriers"]);
 });
 
 test("buildStudyAnalysisPlan forces the primary lens and drops unknown slugs", () => {

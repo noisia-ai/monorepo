@@ -1,14 +1,21 @@
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateText } from "ai";
+import { generateObject } from "ai";
 import type { Job } from "bullmq";
+import { z } from "zod";
 
 import {
-  buildQueryRefinementPrompt,
-  parseComposedQueryJson,
+  BOOLEAN_LISTENING_QUERY_RULES,
+  buildGenerationContract,
+  buildQueryConstructionInput,
+  buildQueryConstructionPlan,
+  PORTABLE_LISTEN_QUERY_MAX_LENGTH,
+  queryValidationReports,
   QUERY_ENGINE_PIPELINE_VERSION,
-  SENTIONE_LQL_RULES,
+  validateConstructedQuery,
   type ComposedQuery,
   type EvaluationHistoryEntry,
+  type QueryCompetitorEntity,
+  type QueryConstructionScope,
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
@@ -37,6 +44,23 @@ type SourceIterationRow = {
   query_components: unknown;
 };
 
+type SourcePackRow = {
+  id: string;
+  scope: "brand" | "competitors" | "category" | string;
+  entity_key: string | null;
+  signal_intent: string;
+  objective: string | null;
+  query_text: string | null;
+  query_components: Record<string, unknown> | null;
+  evaluation: Record<string, unknown> | null;
+};
+
+const refinedQuerySchema = z.object({
+  // Keep transport parsing permissive enough to feed contract violations back
+  // into the refinement loop. The listening adapter limit is enforced below.
+  query: z.string().trim().min(1).max(PORTABLE_LISTEN_QUERY_MAX_LENGTH)
+});
+
 export async function applyQueryAdjustmentsJob(job: Job<ApplyAdjustmentsJobData>) {
   await job.updateProgress(10);
 
@@ -55,85 +79,123 @@ export async function applyQueryAdjustmentsJob(job: Job<ApplyAdjustmentsJobData>
 
   await job.updateProgress(25);
 
-  const [corpusInput, evaluationHistory] = await Promise.all([
+  const [corpusInput, evaluationHistory, sourcePacks] = await Promise.all([
     loadCorpusContext(corpusId),
-    loadEvaluationHistory(corpusId)
+    loadEvaluationHistory(corpusId),
+    loadSourcePacks(corpusId, sourceIterationId)
   ]);
   await job.updateProgress(45);
   console.log(`[apply-adjustments] Loaded ${evaluationHistory.length} history entries for context`);
 
   const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
-  const prompt = buildQueryRefinementPrompt({
-    previousQueryText: sourceIteration.query_text,
-    proposedAdjustments,
-    evaluation,
-    subject: corpusInput.subject,
-    corpus: corpusInput.corpus,
-    methodology: { slug: corpusInput.methodology.slug, name: corpusInput.methodology.name },
-    knowledgeSources: corpusInput.knowledgeSources,
-    queryStrategyBrief: corpusInput.queryStrategyBrief,
-    evaluationHistory,
-    userComments: job.data.userComments
-  });
-
-  let composed: ComposedQuery;
-  try {
-    const result = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2
-    });
-    console.log(`[apply-adjustments] Claude response (first 200): ${result.text.slice(0, 200)}`);
-    composed = parseComposedQueryJson(result.text, corpusInput, model);
-
-    if (!composed.competitor_query_text || composed.competitor_query_text.length === 0) {
-      console.warn(`[apply-adjustments] Claude returned no competitor query — retrying`);
-      const competitorOnly = await generateCompetitorQuery({
-        brandQueryText: composed.query_text,
-        corpus: corpusInput,
-        model
-      });
-      if (competitorOnly) {
-        composed = { ...composed, competitor_query_text: competitorOnly };
-      }
-    }
-    // If Claude dropped the industry query, do a focused retry asking ONLY for that one.
-    if (!composed.industry_query_text || composed.industry_query_text.length === 0) {
-      console.warn(`[apply-adjustments] Claude returned only brand query — retrying for industry`);
-      const industryOnly = await generateIndustryQuery({
-        brandQueryText: composed.query_text,
-        corpus: corpusInput,
-        model
-      });
-      if (industryOnly) {
-        composed = { ...composed, industry_query_text: industryOnly };
-      }
-    }
-  } catch (err) {
-    console.error(`[apply-adjustments] Claude failed: ${err instanceof Error ? err.message : err}`);
-    // Fall back to source iteration with minimal modifications
-    composed = {
-      query_text: sourceIteration.query_text,
-      competitor_query_text: sourceIteration.competitor_query_text ?? undefined,
-      industry_query_text: sourceIteration.industry_query_text ?? undefined,
-      query_components: {
-        ...(typeof sourceIteration.query_components === "object" && sourceIteration.query_components !== null
-          ? sourceIteration.query_components as Record<string, unknown>
-          : {}),
-        brand_seeds: [],
-        competitor_seeds: [],
-        category_seeds: [],
-        trigger_phrases_tb: [],
-        barrier_phrases_tb: [],
-        global_exclusions: [],
-        memory_industry: [],
-        memory_brand: [],
-        model,
-        fallback_used: true,
-        fallback_reason: err instanceof Error ? err.message : "unknown"
-      }
-    };
+  const queryComponents = typeof sourceIteration.query_components === "object"
+    && sourceIteration.query_components !== null
+    ? sourceIteration.query_components as ComposedQuery["query_components"]
+    : null;
+  if (!queryComponents) {
+    throw new Error("The source iteration is missing query components.");
   }
+
+  const identityGroups = groupSourcePacks(sourcePacks, corpusInput);
+  const groupsToRefine = identityGroups.filter((group) =>
+    group.packs.some((pack) => pack.evaluation?.status !== "ready")
+  );
+  const frozenGroups = identityGroups.filter((group) =>
+    group.packs.every((pack) => pack.evaluation?.status === "ready")
+  );
+  if (groupsToRefine.length === 0) {
+    throw new Error("All query packs are already stable; there is nothing to refine.");
+  }
+
+  const refinedByIdentity = new Map<string, string>();
+  for (const group of groupsToRefine) {
+    const representative = group.packs.find((pack) => pack.evaluation?.status !== "ready")
+      ?? group.packs[0];
+    if (!representative) continue;
+    const currentQuery = sourceQueryForIdentity({
+      iteration: sourceIteration,
+      queryComponents,
+      group
+    });
+    if (!currentQuery) throw new Error(`Query identity ${group.identity} has no source query.`);
+    const packAdjustments = uniqueStrings(group.packs.flatMap((pack) =>
+      stringArray(pack.evaluation?.proposed_adjustments)
+    ));
+    const refined = await generatePackQuery({
+      pack: representative,
+      identity: group.identity,
+      entityLabel: group.entityLabel,
+      relatedPacks: group.packs,
+      currentQuery,
+      proposedAdjustments: packAdjustments.length > 0 ? packAdjustments : proposedAdjustments,
+      corpus: corpusInput,
+      evaluation,
+      evaluationHistory,
+      userComments: job.data.userComments,
+      model
+    });
+    if (normalizeQuery(refined) === normalizeQuery(currentQuery)) {
+      throw new Error(`The ${group.identity} refinement did not change the query.`);
+    }
+    refinedByIdentity.set(group.identity, refined);
+  }
+
+  const sourceCompetitorQueries = firstClassCompetitorQueries({
+    queryComponents,
+    identityGroups,
+    iteration: sourceIteration
+  });
+  const competitorQueries = sourceCompetitorQueries.map((item) => ({
+    ...item,
+    query_text: refinedByIdentity.get(queryIdentityKey("competitors", item.entity))
+      ?? item.query_text
+  }));
+  const brandQuery = refinedByIdentity.get("brand") ?? sourceIteration.query_text;
+  const categoryQuery = refinedByIdentity.get("category")
+    ?? sourceIteration.industry_query_text
+    ?? undefined;
+  const legacyCompetitorQuery = refinedByIdentity.get("competitors:legacy-peer-set")
+    ?? sourceIteration.competitor_query_text
+    ?? undefined;
+  const generationQueries = {
+    brand: brandQuery,
+    ...Object.fromEntries(competitorQueries.map((item) => [
+      `competitor:${item.entity}`,
+      item.query_text
+    ])),
+    ...(categoryQuery ? { category: categoryQuery } : {})
+  };
+  const composed: ComposedQuery = {
+    query_text: brandQuery,
+    ...(competitorQueries.length > 0 ? { competitor_queries: competitorQueries } : {}),
+    ...(legacyCompetitorQuery ? { competitor_query_text: legacyCompetitorQuery } : {}),
+    ...(categoryQuery ? { industry_query_text: categoryQuery } : {}),
+    query_components: {
+      ...queryComponents,
+      ...(competitorQueries.length > 0 ? { competitor_queries: competitorQueries } : {}),
+      model,
+      generation_contract: buildGenerationContract(
+        corpusInput,
+        queryValidationReports(generationQueries),
+        {
+          validationMode: "structural_plus_imported_evidence",
+          evidenceStatus: "validated_on_imported_mentions"
+        }
+      ),
+      refinement: {
+        source_iteration_id: sourceIterationId,
+        refined_pack_scopes: uniqueStrings(groupsToRefine.flatMap((group) =>
+          group.packs.map((pack) => pack.scope)
+        )),
+        frozen_pack_scopes: uniqueStrings(frozenGroups.flatMap((group) =>
+          group.packs.map((pack) => pack.scope)
+        )),
+        refined_query_identities: groupsToRefine.map((group) => group.identity),
+        frozen_query_identities: frozenGroups.map((group) => group.identity),
+        applied_at: new Date().toISOString()
+      }
+    }
+  };
 
   await job.updateProgress(75);
 
@@ -185,106 +247,265 @@ export async function applyQueryAdjustmentsJob(job: Job<ApplyAdjustmentsJobData>
     new_iteration_id: newIteration.id,
     iteration_number: iterationNumber,
     query_text: newIteration.query_text,
-    planned_query_packs: queryPacks.planned_packs
+    planned_query_packs: queryPacks.planned_packs,
+    refined_pack_scopes: uniqueStrings(groupsToRefine.flatMap((group) =>
+      group.packs.map((pack) => pack.scope)
+    )),
+    frozen_pack_scopes: uniqueStrings(frozenGroups.flatMap((group) =>
+      group.packs.map((pack) => pack.scope)
+    )),
+    refined_query_identities: groupsToRefine.map((group) => group.identity),
+    frozen_query_identities: frozenGroups.map((group) => group.identity)
   };
 }
 
-async function generateCompetitorQuery(params: {
-  brandQueryText: string;
+async function generatePackQuery(input: {
+  pack: SourcePackRow;
+  identity: string;
+  entityLabel: string | null;
+  relatedPacks: SourcePackRow[];
+  currentQuery: string;
+  proposedAdjustments: string[];
   corpus: QueryComposerInput;
+  evaluation: ApplyAdjustmentsJobData["evaluation"];
+  evaluationHistory: EvaluationHistoryEntry[];
+  userComments?: string;
   model: string;
-}): Promise<string | null> {
-  const { brandQueryText, corpus, model } = params;
-  if (corpus.competitors.length === 0) return null;
-  const prompt = [
-    "Tarea unica: derivar la version COMPETENCIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios, sin etiquetas.",
+}) {
+  const constructionInput = buildQueryConstructionInput(input.corpus);
+  const constructionPlan = buildQueryConstructionPlan(constructionInput);
+  const scope = constructionScope(input.pack.scope);
+  const competitorEntity = scope === "competitors" && input.identity !== "competitors:legacy-peer-set"
+    ? input.entityLabel ?? undefined
+    : undefined;
+  const scopeAnchors = scope === "brand"
+    ? constructionPlan.anchors.brand
+    : scope === "category"
+      ? constructionPlan.anchors.category
+      : constructionPlan.anchors.competitor_entities.find((entity) =>
+          normalizeEntityName(entity.entity) === normalizeEntityName(competitorEntity ?? "")
+        )?.terms ?? [];
+  const basePrompt = [
+    "Eres el refinador de hipótesis de queries de listening de Noisia.",
+    `Refina UNA SOLA identidad canónica: ${input.identity}. No cambies ni propongas queries para otras identidades.`,
+    "Devuelve la query booleana final en el campo query, sin Markdown ni explicación.",
+    `La query debe ser ejecutable y respetar el límite portable de ${PORTABLE_LISTEN_QUERY_MAX_LENGTH} caracteres.`,
+    "Conserva la intención del pack y aplica solo los ajustes respaldados por evidencia.",
+    "No inventes marcas, mercados ni exclusiones no presentes en el contexto.",
+    "No agrupes competidores: una query competitiva representa exactamente una entidad.",
+    constructionPlan.mode === "exploratory"
+      ? "MODO EXPLORATORIO: conserva recuperación amplia por entidad. No agregues un AND de triggers, barriers o frases de resultado; esas señales se clasifican después de importar."
+      : "MODO DETECTION: conserva un bloque temático balanceado entre lenguaje positivo y negativo, respaldado por el plan.",
+    "Usa frases naturales cortas; para conceptos más largos usa proximidad. Evita términos ambiguos aislados.",
+    "Conserva o mejora el bloque AND NOT cuando existe ruido conocido.",
+    "La autoridad contextual es: Subject OS (Brand OS o Theme OS), Study OS y fuentes RAG gobernadas.",
+    "La evidencia posterior a importación solo permite corregir el query pack evaluado; no reemplaza esos OS.",
     "",
-    "Reglas:",
-    "- La query de competencia usa SOLO competidores nombrados + la misma señal.",
-    "- NO incluyas la marca principal ni sus handles.",
-    "- Mantiene la misma calidad de exclusiones que la query de marca, sin excluir a los competidores.",
+    BOOLEAN_LISTENING_QUERY_RULES,
     "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Competidores disponibles: ${corpus.competitors.slice(0, 20).join(", ")}`,
-    "",
-    `Query de marca de referencia:\n${brandQueryText}`,
-    "",
-    `Pregunta de negocio: ${corpus.corpus.businessQuestion ?? "n/a"}`,
-    "",
-    "Devuelve la query de competencia ahora (una sola linea, sin envoltorio):"
+    `CONTRATO: mode=${constructionPlan.mode}; scope=${scope}; entity=${input.entityLabel ?? "n/a"}`,
+    `ANCHORS GOBERNADOS: ${JSON.stringify(scopeAnchors)}`,
+    `RUIDO GOBERNADO: ${JSON.stringify(constructionPlan.noise_terms)}`,
+    `THEME POST-INGEST/DETECTION: ${JSON.stringify(constructionPlan.theme_terms)}`,
+    `PACKS RELACIONADOS: ${input.relatedPacks.map((pack) => `${pack.signal_intent}: ${pack.objective ?? "n/a"}`).join(" | ")}`,
+    `QUERY ACTUAL: ${input.currentQuery}`,
+    `AJUSTES OBSERVADOS: ${input.proposedAdjustments.join(" | ") || "n/a"}`,
+    `SCORES SOBRE EVIDENCIA IMPORTADA: calidad=${input.evaluation.quality_score}; densidad=${input.evaluation.density_score}; ruido=${input.evaluation.noise_score}`,
+    `NOTAS: ${input.evaluation.notes || "n/a"}`,
+    `COMENTARIO DEL ANALISTA: ${input.userComments ?? "n/a"}`,
+    `SUBJECT OS: ${input.corpus.subject.type === "brand" ? "brand_os" : "theme_os"}`,
+    `SUJETO: ${JSON.stringify(input.corpus.subject)}`,
+    `PREGUNTA DE NEGOCIO: ${input.corpus.corpus.businessQuestion ?? "n/a"}`,
+    `STUDY OS / CONTEXTO ESTRUCTURADO: ${promptJson(input.corpus.corpus.contextForm, 6_000)}`,
+    `AUDIENCIA: ${input.corpus.corpus.audienceSegment ?? "n/a"}`,
+    `MERCADOS: ${input.corpus.corpus.geoFocus.join(", ") || "n/a"}`,
+    `COMPETIDORES CANÓNICOS: ${input.corpus.competitors.slice(0, 20).join(", ") || "n/a"}`,
+    `QUERY STRATEGY BRIEF: ${promptJson(input.corpus.queryStrategyBrief ?? null, 8_000)}`,
+    `FUENTES RAG: ${promptJson(input.corpus.knowledgeSources.slice(0, 16), 12_000)}`,
+    `HISTORIAL RECIENTE: ${JSON.stringify(input.evaluationHistory.slice(-3))}`
   ].join("\n");
 
-  try {
-    const result = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2
+  let validationFeedback = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const result = await generateObject({
+      model: anthropic(input.model),
+      schema: refinedQuerySchema,
+      prompt: [basePrompt, validationFeedback].filter(Boolean).join("\n\n"),
+      temperature: 0,
+      maxRetries: 2
     });
-    const cleaned = result.text
-      .trim()
-      .replace(/^```[a-z]*\s*/i, "")
-      .replace(/```$/i, "")
-      .replace(/^["']|["']$/g, "")
-      .trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    return cleaned;
-  } catch (err) {
-    console.error(`[apply-adjustments] Competitor retry failed: ${err instanceof Error ? err.message : err}`);
-    return null;
+    const validation = validateConstructedQuery({
+      query: result.object.query,
+      scope,
+      input: constructionInput,
+      plan: constructionPlan,
+      ...(competitorEntity ? { competitorEntity } : {}),
+      allowLegacyCompetitorUnion: input.identity === "competitors:legacy-peer-set"
+    });
+    if (validation.valid) {
+      return validation.structural.normalized_query;
+    }
+    validationFeedback = [
+      "La respuesta anterior fue rechazada por el compilador estructural/semántico.",
+      `QUERY RECHAZADA: ${result.object.query}`,
+      `ERRORES ESTRUCTURALES: ${JSON.stringify(validation.structural.errors)}`,
+      `ERRORES SEMÁNTICOS: ${JSON.stringify(validation.errors)}`,
+      "Corrige únicamente esos errores. Conserva la identidad, el modo de recuperación y la evidencia RAG/importada."
+    ].join("\n");
   }
+
+  throw new Error(`The ${input.identity} query could not satisfy the listening query contract.`);
 }
 
-/**
- * Focused second-pass call: ask Claude for ONLY the industry version of a
- * brand query that we already have. Returns plain text — no JSON envelope —
- * because we can't trust Claude to keep the schema on a one-shot retry.
- */
-async function generateIndustryQuery(params: {
-  brandQueryText: string;
-  corpus: QueryComposerInput;
-  model: string;
-}): Promise<string | null> {
-  const { brandQueryText, corpus, model } = params;
-  const prompt = [
-    "Tarea unica: derivar la version INDUSTRIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios, sin etiquetas.",
-    "",
-    "Reglas:",
-    "- La query de industria mide la misma tematica pero SIN semillas de marca ni handles ni competidores nombrados.",
-    "- Usa terminos de categoria + frases de señal del lenguaje real.",
-    "- Misma calidad de exclusiones que la query de marca, sin la marca misma en NOT.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Query de marca de referencia:\n${brandQueryText}`,
-    "",
-    `Contexto: subject=${corpus.subject.type}/${corpus.subject.name}, industria=${corpus.subject.industry ?? "n/a"}, sub=${corpus.subject.industrySub ?? "n/a"}, paises=${(corpus.subject.countries ?? []).join(",")}.`,
-    `Pregunta de negocio: ${corpus.corpus.businessQuestion ?? "n/a"}`,
-    "",
-    "Devuelve la query de industria ahora (una sola linea, sin envoltorio):"
-  ].join("\n");
+async function loadSourcePacks(corpusId: string, iterationId: string) {
+  const result = await pool.query<SourcePackRow>(
+    `SELECT id, scope, entity_key, signal_intent, objective, query_text, query_components, evaluation
+     FROM query_packs
+     WHERE study_corpus_id = $1 AND query_iteration_id = $2
+     ORDER BY CASE scope WHEN 'brand' THEN 1 WHEN 'competitors' THEN 2 WHEN 'category' THEN 3 ELSE 4 END`,
+    [corpusId, iterationId]
+  );
+  if (result.rows.length === 0) throw new Error("The source iteration has no query packs.");
+  return result.rows;
+}
 
-  try {
-    const result = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2
-    });
-    const cleaned = result.text
-      .trim()
-      .replace(/^```[a-z]*\s*/i, "")
-      .replace(/```$/i, "")
-      .replace(/^["']|["']$/g, "")
-      .trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    console.log(`[apply-adjustments] Industry retry produced ${cleaned.length} chars`);
-    return cleaned;
-  } catch (err) {
-    console.error(`[apply-adjustments] Industry retry failed: ${err instanceof Error ? err.message : err}`);
-    return null;
+type QueryPackIdentityGroup = {
+  identity: string;
+  scope: QueryConstructionScope;
+  entityLabel: string | null;
+  packs: SourcePackRow[];
+};
+
+function groupSourcePacks(
+  packs: SourcePackRow[],
+  corpus: QueryComposerInput
+): QueryPackIdentityGroup[] {
+  const groups = new Map<string, QueryPackIdentityGroup>();
+  for (const pack of packs) {
+    const scope = constructionScope(pack.scope);
+    const entityLabel = packEntityLabel(pack, corpus);
+    const identity = queryIdentityKey(scope, entityLabel);
+    const current = groups.get(identity);
+    if (current) {
+      current.packs.push(pack);
+      continue;
+    }
+    groups.set(identity, { identity, scope, entityLabel, packs: [pack] });
   }
+  const order: Record<QueryConstructionScope, number> = {
+    brand: 1,
+    competitors: 2,
+    category: 3
+  };
+  return Array.from(groups.values()).sort((left, right) =>
+    order[left.scope] - order[right.scope] || left.identity.localeCompare(right.identity)
+  );
+}
+
+function sourceQueryForIdentity(input: {
+  iteration: SourceIterationRow;
+  queryComponents: ComposedQuery["query_components"];
+  group: QueryPackIdentityGroup;
+}) {
+  const packQuery = input.group.packs.find((pack) => pack.query_text?.trim())?.query_text?.trim();
+  if (packQuery) return packQuery;
+  if (input.group.identity === "brand") return input.iteration.query_text;
+  if (input.group.identity === "category") return input.iteration.industry_query_text ?? "";
+  if (input.group.identity === "competitors:legacy-peer-set") {
+    return input.iteration.competitor_query_text ?? "";
+  }
+  const competitor = firstClassCompetitorQueries({
+    queryComponents: input.queryComponents,
+    identityGroups: [input.group],
+    iteration: input.iteration
+  }).find((item) => queryIdentityKey("competitors", item.entity) === input.group.identity);
+  return competitor?.query_text ?? "";
+}
+
+function firstClassCompetitorQueries(input: {
+  queryComponents: ComposedQuery["query_components"];
+  identityGroups: QueryPackIdentityGroup[];
+  iteration: SourceIterationRow;
+}) {
+  const fromComponents = Array.isArray(input.queryComponents.competitor_queries)
+    ? input.queryComponents.competitor_queries
+        .filter((item): item is { entity: string; query_text: string } =>
+          Boolean(item)
+          && typeof item.entity === "string"
+          && item.entity.trim().length > 0
+          && typeof item.query_text === "string"
+          && item.query_text.trim().length > 0
+        )
+    : [];
+  const fromPacks = input.identityGroups.flatMap((group) => {
+    if (group.scope !== "competitors" || !group.entityLabel) return [];
+    const queryText = group.packs.find((pack) => pack.query_text?.trim())?.query_text?.trim();
+    return queryText ? [{ entity: group.entityLabel, query_text: queryText }] : [];
+  });
+  const merged = new Map<string, { entity: string; query_text: string }>();
+  for (const item of [...fromComponents, ...fromPacks]) {
+    const key = normalizeEntityName(item.entity);
+    if (!key || merged.has(key)) continue;
+    merged.set(key, { entity: item.entity.trim(), query_text: item.query_text.trim() });
+  }
+  return Array.from(merged.values());
+}
+
+function packEntityLabel(pack: SourcePackRow, corpus: QueryComposerInput) {
+  if (constructionScope(pack.scope) !== "competitors") return null;
+  const componentLabel = pack.query_components?.entity_label;
+  if (typeof componentLabel === "string" && componentLabel.trim()) return componentLabel.trim();
+  const componentKey = pack.query_components?.entity_key;
+  const entityKey = typeof componentKey === "string" ? componentKey : pack.entity_key;
+  if (!entityKey?.startsWith("competitor:")) return null;
+  return corpus.competitorEntities?.find((entity) =>
+    queryIdentityKey("competitors", entity.name) === entityKey
+  )?.name ?? null;
+}
+
+function queryIdentityKey(scope: QueryConstructionScope | string, entityLabel?: string | null) {
+  const normalizedScope = constructionScope(scope);
+  if (normalizedScope === "brand") return "brand";
+  if (normalizedScope === "category") return "category";
+  return entityLabel ? `competitor:${entitySlug(entityLabel)}` : "competitors:legacy-peer-set";
+}
+
+function constructionScope(scope: string): QueryConstructionScope {
+  if (scope === "competitors") return "competitors";
+  if (scope === "category" || scope === "baseline") return "category";
+  return "brand";
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeQuery(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function normalizeEntityName(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function entitySlug(value: string) {
+  return normalizeEntityName(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "unknown";
+}
+
+function promptJson(value: unknown, maxLength: number) {
+  const rendered = JSON.stringify(value ?? null);
+  if (rendered.length <= maxLength) return rendered;
+  return `${rendered.slice(0, maxLength)}...[truncated]`;
 }
 
 async function loadEvaluationHistory(corpusId: string): Promise<EvaluationHistoryEntry[]> {
@@ -416,6 +637,13 @@ async function loadCorpusContext(corpusId: string): Promise<QueryComposerInput> 
       )
     : { rows: [] as Array<{ canonical_name: string; aliases: string[] | null }> };
   const corpusEntitySeeds = await loadCorpusEntitySeeds([row.corpus_id, row.base_corpus_id]);
+  const competitorEntities = mergeCompetitorEntities(
+    competitorRows.rows.map((competitor) => ({
+      name: competitor.canonical_name,
+      aliases: competitor.aliases ?? []
+    })),
+    corpusEntitySeeds.competitorEntities
+  );
   const ragContext = await loadAnalysisRagContext(row.corpus_id, row.brand_id);
 
   const subject: QueryComposerInput["subject"] = row.brand_id
@@ -458,10 +686,8 @@ async function loadCorpusContext(corpusId: string): Promise<QueryComposerInput> 
       version: "1",
       manifest: {}
     },
-    competitors: competitorRows.rows.flatMap((competitor) => [
-      competitor.canonical_name,
-      ...(competitor.aliases ?? [])
-    ]).concat(corpusEntitySeeds.competitors),
+    competitors: flattenCompetitorEntities(competitorEntities),
+    competitorEntities,
     brandSeeds: row.brand_id
       ? [
           row.brand_name ?? "",
@@ -480,7 +706,7 @@ async function loadCorpusContext(corpusId: string): Promise<QueryComposerInput> 
 async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
   const ids = Array.from(new Set(corpusIds.filter((id): id is string => Boolean(id))));
   if (ids.length === 0) {
-    return { competitors: [], primaryBrand: [] };
+    return { competitorEntities: [], primaryBrand: [] };
   }
   const result = await pool.query<{
     entity_kind: string;
@@ -499,7 +725,7 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
     [ids]
   );
 
-  const competitors: string[] = [];
+  const competitorEntities: QueryCompetitorEntity[] = [];
   const primaryBrand: string[] = [];
   for (const row of result.rows) {
     const seeds = [
@@ -508,12 +734,43 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
       ...(row.handles ?? []),
       ...(row.query_seeds ?? [])
     ].filter(Boolean);
-    if (row.entity_kind === "competitor") competitors.push(...seeds);
+    if (row.entity_kind === "competitor") {
+      competitorEntities.push({
+        name: row.name,
+        aliases: uniqueStrings([...(row.aliases ?? []), ...(row.query_seeds ?? [])]),
+        handles: uniqueStrings(row.handles ?? [])
+      });
+    }
     if (row.entity_kind === "primary_brand") primaryBrand.push(...seeds);
   }
 
   return {
-    competitors: Array.from(new Set(competitors)).slice(0, 80),
+    competitorEntities: mergeCompetitorEntities(competitorEntities),
     primaryBrand: Array.from(new Set(primaryBrand)).slice(0, 40)
   };
+}
+
+function mergeCompetitorEntities(...groups: QueryCompetitorEntity[][]): QueryCompetitorEntity[] {
+  const merged = new Map<string, QueryCompetitorEntity>();
+  for (const entity of groups.flat()) {
+    const name = entity.name.trim();
+    if (!name) continue;
+    const key = normalizeEntityName(name);
+    const current = merged.get(key);
+    merged.set(key, {
+      name: current?.name ?? name,
+      aliases: uniqueStrings([...(current?.aliases ?? []), ...(entity.aliases ?? [])])
+        .filter((value) => normalizeEntityName(value) !== key),
+      handles: uniqueStrings([...(current?.handles ?? []), ...(entity.handles ?? [])])
+    });
+  }
+  return Array.from(merged.values()).slice(0, 20);
+}
+
+function flattenCompetitorEntities(entities: QueryCompetitorEntity[]) {
+  return uniqueStrings(entities.flatMap((entity) => [
+    entity.name,
+    ...(entity.aliases ?? []),
+    ...(entity.handles ?? [])
+  ])).slice(0, 80);
 }

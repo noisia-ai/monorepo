@@ -34,6 +34,22 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 12 | `12_TEST_STRATEGY.md` | Unit + integration + contract + E2E + AI quality |
 | 13 | `13_DIAGRAMS.md` | ER + sequence + state + flow (todos Mermaid) |
 | 14 | `14_ACCEPTANCE_CRITERIA.md` | AC por feature de las 6 fases del MVP |
+| 15 | `15_ACCESS_GATEWAY_WORKSPACE_SWITCHER.md` | Gateway de acceso y workspace switcher |
+| 16 | `16_STUDIO_I18N_ROLLOUT.md` | Rollout i18n de Studio |
+| 17 | `17_REPORTING_API_LOOKER_CONTRACT.md` | Contrato Reporting API / Looker |
+| 18 | `18_REPORTING_API_V2_PUBLIC_CONTRACT.md` | Contrato público Reporting API v2 |
+| 19 | `19_STUDIO_SPRINT_BACKLOG.md` | Backlog de sprint Studio |
+| 20 | `20_ENGINE_HARDENING_HANDOFF.md` | Handoff de hardening del Engine |
+| 21 | `21_LIVE_INTELLIGENCE_PLAN.md` | Plan para pasar de reportes JSON a inteligencia viva |
+| 22 | `22_NOISIA_DATA_OS_CUT_1.md` | Spec productivo de Data OS: catálogos, taxonomías, tags, calidad, lineage y serving APIs |
+| 23 | `23_NOISIA_DATA_OS_STAGING_RUNBOOK.md` | Runbook corto para staging, shadow run, evidencia PR y rollback Data OS |
+| 24 | `24_NOISIA_DATA_OS_TECH_BENCHMARK.md` | Benchmark de tecnologia/proceso: lakehouse, CDP-like, catalogo, semantic layer, orquestacion y criterios de adopcion |
+| 25 | `25_NOISIA_DATA_OS_STAGING_HANDOFF.md` | Checklist de operador para pasar del corte local verificado al evidence pack staging/preview |
+| 26 | `26_NOISIA_DATA_OS_COMPLETION_AUDIT.md` | Matriz de cierre para decidir si el Goal Data OS puede marcarse completo |
+| 27 | `27_BRAND_OS_DATA_OS_PERSISTENCE_AUDIT.md` | Auditoría de persistencia Brand OS: campos, catálogos, seeds, KB, Data OS lineage y gaps de sincronización |
+| 28 | `28_CORPUS_ENGINE_VALIDATION_CONTRACT.md` | Contrato que separa evaluación post-ingesta por query pack y certificación revisionada del corpus |
+| 29 | `29_STUDY_TO_DECK_FEATURE.md` | Especificación del flujo de Study a presentación editable |
+| 30 | `30_QUERY_CONSTRUCTION_V2.md` | Compilador gobernado de queries: modos, identidad, ambigüedad, configuración, tags y lineage |
 
 ---
 
@@ -152,7 +168,23 @@ noisia_studio_product_spec/
 ├── 11_BRAND_SEEDS_CATALOG.yaml
 ├── 12_TEST_STRATEGY.md
 ├── 13_DIAGRAMS.md
-└── 14_ACCEPTANCE_CRITERIA.md
+├── 14_ACCEPTANCE_CRITERIA.md
+├── 15_ACCESS_GATEWAY_WORKSPACE_SWITCHER.md
+├── 16_STUDIO_I18N_ROLLOUT.md
+├── 17_REPORTING_API_LOOKER_CONTRACT.md
+├── 18_REPORTING_API_V2_PUBLIC_CONTRACT.md
+├── 19_STUDIO_SPRINT_BACKLOG.md
+├── 20_ENGINE_HARDENING_HANDOFF.md
+├── 21_LIVE_INTELLIGENCE_PLAN.md
+├── 22_NOISIA_DATA_OS_CUT_1.md
+├── 23_NOISIA_DATA_OS_STAGING_RUNBOOK.md
+├── 24_NOISIA_DATA_OS_TECH_BENCHMARK.md
+├── 25_NOISIA_DATA_OS_STAGING_HANDOFF.md
+├── 26_NOISIA_DATA_OS_COMPLETION_AUDIT.md
+├── 27_BRAND_OS_DATA_OS_PERSISTENCE_AUDIT.md
+├── 28_CORPUS_ENGINE_VALIDATION_CONTRACT.md
+├── 29_STUDY_TO_DECK_FEATURE.md
+└── 30_QUERY_CONSTRUCTION_V2.md
 ```
 
-15 archivos + 6 YAMLs en subfolder = paquete completo.
+Este índice es un paquete vivo; el canon vigente incluye los documentos 00-30 y los YAMLs de metodología.

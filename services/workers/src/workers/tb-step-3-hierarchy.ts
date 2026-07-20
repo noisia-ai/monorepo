@@ -16,6 +16,13 @@ import {
   type TbLayer
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import {
+  assertCorpusDataOsAuditReady,
+  auditCorpusDataOs,
+  persistCorpusDataOsAudit,
+  summarizeCorpusDataOsAudit
+} from "./data-os-corpus-audit";
+import { materializeTbCodingDataOs } from "./tb-data-os-bridge";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
@@ -206,6 +213,17 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
 
     // Persist findings + citations + back-link mention codings
     const stats = await persistFindings({ tbAnalysisId, toPersist });
+    const dataOsBridge = await materializeTbCodingDataOs({
+      tbAnalysisId,
+      stage: "step3_hierarchy"
+    });
+    const dataOsAudit = await auditCorpusDataOs({
+      corpusId: dataOsBridge.study_corpus_id,
+      stage: "post_coding",
+      tbAnalysisId
+    });
+    await persistCorpusDataOsAudit({ tbAnalysisId, audit: dataOsAudit });
+    assertCorpusDataOsAuditReady(dataOsAudit, "T&B hierarchy bridge");
     await job.updateProgress(96);
 
     await markStepCompleted({
@@ -217,6 +235,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
         findings_inserted: stats.findingsInserted,
         citations_inserted: stats.citationsInserted,
         codings_linked: stats.codingsLinked,
+        data_os_coding_bridge: dataOsBridge,
+        data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
         top_findings: toPersist
           .slice()
           .sort((a, b) => b.score - a.score)
@@ -238,6 +258,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
     return {
       findings: stats.findingsInserted,
       citations: stats.citationsInserted,
+      data_os_coding_bridge: dataOsBridge,
+      data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
       next_step_job_id: next.jobId
     };
   } catch (err) {

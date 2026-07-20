@@ -11,6 +11,8 @@ import {
   methodologies,
   queryIterations,
   queryPacks,
+  queryValidationAttempts,
+  queryValidationRuns,
   organizations,
   studyCorpora,
   tbAnalyses,
@@ -21,6 +23,16 @@ import {
   themes,
   userBrandAccess
 } from "@noisia/db";
+import {
+  QUERY_PACK_EVALUATOR_PIPELINE_VERSION,
+  QUERY_PACK_IMPORTED_SAMPLE_SIZE,
+  QUERY_PACK_MIN_IMPORTED_SAMPLE_SIZE
+} from "@noisia/query-engine";
+import {
+  collectIndustryTags,
+  isGloballyReusableBaselineCandidate,
+  type BaselineCorpusOption
+} from "@/lib/baseline-corpus";
 import { db, pool } from "@/lib/db";
 import { queryPackHasDirectCsv } from "@/lib/engine/query-pack-readiness";
 import { normalizeStudyAnalysisPlan } from "@/lib/multimethod/analysis-plan";
@@ -176,16 +188,32 @@ export async function listActiveMethodologies() {
     .orderBy(asc(methodologies.name), desc(methodologies.version));
 }
 
-export async function listReusableIndustryCorporaForUser(appUser: AppUser) {
+export async function listReusableBaselineCorporaForUser(appUser: AppUser): Promise<BaselineCorpusOption[]> {
   const rows = await db
     .select({
       id: studyCorpora.id,
       name: studyCorpora.name,
       status: studyCorpora.status,
+      brandId: studyCorpora.brandId,
+      brandName: brands.name,
+      brandDisplayName: brands.displayName,
+      brandIndustry: brands.industry,
+      brandIndustrySub: brands.industrySub,
+      brandCountries: brands.countries,
+      themeId: studyCorpora.themeId,
       themeName: themes.name,
       themeSlug: themes.slug,
-      organizationId: themes.organizationId,
+      themeIndustryFocus: themes.industryFocus,
+      themeGeoFocus: themes.geoFocus,
+      organizationId: sql<string | null>`coalesce(${brands.organizationId}, ${themes.organizationId})`,
       isPublic: themes.isPublic,
+      methodologyId: methodologies.id,
+      methodologySlug: methodologies.slug,
+      methodologyName: methodologies.name,
+      methodologyVersion: methodologies.version,
+      geoFocus: studyCorpora.geoFocus,
+      targetWindowMonths: studyCorpora.targetWindowMonths,
+      corpusFirstApprovedAt: studyCorpora.corpusFirstApprovedAt,
       includedCount: sql<number>`coalesce((
         select count(*)::int
         from ${mentions}
@@ -195,17 +223,65 @@ export async function listReusableIndustryCorporaForUser(appUser: AppUser) {
       updatedAt: studyCorpora.updatedAt
     })
     .from(studyCorpora)
-    .innerJoin(themes, eq(themes.id, studyCorpora.themeId))
+    .innerJoin(methodologies, eq(methodologies.id, studyCorpora.methodologyId))
+    .leftJoin(brands, eq(brands.id, studyCorpora.brandId))
+    .leftJoin(themes, eq(themes.id, studyCorpora.themeId))
     .where(ne(studyCorpora.status, "archived"))
     .orderBy(desc(studyCorpora.updatedAt));
 
-  if (appUser.userType === "noisia_internal") {
-    return rows;
-  }
+  const accessibleBrandIds = appUser.userType === "noisia_internal"
+    ? null
+    : new Set(
+        (
+          await db
+            .select({ brandId: userBrandAccess.brandId })
+            .from(userBrandAccess)
+            .where(and(eq(userBrandAccess.userId, appUser.id), isNull(userBrandAccess.revokedAt)))
+        ).map((row) => row.brandId)
+      );
 
-  return rows.filter((row) => {
-    return row.isPublic || (!!appUser.organizationId && row.organizationId === appUser.organizationId);
-  });
+  return rows
+    .filter((row) => {
+      if (appUser.userType === "noisia_internal") return true;
+      if (row.brandId) return accessibleBrandIds?.has(row.brandId) ?? false;
+      return Boolean(row.isPublic || (!!appUser.organizationId && row.organizationId === appUser.organizationId));
+    })
+    .map((row) => {
+      const candidate: BaselineCorpusOption = {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        candidateType: row.brandId ? "brand_reuse" : "industry_baseline",
+        subjectLabel: row.brandId ? row.brandDisplayName ?? row.brandName : row.themeName,
+        brandId: row.brandId,
+        brandName: row.brandDisplayName ?? row.brandName,
+        themeId: row.themeId,
+        themeName: row.themeName,
+        themeSlug: row.themeSlug,
+        methodologyId: row.methodologyId,
+        methodologySlug: row.methodologySlug,
+        methodologyName: row.methodologyName,
+        methodologyVersion: row.methodologyVersion,
+        industryTags: row.brandId
+          ? collectIndustryTags(row.brandIndustry, row.brandIndustrySub)
+          : collectIndustryTags(row.themeIndustryFocus),
+        geoFocus: normalizeCountryList(row.geoFocus ?? row.themeGeoFocus ?? row.brandCountries),
+        includedCount: row.includedCount,
+        targetWindowMonths: row.targetWindowMonths ?? null,
+        updatedAt: row.updatedAt?.toISOString() ?? null,
+        corpusFirstApprovedAt: row.corpusFirstApprovedAt?.toISOString() ?? null
+      };
+      return candidate;
+    })
+    .filter(isGloballyReusableBaselineCandidate);
+}
+
+export async function listReusableIndustryCorporaForUser(appUser: AppUser) {
+  return listReusableBaselineCorporaForUser(appUser);
+}
+
+function normalizeCountryList(value: string[] | null | undefined) {
+  return Array.from(new Set((value ?? []).map((item) => item.toUpperCase()).filter(Boolean)));
 }
 
 export async function listImportBatchesForCorpus(corpusId: string) {
@@ -432,6 +508,8 @@ export async function listQueryIterationsForCorpus(corpusId: string) {
       noiseScore: queryIterations.noiseScore,
       aiEvaluationNotes: queryIterations.aiEvaluationNotes,
       insightsManagerDecision: queryIterations.insightsManagerDecision,
+      latestQueryValidationRunId: queryIterations.latestQueryValidationRunId,
+      approvedQueryValidationRunId: queryIterations.approvedQueryValidationRunId,
       pipelineVersion: queryIterations.pipelineVersion,
       createdAt: queryIterations.createdAt
     })
@@ -1357,8 +1435,11 @@ export async function getCorpusEngineState(corpusId: string) {
     .select({
       themeId: studyCorpora.themeId,
       analysisPlan: studyCorpora.analysisPlan,
+      status: studyCorpora.status,
+      corpusRevision: studyCorpora.corpusRevision,
       latestAssessment: studyCorpora.latestAssessment,
-      latestAssessedAt: studyCorpora.latestAssessedAt
+      latestAssessedAt: studyCorpora.latestAssessedAt,
+      latestAssessedRevision: studyCorpora.latestAssessedRevision
     })
     .from(studyCorpora)
     .where(eq(studyCorpora.id, corpusId))
@@ -1396,8 +1477,13 @@ export async function getCorpusEngineState(corpusId: string) {
       queryText: queryPacks.queryText,
       queryComponents: queryPacks.queryComponents,
       seeds: queryPacks.seeds,
+      evaluation: queryPacks.evaluation,
       status: queryPacks.status,
       mentionsReturned: queryPacks.mentionsReturned,
+      qualityScore: queryPacks.qualityScore,
+      densityScore: queryPacks.densityScore,
+      noiseScore: queryPacks.noiseScore,
+      evaluatedAt: queryPacks.evaluatedAt,
       linkedMentionCount: sql<number>`(
         SELECT COUNT(DISTINCT mqs.mention_id)::int
         FROM mention_query_sources mqs
@@ -1410,6 +1496,10 @@ export async function getCorpusEngineState(corpusId: string) {
     .from(queryPacks)
     .where(eq(queryPacks.studyCorpusId, corpusId))
     .orderBy(desc(queryPacks.createdAt));
+  const productionLensSlug = normalizeStudyAnalysisPlan(assessmentRow?.analysisPlan).primary_methodology_slug === "signal-pulse"
+    ? "signal-pulse"
+    : "triggers-barriers";
+  const productionPacks = packs.filter((pack) => pack.lensSlug === productionLensSlug);
 
   const activeEntities = await db
     .select({ id: corpusEntities.id })
@@ -1419,18 +1509,55 @@ export async function getCorpusEngineState(corpusId: string) {
   // The "current" iteration is the most recently created — wizard works on it
   const current = iterations[0] ?? null;
 
+  const [latestQueryValidationRun] = current?.latestQueryValidationRunId
+    ? await db
+        .select({
+          id: queryValidationRuns.id,
+          status: queryValidationRuns.status,
+          sourceSystem: queryValidationRuns.sourceSystem,
+          sampleSizePerPack: queryValidationRuns.sampleSizePerPack,
+          maxAttempts: queryValidationRuns.maxAttempts,
+          summary: queryValidationRuns.summary,
+          pipelineVersion: queryValidationRuns.pipelineVersion,
+          startedAt: queryValidationRuns.startedAt,
+          completedAt: queryValidationRuns.completedAt
+        })
+        .from(queryValidationRuns)
+        .where(eq(queryValidationRuns.id, current.latestQueryValidationRunId))
+        .limit(1)
+    : [];
+
+  const queryValidationAttemptsForRun = latestQueryValidationRun
+    ? await db
+        .select({
+          id: queryValidationAttempts.id,
+          queryPackId: queryValidationAttempts.queryPackId,
+          attemptNumber: queryValidationAttempts.attemptNumber,
+          attemptKind: queryValidationAttempts.attemptKind,
+          queryText: queryValidationAttempts.queryText,
+          sampleSize: queryValidationAttempts.sampleSize,
+          uniqueSampleSize: queryValidationAttempts.uniqueSampleSize,
+          status: queryValidationAttempts.status,
+          metrics: queryValidationAttempts.metrics,
+          notes: queryValidationAttempts.notes,
+          proposedAdjustments: queryValidationAttempts.proposedAdjustments,
+          evaluatedAt: queryValidationAttempts.evaluatedAt
+        })
+        .from(queryValidationAttempts)
+        .where(eq(queryValidationAttempts.queryValidationRunId, latestQueryValidationRun.id))
+        .orderBy(asc(queryValidationAttempts.attemptNumber))
+    : [];
+
   // Decide the active step purely from current iteration state
   type Step = "compose" | "upload" | "evaluate" | "decide" | "approved";
   let activeStep: Step = "compose";
 
   if (current) {
     const decision = current.insightsManagerDecision;
-    const evaluated = current.qualityScore !== null;
     const currentBatches = batches.filter(
       (b) => b.queryIterationId === current.id && b.status === "completed"
     );
-    const currentPacks = packs.filter((pack) => pack.queryIterationId === current.id);
-    const expectedPackMode = normalizeStudyAnalysisPlan(assessmentRow?.analysisPlan).selected_lenses.length > 1;
+    const currentPacks = productionPacks.filter((pack) => pack.queryIterationId === current.id);
     const primaryMentionType = assessmentRow?.themeId ? "industry" : "brand";
     const hasBrand = currentBatches.some((b) => b.mentionType === "brand");
     const hasCompetitor = currentBatches.some((b) => b.mentionType === "competitor");
@@ -1448,39 +1575,62 @@ export async function getCorpusEngineState(corpusId: string) {
     const legacyCsvsReady = hasPrimary && (!wantsCompetitor || hasCompetitor) && (!wantsIndustry || hasIndustry);
     const packUploadsReady = currentPacks.length > 0
       && currentPacks.every((pack) => queryPackHasDirectCsv(pack, currentBatches));
-    const csvsReady = expectedPackMode && currentPacks.length === 0
-      ? false
-      : currentPacks.length > 0
+    const csvsReady = currentPacks.length > 0
         ? packUploadsReady
       : activeEntities.length > 0
         ? entityUploadsReady
         : legacyCsvsReady;
+    const terminalEvaluationStatuses = new Set(["ready", "needs_adjustment", "insufficient_sample", "failed"]);
+    const packEvaluationStatuses = currentPacks.map((pack) => queryPackEvaluationStatus(pack.evaluation));
+    const packsEvaluated = currentPacks.length > 0
+      && packEvaluationStatuses.every((status) => status && terminalEvaluationStatuses.has(status));
+    const legacyEvaluated = currentPacks.length === 0 && current.qualityScore !== null;
 
-    if (decision === "approved") {
-      activeStep = "approved";
+    const validationContractCurrent = Boolean(
+      latestQueryValidationRun
+        && latestQueryValidationRun.sourceSystem === "imported_corpus"
+        && latestQueryValidationRun.pipelineVersion === QUERY_PACK_EVALUATOR_PIPELINE_VERSION
+    );
+
+    if (decision === "query_approved" || decision === "approved") {
+      // Query validation closes on imported evidence. Corpus certification is
+      // a separate, revision-bound gate rendered above the query workflow.
+      activeStep = "decide";
     } else if (decision === "applied" || decision === "rejected") {
       // last iteration was actioned but no new iteration yet — compose next
       activeStep = "compose";
-    } else if (!evaluated && csvsReady) {
-      activeStep = "evaluate";
-    } else if (evaluated) {
+    } else if (currentPacks.length > 0) {
+      if (!packUploadsReady) {
+        activeStep = "upload";
+      } else if (!packsEvaluated || !validationContractCurrent) {
+        activeStep = "evaluate";
+      } else {
+        // Terminal imported-evidence results always go through analyst review.
+        activeStep = "decide";
+      }
+    } else if (legacyEvaluated) {
       activeStep = "decide";
+    } else if (csvsReady) {
+      activeStep = "evaluate";
     } else {
       activeStep = "upload";
     }
   }
 
-  // Corpus-level "ever approved" flag — stays true even after user keeps
-  // iterating on top of an approved corpus to enrich it.
-  const isApproved = iterations.some((i) => i.insightsManagerDecision === "approved");
-
-  // Smart suggestion: is the latest iteration good enough to approve?
-  let readyToApprove = false;
-  if (current && current.qualityScore !== null) {
-    const q = Number(current.qualityScore);
-    const d = Number(current.densityScore);
-    const n = Number(current.noiseScore);
-    readyToApprove = q >= 7 && d >= 7 && n <= 3;
+  // Query potential is a gate for the candidate query only. It never certifies
+  // the imported corpus; corpus approval is revisioned independently below.
+  let queryReady = false;
+  if (current) {
+    const currentPacks = productionPacks.filter((pack) => pack.queryIterationId === current.id);
+    if (currentPacks.length > 0) {
+      queryReady = current.insightsManagerDecision === "query_approved"
+        && Boolean(current.approvedQueryValidationRunId);
+    } else if (current.qualityScore !== null) {
+      const q = Number(current.qualityScore);
+      const d = Number(current.densityScore);
+      const n = Number(current.noiseScore);
+      queryReady = q >= 7 && d >= 7 && n <= 3;
+    }
   }
 
   const snapshots = await db
@@ -1495,6 +1645,16 @@ export async function getCorpusEngineState(corpusId: string) {
     .where(eq(corpusSnapshots.studyCorpusId, corpusId))
     .orderBy(desc(corpusSnapshots.createdAt))
     .limit(20);
+
+  const assessmentCurrent = Boolean(
+    assessmentRow?.latestAssessment
+      && assessmentRow.latestAssessedRevision === assessmentRow.corpusRevision
+  );
+  const hasApprovalSnapshot = snapshots.some((snapshot) => snapshot.kind === "approval");
+  const isApproved = assessmentRow?.status === "corpus_approved"
+    && assessmentCurrent
+    && hasApprovalSnapshot;
+  if (isApproved) activeStep = "approved";
 
   const cleanups = await db
     .select({
@@ -1521,14 +1681,34 @@ export async function getCorpusEngineState(corpusId: string) {
     },
     iterations,
     batches,
-    queryPacks: packs,
+    queryPacks: productionPacks,
     current,
     activeStep,
     isApproved,
-    readyToApprove,
+    queryReady,
+    queryValidation: latestQueryValidationRun
+      ? {
+          ...latestQueryValidationRun,
+          approved: current?.approvedQueryValidationRunId === latestQueryValidationRun.id,
+          contractCurrent: latestQueryValidationRun.sourceSystem === "imported_corpus"
+            && latestQueryValidationRun.pipelineVersion === QUERY_PACK_EVALUATOR_PIPELINE_VERSION,
+          evidenceSampleTarget: QUERY_PACK_IMPORTED_SAMPLE_SIZE,
+          minimumEvidenceSample: QUERY_PACK_MIN_IMPORTED_SAMPLE_SIZE,
+          attempts: queryValidationAttemptsForRun
+        }
+      : null,
     assessment: assessmentRow?.latestAssessment ?? null,
     assessedAt: assessmentRow?.latestAssessedAt ?? null,
+    corpusRevision: assessmentRow?.corpusRevision ?? 1,
+    latestAssessedRevision: assessmentRow?.latestAssessedRevision ?? null,
+    assessmentCurrent,
     snapshots,
     cleanups
   };
+}
+
+function queryPackEvaluationStatus(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const status = (value as Record<string, unknown>).status;
+  return typeof status === "string" ? status : null;
 }

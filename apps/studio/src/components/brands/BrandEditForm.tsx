@@ -1,12 +1,14 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { Icon } from "@/components/ui/Icon";
-import { INDUSTRY_OPTIONS, subindustriesForIndustry } from "@/lib/industry-catalog";
+import { COUNTRY_OPTIONS } from "@/lib/country-catalog";
+import { INDUSTRY_OPTIONS, INDUSTRY_SEARCH_ALIASES, subindustriesForIndustry } from "@/lib/industry-catalog";
 import { slugify } from "@/lib/slug";
+import { CatalogCombobox, ExpandableTextareaField, TokenCatalogField, TokenInputField, type ComboOption } from "./BrandOsForm";
 
 type EditableBrand = {
   id: string;
@@ -27,6 +29,12 @@ type OrganizationOption = {
   name: string;
 };
 
+const industryOptions: ComboOption[] = INDUSTRY_OPTIONS.map((industry) => ({
+  value: industry,
+  label: industry,
+  keywords: INDUSTRY_SEARCH_ALIASES.get(industry) ?? []
+}));
+
 export function BrandEditForm({
   brand,
   organizations
@@ -46,8 +54,22 @@ export function BrandEditForm({
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [orgCreateError, setOrgCreateError] = useState<string | null>(null);
   const [industryValue, setIndustryValue] = useState(brand.industry ?? "");
+  const [subindustryValues, setSubindustryValues] = useState(splitList(brand.industrySub ?? ""));
+  const [countryValues, setCountryValues] = useState(brand.countries ?? ["MX"]);
+  const [aliasValues, setAliasValues] = useState(brand.brandSeedHandles ?? []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const subindustryOptions = useMemo(
+    () => subindustriesForIndustry(industryValue).map((subindustry) => ({ value: subindustry, label: subindustry })),
+    [industryValue]
+  );
+
+  function preventImplicitSubmit(event: KeyboardEvent<HTMLFormElement>) {
+    const target = event.target as HTMLElement | null;
+    if (event.key !== "Enter") return;
+    if (target?.tagName === "TEXTAREA" || target?.tagName === "BUTTON") return;
+    event.preventDefault();
+  }
 
   async function createOrganization() {
     setOrgCreateError(null);
@@ -103,11 +125,11 @@ export function BrandEditForm({
       slug: slugify(String(form.get("slug") ?? "").trim()),
       name: String(form.get("name") ?? "").trim(),
       display_name: String(form.get("display_name") ?? "").trim(),
-      industry: String(form.get("industry") ?? "").trim(),
-      industry_sub: String(form.get("industry_sub") ?? "").trim(),
-      countries: splitList(String(form.get("countries") ?? "MX")).map((item) => item.toUpperCase()),
+      industry: industryValue.trim(),
+      industry_sub: subindustryValues.join(", "),
+      countries: countryValues.map((item) => item.toUpperCase()),
       description: String(form.get("description") ?? "").trim(),
-      brand_seed_handles: splitList(String(form.get("brand_seed_handles") ?? "")),
+      brand_seed_handles: aliasValues,
       status: String(form.get("status") ?? "active")
     };
 
@@ -128,8 +150,8 @@ export function BrandEditForm({
   }
 
   return (
-    <form className="new-study-shell brand-os-shell" onSubmit={onSubmit}>
-      <section className="new-study-panel">
+    <form className="new-study-shell brand-os-shell" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
+      <section className="new-study-panel new-study-panel--raised">
         <div className="new-study-section-head">
           <p className="vitals-eyebrow">{brandT("identityEyebrow")}</p>
           <h2>{t("formTitle")}</h2>
@@ -245,34 +267,26 @@ export function BrandEditForm({
         </div>
 
         <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("industry")}</span>
-            <input
-              className="filter-input new-study-input"
-              name="industry"
-              list="edit-industry-options"
-              value={industryValue}
-              onChange={(event) => setIndustryValue(event.target.value)}
-            />
-            <datalist id="edit-industry-options">
-              {INDUSTRY_OPTIONS.map((industry) => <option key={industry} value={industry} />)}
-            </datalist>
-          </label>
-          <label className="new-study-field">
-            <span>{brandT("subindustry")}</span>
-            <input className="filter-input new-study-input" name="industry_sub" list="edit-subindustry-options" defaultValue={brand.industrySub ?? ""} />
-            <datalist id="edit-subindustry-options">
-              {subindustriesForIndustry(industryValue).map((subindustry) => (
-                <option key={subindustry} value={subindustry} />
-              ))}
-            </datalist>
-          </label>
+          <CatalogCombobox
+            label={brandT("industry")}
+            name="industry"
+            options={industryOptions}
+            placeholder={brandT("industryPlaceholder")}
+            value={industryValue}
+            onChange={setIndustryValue}
+          />
+          <TokenCatalogField
+            allowCustom
+            disabled={!industryValue.trim()}
+            disabledHint={brandT("subindustryDisabled")}
+            label={brandT("subindustry")}
+            name="industry_sub"
+            options={subindustryOptions}
+            placeholder={brandT("subindustryPlaceholder")}
+            values={subindustryValues}
+            onChange={setSubindustryValues}
+          />
         </div>
-
-        <label className="new-study-field new-study-field--wide">
-          <span>{brandT("description")}</span>
-          <textarea className="filter-input new-study-textarea" name="description" maxLength={12000} defaultValue={brand.description ?? ""} />
-        </label>
       </section>
 
       <section className="new-study-panel">
@@ -281,20 +295,29 @@ export function BrandEditForm({
           <h2>{t("relationsTitle")}</h2>
         </div>
         <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("countries")}</span>
-            <input className="filter-input new-study-input" name="countries" defaultValue={(brand.countries ?? ["MX"]).join(", ")} />
-          </label>
-          <label className="new-study-field">
-            <span>{brandT("aliases")}</span>
-            <textarea
-              className="filter-input new-study-textarea new-study-textarea--short"
-              name="brand_seed_handles"
-              defaultValue={(brand.brandSeedHandles ?? []).join("\n")}
-              placeholder="@sephoramx&#10;sephora mexico"
-            />
-          </label>
+          <TokenCatalogField
+            label={brandT("countries")}
+            name="countries"
+            options={COUNTRY_OPTIONS}
+            placeholder={brandT("countryPlaceholder")}
+            values={countryValues}
+            onChange={setCountryValues}
+          />
+          <TokenInputField
+            label={brandT("aliases")}
+            name="brand_seed_handles"
+            placeholder={brandT("aliasesPlaceholder")}
+            values={aliasValues}
+            onChange={setAliasValues}
+          />
         </div>
+
+        <ExpandableTextareaField
+          defaultValue={brand.description ?? ""}
+          label={brandT("description")}
+          maxLength={12000}
+          name="description"
+        />
       </section>
 
       <footer className="new-study-actions">

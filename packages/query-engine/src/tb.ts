@@ -82,6 +82,7 @@ export type TbRagPromptContext = {
   query_strategy_brief?: unknown | null;
   knowledge_sources?: unknown[];
   corpus_intelligence?: unknown | null;
+  structured_observations?: unknown | null;
 };
 
 export function buildPreflightPrompt(input: PreflightInput): string {
@@ -1300,7 +1301,7 @@ export function buildSynthesisPrompt(args: {
             why_it_matters: "Aparece como tema transversal que no sólo frena compra; también define expectativa de experiencia.",
             data_basis: ["corpus", "customer_service_csv"],
             evidence_count: 42,
-            source_breakdown: [{ source: "customer_service_csv", count: 28 }, { source: "sentione", count: 14 }],
+            source_breakdown: [{ source: "customer_service_csv", count: 28 }, { source: "social_listening", count: 14 }],
             related_finding_ids: ["B-PER-01"],
             confidence: "media",
             evidence_quotes: ["La gente no sabe con quién resolver cuando algo falla."]
@@ -1328,24 +1329,85 @@ export function buildSynthesisPrompt(args: {
 
 function compactJson(value: unknown, maxChars: number): string {
   if (!value) return "";
-  try {
-    return JSON.stringify(value, null, 2).slice(0, maxChars);
-  } catch {
-    return "";
+  const profiles: JsonCompactionProfile[] = [
+    { stringChars: 2_400, arrayItems: 80, knowledgeSources: 8, sourceInventory: 80, monthlySeries: 180 },
+    { stringChars: 1_200, arrayItems: 40, knowledgeSources: 8, sourceInventory: 80, monthlySeries: 120 },
+    { stringChars: 600, arrayItems: 24, knowledgeSources: 6, sourceInventory: 80, monthlySeries: 72 },
+    { stringChars: 320, arrayItems: 12, knowledgeSources: 4, sourceInventory: 80, monthlySeries: 36 },
+    { stringChars: 160, arrayItems: 8, knowledgeSources: 2, sourceInventory: 80, monthlySeries: 18 }
+  ];
+
+  for (const profile of profiles) {
+    try {
+      const serialized = JSON.stringify(compactJsonValue(value, profile, []));
+      if (serialized.length <= maxChars) return serialized;
+    } catch {
+      return "";
+    }
   }
+
+  return JSON.stringify({
+    truncated: true,
+    reason: "Context exceeded the governed prompt budget after structured compaction.",
+    top_level_keys: value && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value as Record<string, unknown>)
+      : []
+  });
 }
 
-function renderTbRagContext(context: TbRagPromptContext | undefined): string {
+type JsonCompactionProfile = {
+  stringChars: number;
+  arrayItems: number;
+  knowledgeSources: number;
+  sourceInventory: number;
+  monthlySeries: number;
+};
+
+function compactJsonValue(
+  value: unknown,
+  profile: JsonCompactionProfile,
+  path: string[]
+): unknown {
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length <= profile.stringChars
+      ? normalized
+      : `${normalized.slice(0, Math.max(0, profile.stringChars - 12))} [truncated]`;
+  }
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    const key = path.at(-1);
+    const limit = key === "source_inventory"
+      ? profile.sourceInventory
+      : key === "monthly_series"
+        ? profile.monthlySeries
+        : key === "knowledge_sources"
+          ? profile.knowledgeSources
+          : profile.arrayItems;
+    return value.slice(0, limit).map((item) => compactJsonValue(item, profile, [...path, "[]"]));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, compactJsonValue(item, profile, [...path, key])])
+    );
+  }
+  return String(value);
+}
+
+export function renderTbRagContext(context: TbRagPromptContext | undefined): string {
   if (!context) return "(sin contexto Knowledge Base disponible)";
   const text = compactJson(
     {
+      structured_observations: context.structured_observations ?? null,
       query_strategy_brief: context.query_strategy_brief ?? null,
       knowledge_sources: Array.isArray(context.knowledge_sources)
         ? context.knowledge_sources.slice(0, 8)
         : [],
       corpus_intelligence: context.corpus_intelligence ?? null
     },
-    10_000
+    36_000
   );
   return text || "(sin contexto Knowledge Base disponible)";
 }
