@@ -770,8 +770,40 @@ type PersistedOpenSignalRow = {
   confidence: string;
 };
 
+type PersistedStrategicOpportunityRow = {
+  opportunity_id: string;
+  title: string;
+  decision: string;
+  why_now: string;
+  level: string;
+  source_mix: string[] | null;
+  related_finding_ids: string[] | null;
+  evidence_summary: string;
+  what_to_do: string;
+  success_signal: string;
+  confidence: string;
+};
+
+type PersistedActionStudioRow = {
+  action_id: string;
+  target_team: string;
+  kind: string;
+  title: string;
+  finding_ids: string[] | null;
+  primary_finding_id: string | null;
+  rationale: string;
+  action_text: string;
+  suggested_channel: string | null;
+  suggested_format: string | null;
+  success_signal: string;
+  estimated_effort: string;
+  estimated_impact: string;
+  confidence: string;
+  priority_rank: number;
+};
+
 async function loadPersistedIntelligence(tbAnalysisId: string) {
-  const [insights, openSignals] = await Promise.all([
+  const [insights, openSignals, strategicOpportunities, actionStudio] = await Promise.all([
     pool.query<PersistedInsightRow>(
       `
         SELECT
@@ -807,6 +839,65 @@ async function loadPersistedIntelligence(tbAnalysisId: string) {
         ORDER BY position ASC, created_at ASC
       `,
       [tbAnalysisId]
+    ),
+    pool.query<PersistedStrategicOpportunityRow>(
+      `
+        SELECT
+          opportunity.opportunity_id,
+          opportunity.title,
+          opportunity.decision,
+          opportunity.why_now,
+          opportunity.level,
+          opportunity.source_mix,
+          COALESCE((
+            SELECT array_agg(finding.finding_id ORDER BY link.position, finding.finding_id)
+            FROM tb_opportunity_findings link
+            INNER JOIN tb_findings finding ON finding.id = link.finding_id
+            WHERE link.opportunity_id = opportunity.id
+              AND finding.tb_analysis_id = opportunity.tb_analysis_id
+          ), ARRAY[]::text[]) AS related_finding_ids,
+          opportunity.evidence_summary,
+          opportunity.what_to_do,
+          opportunity.success_signal,
+          opportunity.confidence
+        FROM tb_strategic_opportunities opportunity
+        WHERE opportunity.tb_analysis_id = $1
+        ORDER BY opportunity.position ASC, opportunity.created_at ASC
+      `,
+      [tbAnalysisId]
+    ),
+    pool.query<PersistedActionStudioRow>(
+      `
+        SELECT
+          action.action_id,
+          action.target_team,
+          action.kind,
+          action.title,
+          COALESCE((
+            SELECT array_agg(finding.finding_id ORDER BY link.position, finding.finding_id)
+            FROM tb_action_findings link
+            INNER JOIN tb_findings finding ON finding.id = link.finding_id
+            WHERE link.action_id = action.id
+              AND finding.tb_analysis_id = action.tb_analysis_id
+          ), ARRAY[]::text[]) AS finding_ids,
+          primary_finding.finding_id AS primary_finding_id,
+          action.rationale,
+          action.action_text,
+          action.suggested_channel,
+          action.suggested_format,
+          action.success_signal,
+          action.estimated_effort,
+          action.estimated_impact,
+          action.confidence,
+          action.priority_rank
+        FROM tb_action_studio action
+        LEFT JOIN tb_findings primary_finding
+          ON primary_finding.id = action.primary_finding_id
+         AND primary_finding.tb_analysis_id = action.tb_analysis_id
+        WHERE action.tb_analysis_id = $1
+        ORDER BY action.priority_rank ASC, action.created_at ASC
+      `,
+      [tbAnalysisId]
     )
   ]);
 
@@ -834,6 +925,36 @@ async function loadPersistedIntelligence(tbAnalysisId: string) {
       related_finding_ids: [],
       confidence: row.confidence,
       evidence_quotes: row.evidence_quotes ?? []
+    })),
+    strategicOpportunities: strategicOpportunities.rows.map((row) => ({
+      opportunity_id: row.opportunity_id,
+      title: row.title,
+      decision: row.decision,
+      why_now: row.why_now,
+      level: row.level,
+      source_mix: row.source_mix ?? [],
+      related_finding_ids: row.related_finding_ids ?? [],
+      evidence_summary: row.evidence_summary,
+      what_to_do: row.what_to_do,
+      success_signal: row.success_signal,
+      confidence: row.confidence
+    })),
+    actionStudio: actionStudio.rows.map((row) => ({
+      action_id: row.action_id,
+      target_team: row.target_team,
+      kind: row.kind,
+      title: row.title,
+      finding_ids: row.finding_ids ?? [],
+      primary_finding_id: row.primary_finding_id,
+      rationale: row.rationale,
+      action_text: row.action_text,
+      suggested_channel: row.suggested_channel,
+      suggested_format: row.suggested_format,
+      success_signal: row.success_signal,
+      estimated_effort: row.estimated_effort,
+      estimated_impact: row.estimated_impact,
+      confidence: row.confidence,
+      priority_rank: row.priority_rank
     }))
   };
 }
@@ -846,7 +967,11 @@ function mergePersistedIntelligence(
   return {
     ...meta,
     emerging_patterns: persisted.emergingPatterns.length > 0 ? persisted.emergingPatterns : meta.emerging_patterns,
-    open_signals: persisted.openSignals.length > 0 ? persisted.openSignals : meta.open_signals
+    open_signals: persisted.openSignals.length > 0 ? persisted.openSignals : meta.open_signals,
+    strategic_opportunities: persisted.strategicOpportunities.length > 0
+      ? persisted.strategicOpportunities
+      : meta.strategic_opportunities,
+    action_studio: persisted.actionStudio.length > 0 ? persisted.actionStudio : meta.action_studio
   };
 }
 

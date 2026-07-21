@@ -13,10 +13,7 @@ import {
   assessSignalServingReadiness,
   getSignalServingReadiness
 } from "@/lib/data-os/signal-serving";
-import {
-  loadPublishedSignalOverview,
-  mapPublishedSignalOpportunities
-} from "@/lib/data-os/published-signal-overview";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
 import { pool } from "@/lib/db";
 import { buildSignalPayload } from "@/lib/signal/build";
 
@@ -107,11 +104,12 @@ export default async function TbAnalysisReviewPage({
   const knowledgeImpact = asRecord(signalPreview.knowledge_impact);
   const knowledgeSources = arrayRecords(knowledgeImpact.sources_used);
   const opportunities = relationalOverview
-    ? mapPublishedSignalOpportunities(relationalOverview.opportunities)
-        .map((row) => row as unknown as JsonRecord)
+    ? relationalOverview.opportunities.map((row) => row as unknown as JsonRecord)
     : [];
   const emergingPatterns = arrayRecords(signalPreview.emerging_patterns);
-  const actionCards = arrayRecords(signalPreview.action_cards);
+  const actionCards = relationalOverview
+    ? relationalOverview.action_studio.map((row) => row as unknown as JsonRecord)
+    : arrayRecords(signalPreview.action_cards);
   const competitive = asRecord(signalPreview.competitive);
   const competitiveEntities = arrayRecords(competitive.entities);
   const boundaries = asRecord(signalPreview.client_boundaries);
@@ -236,7 +234,8 @@ export default async function TbAnalysisReviewPage({
             <div className="analysis-readiness-grid">
               <ReadinessTile label="Menciones del snapshot" value={signalServingReadiness.counts.mentions} detail="Población inmutable en corpus_snapshot_mentions" />
               <ReadinessTile label="Hallazgos" value={signalServingReadiness.counts.findings} detail={`${signalServingReadiness.counts.findingsWithEvidence}/${signalServingReadiness.counts.findings} con evidencia del snapshot`} />
-              <ReadinessTile label="Oportunidades" value={signalServingReadiness.counts.opportunities} detail="Activation + friction removal" />
+              <ReadinessTile label="Oportunidades" value={signalServingReadiness.counts.opportunities} detail={`${signalServingReadiness.counts.opportunitiesWithEvidence}/${signalServingReadiness.counts.opportunities} con evidencia del snapshot`} />
+              <ReadinessTile label="Action Studio" value={signalServingReadiness.counts.actions} detail={`${signalServingReadiness.counts.actionsWithEvidence}/${signalServingReadiness.counts.actions} con evidencia del snapshot`} />
               <ReadinessTile label="Citas" value={signalServingReadiness.counts.citationLinks} detail={`${signalServingReadiness.counts.citations} menciones únicas citadas`} />
               <ReadinessTile label="Tags" value={signalServingReadiness.counts.tags} detail={`${signalServingReadiness.counts.tagTerms} términos taxonómicos`} />
               <ReadinessTile label="Features" value={signalServingReadiness.counts.features} detail={`${signalServingReadiness.counts.featureKeys} feature keys`} />

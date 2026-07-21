@@ -34,6 +34,7 @@ preparacion productiva.
 | Taxonomias y tags versionados | `taxonomies`, `taxonomy_terms`, `record_tags`, `tagging_model_versions` | Implementado local; requiere staging evidence |
 | Calidad y lineage | `data_quality_results`, `lineage_edges`, zero failed quality | Implementado local; requiere staging evidence |
 | APIs de serving | `/api/data-os/*`, `data-os:serving-smoke`, fallback checks | Build local verde; requiere remote serving smoke |
+| Analysis Serving Layer T&B | migracion `0045`, persistencia transaccional Step 6, refs `signal-serving-v2`, Review/Signal/deck compartidos | Implementado local; requiere backfill y smoke sobre output staging |
 | Shadow mode seguro | `NOISIA_DATA_OS_SHADOW_MODE=true`, live render false, fallback payload | Implementado; requiere staging release gate |
 | Review humano antes de cliente | `review-queue.json`, `review-sample.json`, review events de tag/assertion | Flujo implementado; requiere IDs revisados en staging |
 | Produccion por PR | PR template, CODEOWNERS, `release-gate.json` | Implementado; PR pendiente |
@@ -63,6 +64,34 @@ No se ejecutaron en este checkpoint `@noisia/studio build`, `data-os:verify`,
 `data-os:staging-check` ni `data-os:staging-shadow`. Los checks locales anteriores y la
 reconciliacion documentada mas abajo siguen siendo evidencia historica, no sustituyen
 una nueva corrida contra el estado final de la rama. Data OS Cut 1 permanece en WIP.
+
+## Continuacion Analysis Serving Layer (2026-07-21)
+
+La continuacion posterior al checkpoint conecta la migracion `0045` con Step 6 y con
+los consumidores T&B. El alcance local incluye:
+
+- persistencia transaccional de oportunidades estrategicas, Action Studio y sus links
+  a findings;
+- lectura canonica compartida en Review, Signal, deck y resumen de correo;
+- readiness que reconcilia sintesis contra filas canonicas y exige evidencia del
+  snapshot;
+- nueve `dashboard_data_refs` obligatorios bajo `signal-serving-v2`;
+- bloqueo de reescritura in-place para outputs publicados;
+- backfill protegido que preserva `published_outputs.payload`, status, version y
+  `published_at`.
+
+Este avance sigue siendo WIP hasta correr todos los gates locales del estado final y un
+backfill/shadow real en staging o preview. No constituye evidencia productiva.
+
+Validaciones locales de esta continuacion:
+
+- monorepo typecheck: 11/11 paquetes verdes;
+- monorepo lint: cero errores y 10 warnings preexistentes del deck estatico;
+- monorepo test: 16/16 tareas verdes; DB 41, Studio 224 y Workers 116 pruebas;
+- build de produccion de Studio: verde;
+- `data-os:verify`: 11 migraciones, 44 tablas y 57 contratos verificados;
+- `data-os:staging-check`: detenido correctamente por ausencia de `DATABASE_URL`,
+  target remoto, corpus/output UUIDs y aprobacion explicita del shadow.
 
 ## Checks Locales Minimos
 

@@ -4,7 +4,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { publishedOutputs, tbAnalyses } from "@noisia/db";
+import { parseSynthesisResponse, type SynthesisResponse } from "@noisia/query-engine";
 import { eq } from "drizzle-orm";
+import type { Pool } from "pg";
 
 const ALLOW_REMOTE_ENV = "NOISIA_DATA_OS_SIGNAL_BACKFILL_ALLOW_REMOTE";
 
@@ -12,6 +14,7 @@ type RelationalCounts = {
   mentions: number;
   findings: number;
   opportunities: number;
+  actions: number;
 };
 
 type CodingBridgeSummary = {
@@ -23,6 +26,15 @@ type CodingBridgeSummary = {
     status: string;
     warnings: string[];
   };
+};
+
+type ServingEntitiesBackfill = {
+  sourceAvailable: boolean;
+  required: boolean;
+  sourceCounts: { strategicOpportunities: number; actionStudio: number };
+  existingCounts: { strategicOpportunities: number; actionStudio: number };
+  synthesis: SynthesisResponse;
+  findingUuidByHumanId: Map<string, string>;
 };
 
 const REMEDIABLE_PREFLIGHT_BLOCK = "governed_dimensions_missing";
@@ -114,11 +126,13 @@ function dateValue(value: Date | string | null) {
 function relationalCounts(overview: {
   corpus: { total_mentions: number };
   metrics: { findings_total: number; opportunities_total: number };
+  action_studio: unknown[];
 }): RelationalCounts {
   return {
     mentions: overview.corpus.total_mentions,
     findings: overview.metrics.findings_total,
-    opportunities: overview.metrics.opportunities_total
+    opportunities: overview.metrics.opportunities_total,
+    actions: overview.action_studio.length
   };
 }
 
@@ -136,6 +150,22 @@ function assertCountsMatch(
   }
 }
 
+function assertCoreCountsStable(
+  actual: RelationalCounts,
+  expected: RelationalCounts,
+  stage: string
+) {
+  assertCountsMatch(
+    {
+      ...actual,
+      opportunities: expected.opportunities,
+      actions: expected.actions
+    },
+    expected,
+    stage
+  );
+}
+
 function requiresHistoricalCodingBridge(
   hardBlocks: Array<{ code: string }>
 ) {
@@ -143,10 +173,22 @@ function requiresHistoricalCodingBridge(
 }
 
 function hasOnlyRemediablePreflightBlocks(
-  hardBlocks: Array<{ code: string }>
+  hardBlocks: Array<{ code: string }>,
+  servingEntitiesSourceAvailable: boolean
 ) {
+  const remediable = new Set([
+    REMEDIABLE_PREFLIGHT_BLOCK,
+    ...(servingEntitiesSourceAvailable
+      ? [
+          "opportunity_evidence_incomplete",
+          "action_evidence_incomplete",
+          "opportunity_persistence_mismatch",
+          "action_persistence_mismatch"
+        ]
+      : [])
+  ]);
   return hardBlocks.length > 0
-    && hardBlocks.every((issue) => issue.code === REMEDIABLE_PREFLIGHT_BLOCK);
+    && hardBlocks.every((issue) => remediable.has(issue.code));
 }
 
 async function materializeHistoricalCodingBridge(
@@ -181,6 +223,105 @@ async function materializeHistoricalCodingBridge(
     return summary;
   } finally {
     await workerDbModule.pool.end();
+  }
+}
+
+async function loadServingEntitiesBackfill(
+  pool: Pool,
+  analysisId: string
+): Promise<ServingEntitiesBackfill> {
+  const [analysisResult, findingsResult, countsResult] = await Promise.all([
+    pool.query<{
+      activation_playbook: unknown;
+      friction_removal_plan: unknown;
+      meta_json: unknown;
+    }>(
+      `SELECT activation_playbook, friction_removal_plan, meta_json
+       FROM tb_analyses
+       WHERE id = $1::uuid`,
+      [analysisId]
+    ),
+    pool.query<{ id: string; finding_id: string }>(
+      `SELECT id::text, finding_id
+       FROM tb_findings
+       WHERE tb_analysis_id = $1::uuid`,
+      [analysisId]
+    ),
+    pool.query<{ strategic_opportunities: number; action_studio: number }>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM tb_strategic_opportunities WHERE tb_analysis_id = $1::uuid) AS strategic_opportunities,
+         (SELECT COUNT(*)::int FROM tb_action_studio WHERE tb_analysis_id = $1::uuid) AS action_studio`,
+      [analysisId]
+    )
+  ]);
+  const analysis = analysisResult.rows[0];
+  if (!analysis) throw new Error("Linked T&B analysis disappeared while preparing serving backfill.");
+  const meta = asRecord(analysis.meta_json);
+  const sourceAvailable = Array.isArray(meta.strategic_opportunities)
+    && Array.isArray(meta.action_studio);
+  const synthesis = parseSynthesisResponse(JSON.stringify({
+    activation_playbook: analysis.activation_playbook,
+    friction_removal_plan: analysis.friction_removal_plan,
+    action_studio: meta.action_studio,
+    emerging_patterns: meta.emerging_patterns,
+    knowledge_impact: meta.knowledge_impact,
+    strategic_opportunities: meta.strategic_opportunities,
+    future_signals: meta.future_signals,
+    market_analysis: meta.market_analysis,
+    evidence_deep_dives: meta.evidence_deep_dives
+  }));
+  const existing = countsResult.rows[0] ?? { strategic_opportunities: 0, action_studio: 0 };
+  const sourceCounts = {
+    strategicOpportunities: synthesis.strategic_opportunities.length,
+    actionStudio: synthesis.action_studio.length
+  };
+  const existingCounts = {
+    strategicOpportunities: Number(existing.strategic_opportunities ?? 0),
+    actionStudio: Number(existing.action_studio ?? 0)
+  };
+
+  return {
+    sourceAvailable,
+    required: sourceAvailable && (
+      sourceCounts.strategicOpportunities !== existingCounts.strategicOpportunities
+      || sourceCounts.actionStudio !== existingCounts.actionStudio
+    ),
+    sourceCounts,
+    existingCounts,
+    synthesis,
+    findingUuidByHumanId: new Map(findingsResult.rows.map((finding) => [finding.finding_id, finding.id]))
+  };
+}
+
+async function materializeHistoricalServingEntities(
+  pool: Pool,
+  analysisId: string,
+  plan: ServingEntitiesBackfill
+) {
+  const {
+    assertTbServingFindingLinksResolved,
+    replaceTbSignalServingEntities
+  } = await import(
+    "../../../services/workers/src/workers/tb-signal-serving-persistence"
+  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = 0");
+    const result = await replaceTbSignalServingEntities(client, {
+      tbAnalysisId: analysisId,
+      strategicOpportunities: plan.synthesis.strategic_opportunities,
+      actionStudio: plan.synthesis.action_studio,
+      findingUuidByHumanId: plan.findingUuidByHumanId
+    });
+    assertTbServingFindingLinksResolved(result.unmatchedFindingIds);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -263,6 +404,7 @@ async function main() {
       throw new Error(`Analysis must be approved before serving backfill; received ${analysis.status}.`);
     }
 
+    const servingEntitiesPlan = await loadServingEntitiesBackfill(pool, analysis.id);
     const readinessBeforeRefs = await getSignalServingReadiness({
       analysisId: analysis.id,
       snapshotId: analysis.snapshotId,
@@ -275,34 +417,55 @@ async function main() {
     );
     if (
       !assessmentBeforeRefs.ready
-      && !hasOnlyRemediablePreflightBlocks(assessmentBeforeRefs.hardBlocks)
+      && !hasOnlyRemediablePreflightBlocks(
+        assessmentBeforeRefs.hardBlocks,
+        servingEntitiesPlan.sourceAvailable
+      )
     ) {
       throw new Error(
         `Relational serving is not ready: ${assessmentBeforeRefs.hardBlocks.map((issue) => issue.code).join(", ")}`
       );
     }
 
-    const overviewBeforeRefs = await loadPublishedSignalOverview({
-      outputId: output.id,
-      corpusId: output.studyCorpusId,
-      snapshotId: analysis.snapshotId,
-      analysisId: analysis.id,
-      requireGovernedRef: false
-    });
     const expectedCounts: RelationalCounts = {
       mentions: readinessBeforeRefs.counts.mentions,
       findings: readinessBeforeRefs.counts.findings,
-      opportunities: readinessBeforeRefs.counts.opportunities
+      opportunities: readinessBeforeRefs.counts.opportunities,
+      actions: readinessBeforeRefs.counts.actions
     };
-    assertCountsMatch(relationalCounts(overviewBeforeRefs), expectedCounts, "Preflight");
+    let preflightServingReadError: string | null = null;
+    try {
+      const overviewBeforeRefs = await loadPublishedSignalOverview({
+        outputId: output.id,
+        corpusId: output.studyCorpusId,
+        snapshotId: analysis.snapshotId,
+        analysisId: analysis.id,
+        requireGovernedRef: false
+      });
+      assertCountsMatch(relationalCounts(overviewBeforeRefs), expectedCounts, "Preflight");
+    } catch (error) {
+      if (!servingEntitiesPlan.sourceAvailable) throw error;
+      preflightServingReadError = error instanceof Error ? error.message : String(error);
+    }
 
     const preflight = {
       mode: apply ? "apply" : "dry-run",
-      status: codingBridgeRequired ? "coding_bridge_required" : "verified",
+      status: codingBridgeRequired || servingEntitiesPlan.required || preflightServingReadError
+        ? "reconciliation_required"
+        : servingEntitiesPlan.sourceAvailable
+          ? "reconciliation_planned"
+          : "verified",
       contract_version: readinessBeforeRefs.contractVersion,
       counts: expectedCounts,
       warnings: assessmentBeforeRefs.warnings.map((warning) => warning.code),
       coding_bridge_required: codingBridgeRequired,
+      serving_entities: {
+        source_available: servingEntitiesPlan.sourceAvailable,
+        reconciliation_required: servingEntitiesPlan.required,
+        preflight_read_error: preflightServingReadError,
+        source_counts: servingEntitiesPlan.sourceCounts,
+        existing_counts: servingEntitiesPlan.existingCounts
+      },
       data_refs_complete: readinessBeforeRefs.dataRefs.complete,
       payload_role: "manifest_only"
     };
@@ -318,6 +481,10 @@ async function main() {
       codingBridge = await materializeHistoricalCodingBridge(analysis.id);
     }
 
+    const servingEntities = servingEntitiesPlan.sourceAvailable
+      ? await materializeHistoricalServingEntities(pool, analysis.id, servingEntitiesPlan)
+      : null;
+
     const readinessAfterBridge = await getSignalServingReadiness({
       analysisId: analysis.id,
       snapshotId: analysis.snapshotId,
@@ -327,13 +494,14 @@ async function main() {
     const assessmentAfterBridge = assessSignalServingReadiness(readinessAfterBridge);
     if (!assessmentAfterBridge.ready) {
       throw new Error(
-        `Relational serving is not ready after coding reconciliation: ${assessmentAfterBridge.hardBlocks.map((issue) => issue.code).join(", ")}`
+        `Relational serving is not ready after historical reconciliation: ${assessmentAfterBridge.hardBlocks.map((issue) => issue.code).join(", ")}`
       );
     }
-    assertCountsMatch({
+    assertCoreCountsStable({
       mentions: readinessAfterBridge.counts.mentions,
       findings: readinessAfterBridge.counts.findings,
-      opportunities: readinessAfterBridge.counts.opportunities
+      opportunities: readinessAfterBridge.counts.opportunities,
+      actions: readinessAfterBridge.counts.actions
     }, expectedCounts, "Post-bridge");
 
     const original = {
@@ -375,7 +543,8 @@ async function main() {
     assertCountsMatch(verifiedCounts, {
       mentions: readiness.counts.mentions,
       findings: readiness.counts.findings,
-      opportunities: readiness.counts.opportunities
+      opportunities: readiness.counts.opportunities,
+      actions: readiness.counts.actions
     }, "Post-reference");
 
     const verifiedAt = new Date();
@@ -394,6 +563,15 @@ async function main() {
           quality: codingBridge.quality
         }
       } : {}),
+      ...(servingEntities ? {
+        data_os_serving_entities: {
+          strategic_opportunities: servingEntities.strategicOpportunitiesInserted,
+          opportunity_finding_links: servingEntities.opportunityFindingLinksInserted,
+          action_studio: servingEntities.actionStudioInserted,
+          action_finding_links: servingEntities.actionFindingLinksInserted,
+          unmatched_finding_ids: servingEntities.unmatchedFindingIds
+        }
+      } : {}),
       relational_verification: {
         status: "verified",
         contract_version: readiness.contractVersion,
@@ -401,6 +579,7 @@ async function main() {
         mentions: verifiedCounts.mentions,
         findings: verifiedCounts.findings,
         opportunities: verifiedCounts.opportunities,
+        actions: verifiedCounts.actions,
         payload_role: "manifest_only",
         payload_preserved: true
       }
@@ -447,6 +626,7 @@ async function main() {
         complete: readiness.dataRefs.complete
       },
       coding_bridge: codingBridge,
+      serving_entities: servingEntities,
       preserved: preservationChecks,
       payload_role: "manifest_only"
     }, null, 2));

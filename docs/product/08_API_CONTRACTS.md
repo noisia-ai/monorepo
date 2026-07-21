@@ -609,6 +609,42 @@ Los refs conservan filtros, visibilidad, corpus scope y lineage hacia
 unidades, búsqueda, tickets, spend y margen. La UI declara asociación temporal, nunca
 causalidad.
 
+### T&B Signal relational serving v2
+
+`GET /api/signal/:outputId/overview` y `GET /api/signal/:outputId/corpus` sirven el
+snapshot aprobado al que apunta el output autorizado. Para outputs con
+`data_contract.version="signal-serving-v2"`, pantalla, deck y correo usan el mismo
+contrato relacional y fallan cerrado si readiness no pasa.
+
+Refs obligatorios del contrato:
+
+- `published_mentions`;
+- `social_overview`;
+- `social_timeseries`;
+- `social_dimensions`;
+- `analysis_findings`;
+- `analysis_opportunities`;
+- `analysis_actions`;
+- `analysis_evidence`;
+- `cross_source_timeline`.
+
+`analysis_opportunities` apunta a `tb_strategic_opportunities` y
+`tb_opportunity_findings`; `analysis_actions` apunta a `tb_action_studio` y
+`tb_action_findings`. `tb_recommendations` permanece como playbook operacional y no se
+cuenta como oportunidad estrategica.
+
+Readiness bloquea publicacion o serving cuando:
+
+- la cantidad sintetizada no coincide con las filas canonicas;
+- existe un finding, oportunidad o accion sin evidencia dentro del snapshot;
+- faltan tags/features gobernadas;
+- falta cualquiera de los nueve refs.
+
+Un contrato relacional anterior responde `409 signal_serving_contract_outdated` en el
+endpoint de overview hasta ejecutar reconciliacion. El payload publicado se conserva
+como fallback de compatibilidad; publicar de nuevo sobre la misma fila ya publicada
+responde `409 published_output_immutable`.
+
 ### `GET /api/data-os/corpora/:id/sources`
 
 Inventario de fuentes operativas ligadas al corpus, con último sync conocido.

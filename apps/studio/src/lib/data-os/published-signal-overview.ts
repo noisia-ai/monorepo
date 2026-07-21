@@ -6,6 +6,7 @@ import {
   type SignalMobility
 } from "@/lib/signal/semantics";
 import type {
+  PublicActionCard,
   PublicTbFinding,
   StrategicOpportunity,
   TbConfidence,
@@ -28,25 +29,38 @@ function toNumber(value: unknown): number {
 
 export type PublishedSignalOpportunity = {
   id: string;
-  kind: string;
-  finding_id: string | null;
-  finding_code: string | null;
-  finding_name: string | null;
-  intervention: string | null;
-  intervention_type: string | null;
-  recommendation: string | null;
-  structural_reason: string | null;
-  success_indicator: string | null;
-  suggested_owner: string | null;
-  recommended_media: string | null;
-  recommended_tone: string | null;
-  saturation_risk: string | null;
-  applicable_categories: string[] | null;
-  estimated_investment: string | null;
-  confidence: string | null;
-  mobility: SignalMobility;
+  opportunity_id: string;
+  title: string;
+  decision: string;
+  why_now: string;
+  level: string;
+  source_mix: string[];
+  related_finding_ids: string[];
+  evidence_summary: string;
+  what_to_do: string;
+  success_signal: string;
+  confidence: string;
   citation_count: number;
   position: number;
+};
+
+type PublishedSignalActionRow = {
+  action_id: string;
+  target_team: string;
+  kind: string;
+  title: string;
+  finding_ids: string[];
+  primary_finding_id: string | null;
+  rationale: string;
+  action_text: string;
+  suggested_channel: string | null;
+  suggested_format: string | null;
+  success_signal: string;
+  estimated_effort: string;
+  estimated_impact: string;
+  confidence: string;
+  priority_rank: number;
+  citation_count: number;
 };
 
 export type PublishedSignalOverview = {
@@ -116,7 +130,8 @@ export type PublishedSignalOverview = {
     score: string | null;
     citation_count: number;
   }>;
-  opportunities: PublishedSignalOpportunity[];
+  opportunities: StrategicOpportunity[];
+  action_studio: PublicActionCard[];
   tag_distribution: Array<{
     taxonomy_key: string;
     term_key: string;
@@ -179,44 +194,86 @@ function normalizeFindingMobility(value: string | null): TbMobility | null {
   return null;
 }
 
-function opportunityLevel(row: PublishedSignalOpportunity): StrategicOpportunity["level"] {
-  const interventionType = row.intervention_type?.toLowerCase() ?? "";
-  if (row.kind === "friction_removal") return "product_cx";
-  if (/compet|share|benchmark/.test(interventionType)) return "competitive";
-  if (/medici|metric|measure/.test(interventionType)) return "measurement";
-  if (/position|brand|marca/.test(interventionType)) return "brand";
-  if (/category|categor/.test(interventionType)) return "category";
-  return "content";
-}
-
 export function mapPublishedSignalOpportunities(
   rows: PublishedSignalOpportunity[]
 ): StrategicOpportunity[] {
-  return rows.map((row) => {
-    const title = row.finding_name ?? row.intervention ?? row.recommendation ?? row.kind;
-    const decision = row.recommendation ?? row.intervention ?? row.structural_reason ?? title;
-    const evidenceSummary = row.citation_count > 0
-      ? `${row.citation_count} snapshot citation${row.citation_count === 1 ? "" : "s"} support this recommendation.`
-      : "No snapshot citation is attached to this recommendation yet.";
+  return rows.map((row) => ({
+    opportunity_id: row.opportunity_id,
+    title: row.title,
+    decision: row.decision,
+    why_now: row.why_now,
+    level: requiredEnum(row.level, OPPORTUNITY_LEVELS, "Strategic opportunity level"),
+    source_mix: Array.from(new Set([
+      ...row.source_mix,
+      "published_snapshot",
+      "tb_strategic_opportunities",
+      ...(row.citation_count > 0 ? ["finding_citations"] : [])
+    ])),
+    related_finding_ids: row.related_finding_ids,
+    evidence_summary: row.evidence_summary,
+    what_to_do: row.what_to_do,
+    success_signal: row.success_signal,
+    confidence: requiredEnum(row.confidence, CONFIDENCE_LEVELS, "Strategic opportunity confidence")
+  }));
+}
 
-    return {
-      opportunity_id: row.id,
-      title,
-      decision,
-      why_now: row.structural_reason ?? evidenceSummary,
-      level: opportunityLevel(row),
-      source_mix: [
-        "published_snapshot",
-        "tb_recommendations",
-        ...(row.citation_count > 0 ? ["finding_citations"] : [])
-      ],
-      related_finding_ids: [row.finding_code ?? row.finding_id].filter((value): value is string => Boolean(value)),
-      evidence_summary: evidenceSummary,
-      what_to_do: row.intervention ?? row.recommendation ?? decision,
-      success_signal: row.success_indicator ?? "Define and approve a measurable success signal before activation.",
-      confidence: normalizeOpportunityConfidence(row.confidence)
-    };
-  });
+export function mapPublishedSignalActions(rows: PublishedSignalActionRow[]): PublicActionCard[] {
+  return rows.map((row) => ({
+    action_id: row.action_id,
+    target_team: requiredEnum(row.target_team, ACTION_TEAMS, "Action Studio target_team"),
+    kind: requiredEnum(row.kind, ACTION_KINDS, "Action Studio kind"),
+    title: row.title,
+    finding_ids: row.finding_ids,
+    primary_finding_id: row.primary_finding_id,
+    action_text: row.action_text,
+    rationale: row.rationale,
+    suggested_channel: row.suggested_channel,
+    suggested_format: row.suggested_format,
+    success_signal: row.success_signal,
+    estimated_effort: requiredEnum(row.estimated_effort, ACTION_EFFORTS, "Action Studio estimated_effort"),
+    estimated_impact: requiredEnum(row.estimated_impact, ACTION_IMPACTS, "Action Studio estimated_impact"),
+    confidence: requiredEnum(row.confidence, CONFIDENCE_LEVELS, "Action Studio confidence"),
+    priority_rank: row.priority_rank
+  }));
+}
+
+const ACTION_TEAMS = [
+  "brand_strategy",
+  "creative_content",
+  "product_cx",
+  "retail_media",
+  "measurement",
+  "cultural_guardrails"
+] as const;
+
+const ACTION_KINDS = [
+  "activation",
+  "friction_removal",
+  "alignment",
+  "experiment",
+  "guardrail",
+  "structural_note"
+] as const;
+
+const ACTION_EFFORTS = ["baja", "media", "alta"] as const;
+const ACTION_IMPACTS = ["bajo", "medio", "alto"] as const;
+
+const OPPORTUNITY_LEVELS = [
+  "brand",
+  "content",
+  "product_cx",
+  "competitive",
+  "measurement",
+  "category"
+] as const;
+
+const CONFIDENCE_LEVELS = ["alta", "media", "baja_direccional"] as const;
+
+function requiredEnum<const T extends readonly string[]>(value: string, allowed: T, label: string): T[number] {
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new Error(`${label} has an invalid canonical value: ${value}`);
+  }
+  return value as T[number];
 }
 
 function normalizeMobilityDistribution(rows: MobilityRow[]) {
@@ -286,6 +343,7 @@ export async function loadPublishedSignalOverview(
     topVoice,
     topBarriers,
     opportunities,
+    actionStudio,
     tagDistribution,
     featureDistribution,
     evidence,
@@ -357,9 +415,8 @@ export async function loadPublishedSignalOverview(
                )::int AS movable_total,
                (
                  SELECT COUNT(*)::int
-                 FROM tb_recommendations tr
-                 WHERE tr.tb_analysis_id = $1::uuid
-                   AND tr.kind IN ('activation', 'friction_removal')
+                 FROM tb_strategic_opportunities opportunity
+                 WHERE opportunity.tb_analysis_id = $1::uuid
                ) AS opportunities_total
         FROM tb_findings tf
         WHERE tf.tb_analysis_id = $1::uuid
@@ -540,59 +597,86 @@ export async function loadPublishedSignalOverview(
       `,
       snapshotAnalysisParams
     ),
-    pool.query<{
-      id: string;
-      kind: string;
-      finding_id: string | null;
-      finding_code: string | null;
-      finding_name: string | null;
-      intervention: string | null;
-      intervention_type: string | null;
-      recommendation: string | null;
-      structural_reason: string | null;
-      success_indicator: string | null;
-      suggested_owner: string | null;
-      recommended_media: string | null;
-      recommended_tone: string | null;
-      saturation_risk: string | null;
-      applicable_categories: string[] | null;
-      estimated_investment: string | null;
-      confidence: string | null;
-      movilidad: string | null;
-      citation_count: number;
-      position: number;
-    }>(
+    pool.query<PublishedSignalOpportunity>(
       `
-        SELECT tr.id,
-               tr.kind,
-               tr.finding_id,
-               tf.finding_id AS finding_code,
-               tf.nombre_comercial AS finding_name,
-               tr.intervencion_sugerida AS intervention,
-               tr.tipo_intervencion AS intervention_type,
-               tr.recomendacion AS recommendation,
-               tr.razon_estructural AS structural_reason,
-               tr.indicador_exito AS success_indicator,
-               tr.responsable_sugerido AS suggested_owner,
-               tr.medio_recomendado AS recommended_media,
-               tr.tono_recomendado AS recommended_tone,
-               tr.riesgo_saturacion AS saturation_risk,
-               tr.categoria_donde_aplica AS applicable_categories,
-               tr.inversion_estimada AS estimated_investment,
-               tf.confidence,
-               tf.movilidad,
-               COUNT(DISTINCT csm.mention_id)::int AS citation_count,
-               tr.position::int
-        FROM tb_recommendations tr
-        LEFT JOIN tb_findings tf ON tf.id = tr.finding_id
-        LEFT JOIN tb_finding_citations fc ON fc.finding_id = tf.id
-        LEFT JOIN corpus_snapshot_mentions csm
-          ON csm.mention_id = fc.mention_id
-         AND csm.snapshot_id = $2::uuid
-        WHERE tr.tb_analysis_id = $1::uuid
-          AND tr.kind IN ('activation', 'friction_removal')
-        GROUP BY tr.id, tf.id
-        ORDER BY tr.position, tr.created_at, tr.id
+        SELECT opportunity.id::text AS id,
+               opportunity.opportunity_id,
+               opportunity.title,
+               opportunity.decision,
+               opportunity.why_now,
+               opportunity.level,
+               opportunity.source_mix,
+               COALESCE((
+                 SELECT array_agg(finding.finding_id ORDER BY link.position, finding.finding_id)
+                 FROM tb_opportunity_findings link
+                 INNER JOIN tb_findings finding ON finding.id = link.finding_id
+                 WHERE link.opportunity_id = opportunity.id
+                   AND finding.tb_analysis_id = opportunity.tb_analysis_id
+               ), ARRAY[]::text[]) AS related_finding_ids,
+               opportunity.evidence_summary,
+               opportunity.what_to_do,
+               opportunity.success_signal,
+               opportunity.confidence,
+               (
+                 SELECT COUNT(DISTINCT snapshot_mention.mention_id)::int
+                 FROM tb_opportunity_findings link
+                 INNER JOIN tb_findings finding
+                   ON finding.id = link.finding_id
+                  AND finding.tb_analysis_id = opportunity.tb_analysis_id
+                 INNER JOIN tb_finding_citations citation ON citation.finding_id = link.finding_id
+                 INNER JOIN corpus_snapshot_mentions snapshot_mention
+                   ON snapshot_mention.mention_id = citation.mention_id
+                  AND snapshot_mention.snapshot_id = $2::uuid
+                 WHERE link.opportunity_id = opportunity.id
+               ) AS citation_count,
+               opportunity.position::int
+        FROM tb_strategic_opportunities opportunity
+        WHERE opportunity.tb_analysis_id = $1::uuid
+        ORDER BY opportunity.position, opportunity.created_at, opportunity.id
+      `,
+      snapshotAnalysisParams
+    ),
+    pool.query<PublishedSignalActionRow>(
+      `
+        SELECT action.action_id,
+               action.target_team,
+               action.kind,
+               action.title,
+               COALESCE((
+                 SELECT array_agg(finding.finding_id ORDER BY link.position, finding.finding_id)
+                 FROM tb_action_findings link
+                 INNER JOIN tb_findings finding ON finding.id = link.finding_id
+                 WHERE link.action_id = action.id
+                   AND finding.tb_analysis_id = action.tb_analysis_id
+               ), ARRAY[]::text[]) AS finding_ids,
+               primary_finding.finding_id AS primary_finding_id,
+               action.rationale,
+               action.action_text,
+               action.suggested_channel,
+               action.suggested_format,
+               action.success_signal,
+               action.estimated_effort,
+               action.estimated_impact,
+               action.confidence,
+               action.priority_rank::int,
+               (
+                 SELECT COUNT(DISTINCT snapshot_mention.mention_id)::int
+                 FROM tb_action_findings link
+                 INNER JOIN tb_findings finding
+                   ON finding.id = link.finding_id
+                  AND finding.tb_analysis_id = action.tb_analysis_id
+                 INNER JOIN tb_finding_citations citation ON citation.finding_id = link.finding_id
+                 INNER JOIN corpus_snapshot_mentions snapshot_mention
+                   ON snapshot_mention.mention_id = citation.mention_id
+                  AND snapshot_mention.snapshot_id = $2::uuid
+                 WHERE link.action_id = action.id
+               ) AS citation_count
+        FROM tb_action_studio action
+        LEFT JOIN tb_findings primary_finding
+          ON primary_finding.id = action.primary_finding_id
+         AND primary_finding.tb_analysis_id = action.tb_analysis_id
+        WHERE action.tb_analysis_id = $1::uuid
+        ORDER BY action.priority_rank, action.created_at, action.id
       `,
       snapshotAnalysisParams
     ),
@@ -817,12 +901,16 @@ export async function loadPublishedSignalOverview(
       citation_count: toNumber(row.citation_count),
       movilidad: normalizeSignalMobility(row.movilidad)
     })),
-    opportunities: opportunities.rows.map(({ movilidad, ...row }) => ({
+    opportunities: mapPublishedSignalOpportunities(opportunities.rows.map((row) => ({
       ...row,
       citation_count: toNumber(row.citation_count),
-      position: toNumber(row.position),
-      mobility: normalizeSignalMobility(movilidad)
-    })),
+      position: toNumber(row.position)
+    }))),
+    action_studio: mapPublishedSignalActions(actionStudio.rows.map((row) => ({
+      ...row,
+      priority_rank: toNumber(row.priority_rank),
+      citation_count: toNumber(row.citation_count)
+    }))),
     tag_distribution: tagDistribution.rows.map((row) => ({
       ...row,
       count: toNumber(row.count)

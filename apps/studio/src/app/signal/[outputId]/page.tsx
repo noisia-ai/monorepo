@@ -31,7 +31,6 @@ import { pool } from "@/lib/db";
 import { getSignalOutputForUser } from "@/lib/data/signal";
 import {
   loadPublishedSignalOverview,
-  mapPublishedSignalOpportunities,
   type PublishedSignalOverview,
 } from "@/lib/data-os/published-signal-overview";
 import {
@@ -126,8 +125,11 @@ export default async function SignalOutputPage({
       ...rawViewModel.report,
       brand_name: brandLabel
     },
+    actionCards: relationalOverview
+      ? relationalOverview.action_studio
+      : rawViewModel.actionCards,
     strategicOpportunities: relationalOverview
-      ? mapPublishedSignalOpportunities(relationalOverview.opportunities)
+      ? relationalOverview.opportunities
       : rawViewModel.strategicOpportunities,
   };
   const metrics = relationalOverview ? asRecord(relationalOverview.metrics) : asRecord(payload.metrics);

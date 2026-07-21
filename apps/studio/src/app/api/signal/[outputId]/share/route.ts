@@ -11,8 +11,14 @@ import { displayRole, getUserType, normalizeRole } from "@/lib/auth/roles";
 import { syncClientBrandAccessForOrganization } from "@/lib/auth/org-sync";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
 import { renderSignalShareEmail, sendEmail } from "@/lib/email";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
+import { hasSignalServingContract } from "@/lib/signal/semantics";
 import { absoluteAppUrl } from "@/lib/url/origin";
 
 const INVITATION_TTL_DAYS = 14;
@@ -266,7 +272,16 @@ async function sendShareEmailBestEffort(args: {
     if (args.output.kind === "signal_pulse") {
       return sendSignalPulseShareEmail(args);
     }
-    const vm = adaptTbSignalPayload(args.output.payload);
+    const rawVm = adaptTbSignalPayload(args.output.payload);
+    const relationalOverview = await loadShareRelationalOverview(args.output);
+    const vm = relationalOverview
+      ? {
+          ...rawVm,
+          findings: relationalOverview.findings,
+          actionCards: relationalOverview.action_studio,
+          strategicOpportunities: relationalOverview.opportunities
+        }
+      : rawVm;
     const brandLabel = args.output.brandName ?? args.output.brandFallbackName ?? args.output.themeName ?? vm.report.brand_name;
     const methodologyName = args.output.methodologyName ?? vm.report.methodology_name;
     const reportTitle = args.output.headline ?? args.output.title ?? vm.report.headline;
@@ -310,6 +325,36 @@ async function sendShareEmailBestEffort(args: {
       error: err instanceof Error ? err.message : "No pudimos preparar el correo del reporte."
     };
   }
+}
+
+async function loadShareRelationalOverview(
+  output: NonNullable<Awaited<ReturnType<typeof getSignalOutputForUser>>>
+) {
+  if (!hasSignalServingContract(output.manifest)) return null;
+  if (!output.tbAnalysisId || !output.snapshotId) {
+    throw new Error("El Signal publicado no tiene snapshot o analisis relacional.");
+  }
+
+  const readiness = await getSignalServingReadiness({
+    analysisId: output.tbAnalysisId,
+    outputId: output.id,
+    requireDataRefs: true,
+    snapshotId: output.snapshotId
+  });
+  const assessment = assessSignalServingReadiness(readiness);
+  if (!assessment.ready) {
+    throw new Error(
+      `El Signal publicado no cumple el contrato relacional: ${assessment.hardBlocks.map((issue) => issue.code).join(", ")}`
+    );
+  }
+
+  return loadPublishedSignalOverview({
+    analysisId: output.tbAnalysisId,
+    corpusId: output.studyCorpusId,
+    outputId: output.id,
+    requireGovernedRef: true,
+    snapshotId: output.snapshotId
+  });
 }
 
 async function sendSignalPulseShareEmail(args: {

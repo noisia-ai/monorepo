@@ -69,6 +69,31 @@ Si aparece `DATABASE_URL_FORMAT=placeholder_refused` o
 `DATABASE_URL_FORMAT=invalid_postgres_url`, la flight card todavía no fue reemplazada
 correctamente o la URL no es una conexión Postgres valida.
 
+### Reconciliacion opcional de un Signal T&B historico
+
+Para validar `signal-serving-v2` sobre un output T&B publicado, ejecutar primero el
+dry-run con el UUID solo en la terminal segura:
+
+```bash
+NOISIA_DATA_OS_SIGNAL_BACKFILL_ALLOW_REMOTE=true \
+corepack pnpm --filter @noisia/studio signal:backfill-serving -- \
+  --output-id=<published_tb_signal_output_uuid>
+```
+
+El dry-run reporta si faltan el coding bridge, oportunidades o Action Studio, sin
+escribir. Si el target confirmado es `staging` o `preview`, aplicar con:
+
+```bash
+NOISIA_DATA_OS_SIGNAL_BACKFILL_ALLOW_REMOTE=true \
+corepack pnpm --filter @noisia/studio signal:backfill-serving -- \
+  --output-id=<published_tb_signal_output_uuid> --apply
+```
+
+La reconciliacion debe terminar con refs completos, cero hard blocks y checks de
+preservacion en `true`. No cambia `published_outputs.payload`, status, version ni
+`published_at`; solo materializa las entidades canonicas y actualiza el manifiesto.
+No ejecutar este comando contra produccion.
+
 ## Paso 2: Shadow Run
 
 ```bash

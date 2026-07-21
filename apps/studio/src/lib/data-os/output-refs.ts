@@ -6,7 +6,6 @@ import { getDataOsOverlappingMonths } from "@/lib/data-os/month-overlap";
 import { getDataOsCorpusReadiness } from "@/lib/data-os/readiness";
 import {
   REQUIRED_SIGNAL_DATA_REF_KEYS,
-  SIGNAL_OPPORTUNITY_KINDS,
   SIGNAL_SERVING_CONTRACT_VERSION,
   type RequiredSignalDataRefKey
 } from "@/lib/signal/semantics";
@@ -287,10 +286,21 @@ function buildRequiredSignalRefs(args: {
       sourceId: args.analysisId,
       filters: {
         contract: SIGNAL_SERVING_CONTRACT_VERSION,
-        table: "tb_recommendations",
+        tables: ["tb_strategic_opportunities", "tb_opportunity_findings"],
         analysis_id: args.analysisId,
-        kinds: [...SIGNAL_OPPORTUNITY_KINDS],
-        grain: "recommendation"
+        grain: "strategic_opportunity"
+      },
+      visibility: analysisVisibility
+    },
+    {
+      refKey: "analysis_actions",
+      sourceType: "tb_analysis",
+      sourceId: args.analysisId,
+      filters: {
+        contract: SIGNAL_SERVING_CONTRACT_VERSION,
+        tables: ["tb_action_studio", "tb_action_findings"],
+        analysis_id: args.analysisId,
+        grain: "action"
       },
       visibility: analysisVisibility
     },

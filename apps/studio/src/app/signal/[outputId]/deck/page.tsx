@@ -1,10 +1,17 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { DeckRuntime } from "@/components/signal/deck/DeckRuntime";
 import { DeckSlides } from "@/components/signal/deck/DeckSlides";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
+import { hasSignalServingContract } from "@/lib/signal/semantics";
+import { buildTbDecisionFieldNodes } from "@/lib/signal/tb-decision-field";
 
 import "./deck.css";
 
@@ -94,6 +101,17 @@ export default async function SignalDeckPage({
   const output = await getSignalOutputForUser(session.appUser, outputId);
   if (!output) notFound();
 
+  const strictRelational = hasSignalServingContract(output.manifest);
+  const relationalOverview = strictRelational && output.tbAnalysisId && output.snapshotId
+    ? await loadDeckRelationalOverview({
+        analysisId: output.tbAnalysisId,
+        corpusId: output.studyCorpusId,
+        outputId: output.id,
+        snapshotId: output.snapshotId
+      })
+    : null;
+  if (strictRelational && !relationalOverview) redirect(`/signal/${outputId}`);
+
   const rawVm = adaptTbSignalPayload(output.payload);
   const live = asRecord((output.payload as Record<string, unknown>)?.live_intelligence);
   const liveIntelligence = live.status
@@ -107,12 +125,22 @@ export default async function SignalDeckPage({
   const aggregates = asRecord((output.payload as Record<string, unknown>)?.aggregates);
   const corpusAgg = asRecord(aggregates.corpus);
   const corpusWindow = asRecord(corpusAgg.window);
-  const corpusTotal = Number(corpusAgg.total_mentions ?? 0);
-  const windowMonths = Number(corpusWindow.months ?? 0);
+  const corpusTotal = relationalOverview?.corpus.total_mentions ?? Number(corpusAgg.total_mentions ?? 0);
+  const windowMonths = relationalOverview
+    ? relationalOverview.volume_timeline.length
+    : Number(corpusWindow.months ?? 0);
 
   const brandLabel = output.brandName ?? output.brandFallbackName ?? output.themeName ?? rawVm.report.brand_name;
   const vm = {
     ...rawVm,
+    decisionFieldNodes: relationalOverview
+      ? buildTbDecisionFieldNodes(relationalOverview.findings)
+      : rawVm.decisionFieldNodes,
+    findings: relationalOverview?.findings ?? rawVm.findings,
+    actionCards: relationalOverview?.action_studio ?? rawVm.actionCards,
+    strategicOpportunities: relationalOverview
+      ? relationalOverview.opportunities
+      : rawVm.strategicOpportunities,
     report: {
       ...rawVm.report,
       brand_name: brandLabel
@@ -139,4 +167,31 @@ export default async function SignalDeckPage({
       </DeckRuntime>
     </div>
   );
+}
+
+async function loadDeckRelationalOverview(args: {
+  analysisId: string;
+  corpusId: string;
+  outputId: string;
+  snapshotId: string;
+}) {
+  try {
+    const readiness = await getSignalServingReadiness({
+      analysisId: args.analysisId,
+      outputId: args.outputId,
+      requireDataRefs: true,
+      snapshotId: args.snapshotId
+    });
+    if (!assessSignalServingReadiness(readiness).ready) return null;
+    return await loadPublishedSignalOverview({
+      analysisId: args.analysisId,
+      corpusId: args.corpusId,
+      outputId: args.outputId,
+      requireGovernedRef: true,
+      snapshotId: args.snapshotId
+    });
+  } catch (error) {
+    console.error("[signal-deck] relational serving failed", { error, outputId: args.outputId });
+    return null;
+  }
 }

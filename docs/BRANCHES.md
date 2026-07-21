@@ -53,6 +53,9 @@ Cut 1 adds:
 - Knowledge Catalog tables for chunks, assertions, assertion links and usage events;
 - taxonomy/entity/tag/feature store tables;
 - semantic layer tables and `dashboard_data_refs`;
+- a shared T&B Analysis Serving Layer for Review and Signal, with canonical strategic
+  opportunities, Action Studio, immutable published revisions and guarded historical
+  reconciliation;
 - feature-flagged `/api/data-os/*` serving APIs;
 - local/staging gates: `data-os:verify`, `data-os:candidates`,
   `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence`;

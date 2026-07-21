@@ -21,6 +21,11 @@ import { pool } from "../db/client";
 import { safeJsonStringifyForPostgres, sanitizeUnicodeForPostgresJson, sanitizeUnicodeForPostgresText } from "./postgres-json";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
+import {
+  assertTbAnalysisAcceptsSynthesisWrite,
+  assertTbServingFindingLinksResolved,
+  replaceTbSignalServingEntities
+} from "./tb-signal-serving-persistence";
 import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
 import {
   enqueueStep,
@@ -200,6 +205,10 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
         humanizer_output_chars: humanizer.outputChars,
         humanizer_error: humanizer.errorMessage,
         recommendations_inserted: persistResult.recommendationsInserted,
+        strategic_opportunities_inserted: persistResult.strategicOpportunitiesInserted,
+        opportunity_finding_links_inserted: persistResult.opportunityFindingLinksInserted,
+        action_studio_inserted: persistResult.actionStudioInserted,
+        action_finding_links_inserted: persistResult.actionFindingLinksInserted,
         unmatched_recommendation_ids: persistResult.unmatchedFindingIds,
         humanizer_preview: {
           before: beforeHumanizer.slice(0, 300),
@@ -500,7 +509,14 @@ async function persistSynthesis(args: {
   };
   confidencePerFinding: Record<string, string>;
   findings: FindingRow[];
-}): Promise<{ recommendationsInserted: number; unmatchedFindingIds: string[] }> {
+}): Promise<{
+  recommendationsInserted: number;
+  strategicOpportunitiesInserted: number;
+  opportunityFindingLinksInserted: number;
+  actionStudioInserted: number;
+  actionFindingLinksInserted: number;
+  unmatchedFindingIds: string[];
+}> {
   const client = await pool.connect();
   const findingUuidById = new Map(args.findings.map((f) => [f.finding_id, f.id]));
   const unmatched = new Set<string>();
@@ -511,6 +527,13 @@ async function persistSynthesis(args: {
     // Disable timeout for this transaction — the synthesis UPDATE writes large
     // jsonb payloads and the pooler's 2-min statement_timeout kills it otherwise.
     await client.query("SET LOCAL statement_timeout = 0");
+    const lockedAnalysis = await client.query<{ status: string }>(
+      `SELECT status FROM tb_analyses WHERE id = $1 FOR UPDATE`,
+      [args.tbAnalysisId]
+    );
+    const analysisStatus = lockedAnalysis.rows[0]?.status;
+    if (!analysisStatus) throw new Error(`tb_analyses ${args.tbAnalysisId} not found`);
+    assertTbAnalysisAcceptsSynthesisWrite(analysisStatus);
     await client.query(
       `UPDATE tb_analyses
        SET activation_playbook = $1::jsonb,
@@ -549,6 +572,14 @@ async function persistSynthesis(args: {
     await client.query(`DELETE FROM tb_recommendations WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
     await client.query(`DELETE FROM tb_insights WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
     await client.query(`DELETE FROM tb_open_signals WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
+
+    const servingEntities = await replaceTbSignalServingEntities(client, {
+      tbAnalysisId: args.tbAnalysisId,
+      strategicOpportunities: args.strategicOpportunities,
+      actionStudio: args.actionStudio,
+      findingUuidByHumanId: findingUuidById
+    });
+    assertTbServingFindingLinksResolved(servingEntities.unmatchedFindingIds);
 
     for (const [position, rec] of args.activationPlaybook.por_trigger_recomendacion.entries()) {
       const findingUuid = findingUuidById.get(rec.trigger_id) ?? null;
@@ -607,7 +638,14 @@ async function persistSynthesis(args: {
     });
 
     await client.query("COMMIT");
-    return { recommendationsInserted: inserted, unmatchedFindingIds: Array.from(unmatched) };
+    return {
+      recommendationsInserted: inserted,
+      strategicOpportunitiesInserted: servingEntities.strategicOpportunitiesInserted,
+      opportunityFindingLinksInserted: servingEntities.opportunityFindingLinksInserted,
+      actionStudioInserted: servingEntities.actionStudioInserted,
+      actionFindingLinksInserted: servingEntities.actionFindingLinksInserted,
+      unmatchedFindingIds: Array.from(unmatched).sort()
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;

@@ -39,6 +39,9 @@ The target product category is not a full CDP yet. The correct first architectur
 - data contracts, quality checks, source health, and lineage;
 - serving APIs that read live database records and materialized aggregates;
 - `published_outputs.payload` remains a fallback snapshot, not the source of truth.
+- T&B Review and client Signal share one analysis-serving layer. Review validates and
+  approves findings, strategic opportunities and Action Studio against snapshot
+  evidence; Signal reads that approved revision without silently recalculating it.
 
 Cut 1 is intentionally additive:
 
@@ -47,6 +50,8 @@ Cut 1 is intentionally additive:
 - no client-visible switch until shadow mode passes;
 - no full identity-resolution CDP promise;
 - no dashboard rewrite before the data APIs exist.
+- no in-place rewrite of an already published Signal output; corrections require a new
+  analysis revision, except for guarded manifest-only historical reconciliation.
 
 ## Consequences
 

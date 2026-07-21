@@ -1229,6 +1229,10 @@ Tablas:
 - `semantic_models`
 - `metric_materializations`
 - `dashboard_data_refs`
+- `tb_strategic_opportunities`
+- `tb_opportunity_findings`
+- `tb_action_studio`
+- `tb_action_findings`
 
 Reglas:
 
@@ -1239,6 +1243,19 @@ Reglas:
   `metrics`, `corpus` y `chart_aggregates`.
 - Cada `dashboard_data_ref.source_id` debe apuntar al `data_asset` que sirve esa
   sección para que el dashboard tenga lineage auditable.
+- Las oportunidades estrategicas no son aliases de `tb_recommendations`:
+  `tb_strategic_opportunities` conserva decision, nivel, confidence y orden;
+  `tb_opportunity_findings` conserva su evidencia por finding.
+- Action Studio vive en `tb_action_studio` y `tb_action_findings`, separado del
+  playbook operacional. Step 6 reemplaza ambas colecciones dentro de la misma
+  transaccion que actualiza la sintesis.
+- Review y Signal consultan estas mismas entidades. Review puede aprobarlas solo
+  cuando cada entidad tiene evidencia dentro del snapshot; Signal consume la version
+  aprobada y no recalcula oportunidades o acciones.
+- Un `published_output` con contrato `signal-serving-v2` es una revision inmutable.
+  Para cambiar contenido se crea una nueva revision del analisis; el backfill
+  controlado solo puede agregar refs/manifiesto preservando payload, status, version y
+  `published_at`.
 
 ### 16.6 Serving y rollout
 

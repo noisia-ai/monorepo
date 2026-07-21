@@ -24,7 +24,11 @@ import { attachLiveIntelligenceLinksToPayload } from "@/lib/live-intelligence/pu
 import { persistTbSignalObservations } from "@/lib/live-intelligence/tb-observations";
 import { buildSignalPayload, normalizeSignalManifest } from "@/lib/signal/build";
 import { SIGNAL_PAYLOAD_VERSION } from "@/lib/signal/contracts";
-import { attachSignalServingContract } from "@/lib/signal/semantics";
+import {
+  attachSignalServingContract,
+  isImmutablePublishedSignalStatus,
+  SIGNAL_SERVING_CONTRACT_VERSION
+} from "@/lib/signal/semantics";
 
 const bodySchema = z.object({
   title: z.string().min(3).max(140),
@@ -63,6 +67,24 @@ export async function POST(
       {
         error: "analysis_not_approved",
         message: "Primero aprueba la síntesis antes de preparar Signal."
+      },
+      { status: 409 }
+    );
+  }
+
+  const [existingOutput] = await db
+    .select({ id: publishedOutputs.id, status: publishedOutputs.status })
+    .from(publishedOutputs)
+    .where(and(
+      eq(publishedOutputs.tbAnalysisId, state.analysis.id),
+      eq(publishedOutputs.outputType, "narrative_dashboard")
+    ))
+    .limit(1);
+  if (existingOutput && isImmutablePublishedSignalStatus(existingOutput.status)) {
+    return Response.json(
+      {
+        error: "published_output_immutable",
+        message: "El Signal publicado esta congelado. Crea una nueva revision del analisis para publicar cambios."
       },
       { status: 409 }
     );
@@ -186,13 +208,23 @@ export async function POST(
         publishedAt: null,
         archivedAt: null,
         updatedAt: new Date()
-      }
+      },
+      setWhere: eq(publishedOutputs.status, "draft")
     })
     .returning({
       id: publishedOutputs.id,
       status: publishedOutputs.status,
       title: publishedOutputs.title
     });
+  if (!output) {
+    return Response.json(
+      {
+        error: "published_output_immutable",
+        message: "El Signal fue publicado por otra solicitud y ya no puede reescribirse."
+      },
+      { status: 409 }
+    );
+  }
 
   let liveIntelligence: Awaited<ReturnType<typeof persistTbSignalObservations>> | null = null;
   const dataOsReferences = output?.id
@@ -207,7 +239,7 @@ export async function POST(
         status: "skipped" as const,
         refs: 0,
         lineageEdges: 0,
-        contractVersion: "signal-serving-v1",
+        contractVersion: SIGNAL_SERVING_CONTRACT_VERSION,
         presentRefs: [],
         missingRefs: [],
         reason: "output_not_created"
@@ -229,6 +261,7 @@ export async function POST(
     mentions: number;
     findings: number;
     opportunities: number;
+    actions: number;
   } | null = null;
   let publishedManifest: Record<string, unknown> = { ...draftManifest };
 
@@ -280,7 +313,8 @@ export async function POST(
       relationalVerification = {
         mentions: overview.corpus.total_mentions,
         findings: overview.metrics.findings_total,
-        opportunities: overview.metrics.opportunities_total
+        opportunities: overview.metrics.opportunities_total,
+        actions: overview.action_studio.length
       };
     } catch (error) {
       return Response.json(
@@ -323,6 +357,7 @@ export async function POST(
         mentions: relationalVerification.mentions,
         findings: relationalVerification.findings,
         opportunities: relationalVerification.opportunities,
+        actions: relationalVerification.actions,
         payload_role: "manifest_only",
         payload_preserved: true
       }
@@ -353,7 +388,7 @@ export async function POST(
       };
     }
 
-    await db
+    const [publishedOutput] = await db
       .update(publishedOutputs)
       .set({
         status: "published",
@@ -363,7 +398,20 @@ export async function POST(
         publishedAt: new Date(),
         updatedAt: new Date()
       })
-      .where(eq(publishedOutputs.id, output.id));
+      .where(and(
+        eq(publishedOutputs.id, output.id),
+        eq(publishedOutputs.status, "draft")
+      ))
+      .returning({ id: publishedOutputs.id });
+    if (!publishedOutput) {
+      return Response.json(
+        {
+          error: "published_output_immutable",
+          message: "El Signal fue publicado por otra solicitud y esta revision no se reescribio."
+        },
+        { status: 409 }
+      );
+    }
   }
 
   return Response.json({
@@ -425,7 +473,8 @@ function compareRelationalServingCounts(
   const pairs = [
     ["mentions", overview.corpus.total_mentions, readiness.counts.mentions],
     ["findings", overview.metrics.findings_total, readiness.counts.findings],
-    ["opportunities", overview.metrics.opportunities_total, readiness.counts.opportunities]
+    ["opportunities", overview.metrics.opportunities_total, readiness.counts.opportunities],
+    ["actions", overview.action_studio.length, readiness.counts.actions]
   ] as const;
 
   for (const [name, served, expected] of pairs) {

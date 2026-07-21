@@ -10,6 +10,7 @@ import {
 import { getSignalOutputForUser } from "@/lib/data/signal";
 import { isUndefinedTableError } from "@/lib/db/errors";
 import {
+  getSignalServingContractVersion,
   hasSignalServingContract,
   SIGNAL_SERVING_CONTRACT_VERSION
 } from "@/lib/signal/semantics";
@@ -48,6 +49,19 @@ export async function GET(request: Request, context: { params: Promise<{ outputI
   }
 
   try {
+    const declaredContractVersion = getSignalServingContractVersion(output.manifest);
+    if (declaredContractVersion && declaredContractVersion !== SIGNAL_SERVING_CONTRACT_VERSION) {
+      return Response.json(
+        {
+          error: "signal_serving_contract_outdated",
+          message: "This Signal output must be reconciled before relational serving can be enabled.",
+          contract_version: declaredContractVersion,
+          required_contract_version: SIGNAL_SERVING_CONTRACT_VERSION,
+          fallback: "published_outputs.payload"
+        },
+        { status: 409, headers: { "Cache-Control": "no-store" } }
+      );
+    }
     const requireGovernedRef = hasSignalServingContract(output.manifest);
     if (requireGovernedRef) {
       const readiness = await getSignalServingReadiness({

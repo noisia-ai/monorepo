@@ -22,7 +22,12 @@ export async function getSignalServingReadiness(args: {
     mentions: number;
     findings: number;
     findings_with_evidence: number;
+    synthesized_opportunities: number;
     opportunities: number;
+    opportunities_with_evidence: number;
+    synthesized_actions: number;
+    actions: number;
+    actions_with_evidence: number;
     citations: number;
     citation_links: number;
     tags: number;
@@ -44,11 +49,59 @@ export async function getSignalServingReadiness(args: {
           WHERE finding.tb_analysis_id = $2::uuid
         ) AS findings_with_evidence,
         (
+          SELECT CASE
+            WHEN jsonb_typeof(analysis.meta_json->'strategic_opportunities') = 'array'
+              THEN jsonb_array_length(analysis.meta_json->'strategic_opportunities')
+            ELSE 0
+          END
+          FROM tb_analyses analysis
+          WHERE analysis.id = $2::uuid
+        )::int AS synthesized_opportunities,
+        (
           SELECT COUNT(*)::int
-          FROM tb_recommendations
+          FROM tb_strategic_opportunities
           WHERE tb_analysis_id = $2::uuid
-            AND kind IN ('activation', 'friction_removal')
         ) AS opportunities,
+        (
+          SELECT COUNT(DISTINCT opportunity.id)::int
+          FROM tb_strategic_opportunities opportunity
+          INNER JOIN tb_opportunity_findings link ON link.opportunity_id = opportunity.id
+          INNER JOIN tb_findings finding
+            ON finding.id = link.finding_id
+           AND finding.tb_analysis_id = opportunity.tb_analysis_id
+          INNER JOIN tb_finding_citations citation ON citation.finding_id = link.finding_id
+          INNER JOIN corpus_snapshot_mentions snapshot_mention
+            ON snapshot_mention.snapshot_id = $1::uuid
+           AND snapshot_mention.mention_id = citation.mention_id
+          WHERE opportunity.tb_analysis_id = $2::uuid
+        ) AS opportunities_with_evidence,
+        (
+          SELECT CASE
+            WHEN jsonb_typeof(analysis.meta_json->'action_studio') = 'array'
+              THEN jsonb_array_length(analysis.meta_json->'action_studio')
+            ELSE 0
+          END
+          FROM tb_analyses analysis
+          WHERE analysis.id = $2::uuid
+        )::int AS synthesized_actions,
+        (
+          SELECT COUNT(*)::int
+          FROM tb_action_studio
+          WHERE tb_analysis_id = $2::uuid
+        ) AS actions,
+        (
+          SELECT COUNT(DISTINCT action.id)::int
+          FROM tb_action_studio action
+          INNER JOIN tb_action_findings link ON link.action_id = action.id
+          INNER JOIN tb_findings finding
+            ON finding.id = link.finding_id
+           AND finding.tb_analysis_id = action.tb_analysis_id
+          INNER JOIN tb_finding_citations citation ON citation.finding_id = link.finding_id
+          INNER JOIN corpus_snapshot_mentions snapshot_mention
+            ON snapshot_mention.snapshot_id = $1::uuid
+           AND snapshot_mention.mention_id = citation.mention_id
+          WHERE action.tb_analysis_id = $2::uuid
+        ) AS actions_with_evidence,
         (
           SELECT COUNT(DISTINCT citation.mention_id)::int
           FROM tb_finding_citations citation
@@ -128,7 +181,12 @@ export async function getSignalServingReadiness(args: {
       mentions: row?.mentions ?? 0,
       findings: row?.findings ?? 0,
       findingsWithEvidence: row?.findings_with_evidence ?? 0,
+      synthesizedOpportunities: row?.synthesized_opportunities ?? 0,
       opportunities: row?.opportunities ?? 0,
+      opportunitiesWithEvidence: row?.opportunities_with_evidence ?? 0,
+      synthesizedActions: row?.synthesized_actions ?? 0,
+      actions: row?.actions ?? 0,
+      actionsWithEvidence: row?.actions_with_evidence ?? 0,
       citations: row?.citations ?? 0,
       citationLinks: row?.citation_links ?? 0,
       tags: row?.tags ?? 0,

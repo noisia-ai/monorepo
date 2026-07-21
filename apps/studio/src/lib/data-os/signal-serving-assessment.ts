@@ -8,7 +8,12 @@ export type SignalServingReadiness = {
     mentions: number;
     findings: number;
     findingsWithEvidence: number;
+    synthesizedOpportunities: number;
     opportunities: number;
+    opportunitiesWithEvidence: number;
+    synthesizedActions: number;
+    actions: number;
+    actionsWithEvidence: number;
     citations: number;
     citationLinks: number;
     tags: number;
@@ -63,6 +68,34 @@ export function assessSignalServingReadiness(
       detail: `${counts.findingsWithEvidence}/${counts.findings} hallazgos con evidencia`
     });
   }
+  if (counts.opportunities !== counts.synthesizedOpportunities) {
+    hardBlocks.push({
+      code: "opportunity_persistence_mismatch",
+      message: "Las oportunidades sintetizadas no coinciden con la capa relacional canonica.",
+      detail: `${counts.opportunities}/${counts.synthesizedOpportunities} oportunidades persistidas`
+    });
+  }
+  if (counts.opportunities > 0 && counts.opportunitiesWithEvidence < counts.opportunities) {
+    hardBlocks.push({
+      code: "opportunity_evidence_incomplete",
+      message: "Hay oportunidades estrategicas sin findings verificables dentro del snapshot aprobado.",
+      detail: `${counts.opportunitiesWithEvidence}/${counts.opportunities} oportunidades con evidencia`
+    });
+  }
+  if (counts.actions !== counts.synthesizedActions) {
+    hardBlocks.push({
+      code: "action_persistence_mismatch",
+      message: "Action Studio no coincide con la capa relacional canonica.",
+      detail: `${counts.actions}/${counts.synthesizedActions} acciones persistidas`
+    });
+  }
+  if (counts.actions > 0 && counts.actionsWithEvidence < counts.actions) {
+    hardBlocks.push({
+      code: "action_evidence_incomplete",
+      message: "Hay acciones sin findings verificables dentro del snapshot aprobado.",
+      detail: `${counts.actionsWithEvidence}/${counts.actions} acciones con evidencia`
+    });
+  }
   if (counts.tags === 0 && counts.features === 0) {
     hardBlocks.push({
       code: "governed_dimensions_missing",
@@ -81,6 +114,12 @@ export function assessSignalServingReadiness(
     warnings.push({
       code: "opportunities_missing",
       message: "No hay oportunidades estructuradas; Signal podra publicarse sin ese modulo."
+    });
+  }
+  if (counts.actions === 0) {
+    warnings.push({
+      code: "actions_missing",
+      message: "Action Studio no contiene acciones canonicas para este analisis."
     });
   }
   if (counts.tags === 0) {

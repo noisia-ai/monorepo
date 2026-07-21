@@ -22,6 +22,7 @@ const REQUIRED_MIGRATIONS = [
   "0045_signal_serving_entities"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
+const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
 
 const REQUIRED_TABLES = [
   "data_assets",
@@ -117,8 +118,13 @@ const REQUIRED_CONTRACT_FILES = [
   "infrastructure/db/scripts/data-os-review-sample.ts",
   "infrastructure/db/scripts/validate-data-os-evidence-pack.ts",
   "infrastructure/db/scripts/validate-data-os-local-smoke.ts",
+  "apps/studio/scripts/backfill-signal-serving.ts",
   "apps/studio/scripts/data-os-serving-smoke.ts",
+  "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/signal-output/route.ts",
   "apps/studio/src/app/pulse/[outputId]/page.tsx",
+  "apps/studio/src/lib/data-os/published-signal-overview.ts",
+  "apps/studio/src/lib/data-os/signal-serving.ts",
+  "apps/studio/src/lib/signal/semantics.ts",
   "apps/studio/src/app/api/data-os/_lib/load.ts",
   "apps/studio/src/lib/data-os/serving.ts",
   "apps/studio/src/lib/data-os/serving.test.ts",
@@ -136,7 +142,9 @@ const REQUIRED_CONTRACT_FILES = [
   "services/workers/src/queues/data-os.ts",
   "services/workers/scripts/reconcile-data-os-sources.ts",
   "services/workers/src/workers/data-os-shadow.ts",
-  "services/workers/src/workers/data-os-shadow.test.ts"
+  "services/workers/src/workers/data-os-shadow.test.ts",
+  "services/workers/src/workers/tb-signal-serving-persistence.ts",
+  "services/workers/src/workers/tb-step-6-synthesis.ts"
 ];
 
 const REQUIRED_ROOT_SCRIPTS: Record<string, string> = {
@@ -440,6 +448,23 @@ async function verifyImplementationContracts(repoRoot: string) {
   const shadowQa = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-shadow-qa.ts"), "utf8");
   const smoke = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-smoke.ts"), "utf8");
   const servingSmoke = await readFile(join(repoRoot, "apps", "studio", "scripts", "data-os-serving-smoke.ts"), "utf8");
+  const signalBackfill = await readFile(join(repoRoot, "apps", "studio", "scripts", "backfill-signal-serving.ts"), "utf8");
+  const signalPublishRoute = await readFile(
+    join(repoRoot, "apps", "studio", "src", "app", "api", "corpora", "[id]", "tb-analysis", "[analysisId]", "signal-output", "route.ts"),
+    "utf8"
+  );
+  const signalOverview = await readFile(
+    join(repoRoot, "apps", "studio", "src", "lib", "data-os", "published-signal-overview.ts"),
+    "utf8"
+  );
+  const signalReadiness = await readFile(
+    join(repoRoot, "apps", "studio", "src", "lib", "data-os", "signal-serving.ts"),
+    "utf8"
+  );
+  const signalSemantics = await readFile(
+    join(repoRoot, "apps", "studio", "src", "lib", "signal", "semantics.ts"),
+    "utf8"
+  );
   const pulsePage = await readFile(join(repoRoot, "apps", "studio", "src", "app", "pulse", "[outputId]", "page.tsx"), "utf8");
   const loader = await readFile(join(repoRoot, "apps", "studio", "src", "app", "api", "data-os", "_lib", "load.ts"), "utf8");
   const pulseLiveRoute = await readFile(
@@ -459,6 +484,14 @@ async function verifyImplementationContracts(repoRoot: string) {
   const dataOsQueue = await readFile(join(repoRoot, "services", "workers", "src", "queues", "data-os.ts"), "utf8");
   const dataOsWorker = await readFile(join(repoRoot, "services", "workers", "src", "workers", "data-os-shadow.ts"), "utf8");
   const dataOsWorkerTest = await readFile(join(repoRoot, "services", "workers", "src", "workers", "data-os-shadow.test.ts"), "utf8");
+  const tbSignalPersistence = await readFile(
+    join(repoRoot, "services", "workers", "src", "workers", "tb-signal-serving-persistence.ts"),
+    "utf8"
+  );
+  const tbStep6 = await readFile(
+    join(repoRoot, "services", "workers", "src", "workers", "tb-step-6-synthesis.ts"),
+    "utf8"
+  );
   const dataOsRouteContents = await Promise.all(
     REQUIRED_ROUTES.map(async (route) => ({
       route,
@@ -568,6 +601,42 @@ async function verifyImplementationContracts(repoRoot: string) {
     missing.push("AGENTS completion requires staging evidence guard");
   }
   if (!agents.includes("docs/AGENT_GUARDRAILS.md")) missing.push("AGENTS guardrails pointer");
+  if (!signalSemantics.includes('SIGNAL_SERVING_CONTRACT_VERSION = "signal-serving-v2"')) {
+    missing.push("Signal serving v2 contract version");
+  }
+  if (!signalSemantics.includes('"analysis_actions"')) missing.push("Signal Action Studio required data ref");
+  if (!signalOverview.includes("FROM tb_strategic_opportunities")) {
+    missing.push("Signal canonical strategic opportunity reader");
+  }
+  if (!signalOverview.includes("FROM tb_action_studio")) missing.push("Signal canonical Action Studio reader");
+  if (!signalReadiness.includes("synthesized_opportunities") || !signalReadiness.includes("synthesized_actions")) {
+    missing.push("Signal synthesis persistence reconciliation");
+  }
+  if (!tbSignalPersistence.includes("INSERT INTO tb_strategic_opportunities")) {
+    missing.push("Step 6 strategic opportunity persistence");
+  }
+  if (!tbSignalPersistence.includes("INSERT INTO tb_action_studio")) {
+    missing.push("Step 6 Action Studio persistence");
+  }
+  if (!tbStep6.includes("FOR UPDATE") || !tbStep6.includes("assertTbAnalysisAcceptsSynthesisWrite")) {
+    missing.push("Step 6 approved analysis immutability guard");
+  }
+  if (!signalPublishRoute.includes("published_output_immutable") || !signalPublishRoute.includes("setWhere")) {
+    missing.push("published Signal immutable write guard");
+  }
+  if (!signalBackfill.includes("NOISIA_DATA_OS_SIGNAL_BACKFILL_ALLOW_REMOTE")) {
+    missing.push("Signal serving backfill remote guard");
+  }
+  if (!signalBackfill.includes("payloadDigest") || !signalBackfill.includes("published_at")) {
+    missing.push("Signal serving backfill payload preservation checks");
+  }
+  if (!apiContracts.includes("T&B Signal relational serving v2")) {
+    missing.push("API contracts Signal serving v2 section");
+  }
+  if (!schemaDoc.includes("tb_strategic_opportunities") || !schemaDoc.includes("tb_action_studio")) {
+    missing.push("database schema Signal serving entities");
+  }
+  if (!handoff.includes("signal:backfill-serving")) missing.push("staging handoff Signal serving backfill command");
   if (!gitignore.match(/^\.data$/m)) missing.push("gitignore local evidence data directory");
   if (!gitignore.match(/^\*\.log$/m)) missing.push("gitignore captured command logs");
   if (!gitignore.match(/^\.env\*$/m)) missing.push("gitignore all env files");
@@ -1153,9 +1222,9 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!adr.includes("published_outputs.payload") || !adr.includes("fallback snapshot")) {
     missing.push("ADR payload fallback contract");
   }
-  if (!branches.includes("codex/noisia-data-os-prod")) missing.push("branches doc Data OS branch");
+  if (!branches.includes(`### \`${DATA_OS_WORK_BRANCH}\``)) missing.push("branches doc Data OS branch");
   if (!branches.includes("codex/signal-pulse")) missing.push("branches doc Signal Pulse base");
-  if (!branches.includes("Current fork point")) missing.push("branches doc Data OS fork point");
+  if (!branches.includes("Fork point:")) missing.push("branches doc Data OS fork point");
   if (!branches.includes("e329136")) missing.push("branches doc Data OS fork commit");
   if (!branches.includes("Do not branch Data OS directly from `main`")) {
     missing.push("branches doc no direct main branch guard");
@@ -1763,7 +1832,7 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!completionAuditScript.includes("pr-summary database format")) {
     missing.push("completion audit CLI PR summary database format check");
   }
-  if (!branches.includes("codex/noisia-data-os-prod")) {
+  if (!branches.includes(DATA_OS_WORK_BRANCH)) {
     missing.push("branches doc Data OS branch");
   }
   if (!completionAuditDoc.includes("Partir de `codex/signal-pulse`")) {
