@@ -7,8 +7,14 @@ import {
   disabledDataOsResponse,
   disabledSignalPulseLiveResponse,
   isSignalPulseLiveApiEnabled,
-  isDataOsServingEnabled
+  isDataOsServingEnabled,
+  isSignalWorkspaceApiEnabled
 } from "@/lib/data-os/serving";
+import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
+import {
+  loadSignalWorkspaceContextWithDependencies,
+  type SignalWorkspaceSession
+} from "@/lib/data-os/signal-workspace-context";
 import { isSignalPulseOutput } from "@/lib/signal-pulse/pulse-api";
 import {
   resolveSignalPulseVisibility,
@@ -70,4 +76,13 @@ export async function loadDataOsPulseContext(outputId: string, options: {
   }
 
   return { output, session, visibility } as const;
+}
+
+export function loadSignalWorkspaceContext(workspaceId: string) {
+  return loadSignalWorkspaceContextWithDependencies(workspaceId, {
+    getSession: getAuthenticatedAppUser as () => Promise<SignalWorkspaceSession | null>,
+    isEnabled: isSignalWorkspaceApiEnabled,
+    canView: canViewClientOutputs,
+    resolveWorkspace: resolveSignalWorkspaceForUser
+  });
 }

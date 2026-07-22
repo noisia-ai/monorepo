@@ -42,6 +42,22 @@ test("materialization and drill-down use the exact same canonical predicate", ()
   assert.doesNotMatch(materialization.sql, /published_outputs|chart_aggregates/u);
 });
 
+test("metric drill-down adds the same governed constituent rule used by aggregation", () => {
+  const engagement = buildSignalMentionDrillDownPlanV1({
+    metric_key: "engagement.total",
+    filter: baseFilter,
+    study_corpus_ids: [corpusId]
+  });
+  const topic = buildSignalMentionDrillDownPlanV1({
+    metric_key: "topic.volume",
+    filter: baseFilter,
+    study_corpus_ids: [corpusId]
+  });
+  assert.match(engagement.sql, /jsonb_typeof\(m\.engagement->'likes'\) = 'number'/u);
+  assert.match(topic.sql, /record_tags tag/u);
+  assert.match(topic.sql, /taxonomy\.taxonomy_key\) LIKE '%topic%'/u);
+});
+
 test("planner parameterizes dimension values and is stable for equivalent filters", () => {
   const left = buildSignalMentionPredicateV1(baseFilter, [corpusId]);
   const right = buildSignalMentionPredicateV1({

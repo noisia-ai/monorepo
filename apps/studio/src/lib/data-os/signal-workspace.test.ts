@@ -47,7 +47,7 @@ test("internal users resolve a workspace and its governed corpora", async () => 
   const result = await resolveSignalWorkspaceWithStore(
     storeWith({ ...workspace, hasBrandAccess: false }),
     user({ userType: "noisia_internal", organizationId: null }),
-    { workspaceId: WORKSPACE_ID, organizationId: ORGANIZATION_ID }
+    { workspaceId: WORKSPACE_ID }
   );
   assert.equal(result?.id, WORKSPACE_ID);
   assert.equal(result?.corpora[0]?.role, "operational");
@@ -85,4 +85,3 @@ test("missing workspaces resolve to null without leaking scope", async () => {
   );
   assert.equal(result, null);
 });
-

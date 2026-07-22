@@ -1,10 +1,18 @@
 import { Queue, type JobsOptions } from "bullmq";
 import Redis from "ioredis";
 
-import { DATA_OS_QUEUE_NAME, DATA_OS_SHADOW_RUN_JOB_NAME, type DataOsShadowRunJobData } from "@noisia/query-engine";
+import {
+  DATA_OS_QUEUE_NAME,
+  DATA_OS_SHADOW_RUN_JOB_NAME,
+  SIGNAL_MATERIALIZE_JOB_NAME,
+  type DataOsShadowRunJobData,
+  type SignalMaterializeJobDataV1
+} from "@noisia/query-engine";
+
+type DataOsStudioJobData = DataOsShadowRunJobData | SignalMaterializeJobDataV1;
 
 declare global {
-  var noisiaDataOsQueue: Queue<DataOsShadowRunJobData> | undefined;
+  var noisiaDataOsQueue: Queue<DataOsStudioJobData> | undefined;
   var noisiaDataOsRedis: Redis | undefined;
 }
 
@@ -34,7 +42,7 @@ export function getDataOsQueue() {
   }
 
   if (!globalThis.noisiaDataOsQueue) {
-    globalThis.noisiaDataOsQueue = new Queue<DataOsShadowRunJobData>(resolveDataOsQueueName(), {
+    globalThis.noisiaDataOsQueue = new Queue<DataOsStudioJobData>(resolveDataOsQueueName(), {
       connection: globalThis.noisiaDataOsRedis
     });
   }
@@ -52,4 +60,18 @@ export function buildDataOsShadowRunJobOptions(): JobsOptions {
 
 export async function enqueueDataOsShadowRun(data: DataOsShadowRunJobData) {
   return getDataOsQueue().add(DATA_OS_SHADOW_RUN_JOB_NAME, data, buildDataOsShadowRunJobOptions());
+}
+
+export async function enqueueSignalAdHocMaterialization(data: SignalMaterializeJobDataV1, jobId: string) {
+  return getDataOsQueue().add(SIGNAL_MATERIALIZE_JOB_NAME, data, buildSignalAdHocMaterializationJobOptions(jobId));
+}
+
+export function buildSignalAdHocMaterializationJobOptions(jobId: string): JobsOptions {
+  return {
+    jobId,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5_000 },
+    removeOnComplete: { age: 3_600, count: 500 },
+    removeOnFail: { age: 604_800, count: 500 }
+  };
 }

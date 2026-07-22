@@ -19,6 +19,8 @@ tags:
     description: Flat datasets and CSV exports.
   - name: Public V2
     description: Structured Signal output for customers and external integrations.
+  - name: Signal Workspace V1
+    description: Protected workspace-centric live Social Listening APIs. Disabled by default.
 paths:
   /api/public/v1/reports:
     get:
@@ -223,6 +225,200 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/ServerError"
+  /api/data-os/signal/{workspaceId}/bootstrap:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceBootstrap
+      summary: Get workspace identity, corpus context, coverage and freshness.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/facets:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceFacets
+      summary: List permission-aware facets under the current SignalFilterV1.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/metric-groups:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceMetricGroups
+      summary: Get visible metric groups, versions, capabilities and freshness.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/series:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceSeries
+      summary: Get a deterministic daily, weekly or monthly metric series.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalMetricKey" }
+        - { $ref: "#/components/parameters/SignalMetricVersion" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalRequireFresh" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "202": { $ref: "#/components/responses/SignalWorkspacePending" }
+        "206": { $ref: "#/components/responses/SignalBackendError" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/breakdowns:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceBreakdown
+      summary: Get the governed breakdown for a metric under the current filter.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalMetricKey" }
+        - { $ref: "#/components/parameters/SignalMetricVersion" }
+        - name: dimension
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignalDimensionV1" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalRequireFresh" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "202": { $ref: "#/components/responses/SignalWorkspacePending" }
+        "206": { $ref: "#/components/responses/SignalBackendError" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/comparison:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: compareSignalWorkspacePeriods
+      summary: Compare equal-length, non-overlapping periods for one metric.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalMetricKey" }
+        - { $ref: "#/components/parameters/SignalMetricVersion" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - name: comparison_start
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: comparison_end
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalRequireFresh" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "202": { $ref: "#/components/responses/SignalWorkspacePending" }
+        "206": { $ref: "#/components/responses/SignalBackendError" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/mentions:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceMentions
+      summary: Page through sanitized metric constituents using an opaque cursor.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalMetricKey" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/lineage:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceLineage
+      summary: Get basic metric definition and data watermark lineage.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - name: metric_key
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
 components:
   securitySchemes:
     bearerAuth:
@@ -235,6 +431,11 @@ components:
       in: header
       name: x-noisia-api-key
       description: Fallback API key header.
+    kindeSession:
+      type: apiKey
+      in: cookie
+      name: noisia_studio_session
+      description: Logical Studio session; Kinde authenticates and Noisia DB authorizes workspace and brand access.
   parameters:
     OutputId:
       name: outputId
@@ -243,7 +444,76 @@ components:
       schema:
         type: string
       description: Published output id.
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Stable Signal workspace id, never an output id.
+    SignalStart:
+      name: start
+      in: query
+      required: true
+      schema: { type: string, format: date }
+    SignalEnd:
+      name: end
+      in: query
+      required: true
+      schema: { type: string, format: date }
+    SignalTimezone:
+      name: timezone
+      in: query
+      required: false
+      schema: { type: string, default: workspace timezone }
+    SignalGranularity:
+      name: granularity
+      in: query
+      required: false
+      schema: { type: string, enum: [day, week, month], default: day }
+    SignalMetricKey:
+      name: metric_key
+      in: query
+      required: true
+      schema: { type: string }
+    SignalMetricVersion:
+      name: metric_version
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+    SignalRequireFresh:
+      name: require_fresh
+      in: query
+      required: false
+      description: Fail with a typed stale or partial response instead of serving degraded materialization state.
+      schema: { type: boolean, default: false }
   responses:
+    SignalWorkspaceSuccess:
+      description: signal-backend-v1 response. Concrete shape depends on the route.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contract_version]
+            properties:
+              contract_version: { const: signal-backend-v1 }
+            additionalProperties: true
+    SignalWorkspacePending:
+      description: A bounded ad hoc materialization was deduplicated and queued.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contract_version, state, filters_hash, retry_after_seconds]
+            properties:
+              contract_version: { const: signal-backend-v1 }
+              state: { const: pending }
+              filters_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+              retry_after_seconds: { type: integer }
+    SignalBackendError:
+      description: Typed signal-backend-v1 contract error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignalBackendErrorV1" }
     Unauthorized:
       description: Missing or invalid API key.
       content:
@@ -269,6 +539,17 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SignalBackendErrorV1:
+      type: object
+      required: [contract_version, error, message, details]
+      properties:
+        contract_version: { const: signal-backend-v1 }
+        error: { type: string, enum: [invalid_filter, unsupported_dimension, stale, partial, not_available] }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
+    SignalDimensionV1:
+      type: string
+      enum: [platform, source_type, entity, product, campaign, topic, taxonomy, signal, signal_lifecycle, audience, demographic, journey_stage, trigger, barrier, sentiment_polarity, emotion, country, language, content_format]
     ErrorResponse:
       type: object
       required: [error, message]

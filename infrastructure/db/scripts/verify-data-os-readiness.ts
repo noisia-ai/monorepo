@@ -20,7 +20,11 @@ const REQUIRED_MIGRATIONS = [
   "0043_data_os_asset_records_metric_catalog",
   "0044_query_pack_entity_identity",
   "0045_signal_serving_entities",
-  "0046_analysis_artifact_evidence_graph"
+  "0046_analysis_artifact_evidence_graph",
+  "0047_signal_workspace_identity",
+  "0048_signal_recurring_refresh",
+  "0049_signal_metric_catalog_v1",
+  "0050_signal_metric_materializations_v1"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -75,7 +79,14 @@ const REQUIRED_TABLES = [
   "analysis_evidence_links",
   "analysis_artifact_relations",
   "analysis_artifact_review_events",
-  "published_output_artifacts"
+  "published_output_artifacts",
+  "signal_workspaces",
+  "signal_workspace_corpora",
+  "signal_refresh_policies",
+  "signal_data_watermarks",
+  "signal_refresh_runs",
+  "signal_data_invalidations",
+  "signal_interpretation_freshness"
 ];
 
 const REQUIRED_ROUTES = [
@@ -91,7 +102,15 @@ const REQUIRED_ROUTES = [
   "apps/studio/src/app/api/data-os/corpora/[id]/tags/route.ts",
   "apps/studio/src/app/api/data-os/pulse/[outputId]/live/route.ts",
   "apps/studio/src/app/api/data-os/pulse/[outputId]/corpus/route.ts",
-  "apps/studio/src/app/api/data-os/pulse/[outputId]/metrics/route.ts"
+  "apps/studio/src/app/api/data-os/pulse/[outputId]/metrics/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/bootstrap/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/facets/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/metric-groups/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/series/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/breakdowns/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/comparison/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/mentions/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/lineage/route.ts"
 ];
 
 const REQUIRED_CONTRACT_FILES = [
@@ -136,6 +155,10 @@ const REQUIRED_CONTRACT_FILES = [
   "apps/studio/src/lib/data-os/published-signal-overview.ts",
   "apps/studio/src/lib/data-os/analysis-artifact-graph.ts",
   "apps/studio/src/lib/data-os/signal-serving.ts",
+  "apps/studio/src/lib/data-os/signal-workspace.ts",
+  "apps/studio/src/lib/data-os/signal-workspace-context.ts",
+  "apps/studio/src/lib/data-os/signal-workspace-serving.ts",
+  "apps/studio/src/lib/data-os/signal-workspace-fixtures.ts",
   "apps/studio/src/lib/signal/semantics.ts",
   "apps/studio/src/app/api/data-os/_lib/load.ts",
   "apps/studio/src/lib/data-os/serving.ts",
@@ -151,10 +174,17 @@ const REQUIRED_CONTRACT_FILES = [
   "apps/studio/src/lib/queue/data-os.test.ts",
   "packages/query-engine/src/data-os.ts",
   "packages/query-engine/src/data-os.test.ts",
+  "packages/query-engine/src/signal-backend-v1.ts",
+  "packages/query-engine/src/signal-refresh-v1.ts",
+  "packages/query-engine/src/signal-metric-catalog-v1.ts",
+  "packages/query-engine/src/signal-materialization-v1.ts",
   "services/workers/src/queues/data-os.ts",
   "services/workers/scripts/reconcile-data-os-sources.ts",
   "services/workers/src/workers/data-os-shadow.ts",
   "services/workers/src/workers/data-os-shadow.test.ts",
+  "services/workers/src/workers/signal-refresh.ts",
+  "services/workers/src/workers/signal-refresh-runtime.ts",
+  "services/workers/src/workers/signal-materialization.ts",
   "services/workers/src/workers/tb-signal-serving-persistence.ts",
   "services/workers/src/workers/tb-analysis-artifact-persistence.ts",
   "services/workers/src/workers/tb-step-6-synthesis.ts"
@@ -196,6 +226,9 @@ const SAFE_DEFAULTS = [
   "NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED=false",
   "NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false",
   "NOISIA_DATA_OS_WORKER_ENABLED=false",
+  "NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=false",
+  "NOISIA_SIGNAL_WORKSPACE_API_ENABLED=false",
+  "NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED=false",
   "NOISIA_DATA_OS_WORKER_RUNS_ENABLED=false",
   "NOISIA_DATA_OS_WORKER_REMOTE_APPROVED=false",
   "NOISIA_DATA_OS_WORKER_CONCURRENCY=1",
@@ -1361,7 +1394,14 @@ async function verifyImplementationContracts(repoRoot: string) {
     "record_tags",
     "lineage_edges",
     "metric_definitions",
-    "dashboard_data_refs"
+    "dashboard_data_refs",
+    "signal_workspaces",
+    "signal_workspace_corpora",
+    "signal_refresh_policies",
+    "signal_data_watermarks",
+    "signal_refresh_runs",
+    "signal_data_invalidations",
+    "signal_interpretation_freshness"
   ]) {
     if (!schemaDoc.includes(table)) missing.push(`database schema missing ${table}`);
   }
@@ -1386,7 +1426,15 @@ async function verifyImplementationContracts(repoRoot: string) {
     "GET /api/data-os/corpora/:id/tags",
     "GET /api/data-os/pulse/:outputId/live",
     "GET /api/data-os/pulse/:outputId/metrics",
-    "GET /api/data-os/pulse/:outputId/corpus"
+    "GET /api/data-os/pulse/:outputId/corpus",
+    "GET /api/data-os/signal/:workspaceId/bootstrap",
+    "GET /api/data-os/signal/:workspaceId/facets",
+    "GET /api/data-os/signal/:workspaceId/metric-groups",
+    "GET /api/data-os/signal/:workspaceId/series",
+    "GET /api/data-os/signal/:workspaceId/breakdowns",
+    "GET /api/data-os/signal/:workspaceId/comparison",
+    "GET /api/data-os/signal/:workspaceId/mentions",
+    "GET /api/data-os/signal/:workspaceId/lineage"
   ]) {
     if (!apiContracts.includes(endpoint)) missing.push(`API contracts missing ${endpoint}`);
   }
@@ -1394,6 +1442,12 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!apiContracts.includes("NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED=true")) missing.push("API contracts Signal Pulse live flag");
   if (!apiContracts.includes("NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=true")) {
     missing.push("API contracts Signal Pulse live render flag");
+  }
+  if (!apiContracts.includes("NOISIA_SIGNAL_WORKSPACE_API_ENABLED=true")) {
+    missing.push("API contracts Signal workspace API flag");
+  }
+  if (!apiContracts.includes("NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED")) {
+    missing.push("API contracts Signal ad hoc materialization flag");
   }
   if (!apiContracts.includes("published_outputs.payload")) missing.push("API contracts payload fallback");
   if (!apiContracts.includes("canViewClientOutputs")) missing.push("API contracts Pulse output read auth");

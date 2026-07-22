@@ -116,7 +116,7 @@ flowchart LR
 | SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Completo (2026-07-22) |
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
-| SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Pendiente |
+| SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente |
 | SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente |
@@ -560,6 +560,35 @@ git diff --check
 
 Con curl/tests se puede explorar un Signal, cambiar filtros, obtener métricas y abrir
 drill-down sin leer `published_outputs.payload` ni renderizar una página.
+
+### Estado / Handoff
+
+**Completo, 2026-07-22.** Se agregaron ocho rutas protegidas bajo
+`/api/data-os/signal/[workspaceId]`: bootstrap, facets, metric groups, series,
+breakdowns, comparison, mentions y lineage. Todas resuelven la identidad/authZ de
+SB-02, seleccionan el corpus operational vigente (legacy sólo como fallback), usan
+`SignalFilterV1` y conservan errores, cursor, watermark y freshness de
+`signal-backend-v1`.
+
+`signal-workspace-serving.ts` lee exclusivamente stores relacionales vivos; el módulo
+legacy `signal-serving.ts`, `/signal/{outputId}` y `/api/data-os/pulse/:outputId/*`
+permanecen intactos. Cliente no recibe raw metadata, source type/provider/sync IDs ni
+quality details internos. Facets se calculan bajo el filtro y authZ actuales. ETags son
+privados y stale/partial no se cachea silenciosamente.
+
+La API está cerrada por `NOISIA_SIGNAL_WORKSPACE_API_ENABLED=false`. El materializador
+ad hoc tiene switch independiente, límites/TTL de SB-05 y respuesta 202 pending. Se
+actualizaron contratos, OpenAPI y fixtures TypeScript de series, breakdown y
+drill-down. Contract/source tests demuestran filtro normalizado, authZ negativa,
+respuesta tipada y ausencia de lecturas a `published_outputs.payload`.
+
+Gates Studio, DB, build, Data OS y diff verdes. No hubo runtime API contra Postgres
+porque `DATABASE_URL` local sigue ausente y Docker no está disponible; no se usó target
+remoto ni se inventó evidencia. No se activó ninguna flag.
+
+**Siguiente tarea habilitada:** SB-07 · Versioned Claude Metric Interpretations. Queda
+habilitada por contrato y serving, pero no iniciada: no se ejecutó Claude ni se creó
+interpretación alguna.
 
 ### Commit Sugerido
 

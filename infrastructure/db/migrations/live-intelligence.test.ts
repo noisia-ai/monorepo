@@ -258,7 +258,7 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
   const reviewQueueRouteFile = routeFiles.find((routeFile) => routeFile.includes("/review-queue/"));
   const readinessRouteFile = routeFiles.find((routeFile) => routeFile.endsWith("/readiness/route.ts"));
 
-  assert.equal(routeFiles.length, 13);
+  assert.equal(routeFiles.length, 21);
   assert.match(loader, /getAuthenticatedAppUser/);
   assert.match(loader, /canManageCorpus/);
   assert.match(loader, /canViewClientOutputs/);
@@ -283,6 +283,11 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
     if (routeFile.includes("/pulse/")) {
       assert.match(route, /loadDataOsPulseContext/, `${routeFile} must use the Pulse Data OS loader.`);
       assert.doesNotMatch(route, /loadDataOsCorpusContext/);
+    }
+    if (routeFile.includes("/signal/")) {
+      assert.match(route, /loadSignalWorkspaceContext/, `${routeFile} must use the Signal workspace authZ loader.`);
+      assert.doesNotMatch(route, /loadDataOsCorpusContext|loadDataOsPulseContext/);
+      assert.doesNotMatch(route, /published_outputs|raw_metadata|chart_aggregates/);
     }
   }
 

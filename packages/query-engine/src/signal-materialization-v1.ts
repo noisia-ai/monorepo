@@ -136,10 +136,12 @@ export function buildSignalMentionPredicateV1(
 export function buildSignalMentionDrillDownPlanV1(args: {
   filter: unknown;
   study_corpus_ids: string[];
+  metric_key?: string;
   limit?: number;
   cursor?: { occurred_at: string; subject_id: string };
 }) {
   const predicate = buildSignalMentionPredicateV1(args.filter, args.study_corpus_ids);
+  const metricPredicate = args.metric_key ? metricConstituentPredicateSql(args.metric_key) : null;
   const params = [...predicate.params];
   const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
   let cursor = "";
@@ -156,12 +158,48 @@ export function buildSignalMentionDrillDownPlanV1(args: {
         COALESCE(m.resolved_platform, m.platform) AS platform,
         m.language, m.country
       FROM mentions m
-      WHERE ${predicate.sql}${cursor}
+      WHERE ${predicate.sql}${metricPredicate ? `\n        AND (${metricPredicate})` : ""}${cursor}
       ORDER BY m.published_at DESC, m.id DESC
       LIMIT $${params.length}::int
     `,
     params
   };
+}
+
+function metricConstituentPredicateSql(metricKey: string) {
+  if (!signalMetricDefinitionV1(metricKey, 1)) {
+    throw new SignalBackendContractError("not_available", "Signal metric definition is not available.", { metric_key: metricKey });
+  }
+  if (metricKey === "sentiment.share") return "m.sentiment_score IS NOT NULL";
+  if (metricKey === "platform.share") return "COALESCE(m.resolved_platform, m.platform) IS NOT NULL";
+  if (metricKey === "source_type.share") return "m.source_system IS NOT NULL";
+  if (metricKey === "engagement.total" || metricKey === "engagement.average_per_mention") {
+    return ["likes", "comments", "shares", "reposts", "saves"]
+      .map((key) => `jsonb_typeof(m.engagement->'${key}') = 'number'`)
+      .join(" OR ");
+  }
+  if (metricKey === "governed_entity.volume") {
+    return `EXISTS (
+      SELECT 1 FROM record_entity_links rel
+      JOIN intelligence_entities entity ON entity.id = rel.entity_id AND entity.status = 'active'
+      WHERE rel.subject_type = 'mention' AND rel.subject_id = m.id
+    )`;
+  }
+  const taxonomyPattern = metricKey === "emotion.share" ? "emotion"
+    : metricKey === "topic.volume" ? "topic"
+      : metricKey === "narrative.volume" ? "narrative"
+        : null;
+  if (taxonomyPattern) {
+    return `EXISTS (
+      SELECT 1 FROM record_tags tag
+      JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
+      JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
+      WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
+        AND tag.review_status <> 'rejected'
+        AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'
+    )`;
+  }
+  return "true";
 }
 
 export function buildSignalMetricMaterializationPlanV1(args: {

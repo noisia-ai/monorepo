@@ -825,6 +825,73 @@ corepack pnpm --filter @noisia/db signal:materialization:explain
 El comando redacta identidades. Un target remoto requiere override explícito y target
 staging/preview/throwaway; producción se rechaza.
 
+#### Signal workspace serving APIs V1 (SB-06)
+
+Base protegida: `/api/data-os/signal/:workspaceId/*`. `workspaceId` es siempre la
+identidad estable de SB-02; nunca se interpreta como `outputId`. Las rutas requieren
+sesión Studio, authZ de organización/brand, un corpus `operational` activo (o `legacy`
+como fallback transitorio) y tres switches explícitos:
+
+```text
+NOISIA_DATA_OS_ENABLED=true
+NOISIA_DATA_OS_SERVING_ENABLED=true
+NOISIA_SIGNAL_WORKSPACE_API_ENABLED=true
+```
+
+Los defaults del repositorio son `false`. El cache ad hoc tiene un cuarto switch
+independiente, también `false`: `NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED`.
+
+| Route | Semántica |
+|---|---|
+| `GET /api/data-os/signal/:workspaceId/bootstrap` | identity, subject, corpus, coverage, data/interpretation freshness y estado por group |
+| `GET /api/data-os/signal/:workspaceId/facets` | facets y counts bajo el filtro actual; `source_type` sólo para usuarios internos |
+| `GET /api/data-os/signal/:workspaceId/metric-groups` | catálogo visible, versiones, grains, dimensiones y freshness |
+| `GET /api/data-os/signal/:workspaceId/series` | `SignalTimeSeriesV1` para `metric_key@metric_version` |
+| `GET /api/data-os/signal/:workspaceId/breakdowns` | `SignalBreakdownV1` para la dimensión gobernada de la métrica |
+| `GET /api/data-os/signal/:workspaceId/comparison` | periodos no traslapados de igual número de días |
+| `GET /api/data-os/signal/:workspaceId/mentions` | registros constituyentes sanitizados y cursor opaco estable |
+| `GET /api/data-os/signal/:workspaceId/lineage` | definition/version/formula hash, materialization y watermark hash básicos |
+
+Excepto `bootstrap`, toda ruta recibe el mismo filtro canónico en query params:
+
+```http
+GET /api/data-os/signal/{workspaceId}/series
+  ?metric_key=conversation.volume
+  &metric_version=1
+  &start=2026-06-01
+  &end=2026-06-30
+  &timezone=America%2FMexico_City
+  &granularity=day
+  &dimension.platform=instagram
+```
+
+Aliases, arrays y orden se normalizan por `signal-backend-v1`; desconocidos, rangos
+mayores a 366 días, más de seis dimensiones o más de 50 valores por dimensión fallan
+con error tipado. `series`, `breakdowns` y `comparison` aceptan
+`require_fresh=true`: `stale` y `partial` se vuelven errores contractuales en vez de una
+respuesta silenciosa. Breakdown V1 sólo sirve la dimensión materializada y gobernada
+de la métrica (platform, source type, sentiment, emotion, topic, taxonomy o entity);
+otra dimensión responde `unsupported_dimension`.
+
+Si no existe el hash solicitado y el cache ad hoc está apagado, responde
+`not_available`. Si está aprobado, encola como máximo cinco métricas con job ID estable,
+responde HTTP 202 + `state=pending` y TTL de 15 minutos. No espera al worker dentro de
+la request.
+
+Series y breakdowns llevan watermark y freshness; ETags privados se derivan de
+watermark/computed state y admiten 304. Stale/partial usan `private, no-cache`. Cursor
+de drill-down queda ligado a `metric_key + filters_hash` y pagina por
+`(published_at, mention_id)`; cada registro contiene sólo snippet/title/url, platform,
+language y country. No se exponen `raw_metadata`, providers/source keys, quality details
+internos ni source sync IDs a clientes. `source_type.share` es interno.
+
+Estas rutas leen `metric_materializations`, `mentions` y el semantic layer gobernado;
+nunca leen `published_outputs.payload` ni `chart_aggregates`. Los adaptadores
+`/api/data-os/pulse/:outputId/*` y `/signal/{outputId}` permanecen intactos con su
+fallback legacy. Fixtures TypeScript para el futuro frontend viven en
+`signal-workspace-fixtures.ts`; el OpenAPI protegido está documentado en
+`docs/api/openapi.yaml`.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

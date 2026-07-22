@@ -10,8 +10,10 @@ const {
   disabledDataOsResponse,
   disabledSignalPulseLiveResponse,
   isDataOsServingEnabled,
+  isSignalAdHocMaterializationEnabled,
   isSignalPulseLiveApiEnabled,
   isSignalPulseLiveRenderEnabled,
+  isSignalWorkspaceApiEnabled,
   optionalSearchParam,
   parseDataOsReviewQueueFilters,
   parseDataOsTagFilters,
@@ -52,6 +54,18 @@ test("Signal Pulse live API has its own explicit kill switch", () => {
   assert.equal(isSignalPulseLiveApiEnabled({ NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED: "true" }), true);
   assert.equal(isSignalPulseLiveApiEnabled({ NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED: "false" }), false);
   assert.equal(isSignalPulseLiveApiEnabled({}), false);
+});
+
+test("Signal workspace APIs and ad hoc cache have independent closed-by-default switches", () => {
+  const dataOs = { NOISIA_DATA_OS_ENABLED: "true", NOISIA_DATA_OS_SERVING_ENABLED: "true" };
+  assert.equal(isSignalWorkspaceApiEnabled(dataOs), false);
+  assert.equal(isSignalWorkspaceApiEnabled({ ...dataOs, NOISIA_SIGNAL_WORKSPACE_API_ENABLED: "true" }), true);
+  assert.equal(isSignalAdHocMaterializationEnabled({ ...dataOs, NOISIA_SIGNAL_WORKSPACE_API_ENABLED: "true" }), false);
+  assert.equal(isSignalAdHocMaterializationEnabled({
+    ...dataOs,
+    NOISIA_SIGNAL_WORKSPACE_API_ENABLED: "true",
+    NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED: "true"
+  }), true);
 });
 
 test("Signal Pulse live render requires Data OS serving, live API and its own flag", () => {

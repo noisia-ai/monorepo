@@ -93,6 +93,14 @@ export function isSignalPulseLiveApiEnabled(env: DataOsEnv = process.env) {
   return env.NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED === "true";
 }
 
+export function isSignalWorkspaceApiEnabled(env: DataOsEnv = process.env) {
+  return isDataOsServingEnabled(env) && env.NOISIA_SIGNAL_WORKSPACE_API_ENABLED === "true";
+}
+
+export function isSignalAdHocMaterializationEnabled(env: DataOsEnv = process.env) {
+  return isSignalWorkspaceApiEnabled(env) && env.NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED === "true";
+}
+
 export function isSignalPulseLiveRenderEnabled(env: DataOsEnv = process.env) {
   return isDataOsServingEnabled(env) && isSignalPulseLiveApiEnabled(env) && env.NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED === "true";
 }

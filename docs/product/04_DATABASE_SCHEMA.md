@@ -1329,6 +1329,45 @@ La validación del Engine se divide en dos familias de evidencia:
 Un score de query no puede actualizar `latest_assessed_revision`; una evaluación de
 corpus no puede cerrar queries. Ver `28_CORPUS_ENGINE_VALIDATION_CONTRACT.md`.
 
+### 16.8 Signal workspace, refresh y métricas vivas
+
+Signal usa una identidad estable y stores relacionales gobernados; `outputId` queda
+como mapping transitorio y no como identidad del dashboard vivo.
+
+Tablas nuevas:
+
+- `signal_workspaces`: workspace único por organización y slug, con exactamente un
+  subject entre `brand_id` y `theme_id`, timezone, status y metadata.
+- `signal_workspace_corpora`: relación temporal con corpora `operational`,
+  `strategic` o `legacy`; sólo una relación activa por corpus/rol y workspace.
+- `signal_refresh_policies`: cadence, timezone, owner y siguiente ejecución; nace
+  deshabilitada.
+- `signal_data_watermarks`: revisión de corpus, import/sync aceptado, máxima fecha
+  observada, materialización y freshness por workspace/corpus/source.
+- `signal_refresh_runs`: intentos idempotentes, locks, errores seguros y estados de
+  retry/dead-letter.
+- `signal_data_invalidations`: invalidación selectiva por workspace, corpus, source,
+  revisión y rango afectado.
+- `signal_interpretation_freshness`: estado separado para interpretaciones futuras;
+  SB-02–SB-06 no ejecutan Claude.
+
+El catálogo V1 reutiliza `metric_definitions` y `semantic_models`; no existe un
+catálogo paralelo. La migración `0049_signal_metric_catalog_v1` agrega versión,
+formula hash, denominator, dimensions, null semantics, comparability, quality rules,
+drill-down subject y visibility. Un cambio de fórmula requiere una nueva versión.
+
+`metric_materializations`, extendida por
+`0050_signal_metric_materializations_v1`, persiste workspace/corpus, definition y
+versión, periodo, filtro canónico, `filters_hash`, payload tipado, value, denominator,
+sample size, quality/materialization state, watermark, timestamps y cache scope. Sus
+índices cubren series por workspace/hash/grain, freshness, periodos por corpus y
+expiración ad hoc. Los faltantes permanecen `NULL`/`not_available`; nunca se convierten
+en cero.
+
+Las APIs `/api/data-os/signal/:workspaceId/*` leen estas tablas y `mentions` bajo el
+mismo predicate de `SignalFilterV1`. No leen `published_outputs.payload` como source of
+truth. Las rutas Pulse y `/signal/{outputId}` conservan su comportamiento legacy.
+
 ---
 
 ## Cierre

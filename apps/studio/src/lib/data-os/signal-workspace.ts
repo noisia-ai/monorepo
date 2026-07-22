@@ -35,8 +35,13 @@ export type SignalWorkspaceStoreRow = Omit<ResolvedSignalWorkspace, "contractVer
   hasBrandAccess: boolean;
 };
 
+type NormalizedSignalWorkspaceLookup = (
+  | { workspaceId: string; workspaceSlug?: never }
+  | { workspaceId?: never; workspaceSlug: string }
+) & { organizationId: string | null };
+
 export interface SignalWorkspaceResolverStore {
-  loadWorkspace(lookup: Required<Pick<SignalWorkspaceLookup, "organizationId">> & SignalWorkspaceLookup, userId: string): Promise<SignalWorkspaceStoreRow | null>;
+  loadWorkspace(lookup: NormalizedSignalWorkspaceLookup, userId: string): Promise<SignalWorkspaceStoreRow | null>;
   loadWorkspaceForLegacyOutput?(outputId: string, userId: string): Promise<SignalWorkspaceStoreRow | null>;
 }
 
@@ -82,20 +87,20 @@ export async function resolveLegacyOutputSignalWorkspaceForUser(
 function normalizeLookup(
   user: SignalWorkspaceUser,
   lookup: SignalWorkspaceLookup
-): Required<Pick<SignalWorkspaceLookup, "organizationId">> & SignalWorkspaceLookup {
+): NormalizedSignalWorkspaceLookup {
   const organizationId = (lookup.organizationId ?? user.organizationId)?.trim().toLowerCase();
-  if (!organizationId || !UUID_PATTERN.test(organizationId)) {
+  if ((!organizationId || !UUID_PATTERN.test(organizationId)) && !(user.userType === "noisia_internal" && lookup.workspaceId)) {
     throw new Error("organizationId is required and must be a UUID when resolving a Signal workspace.");
   }
   if (lookup.workspaceId) {
     const workspaceId = lookup.workspaceId.trim().toLowerCase();
     if (!UUID_PATTERN.test(workspaceId)) throw new Error("workspaceId must be a UUID.");
-    return { workspaceId, organizationId };
+    return { workspaceId, organizationId: organizationId ?? null };
   }
   if (!lookup.workspaceSlug) throw new Error("workspaceSlug is required.");
   const workspaceSlug = lookup.workspaceSlug.trim().toLowerCase();
   if (!SLUG_PATTERN.test(workspaceSlug)) throw new Error("workspaceSlug must be canonical.");
-  return { workspaceSlug, organizationId };
+  return { workspaceSlug, organizationId: organizationId as string };
 }
 
 function publicWorkspace(row: SignalWorkspaceStoreRow): ResolvedSignalWorkspace {
@@ -121,12 +126,19 @@ function publicWorkspace(row: SignalWorkspaceStoreRow): ResolvedSignalWorkspace 
 const postgresSignalWorkspaceStore: SignalWorkspaceResolverStore = {
   async loadWorkspace(lookup, userId) {
     const { pool } = await import("@/lib/db");
+    if (lookup.workspaceId && !lookup.organizationId) {
+      const result = await pool.query(
+        workspaceSelectSql("sw.id = $1::uuid", 2),
+        [lookup.workspaceId, userId]
+      );
+      return mapWorkspaceRow(result.rows[0]);
+    }
     const params = lookup.workspaceId
       ? [lookup.organizationId, lookup.workspaceId, userId]
       : [lookup.organizationId, lookup.workspaceSlug, userId];
     const predicate = lookup.workspaceId ? "sw.id = $2::uuid" : "sw.slug = $2";
     const result = await pool.query(
-      workspaceSelectSql(`${predicate} AND sw.organization_id = $1::uuid`),
+      workspaceSelectSql(`${predicate} AND sw.organization_id = $1::uuid`, 3),
       params
     );
     return mapWorkspaceRow(result.rows[0]);
@@ -143,14 +155,14 @@ const postgresSignalWorkspaceStore: SignalWorkspaceResolverStore = {
          AND mapped.workspace_id = sw.id
          AND mapped.valid_to IS NULL
         WHERE po.id = $1::uuid
-      )`),
+      )`, 2),
       [outputId, userId]
     );
     return mapWorkspaceRow(result.rows[0]);
   }
 };
 
-function workspaceSelectSql(predicate: string) {
+function workspaceSelectSql(predicate: string, userParameter: number) {
   return `
     SELECT
       sw.id::text,
@@ -163,7 +175,7 @@ function workspaceSelectSql(predicate: string) {
       EXISTS (
         SELECT 1
         FROM user_brand_access uba
-        WHERE uba.user_id = $${predicate.includes("$2") ? "3" : "2"}::uuid
+        WHERE uba.user_id = $${userParameter}::uuid
           AND uba.brand_id = sw.brand_id
           AND uba.revoked_at IS NULL
       ) AS has_brand_access,
