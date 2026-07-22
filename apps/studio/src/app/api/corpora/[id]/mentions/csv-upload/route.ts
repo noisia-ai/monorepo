@@ -11,7 +11,8 @@ import {
   importBatches,
   queryIterations,
   queryPacks,
-  queryValidationRuns
+  queryValidationRuns,
+  recordSignalDataAcceptance
 } from "@noisia/db";
 import { forbidden, unauthorized } from "@/lib/api/responses";
 
@@ -22,7 +23,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { ingestSentioneCsvStream } from "@/lib/csv/sentione";
 import { getCorpusForUser } from "@/lib/data/corpora";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 import { getQueryEngineQueue } from "@/lib/queue/query-engine";
 
 const WORKER_INGEST_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -293,12 +294,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const corpusRevision = persistedCount > 0
       ? await advanceCorpusRevision(corpus.id)
       : null;
+    const acceptances = await recordSignalDataAcceptance(pool, {
+      studyCorpusId: corpus.id,
+      sourceKey: "listening_csv",
+      importBatchId: batch.id,
+      corpusRevision,
+      materializedAt: new Date()
+    });
 
     return Response.json({
       import_batch_id: batch.id,
       query_validation_run_id: approvedValidationRun?.id ?? null,
       stats,
-      corpus_revision: corpusRevision
+      corpus_revision: corpusRevision,
+      signal_data: {
+        watermarks_changed: acceptances.filter((item) => item.changed).length,
+        invalidations_created: acceptances.filter((item) => item.invalidationId).length
+      }
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

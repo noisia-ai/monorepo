@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import type { Job } from "bullmq";
 
+import { recordSignalDataAcceptance } from "@noisia/db";
 import { pool } from "../db/client";
 import { advanceCorpusRevision } from "./corpus-revision";
 import { reconcileListeningDataOs } from "./listening-data-os";
@@ -138,6 +139,12 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
       corpusId: job.data.corpusId,
       importBatchId: job.data.importBatchId
     });
+    const acceptances = await recordSignalDataAcceptance(pool, {
+      studyCorpusId: job.data.corpusId,
+      sourceKey: "listening_csv",
+      importBatchId: job.data.importBatchId,
+      materializedAt: new Date()
+    });
     await job.updateProgress(100);
     return {
       import_batch_id: job.data.importBatchId,
@@ -149,6 +156,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
       },
       corpus_revision: null,
       data_os: dataOs,
+      signal_data_acceptances: acceptances.length,
       reconciliation_only: true
     };
   }
@@ -200,12 +208,20 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
       corpusId: job.data.corpusId,
       importBatchId: job.data.importBatchId
     });
+    const acceptances = await recordSignalDataAcceptance(pool, {
+      studyCorpusId: job.data.corpusId,
+      sourceKey: "listening_csv",
+      importBatchId: job.data.importBatchId,
+      corpusRevision,
+      materializedAt: new Date()
+    });
     await job.updateProgress(100);
     return {
       import_batch_id: job.data.importBatchId,
       stats,
       corpus_revision: corpusRevision,
       data_os: dataOs,
+      signal_data_acceptances: acceptances.length,
       reconciliation_only: false
     };
   } catch (error) {

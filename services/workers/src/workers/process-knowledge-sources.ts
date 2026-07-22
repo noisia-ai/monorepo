@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 
+import { recordSignalDataAcceptance } from "@noisia/db";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
 import type { Job } from "bullmq";
@@ -657,6 +658,13 @@ async function materializeKnowledgeSourceData(source: KnowledgeSourceRow, corpus
       })
     ]
   );
+  const signalDataAcceptances = await recordSignalDataAcceptance(pool, {
+    studyCorpusId: corpusId,
+    sourceKey: `knowledge_source:${source.id}`,
+    dataSourceId,
+    sourceSyncRunId: syncRunId,
+    materializedAt: new Date()
+  });
 
   return {
     sourceProfile,
@@ -665,6 +673,7 @@ async function materializeKnowledgeSourceData(source: KnowledgeSourceRow, corpus
       data_source_id: dataSourceId,
       data_asset_id: dataAssetId,
       source_sync_run_id: syncRunId,
+      signal_data_acceptances: signalDataAcceptances.length,
       source_record_count: records.length,
       upserted_record_count: insertedRecords,
       observation_count: observations.length,

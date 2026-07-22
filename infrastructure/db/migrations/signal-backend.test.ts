@@ -25,3 +25,42 @@ test("SB-02 backfill is dry-run by default, remote guarded, redacted and idempot
   assert.match(script, /sw\.organization_id = ec\.organization_id/);
 });
 
+test("SB-03 persists disabled refresh policy, independent freshness and idempotent invalidation", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0048_signal_recurring_refresh.sql"), "utf8");
+  for (const table of [
+    "signal_refresh_policies",
+    "signal_data_watermarks",
+    "signal_refresh_runs",
+    "signal_data_invalidations",
+    "signal_interpretation_freshness"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /enabled boolean NOT NULL DEFAULT false/);
+  assert.match(migration, /source_freshness_state/);
+  assert.match(migration, /data_freshness_state/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION record_signal_data_acceptance/);
+  assert.match(migration, /Completed import batch does not belong to the corpus/);
+  assert.match(migration, /ON CONFLICT \(workspace_id, study_corpus_id, source_key\)/);
+  assert.match(migration, /ON CONFLICT \(idempotency_key\) DO NOTHING/);
+  assert.match(migration, /'targets', jsonb_build_array\('metric_materializations', 'interpretation_freshness'\)/);
+});
+
+test("SB-03 wires existing imports and source syncs to the shared acceptance function", async () => {
+  const [workerImport, knowledgeSync, studioImport, performanceSync, refreshWorker, envExample] = await Promise.all([
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/process-knowledge-sources.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/mentions/csv-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/sources/performance-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/.env.example"), "utf8")
+  ]);
+  for (const source of [workerImport, knowledgeSync, studioImport, performanceSync]) {
+    assert.match(source, /recordSignalDataAcceptance/);
+  }
+  assert.match(refreshWorker, /pg_try_advisory_lock/);
+  assert.match(refreshWorker, /FOR UPDATE SKIP LOCKED/);
+  assert.match(refreshWorker, /materialization\.period_id IS NULL/);
+  assert.match(refreshWorker, /dead_letter/);
+  assert.match(envExample, /NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=false/);
+});

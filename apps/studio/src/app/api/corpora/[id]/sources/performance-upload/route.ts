@@ -1,4 +1,5 @@
 import { forbidden, unauthorized } from "@/lib/api/responses";
+import { recordSignalDataAcceptance } from "@noisia/db";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
@@ -157,6 +158,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         syncRunId
       ]
     );
+    const acceptances = await recordSignalDataAcceptance(client, {
+      studyCorpusId: corpus.id,
+      sourceKey: `performance:${provider.toLowerCase()}`,
+      dataSourceId,
+      sourceSyncRunId: syncRunId,
+      materializedAt: new Date()
+    });
     await client.query("ANALYZE performance_records");
     await client.query("COMMIT");
 
@@ -165,6 +173,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       mode,
       data_source_id: dataSourceId,
       source_sync_run_id: syncRunId,
+      signal_data: {
+        watermarks_changed: acceptances.filter((item) => item.changed).length,
+        invalidations_created: acceptances.filter((item) => item.invalidationId).length
+      },
       mapping: parsed.mapping,
       stats: {
         ...parsed.stats,

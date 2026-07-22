@@ -694,6 +694,45 @@ necesita la identidad nueva, `resolveLegacyOutputSignalWorkspaceForUser` sigue
 vuelve a aplicar authZ. Este mapping es sólo compatibilidad; nuevas APIs no deben usar
 `published_outputs` como raíz ni como source of truth.
 
+#### Refresh recurrente, watermarks e invalidación (SB-03)
+
+`signal_refresh_policies` gobierna cada `workspace_id + source_key`: adapter, cadence
+(`manual | hourly | daily | weekly | monthly`), timezone, owner,
+`expected_next_run` y `enabled`. Toda policy nace `enabled=false`; el scheduler además
+requiere `NOISIA_DATA_OS_WORKER_ENABLED=true` y
+`NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=true`. El tick BullMQ tiene identidad estable
+por deploy y sólo encola policies vencidas.
+
+Una aceptación usa la operación compartida `recordSignalDataAcceptance` y la función
+transaccional `record_signal_data_acceptance`. El evento debe ser exactamente uno:
+`source_sync_run_id` completado o `import_batch_id` completado, y debe pertenecer al
+corpus. La misma aceptación repetida no avanza el watermark ni crea otra invalidación.
+CSV síncrono/asíncrono, performance uploads y materialización de knowledge sources usan
+esta operación.
+
+`signal_data_watermarks` separa:
+
+- source freshness (`fresh | stale | partial | failed | not_available`);
+- data freshness (`fresh | stale | partial | not_available`);
+- corpus revision, último sync/import aceptado, máxima observación, accepted/materialized
+  timestamps y `stale_after`.
+
+`signal_interpretation_freshness` conserva por separado el estado interpretativo ligado
+a metric group, `filters_hash` y hashes de watermark. Nueva data no se presenta como
+texto fresco: la invalidación sólo marca interpretaciones que declaran dependencia del
+corpus/source en `data_scope`.
+
+`signal_refresh_runs` conserva idempotency key, job, trigger, attempt, status y error
+sanitizado. Estados terminales: `completed`, `skipped` o `dead_letter`. Los workers usan
+job IDs estables, advisory locks, tres intentos y backoff exponencial. El adapter V1
+opera sobre imports manuales y `source_sync_runs` ya completados; un pull automático de
+SentiOne sigue siendo adapter pendiente.
+
+`signal_data_invalidations` lleva la ventana afectada y scope. El processor marca stale
+sólo materializaciones del corpus cuyo `report_period` traslapa esa ventana, y sólo
+freshness interpretativa con dependencia explícita. No modifica outputs publicados ni
+strategic releases y no invoca Claude.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

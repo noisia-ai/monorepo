@@ -9,6 +9,8 @@ import {
   startQueryEngineWorker
 } from "./queues/query-engine";
 import { startDataOsWorker } from "./queues/data-os";
+import { closeSignalRefreshScheduler, startSignalRefreshScheduler } from "./queues/signal-refresh";
+import { isSignalRefreshSchedulerEnabled } from "./workers/signal-refresh-runtime";
 import { startEngineAnalysisWorker } from "./queues/engine-analysis";
 import { startTbAnalysisWorker } from "./queues/tb-analysis";
 
@@ -16,6 +18,12 @@ const queryEngineWorker = startQueryEngineWorker();
 const tbAnalysisWorker = startTbAnalysisWorker();
 const engineAnalysisWorker = isEngineRuntimeEnabled() ? startEngineAnalysisWorker() : null;
 const dataOsWorker = isDataOsWorkerEnabled() ? startDataOsWorker() : null;
+const signalRefreshScheduler = dataOsWorker && isSignalRefreshSchedulerEnabled()
+  ? startSignalRefreshScheduler().catch((error) => {
+      console.error("Signal refresh scheduler failed to start:", error);
+      return null;
+    })
+  : null;
 const heartbeat = startQueryEngineHeartbeat();
 const keepAlive = setInterval(() => undefined, 60_000);
 
@@ -62,6 +70,8 @@ async function shutdown() {
   await tbAnalysisWorker.close();
   await engineAnalysisWorker?.close();
   await dataOsWorker?.close();
+  if (signalRefreshScheduler) await signalRefreshScheduler;
+  await closeSignalRefreshScheduler();
   await closeQueryEngineProducer();
   await redisConnection.quit();
   await pool.end();

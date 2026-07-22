@@ -113,7 +113,7 @@ flowchart LR
 |---|---|---:|---:|---|---|
 | SB-01 | Signal Backend Contract V1 | P0 | M | North Star | Completo (2026-07-21) |
 | SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Completo (2026-07-22) |
-| SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Pendiente |
+| SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Completo (2026-07-22) |
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Pendiente |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Pendiente |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Pendiente |
@@ -321,6 +321,27 @@ git diff --check
 
 Una carga nueva cambia el watermark exactamente una vez, encola invalidaciones
 idempotentes y no dispara LLM ni reescribe releases estratégicos.
+
+### Estado / Handoff
+
+**Completo, 2026-07-22.** La migración `0048_signal_recurring_refresh` agrega policies
+apagadas por default, watermarks por workspace/corpus/source, refresh runs,
+invalidaciones selectivas e interpretation freshness separada. La función transaccional
+`record_signal_data_acceptance` valida ownership del evento, avanza cada watermark una
+sola vez y emite una invalidación idempotente. CSV síncrono/asíncrono y syncs exitosos de
+performance/knowledge ya usan ese writer compartido.
+
+El scheduler BullMQ requiere dos flags explícitos, usa tick/job IDs estables, locks,
+dedupe, retries y dead-letter. El adapter recurrente consume imports y sync runs
+existentes; el pull API automático de SentiOne queda pendiente. La invalidación traslapa
+periodos y dependencias declaradas, sin tocar strategic releases, payloads ni Claude.
+
+Gates estáticos verdes. La migración no se aplicó en runtime porque no hubo
+`DATABASE_URL` local y el daemon de Docker siguió apagado; no se usó un target remoto.
+
+**Siguiente tarea habilitada:** SB-04 · Social Listening Metric Catalog V1. SB-04 puede
+registrar definiciones canónicas mientras SB-03 aporta la identidad temporal que SB-05
+usará para materializar. No se inició SB-04 en este checkpoint.
 
 ### Commit Sugerido
 

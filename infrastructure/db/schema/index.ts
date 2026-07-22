@@ -376,6 +376,159 @@ export const signalWorkspaceCorpora = pgTable(
   ]
 );
 
+export const signalRefreshPolicies = pgTable(
+  "signal_refresh_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "cascade" }),
+    sourceKey: text("source_key").notNull(),
+    adapterKey: text("adapter_key").notNull().default("manual_import"),
+    cadence: text("cadence").notNull().default("manual"),
+    timezone: text("timezone").notNull().default("UTC"),
+    enabled: boolean("enabled").notNull().default(false),
+    expectedNextRun: timestamp("expected_next_run", { withTimezone: true }),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_refresh_policies_source_key_present", sql`btrim(${table.sourceKey}) <> ''`),
+    check("signal_refresh_policies_adapter_key_present", sql`btrim(${table.adapterKey}) <> ''`),
+    check("signal_refresh_policies_timezone_present", sql`btrim(${table.timezone}) <> ''`),
+    check("signal_refresh_policies_cadence", sql`${table.cadence} IN ('manual', 'hourly', 'daily', 'weekly', 'monthly')`),
+    check(
+      "signal_refresh_policies_enabled_schedule",
+      sql`${table.enabled} = false OR (${table.cadence} <> 'manual' AND ${table.expectedNextRun} IS NOT NULL)`
+    ),
+    unique("uq_signal_refresh_policies_workspace_source").on(table.workspaceId, table.sourceKey),
+    index("idx_signal_refresh_policies_due")
+      .on(table.expectedNextRun, table.workspaceId)
+      .where(sql`${table.enabled} = true`),
+    index("idx_signal_refresh_policies_data_source")
+      .on(table.dataSourceId)
+      .where(sql`${table.dataSourceId} IS NOT NULL`)
+  ]
+);
+
+export const signalDataWatermarks = pgTable(
+  "signal_data_watermarks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "set null" }),
+    sourceKey: text("source_key").notNull(),
+    corpusRevision: integer("corpus_revision").notNull(),
+    lastSourceSyncRunId: uuid("last_source_sync_run_id").references(() => sourceSyncRuns.id, { onDelete: "set null" }),
+    lastImportBatchId: uuid("last_import_batch_id").references(() => importBatches.id, { onDelete: "set null" }),
+    maxObservedAt: timestamp("max_observed_at", { withTimezone: true }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    materializedAt: timestamp("materialized_at", { withTimezone: true }).notNull(),
+    sourceFreshnessState: text("source_freshness_state").notNull().default("not_available"),
+    dataFreshnessState: text("data_freshness_state").notNull().default("not_available"),
+    staleAfter: timestamp("stale_after", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_data_watermarks_revision_nonnegative", sql`${table.corpusRevision} >= 0`),
+    check("signal_data_watermarks_source_state", sql`${table.sourceFreshnessState} IN ('fresh', 'stale', 'partial', 'failed', 'not_available')`),
+    check("signal_data_watermarks_data_state", sql`${table.dataFreshnessState} IN ('fresh', 'stale', 'partial', 'not_available')`),
+    check("signal_data_watermarks_materialized_after_accept", sql`${table.materializedAt} >= ${table.acceptedAt}`),
+    unique("uq_signal_data_watermarks_scope").on(table.workspaceId, table.studyCorpusId, table.sourceKey),
+    index("idx_signal_data_watermarks_workspace_freshness").on(table.workspaceId, table.dataFreshnessState, table.maxObservedAt),
+    index("idx_signal_data_watermarks_corpus_source").on(table.studyCorpusId, table.sourceKey, table.acceptedAt)
+  ]
+);
+
+export const signalRefreshRuns = pgTable(
+  "signal_refresh_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    refreshPolicyId: uuid("refresh_policy_id").references(() => signalRefreshPolicies.id, { onDelete: "set null" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    sourceKey: text("source_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    bullmqJobId: text("bullmq_job_id"),
+    trigger: text("trigger").notNull().default("scheduled"),
+    status: text("status").notNull().default("queued"),
+    attempt: integer("attempt").notNull().default(1),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    errorSummary: jsonb("error_summary").notNull().default(sql`'{}'::jsonb`),
+    resultSummary: jsonb("result_summary").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_refresh_runs_status", sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'dead_letter', 'skipped')`),
+    check("signal_refresh_runs_trigger", sql`${table.trigger} IN ('scheduled', 'manual', 'import')`),
+    check("signal_refresh_runs_attempt_positive", sql`${table.attempt} >= 1`),
+    unique("uq_signal_refresh_runs_idempotency").on(table.idempotencyKey),
+    index("idx_signal_refresh_runs_workspace_status").on(table.workspaceId, table.status, table.createdAt),
+    index("idx_signal_refresh_runs_policy_status").on(table.refreshPolicyId, table.status, table.createdAt)
+  ]
+);
+
+export const signalDataInvalidations = pgTable(
+  "signal_data_invalidations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    dataWatermarkId: uuid("data_watermark_id").notNull().references(() => signalDataWatermarks.id, { onDelete: "cascade" }),
+    sourceKey: text("source_key").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    reason: text("reason").notNull().default("data_accepted"),
+    affectedFrom: date("affected_from"),
+    affectedThrough: date("affected_through"),
+    scope: jsonb("scope").notNull().default(sql`'{}'::jsonb`),
+    status: text("status").notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    errorSummary: jsonb("error_summary").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    processedAt: timestamp("processed_at", { withTimezone: true })
+  },
+  (table) => [
+    check("signal_data_invalidations_status", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed', 'dead_letter')`),
+    check("signal_data_invalidations_attempt_nonnegative", sql`${table.attempt} >= 0`),
+    check("signal_data_invalidations_window", sql`${table.affectedFrom} IS NULL OR ${table.affectedThrough} IS NULL OR ${table.affectedFrom} <= ${table.affectedThrough}`),
+    unique("uq_signal_data_invalidations_idempotency").on(table.idempotencyKey),
+    index("idx_signal_data_invalidations_pending")
+      .on(table.status, table.createdAt)
+      .where(sql`${table.status} IN ('pending', 'failed')`),
+    index("idx_signal_data_invalidations_scope").on(table.workspaceId, table.studyCorpusId, table.affectedFrom, table.affectedThrough)
+  ]
+);
+
+export const signalInterpretationFreshness = pgTable(
+  "signal_interpretation_freshness",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    metricGroupKey: text("metric_group_key").notNull(),
+    filtersHash: text("filters_hash").notNull(),
+    dataScope: jsonb("data_scope").notNull().default(sql`'{}'::jsonb`),
+    dataWatermarkHash: text("data_watermark_hash"),
+    interpretationWatermarkHash: text("interpretation_watermark_hash"),
+    state: text("state").notNull().default("not_available"),
+    reason: text("reason"),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_interpretation_freshness_state", sql`${table.state} IN ('fresh', 'stale', 'pending', 'partial', 'not_available')`),
+    unique("uq_signal_interpretation_freshness_scope").on(table.workspaceId, table.metricGroupKey, table.filtersHash),
+    index("idx_signal_interpretation_freshness_workspace_state").on(table.workspaceId, table.state, table.evaluatedAt)
+  ]
+);
+
 export const queryIterations = pgTable(
   "query_iterations",
   {
