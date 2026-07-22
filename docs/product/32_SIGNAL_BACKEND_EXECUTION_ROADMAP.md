@@ -114,7 +114,7 @@ flowchart LR
 | SB-01 | Signal Backend Contract V1 | P0 | M | North Star | Completo (2026-07-21) |
 | SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Completo (2026-07-22) |
 | SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Completo (2026-07-22) |
-| SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Pendiente |
+| SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Pendiente |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Pendiente |
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente |
@@ -397,6 +397,27 @@ git diff --check
 
 Cada métrica V1 tiene definición inequívoca y ningún chart futuro necesita inventar una
 fórmula o denominador en el frontend.
+
+### Estado / Handoff
+
+**Completo, 2026-07-22.** `@noisia/query-engine` exporta el catálogo canónico V1 con
+cinco groups y once métricas versionadas. Cada definición fija fórmula + hash, unit,
+denominador, grains, dimensiones/visibilidad, null semantics, comparabilidad, quality
+rules y drill-down subject. Los contract tests cubren groups requeridos, duplicados,
+versiones, units, denominadores, dimensiones y mutación de fórmula.
+
+La migración `0049_signal_metric_catalog_v1` extiende el `metric_definitions` existente,
+preserva `semantic_models` como grouping layer y rechaza cambios de fórmula sin nueva
+versión. El seed `db:seed:signal-metrics` consume el catálogo compartido, es idempotente
+y conserva los guardrails de target. Los writers Data OS existentes se adaptaron a
+`(metric_key, version)`. No se materializaron métricas ni se agregó frontend/API.
+
+Gates estáticos verdes. La migración y el seed no se ejecutaron contra Postgres por la
+misma ausencia de DB local; no se usó un target remoto.
+
+**Siguiente tarea habilitada:** SB-05 · Deterministic Metric Materialization Engine,
+ahora con identidad, watermarks/invalidaciones y catálogo versionado disponibles. No se
+inició SB-05 en este checkpoint.
 
 ### Commit Sugerido
 

@@ -64,3 +64,32 @@ test("SB-03 wires existing imports and source syncs to the shared acceptance fun
   assert.match(refreshWorker, /dead_letter/);
   assert.match(envExample, /NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=false/);
 });
+
+test("SB-04 versions the canonical metric registry and blocks silent formula changes", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0049_signal_metric_catalog_v1.sql"), "utf8");
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS signal_metric/u);
+  assert.match(migration, /ALTER TABLE metric_definitions/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1/);
+  assert.match(migration, /uq_metric_definitions_key_version UNIQUE \(metric_key, version\)/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION protect_metric_definition_formula_version/);
+  assert.match(migration, /Metric formula changes require a new metric version/);
+  assert.match(migration, /idx_metric_definitions_group_version/);
+});
+
+test("SB-04 seed reuses metric_definitions and semantic_models idempotently", async () => {
+  const [seed, backfill, listening, knowledge] = await Promise.all([
+    readFile(resolve(process.cwd(), "seeds/signal-metric-catalog.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/data-os-backfill.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../packages/query-engine/src/listening-data-os.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/process-knowledge-sources.ts"), "utf8")
+  ]);
+  assert.match(seed, /SIGNAL_METRIC_DEFINITIONS_V1/);
+  assert.match(seed, /INSERT INTO metric_definitions/);
+  assert.match(seed, /INSERT INTO semantic_models/);
+  assert.match(seed, /signal_social_listening_v1/);
+  assert.match(seed, /ON CONFLICT \(metric_key, version\) DO UPDATE/);
+  for (const writer of [backfill, listening, knowledge]) {
+    assert.match(writer, /ON CONFLICT \(metric_key, version\)/);
+    assert.doesNotMatch(writer, /ON CONFLICT \(metric_key\)(?!,)/u);
+  }
+});

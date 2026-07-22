@@ -5,6 +5,7 @@ import { seedDemoData } from "./demo-data.js";
 import { requireEnv } from "./env.js";
 import { seedMemory } from "./memory.js";
 import { seedMethodologies } from "./methodologies.js";
+import { seedSignalMetricCatalogV1 } from "./signal-metric-catalog.js";
 
 async function main() {
   requireSafeDatabaseWriteTarget(requireEnv("DATABASE_URL"), {
@@ -16,6 +17,7 @@ async function main() {
   const brandSeeds = await seedBrandSeeds();
   const demo = await seedDemoData();
   const memory = await seedMemory();
+  const signalMetrics = await seedSignalMetricCatalogV1();
 
   console.log(
     JSON.stringify(
@@ -24,7 +26,8 @@ async function main() {
         methodologies,
         brandSeeds,
         demo,
-        memory
+        memory,
+        signalMetrics
       },
       null,
       2

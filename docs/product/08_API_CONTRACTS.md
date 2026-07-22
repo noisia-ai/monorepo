@@ -733,6 +733,50 @@ sólo materializaciones del corpus cuyo `report_period` traslapa esa ventana, y 
 freshness interpretativa con dependencia explícita. No modifica outputs publicados ni
 strategic releases y no invoca Claude.
 
+#### Social Listening metric catalog V1 (SB-04)
+
+El registry canónico continúa siendo `metric_definitions`; `semantic_models` agrupa las
+medidas bajo `signal_social_listening_v1`. No existe una tabla paralela de métricas.
+`@noisia/query-engine` exporta `SIGNAL_METRIC_CATALOG_V1`, que es la fuente compartida
+para seeds, planner, workers y serving.
+
+`metric_definitions` identifica cada fórmula por `(metric_key, version)` y agrega
+`metric_group_key`, `formula_hash` y `visibility`. Key y version son inmutables. Un
+trigger rechaza un cambio de `definition.formula` dentro de la misma versión; una nueva
+fórmula exige insertar otra versión. El seed es idempotente y protegido por los mismos
+guardrails de DB:
+
+```bash
+corepack pnpm --filter @noisia/db db:seed:signal-metrics
+```
+
+Catálogo V1:
+
+| Group | Metric key | Fórmula / denominador | Unit | Visibilidad |
+|---|---|---|---|---|
+| conversation volume and velocity | `conversation.volume@1` | count de mentions incluidas / ninguno | count | both |
+| conversation volume and velocity | `conversation.velocity@1` | `(current - previous) / previous`; previous period igual en días | ratio | both |
+| sentiment and emotion | `sentiment.share@1` | bucket polaridad / mentions con polaridad aceptada | ratio | both |
+| sentiment and emotion | `emotion.share@1` | bucket emoción / mentions con emoción aceptada | ratio | both |
+| platform and source mix | `platform.share@1` | bucket plataforma / mentions con plataforma | ratio | both |
+| platform and source mix | `source_type.share@1` | bucket source type / mentions clasificadas | ratio | internal |
+| engagement | `engagement.total@1` | suma de componentes gobernados observados / ninguno | count | both |
+| engagement | `engagement.average_per_mention@1` | engagement / mentions con medición | ratio | both |
+| topics, narratives and governed entities | `topic.volume@1` | mentions distintas con topic aceptado / ninguno | count | both |
+| topics, narratives and governed entities | `narrative.volume@1` | mentions distintas con taxonomy narrativa aceptada / ninguno | count | both |
+| topics, narratives and governed entities | `governed_entity.volume@1` | mentions distintas con entity link aceptado / ninguno | count | both |
+
+Cada definición incluye fórmula estructurada, SHA-256 de fórmula, grains
+`day/week/month`, dimensiones tomadas exclusivamente de `SignalFilterV1`, visibilidad
+por dimensión, null semantics, comparabilidad, quality rules y
+`drill_down_subject=mention`. Un cero sólo es cero cuando fue observado; falta de
+cobertura o denominador produce `not_available`, y cobertura incompleta produce
+`partial`. `source_type` permanece interno aun cuando otra dimensión del metric sea
+client-visible.
+
+Campaign/event impact queda condicionado a cobertura futura; no forma parte del core
+V1. T&B movement pertenece a SB-09. SB-04 no materializa datos ni crea endpoints.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

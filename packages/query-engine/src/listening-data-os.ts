@@ -607,7 +607,7 @@ async function ensureListeningMetricDefinitions(execute: DataOsSqlExecutor) {
         definition jsonb,
         dimensions jsonb
       )
-      ON CONFLICT (metric_key)
+      ON CONFLICT (metric_key, version)
       DO UPDATE SET
         name = EXCLUDED.name,
         description = EXCLUDED.description,

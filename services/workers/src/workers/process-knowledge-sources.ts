@@ -1170,7 +1170,7 @@ async function ensureSourceMetricDefinitions(observations: SourceObservation[]) 
         definition jsonb,
         dimensions jsonb
       )
-      ON CONFLICT (metric_key) DO UPDATE SET
+      ON CONFLICT (metric_key, version) DO UPDATE SET
         name = EXCLUDED.name,
         description = EXCLUDED.description,
         grain = EXCLUDED.grain,

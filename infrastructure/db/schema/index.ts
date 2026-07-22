@@ -2980,19 +2980,32 @@ export const metricDefinitions = pgTable(
   "metric_definitions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    metricKey: text("metric_key").notNull().unique(),
+    metricKey: text("metric_key").notNull(),
+    version: integer("version").notNull().default(1),
+    metricGroupKey: text("metric_group_key"),
     name: text("name").notNull(),
     description: text("description"),
     grain: text("grain").notNull(),
     unit: text("unit"),
     definition: jsonb("definition").notNull(),
+    formulaHash: text("formula_hash"),
     dimensions: jsonb("dimensions").notNull().default(sql`'[]'::jsonb`),
+    visibility: text("visibility").notNull().default("internal"),
     ownerTeam: text("owner_team"),
     status: text("status").notNull().default("active"),
     createdAt: now(),
     updatedAt: updatedAt()
   },
-  (table) => [index("idx_metric_definitions_status").on(table.status, table.grain)]
+  (table) => [
+    check("metric_definitions_version_positive", sql`${table.version} >= 1`),
+    check("metric_definitions_visibility", sql`${table.visibility} IN ('internal', 'client', 'both')`),
+    check("metric_definitions_formula_hash", sql`${table.formulaHash} IS NULL OR ${table.formulaHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    unique("uq_metric_definitions_key_version").on(table.metricKey, table.version),
+    index("idx_metric_definitions_status").on(table.status, table.grain),
+    index("idx_metric_definitions_group_version")
+      .on(table.metricGroupKey, table.version, table.status)
+      .where(sql`${table.metricGroupKey} IS NOT NULL`)
+  ]
 );
 
 export const semanticModels = pgTable(

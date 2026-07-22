@@ -30,6 +30,7 @@
     "data-os:verify": "tsx scripts/verify-data-os-readiness.ts",
     "db:verify:readiness": "tsx scripts/verify-live-intelligence-readiness.ts",
     "db:seed:methodologies": "tsx seeds/methodologies-only.ts",
+    "db:seed:signal-metrics": "tsx seeds/signal-metrics-only.ts",
     "db:seed": "tsx seeds/index.ts",
     "db:verify": "tsx seeds/verify.ts",
     "lint": "echo \"No lint configured for @noisia/db yet\"",
@@ -37,6 +38,7 @@
     "test": "node --test --import tsx migrations/*.test.ts"
   },
   "dependencies": {
+    "@noisia/query-engine": "workspace:*",
     "@opentelemetry/api": "^1.9.1",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.0",

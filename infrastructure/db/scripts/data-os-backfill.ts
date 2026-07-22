@@ -2291,7 +2291,7 @@ async function seedSemanticLayer(ctx: BackfillContext) {
           metric_key, name, description, grain, unit, definition, dimensions, owner_team, status
         )
         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, 'data-os', 'active')
-        ON CONFLICT (metric_key) DO UPDATE SET
+        ON CONFLICT (metric_key, version) DO UPDATE SET
           name = EXCLUDED.name,
           description = EXCLUDED.description,
           grain = EXCLUDED.grain,

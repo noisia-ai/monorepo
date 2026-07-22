@@ -344,6 +344,13 @@
       "when": 1784919600000,
       "tag": "0048_signal_recurring_refresh",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1785006000000,
+      "tag": "0049_signal_metric_catalog_v1",
+      "breakpoints": true
     }
   ]
 }

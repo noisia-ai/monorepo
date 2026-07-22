@@ -178,6 +178,9 @@ importers:
 
   infrastructure/db:
     dependencies:
+      '@noisia/query-engine':
+        specifier: workspace:*
+        version: link:../../packages/query-engine
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
