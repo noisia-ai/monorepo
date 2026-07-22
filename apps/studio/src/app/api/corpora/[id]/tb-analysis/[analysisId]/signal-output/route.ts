@@ -7,6 +7,7 @@ import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { db, pool } from "@/lib/db";
+import { persistPublishedAnalysisArtifacts } from "@/lib/data-os/analysis-artifact-graph";
 import { persistDataOsOutputRefs } from "@/lib/data-os/output-refs";
 import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
 import {
@@ -227,6 +228,7 @@ export async function POST(
   }
 
   let liveIntelligence: Awaited<ReturnType<typeof persistTbSignalObservations>> | null = null;
+  let analysisArtifactSnapshot: Awaited<ReturnType<typeof persistPublishedAnalysisArtifacts>> | null = null;
   const dataOsReferences = output?.id
     ? await persistDataOsOutputRefs({
         outputId: output.id,
@@ -388,6 +390,33 @@ export async function POST(
       };
     }
 
+    try {
+      analysisArtifactSnapshot = await persistPublishedAnalysisArtifacts({
+        outputId: output.id,
+        corpusId: corpus.id,
+        analysisId: state.analysis.id
+      });
+      publishedManifest = {
+        ...publishedManifest,
+        analysis_artifacts: {
+          contract_version: analysisArtifactSnapshot.contractVersion,
+          linked_artifacts: analysisArtifactSnapshot.linkedArtifacts,
+          rejected_artifacts: analysisArtifactSnapshot.rejectedArtifacts,
+          snapshot_role: "approved_revision"
+        }
+      };
+    } catch (error) {
+      return Response.json(
+        {
+          error: "analysis_artifact_snapshot_failed",
+          message: "Signal quedo como draft porque no fue posible congelar sus artefactos analiticos aprobados.",
+          output,
+          detail: error instanceof Error ? error.message : "unknown_analysis_artifact_snapshot_error"
+        },
+        { status: 409 }
+      );
+    }
+
     const [publishedOutput] = await db
       .update(publishedOutputs)
       .set({
@@ -418,6 +447,7 @@ export async function POST(
     ok: true,
     output: output ? { ...output, status: isPublish ? "published" : "draft" } : output,
     liveIntelligence,
+    analysisArtifactSnapshot,
     dataOsReferences,
     relationalVerification,
     signalServingReadiness,

@@ -178,6 +178,10 @@ function hasOnlyRemediablePreflightBlocks(
 ) {
   const remediable = new Set([
     REMEDIABLE_PREFLIGHT_BLOCK,
+    "analysis_artifacts_missing",
+    "analysis_artifact_groups_incomplete",
+    "finding_artifact_mismatch",
+    "finding_artifact_evidence_incomplete",
     ...(servingEntitiesSourceAvailable
       ? [
           "opportunity_evidence_incomplete",
@@ -189,6 +193,100 @@ function hasOnlyRemediablePreflightBlocks(
   ]);
   return hardBlocks.length > 0
     && hardBlocks.every((issue) => remediable.has(issue.code));
+}
+
+async function materializeHistoricalArtifactGraph(
+  pool: Pool,
+  analysisId: string
+) {
+  const { replaceTbAnalysisArtifactGraph } = await import(
+    "../../../services/workers/src/workers/tb-analysis-artifact-persistence"
+  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = 0");
+    const existing = await client.query<{
+      artifacts: number | string;
+      unresolved: number | string;
+      reviewed: number | string;
+    }>(
+      `SELECT
+         COUNT(*) AS artifacts,
+         COUNT(*) FILTER (WHERE review_status IN ('draft', 'needs_review')) AS unresolved,
+         COUNT(*) FILTER (WHERE review_status NOT IN ('draft', 'needs_review')) AS reviewed
+       FROM analysis_artifacts
+       WHERE tb_analysis_id = $1::uuid`,
+      [analysisId]
+    );
+    const existingArtifacts = Number(existing.rows[0]?.artifacts ?? 0);
+    const unresolved = Number(existing.rows[0]?.unresolved ?? 0);
+    const reviewed = Number(existing.rows[0]?.reviewed ?? 0);
+    if (existingArtifacts > 0 && reviewed > 0 && unresolved > 0) {
+      throw new Error("Historical artifact graph mixes reviewed and unresolved artifacts.");
+    }
+
+    const graph = existingArtifacts > 0 && reviewed === existingArtifacts
+      ? null
+      : await replaceTbAnalysisArtifactGraph(client, analysisId);
+    await client.query(
+      `INSERT INTO analysis_artifact_review_events (
+         artifact_id, reviewer_user_id, action, previous_status, next_status, patch, notes
+       )
+       SELECT
+         artifact.id,
+         NULL,
+         'backfill_existing_approval',
+         artifact.review_status,
+         'accepted',
+         '{}'::jsonb,
+         'Inherited the existing approved T&B analysis state during guarded backfill.'
+       FROM analysis_artifacts artifact
+       WHERE artifact.tb_analysis_id = $1::uuid
+         AND artifact.review_status IN ('draft', 'needs_review')`,
+      [analysisId]
+    );
+    await client.query(
+      `UPDATE analysis_artifacts
+       SET review_status = 'accepted',
+           updated_at = NOW()
+       WHERE tb_analysis_id = $1::uuid
+         AND review_status IN ('draft', 'needs_review')`,
+      [analysisId]
+    );
+    const counts = await client.query<{
+      artifacts: number | string;
+      evidence_groups: number | string;
+      evidence_links: number | string;
+      artifact_relations: number | string;
+    }>(
+      `SELECT
+         COUNT(DISTINCT artifact.id) AS artifacts,
+         COUNT(DISTINCT evidence_group.id) AS evidence_groups,
+         COUNT(DISTINCT evidence_link.id) AS evidence_links,
+         COUNT(DISTINCT relation.id) AS artifact_relations
+       FROM analysis_artifacts artifact
+       LEFT JOIN analysis_evidence_groups evidence_group ON evidence_group.artifact_id = artifact.id
+       LEFT JOIN analysis_evidence_links evidence_link ON evidence_link.evidence_group_id = evidence_group.id
+       LEFT JOIN analysis_artifact_relations relation ON relation.source_artifact_id = artifact.id
+       WHERE artifact.tb_analysis_id = $1::uuid`,
+      [analysisId]
+    );
+    await client.query("COMMIT");
+    const row = counts.rows[0];
+    return {
+      status: graph ? "materialized" : "preserved",
+      artifacts: Number(row?.artifacts ?? 0),
+      evidenceGroups: Number(row?.evidence_groups ?? 0),
+      evidenceLinks: Number(row?.evidence_links ?? 0),
+      artifactRelations: Number(row?.artifact_relations ?? 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function materializeHistoricalCodingBridge(
@@ -335,6 +433,7 @@ async function main() {
     { db, pool },
     { persistDataOsOutputRefs },
     { loadPublishedSignalOverview },
+    { persistPublishedAnalysisArtifacts },
     { assessSignalServingReadiness, getSignalServingReadiness },
     { attachSignalServingContract },
     { requireSafeDatabaseReadTarget, requireSafeDatabaseWriteTarget }
@@ -342,6 +441,7 @@ async function main() {
     import("../src/lib/db"),
     import("../src/lib/data-os/output-refs"),
     import("../src/lib/data-os/published-signal-overview"),
+    import("../src/lib/data-os/analysis-artifact-graph"),
     import("../src/lib/data-os/signal-serving"),
     import("../src/lib/signal/semantics"),
     import("../../../infrastructure/db/seeds/connection")
@@ -415,6 +515,14 @@ async function main() {
     const codingBridgeRequired = requiresHistoricalCodingBridge(
       assessmentBeforeRefs.hardBlocks
     );
+    const artifactGraphRequired = assessmentBeforeRefs.hardBlocks.some((issue) =>
+      [
+        "analysis_artifacts_missing",
+        "analysis_artifact_groups_incomplete",
+        "finding_artifact_mismatch",
+        "finding_artifact_evidence_incomplete"
+      ].includes(issue.code)
+    );
     if (
       !assessmentBeforeRefs.ready
       && !hasOnlyRemediablePreflightBlocks(
@@ -450,7 +558,7 @@ async function main() {
 
     const preflight = {
       mode: apply ? "apply" : "dry-run",
-      status: codingBridgeRequired || servingEntitiesPlan.required || preflightServingReadError
+      status: codingBridgeRequired || servingEntitiesPlan.required || artifactGraphRequired || preflightServingReadError
         ? "reconciliation_required"
         : servingEntitiesPlan.sourceAvailable
           ? "reconciliation_planned"
@@ -459,6 +567,7 @@ async function main() {
       counts: expectedCounts,
       warnings: assessmentBeforeRefs.warnings.map((warning) => warning.code),
       coding_bridge_required: codingBridgeRequired,
+      artifact_graph_required: artifactGraphRequired,
       serving_entities: {
         source_available: servingEntitiesPlan.sourceAvailable,
         reconciliation_required: servingEntitiesPlan.required,
@@ -481,9 +590,10 @@ async function main() {
       codingBridge = await materializeHistoricalCodingBridge(analysis.id);
     }
 
-    const servingEntities = servingEntitiesPlan.sourceAvailable
+    const servingEntities = servingEntitiesPlan.required
       ? await materializeHistoricalServingEntities(pool, analysis.id, servingEntitiesPlan)
       : null;
+    const artifactGraph = await materializeHistoricalArtifactGraph(pool, analysis.id);
 
     const readinessAfterBridge = await getSignalServingReadiness({
       analysisId: analysis.id,
@@ -546,6 +656,11 @@ async function main() {
       opportunities: readiness.counts.opportunities,
       actions: readiness.counts.actions
     }, "Post-reference");
+    const artifactSnapshot = await persistPublishedAnalysisArtifacts({
+      outputId: output.id,
+      corpusId: output.studyCorpusId,
+      analysisId: analysis.id
+    });
 
     const verifiedAt = new Date();
     const manifest = attachSignalServingContract({
@@ -572,6 +687,12 @@ async function main() {
           unmatched_finding_ids: servingEntities.unmatchedFindingIds
         }
       } : {}),
+      analysis_artifacts: {
+        contract_version: artifactSnapshot.contractVersion,
+        linked_artifacts: artifactSnapshot.linkedArtifacts,
+        rejected_artifacts: artifactSnapshot.rejectedArtifacts,
+        snapshot_role: "approved_revision"
+      },
       relational_verification: {
         status: "verified",
         contract_version: readiness.contractVersion,
@@ -627,6 +748,8 @@ async function main() {
       },
       coding_bridge: codingBridge,
       serving_entities: servingEntities,
+      artifact_graph: artifactGraph,
+      artifact_snapshot: artifactSnapshot,
       preserved: preservationChecks,
       payload_role: "manifest_only"
     }, null, 2));

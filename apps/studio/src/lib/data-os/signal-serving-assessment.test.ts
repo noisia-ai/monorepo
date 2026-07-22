@@ -36,6 +36,13 @@ function readiness(
       tagTerms: 12,
       features: 1_200,
       featureKeys: 8,
+      analysisArtifacts: 34,
+      artifactsWithEvidenceGroups: 34,
+      findingArtifacts: 17,
+      findingArtifactsWithEvidence: 17,
+      artifactRelations: 19,
+      structuredContextArtifacts: 1,
+      structuredContextSources: 4,
       ...overrides
     },
     dataRefs: {
@@ -121,4 +128,27 @@ test("blocks publication when synthesized entities were not persisted canonicall
   assert.equal(assessment.ready, false);
   assert.equal(assessment.hardBlocks.some((issue) => issue.code === "opportunity_persistence_mismatch"), true);
   assert.equal(assessment.hardBlocks.some((issue) => issue.code === "action_persistence_mismatch"), true);
+});
+
+test("blocks publication when the shared artifact graph is absent or incomplete", () => {
+  const missing = assessSignalServingReadiness(readiness({
+    analysisArtifacts: 0,
+    artifactsWithEvidenceGroups: 0,
+    findingArtifacts: 0,
+    findingArtifactsWithEvidence: 0,
+    artifactRelations: 0,
+    structuredContextArtifacts: 0,
+    structuredContextSources: 0
+  }));
+  const incomplete = assessSignalServingReadiness(readiness({
+    artifactsWithEvidenceGroups: 33,
+    findingArtifactsWithEvidence: 16
+  }));
+
+  assert.equal(missing.ready, false);
+  assert.equal(missing.hardBlocks.some((issue) => issue.code === "analysis_artifacts_missing"), true);
+  assert.equal(missing.hardBlocks.some((issue) => issue.code === "finding_artifact_mismatch"), true);
+  assert.equal(incomplete.ready, false);
+  assert.equal(incomplete.hardBlocks.some((issue) => issue.code === "analysis_artifact_groups_incomplete"), true);
+  assert.equal(incomplete.hardBlocks.some((issue) => issue.code === "finding_artifact_evidence_incomplete"), true);
 });

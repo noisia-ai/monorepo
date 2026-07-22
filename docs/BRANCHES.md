@@ -1,6 +1,6 @@
 # Noisia Branch State
 
-> Current as of 2026-07-20. This is branch context for production-bound agent work;
+> Current as of 2026-07-21. This is branch context for production-bound agent work;
 > verify with `git branch -vv --all` before making release decisions.
 
 ## Production Branch
@@ -39,8 +39,9 @@
 - Base: `codex/signal-pulse`.
 - Fork point: `e329136` (`Add Signal Pulse source health context`), the tip of
   `codex/signal-pulse` when Data OS Cut 1 work began.
-- Current checkpoint: `74bf11a` (`Checkpoint Data OS Cut 1 implementation`), pushed to
-  `origin/codex/noisia-data-os-cut-1-wip` as a recovery point.
+- Previous recovery checkpoint: `48ef71d` (`Implement T&B relational serving layer`).
+  Subsequent focused commits add the Analysis Artifact Graph; use `git log` to resolve
+  the exact remote tip instead of treating this document as a branch pointer.
 - Status: active WIP. The checkpoint is locally validated but does not claim feature
   completion, staging readiness or production readiness. No PR is open.
 
@@ -56,6 +57,9 @@ Cut 1 adds:
 - a shared T&B Analysis Serving Layer for Review and Signal, with canonical strategic
   opportunities, Action Studio, immutable published revisions and guarded historical
   reconciliation;
+- an additive `analysis-artifacts-v1` registry and evidence graph connecting typed
+  analytical units, mention citations, contextual Study assets, editorial state and
+  the exact artifact revisions frozen into a published output;
 - feature-flagged `/api/data-os/*` serving APIs;
 - local/staging gates: `data-os:verify`, `data-os:candidates`,
   `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence`;

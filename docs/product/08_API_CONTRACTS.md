@@ -645,6 +645,38 @@ endpoint de overview hasta ejecutar reconciliacion. El payload publicado se cons
 como fallback de compatibilidad; publicar de nuevo sobre la misma fila ya publicada
 responde `409 published_output_immutable`.
 
+### Analysis Artifact Graph v1
+
+Review y Signal comparten el contrato interno `analysis-artifacts-v1`:
+
+```json
+{
+  "contract_version": "analysis-artifacts-v1",
+  "analysis_id": "uuid",
+  "corpus_id": "uuid",
+  "output_id": "uuid-or-null",
+  "artifacts": [],
+  "evidence_groups": [],
+  "evidence_links": [],
+  "relations": []
+}
+```
+
+Cada artefacto tiene `artifact_key`, `artifact_type`, `review_status`, `revision` y
+contenido propio. Los links de evidencia usan `source_type` + `source_id`; las
+relaciones usan IDs de artefacto. Al leer con `output_id`, solo se incluyen filas
+presentes en `published_output_artifacts` con el mismo `artifact_revision`.
+
+El contrato distingue evidencia directa de contexto disponible. Menciones citadas por
+findings son `supports`; archivos estructurados consumidos de forma general son
+`available_as_context` y declaran `claim_specific=false`. No se permite convertir esa
+disponibilidad en soporte de una afirmacion concreta sin una referencia devuelta por el
+pipeline.
+
+Readiness bloquea aprobacion/publicacion cuando falta el registro de artefactos, un
+artefacto no tiene grupo declarado, los findings no coinciden con sus artefactos o sus
+menciones verificables no estan dentro del snapshot.
+
 ### `GET /api/data-os/corpora/:id/sources`
 
 Inventario de fuentes operativas ligadas al corpus, con último sync conocido.

@@ -1233,6 +1233,12 @@ Tablas:
 - `tb_opportunity_findings`
 - `tb_action_studio`
 - `tb_action_findings`
+- `analysis_artifacts`
+- `analysis_evidence_groups`
+- `analysis_evidence_links`
+- `analysis_artifact_relations`
+- `analysis_artifact_review_events`
+- `published_output_artifacts`
 
 Reglas:
 
@@ -1256,6 +1262,21 @@ Reglas:
   Para cambiar contenido se crea una nueva revision del analisis; el backfill
   controlado solo puede agregar refs/manifiesto preservando payload, status, version y
   `published_at`.
+- `analysis_artifacts` registra unidades direccionables y tipadas sin reemplazar las
+  tablas de dominio. Su `content` flexible pertenece a una fila/version concreta; no es
+  un payload monolitico de reporte.
+- `analysis_evidence_groups` y `analysis_evidence_links` separan evidencia protagonista,
+  de soporte, contraria, contextual, denominador y limitaciones. Un link apunta a una
+  fuente gobernada por `source_type` + `source_id`.
+- `analysis_artifact_relations` conecta oportunidades, acciones, insights, señales
+  futuras, lectura de mercado y deep dives con los findings que los soportan.
+- Los assets estructurados disponibles para Claude se conectan al artefacto
+  `analysis_context` con `claim_specific=false`. No se ligan a un finding concreto hasta
+  que el pipeline devuelva una referencia explicita a `data_observation` o
+  `data_asset_record`.
+- `analysis_artifact_review_events` conserva decisiones editoriales y
+  `published_output_artifacts` congela el `artifact_revision` exacto consumido por
+  Signal. Solo estados `accepted`, `corrected` o `limited` son publicables.
 
 ### 16.6 Serving y rollout
 

@@ -6,6 +6,7 @@ import { canApproveAnalysis } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { db } from "@/lib/db";
+import { approveTbAnalysisWithArtifacts } from "@/lib/data-os/analysis-artifact-graph";
 import {
   assessSignalServingReadiness,
   getSignalServingReadiness,
@@ -114,18 +115,27 @@ export async function POST(
       })
     : currentAnalysis.limitations;
 
-  const [updated] = await db
-    .update(tbAnalyses)
-    .set({
-      status: "approved_by_im",
-      currentStep: "done",
-      limitations: approvalLimitations,
-      approvedByImUserId: session.appUser.id,
-      imApprovedAt: new Date(),
-      updatedAt: new Date()
-    })
-    .where(and(eq(tbAnalyses.id, analysisId), eq(tbAnalyses.studyCorpusId, corpus.id)))
-    .returning({ id: tbAnalyses.id, status: tbAnalyses.status });
+  let updated: { id: string; status: string } | null;
+  try {
+    updated = await approveTbAnalysisWithArtifacts({
+      corpusId: corpus.id,
+      analysisId,
+      reviewerUserId: session.appUser.id,
+      limitations: approvalLimitations
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "analysis_artifact_approval_failed";
+    if (detail === "analysis_artifact_graph_missing" || detail === "analysis_artifact_review_state_conflict") {
+      return Response.json(
+        {
+          error: detail,
+          message: "La sintesis no se puede aprobar porque su capa de artefactos requiere materializacion o revision."
+        },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
 
   if (!updated) {
     return Response.json({ error: "not_found", message: "Analysis not found." }, { status: 404 });

@@ -34,6 +34,13 @@ export async function getSignalServingReadiness(args: {
     tag_terms: number;
     features: number;
     feature_keys: number;
+    analysis_artifacts: number;
+    artifacts_with_evidence_groups: number;
+    finding_artifacts: number;
+    finding_artifacts_with_evidence: number;
+    artifact_relations: number;
+    structured_context_artifacts: number;
+    structured_context_sources: number;
   }>(
     `
       SELECT
@@ -157,7 +164,63 @@ export async function getSignalServingReadiness(args: {
            AND snapshot_mention.mention_id = feature.subject_id
           WHERE feature.tb_analysis_id = $2::uuid
             AND feature.subject_type = 'mention'
-        ) AS feature_keys
+        ) AS feature_keys,
+        (
+          SELECT COUNT(*)::int
+          FROM analysis_artifacts artifact
+          WHERE artifact.tb_analysis_id = $2::uuid
+        ) AS analysis_artifacts,
+        (
+          SELECT COUNT(DISTINCT artifact.id)::int
+          FROM analysis_artifacts artifact
+          INNER JOIN analysis_evidence_groups evidence_group
+            ON evidence_group.artifact_id = artifact.id
+          WHERE artifact.tb_analysis_id = $2::uuid
+        ) AS artifacts_with_evidence_groups,
+        (
+          SELECT COUNT(*)::int
+          FROM analysis_artifacts artifact
+          WHERE artifact.tb_analysis_id = $2::uuid
+            AND artifact.artifact_type = 'finding'
+        ) AS finding_artifacts,
+        (
+          SELECT COUNT(DISTINCT artifact.id)::int
+          FROM analysis_artifacts artifact
+          INNER JOIN analysis_evidence_groups evidence_group
+            ON evidence_group.artifact_id = artifact.id
+          INNER JOIN analysis_evidence_links evidence_link
+            ON evidence_link.evidence_group_id = evidence_group.id
+           AND evidence_link.source_type = 'mention'
+          INNER JOIN corpus_snapshot_mentions snapshot_mention
+            ON snapshot_mention.snapshot_id = $1::uuid
+           AND snapshot_mention.mention_id = evidence_link.source_id
+          WHERE artifact.tb_analysis_id = $2::uuid
+            AND artifact.artifact_type = 'finding'
+        ) AS finding_artifacts_with_evidence,
+        (
+          SELECT COUNT(*)::int
+          FROM analysis_artifact_relations relation
+          INNER JOIN analysis_artifacts artifact
+            ON artifact.id = relation.source_artifact_id
+          WHERE artifact.tb_analysis_id = $2::uuid
+        ) AS artifact_relations,
+        (
+          SELECT COUNT(*)::int
+          FROM analysis_artifacts artifact
+          WHERE artifact.tb_analysis_id = $2::uuid
+            AND artifact.artifact_type = 'analysis_context'
+        ) AS structured_context_artifacts,
+        (
+          SELECT COUNT(*)::int
+          FROM analysis_evidence_links evidence_link
+          INNER JOIN analysis_evidence_groups evidence_group
+            ON evidence_group.id = evidence_link.evidence_group_id
+          INNER JOIN analysis_artifacts artifact
+            ON artifact.id = evidence_group.artifact_id
+          WHERE artifact.tb_analysis_id = $2::uuid
+            AND artifact.artifact_type = 'analysis_context'
+            AND evidence_link.source_type = 'data_asset'
+        ) AS structured_context_sources
     `,
     [args.snapshotId, args.analysisId]
   );
@@ -192,7 +255,14 @@ export async function getSignalServingReadiness(args: {
       tags: row?.tags ?? 0,
       tagTerms: row?.tag_terms ?? 0,
       features: row?.features ?? 0,
-      featureKeys: row?.feature_keys ?? 0
+      featureKeys: row?.feature_keys ?? 0,
+      analysisArtifacts: row?.analysis_artifacts ?? 0,
+      artifactsWithEvidenceGroups: row?.artifacts_with_evidence_groups ?? 0,
+      findingArtifacts: row?.finding_artifacts ?? 0,
+      findingArtifactsWithEvidence: row?.finding_artifacts_with_evidence ?? 0,
+      artifactRelations: row?.artifact_relations ?? 0,
+      structuredContextArtifacts: row?.structured_context_artifacts ?? 0,
+      structuredContextSources: row?.structured_context_sources ?? 0
     },
     dataRefs: {
       required: REQUIRED_SIGNAL_DATA_REF_KEYS,

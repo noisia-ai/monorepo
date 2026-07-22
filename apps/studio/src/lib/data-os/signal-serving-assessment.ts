@@ -20,6 +20,13 @@ export type SignalServingReadiness = {
     tagTerms: number;
     features: number;
     featureKeys: number;
+    analysisArtifacts: number;
+    artifactsWithEvidenceGroups: number;
+    findingArtifacts: number;
+    findingArtifactsWithEvidence: number;
+    artifactRelations: number;
+    structuredContextArtifacts: number;
+    structuredContextSources: number;
   };
   dataRefs: {
     required: readonly RequiredSignalDataRefKey[];
@@ -94,6 +101,39 @@ export function assessSignalServingReadiness(
       code: "action_evidence_incomplete",
       message: "Hay acciones sin findings verificables dentro del snapshot aprobado.",
       detail: `${counts.actionsWithEvidence}/${counts.actions} acciones con evidencia`
+    });
+  }
+  if (counts.analysisArtifacts === 0) {
+    hardBlocks.push({
+      code: "analysis_artifacts_missing",
+      message: "La sintesis no tiene artefactos analiticos direccionables para Review y Signal."
+    });
+  }
+  if (
+    counts.analysisArtifacts > 0
+    && counts.artifactsWithEvidenceGroups < counts.analysisArtifacts
+  ) {
+    hardBlocks.push({
+      code: "analysis_artifact_groups_incomplete",
+      message: "Hay artefactos analiticos sin un grupo de evidencia o contexto declarado.",
+      detail: `${counts.artifactsWithEvidenceGroups}/${counts.analysisArtifacts} artefactos con grupo`
+    });
+  }
+  if (counts.findingArtifacts !== counts.findings) {
+    hardBlocks.push({
+      code: "finding_artifact_mismatch",
+      message: "Los findings no coinciden con el registro canonico de artefactos.",
+      detail: `${counts.findingArtifacts}/${counts.findings} findings materializados`
+    });
+  }
+  if (
+    counts.findingArtifacts > 0
+    && counts.findingArtifactsWithEvidence < counts.findingArtifacts
+  ) {
+    hardBlocks.push({
+      code: "finding_artifact_evidence_incomplete",
+      message: "Hay artefactos de finding sin menciones verificables dentro del snapshot.",
+      detail: `${counts.findingArtifactsWithEvidence}/${counts.findingArtifacts} artefactos con evidencia`
     });
   }
   if (counts.tags === 0 && counts.features === 0) {

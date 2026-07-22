@@ -19,7 +19,8 @@ const REQUIRED_MIGRATIONS = [
   "0042_data_os_static_catalog_semantics",
   "0043_data_os_asset_records_metric_catalog",
   "0044_query_pack_entity_identity",
-  "0045_signal_serving_entities"
+  "0045_signal_serving_entities",
+  "0046_analysis_artifact_evidence_graph"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -68,7 +69,13 @@ const REQUIRED_TABLES = [
   "tb_strategic_opportunities",
   "tb_opportunity_findings",
   "tb_action_studio",
-  "tb_action_findings"
+  "tb_action_findings",
+  "analysis_artifacts",
+  "analysis_evidence_groups",
+  "analysis_evidence_links",
+  "analysis_artifact_relations",
+  "analysis_artifact_review_events",
+  "published_output_artifacts"
 ];
 
 const REQUIRED_ROUTES = [
@@ -99,6 +106,7 @@ const REQUIRED_CONTRACT_FILES = [
   "scripts/data-os-staging-shadow.sh",
   "docs/AGENT_GUARDRAILS.md",
   "docs/adr/007-noisia-data-os-cut-1.md",
+  "docs/adr/008-analysis-artifact-evidence-graph.md",
   "docs/BRANCHES.md",
   "docs/product/04_DATABASE_SCHEMA.md",
   "docs/product/06_TECHNICAL_DECISIONS.md",
@@ -123,6 +131,7 @@ const REQUIRED_CONTRACT_FILES = [
   "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/signal-output/route.ts",
   "apps/studio/src/app/pulse/[outputId]/page.tsx",
   "apps/studio/src/lib/data-os/published-signal-overview.ts",
+  "apps/studio/src/lib/data-os/analysis-artifact-graph.ts",
   "apps/studio/src/lib/data-os/signal-serving.ts",
   "apps/studio/src/lib/signal/semantics.ts",
   "apps/studio/src/app/api/data-os/_lib/load.ts",
@@ -144,6 +153,7 @@ const REQUIRED_CONTRACT_FILES = [
   "services/workers/src/workers/data-os-shadow.ts",
   "services/workers/src/workers/data-os-shadow.test.ts",
   "services/workers/src/workers/tb-signal-serving-persistence.ts",
+  "services/workers/src/workers/tb-analysis-artifact-persistence.ts",
   "services/workers/src/workers/tb-step-6-synthesis.ts"
 ];
 
@@ -457,6 +467,10 @@ async function verifyImplementationContracts(repoRoot: string) {
     join(repoRoot, "apps", "studio", "src", "lib", "data-os", "published-signal-overview.ts"),
     "utf8"
   );
+  const analysisArtifactGraph = await readFile(
+    join(repoRoot, "apps", "studio", "src", "lib", "data-os", "analysis-artifact-graph.ts"),
+    "utf8"
+  );
   const signalReadiness = await readFile(
     join(repoRoot, "apps", "studio", "src", "lib", "data-os", "signal-serving.ts"),
     "utf8"
@@ -486,6 +500,10 @@ async function verifyImplementationContracts(repoRoot: string) {
   const dataOsWorkerTest = await readFile(join(repoRoot, "services", "workers", "src", "workers", "data-os-shadow.test.ts"), "utf8");
   const tbSignalPersistence = await readFile(
     join(repoRoot, "services", "workers", "src", "workers", "tb-signal-serving-persistence.ts"),
+    "utf8"
+  );
+  const tbArtifactPersistence = await readFile(
+    join(repoRoot, "services", "workers", "src", "workers", "tb-analysis-artifact-persistence.ts"),
     "utf8"
   );
   const tbStep6 = await readFile(
@@ -621,6 +639,24 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!tbStep6.includes("FOR UPDATE") || !tbStep6.includes("assertTbAnalysisAcceptsSynthesisWrite")) {
     missing.push("Step 6 approved analysis immutability guard");
   }
+  if (!tbStep6.includes("replaceTbAnalysisArtifactGraph")) {
+    missing.push("Step 6 shared artifact graph persistence");
+  }
+  if (!tbArtifactPersistence.includes("INSERT INTO analysis_artifacts")) {
+    missing.push("analysis artifact registry persistence");
+  }
+  if (!tbArtifactPersistence.includes("INSERT INTO analysis_evidence_links")) {
+    missing.push("analysis evidence link persistence");
+  }
+  if (!tbArtifactPersistence.includes("'claim_specific', false")) {
+    missing.push("structured context claim-specific boundary");
+  }
+  if (!analysisArtifactGraph.includes("published_output_artifacts")) {
+    missing.push("published output artifact snapshot contract");
+  }
+  if (!signalPublishRoute.includes("persistPublishedAnalysisArtifacts")) {
+    missing.push("published Signal artifact snapshot persistence");
+  }
   if (!signalPublishRoute.includes("published_output_immutable") || !signalPublishRoute.includes("setWhere")) {
     missing.push("published Signal immutable write guard");
   }
@@ -635,6 +671,9 @@ async function verifyImplementationContracts(repoRoot: string) {
   }
   if (!schemaDoc.includes("tb_strategic_opportunities") || !schemaDoc.includes("tb_action_studio")) {
     missing.push("database schema Signal serving entities");
+  }
+  if (!schemaDoc.includes("analysis_artifacts") || !schemaDoc.includes("analysis_evidence_links")) {
+    missing.push("database schema analysis artifact graph");
   }
   if (!handoff.includes("signal:backfill-serving")) missing.push("staging handoff Signal serving backfill command");
   if (!gitignore.match(/^\.data$/m)) missing.push("gitignore local evidence data directory");

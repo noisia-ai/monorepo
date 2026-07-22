@@ -22,6 +22,7 @@ Branch-local canon:
 - Data OS operator handoff: `docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md`.
 - Data OS completion audit: `docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
+- Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
 - Branch status: `docs/BRANCHES.md`.
 - Production guardrails: `docs/AGENT_GUARDRAILS.md`.
 - Schema canon: `docs/product/04_DATABASE_SCHEMA.md`, section "Data OS Cut 1".

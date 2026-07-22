@@ -114,6 +114,12 @@ async function verifySchema(client: pg.Client) {
     "record_tags",
     "record_feature_values",
     "lineage_edges",
+    "analysis_artifacts",
+    "analysis_evidence_groups",
+    "analysis_evidence_links",
+    "analysis_artifact_relations",
+    "analysis_artifact_review_events",
+    "published_output_artifacts",
     "metric_definitions",
     "semantic_models",
     "metric_materializations",
@@ -144,6 +150,10 @@ async function verifySchema(client: pg.Client) {
     "idx_intelligence_entities_scope",
     "idx_record_tags_subject",
     "idx_lineage_edges_source",
+    "idx_analysis_artifacts_corpus_type",
+    "idx_analysis_evidence_links_source",
+    "idx_analysis_artifact_relations_source",
+    "idx_published_output_artifacts_output",
     "idx_metric_materializations_lookup",
     "idx_dashboard_data_refs_corpus"
   ];

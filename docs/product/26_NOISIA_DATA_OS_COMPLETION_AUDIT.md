@@ -35,6 +35,7 @@ preparacion productiva.
 | Calidad y lineage | `data_quality_results`, `lineage_edges`, zero failed quality | Implementado local; requiere staging evidence |
 | APIs de serving | `/api/data-os/*`, `data-os:serving-smoke`, fallback checks | Build local verde; requiere remote serving smoke |
 | Analysis Serving Layer T&B | migracion `0045`, persistencia transaccional Step 6, refs `signal-serving-v2`, Review/Signal/deck compartidos | Implementado local; requiere backfill y smoke sobre output staging |
+| Analysis Artifact Graph | migracion `0046`, `analysis-artifacts-v1`, evidencia, relaciones, review y snapshot publicado | Implementado local; requiere aplicar schema, backfill y smoke sobre output staging |
 | Shadow mode seguro | `NOISIA_DATA_OS_SHADOW_MODE=true`, live render false, fallback payload | Implementado; requiere staging release gate |
 | Review humano antes de cliente | `review-queue.json`, `review-sample.json`, review events de tag/assertion | Flujo implementado; requiere IDs revisados en staging |
 | Produccion por PR | PR template, CODEOWNERS, `release-gate.json` | Implementado; PR pendiente |
@@ -83,13 +84,34 @@ los consumidores T&B. El alcance local incluye:
 Este avance sigue siendo WIP hasta correr todos los gates locales del estado final y un
 backfill/shadow real en staging o preview. No constituye evidencia productiva.
 
+## Continuacion Analysis Artifact Graph (2026-07-21)
+
+La migracion `0046` agrega el contrato `analysis-artifacts-v1` para que Review y Signal
+compartan unidades analiticas direccionables, grupos de evidencia, links a fuentes,
+relaciones entre artefactos, eventos editoriales y el snapshot exacto de publicacion.
+
+Step 6 reconstruye el graph dentro de su transaccion y proyecta menciones, entidades de
+dominio y relaciones hacia `lineage_edges`. Los assets de Study se registran como
+contexto consumido con `claim_specific=false`; la trazabilidad fila/observacion a un
+finding sigue pendiente hasta que el contrato de sintesis devuelva IDs explicitos.
+
+La aprobacion global T&B acepta los artefactos de la revision y publicar Signal crea
+`published_output_artifacts`. Readiness falla cerrado si el graph falta o si los
+artefactos de finding no conservan evidencia dentro del snapshot. El backfill protegido
+materializa y congela el graph para outputs historicos sin cambiar payload, status,
+version ni `published_at`.
+
+Este bloque es implementacion local. Requiere nuevamente typecheck, lint, tests, build,
+`data-os:verify` y evidencia real de backfill/shadow en staging antes de cualquier claim
+de completitud.
+
 Validaciones locales de esta continuacion:
 
 - monorepo typecheck: 11/11 paquetes verdes;
 - monorepo lint: cero errores y 10 warnings preexistentes del deck estatico;
-- monorepo test: 16/16 tareas verdes; DB 41, Studio 224 y Workers 116 pruebas;
+- monorepo test: todas las tareas verdes; DB 42, Studio 225 y Workers 118 pruebas;
 - build de produccion de Studio: verde;
-- `data-os:verify`: 11 migraciones, 44 tablas y 57 contratos verificados;
+- `data-os:verify`: 12 migraciones, 50 tablas y 60 contratos verificados;
 - `data-os:staging-check`: detenido correctamente por ausencia de `DATABASE_URL`,
   target remoto, corpus/output UUIDs y aprobacion explicita del shadow.
 

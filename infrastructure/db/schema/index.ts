@@ -1691,6 +1691,215 @@ export const publishedOutputs = pgTable(
   ]
 );
 
+/**
+ * Methodology-neutral registry for independently addressable analysis output.
+ * Domain tables (for example tb_findings) keep their typed columns; this layer
+ * gives Review, Signal and lineage one stable artifact contract.
+ */
+export const analysisArtifacts = pgTable(
+  "analysis_artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    engineAnalysisId: uuid("engine_analysis_id").references(() => engineAnalyses.id, { onDelete: "cascade" }),
+    artifactKey: text("artifact_key").notNull(),
+    artifactType: text("artifact_type").notNull(),
+    sourceEntityType: text("source_entity_type"),
+    sourceEntityId: uuid("source_entity_id"),
+    title: text("title"),
+    summary: text("summary"),
+    content: jsonb("content").notNull().default(sql`'{}'::jsonb`),
+    confidence: text("confidence"),
+    reviewStatus: text("review_status").notNull().default("draft"),
+    revision: integer("revision").notNull().default(1),
+    position: integer("position").notNull().default(0),
+    supersedesArtifactId: uuid("supersedes_artifact_id").references(
+      (): AnyPgColumn => analysisArtifacts.id,
+      { onDelete: "set null" }
+    ),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check(
+      "analysis_artifacts_exactly_one_analysis",
+      sql`((${table.tbAnalysisId} IS NOT NULL)::int + (${table.engineAnalysisId} IS NOT NULL)::int) = 1`
+    ),
+    check(
+      "analysis_artifacts_source_pair",
+      sql`(${table.sourceEntityType} IS NULL AND ${table.sourceEntityId} IS NULL)
+        OR (${table.sourceEntityType} IS NOT NULL AND ${table.sourceEntityId} IS NOT NULL)`
+    ),
+    check(
+      "analysis_artifacts_review_status",
+      sql`${table.reviewStatus} IN ('draft', 'needs_review', 'accepted', 'corrected', 'rejected', 'limited')`
+    ),
+    check("analysis_artifacts_revision_positive", sql`${table.revision} >= 1`),
+    uniqueIndex("uq_analysis_artifacts_tb_key_revision")
+      .on(table.tbAnalysisId, table.artifactKey, table.revision)
+      .where(sql`${table.tbAnalysisId} IS NOT NULL`),
+    uniqueIndex("uq_analysis_artifacts_engine_key_revision")
+      .on(table.engineAnalysisId, table.artifactKey, table.revision)
+      .where(sql`${table.engineAnalysisId} IS NOT NULL`),
+    uniqueIndex("uq_analysis_artifacts_source_revision")
+      .on(table.sourceEntityType, table.sourceEntityId, table.revision)
+      .where(sql`${table.sourceEntityType} IS NOT NULL AND ${table.sourceEntityId} IS NOT NULL`),
+    index("idx_analysis_artifacts_corpus_type").on(
+      table.studyCorpusId,
+      table.artifactType,
+      table.reviewStatus,
+      table.position
+    ),
+    index("idx_analysis_artifacts_tb").on(table.tbAnalysisId, table.artifactType, table.position),
+    index("idx_analysis_artifacts_engine").on(table.engineAnalysisId, table.artifactType, table.position)
+  ]
+);
+
+export const analysisEvidenceGroups = pgTable(
+  "analysis_evidence_groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artifactId: uuid("artifact_id")
+      .notNull()
+      .references(() => analysisArtifacts.id, { onDelete: "cascade" }),
+    groupKey: text("group_key").notNull(),
+    role: text("role").notNull().default("supporting"),
+    label: text("label"),
+    summary: text("summary"),
+    position: integer("position").notNull().default(0),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check(
+      "analysis_evidence_groups_role",
+      sql`${table.role} IN ('supporting', 'protagonist', 'counter', 'contextual', 'denominator', 'limitation')`
+    ),
+    unique("uq_analysis_evidence_groups_artifact_key").on(table.artifactId, table.groupKey),
+    index("idx_analysis_evidence_groups_artifact").on(table.artifactId, table.role, table.position)
+  ]
+);
+
+export const analysisEvidenceLinks = pgTable(
+  "analysis_evidence_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    evidenceGroupId: uuid("evidence_group_id")
+      .notNull()
+      .references(() => analysisEvidenceGroups.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    relationType: text("relation_type").notNull().default("supports"),
+    evidenceRole: text("evidence_role").notNull().default("supporting"),
+    quote: text("quote"),
+    locator: jsonb("locator").notNull().default(sql`'{}'::jsonb`),
+    confidence: text("confidence"),
+    weight: numeric("weight", { precision: 5, scale: 4 }),
+    position: integer("position").notNull().default(0),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    check(
+      "analysis_evidence_links_weight_range",
+      sql`${table.weight} IS NULL OR (${table.weight} >= 0 AND ${table.weight} <= 1)`
+    ),
+    unique("uq_analysis_evidence_links_source").on(
+      table.evidenceGroupId,
+      table.sourceType,
+      table.sourceId,
+      table.relationType
+    ),
+    index("idx_analysis_evidence_links_group").on(table.evidenceGroupId, table.position),
+    index("idx_analysis_evidence_links_source").on(table.sourceType, table.sourceId)
+  ]
+);
+
+export const analysisArtifactRelations = pgTable(
+  "analysis_artifact_relations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => analysisArtifacts.id, { onDelete: "cascade" }),
+    targetArtifactId: uuid("target_artifact_id")
+      .notNull()
+      .references(() => analysisArtifacts.id, { onDelete: "cascade" }),
+    relationType: text("relation_type").notNull(),
+    position: integer("position").notNull().default(0),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    check("analysis_artifact_relations_no_self", sql`${table.sourceArtifactId} <> ${table.targetArtifactId}`),
+    unique("uq_analysis_artifact_relations_pair").on(
+      table.sourceArtifactId,
+      table.targetArtifactId,
+      table.relationType
+    ),
+    index("idx_analysis_artifact_relations_source").on(
+      table.sourceArtifactId,
+      table.relationType,
+      table.position
+    ),
+    index("idx_analysis_artifact_relations_target").on(table.targetArtifactId, table.relationType)
+  ]
+);
+
+export const analysisArtifactReviewEvents = pgTable(
+  "analysis_artifact_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artifactId: uuid("artifact_id")
+      .notNull()
+      .references(() => analysisArtifacts.id, { onDelete: "cascade" }),
+    reviewerUserId: uuid("reviewer_user_id").references(() => users.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    previousStatus: text("previous_status"),
+    nextStatus: text("next_status").notNull(),
+    patch: jsonb("patch").notNull().default(sql`'{}'::jsonb`),
+    notes: text("notes"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_analysis_artifact_review_events_artifact").on(table.artifactId, table.createdAt),
+    index("idx_analysis_artifact_review_events_reviewer").on(table.reviewerUserId, table.createdAt)
+  ]
+);
+
+export const publishedOutputArtifacts = pgTable(
+  "published_output_artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publishedOutputId: uuid("published_output_id")
+      .notNull()
+      .references(() => publishedOutputs.id, { onDelete: "cascade" }),
+    artifactId: uuid("artifact_id")
+      .notNull()
+      .references(() => analysisArtifacts.id, { onDelete: "cascade" }),
+    artifactRevision: integer("artifact_revision").notNull(),
+    position: integer("position").notNull().default(0),
+    visibility: text("visibility").notNull().default("published"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    check("published_output_artifacts_revision_positive", sql`${table.artifactRevision} >= 1`),
+    unique("uq_published_output_artifacts_pair").on(table.publishedOutputId, table.artifactId),
+    index("idx_published_output_artifacts_output").on(
+      table.publishedOutputId,
+      table.visibility,
+      table.position
+    ),
+    index("idx_published_output_artifacts_artifact").on(table.artifactId)
+  ]
+);
+
 export const dataAssets = pgTable(
   "data_assets",
   {

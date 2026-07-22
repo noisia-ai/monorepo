@@ -22,6 +22,10 @@ import { safeJsonStringifyForPostgres, sanitizeUnicodeForPostgresJson, sanitizeU
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
+  replaceTbAnalysisArtifactGraph,
+  type TbAnalysisArtifactGraphResult
+} from "./tb-analysis-artifact-persistence";
+import {
   assertTbAnalysisAcceptsSynthesisWrite,
   assertTbServingFindingLinksResolved,
   replaceTbSignalServingEntities
@@ -209,6 +213,11 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
         opportunity_finding_links_inserted: persistResult.opportunityFindingLinksInserted,
         action_studio_inserted: persistResult.actionStudioInserted,
         action_finding_links_inserted: persistResult.actionFindingLinksInserted,
+        analysis_artifacts: persistResult.artifactGraph.artifacts,
+        analysis_evidence_groups: persistResult.artifactGraph.evidenceGroups,
+        analysis_evidence_links: persistResult.artifactGraph.evidenceLinks,
+        analysis_artifact_relations: persistResult.artifactGraph.artifactRelations,
+        analysis_artifact_lineage_edges: persistResult.artifactGraph.lineageEdges,
         unmatched_recommendation_ids: persistResult.unmatchedFindingIds,
         humanizer_preview: {
           before: beforeHumanizer.slice(0, 300),
@@ -515,6 +524,7 @@ async function persistSynthesis(args: {
   opportunityFindingLinksInserted: number;
   actionStudioInserted: number;
   actionFindingLinksInserted: number;
+  artifactGraph: TbAnalysisArtifactGraphResult;
   unmatchedFindingIds: string[];
 }> {
   const client = await pool.connect();
@@ -636,6 +646,7 @@ async function persistSynthesis(args: {
       tbAnalysisId: args.tbAnalysisId,
       openSignals: args.openSignals
     });
+    const artifactGraph = await replaceTbAnalysisArtifactGraph(client, args.tbAnalysisId);
 
     await client.query("COMMIT");
     return {
@@ -644,6 +655,7 @@ async function persistSynthesis(args: {
       opportunityFindingLinksInserted: servingEntities.opportunityFindingLinksInserted,
       actionStudioInserted: servingEntities.actionStudioInserted,
       actionFindingLinksInserted: servingEntities.actionFindingLinksInserted,
+      artifactGraph,
       unmatchedFindingIds: Array.from(unmatched).sort()
     };
   } catch (err) {

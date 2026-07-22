@@ -51,7 +51,8 @@ test("live intelligence migrations are journaled in order", async () => {
     { idx: 42, tag: "0042_data_os_static_catalog_semantics" },
     { idx: 43, tag: "0043_data_os_asset_records_metric_catalog" },
     { idx: 44, tag: "0044_query_pack_entity_identity" },
-    { idx: 45, tag: "0045_signal_serving_entities" }
+    { idx: 45, tag: "0045_signal_serving_entities" },
+    { idx: 46, tag: "0046_analysis_artifact_evidence_graph" }
   ];
   const tail = journal.entries
     .slice(-expected.length)
@@ -169,6 +170,23 @@ test("engine and live intelligence migrations include every required table", asy
   assert.match(signalServingEntitiesSql, /CONSTRAINT uq_tb_action_studio_analysis_id UNIQUE/);
   assert.match(signalServingEntitiesSql, /REFERENCES tb_findings\(id\) ON DELETE CASCADE/);
 
+  const analysisArtifactGraphSql = await migration("0046_analysis_artifact_evidence_graph");
+  for (const table of [
+    "analysis_artifacts",
+    "analysis_evidence_groups",
+    "analysis_evidence_links",
+    "analysis_artifact_relations",
+    "analysis_artifact_review_events",
+    "published_output_artifacts"
+  ]) {
+    assert.match(analysisArtifactGraphSql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(analysisArtifactGraphSql, /analysis_artifacts_exactly_one_analysis/);
+  assert.match(analysisArtifactGraphSql, /analysis_artifacts_source_pair/);
+  assert.match(analysisArtifactGraphSql, /analysis_evidence_links_weight_range/);
+  assert.match(analysisArtifactGraphSql, /REFERENCES published_outputs\(id\) ON DELETE CASCADE/);
+  assert.match(analysisArtifactGraphSql, /REFERENCES analysis_artifacts\(id\) ON DELETE CASCADE/);
+
   const validationSql = await migration("0037_engine_validation_separation");
   assert.match(validationSql, /ADD COLUMN IF NOT EXISTS "corpus_revision" integer NOT NULL DEFAULT 1/);
   assert.match(validationSql, /ADD COLUMN IF NOT EXISTS "latest_assessed_revision" integer/);
@@ -187,6 +205,46 @@ test("engine and live intelligence migrations include every required table", asy
   assert.match(validationLineageSql, /ADD COLUMN IF NOT EXISTS "approved_query_validation_run_id" uuid/);
   assert.match(validationLineageSql, /ADD COLUMN IF NOT EXISTS "attempt_kind" text NOT NULL DEFAULT 'refinement'/);
   assert.match(validationLineageSql, /ADD COLUMN IF NOT EXISTS "query_validation_run_id" uuid/);
+});
+
+test("analysis artifacts stay transactional, reviewable and revision-bound at publish", async () => {
+  const repoRoot = resolve(process.cwd(), "../..");
+  const workerPersistence = await readFile(
+    resolve(repoRoot, "services/workers/src/workers/tb-analysis-artifact-persistence.ts"),
+    "utf8"
+  );
+  const step6 = await readFile(
+    resolve(repoRoot, "services/workers/src/workers/tb-step-6-synthesis.ts"),
+    "utf8"
+  );
+  const graph = await readFile(
+    resolve(repoRoot, "apps/studio/src/lib/data-os/analysis-artifact-graph.ts"),
+    "utf8"
+  );
+  const approvalRoute = await readFile(
+    resolve(repoRoot, "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/approve/route.ts"),
+    "utf8"
+  );
+  const publishRoute = await readFile(
+    resolve(repoRoot, "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/signal-output/route.ts"),
+    "utf8"
+  );
+  const backfill = await readFile(
+    resolve(repoRoot, "apps/studio/scripts/backfill-signal-serving.ts"),
+    "utf8"
+  );
+
+  assert.match(step6, /replaceTbAnalysisArtifactGraph\(client, args\.tbAnalysisId\)/);
+  assert.match(step6, /client\.query\("BEGIN"\)/);
+  assert.match(workerPersistence, /JOIN tb_finding_citations citation/);
+  assert.match(workerPersistence, /'claim_specific', false/);
+  assert.match(workerPersistence, /Reviewed analysis artifacts are immutable/);
+  assert.match(graph, /artifact_revision = artifact\.revision/);
+  assert.match(graph, /review_status IN \('accepted', 'corrected', 'limited'\)/);
+  assert.match(approvalRoute, /approveTbAnalysisWithArtifacts/);
+  assert.match(publishRoute, /persistPublishedAnalysisArtifacts/);
+  assert.match(backfill, /materializeHistoricalArtifactGraph/);
+  assert.match(backfill, /persistPublishedAnalysisArtifacts/);
 });
 
 test("Data OS API routes stay behind shared auth and feature flag loaders", async () => {
