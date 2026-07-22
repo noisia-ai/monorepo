@@ -51,6 +51,7 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 29 | `29_STUDY_TO_DECK_FEATURE.md` | Especificación del flujo de Study a presentación editable |
 | 30 | `30_QUERY_CONSTRUCTION_V2.md` | Compilador gobernado de queries: modos, identidad, ambigüedad, configuración, tags y lineage |
 | 31 | `31_SIGNAL_PRODUCT_NORTH_STAR.md` | North Star de Signal: dashboard casi always-on, interpretaciones Claude y reportes estratégicos en una URL estable |
+| 32 | `32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md` | Roadmap backend de Signal V2 ejecutable por tareas secuenciales con gates y handoffs |
 
 ---
 

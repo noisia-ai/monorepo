@@ -118,6 +118,7 @@ const REQUIRED_CONTRACT_FILES = [
   "docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md",
   "docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md",
   "docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md",
+  "docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md",
   "infrastructure/db/seeds/connection.ts",
   "infrastructure/db/scripts/data-os-analyze.ts",
   "infrastructure/db/scripts/data-os-completion-audit.ts",
@@ -445,6 +446,10 @@ async function verifyImplementationContracts(repoRoot: string) {
     join(repoRoot, "docs", "adr", "009-signal-always-on-strategic-dashboard.md"),
     "utf8"
   );
+  const signalBackendRoadmap = await readFile(
+    join(repoRoot, "docs", "product", "32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md"),
+    "utf8"
+  );
   const connection = await readFile(join(repoRoot, "infrastructure", "db", "seeds", "connection.ts"), "utf8");
   const analyze = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-analyze.ts"), "utf8");
   const backfill = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-backfill.ts"), "utf8");
@@ -543,6 +548,9 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!agents.includes("docs/adr/009-signal-always-on-strategic-dashboard.md")) {
     missing.push("AGENTS Signal architecture ADR pointer");
   }
+  if (!agents.includes("docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md")) {
+    missing.push("AGENTS Signal backend roadmap pointer");
+  }
   if (!signalNorthStar.includes("reportes casi always-on y reportes estratégicos")) {
     missing.push("Signal North Star two-speed product contract");
   }
@@ -557,6 +565,15 @@ async function verifyImplementationContracts(repoRoot: string) {
   }
   if (!signalArchitectureAdr.includes("Claude does not calculate dashboard numbers")) {
     missing.push("Signal ADR deterministic metrics decision");
+  }
+  if (!signalBackendRoadmap.includes("SB-01 · Signal Backend Contract V1")) {
+    missing.push("Signal backend roadmap first task contract");
+  }
+  if (!signalBackendRoadmap.includes("SB-10 · Signal Backend Integration and Front-ready Gate")) {
+    missing.push("Signal backend roadmap front-ready gate");
+  }
+  if (!signalBackendRoadmap.includes("No iniciar el rediseño frontend")) {
+    missing.push("Signal backend roadmap frontend boundary");
   }
   if (!stagingFlightCard.includes("NOISIA_REMOTE_DATABASE_TARGET=staging")) {
     missing.push("staging flight card target placeholder");

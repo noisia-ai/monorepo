@@ -47,6 +47,9 @@
 - Product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`. Signal evolves
   toward one stable client dashboard where almost always-on Social Listening and
   reviewed strategic reports coexist; the current `outputId` surface is transitional.
+- Backend execution: `docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`. Execute
+  SB-01 through SB-10 sequentially; do not begin the Signal V2 frontend before the
+  Backend Ready gate in SB-10.
 
 Cut 1 adds:
 

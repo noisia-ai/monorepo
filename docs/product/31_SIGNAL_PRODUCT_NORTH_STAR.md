@@ -219,6 +219,9 @@ un JSON decorado. “Nivel Shopify” se usa aquí como barra de calidad de prod
 El lenguaje visual, layouts y componentes definitivos se especificarán con el brief de
 Signal V2. Data OS y los contratos de serving deben permitir ese diseño sin dictarlo.
 
+El desarrollo backend previo al rediseño se ejecuta mediante tareas acotadas en
+`32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`.
+
 ## Estado Actual Y Brecha
 
 Ya existen piezas habilitadoras:

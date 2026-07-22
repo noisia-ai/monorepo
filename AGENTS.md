@@ -25,6 +25,7 @@ Branch-local canon:
 - Data OS operator handoff: `docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md`.
 - Data OS completion audit: `docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md`.
 - Signal product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`.
+- Signal backend execution roadmap: `docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
 - Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
 - Signal always-on/strategic architecture ADR: `docs/adr/009-signal-always-on-strategic-dashboard.md`.
