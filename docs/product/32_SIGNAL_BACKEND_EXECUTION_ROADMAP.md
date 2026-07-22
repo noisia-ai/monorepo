@@ -111,7 +111,7 @@ flowchart LR
 
 | ID | Nombre | Prioridad | Tamaño relativo | Dependencias | Estado inicial |
 |---|---|---:|---:|---|---|
-| SB-01 | Signal Backend Contract V1 | P0 | M | North Star | Pendiente |
+| SB-01 | Signal Backend Contract V1 | P0 | M | North Star | Completo (2026-07-21) |
 | SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Pendiente |
 | SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Pendiente |
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Pendiente |
@@ -175,6 +175,20 @@ git diff --check
 
 Studio y workers pueden importar un único contrato y los tests prueban que el alcance de
 una métrica o interpretación es identificable sin depender de orden de query params.
+
+### Estado / Handoff
+
+**Completo, 2026-07-21.** `@noisia/query-engine` exporta `signal-backend-v1` con
+identidad/locator, filtro canónico, hash SHA-256 estable, watermarks, freshness de data e
+interpretación separadas, metric query, series, breakdowns, cursor de drill-down y
+errores tipados. Los contract tests cubren equivalencia semántica, diferencias de scope,
+orden de arrays/query params, aliases, rangos/combinaciones inválidas y consumo desde la
+superficie pública del paquete. No se agregaron migraciones, backfills, SQL, endpoints,
+Claude ni frontend; legacy `outputId` permanece intacto.
+
+**Siguiente tarea habilitada:** SB-02 · Signal Workspace Identity puede partir de este
+contrato para persistence y resolver authZ. SB-02 sigue pendiente y no fue iniciada en
+este cambio.
 
 ### Commit Sugerido
 

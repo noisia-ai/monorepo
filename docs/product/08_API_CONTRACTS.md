@@ -521,6 +521,143 @@ Insights Manager registra qué funcionó/no funcionó en este corpus. Alimenta m
 
 ## 16. Data OS serving endpoints (Cut 1 / shadow)
 
+### Signal backend contract v1
+
+`signal-backend-v1` es el contrato compartido previo a las rutas workspace-centric de
+Signal. Vive en `@noisia/query-engine` y puede ser importado por Studio y workers sin
+depender de `apps/studio`. SB-01 no crea endpoints: las rutas futuras deben usar estos
+tipos y validadores sin reinterpretar filtros, watermarks o estados faltantes.
+
+#### Identidad y locator
+
+El locator siempre incluye `organization_id` y exactamente uno de `workspace_id` o
+`workspace_slug`. La identidad resuelta agrega el sujeto estable (`brand` o `theme`) y
+timezone IANA. El locator no concede acceso; SB-02 implementará persistence y authZ.
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "organization_id": "uuid",
+  "workspace_slug": "laika-mexico"
+}
+```
+
+#### Filtro canónico
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "date_range": { "start": "2026-05-01", "end": "2026-05-31" },
+  "timezone": "America/Mexico_City",
+  "granularity": "day",
+  "dimensions": {
+    "platform": ["instagram", "tiktok"],
+    "sentiment_polarity": ["negative", "positive"]
+  }
+}
+```
+
+Reglas de canonicalización:
+
+- fechas estrictas `YYYY-MM-DD`, rango inclusivo y `start <= end`;
+- timezone validada y resuelta a su identificador IANA canónico;
+- granularidad canónica `day`, `week` o `month`; aliases `daily`, `weekly` y
+  `monthly` son válidos;
+- claves y aliases de dimensión se resuelven antes de validar;
+- valores multiselect usan Unicode NFC, trim, espacios internos colapsados y lowercase;
+- vacíos y duplicados se eliminan; arrays se ordenan por bytes UTF-8;
+- dimensiones se emiten siempre en el orden de `SIGNAL_DIMENSIONS`;
+- una dimensión desconocida responde `unsupported_dimension`, nunca se ignora.
+
+Dimensiones V1, en orden canónico:
+
+`platform`, `source_type`, `entity`, `product`, `campaign`, `topic`, `taxonomy`,
+`signal`, `signal_lifecycle`, `audience`, `demographic`, `journey_stage`, `trigger`,
+`barrier`, `sentiment_polarity`, `emotion`, `country`, `language`, `content_format`.
+
+Aliases aceptados incluyen `platforms → platform`, `source → source_type`,
+`lifecycle → signal_lifecycle`, `sentiment|polarity → sentiment_polarity` y
+`content_type|format → content_format`. Query params aceptan nombres directos o
+`dimension.<key>` / `dimensions.<key>`, valores repetidos y listas separadas por coma.
+El orden de params nunca cambia el filtro normalizado. El serializer canónico emite
+`start`, `end`, `timezone`, `granularity` y después `dimension.<key>` en el orden
+cerrado de dimensiones, repitiendo cada valor ya ordenado.
+
+#### `filters_hash`
+
+El algoritmo V1 es determinístico y no depende del orden de objetos recibido:
+
+1. Validar y normalizar el filtro con las reglas anteriores.
+2. Serializar JSON UTF-8 sin whitespace con claves top-level en este orden:
+   `contract_version`, `date_range`, `timezone`, `granularity`, `dimensions`.
+3. Serializar `date_range` como `start`, `end` y `dimensions` como una lista ordenada
+   de tuplas `[dimension, values]` para no depender del orden de claves JSON.
+4. Calcular SHA-256 sobre esos bytes.
+5. Emitir lowercase como `sha256:<64 hex>`.
+
+Toda request que envíe filtro y hash debe reconciliar ambos. Un mismatch es
+`invalid_filter`. El hash identifica el scope de métricas, interpretaciones y cursores;
+no es una firma de seguridad.
+
+#### Metric query, series y breakdown
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "workspace": {
+    "contract_version": "signal-backend-v1",
+    "organization_id": "uuid",
+    "workspace_id": "uuid"
+  },
+  "metric_key": "conversation.volume",
+  "metric_version": 1,
+  "filter": {},
+  "filters_hash": "sha256:...",
+  "comparison_date_range": { "start": "2026-03-31", "end": "2026-04-30" },
+  "breakdown_dimension": "platform"
+}
+```
+
+El filtro del ejemplo se abrevia; en wire debe ser `SignalFilterV1` completo. Una ventana
+comparativa debe tener el mismo número de días calendario y no traslaparse. Series
+devuelven puntos ordenados y no traslapados; breakdowns rechazan buckets duplicados.
+Cada punto/bucket contiene `value`, `denominator`, `sample_size` y `state`. Un dato
+ausente usa `null` + `not_available`; nunca se convierte silenciosamente en cero.
+
+#### Watermark y freshness
+
+`DataWatermarkV1` identifica `workspace_id`, `corpus_id`, `corpus_revision`, sync runs
+aceptados, `data_through_at`, `accepted_at` y `materialized_at`. Instantes se normalizan
+a UTC ISO-8601, sync IDs se deduplican/ordenan y `materialized_at` no puede preceder a
+`accepted_at`.
+
+`DataFreshnessV1` usa `fresh | stale | partial | not_available` y lleva el watermark
+de datos. `InterpretationFreshnessV1` es independiente, usa
+`fresh | stale | pending | partial | not_available` y queda ligado a `filters_hash`,
+`data_watermark_hash` e `interpretation_watermark_hash`. Data fresca no implica una
+interpretación fresca.
+
+#### Drill-down cursor y errores
+
+El cursor es JSON V1 opaco codificado como base64url. Queda ligado a `metric_key`,
+`filters_hash` y al sort estable `(occurred_at, subject_id)`. Un cursor con versión,
+hash, métrica o forma inválida responde `invalid_filter`; el consumidor debe verificar
+además que métrica/hash coincidan con la request activa.
+
+Formato de error:
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "error": "invalid_filter",
+  "message": "filters_hash does not match the canonical filter.",
+  "details": { "field": "filters_hash" }
+}
+```
+
+Códigos cerrados V1: `invalid_filter`, `unsupported_dimension`, `stale`, `partial` y
+`not_available`.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

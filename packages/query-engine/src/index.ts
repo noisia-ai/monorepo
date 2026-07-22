@@ -35,6 +35,7 @@ export * from "./data-os-capabilities";
 export * from "./tb-data-os-bridge-quality";
 export * from "./data-os-corpus-audit";
 export * from "./data-os-metric-catalog";
+export * from "./signal-backend-v1";
 export * from "./query-pack-evaluation";
 export * from "./listen-query-language";
 export * from "./query-construction";
