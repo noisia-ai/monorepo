@@ -1,0 +1,364 @@
+import type { Job } from "bullmq";
+
+import {
+  buildSignalMetricMaterializationPlanV1,
+  buildSignalPrecomputedFiltersV1,
+  dataWatermarkHashV1,
+  normalizeSignalFilterV1,
+  SIGNAL_METRIC_DEFINITIONS_V1,
+  SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN,
+  signalFiltersHashV1,
+  signalMetricMaterializationKeyV1,
+  splitSignalMaterializationDateRangeV1,
+  validateDataWatermarkV1,
+  type DataWatermarkV1,
+  type SignalFilterV1,
+  type SignalGranularityV1,
+  type SignalMaterializationRowV1,
+  type SignalMaterializeJobDataV1
+} from "@noisia/query-engine";
+
+import { pool } from "../db/client";
+
+type WorkspaceScope = {
+  workspace_id: string;
+  study_corpus_id: string;
+  timezone: string;
+};
+
+type WatermarkRow = {
+  id: string;
+  corpus_revision: number;
+  last_source_sync_run_id: string | null;
+  last_import_batch_id: string | null;
+  max_observed_at: Date | null;
+  accepted_at: Date;
+  data_freshness_state: "fresh" | "stale" | "partial" | "not_available";
+  stale_after: Date | null;
+};
+
+export async function signalMaterializationJob(job: Job<SignalMaterializeJobDataV1>) {
+  const client = await pool.connect();
+  const lockKey = `signal-materialize:${job.data.workspace_id}:${job.data.study_corpus_id}`;
+  let locked = false;
+  try {
+    const lock = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked`,
+      [lockKey]
+    );
+    locked = lock.rows[0]?.locked === true;
+    if (!locked) throw new Error("signal_materialization_lock_unavailable");
+
+    const scopeResult = await client.query<WorkspaceScope>(`
+      SELECT workspace.id::text AS workspace_id,
+        membership.study_corpus_id::text,
+        workspace.timezone
+      FROM signal_workspaces workspace
+      JOIN signal_workspace_corpora membership
+        ON membership.workspace_id = workspace.id
+       AND membership.valid_to IS NULL
+      WHERE workspace.id = $1::uuid
+        AND membership.study_corpus_id = $2::uuid
+        AND membership.role IN ('operational', 'legacy')
+        AND workspace.status = 'active'
+      LIMIT 1
+    `, [job.data.workspace_id, job.data.study_corpus_id]);
+    const scope = scopeResult.rows[0];
+    if (!scope) return { state: "not_available", reason: "workspace_corpus_scope_not_available" };
+
+    const requestedFilter = job.data.trigger === "ad_hoc" ? normalizeSignalFilterV1(job.data.filter) : null;
+    const affectedFrom = requestedFilter?.date_range.start ?? (job.data.trigger === "invalidation" ? job.data.affected_from : null);
+    const affectedThrough = requestedFilter?.date_range.end ?? (job.data.trigger === "invalidation" ? job.data.affected_through : null);
+    const windowResult = await client.query<{ date_from: string | null; date_through: string | null }>(`
+      SELECT
+        COALESCE($3::date, MIN((published_at AT TIME ZONE $2)::date))::text AS date_from,
+        COALESCE($4::date, MAX((published_at AT TIME ZONE $2)::date))::text AS date_through
+      FROM mentions
+      WHERE study_corpus_id = $1::uuid
+        AND inclusion_status = 'included'
+        AND ($3::date IS NULL OR (published_at AT TIME ZONE $2)::date >= $3::date)
+        AND ($4::date IS NULL OR (published_at AT TIME ZONE $2)::date <= $4::date)
+    `, [scope.study_corpus_id, scope.timezone, affectedFrom, affectedThrough]);
+    const window = windowResult.rows[0];
+    if (!window?.date_from || !window.date_through || window.date_from > window.date_through) {
+      return { state: "not_available", reason: "no_included_mentions_in_window" };
+    }
+
+    const watermarkRows = await client.query<WatermarkRow>(`
+      SELECT id::text, corpus_revision, last_source_sync_run_id::text,
+        last_import_batch_id::text, max_observed_at, accepted_at,
+        data_freshness_state, stale_after
+      FROM signal_data_watermarks
+      WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
+      ORDER BY accepted_at DESC, id
+    `, [scope.workspace_id, scope.study_corpus_id]);
+    if (watermarkRows.rows.length === 0) {
+      return { state: "not_available", reason: "data_watermark_not_available" };
+    }
+    const now = new Date();
+    const watermark = combinedWatermark(scope, watermarkRows.rows, now);
+    const watermarkHash = dataWatermarkHashV1(watermark);
+    const latestWatermarkId = watermarkRows.rows[0]?.id as string;
+    const freshness = combinedFreshness(watermarkRows.rows, now);
+    const staleAfter = earliestStaleAfter(watermarkRows.rows) ?? new Date(now.getTime() + 24 * 60 * 60 * 1_000);
+
+    const facetsResult = await client.query<{
+      platforms: string[] | null;
+      source_types: string[] | null;
+      countries: string[] | null;
+      languages: string[] | null;
+    }>(`
+      SELECT
+        (SELECT array_agg(value ORDER BY value) FROM (
+          SELECT DISTINCT lower(COALESCE(resolved_platform, platform)) AS value
+          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included'
+            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          ORDER BY value LIMIT 20
+        ) values) AS platforms,
+        (SELECT array_agg(value ORDER BY value) FROM (
+          SELECT DISTINCT lower(source_system) AS value
+          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included'
+            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          ORDER BY value LIMIT 20
+        ) values) AS source_types,
+        (SELECT array_agg(value ORDER BY value) FROM (
+          SELECT DISTINCT lower(country) AS value
+          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included' AND country IS NOT NULL
+            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          ORDER BY value LIMIT 20
+        ) values) AS countries,
+        (SELECT array_agg(value ORDER BY value) FROM (
+          SELECT DISTINCT lower(language) AS value
+          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included' AND language IS NOT NULL
+            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          ORDER BY value LIMIT 20
+        ) values) AS languages
+    `, [scope.study_corpus_id, scope.timezone, window.date_from, window.date_through]);
+    const facets = facetsResult.rows[0];
+    const dateWindows = requestedFilter
+      ? [requestedFilter.date_range]
+      : splitSignalMaterializationDateRangeV1({ start: window.date_from, end: window.date_through });
+
+    const definitions = await client.query<{ id: string; metric_key: string; version: number }>(`
+      SELECT id::text, metric_key, version
+      FROM metric_definitions
+      WHERE status = 'active' AND (metric_key, version) IN (
+        SELECT metric_key, MAX(version) FROM metric_definitions
+        WHERE metric_group_key IS NOT NULL GROUP BY metric_key
+      )
+    `);
+    const definitionIds = new Map(definitions.rows.map((row) => [`${row.metric_key}@${row.version}`, row.id]));
+    const semanticModel = await client.query<{ id: string }>(`
+      SELECT id::text FROM semantic_models
+      WHERE model_key = 'signal_social_listening_v1' AND status = 'active'
+      LIMIT 1
+    `);
+    const semanticModelId = semanticModel.rows[0]?.id ?? null;
+
+    const cachedFilters = requestedFilter ? [] : (await client.query<{ normalized_filter: SignalFilterV1 }>(`
+      SELECT DISTINCT normalized_filter
+      FROM metric_materializations
+      WHERE workspace_id = $1::uuid
+        AND study_corpus_id = $2::uuid
+        AND materialization_state <> 'pending'
+        AND normalized_filter IS NOT NULL
+        AND ($3::date IS NULL OR period_end >= $3::date)
+        AND ($4::date IS NULL OR period_start <= $4::date)
+        AND (cache_scope <> 'ad_hoc' OR expires_at > now())
+      ORDER BY normalized_filter::text
+      LIMIT $5::int
+    `, [
+      scope.workspace_id,
+      scope.study_corpus_id,
+      affectedFrom,
+      affectedThrough,
+      SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN
+    ])).rows.map((row) => normalizeSignalFilterV1(row.normalized_filter));
+
+    const filtersToMaterialize: SignalFilterV1[] = requestedFilter
+      ? [requestedFilter]
+      : cachedFilters.length > 0
+        ? cachedFilters
+        : dateWindows.flatMap((dateRange) => {
+            const baseFilter: SignalFilterV1 = {
+              contract_version: "signal-backend-v1",
+              date_range: dateRange,
+              timezone: scope.timezone,
+              granularity: "day",
+              dimensions: {}
+            };
+            const filters = buildSignalPrecomputedFiltersV1(baseFilter, {
+              platform: facets?.platforms ?? [],
+              source_type: facets?.source_types ?? [],
+              country: facets?.countries ?? [],
+              language: facets?.languages ?? []
+            });
+            return (["day", "week", "month"] as SignalGranularityV1[])
+              .flatMap((granularity) => filters.map((filter) => ({ ...filter, granularity })));
+          });
+    const uniqueFilters = Array.from(
+      new Map(filtersToMaterialize.map((filter) => [signalFiltersHashV1(filter), filter])).values()
+    ).slice(0, SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN);
+
+    await client.query("BEGIN");
+    let rowsWritten = 0;
+    let plansExecuted = 0;
+    const requestedMetricKeys = new Set(job.data.trigger === "ad_hoc" ? job.data.metric_keys : []);
+    for (const normalizedFilter of uniqueFilters) {
+        const granularity = normalizedFilter.granularity;
+        const requestedDimensions = new Set(Object.keys(normalizedFilter.dimensions));
+        for (const metric of SIGNAL_METRIC_DEFINITIONS_V1) {
+          if (requestedMetricKeys.size > 0 && !requestedMetricKeys.has(metric.key)) continue;
+          if (Array.from(requestedDimensions).some((dimension) => !metric.dimensions.some((item) => item.key === dimension))) {
+            continue;
+          }
+          const definitionId = definitionIds.get(`${metric.key}@${metric.version}`);
+          if (!definitionId) throw new Error(`signal_metric_definition_missing:${metric.key}@${metric.version}`);
+          const plan = buildSignalMetricMaterializationPlanV1({
+            metric_key: metric.key,
+            metric_version: metric.version,
+            filter: normalizedFilter,
+            study_corpus_ids: [scope.study_corpus_id]
+          });
+          const result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
+          plansExecuted += 1;
+          for (const row of result.rows) {
+            const state = effectiveState(row.materialization_state, freshness);
+            const qualityState = state === "partial" ? "partial" : row.quality_state;
+            const materializationKey = signalMetricMaterializationKeyV1({
+              workspace_id: scope.workspace_id,
+              study_corpus_id: scope.study_corpus_id,
+              metric_key: metric.key,
+              metric_version: metric.version,
+              granularity,
+              period_start: row.period_start,
+              period_end: row.period_end,
+              filters_hash: plan.predicate.filters_hash
+            });
+            await client.query(`
+              INSERT INTO metric_materializations (
+                workspace_id, materialization_key, metric_definition_id,
+                metric_key, metric_version, metric_group_key, semantic_model_id,
+                study_corpus_id, granularity, period_start, period_end,
+                normalized_filter, filters_hash, payload, typed_payload,
+                value, denominator, sample_size, quality_state,
+                data_watermark_id, data_watermark, data_watermark_hash,
+                materialization_state, cache_scope, computed_at, stale_after, expires_at
+              ) VALUES (
+                $1::uuid, $2, $3::uuid, $4, $5, $6, $7::uuid, $8::uuid,
+                $9, $10::date, $11::date, $12::jsonb, $13, $14::jsonb, $14::jsonb,
+                $15::numeric, $16::numeric, $17::int, $18,
+                $19::uuid, $20::jsonb, $21, $22, $23, now(), $24::timestamptz,
+                CASE WHEN $23 = 'ad_hoc' THEN now() + interval '15 minutes' ELSE NULL END
+              )
+              ON CONFLICT (materialization_key) WHERE materialization_key IS NOT NULL DO UPDATE SET
+                metric_definition_id = EXCLUDED.metric_definition_id,
+                semantic_model_id = EXCLUDED.semantic_model_id,
+                normalized_filter = EXCLUDED.normalized_filter,
+                filters_hash = EXCLUDED.filters_hash,
+                payload = EXCLUDED.payload,
+                typed_payload = EXCLUDED.typed_payload,
+                value = EXCLUDED.value,
+                denominator = EXCLUDED.denominator,
+                sample_size = EXCLUDED.sample_size,
+                quality_state = EXCLUDED.quality_state,
+                data_watermark_id = EXCLUDED.data_watermark_id,
+                data_watermark = EXCLUDED.data_watermark,
+                data_watermark_hash = EXCLUDED.data_watermark_hash,
+                materialization_state = EXCLUDED.materialization_state,
+                cache_scope = EXCLUDED.cache_scope,
+                computed_at = now(), stale_after = EXCLUDED.stale_after,
+                expires_at = EXCLUDED.expires_at
+            `, [
+              scope.workspace_id,
+              materializationKey,
+              definitionId,
+              metric.key,
+              metric.version,
+              metric.group,
+              semanticModelId,
+              scope.study_corpus_id,
+              granularity,
+              row.period_start,
+              row.period_end,
+              JSON.stringify(plan.predicate.normalized_filter),
+              plan.predicate.filters_hash,
+              JSON.stringify(row.typed_payload),
+              row.value,
+              row.denominator,
+              Number(row.sample_size),
+              qualityState,
+              latestWatermarkId,
+              JSON.stringify(watermark),
+              watermarkHash,
+              state,
+              plan.cache_scope,
+              staleAfter.toISOString()
+            ]);
+            rowsWritten += 1;
+          }
+        }
+    }
+    await client.query(`
+      UPDATE signal_data_watermarks
+      SET materialized_at = $3::timestamptz, updated_at = now()
+      WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
+    `, [scope.workspace_id, scope.study_corpus_id, now.toISOString()]);
+    if (job.data.trigger === "invalidation") {
+      await client.query(`
+        UPDATE signal_data_invalidations
+        SET scope = scope || jsonb_build_object(
+          'materialization_plans_executed', $2::int,
+          'materialization_rows_written', $3::int,
+          'materialization_watermark_hash', $4
+        )
+        WHERE id = $1::uuid
+      `, [job.data.invalidation_id, plansExecuted, rowsWritten, watermarkHash]);
+    }
+    await client.query("COMMIT");
+    return { state: freshness, plans_executed: plansExecuted, rows_written: rowsWritten, watermark_hash: watermarkHash };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    if (locked) await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}
+
+function combinedWatermark(scope: WorkspaceScope, rows: WatermarkRow[], materializedAt: Date): DataWatermarkV1 {
+  const acceptedAt = new Date(Math.max(...rows.map((row) => row.accepted_at.getTime())));
+  const observed = rows.flatMap((row) => row.max_observed_at ? [row.max_observed_at.getTime()] : []);
+  const maxObserved = observed.length ? new Date(Math.min(Math.max(...observed), acceptedAt.getTime())) : null;
+  return validateDataWatermarkV1({
+    contract_version: "signal-backend-v1",
+    workspace_id: scope.workspace_id,
+    corpus_id: scope.study_corpus_id,
+    corpus_revision: Math.max(...rows.map((row) => row.corpus_revision)),
+    source_sync_run_ids: Array.from(new Set(rows.flatMap((row) => [row.last_source_sync_run_id, row.last_import_batch_id]).filter((id): id is string => Boolean(id)))),
+    data_through_at: maxObserved?.toISOString() ?? null,
+    accepted_at: acceptedAt.toISOString(),
+    materialized_at: materializedAt.toISOString()
+  });
+}
+
+function combinedFreshness(rows: WatermarkRow[], now: Date): "fresh" | "stale" | "partial" {
+  if (rows.some((row) => row.data_freshness_state === "stale" || (row.stale_after && row.stale_after <= now))) return "stale";
+  if (rows.some((row) => row.data_freshness_state === "partial" || row.data_freshness_state === "not_available")) return "partial";
+  return "fresh";
+}
+
+function effectiveState(
+  metricState: SignalMaterializationRowV1["materialization_state"],
+  freshness: "fresh" | "stale" | "partial"
+) {
+  if (metricState === "not_available") return metricState;
+  if (freshness === "stale") return "stale" as const;
+  if (freshness === "partial" || metricState === "partial") return "partial" as const;
+  return "fresh" as const;
+}
+
+function earliestStaleAfter(rows: WatermarkRow[]) {
+  const values = rows.flatMap((row) => row.stale_after ? [row.stale_after.getTime()] : []);
+  return values.length ? new Date(Math.min(...values)) : null;
+}

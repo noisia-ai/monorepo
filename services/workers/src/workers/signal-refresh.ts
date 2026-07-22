@@ -3,10 +3,13 @@ import type { Job } from "bullmq";
 import { recordSignalDataAcceptance } from "@noisia/db";
 import {
   SIGNAL_INVALIDATION_JOB_NAME,
+  SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
+  SIGNAL_MATERIALIZE_JOB_NAME,
   SIGNAL_REFRESH_CONTRACT_VERSION,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   buildSignalRefreshRunIdempotencyKeyV1,
   type SignalInvalidationJobDataV1,
+  type SignalMaterializeJobDataV1,
   type SignalRefreshRunJobDataV1,
   type SignalRefreshTickJobDataV1
 } from "@noisia/query-engine";
@@ -271,15 +274,29 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
 
     const materializations = await client.query(`
       UPDATE metric_materializations materialization
-      SET stale_after = LEAST(COALESCE(materialization.stale_after, now()), now())
+      SET stale_after = LEAST(COALESCE(materialization.stale_after, now()), now()),
+          materialization_state = CASE
+            WHEN materialization.workspace_id IS NOT NULL THEN 'stale'
+            ELSE materialization.materialization_state
+          END
       WHERE materialization.study_corpus_id = $1::uuid
         AND (
-          materialization.period_id IS NULL
-          OR EXISTS (
-            SELECT 1 FROM report_periods period
-            WHERE period.id = materialization.period_id
-              AND ($2::date IS NULL OR period.period_end >= $2::date)
-              AND ($3::date IS NULL OR period.period_start <= $3::date)
+          (
+            materialization.workspace_id IS NOT NULL
+            AND ($2::date IS NULL OR materialization.period_end >= $2::date)
+            AND ($3::date IS NULL OR materialization.period_start <= $3::date)
+          )
+          OR (
+            materialization.workspace_id IS NULL
+            AND (
+              materialization.period_id IS NULL
+              OR EXISTS (
+                SELECT 1 FROM report_periods period
+                WHERE period.id = materialization.period_id
+                  AND ($2::date IS NULL OR period.period_end >= $2::date)
+                  AND ($3::date IS NULL OR period.period_start <= $3::date)
+              )
+            )
           )
         )
     `, [invalidation.study_corpus_id, invalidation.affected_from, invalidation.affected_through]);
@@ -293,6 +310,20 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
           OR freshness.data_scope->'source_keys' ? $3
         )
     `, [invalidation.workspace_id, invalidation.study_corpus_id, invalidation.source_key]);
+    const materializationJob: SignalMaterializeJobDataV1 = {
+      contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
+      trigger: "invalidation",
+      workspace_id: invalidation.workspace_id,
+      study_corpus_id: invalidation.study_corpus_id,
+      invalidation_id: invalidation.id,
+      affected_from: invalidation.affected_from,
+      affected_through: invalidation.affected_through
+    };
+    await getSignalRefreshQueue().add(
+      SIGNAL_MATERIALIZE_JOB_NAME,
+      materializationJob,
+      buildSignalRefreshRunOptions(`signal-materialize-${invalidation.id}`)
+    );
     await client.query(`
       UPDATE signal_data_invalidations
       SET status = 'completed', processed_at = now(),

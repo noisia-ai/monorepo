@@ -777,6 +777,54 @@ client-visible.
 Campaign/event impact queda condicionado a cobertura futura; no forma parte del core
 V1. T&B movement pertenece a SB-09. SB-04 no materializa datos ni crea endpoints.
 
+#### Deterministic metric materialization V1 (SB-05)
+
+`@noisia/query-engine` exporta el planner `signal-materialization-v1`. Éste acepta
+únicamente un `SignalFilterV1` normalizado y una lista gobernada de corpora. Tanto el
+agregado como el drill-down reutilizan el mismo predicate SQL parameterizado y su
+fingerprint; no existe un segundo traductor de filtros. El planner rechaza más de 366
+días, más de seis dimensiones, más de 50 valores por dimensión o dimensiones que la
+versión de la métrica no soporta.
+
+El worker materializa los cinco metric groups en `day`, `week` y `month` desde
+`mentions`, `record_tags`, `record_entity_links` y `record_feature_values`. Por cada
+periodo persiste en `metric_materializations`: workspace/corpus, definición y versión,
+group, filtro normalizado, `filters_hash`, value/denominator/sample size, payload
+tipado, quality, watermark + hash, `computed_at`, `stale_after`, estado y cache scope.
+Los estados son `fresh | stale | pending | partial | not_available`; ausencia de
+cobertura o denominador usa `null`, no cero.
+
+La identidad de fila es SHA-256 sobre workspace, corpus, métrica/version, grain,
+periodo y `filters_hash`. El watermark no participa en esa identidad: un avance de
+datos invalida y actualiza la misma fila de manera idempotente. La invalidación de
+SB-03 selecciona únicamente periodos traslapados y encola un job deduplicado; el worker
+usa advisory lock y el Data OS worker continúa apagado por default.
+
+Cache policy:
+
+- `default`: filtro sin dimensiones;
+- `precomputed`: una dimensión canónica entre platform, source type, country o
+  language con un valor; máximo ocho filtros por ventana;
+- `ad_hoc`: cualquier otra combinación aceptada, TTL de 15 minutos y sin fan-out
+  automático.
+
+Ventanas operativas mayores a 366 días se parten determinísticamente para el job; una
+request individual sigue limitada a 366. `chart_aggregates` no se lee como source of
+truth ni se reescribe: queda disponible sólo para adaptadores legacy. El planner y el
+worker tampoco leen `published_outputs.payload`.
+
+EXPLAIN protegido para el siguiente operador con Postgres local:
+
+```bash
+corepack pnpm --filter @noisia/db signal:materialization:explain
+# sólo local, para ejecutar además el plan:
+NOISIA_SIGNAL_EXPLAIN_ANALYZE=true \
+corepack pnpm --filter @noisia/db signal:materialization:explain
+```
+
+El comando redacta identidades. Un target remoto requiere override explícito y target
+staging/preview/throwaway; producción se rechaza.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

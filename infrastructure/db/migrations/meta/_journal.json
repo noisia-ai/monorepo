@@ -351,6 +351,13 @@
       "when": 1785006000000,
       "tag": "0049_signal_metric_catalog_v1",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1785013200000,
+      "tag": "0050_signal_metric_materializations_v1",
+      "breakpoints": true
     }
   ]
 }

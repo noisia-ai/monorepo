@@ -4,6 +4,7 @@ import {
   DATA_OS_QUEUE_NAME,
   DATA_OS_SHADOW_RUN_JOB_NAME,
   SIGNAL_INVALIDATION_JOB_NAME,
+  SIGNAL_MATERIALIZE_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME
 } from "@noisia/query-engine";
@@ -13,6 +14,7 @@ import {
   signalRefreshRunJob,
   signalRefreshTickJob
 } from "../workers/signal-refresh";
+import { signalMaterializationJob } from "../workers/signal-materialization";
 import { redisConnection } from "./query-engine";
 
 export function startDataOsWorker() {
@@ -25,6 +27,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_REFRESH_TICK_JOB_NAME) return signalRefreshTickJob(job);
       if (job.name === SIGNAL_REFRESH_RUN_JOB_NAME) return signalRefreshRunJob(job);
       if (job.name === SIGNAL_INVALIDATION_JOB_NAME) return signalInvalidationJob(job);
+      if (job.name === SIGNAL_MATERIALIZE_JOB_NAME) return signalMaterializationJob(job);
 
       throw new Error(`Unsupported Data OS job: ${job.name}`);
     },

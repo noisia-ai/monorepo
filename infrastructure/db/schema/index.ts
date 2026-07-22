@@ -932,6 +932,9 @@ export const mentions = pgTable(
     unique("uq_mentions_source_external").on(table.sourceSystem, table.externalId),
     index("idx_mentions_corpus_platform").on(table.studyCorpusId, table.platform),
     index("idx_mentions_corpus_inclusion").on(table.studyCorpusId, table.inclusionStatus),
+    index("idx_mentions_signal_materialization")
+      .on(table.studyCorpusId, table.publishedAt, table.id)
+      .where(sql`${table.inclusionStatus} = 'included'`),
     index("idx_mentions_published").on(table.publishedAt),
     index("idx_mentions_text_hash").on(table.textHash)
   ]
@@ -3029,20 +3032,88 @@ export const metricMaterializations = pgTable(
   "metric_materializations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    materializationKey: text("materialization_key"),
     metricDefinitionId: uuid("metric_definition_id")
       .notNull()
       .references(() => metricDefinitions.id, { onDelete: "cascade" }),
+    metricKey: text("metric_key"),
+    metricVersion: integer("metric_version"),
+    metricGroupKey: text("metric_group_key"),
     semanticModelId: uuid("semantic_model_id").references(() => semanticModels.id, { onDelete: "set null" }),
     studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
     periodId: uuid("period_id").references(() => reportPeriods.id, { onDelete: "set null" }),
+    granularity: text("granularity"),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    normalizedFilter: jsonb("normalized_filter"),
     filtersHash: text("filters_hash").notNull().default("default"),
     payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    typedPayload: jsonb("typed_payload"),
+    value: numeric("value"),
+    denominator: numeric("denominator"),
+    sampleSize: integer("sample_size"),
+    qualityState: text("quality_state"),
+    dataWatermarkId: uuid("data_watermark_id").references(() => signalDataWatermarks.id, { onDelete: "set null" }),
+    dataWatermark: jsonb("data_watermark"),
+    dataWatermarkHash: text("data_watermark_hash"),
+    materializationState: text("materialization_state"),
+    cacheScope: text("cache_scope"),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
-    staleAfter: timestamp("stale_after", { withTimezone: true })
+    staleAfter: timestamp("stale_after", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true })
   },
   (table) => [
     index("idx_metric_materializations_lookup").on(table.studyCorpusId, table.metricDefinitionId, table.periodId),
-    unique("uq_metric_materializations_ref").on(table.metricDefinitionId, table.studyCorpusId, table.periodId, table.filtersHash)
+    unique("uq_metric_materializations_ref").on(table.metricDefinitionId, table.studyCorpusId, table.periodId, table.filtersHash),
+    uniqueIndex("uq_metric_materializations_signal_key")
+      .on(table.materializationKey)
+      .where(sql`${table.materializationKey} IS NOT NULL`),
+    index("idx_metric_materializations_signal_series")
+      .on(
+        table.workspaceId,
+        table.metricGroupKey,
+        table.metricKey,
+        table.metricVersion,
+        table.filtersHash,
+        table.granularity,
+        table.periodStart
+      )
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+    index("idx_metric_materializations_signal_freshness")
+      .on(table.workspaceId, table.materializationState, table.staleAfter, table.computedAt)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+    index("idx_metric_materializations_signal_corpus_period")
+      .on(table.studyCorpusId, table.periodStart, table.periodEnd)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+    index("idx_metric_materializations_signal_ad_hoc_expiry")
+      .on(table.expiresAt)
+      .where(sql`${table.cacheScope} = 'ad_hoc'`),
+    check(
+      "metric_materializations_signal_v1_shape",
+      sql`${table.workspaceId} IS NULL OR (
+        ${table.materializationKey} IS NOT NULL
+        AND ${table.metricKey} IS NOT NULL
+        AND ${table.metricVersion} >= 1
+        AND ${table.metricGroupKey} IS NOT NULL
+        AND ${table.granularity} IN ('day', 'week', 'month')
+        AND ${table.periodStart} IS NOT NULL
+        AND ${table.periodEnd} >= ${table.periodStart}
+        AND ${table.normalizedFilter} IS NOT NULL
+        AND ${table.filtersHash} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.typedPayload} IS NOT NULL
+        AND ${table.sampleSize} >= 0
+        AND ${table.qualityState} IN ('pass', 'partial', 'failed', 'unknown')
+        AND ${table.dataWatermark} IS NOT NULL
+        AND ${table.dataWatermarkHash} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.materializationState} IN ('fresh', 'stale', 'pending', 'partial', 'not_available')
+        AND ${table.cacheScope} IN ('default', 'precomputed', 'ad_hoc')
+      )`
+    ),
+    check(
+      "metric_materializations_null_semantics",
+      sql`${table.workspaceId} IS NULL OR ${table.materializationState} NOT IN ('pending', 'not_available') OR ${table.value} IS NULL`
+    )
   ]
 );
 

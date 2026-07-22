@@ -31,6 +31,7 @@
     "db:verify:readiness": "tsx scripts/verify-live-intelligence-readiness.ts",
     "db:seed:methodologies": "tsx seeds/methodologies-only.ts",
     "db:seed:signal-metrics": "tsx seeds/signal-metrics-only.ts",
+    "signal:materialization:explain": "tsx scripts/signal-materialization-explain.ts",
     "db:seed": "tsx seeds/index.ts",
     "db:verify": "tsx seeds/verify.ts",
     "lint": "echo \"No lint configured for @noisia/db yet\"",

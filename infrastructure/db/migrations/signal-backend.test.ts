@@ -93,3 +93,42 @@ test("SB-04 seed reuses metric_definitions and semantic_models idempotently", as
     assert.doesNotMatch(writer, /ON CONFLICT \(metric_key\)(?!,)/u);
   }
 });
+
+test("SB-05 extends canonical materializations with typed deterministic Signal state", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0050_signal_metric_materializations_v1.sql"), "utf8");
+  assert.match(migration, /ALTER TABLE metric_materializations/);
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS signal_metric_material/u);
+  for (const field of [
+    "workspace_id", "materialization_key", "metric_version", "period_start",
+    "normalized_filter", "typed_payload", "denominator", "sample_size",
+    "quality_state", "data_watermark_hash", "materialization_state", "cache_scope"
+  ]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${field}`));
+  }
+  assert.match(migration, /'fresh', 'stale', 'pending', 'partial', 'not_available'/);
+  assert.match(migration, /uq_metric_materializations_signal_key/);
+  assert.match(migration, /idx_metric_materializations_signal_series/);
+  assert.match(migration, /idx_mentions_signal_materialization/);
+  assert.match(migration, /chart_aggregates is legacy projection only/);
+});
+
+test("SB-05 worker recalculates selective periods from accepted watermarks without payload or Claude", async () => {
+  const [materializer, invalidator, queue] = await Promise.all([
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-materialization.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/queues/data-os.ts"), "utf8")
+  ]);
+  assert.match(materializer, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(materializer, /SIGNAL_METRIC_DEFINITIONS_V1/);
+  assert.match(materializer, /INSERT INTO metric_materializations/);
+  assert.match(materializer, /ON CONFLICT \(materialization_key\)/);
+  assert.match(materializer, /dataWatermarkHashV1/);
+  assert.match(materializer, /\["day", "week", "month"\]/);
+  assert.match(materializer, /SELECT DISTINCT normalized_filter/);
+  assert.match(materializer, /period_end >= \$3::date/);
+  assert.doesNotMatch(materializer, /published_outputs|chart_aggregates|Claude|Anthropic/u);
+  assert.match(invalidator, /materialization\.period_end >= \$2::date/);
+  assert.match(invalidator, /materialization_state = CASE/);
+  assert.match(invalidator, /SIGNAL_MATERIALIZE_JOB_NAME/);
+  assert.match(queue, /signalMaterializationJob/);
+});

@@ -12,7 +12,8 @@ import { redisConnection } from "./query-engine";
 export type SignalDataOsJobData =
   | SignalRefreshTickJobDataV1
   | import("@noisia/query-engine").SignalRefreshRunJobDataV1
-  | import("@noisia/query-engine").SignalInvalidationJobDataV1;
+  | import("@noisia/query-engine").SignalInvalidationJobDataV1
+  | import("@noisia/query-engine").SignalMaterializeJobDataV1;
 
 let signalRefreshQueue: Queue<SignalDataOsJobData> | null = null;
 
@@ -43,4 +44,3 @@ function resolveQueueName(baseName: string) {
   const runtimeEnv = process.env.RAILWAY_ENVIRONMENT || process.env.VERCEL_ENV || process.env.NODE_ENV;
   return runtimeEnv && runtimeEnv !== "development" ? baseName : `${baseName}-local`;
 }
-

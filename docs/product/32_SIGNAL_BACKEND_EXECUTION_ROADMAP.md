@@ -115,7 +115,7 @@ flowchart LR
 | SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Completo (2026-07-22) |
 | SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Completo (2026-07-22) |
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
-| SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Pendiente |
+| SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Pendiente |
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente |
@@ -474,6 +474,34 @@ el blocker exacto para el siguiente operador.
 
 Para filtros iguales, agregado y menciones constituyentes reconcilian; la misma data y
 definición producen los mismos valores sin Claude ni payload publicado.
+
+### Estado / Handoff
+
+**Completo, 2026-07-22.** `signal-materialization-v1` aporta el único predicate builder
+parameterizado para agregado y drill-down, límites de rango/cardinalidad, cache scope y
+planes SQL diarios, semanales y mensuales para las once métricas de los cinco groups.
+Los fixtures reconciliados prueban que agregado, breakdown y registros constituyentes
+usan el mismo filtro y que faltantes permanecen `null`/`not_available`.
+
+La migración `0050_signal_metric_materializations_v1` extiende la tabla canónica con
+workspace, definición/version, periodos, filtro normalizado/hash, payload tipado,
+value/denominator/sample size, quality, watermark/hash, freshness state y TTL de cache.
+Incluye índices de series/freshness/periodo, identidad SHA-256 idempotente y un índice
+parcial de mentions. `chart_aggregates` permanece sólo como adaptador legacy.
+
+Las invalidaciones de SB-03 ahora marcan `stale` únicamente periodos traslapados y
+encolan un job deduplicado. El worker, todavía cerrado por los flags seguros de Data OS,
+usa advisory lock, combina watermarks, precomputa como máximo ocho filtros canónicos,
+parte ventanas operativas largas e incluye un camino ad hoc limitado a cinco métricas
+con TTL de 15 minutos. No lee `published_outputs.payload` ni invoca Claude.
+
+Gates estáticos verdes. No se aplicó `0050` ni se ejecutó
+`signal:materialization:explain` porque no hay `DATABASE_URL` local y el daemon Docker no
+está disponible. El comando protegido quedó listo; no se usó un target remoto ni se
+inventó evidencia runtime.
+
+**Siguiente tarea habilitada:** SB-06 · Signal Workspace Serving APIs and Drill-down.
+No se inició frontend, interpretación ni ninguna SB posterior.
 
 ### Commit Sugerido
 
