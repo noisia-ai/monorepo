@@ -112,7 +112,7 @@ flowchart LR
 | ID | Nombre | Prioridad | Tamaño relativo | Dependencias | Estado inicial |
 |---|---|---:|---:|---|---|
 | SB-01 | Signal Backend Contract V1 | P0 | M | North Star | Completo (2026-07-21) |
-| SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Pendiente |
+| SB-02 | Signal Workspace Identity | P0 | L | SB-01 | Completo (2026-07-22) |
 | SB-03 | Recurring Ingestion, Watermarks and Invalidation | P0 | L | SB-02 | Pendiente |
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Pendiente |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Pendiente |
@@ -246,6 +246,25 @@ evidencia runtime.
 
 Un servicio autenticado puede resolver un Signal workspace, su sujeto y sus corpora sin
 consultar primero un `published_output`.
+
+### Estado / Handoff
+
+**Completo, 2026-07-22.** La migración `0047_signal_workspace_identity` agrega
+`signal_workspaces` y membresías temporales `signal_workspace_corpora`, con sujetos,
+slugs, roles, vigencia, constraints, índices y triggers que impiden cruces de sujeto u
+organización. Studio resuelve por ID o slug aplicando rol interno, ownership de
+organización y acceso activo de marca; denegado e inexistente no filtran existencia.
+El backfill es idempotente, dry-run por default, protegido para targets remotos y sólo
+reporta conteos. El mapping transitorio desde `outputId` está documentado y las rutas
+legacy no fueron modificadas.
+
+Gates estáticos y build verdes. La migración no se aplicó en runtime: `DATABASE_URL` no
+estaba disponible en shell y el daemon local de Docker estaba apagado. No se usó un
+target remoto ni se inventó evidencia de ejecución.
+
+**Siguiente tarea habilitada:** SB-03 · Recurring Ingestion, Watermarks and Invalidation
+puede ligar políticas y watermarks a esta identidad estable. No se inició SB-03 en este
+checkpoint.
 
 ### Commit Sugerido
 

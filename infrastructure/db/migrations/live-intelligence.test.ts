@@ -52,7 +52,8 @@ test("live intelligence migrations are journaled in order", async () => {
     { idx: 43, tag: "0043_data_os_asset_records_metric_catalog" },
     { idx: 44, tag: "0044_query_pack_entity_identity" },
     { idx: 45, tag: "0045_signal_serving_entities" },
-    { idx: 46, tag: "0046_analysis_artifact_evidence_graph" }
+    { idx: 46, tag: "0046_analysis_artifact_evidence_graph" },
+    { idx: 47, tag: "0047_signal_workspace_identity" }
   ];
   const tail = journal.entries
     .slice(-expected.length)

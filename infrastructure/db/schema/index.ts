@@ -308,6 +308,74 @@ export const studyCorpora = pgTable(
   ]
 );
 
+export const signalWorkspaces = pgTable(
+  "signal_workspaces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    brandId: uuid("brand_id").references(() => brands.id, { onDelete: "restrict" }),
+    themeId: uuid("theme_id").references(() => themes.id, { onDelete: "restrict" }),
+    slug: text("slug").notNull(),
+    timezone: text("timezone").notNull().default("UTC"),
+    status: text("status").notNull().default("active"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check(
+      "signal_workspaces_exactly_one_subject",
+      sql`((${table.brandId} IS NOT NULL)::int + (${table.themeId} IS NOT NULL)::int) = 1`
+    ),
+    check("signal_workspaces_slug_format", sql`${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`),
+    check("signal_workspaces_timezone_present", sql`btrim(${table.timezone}) <> ''`),
+    check("signal_workspaces_status", sql`${table.status} IN ('active', 'paused', 'archived')`),
+    unique("uq_signal_workspaces_org_slug").on(table.organizationId, table.slug),
+    uniqueIndex("uq_signal_workspaces_brand")
+      .on(table.organizationId, table.brandId)
+      .where(sql`${table.brandId} IS NOT NULL`),
+    uniqueIndex("uq_signal_workspaces_theme")
+      .on(table.organizationId, table.themeId)
+      .where(sql`${table.themeId} IS NOT NULL`),
+    index("idx_signal_workspaces_org_status").on(table.organizationId, table.status, table.slug),
+    index("idx_signal_workspaces_subject").on(table.brandId, table.themeId)
+  ]
+);
+
+export const signalWorkspaceCorpora = pgTable(
+  "signal_workspace_corpora",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "restrict" }),
+    role: text("role").notNull(),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
+    validTo: timestamp("valid_to", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_workspace_corpora_role", sql`${table.role} IN ('operational', 'strategic', 'legacy')`),
+    check("signal_workspace_corpora_validity", sql`${table.validTo} IS NULL OR ${table.validTo} > ${table.validFrom}`),
+    uniqueIndex("uq_signal_workspace_corpora_active")
+      .on(table.workspaceId, table.studyCorpusId)
+      .where(sql`${table.validTo} IS NULL`),
+    index("idx_signal_workspace_corpora_workspace_active")
+      .on(table.workspaceId, table.role, table.validFrom)
+      .where(sql`${table.validTo} IS NULL`),
+    index("idx_signal_workspace_corpora_corpus_active")
+      .on(table.studyCorpusId, table.role, table.workspaceId)
+      .where(sql`${table.validTo} IS NULL`)
+  ]
+);
+
 export const queryIterations = pgTable(
   "query_iterations",
   {

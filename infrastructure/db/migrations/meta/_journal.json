@@ -330,6 +330,13 @@
       "when": 1784746800000,
       "tag": "0046_analysis_artifact_evidence_graph",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1784833200000,
+      "tag": "0047_signal_workspace_identity",
+      "breakpoints": true
     }
   ]
 }

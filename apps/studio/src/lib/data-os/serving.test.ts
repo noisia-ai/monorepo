@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import "./signal-workspace.test";
+
 process.env.DATABASE_URL ??= "postgres://unit:test@localhost:5432/noisia_test";
 
 const {

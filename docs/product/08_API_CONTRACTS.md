@@ -532,7 +532,8 @@ tipos y validadores sin reinterpretar filtros, watermarks o estados faltantes.
 
 El locator siempre incluye `organization_id` y exactamente uno de `workspace_id` o
 `workspace_slug`. La identidad resuelta agrega el sujeto estable (`brand` o `theme`) y
-timezone IANA. El locator no concede acceso; SB-02 implementará persistence y authZ.
+timezone IANA. El locator no concede acceso; el resolver de SB-02 aplica authZ desde la
+DB antes de devolver identidad o corpora.
 
 ```json
 {
@@ -657,6 +658,41 @@ Formato de error:
 
 Códigos cerrados V1: `invalid_filter`, `unsupported_dimension`, `stale`, `partial` y
 `not_available`.
+
+#### Persistencia y resolución de workspace (SB-02)
+
+`signal_workspaces` es la identidad permanente de un Signal y pertenece a una
+organización con exactamente uno de `brand_id` o `theme_id`. `(organization_id, slug)`
+y el sujeto son únicos; timezone, status y metadata pertenecen al workspace, no a un
+output. `signal_workspace_corpora` conserva la relación temporal con `study_corpora`
+usando `operational`, `strategic` o `legacy`. Triggers de integridad impiden enlazar un
+sujeto o corpus de otra organización incluso si se entrega un UUID válido.
+
+El resolver interno acepta `{ workspaceId, organizationId }` o
+`{ workspaceSlug, organizationId }`. Usuarios Noisia pueden resolver cualquier scope;
+clientes necesitan la misma organización y, para workspaces de marca, acceso activo en
+`user_brand_access`. Una denegación y un workspace inexistente devuelven el mismo
+resultado nulo para no filtrar existencia.
+
+Backfill protegido, dry-run por default:
+
+```bash
+corepack pnpm --filter @noisia/studio signal:backfill-workspaces
+# apply sólo en local o staging/preview aprobado:
+NOISIA_SIGNAL_WORKSPACE_BACKFILL_ALLOW_REMOTE=true \
+NOISIA_REMOTE_DATABASE_TARGET=staging \
+corepack pnpm --filter @noisia/studio signal:backfill-workspaces -- --apply
+```
+
+El resumen sólo imprime conteos, es idempotente y la unión corpus/workspace exige
+subject y organización coincidentes.
+
+Mapping transitorio legacy: `/signal/{outputId}` y `/api/data-os/pulse/:outputId/*`
+siguen resolviendo y sirviendo el output publicado sin cambios. Cuando un consumidor
+necesita la identidad nueva, `resolveLegacyOutputSignalWorkspaceForUser` sigue
+`published_outputs.study_corpus_id → signal_workspace_corpora → signal_workspaces` y
+vuelve a aplicar authZ. Este mapping es sólo compatibilidad; nuevas APIs no deben usar
+`published_outputs` como raíz ni como source of truth.
 
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
