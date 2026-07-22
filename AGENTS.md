@@ -10,9 +10,12 @@ This branch implements **Noisia Data OS Cut 1** on top of `codex/signal-pulse`: 
 client-owned data layer with source catalogs, Brand OS, Knowledge Base, taxonomies, tags,
 quality checks, lineage and serving APIs in shadow mode.
 
-Signal Pulse remains the first consumer surface: a tactical, marketing-first,
-month-comparable report. The 16 multimethod engine lenses remain **PAUSED**. Do not build
-new UI on top of them and do not break them; see GitHub Issue #2.
+Signal Pulse remains the first technical consumer surface for this cut: a tactical,
+marketing-first, month-comparable report. The long-term product direction is the unified
+Signal dashboard in `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`; do not start its UI
+rewrite before the live serving contracts are proven. The 16 multimethod engine lenses
+remain **PAUSED**. Do not build new UI on top of them and do not break them; see GitHub
+Issue #2.
 
 Branch-local canon:
 
@@ -21,8 +24,10 @@ Branch-local canon:
 - Data OS technology/process benchmark: `docs/product/24_NOISIA_DATA_OS_TECH_BENCHMARK.md`.
 - Data OS operator handoff: `docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md`.
 - Data OS completion audit: `docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md`.
+- Signal product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
 - Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
+- Signal always-on/strategic architecture ADR: `docs/adr/009-signal-always-on-strategic-dashboard.md`.
 - Branch status: `docs/BRANCHES.md`.
 - Production guardrails: `docs/AGENT_GUARDRAILS.md`.
 - Schema canon: `docs/product/04_DATABASE_SCHEMA.md`, section "Data OS Cut 1".

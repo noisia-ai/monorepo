@@ -1141,6 +1141,8 @@ test("Data OS readiness verifier covers migration, routes, flags and optional DB
   assert.match(script, /23_NOISIA_DATA_OS_STAGING_RUNBOOK/);
   assert.match(script, /25_NOISIA_DATA_OS_STAGING_HANDOFF/);
   assert.match(script, /26_NOISIA_DATA_OS_COMPLETION_AUDIT/);
+  assert.match(script, /31_SIGNAL_PRODUCT_NORTH_STAR/);
+  assert.match(script, /009-signal-always-on-strategic-dashboard/);
   assert.match(script, /verifyRootScripts/);
   assert.match(script, /verifyStudioScripts/);
   assert.match(script, /verifyImplementationContracts/);
@@ -1150,6 +1152,9 @@ test("Data OS readiness verifier covers migration, routes, flags and optional DB
   assert.match(script, /tagging_rule_sets/);
   assert.match(script, /tagging_model_versions_with_rule_set/);
   assert.match(script, /AGENTS Data OS priority/);
+  assert.match(script, /AGENTS Signal North Star pointer/);
+  assert.match(script, /Signal North Star two-speed product contract/);
+  assert.match(script, /Signal ADR deterministic metrics decision/);
   assert.match(script, /AGENTS Studio build gate/);
   assert.match(script, /PR template Studio build gate/);
   assert.match(script, /CI Studio production build step/);

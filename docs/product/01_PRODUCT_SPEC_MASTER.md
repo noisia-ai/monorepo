@@ -1,6 +1,10 @@
 # Noisia Studio — Product Spec Master
 
 > El documento central. Las 8 dimensiones del producto, las respuestas a cada una, y el bloque de mínimo para arrancar.
+>
+> La dirección objetivo de Signal está definida en
+> `31_SIGNAL_PRODUCT_NORTH_STAR.md`. Esa especificación gobierna cuando este documento
+> describa Signal solamente como un output periódico o metodología aislada.
 
 ---
 
@@ -296,7 +300,9 @@ Cada metodología tiene la misma estructura en plataforma:
 - **Componentes visuales del dashboard** (qué charts, qué tarjetas, qué jerarquía).
 - **Prompts base para IA** (qué exactamente se le pide a Claude/GPT al ejecutar).
 - **Memoria por industria** (qué aprendizajes acumulados consulta antes de operar).
-- **Estructura del JSON resultante** (forma del output que Codex renderiza).
+- **Contrato de artefactos y serving** (forma de los datos, métricas, evidencia e
+  interpretaciones que consume Signal). JSON se conserva como export/fallback, no como
+  source of truth del dashboard.
 
 La plataforma debe permitir agregar metodologías nuevas sin tocar código — sí tocar config. Cada metodología es un módulo declarativo.
 
@@ -314,6 +320,10 @@ La plataforma debe permitir agregar metodologías nuevas sin tocar código — s
 ### 5.1 Naturaleza del entregable
 
 **El estudio es un dashboard.** No es un PDF. No es un PowerPoint. No es un Markdown. Es un dashboard conectado en vivo a la data, hospedado en Noisia Studio, al que el cliente accede con sus credenciales.
+
+En la dirección objetivo, **Signal** es la entrada estable a ese dashboard. Social
+Listening operativo y corridas estratégicas conviven allí aunque tengan cadencias y
+reglas de publicación distintas. Ver `31_SIGNAL_PRODUCT_NORTH_STAR.md`.
 
 **Cada dashboard tiene 2 vistas de la misma data:**
 
@@ -352,8 +362,13 @@ Cada bloque es un componente React/Vue versionado en el banco. Cuando el cliente
 
 ### 5.4 Versioning de outputs
 
-- El **output es el dashboard mismo, en vivo**. No se "publica una versión" — la versión vive.
-- Cuando el Insights Manager edita el corpus, el dashboard se actualiza. Se guarda **snapshot histórico** de la versión anterior para auditoría y para comparación temporal.
+- El **producto es el dashboard vivo**; un `published_output` es una revisión o release
+  dentro de Signal, no la identidad permanente del producto.
+- El corpus y las métricas operativas continúan actualizándose con su propia cadencia.
+- Interpretaciones Claude y corridas estratégicas conservan periodo, filtros, watermark,
+  evidencia y revisión. Una revisión aprobada no cambia silenciosamente.
+- Cuando entra nueva data se crean nuevas materializaciones o revisiones. Los snapshots
+  históricos permiten auditoría y comparación temporal sin congelar todo Signal.
 - El **PDF export** se genera desde la vista actual del dashboard con `mediaprint`. Es derivado, no entregable principal.
 - El cliente puede pedir un PDF en cualquier momento, desde cualquier vista del dashboard.
 
@@ -484,21 +499,30 @@ Esta library mejora el Engine, el ingestor, los outputs y las recomendaciones de
 
 ### 8.1 Cadencia
 
-**No hay default fijo de quincenal o mensual.** Cada cliente define.
+Signal opera con dos cadencias independientes:
 
 - **Corpus inicial:** típicamente 12 meses de historia.
-- **Actualizaciones:** disparadas por el Insights Manager cuando agrega data nueva o cuando hay un trigger temporal (evento, campaña, crisis).
-- **Posibilidades:** quincenal, mensual, trimestral, ad-hoc. Depende del contrato.
+- **Ingesta y reportes operativos:** diaria, semanal, mensual o ad hoc según fuente y
+  contrato. Mantienen Social Listening casi always-on.
+- **Interpretación de grupos de métricas:** asíncrona, gobernada por política de refresh,
+  cambio material y presupuesto; no ocurre en cada page view.
+- **Corridas estratégicas:** mensuales, trimestrales o por evento/decisión. T&B se ejecuta
+  explícitamente, se revisa y se publica como una nueva revisión.
+
+No hay un default comercial único. La UI debe mostrar frescura de data e interpretación
+por separado.
 
 ### 8.2 Mecánica de actualización
 
 Cuando el Insights Manager agrega menciones nuevas al corpus (vía API live, vía CSV import, vía nueva corrida del Engine):
 
-1. Las menciones nuevas se ingestan al schema.
-2. Se clasifican contra el protocolo de la metodología activa.
-3. Se actualizan los hallazgos: pueden reforzar uno existente, mutar uno, o emerger uno nuevo.
-4. El dashboard se actualiza en vivo.
-5. Si el IA detecta cambio significativo (ver criterios abajo), se dispara notificación WhatsApp al cliente.
+1. Las menciones nuevas se ingestan al schema con fuente, sync run, periodo y lineage.
+2. Se enriquecen y actualizan las materializaciones de los metric groups afectados.
+3. Los charts vivos reflejan la nueva data según su watermark.
+4. Las interpretaciones afectadas quedan stale y se regeneran por política y presupuesto.
+5. La corrida estratégica aprobada no se reescribe; la nueva data alimenta la siguiente
+   corrida o dispara una señal para adelantarla.
+6. Si emerge un cambio significativo, se genera el flujo de notificación configurado.
 
 ### 8.3 Comparativos antes/después
 

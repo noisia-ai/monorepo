@@ -107,6 +107,7 @@ const REQUIRED_CONTRACT_FILES = [
   "docs/AGENT_GUARDRAILS.md",
   "docs/adr/007-noisia-data-os-cut-1.md",
   "docs/adr/008-analysis-artifact-evidence-graph.md",
+  "docs/adr/009-signal-always-on-strategic-dashboard.md",
   "docs/BRANCHES.md",
   "docs/product/04_DATABASE_SCHEMA.md",
   "docs/product/06_TECHNICAL_DECISIONS.md",
@@ -116,6 +117,7 @@ const REQUIRED_CONTRACT_FILES = [
   "docs/product/24_NOISIA_DATA_OS_TECH_BENCHMARK.md",
   "docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md",
   "docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md",
+  "docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md",
   "infrastructure/db/seeds/connection.ts",
   "infrastructure/db/scripts/data-os-analyze.ts",
   "infrastructure/db/scripts/data-os-completion-audit.ts",
@@ -435,6 +437,14 @@ async function verifyImplementationContracts(repoRoot: string) {
     join(repoRoot, "docs", "product", "26_NOISIA_DATA_OS_COMPLETION_AUDIT.md"),
     "utf8"
   );
+  const signalNorthStar = await readFile(
+    join(repoRoot, "docs", "product", "31_SIGNAL_PRODUCT_NORTH_STAR.md"),
+    "utf8"
+  );
+  const signalArchitectureAdr = await readFile(
+    join(repoRoot, "docs", "adr", "009-signal-always-on-strategic-dashboard.md"),
+    "utf8"
+  );
   const connection = await readFile(join(repoRoot, "infrastructure", "db", "seeds", "connection.ts"), "utf8");
   const analyze = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-analyze.ts"), "utf8");
   const backfill = await readFile(join(repoRoot, "infrastructure", "db", "scripts", "data-os-backfill.ts"), "utf8");
@@ -526,6 +536,27 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!agents.includes("docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md")) missing.push("AGENTS Data OS handoff pointer");
   if (!agents.includes("docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md")) {
     missing.push("AGENTS Data OS completion audit pointer");
+  }
+  if (!agents.includes("docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md")) {
+    missing.push("AGENTS Signal North Star pointer");
+  }
+  if (!agents.includes("docs/adr/009-signal-always-on-strategic-dashboard.md")) {
+    missing.push("AGENTS Signal architecture ADR pointer");
+  }
+  if (!signalNorthStar.includes("reportes casi always-on y reportes estratégicos")) {
+    missing.push("Signal North Star two-speed product contract");
+  }
+  if (!signalNorthStar.includes("Claude no es la fuente de ningún número mostrado")) {
+    missing.push("Signal North Star deterministic metrics contract");
+  }
+  if (!signalNorthStar.includes("una URL estable")) {
+    missing.push("Signal North Star stable client URL contract");
+  }
+  if (!signalArchitectureAdr.includes("Signal becomes a stable client dashboard/workspace")) {
+    missing.push("Signal ADR stable dashboard decision");
+  }
+  if (!signalArchitectureAdr.includes("Claude does not calculate dashboard numbers")) {
+    missing.push("Signal ADR deterministic metrics decision");
   }
   if (!stagingFlightCard.includes("NOISIA_REMOTE_DATABASE_TARGET=staging")) {
     missing.push("staging flight card target placeholder");

@@ -10,6 +10,7 @@
 |---|---|---|---|
 | **Database** | **Supabase managed (Postgres 15+)** | Auth incluido, RLS nativo, storage, dashboard admin, costo previsible | Migrar a Postgres self-hosted si pasamos 100GB o 50M filas |
 | **Data foundation** | **Noisia Data OS Cut 1 sobre Postgres/Drizzle** | Signal Pulse necesita una base viva por cliente: catálogos de fuentes, Brand OS, Knowledge, taxonomías, tags, calidad, lineage y serving APIs. Ver ADR 007. | Evaluar lakehouse externo/dbt formal cuando el volumen o el equipo de datos lo justifique |
+| **Signal product surface** | **Dashboard estable con data casi always-on y revisiones estratégicas** | Social Listening vivo e interpretaciones de metric groups deben convivir con T&B periódico en una sola Signal home. Ver ADR 009 y el North Star 31. | Migrar la ruta report-centric por `outputId` después de probar filtros y serving en shadow |
 | **Auth** | **Kinde** | Multi-org nativo (Org → Brand → User), soporta organizaciones múltiples por usuario, free hasta 7.5K MAU, $25/mes después | Evaluar SuperTokens self-hosted si Kinde sube precios |
 | **LLM provider** | **Anthropic Claude** vía **Vercel AI SDK** | Streaming, fallbacks gratis, switching de proveedor sin reescribir | Agregar OpenAI como fallback cuando llegue contrato grande |
 | **Pipeline workers** | **BullMQ + Redis** sobre Node 20 TypeScript | Mismo stack que website y studio (cero polyglot), Codex es senior TS, BullMQ tiene UI gratuita | Migrar a Temporal cuando pasen 50 jobs concurrentes o se necesiten workflows largos con state machines |

@@ -111,7 +111,7 @@ Validaciones locales de esta continuacion:
 - monorepo lint: cero errores y 10 warnings preexistentes del deck estatico;
 - monorepo test: todas las tareas verdes; DB 42, Studio 225 y Workers 118 pruebas;
 - build de produccion de Studio: verde;
-- `data-os:verify`: 12 migraciones, 50 tablas y 60 contratos verificados;
+- `data-os:verify`: 12 migraciones, 50 tablas y 62 contratos verificados;
 - `data-os:staging-check`: detenido correctamente por ausencia de `DATABASE_URL`,
   target remoto, corpus/output UUIDs y aprobacion explicita del shadow.
 

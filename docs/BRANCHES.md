@@ -44,6 +44,9 @@
   the exact remote tip instead of treating this document as a branch pointer.
 - Status: active WIP. The checkpoint is locally validated but does not claim feature
   completion, staging readiness or production readiness. No PR is open.
+- Product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`. Signal evolves
+  toward one stable client dashboard where almost always-on Social Listening and
+  reviewed strategic reports coexist; the current `outputId` surface is transitional.
 
 Cut 1 adds:
 
@@ -60,6 +63,8 @@ Cut 1 adds:
 - an additive `analysis-artifacts-v1` registry and evidence graph connecting typed
   analytical units, mention citations, contextual Study assets, editorial state and
   the exact artifact revisions frozen into a published output;
+- the documented target architecture for live metric groups, versioned Claude
+  interpretations, periodic T&B releases and a stable Signal home;
 - feature-flagged `/api/data-os/*` serving APIs;
 - local/staging gates: `data-os:verify`, `data-os:candidates`,
   `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence`;
