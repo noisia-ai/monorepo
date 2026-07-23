@@ -1,9 +1,11 @@
 <!doctype html>
 <!--
   Noisia deck shell. Assemble a deck by copying the engine/ files next to this
-  index.html, then replacing <!-- SLIDES --> with slide fragments from ../slides/.
+  index.html, then replacing the SLIDES marker below with slide fragments from ../slides/.
   Render to PDF with: node packages/pitch-kit/builders/build-pdf.mjs <this-file> out.pdf
   Design canvas: 1920x1080 (16:9). See ../AGENTS.md for rules.
+  NO escribas la secuencia del marcador dentro de este comentario: un comentario HTML
+  termina en el primer cierre, y el resto se imprimiría como texto visible en el deck.
 -->
 <html lang="es">
 <head>
@@ -23,7 +25,8 @@
 <body>
 <deck-stage width="1920" height="1080">
 
-<!-- SLIDES: paste slide fragments here, in order. Update the NN / TOTAL in each footer. -->
+<!-- Pega aquí los slide fragments, en orden, y corrige el NN / TOTAL de cada footer. -->
+<!-- SLIDES -->
 
 </deck-stage>
 <script src="deck-stage.js"></script>

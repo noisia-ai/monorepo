@@ -19,7 +19,9 @@ operative rulebook for anyone (human or agent) editing the kit itself.
 4. **The kit must learn.** When you build something reusable, contribute it back (see below). When you only consume existing slides, don't.
 5. **Brand fidelity.** Use the tokens in `engine/noisia-tokens.css`; don't introduce off-palette colors or fonts. Canvas is 1920×1080.
 6. **Copy passes `COPY_RULES.md`.** Humanize + client-ready sanitize every word: no internal/purpose/navigation text on a slide (the header-right is always `noisia.ai`), no AI tells, no emojis; in Spanish keep standard tech anglicisms (**Dashboard**, not "Panel de control"). Noisia is complex; the press is simple.
-7. **Tiers are a reference, not a cage.** Foundation/Intelligence/Strategy guide scoping and pricing — propose a custom scope when the real work doesn't fit a tier.
+7. **The offer is Reportes / Estudios** (Data is a capability, not a third column). The catalog — R1-R3 and E1-E5 — lives in `packages/kb/02-services/product-model.md`; use those names. Foundation/Intelligence/Strategy are internal calibration of depth, **not** the commercial story: they don't belong on a slide. If the real work doesn't fit a catalog product, propose a custom scope honestly.
+8. **Sell the question, not the method.** Never put a methodology name on a slide — use the question it answers. The method is for when the client asks how.
+9. **Never write the SLIDES marker sequence inside an HTML comment** in `deck-template.html` or a fragment. An HTML comment ends at its first closing marker, so everything after it renders as visible text on the deck. This bit us once already.
 
 ## 🔁 Contribution loop (how the kit grows)
 When you create a reusable slide / rule / builder improvement:
