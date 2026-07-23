@@ -19,7 +19,12 @@ const REQUIRED_FILES = [
   "review-queue.json",
   "review-sample.json",
   "evidence.json",
-  "evidence.md"
+  "evidence.md",
+  "signal-v2-backfill.json",
+  "signal-v2-reconcile.json",
+  "signal-v2-explain.json",
+  "signal-v2-shadow.json",
+  "backend-ready-signal-v2.json"
 ];
 
 const EVIDENCE_TARGETS = new Set(["staging", "throwaway", "preview"]);
@@ -124,6 +129,49 @@ function assertFlag(record: JsonRecord, key: string, expected: string) {
 
 function assertTrue(record: JsonRecord, key: string) {
   if (record[key] !== true) fail(`${key} must be true.`);
+}
+
+async function validateSignalV2Artifacts(evidenceDir: string) {
+  const backfill = await readJson(join(evidenceDir, "signal-v2-backfill.json"));
+  assertTrue(backfill, "ok");
+  if (backfill.mode !== "apply") fail("signal-v2-backfill.json mode must be apply.");
+  assertTrue(backfill, "identifiers_redacted");
+  assertTrue(backfill, "payload_preserved");
+  if (numberValue(backfill, "llm_spend_usd") !== 0) fail("signal-v2-backfill.json LLM spend must be zero.");
+  if (backfill.client_activation !== false) fail("signal-v2-backfill.json must keep client activation false.");
+
+  const reconcile = await readJson(join(evidenceDir, "signal-v2-reconcile.json"));
+  assertTrue(reconcile, "ok");
+  assertTrue(reconcile, "identifiers_redacted");
+  assertMin(reconcile, "metrics_checked", 1);
+  assertMin(reconcile, "series_periods_checked", 1);
+  assertMin(reconcile, "breakdown_periods_checked", 1);
+  assertMin(reconcile, "drill_down_pages_checked", 1);
+  assertEmpty("signal-v2-reconcile.json failures", reconcile.failures);
+
+  const explain = await readJson(join(evidenceDir, "signal-v2-explain.json"));
+  assertTrue(explain, "ok");
+  assertTrue(explain, "identifiers_redacted");
+  assertTrue(explain, "analyze");
+  assertTrue(explain, "representative_volume");
+
+  const shadow = await readJson(join(evidenceDir, "signal-v2-shadow.json"));
+  assertTrue(shadow, "ready_for_backend_signal_v2");
+  assertTrue(shadow, "identifiers_redacted");
+  assertEmpty("signal-v2-shadow.json failures", shadow.failed);
+  if (numberValue(shadow, "llm_spend_usd") !== 0) fail("signal-v2-shadow.json LLM spend must be zero.");
+  if (shadow.client_activation !== false) fail("signal-v2-shadow.json must keep client activation false.");
+
+  const backendReady = await readJson(join(evidenceDir, "backend-ready-signal-v2.json"));
+  assertTrue(backendReady, "backend_ready_for_signal_v2");
+  assertTrue(backendReady, "identifiers_redacted");
+  assertEmpty("backend-ready-signal-v2.json failures", backendReady.failed);
+  if (numberValue(backendReady, "llm_spend_usd") !== 0) {
+    fail("backend-ready-signal-v2.json script LLM spend must be zero.");
+  }
+  if (backendReady.client_activation !== false) {
+    fail("backend-ready-signal-v2.json must keep client activation false.");
+  }
 }
 
 function readReadmeTarget(readme: string) {
@@ -576,6 +624,8 @@ async function main() {
   const reviewSample = JSON.parse(reviewSampleContents) as unknown;
   if (!isRecord(reviewSample)) fail("review-sample.json must contain a JSON object.");
   validateReviewSample(reviewSample, reviewSampleContents);
+
+  await validateSignalV2Artifacts(evidenceDir);
 
   if (!candidatesSkipped) {
     const candidates = await readJson(join(evidenceDir, "candidates.json"));

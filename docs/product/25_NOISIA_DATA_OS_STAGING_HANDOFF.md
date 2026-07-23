@@ -170,6 +170,14 @@ Debe regenerar:
 - `signal-v2-shadow.json`
 - `backend-ready-signal-v2.json`
 
+El último artifact se calcula después de `serving-smoke.json` y exige explícitamente
+payload parity, fallback y visibilidad legacy verdes, además del shadow workspace-centric.
+`signal-v2-reconcile.json` debe reportar series, breakdowns y páginas de drill-down
+reconciliadas para el filtro home canónico vigente.
+`evidence-pack-validation.json` debe incluir los artifacts Signal V2 en su manifest
+SHA-256; un archivo ausente, degradado o modificado después de validar bloquea el cierre.
+`pr-summary.md` debe declarar `Backend Ready For Signal V2: true`.
+
 ## Paso 5: Gate De Produccion
 
 Leer `release-gate.json`. Para abrir PR productivo debe decir:

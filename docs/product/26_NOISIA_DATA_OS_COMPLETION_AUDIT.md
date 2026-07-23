@@ -151,8 +151,8 @@ aprobado ni UUIDs de workspace/corpus/output. `data-os:verify` debe seguir repor
 no convierte los tests de source/contract en evidencia runtime.
 
 Gates locales del checkpoint SB-10: monorepo typecheck 11/11, lint 11/11 con cero
-errores y diez warnings preexistentes, tests 16/16 tareas; DB 57, Query Engine 185,
-Workers 127 y Studio 241 pruebas; build Studio verde; `data-os:verify` verifica 21
+errores y diez warnings preexistentes, tests 16/16 tareas; DB 59, Query Engine 185,
+Workers 130 y Studio 241 pruebas; build Studio verde; `data-os:verify` verifica 21
 migraciones, 25 rutas, 66 tablas, 81 contratos y reporta DB omitida. Gasto LLM: USD 0.
 
 ## Checks Locales Minimos
@@ -199,7 +199,16 @@ El paquete final debe contener:
 - `signal-v2-reconcile.json` con `ok: true`;
 - `signal-v2-explain.json` con `ok: true` y volumen representativo;
 - `signal-v2-shadow.json` con `ready_for_backend_signal_v2: true`;
+- `serving-smoke.json` con paridad legacy, fallback y visibilidad verdes consumidos
+  directamente por el gate Signal V2;
+- `signal-v2-reconcile.json` con todos los puntos de la serie home, breakdown payloads
+  y drill-down acotado reconciliados contra el planner SQL compartido;
 - `backend-ready-signal-v2.json` con `backend_ready_for_signal_v2: true`;
+- `data-os:completion-audit` debe leer ese artifact y mantener
+  `ready_for_goal_completion: false` si el gate Signal V2 no pasó;
+- `evidence-pack-validation.json` debe validar e incluir los cinco artifacts Signal V2
+  en su manifest SHA-256;
+- `pr-summary.md` debe incluir `Backend Ready For Signal V2: true`;
 - `completion-audit.json` con `requirement_checks` cubriendo todos los gates de
   `release-gate.json`, incluyendo catalogo, Brand OS, Knowledge Base, taxonomias,
   review humano, serving shadow, fallback, verifier local, formato Postgres,

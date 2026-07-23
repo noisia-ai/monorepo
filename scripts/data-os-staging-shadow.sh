@@ -245,10 +245,6 @@ run_capture_allow_failure signal-v2-shadow.json \
   NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false \
   corepack pnpm --silent --filter @noisia/studio signal:v2:shadow
 
-run_capture_allow_failure backend-ready-signal-v2.json \
-  env NOISIA_DATA_OS_EVIDENCE_PACK_DIR="$EVIDENCE_DIR" \
-  corepack pnpm --silent signal:v2:backend-gate
-
 run_capture analyze.json \
   env NOISIA_DATA_OS_ANALYZE_ALLOW_REMOTE=true \
   corepack pnpm --silent --filter @noisia/db data-os:analyze
@@ -294,6 +290,10 @@ if [[ ! -f "$EVIDENCE_DIR/review-sample.json" ]]; then
     exit 1
   fi
 fi
+
+run_capture_allow_failure backend-ready-signal-v2.json \
+  env NOISIA_DATA_OS_EVIDENCE_PACK_DIR="$EVIDENCE_DIR" \
+  corepack pnpm --silent signal:v2:backend-gate
 
 run_capture evidence.json \
   env NOISIA_DATA_OS_EVIDENCE_ALLOW_REMOTE=true \

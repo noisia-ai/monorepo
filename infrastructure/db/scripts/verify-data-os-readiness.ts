@@ -1909,6 +1909,9 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!completionAuditDoc.includes("database_format_postgres_url")) {
     missing.push("completion audit database format release gate");
   }
+  if (!completionAuditDoc.includes("backend-ready-signal-v2.json")) {
+    missing.push("completion audit Signal V2 backend gate artifact");
+  }
   if (!completionAuditDoc.includes("ready_for_release_review_sample: true")) {
     missing.push("completion audit review sample gate");
   }
@@ -2013,6 +2016,9 @@ async function verifyImplementationContracts(repoRoot: string) {
   if (!completionAuditScript.includes("release-gate.ready_for_production_review=true")) {
     missing.push("completion audit CLI release gate check");
   }
+  if (!completionAuditScript.includes("backend-ready-signal-v2.backend_ready_for_signal_v2=true")) {
+    missing.push("completion audit CLI Signal V2 backend gate check");
+  }
   if (!completionAuditScript.includes("evidence.md Architecture Decision")) {
     missing.push("completion audit CLI architecture evidence check");
   }
@@ -2027,6 +2033,12 @@ async function verifyImplementationContracts(repoRoot: string) {
   }
   if (!completionAuditScript.includes("pr-summary database format")) {
     missing.push("completion audit CLI PR summary database format check");
+  }
+  if (!completionAuditScript.includes("pr-summary Signal V2 backend gate")) {
+    missing.push("completion audit CLI PR summary Signal V2 gate check");
+  }
+  if (!prSummary.includes("Backend Ready For Signal V2")) {
+    missing.push("PR summary Signal V2 backend gate line");
   }
   if (!branches.includes(DATA_OS_WORK_BRANCH)) {
     missing.push("branches doc Data OS branch");
@@ -2334,6 +2346,20 @@ async function verifyImplementationContracts(repoRoot: string) {
   }
   if (!evidencePackValidator.includes("serving-smoke.json must not include corpus or output UUID values")) {
     missing.push("evidence pack validator serving smoke UUID guard");
+  }
+  for (const artifact of [
+    "signal-v2-backfill.json",
+    "signal-v2-reconcile.json",
+    "signal-v2-explain.json",
+    "signal-v2-shadow.json",
+    "backend-ready-signal-v2.json"
+  ]) {
+    if (!evidencePackValidator.includes(artifact)) {
+      missing.push(`evidence pack validator ${artifact} gate`);
+    }
+  }
+  if (!evidencePackValidator.includes("validateSignalV2Artifacts")) {
+    missing.push("evidence pack validator Signal V2 runtime validator");
   }
   if (!evidencePackValidator.includes("evidence.md must not include corpus or output UUID values")) {
     missing.push("evidence pack validator markdown UUID scan");

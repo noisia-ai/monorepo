@@ -108,7 +108,8 @@ async function main() {
       evidence_dir: null,
       missing_evidence: [
         "NOISIA_DATA_OS_EVIDENCE_PACK_DIR or explicit evidence pack path",
-        "staging/preview release-gate.json with ready_for_production_review=true"
+        "staging/preview release-gate.json with ready_for_production_review=true",
+        "backend-ready-signal-v2.json with backend_ready_for_signal_v2=true"
       ],
       requirement_checks: [
         {
@@ -120,6 +121,11 @@ async function main() {
           evidence: "release-gate.json",
           ok: false,
           requirement: "release-gate.ready_for_production_review=true"
+        },
+        {
+          evidence: "backend-ready-signal-v2.json",
+          ok: false,
+          requirement: "backend-ready-signal-v2.backend_ready_for_signal_v2=true"
         }
       ],
       next_command: "corepack pnpm data-os:staging-check && corepack pnpm data-os:staging-shadow"
@@ -128,7 +134,13 @@ async function main() {
     return;
   }
 
-  const requiredFiles = ["evidence-pack-validation.json", "release-gate.json", "evidence.md", "pr-summary.md"];
+  const requiredFiles = [
+    "evidence-pack-validation.json",
+    "release-gate.json",
+    "backend-ready-signal-v2.json",
+    "evidence.md",
+    "pr-summary.md"
+  ];
   for (const file of requiredFiles) {
     checkRequirement(file, file, await fileExists(join(evidenceDir, file)));
   }
@@ -137,6 +149,9 @@ async function main() {
     ? null
     : await readJson(join(evidenceDir, "evidence-pack-validation.json"));
   const releaseGate = missing.includes("release-gate.json") ? null : await readJson(join(evidenceDir, "release-gate.json"));
+  const backendReady = missing.includes("backend-ready-signal-v2.json")
+    ? null
+    : await readJson(join(evidenceDir, "backend-ready-signal-v2.json"));
 
   if (validation) {
     checkRequirement("evidence-pack-validation.ok=true", "evidence-pack-validation.json", validation.ok === true);
@@ -195,6 +210,29 @@ async function main() {
     }
   }
 
+  if (backendReady) {
+    checkRequirement(
+      "backend-ready-signal-v2.backend_ready_for_signal_v2=true",
+      "backend-ready-signal-v2.json",
+      backendReady.backend_ready_for_signal_v2 === true
+    );
+    checkRequirement(
+      "backend-ready-signal-v2 identifiers redacted",
+      "backend-ready-signal-v2.json",
+      backendReady.identifiers_redacted === true
+    );
+    checkRequirement(
+      "backend-ready-signal-v2 zero script LLM spend",
+      "backend-ready-signal-v2.json",
+      Number(backendReady.llm_spend_usd) === 0
+    );
+    checkRequirement(
+      "backend-ready-signal-v2 clients not activated",
+      "backend-ready-signal-v2.json",
+      backendReady.client_activation === false
+    );
+  }
+
   if (!missing.includes("evidence.md")) {
     const evidenceMarkdown = await readFile(join(evidenceDir, "evidence.md"), "utf8");
     assertPrSafe("evidence.md", evidenceMarkdown);
@@ -225,6 +263,11 @@ async function main() {
       "pr-summary database format",
       "pr-summary.md",
       prSummary.includes("Database format: postgres_url")
+    );
+    checkRequirement(
+      "pr-summary Signal V2 backend gate",
+      "pr-summary.md",
+      prSummary.includes("Backend Ready For Signal V2: true")
     );
   }
 

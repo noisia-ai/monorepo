@@ -531,18 +531,25 @@ export NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true
 2. reconciliación materialización → planner SQL → drill-down;
 3. EXPLAIN con volumen mínimo de 1,000 menciones e índices `0055`;
 4. shadow del facade interno/cliente contra cobertura legacy;
-5. `signal:v2:backend-gate`.
+5. serving smoke legacy con payload parity, fallback y visibilidad;
+6. `signal:v2:backend-gate`.
 
 Artifacts adicionales del evidence pack:
 
 - `signal-v2-backfill.json`: `mode=apply`, payload preservado, gasto cero y sin
   activación cliente;
-- `signal-v2-reconcile.json`: value, denominator, sample y page bounded reconciliados;
+- `signal-v2-reconcile.json`: serie canónica completa, breakdown payloads, value,
+  denominator, sample y page bounded reconciliados;
 - `signal-v2-explain.json`: volumen, índices y budgets de costo/tiempo;
 - `signal-v2-shadow.json`: cinco metric groups, interpretaciones revisadas, release
   current, comparación compatible, visibilidad y fallback;
+- `serving-smoke.json`: paridad legacy, kill-switch fallback y visibilidad interna/cliente
+  verdes; el backend gate lo consume directamente;
 - `backend-ready-signal-v2.json`:
   `backend_ready_for_signal_v2=true`.
+
+El validador del evidence pack exige estos cinco artifacts Signal V2, valida sus
+estados/redacción y los incluye en el manifest SHA-256 que luego verifica release-gate.
 
 El wrapper conserva los artifacts aunque el gate quede bloqueado y termina non-zero.
 Eso es evidencia honesta, no un error que se deba ocultar. Si pide review humano,

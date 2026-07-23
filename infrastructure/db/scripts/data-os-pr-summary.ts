@@ -74,6 +74,7 @@ async function main() {
   const readme = await readFile(join(evidenceDir, "README.md"), "utf8");
   const evidenceMarkdown = await readFile(join(evidenceDir, "evidence.md"), "utf8");
   const validation = await readJson(join(evidenceDir, "evidence-pack-validation.json"));
+  const backendReady = await readJson(join(evidenceDir, "backend-ready-signal-v2.json"));
   const releaseGatePath = join(evidenceDir, "release-gate.json");
   const releaseGate = (await fileExists(releaseGatePath)) ? await readJson(releaseGatePath) : null;
   const artifactManifest = Array.isArray(validation.artifact_manifest) ? validation.artifact_manifest : [];
@@ -89,6 +90,9 @@ async function main() {
     }
     for (const gate of REQUIRED_PR_SUMMARY_RELEASE_GATES) {
       if (!releaseGates.includes(gate)) fail(`Release gate is missing required PR summary gate: ${gate}.`);
+    }
+    if (backendReady.backend_ready_for_signal_v2 !== true) {
+      fail("PR summary requires backend_ready_for_signal_v2=true.");
     }
   }
   const releaseLine = releaseGate
@@ -108,6 +112,7 @@ async function main() {
     `Candidates checked: ${sanitizeScalar(validation.candidates_checked)}`,
     `Validation: ready_for_release_gate=${sanitizeScalar(validation.ready_for_release_gate)}`,
     releaseLine,
+    `Backend Ready For Signal V2: ${sanitizeScalar(backendReady.backend_ready_for_signal_v2)}`,
     `Artifacts checksummed: ${artifactManifest.length}`,
     `Artifact manifest algorithm: ${sanitizeScalar(validation.artifact_manifest_algorithm)}`,
     releaseGateLine,

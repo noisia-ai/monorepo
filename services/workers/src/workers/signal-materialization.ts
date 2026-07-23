@@ -12,7 +12,6 @@ import {
   SIGNAL_INTERPRETATION_PROMPT_VERSION,
   SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN,
   signalDefaultWorkspaceHomeFilterV1,
-  signalFiltersHashV1,
   signalMetricMaterializationKeyV1,
   signalInterpretationIdempotencyKeyV1,
   splitSignalMaterializationDateRangeV1,
@@ -26,6 +25,7 @@ import {
 
 import { pool } from "../db/client";
 import { getSignalRefreshQueue } from "../queues/signal-refresh";
+import { prioritizeSignalMaterializationFiltersV1 } from "./signal-materialization-filters";
 
 type WorkspaceScope = {
   workspace_id: string;
@@ -109,6 +109,16 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     const freshness = combinedFreshness(watermarkRows.rows, now);
     const staleAfter = earliestStaleAfter(watermarkRows.rows);
 
+    const coverageResult = await client.query<{ date_from: string | null; date_through: string | null }>(`
+      SELECT
+        MIN((published_at AT TIME ZONE $2)::date)::text AS date_from,
+        MAX((published_at AT TIME ZONE $2)::date)::text AS date_through
+      FROM mentions
+      WHERE study_corpus_id = $1::uuid
+        AND inclusion_status = 'included'
+    `, [scope.study_corpus_id, scope.timezone]);
+    const coverage = coverageResult.rows[0];
+
     const facetsResult = await client.query<{
       platforms: string[] | null;
       source_types: string[] | null;
@@ -143,8 +153,8 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     `, [scope.study_corpus_id, scope.timezone, window.date_from, window.date_through]);
     const facets = facetsResult.rows[0];
     const homeFilter = signalDefaultWorkspaceHomeFilterV1(
-      window.date_from,
-      window.date_through,
+      coverage?.date_from ?? null,
+      coverage?.date_through ?? null,
       scope.timezone
     );
     const dateWindows = requestedFilter
@@ -194,30 +204,30 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN
     ])).rows.map((row) => normalizeSignalFilterV1(row.normalized_filter));
 
-    const filtersToMaterialize: SignalFilterV1[] = requestedFilter
+    const generatedFilters = dateWindows.flatMap((dateRange) => {
+      const baseFilter: SignalFilterV1 = {
+        contract_version: "signal-backend-v1",
+        date_range: dateRange,
+        timezone: scope.timezone,
+        granularity: "day",
+        dimensions: {}
+      };
+      const filters = buildSignalPrecomputedFiltersV1(baseFilter, {
+        platform: facets?.platforms ?? [],
+        source_type: facets?.source_types ?? [],
+        country: facets?.countries ?? [],
+        language: facets?.languages ?? []
+      });
+      return (["day", "week", "month"] as SignalGranularityV1[])
+        .flatMap((granularity) => filters.map((filter) => ({ ...filter, granularity })));
+    });
+    const uniqueFilters = requestedFilter
       ? [requestedFilter]
-      : cachedFilters.length > 0
-        ? cachedFilters
-        : dateWindows.flatMap((dateRange) => {
-            const baseFilter: SignalFilterV1 = {
-              contract_version: "signal-backend-v1",
-              date_range: dateRange,
-              timezone: scope.timezone,
-              granularity: "day",
-              dimensions: {}
-            };
-            const filters = buildSignalPrecomputedFiltersV1(baseFilter, {
-              platform: facets?.platforms ?? [],
-              source_type: facets?.source_types ?? [],
-              country: facets?.countries ?? [],
-              language: facets?.languages ?? []
-            });
-            return (["day", "week", "month"] as SignalGranularityV1[])
-              .flatMap((granularity) => filters.map((filter) => ({ ...filter, granularity })));
-          });
-    const uniqueFilters = Array.from(
-      new Map(filtersToMaterialize.map((filter) => [signalFiltersHashV1(filter), filter])).values()
-    ).slice(0, SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN);
+      : prioritizeSignalMaterializationFiltersV1({
+          home_filter: homeFilter,
+          cached_filters: cachedFilters,
+          generated_filters: generatedFilters
+        });
 
     await client.query("BEGIN");
     let rowsWritten = 0;

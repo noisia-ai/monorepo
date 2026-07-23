@@ -1062,15 +1062,26 @@ shadow usan los planners compartidos y producen artifacts redactados:
 - `signal-v2-reconcile.json`;
 - `signal-v2-explain.json`;
 - `signal-v2-shadow.json`;
+- `serving-smoke.json`;
 - `backend-ready-signal-v2.json`.
 
-El gate exige cobertura legacy exacta, cinco grupos materializados, cinco
+El gate exige `serving-smoke` verde con payload parity, fallback y visibilidad legacy,
+cobertura legacy exacta, cinco grupos materializados, cinco
 interpretaciones Claude revisadas, release estratégico current, comparación T&B
-compatible, cliente sanitizado, SQL/drill-down reconciliado, volumen representativo,
+compatible, cliente sanitizado, serie/breakdown/SQL/drill-down reconciliados, volumen representativo,
 índices y flags cliente apagadas. No activa producción y no enciende render ni API de
 workspace para clientes.
 
-Gates locales: DB 57 tests, Query Engine 185 tests, workers 127 tests, Studio 241
+**Addendum de auditoría, 2026-07-23.** La revisión local posterior al checkpoint añadió
+dos cierres fail-closed: el gate
+Backend Ready consume directamente `serving-smoke.json`, y cada invalidación prioriza
+el filtro home canónico vigente aunque existan filtros cacheados de coberturas anteriores.
+El reconciliador runtime compara todos los puntos del filtro home, sus breakdown payloads
+y una página acotada de drill-down por métrica. El evidence pack incluye estos artifacts
+en su manifest SHA-256 y `data-os:completion-audit` no puede declarar el Goal completo
+sin `backend_ready_for_signal_v2=true`.
+
+Gates locales: DB 59 tests, Query Engine 185 tests, workers 130 tests, Studio 241
 tests; typecheck/lint/test monorepo, Studio build, `data-os:verify` y
 `git diff --check` verdes. El lint conserva únicamente los diez warnings preexistentes
 del deck estático. No hubo llamada ni gasto LLM.

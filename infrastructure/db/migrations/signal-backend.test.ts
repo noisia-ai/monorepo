@@ -278,6 +278,8 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.doesNotMatch(backfill, /UPDATE\s+published_outputs/iu);
   assert.match(reconcile, /buildSignalMetricMaterializationPlanV1/);
   assert.match(reconcile, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(reconcile, /series_periods_checked/);
+  assert.match(reconcile, /breakdown_payloads_match/);
   assert.match(explain, /EXPLAIN \(\$\{analyze/);
   assert.match(explain, /representativeVolume/);
   assert.match(shadow, /five_metric_groups_materialized/);
@@ -285,6 +287,8 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(shadow, /legacy_coverage_reconciled/);
   assert.match(shadow, /client_flags_off/);
   assert.match(gate, /backend_ready_for_signal_v2/);
+  assert.match(gate, /serving-smoke\.json/);
+  assert.match(gate, /legacy_payload_parity_preserved/);
   assert.match(gate, /signal-v2-reconcile\.json/);
   assert.match(stagingShadow, /NOISIA_SIGNAL_WORKSPACE_ID/);
   assert.match(stagingShadow, /backend-ready-signal-v2\.json/);

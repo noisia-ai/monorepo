@@ -2002,6 +2002,82 @@ async function writeValidStagingEvidencePack(
       }
     })
   );
+  await writeFile(
+    resolve(dir, "backend-ready-signal-v2.json"),
+    JSON.stringify({
+      backend_ready_for_signal_v2: true,
+      identifiers_redacted: true,
+      checks: {
+        staging_target_approved: true,
+        legacy_serving_shadow_ready: true,
+        legacy_payload_parity_preserved: true,
+        legacy_fallback_safe: true,
+        legacy_visibility_safe: true,
+        targeted_backfill_applied: true,
+        metric_sql_drilldown_reconciled: true,
+        representative_query_plans_within_budget: true,
+        facade_shadow_ready: true,
+        identifiers_redacted: true,
+        zero_llm_spend: true,
+        clients_not_activated: true
+      },
+      failed: [],
+      llm_spend_usd: 0,
+      client_activation: false
+    })
+  );
+  await writeFile(
+    resolve(dir, "signal-v2-backfill.json"),
+    JSON.stringify({
+      ok: true,
+      mode: "apply",
+      identifiers_redacted: true,
+      payload_preserved: true,
+      llm_spend_usd: 0,
+      client_activation: false
+    })
+  );
+  await writeFile(
+    resolve(dir, "signal-v2-reconcile.json"),
+    JSON.stringify({
+      ok: true,
+      identifiers_redacted: true,
+      metrics_checked: 12,
+      series_periods_checked: 276,
+      breakdown_periods_checked: 161,
+      drill_down_pages_checked: 12,
+      failures: []
+    })
+  );
+  await writeFile(
+    resolve(dir, "signal-v2-explain.json"),
+    JSON.stringify({
+      ok: true,
+      identifiers_redacted: true,
+      analyze: true,
+      representative_volume: true
+    })
+  );
+  await writeFile(
+    resolve(dir, "signal-v2-shadow.json"),
+    JSON.stringify({
+      ready_for_backend_signal_v2: true,
+      identifiers_redacted: true,
+      failed: [],
+      llm_spend_usd: 0,
+      client_activation: false
+    })
+  );
+}
+
+async function writeSignalV2EvidencePlaceholders(dir: string) {
+  await Promise.all([
+    "signal-v2-backfill.json",
+    "signal-v2-reconcile.json",
+    "signal-v2-explain.json",
+    "signal-v2-shadow.json",
+    "backend-ready-signal-v2.json"
+  ].map((name) => writeFile(resolve(dir, name), "{}")));
 }
 
 async function rewriteStagingCheck(dir: string, rewrite: (contents: string) => string) {
@@ -2216,11 +2292,38 @@ test("Data OS completion audit only passes with a validated staging release gate
     assert.ok(audit.requirement_checks.some((check) => check.requirement === "pr-summary release gates checked"));
     assert.ok(audit.requirement_checks.some((check) => check.requirement === "pr-summary local verifier gate"));
     assert.ok(audit.requirement_checks.some((check) => check.requirement === "pr-summary database format"));
+    assert.ok(audit.requirement_checks.some((check) => check.requirement === "pr-summary Signal V2 backend gate"));
+    assert.ok(audit.requirement_checks.some(
+      (check) => check.requirement === "backend-ready-signal-v2.backend_ready_for_signal_v2=true"
+    ));
     assert.equal(audit.completion_source, "docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md");
     assert.equal(audit.evidence_dir, "external_path_redacted");
     assert.equal(audit.pr_safe, true);
     assert.equal(audit.sensitive_output_redacted, true);
     assert.doesNotMatch(auditResult.stdout, new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    await writeFile(
+      resolve(dir, "backend-ready-signal-v2.json"),
+      JSON.stringify({
+        backend_ready_for_signal_v2: false,
+        identifiers_redacted: true,
+        llm_spend_usd: 0,
+        client_activation: false
+      })
+    );
+    const blockedResult = await execFile(
+      "corepack",
+      ["pnpm", "exec", "tsx", "scripts/data-os-completion-audit.ts", dir],
+      { cwd: process.cwd() }
+    );
+    const blocked = JSON.parse(blockedResult.stdout) as {
+      missing_evidence: string[];
+      ready_for_goal_completion: boolean;
+    };
+    assert.equal(blocked.ready_for_goal_completion, false);
+    assert.ok(blocked.missing_evidence.includes(
+      "backend-ready-signal-v2.backend_ready_for_signal_v2=true"
+    ));
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
@@ -2770,6 +2873,7 @@ test("Data OS evidence pack validator rejects leaked database URLs in artifacts"
     );
     await writeFile(resolve(dir, "evidence.json"), "{}");
     await writeFile(resolve(dir, "evidence.md"), "");
+    await writeSignalV2EvidencePlaceholders(dir);
 
     await assert.rejects(
       execFile("corepack", ["pnpm", "exec", "tsx", "scripts/validate-data-os-evidence-pack.ts", dir], {
@@ -2839,6 +2943,7 @@ test("Data OS evidence pack validator rejects leaked API keys in artifacts", asy
     await writeFile(resolve(dir, "evidence.json"), "{}");
     const syntheticOpenAiKey = ["sk", "proj", "1234567890abcdefghijklmnopqrstuv"].join("-");
     await writeFile(resolve(dir, "evidence.md"), `OPENAI_API_KEY=${syntheticOpenAiKey}`);
+    await writeSignalV2EvidencePlaceholders(dir);
 
     await assert.rejects(
       execFile("corepack", ["pnpm", "exec", "tsx", "scripts/validate-data-os-evidence-pack.ts", dir], {
@@ -2941,6 +3046,7 @@ test("Data OS evidence pack validator rejects UUIDs in PR-ready markdown", async
         "Output: Sample (123e4567-e89b-42d3-a456-426614174000)"
       ].join("\n")
     );
+    await writeSignalV2EvidencePlaceholders(dir);
 
     await assert.rejects(
       execFile("corepack", ["pnpm", "exec", "tsx", "scripts/validate-data-os-evidence-pack.ts", dir], {

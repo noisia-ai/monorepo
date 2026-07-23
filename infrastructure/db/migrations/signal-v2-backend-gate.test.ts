@@ -57,9 +57,65 @@ test("Signal V2 backend gate fails closed when facade shadow is not ready", asyn
   }
 });
 
+test("Signal V2 backend gate fails closed when legacy payload parity is behind", async () => {
+  const dir = await createEvidenceDir();
+  try {
+    await writeJson(dir, "serving-smoke.json", servingSmokeEvidence({
+      live_payload_parity: { live_behind_payload: true }
+    }));
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "scripts/signal-v2-backend-gate.ts"],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, NOISIA_DATA_OS_EVIDENCE_PACK_DIR: dir }
+        }
+      ),
+      (error: unknown) => {
+        const stdout = String((error as { stdout?: unknown }).stdout ?? "");
+        return stdout.includes('"backend_ready_for_signal_v2": false')
+          && stdout.includes('"legacy_payload_parity_preserved"');
+      }
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Signal V2 backend gate fails closed when legacy fallback is unsafe", async () => {
+  const dir = await createEvidenceDir();
+  try {
+    await writeJson(dir, "serving-smoke.json", servingSmokeEvidence({
+      fallback_checks: {
+        data_os_disabled_ready: false,
+        signal_pulse_live_disabled_ready: true
+      }
+    }));
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        ["--import", "tsx", "scripts/signal-v2-backend-gate.ts"],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, NOISIA_DATA_OS_EVIDENCE_PACK_DIR: dir }
+        }
+      ),
+      (error: unknown) => {
+        const stdout = String((error as { stdout?: unknown }).stdout ?? "");
+        return stdout.includes('"backend_ready_for_signal_v2": false')
+          && stdout.includes('"legacy_fallback_safe"');
+      }
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 async function createEvidenceDir() {
   const dir = await mkdtemp(resolve(tmpdir(), "noisia-signal-v2-gate-"));
   await writeFile(resolve(dir, "staging-check.txt"), "ready_for_staging_shadow=true\n");
+  await writeJson(dir, "serving-smoke.json", servingSmokeEvidence());
   await writeJson(dir, "signal-v2-backfill.json", {
     ok: true,
     mode: "apply",
@@ -85,6 +141,37 @@ async function createEvidenceDir() {
     client_activation: false
   });
   return dir;
+}
+
+function servingSmokeEvidence(
+  overrides: Partial<Record<
+    "live_payload_parity" | "fallback_checks" | "visibility_checks",
+    Record<string, boolean>
+  >> = {}
+) {
+  return {
+    ok: true,
+    ready_for_serving_shadow: true,
+    corpus_id: "set_redacted",
+    output_id: "set_redacted",
+    contains_sensitive_ids: false,
+    live_payload_parity: {
+      live_behind_payload: false,
+      ...overrides.live_payload_parity
+    },
+    fallback_checks: {
+      data_os_disabled_ready: true,
+      signal_pulse_live_disabled_ready: true,
+      ...overrides.fallback_checks
+    },
+    visibility_checks: {
+      client_source_health_hidden: true,
+      client_internal_dashboard_refs_hidden: true,
+      internal_source_health_visible: true,
+      internal_dashboard_refs_preserved: true,
+      ...overrides.visibility_checks
+    }
+  };
 }
 
 function writeJson(dir: string, name: string, value: unknown) {
