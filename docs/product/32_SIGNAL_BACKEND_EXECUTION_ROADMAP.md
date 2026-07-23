@@ -117,7 +117,7 @@ flowchart LR
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
-| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente |
+| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Bloqueada por hardening post-SB-06 |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente |
 | SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente |
 | SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente |
@@ -586,9 +586,9 @@ Gates Studio, DB, build, Data OS y diff verdes. No hubo runtime API contra Postg
 porque `DATABASE_URL` local sigue ausente y Docker no está disponible; no se usó target
 remoto ni se inventó evidencia. No se activó ninguna flag.
 
-**Siguiente tarea habilitada:** SB-07 · Versioned Claude Metric Interpretations. Queda
-habilitada por contrato y serving, pero no iniciada: no se ejecutó Claude ni se creó
-interpretación alguna.
+**Siguiente fase requerida:** hardening post-SB-06. SB-07 tiene sus dependencias
+arquitectónicas, pero no está habilitada para iniciar hasta cerrar el gate documentado
+abajo. No se ejecutó Claude ni se creó interpretación alguna.
 
 ### Commit Sugerido
 
@@ -600,6 +600,95 @@ interpretación alguna.
 > métricas, series, breakdowns y drill-down con authZ y contratos V1. Conserva rutas
 > legacy y no implementes páginas/componentes. Incluye OpenAPI, fixtures, tests, build,
 > handoff, commit y push WIP.
+
+---
+
+## Gate De Hardening Post-SB-06 · Conversation Following
+
+### Auditoría Condicionada Del Checkpoint
+
+**Aprobación condicionada, 2026-07-22, checkpoint `b656626`.** SB-02→SB-06 forman un
+buen checkpoint WIP para funcionalidades de social listening y seguimiento continuo
+de conversaciones. La arquitectura se conserva; no se debe desechar ni reescribir el
+trabajo. Antes de comenzar SB-07 se requiere una fase de hardening que cierre los seis
+hallazgos siguientes.
+
+Gates observados en el checkpoint:
+
+- rama limpia y sincronizada con
+  `origin/codex/noisia-data-os-cut-1-wip`;
+- DB: typecheck y 50 tests verdes;
+- Query Engine: typecheck y 166 tests verdes;
+- Workers: typecheck y 121 tests verdes;
+- Studio: typecheck, 236 tests y build verdes;
+- lint general y `data-os:verify` verdes.
+
+No existe `DATABASE_URL` local y Docker no está disponible. Por eso las migraciones
+0047–0050, workers, scheduler y APIs todavía no tienen comprobación runtime contra un
+Postgres real. `data-os:verify` lo reporta correctamente como
+`database.skipped: true`; este checkpoint no constituye evidencia runtime ni de
+staging.
+
+### Hallazgos Bloqueantes Para SB-07
+
+1. **P1 · El scheduler puede perder una corrida.** Actualmente
+   `expected_next_run` avanza antes de confirmar que BullMQ aceptó el job. Un fallo de
+   Redis puede hacer desaparecer esa ocurrencia.
+   Ver [signal-refresh.ts](../../services/workers/src/workers/signal-refresh.ts#L38).
+   El hardening debe persistir el avance sólo después del enqueue confirmado o usar un
+   mecanismo durable equivalente, con test explícito de fallo de Redis.
+2. **P1 · La cadencia no gobierna realmente la frescura.** Las políticas daily,
+   weekly y monthly se persisten, pero `stale_after` usa un fallback fijo de 24 horas y
+   el watermark puede seguir figurando `fresh`.
+   Ver [signal-materialization.ts](../../services/workers/src/workers/signal-materialization.ts#L103).
+   `stale_after`, source freshness y data freshness deben derivarse de la policy y su
+   siguiente corrida esperada, con casos daily/weekly/monthly.
+3. **P1 · `conversation.velocity` no incluye el periodo anterior al rango.** El
+   primer punto queda `not_available` aunque exista el bucket precedente. La
+   invalidación incremental tampoco declara esa dependencia.
+   Ver [signal-materialization-v1.ts](../../packages/query-engine/src/signal-materialization-v1.ts#L457).
+   El planner debe incorporar un lookback de un bucket comparable y la invalidación
+   debe recalcular el bucket dependiente.
+4. **P1 · Las quality rules del catálogo no se ejecutan completamente.** Tags
+   `unreviewed` pueden contar como gobernados porque sólo se excluyen los `rejected`, y
+   el resultado puede persistirse como `pass/fresh`.
+   Ver [signal-materialization-v1.ts](../../packages/query-engine/src/signal-materialization-v1.ts#L437).
+   El motor debe evaluar las reglas versionadas y degradar o bloquear evidencia no
+   gobernada; un estado no revisado nunca debe publicarse silenciosamente como
+   `pass/fresh`.
+5. **P1 · El backfill puede dejar varios corpora operacionales activos.** Serving
+   elige uno por `valid_from`, pero el backfill puede crear varios con el mismo
+   instante, produciendo selección arbitraria.
+   Ver [backfill-signal-workspaces.ts](../../apps/studio/scripts/backfill-signal-workspaces.ts#L135).
+   El backfill y el schema deben garantizar una selección determinística y exactamente
+   un corpus `operational` activo por workspace, conservando idempotencia y scope de
+   organización.
+6. **P2 · Metric groups siempre anuncia cache `fresh`.** La ruta puede cachear
+   respuestas con métricas `stale`, `partial` o `not_available` usando política de
+   respuesta fresca.
+   Ver [metric-groups/route.ts](../../apps/studio/src/app/api/data-os/signal/%5BworkspaceId%5D/metric-groups/route.ts#L23).
+   El estado HTTP/cache debe derivarse del peor estado visible del response y usar
+   `private, no-cache` para cualquier resultado degradado.
+
+### Criterio De Salida Del Hardening
+
+- Los seis hallazgos tienen tests de regresión y sus gates de paquete están verdes.
+- Los gates finales de SB-02→SB-06 vuelven a pasar sin cambiar rutas legacy, frontend,
+  Claude ni flags cliente-visibles.
+- Si sigue sin existir Postgres local, el handoff conserva explícitamente el runtime
+  DB como pendiente; no inventa evidencia. Antes de activación interna o cliente-visible
+  sí se requiere aplicar 0047–0050 y ejecutar scheduler, materialización y serving
+  smoke contra Postgres no productivo.
+- Sólo después de este cierre SB-07 cambia de `Bloqueada` a `Pendiente/habilitada`.
+  El orden posterior permanece SB-07→SB-10.
+
+### Prompt Para La Siguiente Tarea
+
+> Ejecuta únicamente el hardening post-SB-06 de Conversation Following. Corrige los
+> seis hallazgos P1/P2 documentados, agrega tests de regresión y repite los gates de
+> DB, Query Engine, Workers, Studio, build y Data OS. No inicies SB-07 ni ejecutes
+> Claude. Conserva rutas legacy, flags apagadas y reporta cualquier smoke de Postgres
+> que siga pendiente.
 
 ---
 
