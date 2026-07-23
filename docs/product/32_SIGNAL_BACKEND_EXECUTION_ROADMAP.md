@@ -117,8 +117,8 @@ flowchart LR
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
-| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente / habilitada tras hardening (2026-07-22) |
-| SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente |
+| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Completo local (2026-07-22) |
+| SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente / habilitada (2026-07-22) |
 | SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente |
 | SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente |
 
@@ -782,6 +782,26 @@ filtro o watermark incompatible nunca reutiliza texto como si fuera vigente.
 ### Commit Sugerido
 
 `Persist Signal metric interpretations`
+
+### Estado / Handoff SB-07
+
+**Completo local, 2026-07-22.** `signal-interpretation-v1` define packets canónicos
+desde SB-05, identidad idempotente por filter/watermark/prompt/model, refs numéricas
+exactas y separación obligatoria entre facts, hypotheses, causal claims y
+recommendations. La migración `0052_signal_metric_interpretations_v1` agrega runs,
+interpretations y evidence sin modificar `analysis_artifacts`.
+
+El worker Data OS es asíncrono, tiene timeout de 45 segundos, tres intentos, cap de
+presupuesto, costo persistido y fallback determinístico. Los dos switches LLM nacen
+apagados y el budget default es cero; los tests usan un fake y no hubo llamada ni gasto
+Anthropic. Serving expone `/interpretations`, agrega freshness a bootstrap/metric
+groups y filtra `needs_review` para clientes. OpenAPI y contratos quedaron actualizados.
+
+**Evidencia runtime pendiente:** `0052` no se aplicó por ausencia de Postgres local/
+Docker operativo y no se usó un target remoto. Esta limitación se conserva para el
+gate final SB-10.
+
+**Siguiente tarea habilitada:** SB-08 · T&B Structured Evidence and Artifact Review.
 
 ### Prompt Para Tarea Nueva
 

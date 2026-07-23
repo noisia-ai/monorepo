@@ -154,7 +154,7 @@ export function requireFreshSignalResult<T extends {
 
 export async function loadSignalBootstrapV1(workspace: ResolvedSignalWorkspace, isInternalUser: boolean) {
   const corpus = requireServingCorpus(workspace);
-  const [coverage, watermarks, metricStates] = await Promise.all([
+  const [coverage, watermarks, metricStates, interpretationStates] = await Promise.all([
     pool.query<{ date_from: string | null; date_through: string | null; mentions: number }>(`
       SELECT MIN((published_at AT TIME ZONE $2)::date)::text AS date_from,
         MAX((published_at AT TIME ZONE $2)::date)::text AS date_through,
@@ -212,11 +212,21 @@ export async function loadSignalBootstrapV1(workspace: ResolvedSignalWorkspace, 
         MAX(computed_at) AS computed_at
       FROM latest
       GROUP BY metric_group_key ORDER BY metric_group_key
-    `, [workspace.id, corpus.id])
+    `, [workspace.id, corpus.id]),
+    pool.query<{ state: string; reason: string | null; evaluated_at: Date }>(`
+      SELECT state, reason, evaluated_at
+      FROM signal_interpretation_freshness
+      WHERE workspace_id = $1::uuid
+      ORDER BY evaluated_at DESC, id
+    `, [workspace.id])
   ]);
   const coverageRow = coverage.rows[0] ?? { date_from: null, date_through: null, mentions: 0 };
   const freshnessState = worstState(watermarks.rows.map((row) => row.data_freshness_state));
-  const interpretationFreshness = { state: "not_available", reason: "SB-07_not_started" } as const;
+  const interpretationFreshness = {
+    state: signalWorstResponseStateV1(interpretationStates.rows.map((row) => row.state)),
+    reason: interpretationStates.rows.find((row) => row.state !== "fresh")?.reason ?? null,
+    evaluated_at: maxInstant(interpretationStates.rows.map((row) => row.evaluated_at))
+  };
   const responseState = signalWorstResponseStateV1([
     freshnessState,
     interpretationFreshness.state,
@@ -355,10 +365,26 @@ export async function loadSignalMetricGroupsV1(args: {
       AND (cache_scope <> 'ad_hoc' OR expires_at > now())
     ORDER BY metric_key, metric_version, computed_at DESC
   `, [args.workspace.id, corpus.id, filtersHash]);
+  const interpretationStates = await pool.query<{
+    metric_group_key: string;
+    state: string;
+    reason: string | null;
+    evaluated_at: Date;
+  }>(`
+    SELECT metric_group_key, state, reason, evaluated_at
+    FROM signal_interpretation_freshness
+    WHERE workspace_id = $1::uuid AND filters_hash = $2
+  `, [args.workspace.id, filtersHash]);
   const byMetric = new Map(states.rows.map((row) => [`${row.metric_key}@${row.metric_version}`, row]));
+  const byGroupInterpretation = new Map(interpretationStates.rows.map((row) => [row.metric_group_key, row]));
   const groups = SIGNAL_METRIC_CATALOG_V1.map((group) => ({
     key: group.key,
     name: group.name,
+    interpretation: {
+      state: byGroupInterpretation.get(group.key)?.state ?? "not_available",
+      reason: byGroupInterpretation.get(group.key)?.reason ?? "interpretation_not_available",
+      evaluated_at: byGroupInterpretation.get(group.key)?.evaluated_at.toISOString() ?? null
+    },
     metrics: group.metrics
       .filter((metric) => args.isInternalUser || metric.visibility !== "internal")
       .map((metric) => {
@@ -382,8 +408,82 @@ export async function loadSignalMetricGroupsV1(args: {
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     filters_hash: filtersHash,
-    state: signalWorstResponseStateV1(groups.flatMap((group) => group.metrics.map((metric) => metric.state))),
+    state: signalWorstResponseStateV1(groups.flatMap((group) => [
+      ...group.metrics.map((metric) => metric.state),
+      group.interpretation.state
+    ])),
     groups
+  };
+}
+
+export async function loadSignalInterpretationsV1(args: {
+  workspace: ResolvedSignalWorkspace;
+  filter: SignalFilterV1;
+  isInternalUser: boolean;
+}) {
+  assertVisibleFilterDimensions(args.filter, args.isInternalUser);
+  const corpus = requireServingCorpus(args.workspace);
+  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const result = await pool.query<{
+    metric_group_key: string;
+    metric_group_version: number;
+    status: string;
+    review_status: string;
+    generated_by: string;
+    data_watermark_hash: string;
+    data_scope: JsonRecord;
+    content: JsonRecord;
+    created_at: Date;
+  }>(`
+    SELECT DISTINCT ON (interpretation.metric_group_key)
+      interpretation.metric_group_key, interpretation.metric_group_version,
+      CASE
+        WHEN freshness.data_watermark_hash IS DISTINCT FROM interpretation.data_watermark_hash
+          THEN 'stale'
+        ELSE interpretation.status
+      END AS status,
+      interpretation.review_status, interpretation.generated_by,
+      interpretation.data_watermark_hash, interpretation.data_scope,
+      interpretation.content, interpretation.created_at
+    FROM metric_interpretations interpretation
+    LEFT JOIN signal_interpretation_freshness freshness
+      ON freshness.latest_interpretation_id = interpretation.id
+    WHERE interpretation.workspace_id = $1::uuid
+      AND interpretation.study_corpus_id = $2::uuid
+      AND interpretation.filters_hash = $3
+      AND (
+        interpretation.review_status IN ('auto_published', 'approved')
+        OR $4::boolean = true
+      )
+    ORDER BY interpretation.metric_group_key, interpretation.created_at DESC, interpretation.id
+  `, [args.workspace.id, corpus.id, filtersHash, args.isInternalUser]);
+  const byGroup = new Map(result.rows.map((row) => [row.metric_group_key, row]));
+  const interpretations = SIGNAL_METRIC_CATALOG_V1.map((group) => {
+    const row = byGroup.get(group.key);
+    if (!row) return {
+      metric_group_key: group.key,
+      metric_group_version: 1,
+      state: "not_available",
+      reason: "interpretation_not_available",
+      interpretation: null
+    };
+    return {
+      metric_group_key: row.metric_group_key,
+      metric_group_version: row.metric_group_version,
+      state: row.status,
+      review_status: row.review_status,
+      generated_by: row.generated_by,
+      data_watermark_hash: row.data_watermark_hash,
+      data_scope: args.isInternalUser ? row.data_scope : undefined,
+      generated_at: row.created_at.toISOString(),
+      interpretation: row.content
+    };
+  });
+  return {
+    contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
+    filters_hash: filtersHash,
+    state: signalWorstResponseStateV1(interpretations.map((item) => item.state)),
+    interpretations
   };
 }
 

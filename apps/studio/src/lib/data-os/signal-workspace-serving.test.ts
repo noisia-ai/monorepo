@@ -182,7 +182,7 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
 
 test("workspace routes use authZ and canonical stores without published payload, raw metadata or legacy route edits", async () => {
   const routeRoot = resolve(process.cwd(), "src/app/api/data-os/signal/[workspaceId]");
-  const routeNames = ["bootstrap", "facets", "metric-groups", "series", "breakdowns", "comparison", "mentions", "lineage"];
+  const routeNames = ["bootstrap", "facets", "metric-groups", "series", "breakdowns", "comparison", "mentions", "lineage", "interpretations"];
   const sources = await Promise.all(routeNames.map((name) => readFile(resolve(routeRoot, name, "route.ts"), "utf8")));
   const [service, openapi, pulseMetrics, fixtureSource] = await Promise.all([
     readFile(resolve(process.cwd(), "src/lib/data-os/signal-workspace-serving.ts"), "utf8"),
@@ -196,6 +196,7 @@ test("workspace routes use authZ and canonical stores without published payload,
   }
   assert.doesNotMatch(service, /published_outputs|raw_metadata|chart_aggregates/u);
   assert.match(service, /FROM metric_materializations/);
+  assert.match(service, /FROM metric_interpretations interpretation/);
   assert.match(service, /FROM mentions m WHERE \$\{predicate\.sql\}/);
   assert.match(service, /sourceTypeSelect = args\.isInternalUser/);
   for (const routeName of routeNames) {

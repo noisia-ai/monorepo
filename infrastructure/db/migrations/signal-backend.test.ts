@@ -152,3 +152,28 @@ test("post-SB-06 hardening adds a durable refresh outbox, policy freshness and o
   assert.match(fixture, /aggregate\/drill-down reconciliation failed/);
   assert.match(fixture, /governed topic quality reconciliation failed/);
 });
+
+test("SB-07 persists versioned, budget-bounded interpretations without weakening analysis artifacts", async () => {
+  const [migration, worker, contract, serving, analysisMigration] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0052_signal_metric_interpretations_v1.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-interpretation.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../packages/query-engine/src/signal-interpretation-v1.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-serving.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "migrations/0046_analysis_artifact_evidence_graph.sql"), "utf8")
+  ]);
+  for (const table of [
+    "metric_interpretation_runs",
+    "metric_interpretations",
+    "metric_interpretation_evidence"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /actual_cost_usd <= budget_cap_usd/);
+  assert.match(migration, /materialization_id uuid NOT NULL REFERENCES metric_materializations/);
+  assert.match(worker, /FROM metric_materializations/);
+  assert.match(worker, /executeSignalInterpretationV1/);
+  assert.match(contract, /Every number written in a claim must have an exact numeric_ref/);
+  assert.match(serving, /FROM metric_interpretations interpretation/);
+  assert.match(analysisMigration, /analysis_artifacts_exactly_one_analysis/);
+  assert.doesNotMatch(migration, /ALTER TABLE analysis_artifacts/);
+});

@@ -846,6 +846,7 @@ independiente, también `false`: `NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED`.
 | `GET /api/data-os/signal/:workspaceId/bootstrap` | identity, subject, corpus, coverage, data/interpretation freshness y estado por group |
 | `GET /api/data-os/signal/:workspaceId/facets` | facets y counts bajo el filtro actual; `source_type` sólo para usuarios internos |
 | `GET /api/data-os/signal/:workspaceId/metric-groups` | catálogo visible, versiones, grains, dimensiones y freshness |
+| `GET /api/data-os/signal/:workspaceId/interpretations` | interpretación versionada por metric group, ligada al filtro, packet y watermark exactos |
 | `GET /api/data-os/signal/:workspaceId/series` | `SignalTimeSeriesV1` para `metric_key@metric_version` |
 | `GET /api/data-os/signal/:workspaceId/breakdowns` | `SignalBreakdownV1` para la dimensión gobernada de la métrica |
 | `GET /api/data-os/signal/:workspaceId/comparison` | periodos no traslapados de igual número de días |
@@ -905,7 +906,39 @@ Hardening post-SB-06:
   `partial` la materialización con `quality_reasons=["review_pending"]`;
 - si persisten varios corpora operational activos por datos históricos, el resolver
   responde fail-closed `409 not_available` con
-  `reason=multiple_active_operational_corpora`.
+`reason=multiple_active_operational_corpora`.
+
+#### Signal metric interpretations V1 (SB-07)
+
+`GET /api/data-os/signal/:workspaceId/interpretations` usa el mismo
+`SignalFilterV1`. Cada item devuelve `metric_group_key/version`, estado
+`fresh|stale|pending|partial|not_available`, review status, fecha, watermark y el
+contenido validado. Usuarios cliente sólo reciben interpretaciones
+`auto_published|approved`; `needs_review` es visible únicamente para usuarios internos.
+Data scope completo, model/prompt, costo y detalles de ejecución permanecen internos.
+
+Los packets se construyen exclusivamente desde `metric_materializations` SB-05 con
+`filters_hash` y `data_watermark_hash` exactos. Claude no calcula: cada número escrito
+debe tener un `numeric_ref` que coincida exactamente con `value`, `denominator` o
+`sample_size`, y cada evidence ref debe resolver a una materialización del packet.
+Facts, hypotheses, causal claims y recommendations se persisten separadas;
+hypotheses/causal/recommendations siempre quedan `needs_review`.
+
+El worker es asíncrono, idempotente, acotado a tres intentos y 45 segundos, y no se
+habilita con una sola flag. Requiere:
+
+```text
+NOISIA_SIGNAL_INTERPRETATIONS_ENABLED=true
+NOISIA_SIGNAL_INTERPRETATIONS_LLM_ENABLED=true
+ANTHROPIC_API_KEY=<secret>
+NOISIA_SIGNAL_INTERPRETATION_BUDGET_CAP_USD=<approved cap>
+```
+
+Todos los defaults son cerrados y el cap default es cero. Sin autorización o ante
+timeout/error, se persiste un fallback descriptivo determinístico de costo cero y su
+motivo; nunca se llama a Claude desde page view. Un cambio de filtro, watermark,
+metric definition, prompt o model impide reutilizar texto previo y marca freshness
+stale/pending/unavailable según corresponda.
 
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser

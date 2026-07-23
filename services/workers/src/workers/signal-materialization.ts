@@ -7,9 +7,13 @@ import {
   evaluateSignalMetricQualityV1,
   normalizeSignalFilterV1,
   SIGNAL_METRIC_DEFINITIONS_V1,
+  SIGNAL_INTERPRETATION_CONTRACT_VERSION,
+  SIGNAL_INTERPRETATION_JOB_NAME,
+  SIGNAL_INTERPRETATION_PROMPT_VERSION,
   SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN,
   signalFiltersHashV1,
   signalMetricMaterializationKeyV1,
+  signalInterpretationIdempotencyKeyV1,
   splitSignalMaterializationDateRangeV1,
   validateDataWatermarkV1,
   type DataWatermarkV1,
@@ -20,6 +24,7 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "../db/client";
+import { getSignalRefreshQueue } from "../queues/signal-refresh";
 
 type WorkspaceScope = {
   workspace_id: string;
@@ -204,6 +209,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     await client.query("BEGIN");
     let rowsWritten = 0;
     let plansExecuted = 0;
+    const interpretationScopes = new Map<string, { metricGroupKey: string; filter: SignalFilterV1; filtersHash: string }>();
     const requestedMetricKeys = new Set(job.data.trigger === "ad_hoc" ? job.data.metric_keys : []);
     for (const normalizedFilter of uniqueFilters) {
         const granularity = normalizedFilter.granularity;
@@ -220,6 +226,11 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
             metric_version: metric.version,
             filter: normalizedFilter,
             study_corpus_ids: [scope.study_corpus_id]
+          });
+          interpretationScopes.set(`${metric.group}:${plan.predicate.filters_hash}`, {
+            metricGroupKey: metric.group,
+            filter: plan.predicate.normalized_filter,
+            filtersHash: plan.predicate.filters_hash
           });
           const result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
           plansExecuted += 1;
@@ -326,6 +337,41 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       `, [job.data.invalidation_id, plansExecuted, rowsWritten, watermarkHash]);
     }
     await client.query("COMMIT");
+    if (process.env.NOISIA_SIGNAL_INTERPRETATIONS_ENABLED === "true") {
+      const modelVersion = process.env.NOISIA_SIGNAL_INTERPRETATION_MODEL ?? "claude-sonnet-4-5";
+      const budgetCap = finiteBudget(process.env.NOISIA_SIGNAL_INTERPRETATION_BUDGET_CAP_USD);
+      for (const interpretationScope of interpretationScopes.values()) {
+        const idempotencyKey = signalInterpretationIdempotencyKeyV1({
+          workspace_id: scope.workspace_id,
+          metric_group_key: interpretationScope.metricGroupKey,
+          metric_group_version: 1,
+          filters_hash: interpretationScope.filtersHash,
+          data_watermark_hash: watermarkHash,
+          prompt_version: SIGNAL_INTERPRETATION_PROMPT_VERSION,
+          model_version: modelVersion
+        });
+        await getSignalRefreshQueue().add(SIGNAL_INTERPRETATION_JOB_NAME, {
+          contract_version: SIGNAL_INTERPRETATION_CONTRACT_VERSION,
+          workspace_id: scope.workspace_id,
+          study_corpus_id: scope.study_corpus_id,
+          metric_group_key: interpretationScope.metricGroupKey,
+          metric_group_version: 1,
+          filter: interpretationScope.filter,
+          filters_hash: interpretationScope.filtersHash,
+          data_watermark_hash: watermarkHash,
+          prompt_version: SIGNAL_INTERPRETATION_PROMPT_VERSION,
+          model_version: modelVersion,
+          budget_cap_usd: budgetCap,
+          idempotency_key: idempotencyKey
+        }, {
+          jobId: `signal-interpretation-${idempotencyKey.slice(-40)}`,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 5_000 },
+          removeOnComplete: { age: 86_400, count: 1_000 },
+          removeOnFail: { age: 604_800, count: 2_000 }
+        });
+      }
+    }
     return { state: freshness, plans_executed: plansExecuted, rows_written: rowsWritten, watermark_hash: watermarkHash };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -334,6 +380,11 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     if (locked) await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey]).catch(() => undefined);
     client.release();
   }
+}
+
+function finiteBudget(value: string | undefined) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) && number > 0 ? Math.min(number, 100) : 0;
 }
 
 function combinedWatermark(scope: WorkspaceScope, rows: WatermarkRow[], materializedAt: Date): DataWatermarkV1 {

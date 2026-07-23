@@ -24,7 +24,9 @@ const REQUIRED_MIGRATIONS = [
   "0047_signal_workspace_identity",
   "0048_signal_recurring_refresh",
   "0049_signal_metric_catalog_v1",
-  "0050_signal_metric_materializations_v1"
+  "0050_signal_metric_materializations_v1",
+  "0051_signal_backend_foundation_hardening",
+  "0052_signal_metric_interpretations_v1"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -86,7 +88,10 @@ const REQUIRED_TABLES = [
   "signal_data_watermarks",
   "signal_refresh_runs",
   "signal_data_invalidations",
-  "signal_interpretation_freshness"
+  "signal_interpretation_freshness",
+  "metric_interpretation_runs",
+  "metric_interpretations",
+  "metric_interpretation_evidence"
 ];
 
 const REQUIRED_ROUTES = [
@@ -110,7 +115,8 @@ const REQUIRED_ROUTES = [
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/breakdowns/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/comparison/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/mentions/route.ts",
-  "apps/studio/src/app/api/data-os/signal/[workspaceId]/lineage/route.ts"
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/lineage/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/interpretations/route.ts"
 ];
 
 const REQUIRED_CONTRACT_FILES = [
@@ -1401,7 +1407,10 @@ async function verifyImplementationContracts(repoRoot: string) {
     "signal_data_watermarks",
     "signal_refresh_runs",
     "signal_data_invalidations",
-    "signal_interpretation_freshness"
+    "signal_interpretation_freshness",
+    "metric_interpretation_runs",
+    "metric_interpretations",
+    "metric_interpretation_evidence"
   ]) {
     if (!schemaDoc.includes(table)) missing.push(`database schema missing ${table}`);
   }
@@ -1434,7 +1443,8 @@ async function verifyImplementationContracts(repoRoot: string) {
     "GET /api/data-os/signal/:workspaceId/breakdowns",
     "GET /api/data-os/signal/:workspaceId/comparison",
     "GET /api/data-os/signal/:workspaceId/mentions",
-    "GET /api/data-os/signal/:workspaceId/lineage"
+    "GET /api/data-os/signal/:workspaceId/lineage",
+    "GET /api/data-os/signal/:workspaceId/interpretations"
   ]) {
     if (!apiContracts.includes(endpoint)) missing.push(`API contracts missing ${endpoint}`);
   }

@@ -279,6 +279,27 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/interpretations:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceInterpretations
+      summary: Get versioned metric-group interpretations for the exact filter and watermark scope.
+      description: Claude never calculates metrics; every cited number and evidence ref is validated against canonical SB-05 materializations. Pending, stale, partial and unavailable are explicit states.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
   /api/data-os/signal/{workspaceId}/series:
     get:
       tags: [Signal Workspace V1]

@@ -18,5 +18,6 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.match(invalidator, /signal-materialize-\$\{invalidation\.id\}/);
   assert.match(queue, /SIGNAL_MATERIALIZE_JOB_NAME/);
   assert.match(entrypoint, /isDataOsWorkerEnabled\(\)/);
-  assert.doesNotMatch(materializer, /published_outputs|chart_aggregates|anthropic|claude/iu);
+  assert.doesNotMatch(materializer, /published_outputs|chart_aggregates|@ai-sdk\/anthropic|generateObject/iu);
+  assert.match(materializer, /SIGNAL_INTERPRETATION_JOB_NAME/);
 });

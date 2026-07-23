@@ -13,7 +13,8 @@ export type SignalDataOsJobData =
   | SignalRefreshTickJobDataV1
   | import("@noisia/query-engine").SignalRefreshRunJobDataV1
   | import("@noisia/query-engine").SignalInvalidationJobDataV1
-  | import("@noisia/query-engine").SignalMaterializeJobDataV1;
+  | import("@noisia/query-engine").SignalMaterializeJobDataV1
+  | import("@noisia/query-engine").SignalInterpretationJobDataV1;
 
 let signalRefreshQueue: Queue<SignalDataOsJobData> | null = null;
 

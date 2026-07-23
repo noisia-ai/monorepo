@@ -525,6 +525,7 @@ export const signalInterpretationFreshness = pgTable(
     interpretationWatermarkHash: text("interpretation_watermark_hash"),
     state: text("state").notNull().default("not_available"),
     reason: text("reason"),
+    latestInterpretationId: uuid("latest_interpretation_id"),
     evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: updatedAt()
   },
@@ -532,6 +533,107 @@ export const signalInterpretationFreshness = pgTable(
     check("signal_interpretation_freshness_state", sql`${table.state} IN ('fresh', 'stale', 'pending', 'partial', 'not_available')`),
     unique("uq_signal_interpretation_freshness_scope").on(table.workspaceId, table.metricGroupKey, table.filtersHash),
     index("idx_signal_interpretation_freshness_workspace_state").on(table.workspaceId, table.state, table.evaluatedAt)
+  ]
+);
+
+export const metricInterpretationRuns = pgTable(
+  "metric_interpretation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    metricGroupKey: text("metric_group_key").notNull(),
+    metricGroupVersion: integer("metric_group_version").notNull().default(1),
+    normalizedFilter: jsonb("normalized_filter").notNull(),
+    filtersHash: text("filters_hash").notNull(),
+    dataScope: jsonb("data_scope").notNull().default(sql`'{}'::jsonb`),
+    dataWatermarkHash: text("data_watermark_hash").notNull(),
+    packet: jsonb("packet").notNull(),
+    packetHash: text("packet_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    modelVersion: text("model_version").notNull(),
+    provider: text("provider").notNull().default("anthropic"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("queued"),
+    attempt: integer("attempt").notNull().default(0),
+    budgetCapUsd: numeric("budget_cap_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    timeoutMs: integer("timeout_ms").notNull(),
+    errorCode: text("error_code"),
+    errorSummary: jsonb("error_summary").notNull().default(sql`'{}'::jsonb`),
+    fallbackReason: text("fallback_reason"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("metric_interpretation_runs_status", sql`${table.status} IN ('queued', 'running', 'completed', 'skipped', 'failed', 'dead_letter')`),
+    unique("uq_metric_interpretation_runs_idempotency").on(table.idempotencyKey),
+    index("idx_metric_interpretation_runs_scope").on(
+      table.workspaceId, table.metricGroupKey, table.filtersHash, table.dataWatermarkHash, table.createdAt
+    )
+  ]
+);
+
+export const metricInterpretations = pgTable(
+  "metric_interpretations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id").notNull().references(() => metricInterpretationRuns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    metricGroupKey: text("metric_group_key").notNull(),
+    metricGroupVersion: integer("metric_group_version").notNull(),
+    revision: integer("revision").notNull().default(1),
+    filtersHash: text("filters_hash").notNull(),
+    dataWatermarkHash: text("data_watermark_hash").notNull(),
+    packetHash: text("packet_hash").notNull(),
+    dataScope: jsonb("data_scope").notNull(),
+    content: jsonb("content").notNull(),
+    facts: jsonb("facts").notNull().default(sql`'[]'::jsonb`),
+    hypotheses: jsonb("hypotheses").notNull().default(sql`'[]'::jsonb`),
+    causalClaims: jsonb("causal_claims").notNull().default(sql`'[]'::jsonb`),
+    recommendations: jsonb("recommendations").notNull().default(sql`'[]'::jsonb`),
+    status: text("status").notNull().default("fresh"),
+    reviewStatus: text("review_status").notNull(),
+    generatedBy: text("generated_by").notNull(),
+    staleReason: text("stale_reason"),
+    createdAt: now(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id, { onDelete: "set null" })
+  },
+  (table) => [
+    check("metric_interpretations_status", sql`${table.status} IN ('fresh', 'stale', 'pending', 'partial', 'not_available')`),
+    check("metric_interpretations_review_status", sql`${table.reviewStatus} IN ('auto_published', 'needs_review', 'approved', 'rejected')`),
+    unique("uq_metric_interpretations_scope_revision").on(
+      table.workspaceId, table.metricGroupKey, table.metricGroupVersion,
+      table.filtersHash, table.dataWatermarkHash, table.revision
+    ),
+    index("idx_metric_interpretations_serving").on(
+      table.workspaceId, table.metricGroupKey, table.filtersHash, table.status, table.createdAt
+    )
+  ]
+);
+
+export const metricInterpretationEvidence = pgTable(
+  "metric_interpretation_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    interpretationId: uuid("interpretation_id").notNull().references(() => metricInterpretations.id, { onDelete: "cascade" }),
+    // Migration 0052 owns this FK because metric_materializations is declared later.
+    materializationId: uuid("materialization_id").notNull(),
+    claimIndex: integer("claim_index").notNull(),
+    claimKind: text("claim_kind").notNull(),
+    field: text("field"),
+    citedNumericValue: numeric("cited_numeric_value"),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_metric_interpretation_evidence_materialization").on(table.materializationId, table.interpretationId)
   ]
 );
 

@@ -1349,7 +1349,13 @@ Tablas nuevas:
 - `signal_data_invalidations`: invalidación selectiva por workspace, corpus, source,
   revisión y rango afectado.
 - `signal_interpretation_freshness`: estado separado para interpretaciones futuras;
-  SB-02–SB-06 no ejecutan Claude.
+  SB-02–SB-06 no ejecutan Claude; SB-07 lo liga a scope y watermark exactos.
+- `metric_interpretation_runs`: outbox/attempt versionado con packet canónico, filter,
+  watermark, prompt/model, budget, costo, timeout, retry y fallback seguro.
+- `metric_interpretations`: revisión inmutable de facts, hypotheses, causal claims y
+  recommendations por workspace/metric group/filter/watermark.
+- `metric_interpretation_evidence`: referencias exactas de cada claim y número a
+  `metric_materializations`.
 
 El catálogo V1 reutiliza `metric_definitions` y `semantic_models`; no existe un
 catálogo paralelo. La migración `0049_signal_metric_catalog_v1` agrega versión,
@@ -1387,6 +1393,16 @@ Las métricas gobernadas por taxonomías sólo consideran `record_tags.review_st
 'approved'`. Tags pendientes o no revisados no son evidencia aceptada: producen estado
 `partial` y una razón de calidad. `conversation.velocity` conserva el bucket precedente
 real y su invalidación incluye el siguiente bucket dependiente.
+
+#### Interpretaciones versionadas SB-07
+
+La migración `0052_signal_metric_interpretations_v1` mantiene las interpretaciones
+separadas de `analysis_artifacts`: no cambia ni debilita su regla de ownership. El
+packet persistido contiene únicamente materializaciones canónicas SB-05; su hash,
+`filters_hash`, `data_watermark_hash`, prompt y model forman la identidad idempotente.
+La evidencia referencia por FK la materialización y, cuando existe una cita numérica,
+el campo y valor exactos. La invalidación de SB-03 marca freshness e interpretación
+stale sin borrar history. Los switches LLM nacen apagados y el budget cap en cero.
 
 ---
 

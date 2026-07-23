@@ -438,16 +438,26 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       invalidation.affected_through,
       expandedVelocityThrough
     ]);
-    const interpretations = await client.query(`
-      UPDATE signal_interpretation_freshness freshness
-      SET state = 'stale', reason = 'data_watermark_advanced', updated_at = now()
-      WHERE freshness.workspace_id = $1::uuid
-        AND freshness.state <> 'not_available'
-        AND (
-          freshness.data_scope->'study_corpus_ids' ? $2
-          OR freshness.data_scope->'source_keys' ? $3
-        )
-    `, [invalidation.workspace_id, invalidation.study_corpus_id, invalidation.source_key]);
+        const interpretations = await client.query(`
+          WITH stale_freshness AS (
+            UPDATE signal_interpretation_freshness freshness
+            SET state = 'stale', reason = 'data_watermark_advanced', updated_at = now()
+            WHERE freshness.workspace_id = $1::uuid
+              AND freshness.state <> 'not_available'
+              AND (
+                freshness.data_scope->'study_corpus_ids' ? $2
+                OR freshness.data_scope->'source_keys' ? $3
+                OR freshness.data_scope->>'study_corpus_id' = $2
+              )
+            RETURNING latest_interpretation_id
+          )
+          UPDATE metric_interpretations interpretation
+          SET status = 'stale', stale_reason = 'data_watermark_advanced'
+          WHERE interpretation.id IN (
+            SELECT latest_interpretation_id FROM stale_freshness
+            WHERE latest_interpretation_id IS NOT NULL
+          )
+        `, [invalidation.workspace_id, invalidation.study_corpus_id, invalidation.source_key]);
     const materializationJob: SignalMaterializeJobDataV1 = {
       contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
       trigger: "invalidation",
