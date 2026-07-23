@@ -95,6 +95,48 @@ Exploratorio. No se pitchea como si estuviera listo.
 
 ---
 
+## Catálogo canónico
+
+Estos son los nombres de producto. Un deck, una propuesta o una pantalla de Studio usan estos y
+no otros. **Regla de admisión: si no se puede producir dos veces este mes, no es producto — es
+una capacidad**, y se menciona sin cotizarse aparte.
+
+### Reportes
+
+| ID | Producto | Pregunta que contesta | Cadencia |
+|----|----------|------------------------|----------|
+| R1 | Monitoreo de marca | ¿Qué se dice de mi marca y de qué depende? | Mensual, mínimo 3 meses |
+| R2 | Monitoreo de marca y competencia | ¿Cómo estoy contra ellos y qué capitalizan? | Mensual, mínimo 3 meses |
+| R3 | Lectura de campaña o momento | ¿Cómo le fue a esto que lancé? | Puntual |
+
+R1 y R2 se sostienen hoy sobre el catálogo de métricas de Signal (volumen y velocidad,
+sentimiento y emoción, mix de plataforma y fuente, engagement, tópicos/narrativas/entidades)
+más interpretación por grupo de métricas.
+
+**No son producto todavía** — se mencionan como capacidad: alertas 24/7 y monitoreo de crisis
+(no existe el módulo de alertas, y comercialmente casi nunca se vende solo), evaluación de
+influencers como módulo con métricas propias, y detección de riesgos reputacionales como
+vigilancia.
+
+### Estudios
+
+Se organizan **por momento de decisión**, no por metodología ni por audiencia: es el corte que
+habla el idioma del cliente y no obliga a explicar el método para abrir la venta.
+
+| ID | Producto | Pregunta que contesta | Metodologías detrás |
+|----|----------|------------------------|---------------------|
+| E1 | Para lanzar | ¿Sobre qué territorio construyo sin sonar genérico? | Cultural Codes + T&B |
+| E2 | Para entrar | ¿Cómo funciona esta categoría o mercado que no conozco? | Cultural Codes + Influence Architecture |
+| E3 | Para defender | ¿Qué capitaliza mi competencia y dónde soy vulnerable? | Value Perception Matrix + T&B |
+| E4 | Para optimizar | ¿Dónde se rompe el camino entre intención y compra? | Journey Friction Mapping + Decision Velocity |
+| E5 | Para innovar | ¿Qué necesidad real sigue sin resolverse? | T&B + Value Perception Matrix |
+
+La columna de metodologías es **interna**: no aparece en un pitch. E4 es el de mayor riesgo de
+expectativa — en experiencia de compra, app y e-commerce se puede inferir, no saber, y el
+límite se dice antes de cotizar.
+
+---
+
 ## Personalización: al revés de lo que parece
 
 - **Los reportes son los menos estandarizables.** Cada cliente y cada marca dentro de un cliente
