@@ -229,3 +229,65 @@ test("SB-09 freezes T&B scope and human-promotes immutable strategic releases", 
   assert.match(invarianceFixture, /not a member of snapshot 1/);
   assert.match(invarianceFixture, /recomputed_value <> published_value/);
 });
+
+test("SB-10 freezes one protected facade, targeted backfill and runtime front-ready gate", async () => {
+  const [
+    migration,
+    home,
+    rootRoute,
+    fixture,
+    backfill,
+    reconcile,
+    explain,
+    shadow,
+    gate,
+    stagingShadow,
+    openapi
+  ] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0055_signal_v2_front_ready_indexes.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-home.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/data-os/signal/[workspaceId]/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-fixtures.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/backfill-signal-v2.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-reconcile.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-explain.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/signal-v2-shadow.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-backend-gate.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../scripts/data-os-staging-shadow.sh"), "utf8"),
+    readFile(resolve(process.cwd(), "../../docs/api/openapi.yaml"), "utf8")
+  ]);
+
+  for (const index of [
+    "idx_metric_materializations_signal_facade",
+    "idx_mentions_signal_facets",
+    "idx_record_tags_signal_approved_subject"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE INDEX IF NOT EXISTS ${index}`));
+  }
+  assert.match(home, /loadSignalBootstrapV1/);
+  assert.match(home, /loadSignalMetricGroupsV1/);
+  assert.match(home, /loadSignalInterpretationsV1/);
+  assert.match(home, /loadSignalStrategicReleasesV1/);
+  assert.doesNotMatch(home, /published_outputs|chart_aggregates/);
+  assert.match(rootRoute, /loadSignalWorkspaceContext/);
+  assert.match(rootRoute, /loadSignalWorkspaceHomeV1/);
+  assert.match(fixture, /satisfies SignalWorkspaceHomeV1/);
+  assert.match(backfill, /NOISIA_SIGNAL_V2_BACKFILL_APPROVED/);
+  assert.match(backfill, /requireSafeDatabaseWriteTarget/);
+  assert.match(backfill, /payload_preserved/);
+  assert.doesNotMatch(backfill, /UPDATE\s+published_outputs/iu);
+  assert.match(reconcile, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(reconcile, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(explain, /EXPLAIN \(\$\{analyze/);
+  assert.match(explain, /representativeVolume/);
+  assert.match(shadow, /five_metric_groups_materialized/);
+  assert.match(shadow, /five_claude_interpretations_reviewed/);
+  assert.match(shadow, /legacy_coverage_reconciled/);
+  assert.match(shadow, /client_flags_off/);
+  assert.match(gate, /backend_ready_for_signal_v2/);
+  assert.match(gate, /signal-v2-reconcile\.json/);
+  assert.match(stagingShadow, /NOISIA_SIGNAL_WORKSPACE_ID/);
+  assert.match(stagingShadow, /backend-ready-signal-v2\.json/);
+  assert.match(openapi, /SignalWorkspaceHomeV1/);
+  assert.match(openapi, /\/api\/data-os\/signal\/\{workspaceId\}:/);
+});

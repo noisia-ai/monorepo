@@ -35,7 +35,10 @@ export DATABASE_URL=<staging_or_preview_database_url>
 export NOISIA_REMOTE_DATABASE_TARGET=staging # o preview
 export NOISIA_DATA_OS_BACKFILL_CORPUS_ID=<study_corpus_uuid>
 export NOISIA_DATA_OS_SHADOW_OUTPUT_ID=<published_signal_pulse_output_uuid>
+export NOISIA_SIGNAL_WORKSPACE_ID=<signal_workspace_uuid>
 export NOISIA_DATA_OS_STAGING_SHADOW_APPROVED=true
+export NOISIA_SIGNAL_V2_BACKFILL_APPROVED=true
+export NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true
 ```
 
 Si el schema todavia no fue aplicado en esa DB:
@@ -62,6 +65,9 @@ Debe terminar con:
 - `NOISIA_REMOTE_DATABASE_TARGET=staging` o `preview`
 - `NOISIA_DATA_OS_BACKFILL_CORPUS_ID_FORMAT=uuid`
 - `NOISIA_DATA_OS_SHADOW_OUTPUT_ID_FORMAT=uuid`
+- `NOISIA_SIGNAL_WORKSPACE_ID_FORMAT=uuid`
+- `NOISIA_SIGNAL_V2_BACKFILL_APPROVED=true`
+- `NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true`
 - `ready_for_staging_shadow=true`
 
 Si falta cualquier valor, corregir el env local. No copiar UUIDs ni URLs a GitHub.
@@ -109,6 +115,10 @@ El wrapper crea `.data/data-os-evidence/<timestamp>` y corre:
 - `ANALYZE`;
 - serving smoke;
 - review queue redactada.
+- backfill dirigido Signal V2 con payload preservado;
+- reconciliación SQL/materialización/drill-down;
+- EXPLAIN con volumen e índices;
+- facade shadow interno/cliente y gate Backend Ready.
 
 Si todavía no hay muestra humana, el wrapper se detiene después de `review-queue.json`.
 Eso es esperado: el paquete queda parcial para inspección.
@@ -154,6 +164,11 @@ Debe regenerar:
 - `release-gate.json`
 - `pr-summary.md`
 - `completion-audit.json`
+- `signal-v2-backfill.json`
+- `signal-v2-reconcile.json`
+- `signal-v2-explain.json`
+- `signal-v2-shadow.json`
+- `backend-ready-signal-v2.json`
 
 ## Paso 5: Gate De Produccion
 
@@ -175,6 +190,22 @@ corepack pnpm data-os:completion-audit
 Debe terminar con `"ready_for_goal_completion": true`.
 
 El Goal de Data OS no se considera completo hasta tener ese artifact de staging/preview.
+SB-10 tampoco se considera completa hasta que
+`backend-ready-signal-v2.json` diga:
+
+```json
+{
+  "backend_ready_for_signal_v2": true,
+  "llm_spend_usd": 0,
+  "client_activation": false
+}
+```
+
+El campo de gasto en este artifact describe los scripts de backfill/shadow, no autoriza
+las cinco interpretaciones Claude. Si estas faltan, el gate debe quedar bloqueado y el
+operador debe coordinar budget/credenciales/review fuera de este handoff antes de
+reintentar. No activar `NOISIA_SIGNAL_WORKSPACE_API_ENABLED` ni render cliente para
+hacer pasar el gate.
 
 ## Que Pegar En La PR
 

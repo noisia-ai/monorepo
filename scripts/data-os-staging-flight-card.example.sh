@@ -16,9 +16,16 @@ export DATABASE_URL="<staging_or_preview_database_url>"
 # Required Signal Pulse pair. Get these from data-os:candidates or Studio DB.
 export NOISIA_DATA_OS_BACKFILL_CORPUS_ID="<study_corpus_uuid>"
 export NOISIA_DATA_OS_SHADOW_OUTPUT_ID="<published_signal_pulse_output_uuid>"
+export NOISIA_SIGNAL_WORKSPACE_ID="<signal_workspace_uuid>"
 
 # Required operational approval for any remote shadow run.
 export NOISIA_DATA_OS_STAGING_SHADOW_APPROVED=false
+
+# Separate write approval for the idempotent Signal V2 workspace backfill.
+export NOISIA_SIGNAL_V2_BACKFILL_APPROVED=false
+
+# Separate approval for bounded read-only EXPLAIN ANALYZE timing on the remote target.
+export NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=false
 
 # Optional: set true only when the selected remote DB still needs the Data OS schema.
 export NOISIA_DATA_OS_STAGING_SHADOW_APPLY_SCHEMA=false

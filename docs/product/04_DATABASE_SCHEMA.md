@@ -1444,6 +1444,24 @@ artefactos publicados. El current release es un puntero separado validado contra
 release publicado del mismo workspace; ingesta operational posterior no reescribe
 history estratégica.
 
+#### Gate front-ready SB-10
+
+SB-10 no agrega un store paralelo. La migración
+`0055_signal_v2_front_ready_indexes` añade únicamente índices para los access paths
+congelados:
+
+- `idx_metric_materializations_signal_facade`: workspace + corpus + `filters_hash` +
+  metric/version + `computed_at`, usado por home, metric groups, series y lineage;
+- `idx_mentions_signal_facets`: corpus + plataforma resuelta + fecha + ID sobre
+  menciones incluidas, usado por facets y drill-down;
+- `idx_record_tags_signal_approved_subject`: subject + term sobre tags `approved`,
+  usado por topic/emotion/narrative gobernados.
+
+`SignalWorkspaceHomeV1` compone estas tablas con watermarks, interpretaciones y
+releases; no persiste un JSON de dashboard. El backfill dirigido crea relaciones,
+watermark/invalidation y materializaciones de forma idempotente, pero sólo compara el
+digest de `published_outputs.payload` para demostrar que quedó intacto.
+
 ---
 
 ## Cierre

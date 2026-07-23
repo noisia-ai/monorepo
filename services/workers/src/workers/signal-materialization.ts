@@ -11,6 +11,7 @@ import {
   SIGNAL_INTERPRETATION_JOB_NAME,
   SIGNAL_INTERPRETATION_PROMPT_VERSION,
   SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN,
+  signalDefaultWorkspaceHomeFilterV1,
   signalFiltersHashV1,
   signalMetricMaterializationKeyV1,
   signalInterpretationIdempotencyKeyV1,
@@ -141,9 +142,21 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         ) values) AS languages
     `, [scope.study_corpus_id, scope.timezone, window.date_from, window.date_through]);
     const facets = facetsResult.rows[0];
+    const homeFilter = signalDefaultWorkspaceHomeFilterV1(
+      window.date_from,
+      window.date_through,
+      scope.timezone
+    );
     const dateWindows = requestedFilter
       ? [requestedFilter.date_range]
-      : splitSignalMaterializationDateRangeV1({ start: window.date_from, end: window.date_through });
+      : Array.from(new Map([
+          homeFilter?.date_range,
+          ...splitSignalMaterializationDateRangeV1({
+            start: window.date_from,
+            end: window.date_through
+          })
+        ].filter((range): range is { start: string; end: string } => Boolean(range))
+          .map((range) => [`${range.start}:${range.end}`, range])).values());
 
     const definitions = await client.query<{ id: string; metric_key: string; version: number }>(`
       SELECT id::text, metric_key, version

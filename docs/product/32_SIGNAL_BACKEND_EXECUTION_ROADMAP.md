@@ -120,7 +120,7 @@ flowchart LR
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Completo local (2026-07-22) |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Completo local (2026-07-22) |
 | SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Completo local (2026-07-22) |
-| SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente / habilitada (2026-07-22) |
+| SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Trabajo local completo; gate externo bloqueado (2026-07-22) |
 
 El tamaño es relativo, no una estimación de calendario. Cada tarea se divide internamente
 en commits solo si supera un cambio coherente revisable; nunca se mezcla con la tarea
@@ -1041,6 +1041,47 @@ frontend puede consumir sin cambios de schema o semántica previstos.
 
 `Harden Signal backend for V2`
 
+### Estado / Handoff SB-10
+
+**Trabajo local completo, 2026-07-22; criterio de salida todavía bloqueado.** El facade
+congelado `SignalWorkspaceHomeV1` vive en `@noisia/query-engine` y se sirve por
+`GET /api/data-os/signal/:workspaceId`. Compone identidad/sujeto, corpus operacional,
+cobertura, filtro default, facets, freshness, cinco grupos métricos, interpretaciones,
+current/history estratégico, visibilidad, lineage, estados parciales y fallback legacy
+explícito. Lee stores canónicos; `published_outputs.payload` no es source of truth.
+OpenAPI y la fixture TypeScript usan el mismo contrato.
+
+La migración aditiva `0055_signal_v2_front_ready_indexes` cubre facade/series,
+facets/drill-down y tags gobernados. El backfill dirigido `signal:backfill-v2` exige
+output, workspace, target no productivo y aprobación separada; preserva el digest del
+payload, mantiene exactamente un corpus operational, crea invalidación idempotente,
+materializa métricas y fuerza interpretaciones/LLM apagados. Reconciliación, EXPLAIN y
+shadow usan los planners compartidos y producen artifacts redactados:
+
+- `signal-v2-backfill.json`;
+- `signal-v2-reconcile.json`;
+- `signal-v2-explain.json`;
+- `signal-v2-shadow.json`;
+- `backend-ready-signal-v2.json`.
+
+El gate exige cobertura legacy exacta, cinco grupos materializados, cinco
+interpretaciones Claude revisadas, release estratégico current, comparación T&B
+compatible, cliente sanitizado, SQL/drill-down reconciliado, volumen representativo,
+índices y flags cliente apagadas. No activa producción y no enciende render ni API de
+workspace para clientes.
+
+Gates locales: DB 57 tests, Query Engine 185 tests, workers 127 tests, Studio 241
+tests; typecheck/lint/test monorepo, Studio build, `data-os:verify` y
+`git diff --check` verdes. El lint conserva únicamente los diez warnings preexistentes
+del deck estático. No hubo llamada ni gasto LLM.
+
+**Bloqueo externo real:** este checkout no tiene `DATABASE_URL`, Postgres local ni
+Docker operativo. Las migraciones `0047`–`0055`, backfill, workers, reconciliación,
+EXPLAIN y facade no se han ejecutado contra una DB real. Tampoco existen en este shell
+target aprobado, workspace/corpus/output IDs ni aprobaciones. Por lo tanto SB-10 no se
+marca completa y **Backend Ready For Signal V2 = false**. Ejecutar el handoff de
+`docs/product/25_NOISIA_DATA_OS_STAGING_HANDOFF.md`; no comenzar frontend.
+
 ### Prompt Para Tarea Nueva
 
 > Ejecuta SB-10 del roadmap Signal Backend de inicio a fin. Integra el facade de Signal
@@ -1068,16 +1109,14 @@ No iniciar el rediseño frontend hasta que SB-10 demuestre, en un corpus/workspa
 Pasar este gate no activa producción. Únicamente habilita que producto y Codex diseñen
 juntos Signal V2 sobre un backend confiable.
 
+**Estado al 2026-07-22:** no pasó. El código local y el contrato están cerrados, pero
+faltan aplicación runtime de `0047`–`0055`, backfill/shadow/reconciliación/EXPLAIN en
+staging o preview, cinco interpretaciones Claude con presupuesto y revisión aprobados,
+release estratégico current y comparación compatible. El gasto LLM local fue cero.
+
 ## Con Qué Avanzar Ahora
 
-La siguiente tarea es **SB-01 · Signal Backend Contract V1**.
-
-Razón de prioridad:
-
-- todos los grupos de métricas dependen de un filtro estable;
-- toda interpretación depende de periodo, filtro y watermark inequívocos;
-- workspace, workers y APIs necesitan compartir tipos sin importar código desde Studio;
-- es el cambio más pequeño que reduce retrabajo en los nueve bloques siguientes.
-
-Usar el prompt de SB-01 en una tarea nueva. No combinar SB-01 y SB-02 en el mismo chat:
-primero se revisa el contrato, después se materializa su identidad en DB.
+La siguiente acción no es otra SB ni frontend: un operador debe ejecutar el handoff de
+staging/preview de SB-10 con credenciales y aprobaciones reales. Sólo después de obtener
+`backend-ready-signal-v2.json` con `backend_ready_for_signal_v2: true` puede declararse
+SB-10 completa y comenzar el diseño de Signal V2.

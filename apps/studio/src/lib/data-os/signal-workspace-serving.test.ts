@@ -13,6 +13,7 @@ import {
   SIGNAL_BREAKDOWN_FIXTURE_V1,
   SIGNAL_FILTER_FIXTURE_V1,
   SIGNAL_SERIES_FIXTURE_V1,
+  SIGNAL_WORKSPACE_HOME_FIXTURE_V1,
   SIGNAL_WORKSPACE_FIXTURE_IDS
 } from "./signal-workspace-fixtures";
 import { loadSignalWorkspaceContextWithDependencies } from "./signal-workspace-context";
@@ -25,11 +26,31 @@ const {
   signalWorstResponseStateV1,
   summarizeSignalMetricPointsV1
 } = await import("./signal-workspace-serving");
+const { defaultSignalHomeFilter } = await import("./signal-workspace-home");
 
 test("Signal workspace fixtures satisfy the shared series and breakdown contract", () => {
   assert.deepEqual(validateSignalTimeSeriesV1(SIGNAL_SERIES_FIXTURE_V1), SIGNAL_SERIES_FIXTURE_V1);
   assert.deepEqual(validateSignalBreakdownV1(SIGNAL_BREAKDOWN_FIXTURE_V1), SIGNAL_BREAKDOWN_FIXTURE_V1);
   assert.equal(SIGNAL_SERIES_FIXTURE_V1.filters_hash, signalFiltersHashV1(SIGNAL_FILTER_FIXTURE_V1));
+  assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.contract_version, "signal-backend-v1");
+  assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.legacy_fallback.source_of_truth, false);
+  assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.default_filter, SIGNAL_FILTER_FIXTURE_V1);
+  assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.coverage.mentions, 128);
+  assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.facade_version, "signal-workspace-home-v1");
+});
+
+test("home facade chooses the latest covered month without inventing dates", () => {
+  assert.deepEqual(
+    defaultSignalHomeFilter("2026-05-18", "2026-07-22", "America/Mexico_City"),
+    {
+      contract_version: "signal-backend-v1",
+      date_range: { start: "2026-07-01", end: "2026-07-22" },
+      timezone: "America/Mexico_City",
+      granularity: "day",
+      dimensions: {}
+    }
+  );
+  assert.equal(defaultSignalHomeFilter(null, null, "UTC"), null);
 });
 
 test("workspace APIs use the canonical filter parser and ignore only route controls", () => {
@@ -183,7 +204,10 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
 test("workspace routes use authZ and canonical stores without published payload, raw metadata or legacy route edits", async () => {
   const routeRoot = resolve(process.cwd(), "src/app/api/data-os/signal/[workspaceId]");
   const routeNames = ["bootstrap", "facets", "metric-groups", "series", "breakdowns", "comparison", "mentions", "lineage", "interpretations", "releases"];
-  const sources = await Promise.all(routeNames.map((name) => readFile(resolve(routeRoot, name, "route.ts"), "utf8")));
+  const sources = await Promise.all([
+    readFile(resolve(routeRoot, "route.ts"), "utf8"),
+    ...routeNames.map((name) => readFile(resolve(routeRoot, name, "route.ts"), "utf8"))
+  ]);
   const [service, openapi, pulseMetrics, fixtureSource] = await Promise.all([
     readFile(resolve(process.cwd(), "src/lib/data-os/signal-workspace-serving.ts"), "utf8"),
     readFile(resolve(process.cwd(), "../../docs/api/openapi.yaml"), "utf8"),
@@ -202,6 +226,7 @@ test("workspace routes use authZ and canonical stores without published payload,
   for (const routeName of routeNames) {
     assert.match(openapi, new RegExp(`/api/data-os/signal/\\{workspaceId\\}/${routeName}:`));
   }
+  assert.match(openapi, /\/api\/data-os\/signal\/\{workspaceId\}:/);
   assert.match(pulseMetrics, /loadDataOsPulseContext/);
   assert.match(fixtureSource, /SignalTimeSeriesV1/);
   assert.match(fixtureSource, /SignalBreakdownV1/);

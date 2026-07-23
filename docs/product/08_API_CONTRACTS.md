@@ -980,6 +980,58 @@ puntero separado `signal_workspace_current_releases`; el histórico, artefactos,
 findings y materializaciones de una release publicada son inmutables. No hay promoción
 automática y ninguna ruta lee `published_outputs.payload`.
 
+#### Signal workspace home facade V1 (SB-10)
+
+`GET /api/data-os/signal/:workspaceId` es el único facade front-ready. Usa la misma
+sesión, flag, resolver de workspace y authZ por organización/brand que todas las rutas
+workspace-centric. No acepta `outputId`; el fallback legacy sólo se anuncia como link.
+
+Respuesta congelada:
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "facade_version": "signal-workspace-home-v1",
+  "workspace": {},
+  "corpus": {},
+  "coverage": { "date_from": null, "date_through": null, "mentions": 0 },
+  "default_filter": null,
+  "filters_hash": null,
+  "capabilities": [],
+  "facets": {},
+  "freshness": {},
+  "metric_groups": [],
+  "interpretations": [],
+  "strategic": { "current": null, "history": [] },
+  "visibility": { "internal": false, "source_type": false, "quality_details": false },
+  "lineage": [],
+  "partial_states": [],
+  "legacy_fallback": {
+    "identity": "outputId",
+    "dashboard_route_template": "/signal/{outputId}",
+    "api_route_template": "/api/data-os/pulse/{outputId}/*",
+    "source_of_truth": false
+  },
+  "state": "not_available"
+}
+```
+
+El filtro default es el último mes con menciones incluidas y se normaliza con
+`SignalFilterV1`; no inventa fechas cuando no hay cobertura. `state` usa el peor estado
+visible y controla `Cache-Control`: sólo `fresh` admite `private, max-age=30`; stale,
+partial, pending y not_available usan `private, no-cache`. El ETag incorpora hash,
+metric groups y current release.
+
+Internos reciben los detalles permitidos por los loaders existentes. Clientes no
+reciben `source_type`, `quality_state`, `data_scope`, raw metadata ni fuentes internas.
+Los errores siguen siendo los cinco errores tipados de `signal-backend-v1`. La fixture
+autoritativa para el frontend futuro es `SIGNAL_WORKSPACE_HOME_FIXTURE_V1`.
+
+El gate runtime de SB-10 exige un workspace/output/corpus real y produce artifacts
+redactados de backfill, reconciliación SQL/drill-down, EXPLAIN y shadow. Mantiene
+`NOISIA_SIGNAL_WORKSPACE_API_ENABLED=false` y
+`NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false`; pasar el gate no activa clientes.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

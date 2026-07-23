@@ -14,6 +14,8 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.match(materializer, /ON CONFLICT \(materialization_key\)/);
   assert.match(materializer, /CASE WHEN \$23 = 'ad_hoc' THEN now\(\) \+ interval '15 minutes'/);
   assert.match(materializer, /evaluateSignalMetricQualityV1/);
+  assert.match(materializer, /signalDefaultWorkspaceHomeFilterV1/);
+  assert.match(materializer, /homeFilter\?\.date_range/);
   assert.doesNotMatch(materializer, /24 \* 60 \* 60/);
   assert.match(invalidator, /signal-materialize-\$\{invalidation\.id\}/);
   assert.match(queue, /SIGNAL_MATERIALIZE_JOB_NAME/);

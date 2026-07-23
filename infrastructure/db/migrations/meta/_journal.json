@@ -386,6 +386,13 @@
       "when": 1785027600000,
       "tag": "0054_tb_temporal_strategic_releases",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1785031200000,
+      "tag": "0055_signal_v2_front_ready_indexes",
+      "breakpoints": true
     }
   ]
 }

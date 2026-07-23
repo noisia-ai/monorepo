@@ -227,6 +227,25 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/ServerError"
+  /api/data-os/signal/{workspaceId}:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceHome
+      summary: Get the front-ready Signal workspace facade.
+      description: Consolidates workspace/subject, canonical coverage and filter, capabilities, facets, freshness, metric groups, reviewed interpretations, strategic release history, visibility, lineage, partial states and explicit legacy fallback. It never reads published_outputs.payload as source of truth.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Frozen Signal V2 backend facade.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalWorkspaceHomeV1" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
   /api/data-os/signal/{workspaceId}/bootstrap:
     get:
       tags: [Signal Workspace V1]
@@ -673,6 +692,70 @@ components:
     SignalDimensionV1:
       type: string
       enum: [platform, source_type, entity, product, campaign, topic, taxonomy, signal, signal_lifecycle, audience, demographic, journey_stage, trigger, barrier, sentiment_polarity, emotion, country, language, content_format]
+    SignalWorkspaceHomeV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, facade_version, workspace, corpus, coverage, default_filter, filters_hash, capabilities, facets, freshness, metric_groups, interpretations, strategic, visibility, lineage, partial_states, legacy_fallback, state]
+      properties:
+        contract_version: { const: signal-backend-v1 }
+        facade_version: { const: signal-workspace-home-v1 }
+        workspace:
+          type: object
+          required: [workspace_id, workspace_slug, organization_id, subject, timezone, status]
+          additionalProperties: true
+        corpus:
+          type: object
+          required: [id, role, status, name]
+          additionalProperties: true
+        coverage:
+          type: object
+          required: [date_from, date_through, mentions]
+          properties:
+            date_from: { type: [string, "null"], format: date }
+            date_through: { type: [string, "null"], format: date }
+            mentions: { type: integer, minimum: 0 }
+        default_filter:
+          oneOf:
+            - { type: object, additionalProperties: true }
+            - { type: "null" }
+        filters_hash: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [key, state, href]
+            properties:
+              key: { type: string }
+              state: { type: string, enum: [available, partial, not_available] }
+              href: { type: string }
+        facets: { type: object, additionalProperties: true }
+        freshness: { type: object, additionalProperties: true }
+        metric_groups: { type: array, items: { type: object, additionalProperties: true } }
+        interpretations: { type: array, items: { type: object, additionalProperties: true } }
+        strategic:
+          type: object
+          required: [current, history]
+          properties:
+            current: { type: [object, "null"], additionalProperties: true }
+            history: { type: array, items: { type: object, additionalProperties: true } }
+        visibility:
+          type: object
+          required: [internal, source_type, quality_details]
+          properties:
+            internal: { type: boolean }
+            source_type: { type: boolean }
+            quality_details: { type: boolean }
+        lineage: { type: array, items: { type: object, additionalProperties: true } }
+        partial_states: { type: array, items: { type: object, additionalProperties: true } }
+        legacy_fallback:
+          type: object
+          required: [identity, dashboard_route_template, api_route_template, source_of_truth]
+          properties:
+            identity: { const: outputId }
+            dashboard_route_template: { const: "/signal/{outputId}" }
+            api_route_template: { const: "/api/data-os/pulse/{outputId}/*" }
+            source_of_truth: { const: false }
+        state: { type: string, enum: [fresh, stale, pending, partial, not_available] }
     SignalStrategicReleasesV1:
       type: object
       required: [contract_version, strategic_release_contract_version, workspace_id, current, history]

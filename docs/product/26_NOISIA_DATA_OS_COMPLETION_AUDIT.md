@@ -36,6 +36,7 @@ preparacion productiva.
 | APIs de serving | `/api/data-os/*`, `data-os:serving-smoke`, fallback checks | Build local verde; requiere remote serving smoke |
 | Analysis Serving Layer T&B | migracion `0045`, persistencia transaccional Step 6, refs `signal-serving-v2`, Review/Signal/deck compartidos | Implementado local; requiere backfill y smoke sobre output staging |
 | Analysis Artifact Graph | migracion `0046`, `analysis-artifacts-v1`, evidencia, relaciones, review y snapshot publicado | Implementado local; requiere aplicar schema, backfill y smoke sobre output staging |
+| Signal backend SB-02→SB-10 | migraciones `0047`–`0055`, facade workspace, reconcile/EXPLAIN/shadow y `backend-ready-signal-v2.json` | Trabajo local implementado; Backend Ready bloqueado por DB/staging/IDs/aprobaciones |
 | Shadow mode seguro | `NOISIA_DATA_OS_SHADOW_MODE=true`, live render false, fallback payload | Implementado; requiere staging release gate |
 | Review humano antes de cliente | `review-queue.json`, `review-sample.json`, review events de tag/assertion | Flujo implementado; requiere IDs revisados en staging |
 | Produccion por PR | PR template, CODEOWNERS, `release-gate.json` | Implementado; PR pendiente |
@@ -115,6 +116,45 @@ Validaciones locales de esta continuacion:
 - `data-os:staging-check`: detenido correctamente por ausencia de `DATABASE_URL`,
   target remoto, corpus/output UUIDs y aprobacion explicita del shadow.
 
+## Signal Backend SB-02→SB-10 (2026-07-22)
+
+El backend local ahora cubre identidad estable, refresh durable, catálogo y
+materialización determinística, serving workspace-centric, interpretaciones
+versionadas, evidencia/review T&B, temporalidad/releases y un facade front-ready.
+La fase de hardening post-SB-06 cerró la deuda de Conversation Following: outbox
+recuperable, freshness por cadencia, velocity con periodo precedente, quality rules,
+corpus operational único y cache basado en el peor estado.
+
+SB-10 agrega el contrato `SignalWorkspaceHomeV1`, la ruta raíz protegida, fixture y
+OpenAPI congelados, backfill dirigido, reconciliación SQL/drill-down, EXPLAIN e índices
+`0055`, shadow interno/cliente y un gate machine-readable. Todo conserva rutas
+`/signal/{outputId}` y `/api/data-os/pulse/:outputId/*`, deja flags cliente apagadas y
+no reescribe `published_outputs.payload`.
+
+Estado honesto del gate:
+
+| Control | Estado |
+|---|---|
+| Código, contratos y pruebas estáticas SB-02→SB-10 | Implementado local |
+| Migraciones `0047`–`0055` aplicadas a Postgres disposable/staging | Pendiente |
+| Backfill dirigido sobre Signal real | Pendiente |
+| Reconciliación de los cinco metric groups contra SQL/drill-down | Pendiente |
+| EXPLAIN con al menos 1,000 menciones | Pendiente |
+| Cinco interpretaciones Claude revisadas | Pendiente; no hubo llamada ni gasto local |
+| Release estratégico current + comparación compatible | Pendiente de fixture/staging y review humano |
+| `backend-ready-signal-v2.json=true` | Bloqueado |
+| Flags cliente / producción | Apagadas / no tocadas |
+
+El checkout no dispone de `DATABASE_URL`, Postgres local, Docker operativo, target
+aprobado ni UUIDs de workspace/corpus/output. `data-os:verify` debe seguir reportando
+`database.skipped: true`. Esta ausencia impide marcar SB-10 y el Goal como completos;
+no convierte los tests de source/contract en evidencia runtime.
+
+Gates locales del checkpoint SB-10: monorepo typecheck 11/11, lint 11/11 con cero
+errores y diez warnings preexistentes, tests 16/16 tareas; DB 57, Query Engine 185,
+Workers 127 y Studio 241 pruebas; build Studio verde; `data-os:verify` verifica 21
+migraciones, 25 rutas, 66 tablas, 81 contratos y reporta DB omitida. Gasto LLM: USD 0.
+
 ## Checks Locales Minimos
 
 Antes de pedir staging:
@@ -155,6 +195,11 @@ El paquete final debe contener:
 - `release-gate.json` con `ready_for_production_review: true`;
 - `release-gate.json` con gate `database_format_postgres_url`;
 - `completion-audit.json` con `ready_for_goal_completion: true`;
+- `signal-v2-backfill.json` con payload preservado y sin activación cliente;
+- `signal-v2-reconcile.json` con `ok: true`;
+- `signal-v2-explain.json` con `ok: true` y volumen representativo;
+- `signal-v2-shadow.json` con `ready_for_backend_signal_v2: true`;
+- `backend-ready-signal-v2.json` con `backend_ready_for_signal_v2: true`;
 - `completion-audit.json` con `requirement_checks` cubriendo todos los gates de
   `release-gate.json`, incluyendo catalogo, Brand OS, Knowledge Base, taxonomias,
   review humano, serving shadow, fallback, verifier local, formato Postgres,

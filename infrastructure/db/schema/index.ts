@@ -1154,6 +1154,9 @@ export const mentions = pgTable(
     index("idx_mentions_signal_materialization")
       .on(table.studyCorpusId, table.publishedAt, table.id)
       .where(sql`${table.inclusionStatus} = 'included'`),
+    index("idx_mentions_signal_facets")
+      .on(table.studyCorpusId, table.resolvedPlatform, table.publishedAt, table.id)
+      .where(sql`${table.inclusionStatus} = 'included'`),
     index("idx_mentions_published").on(table.publishedAt),
     index("idx_mentions_text_hash").on(table.textHash)
   ]
@@ -3342,6 +3345,9 @@ export const recordTags = pgTable(
     index("idx_record_tags_scope").on(table.studyCorpusId, table.subjectType, table.taxonomyTermId),
     index("idx_record_tags_subject").on(table.subjectType, table.subjectId),
     index("idx_record_tags_review").on(table.studyCorpusId, table.reviewStatus),
+    index("idx_record_tags_signal_approved_subject")
+      .on(table.subjectType, table.subjectId, table.taxonomyTermId)
+      .where(sql`${table.reviewStatus} = 'approved'`),
     index("idx_record_tags_tb_analysis").on(table.tbAnalysisId, table.subjectType, table.taxonomyTermId),
     unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source)
   ]
@@ -3516,6 +3522,16 @@ export const metricMaterializations = pgTable(
     index("idx_metric_materializations_signal_ad_hoc_expiry")
       .on(table.expiresAt)
       .where(sql`${table.cacheScope} = 'ad_hoc'`),
+    index("idx_metric_materializations_signal_facade")
+      .on(
+        table.workspaceId,
+        table.studyCorpusId,
+        table.filtersHash,
+        table.metricKey,
+        table.metricVersion,
+        table.computedAt
+      )
+      .where(sql`${table.workspaceId} IS NOT NULL`),
     check(
       "metric_materializations_signal_v1_shape",
       sql`${table.workspaceId} IS NULL OR (

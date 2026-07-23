@@ -28,7 +28,8 @@ const REQUIRED_MIGRATIONS = [
   "0051_signal_backend_foundation_hardening",
   "0052_signal_metric_interpretations_v1",
   "0053_tb_structured_evidence_review",
-  "0054_tb_temporal_strategic_releases"
+  "0054_tb_temporal_strategic_releases",
+  "0055_signal_v2_front_ready_indexes"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -117,6 +118,7 @@ const REQUIRED_ROUTES = [
   "apps/studio/src/app/api/data-os/pulse/[outputId]/live/route.ts",
   "apps/studio/src/app/api/data-os/pulse/[outputId]/corpus/route.ts",
   "apps/studio/src/app/api/data-os/pulse/[outputId]/metrics/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/bootstrap/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/facets/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/metric-groups/route.ts",
@@ -162,9 +164,14 @@ const REQUIRED_CONTRACT_FILES = [
   "infrastructure/db/scripts/data-os-release-gate.ts",
   "infrastructure/db/scripts/data-os-review-queue.ts",
   "infrastructure/db/scripts/data-os-review-sample.ts",
+  "infrastructure/db/scripts/signal-v2-backend-gate.ts",
+  "infrastructure/db/scripts/signal-v2-explain.ts",
+  "infrastructure/db/scripts/signal-v2-reconcile.ts",
   "infrastructure/db/scripts/validate-data-os-evidence-pack.ts",
   "infrastructure/db/scripts/validate-data-os-local-smoke.ts",
   "apps/studio/scripts/backfill-signal-serving.ts",
+  "apps/studio/scripts/backfill-signal-v2.ts",
+  "apps/studio/scripts/signal-v2-shadow.ts",
   "apps/studio/scripts/data-os-serving-smoke.ts",
   "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/signal-output/route.ts",
   "apps/studio/src/app/pulse/[outputId]/page.tsx",
@@ -173,6 +180,7 @@ const REQUIRED_CONTRACT_FILES = [
   "apps/studio/src/lib/data-os/signal-serving.ts",
   "apps/studio/src/lib/data-os/signal-workspace.ts",
   "apps/studio/src/lib/data-os/signal-workspace-context.ts",
+  "apps/studio/src/lib/data-os/signal-workspace-home.ts",
   "apps/studio/src/lib/data-os/signal-workspace-serving.ts",
   "apps/studio/src/lib/data-os/signal-workspace-fixtures.ts",
   "apps/studio/src/lib/signal/semantics.ts",
@@ -194,6 +202,7 @@ const REQUIRED_CONTRACT_FILES = [
   "packages/query-engine/src/signal-refresh-v1.ts",
   "packages/query-engine/src/signal-metric-catalog-v1.ts",
   "packages/query-engine/src/signal-materialization-v1.ts",
+  "packages/query-engine/src/signal-workspace-home-v1.ts",
   "services/workers/src/queues/data-os.ts",
   "services/workers/scripts/reconcile-data-os-sources.ts",
   "services/workers/src/workers/data-os-shadow.ts",
@@ -229,7 +238,10 @@ const REQUIRED_ROOT_SCRIPTS: Record<string, string> = {
   "data-os:staging-shadow": "bash scripts/data-os-staging-shadow.sh",
   "data-os:validate-evidence-pack": "corepack pnpm --filter @noisia/db data-os:validate-evidence-pack",
   "data-os:validate-local-smoke": "corepack pnpm --filter @noisia/db data-os:validate-local-smoke",
-  "data-os:verify": "corepack pnpm --filter @noisia/db data-os:verify"
+  "data-os:verify": "corepack pnpm --filter @noisia/db data-os:verify",
+  "signal:v2:reconcile": "corepack pnpm --filter @noisia/db signal:v2:reconcile",
+  "signal:v2:explain": "corepack pnpm --filter @noisia/db signal:v2:explain",
+  "signal:v2:backend-gate": "corepack pnpm --filter @noisia/db signal:v2:backend-gate"
 };
 
 const SAFE_DEFAULTS = [
@@ -272,6 +284,14 @@ const SAFE_DEFAULTS = [
   "NOISIA_DATA_OS_SERVING_SMOKE_ALLOW_REMOTE=false",
   "NOISIA_DATA_OS_BACKFILL_CORPUS_ID=",
   "NOISIA_DATA_OS_SHADOW_OUTPUT_ID=",
+  "NOISIA_SIGNAL_WORKSPACE_ID=",
+  "NOISIA_SIGNAL_V2_BACKFILL_APPROVED=false",
+  "NOISIA_SIGNAL_V2_BACKFILL_ALLOW_REMOTE=false",
+  "NOISIA_SIGNAL_V2_RECONCILE_ALLOW_REMOTE=false",
+  "NOISIA_SIGNAL_V2_EXPLAIN_ALLOW_REMOTE=false",
+  "NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE=false",
+  "NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=false",
+  "NOISIA_SIGNAL_V2_SHADOW_ALLOW_REMOTE=false",
   "NOISIA_DATA_OS_SERVING_SMOKE_CORPUS_ID=",
   "NOISIA_DATA_OS_SERVING_SMOKE_OUTPUT_ID=",
   "NOISIA_DATA_OS_STAGING_SHADOW_APPROVED=false",
@@ -384,6 +404,12 @@ async function verifyStudioScripts(repoRoot: string) {
   };
   if (pkg.scripts?.["data-os:serving-smoke"] !== "../../infrastructure/db/node_modules/.bin/tsx scripts/data-os-serving-smoke.ts") {
     fail("Missing @noisia/studio data-os:serving-smoke script.");
+  }
+  if (pkg.scripts?.["signal:backfill-v2"] !== "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-signal-v2.ts") {
+    fail("Missing @noisia/studio signal:backfill-v2 script.");
+  }
+  if (pkg.scripts?.["signal:v2:shadow"] !== "../../infrastructure/db/node_modules/.bin/tsx scripts/signal-v2-shadow.ts") {
+    fail("Missing @noisia/studio signal:v2:shadow script.");
   }
 }
 
@@ -2785,7 +2811,7 @@ async function main() {
       routes: REQUIRED_ROUTES.length,
       tables: REQUIRED_TABLES.length,
       root_scripts: Object.keys(REQUIRED_ROOT_SCRIPTS).length,
-      studio_scripts: 1,
+      studio_scripts: 3,
       worker_scripts: 1,
       contracts: REQUIRED_CONTRACT_FILES.length,
       safe_defaults: SAFE_DEFAULTS.length,

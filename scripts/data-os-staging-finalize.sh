@@ -16,6 +16,7 @@ require_env DATABASE_URL
 require_env NOISIA_REMOTE_DATABASE_TARGET
 require_env NOISIA_DATA_OS_BACKFILL_CORPUS_ID
 require_env NOISIA_DATA_OS_SHADOW_OUTPUT_ID
+require_env NOISIA_SIGNAL_WORKSPACE_ID
 require_env NOISIA_DATA_OS_STAGING_EVIDENCE_DIR
 
 case "${NOISIA_REMOTE_DATABASE_TARGET}" in
@@ -53,6 +54,14 @@ for file_name in README.md shadow-run.log analyze.json serving-smoke.json; do
   if [[ ! -f "$EVIDENCE_DIR/$file_name" ]]; then
     echo "Missing partial staging evidence artifact: $file_name" >&2
     echo "Run corepack pnpm data-os:staging-shadow first, then finalize after human review." >&2
+    exit 1
+  fi
+done
+
+for file_name in signal-v2-backfill.json signal-v2-reconcile.json signal-v2-explain.json signal-v2-shadow.json; do
+  if [[ ! -f "$EVIDENCE_DIR/$file_name" ]]; then
+    echo "Missing Signal V2 staging artifact: $file_name" >&2
+    echo "Run corepack pnpm data-os:staging-shadow before finalizing." >&2
     exit 1
   fi
 done
@@ -107,6 +116,29 @@ run_capture_without_summary() {
   if [[ "$status" -ne 0 ]]; then
     echo "Command failed with exit code $status. See $EVIDENCE_DIR/$file_name" >&2
     exit "$status"
+  fi
+}
+
+run_capture_allow_failure() {
+  local file_name="$1"
+  shift
+
+  {
+    echo ""
+    echo "## ${file_name}"
+    echo ""
+    echo '```bash'
+    redacted_command_summary "$@"
+    echo
+    echo '```'
+  } >>"$SUMMARY_FILE"
+
+  set +e
+  "$@" 2>&1 | tee "$EVIDENCE_DIR/$file_name"
+  local status="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo "Recorded Signal V2 gate failure (exit $status): $file_name" >&2
   fi
 }
 
@@ -167,6 +199,26 @@ run_capture serving-smoke.json \
   NOISIA_DATA_OS_SERVING_SMOKE_OUTPUT_ID="$NOISIA_DATA_OS_SHADOW_OUTPUT_ID" \
   corepack pnpm --silent --filter @noisia/studio data-os:serving-smoke
 
+run_capture signal-v2-reconcile.json \
+  env NOISIA_SIGNAL_V2_RECONCILE_ALLOW_REMOTE=true \
+  corepack pnpm --silent signal:v2:reconcile
+
+run_capture signal-v2-explain.json \
+  env NOISIA_SIGNAL_V2_EXPLAIN_ALLOW_REMOTE=true \
+  NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE=true \
+  NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true \
+  corepack pnpm --silent signal:v2:explain
+
+run_capture_allow_failure signal-v2-shadow.json \
+  env NOISIA_SIGNAL_V2_SHADOW_ALLOW_REMOTE=true \
+  NOISIA_SIGNAL_WORKSPACE_API_ENABLED=false \
+  NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false \
+  corepack pnpm --silent --filter @noisia/studio signal:v2:shadow
+
+run_capture_allow_failure backend-ready-signal-v2.json \
+  env NOISIA_DATA_OS_EVIDENCE_PACK_DIR="$EVIDENCE_DIR" \
+  corepack pnpm --silent signal:v2:backend-gate
+
 run_capture evidence.json \
   env NOISIA_DATA_OS_EVIDENCE_ALLOW_REMOTE=true \
   corepack pnpm --silent --filter @noisia/db data-os:evidence
@@ -200,3 +252,7 @@ run_capture_without_summary completion-audit.json \
 
 echo "Data OS staging evidence finalized."
 echo "Evidence package: ${EVIDENCE_DIR}"
+if ! grep -q '"backend_ready_for_signal_v2": true' "$EVIDENCE_DIR/backend-ready-signal-v2.json"; then
+  echo "Backend Ready For Signal V2 remains blocked; inspect backend-ready-signal-v2.json." >&2
+  exit 1
+fi

@@ -15,6 +15,7 @@ require_env() {
 require_env DATABASE_URL
 require_env NOISIA_DATA_OS_BACKFILL_CORPUS_ID
 require_env NOISIA_DATA_OS_SHADOW_OUTPUT_ID
+require_env NOISIA_SIGNAL_WORKSPACE_ID
 
 case "${NOISIA_REMOTE_DATABASE_TARGET:-}" in
   staging|throwaway|preview)
@@ -28,6 +29,16 @@ esac
 if [[ "${NOISIA_DATA_OS_STAGING_SHADOW_APPROVED:-false}" != "true" ]]; then
   echo "Refusing to run staging shadow until NOISIA_DATA_OS_STAGING_SHADOW_APPROVED=true." >&2
   echo "Confirm DATABASE_URL points to staging/throwaway/preview, not production, before setting it." >&2
+  exit 1
+fi
+
+if [[ "${NOISIA_SIGNAL_V2_BACKFILL_APPROVED:-false}" != "true" ]]; then
+  echo "Refusing Signal V2 targeted backfill until NOISIA_SIGNAL_V2_BACKFILL_APPROVED=true." >&2
+  exit 1
+fi
+
+if [[ "${NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED:-false}" != "true" ]]; then
+  echo "Refusing remote EXPLAIN ANALYZE until NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true." >&2
   exit 1
 fi
 
@@ -109,6 +120,29 @@ run_capture_without_summary() {
   fi
 }
 
+run_capture_allow_failure() {
+  local file_name="$1"
+  shift
+
+  {
+    echo ""
+    echo "## ${file_name}"
+    echo ""
+    echo '```bash'
+    redacted_command_summary "$@"
+    echo
+    echo '```'
+  } >>"$SUMMARY_FILE"
+
+  set +e
+  "$@" 2>&1 | tee "$EVIDENCE_DIR/$file_name"
+  local status="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo "Recorded expected gate failure (exit $status): $file_name" >&2
+  fi
+}
+
 append_release_gate_summary() {
   case "${NOISIA_REMOTE_DATABASE_TARGET}" in
     staging|preview)
@@ -142,6 +176,7 @@ Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Target: ${NOISIA_REMOTE_DATABASE_TARGET}
 Corpus: set (redacted)
 Output: set (redacted)
+Signal workspace: set (redacted)
 Schema apply requested: ${NOISIA_DATA_OS_STAGING_SHADOW_APPLY_SCHEMA:-false}
 Candidates skipped: ${NOISIA_DATA_OS_STAGING_SHADOW_SKIP_CANDIDATES:-false}
 
@@ -183,6 +218,36 @@ run_capture shadow-run.log \
   NOISIA_DATA_OS_VERIFY_ALLOW_REMOTE=true \
   NOISIA_DATA_OS_SHADOW_RUN_ENABLED=true \
   corepack pnpm --silent --filter @noisia/db data-os:shadow-run
+
+run_capture signal-v2-backfill.json \
+  env NOISIA_SIGNAL_V2_BACKFILL_ALLOW_REMOTE=true \
+  NOISIA_SIGNAL_V2_BACKFILL_APPROVED=true \
+  NOISIA_SIGNAL_INTERPRETATIONS_ENABLED=false \
+  NOISIA_SIGNAL_INTERPRETATIONS_LLM_ENABLED=false \
+  corepack pnpm --silent --filter @noisia/studio signal:backfill-v2 -- \
+  --output-id="$NOISIA_DATA_OS_SHADOW_OUTPUT_ID" \
+  --workspace-id="$NOISIA_SIGNAL_WORKSPACE_ID" \
+  --apply
+
+run_capture signal-v2-reconcile.json \
+  env NOISIA_SIGNAL_V2_RECONCILE_ALLOW_REMOTE=true \
+  corepack pnpm --silent signal:v2:reconcile
+
+run_capture signal-v2-explain.json \
+  env NOISIA_SIGNAL_V2_EXPLAIN_ALLOW_REMOTE=true \
+  NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE=true \
+  NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true \
+  corepack pnpm --silent signal:v2:explain
+
+run_capture_allow_failure signal-v2-shadow.json \
+  env NOISIA_SIGNAL_V2_SHADOW_ALLOW_REMOTE=true \
+  NOISIA_SIGNAL_WORKSPACE_API_ENABLED=false \
+  NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED=false \
+  corepack pnpm --silent --filter @noisia/studio signal:v2:shadow
+
+run_capture_allow_failure backend-ready-signal-v2.json \
+  env NOISIA_DATA_OS_EVIDENCE_PACK_DIR="$EVIDENCE_DIR" \
+  corepack pnpm --silent signal:v2:backend-gate
 
 run_capture analyze.json \
   env NOISIA_DATA_OS_ANALYZE_ALLOW_REMOTE=true \
@@ -263,3 +328,7 @@ run_capture_without_summary completion-audit.json \
 
 echo "Data OS staging shadow completed."
 echo "Evidence package: ${EVIDENCE_DIR}"
+if ! grep -q '"backend_ready_for_signal_v2": true' "$EVIDENCE_DIR/backend-ready-signal-v2.json"; then
+  echo "Backend Ready For Signal V2 remains blocked; inspect backend-ready-signal-v2.json." >&2
+  exit 1
+fi

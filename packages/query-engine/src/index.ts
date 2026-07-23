@@ -36,6 +36,7 @@ export * from "./tb-data-os-bridge-quality";
 export * from "./data-os-corpus-audit";
 export * from "./data-os-metric-catalog";
 export * from "./signal-backend-v1";
+export * from "./signal-workspace-home-v1";
 export * from "./signal-refresh-v1";
 export * from "./signal-metric-catalog-v1";
 export * from "./signal-materialization-v1";
