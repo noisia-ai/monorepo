@@ -118,8 +118,8 @@ flowchart LR
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Completo local (2026-07-22) |
-| SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente / habilitada (2026-07-22) |
-| SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente |
+| SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Completo local (2026-07-22) |
+| SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente / habilitada (2026-07-22) |
 | SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente |
 
 El tamaño es relativo, no una estimación de calendario. Cada tarea se divide internamente
@@ -860,6 +860,32 @@ editorial crea una nueva revisión sin reescribir la publicación anterior.
 ### Commit Sugerido
 
 `Complete T&B evidence review`
+
+### Estado / Handoff SB-08
+
+**Completo local, 2026-07-22.** T&B recibe tokens gobernados de observaciones y filas
+accepted, exige refs explícitos por finding y rechaza tokens desconocidos antes de
+persistir. `tb_finding_structured_evidence_refs` refuerza en DB el mismo corpus y
+quality status. El artifact graph mantiene citas finding→mention y proyecta evidencia
+estructurada exacta con lineage a archivo/storage ref, asset, data source,
+source sync/import y observation/record.
+
+Review expone una API interna protegida para `accept`, `correct`, `limit` y `reject`.
+`correct`/`limit`, y cualquier acción contra una revisión publicada, crean una fila
+nueva con `revision + 1`; un trigger DB bloquea UPDATE/DELETE directo de la revisión
+congelada. Reviewer, timestamp, notes y patch quedan en
+`analysis_artifact_review_events`. Readiness expone cobertura claim-specific y estado
+editorial sin promover contexto genérico a evidencia.
+
+Gates locales: DB 53 tests, Query Engine 179 tests, workers 126 tests, Studio 240 tests,
+Studio build y `data-os:verify` verdes; `git diff --check` limpio. No hubo llamada ni
+gasto LLM.
+
+**Evidencia runtime pendiente:** `0053` no se aplicó por ausencia de Postgres local/
+Docker operativo y no se usó un target remoto. Esta limitación se conserva para el
+gate final SB-10.
+
+**Siguiente tarea habilitada:** SB-09 · T&B Temporal Comparison and Strategic Releases.
 
 ### Prompt Para Tarea Nueva
 

@@ -1092,6 +1092,35 @@ findings son `supports`; archivos estructurados consumidos de forma general son
 disponibilidad en soporte de una afirmacion concreta sin una referencia devuelta por el
 pipeline.
 
+Los findings pueden agregar links exactos `source_type=data_observation` o
+`source_type=data_asset_record`. El token debe existir en el packet RAG gobernado, ser
+accepted y pertenecer al mismo corpus. El locator conserva `storage_ref`, asset,
+dataset/row, source sync/import y periodo; lineage conecta esas fuentes al artifact.
+
+### `GET|POST /api/data-os/corpora/:id/artifacts/:artifactId/review`
+
+Ruta interna protegida por el mismo ownership y `canManageCorpus` de Data OS. `GET`
+devuelve el historial editorial de todas las revisiones del artifact. `POST` acepta:
+
+- `GET /api/data-os/corpora/:id/artifacts/:artifactId/review`
+- `POST /api/data-os/corpora/:id/artifacts/:artifactId/review`
+
+```json
+{
+  "action": "correct",
+  "notes": "El alcance aplica sólo a clientes recurrentes.",
+  "patch": {
+    "summary": "La barrera crece entre clientes recurrentes."
+  }
+}
+```
+
+`action` es `accept`, `correct`, `limit` o `reject`. `correct` exige patch; `correct`,
+`limit` y `reject` exigen notas. `correct` y `limit` siempre crean una revisión nueva.
+Cualquier acción sobre una revisión ya publicada también crea una revisión nueva.
+La respuesta indica `artifact_id`, `previous_artifact_id`, `review_status`, `revision`
+y `created_revision`. Una revisión ya superada responde `409 conflict`.
+
 Readiness bloquea aprobacion/publicacion cuando falta el registro de artefactos, un
 artefacto no tiene grupo declarado, los findings no coinciden con sus artefactos o sus
 menciones verificables no estan dentro del snapshot.

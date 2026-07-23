@@ -1251,6 +1251,57 @@ export const tbFindingCitations = pgTable(
   ]
 );
 
+/**
+ * Claim-specific governed evidence selected during T&B hierarchy synthesis.
+ * Migration 0053 verifies that each reference is accepted and belongs to the
+ * same corpus as the finding.
+ */
+export const tbFindingStructuredEvidenceRefs = pgTable(
+  "tb_finding_structured_evidence_refs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    findingId: uuid("finding_id")
+      .notNull()
+      .references(() => tbFindings.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    dataObservationId: uuid("data_observation_id").references(
+      (): AnyPgColumn => dataObservations.id,
+      { onDelete: "restrict" }
+    ),
+    dataAssetRecordId: uuid("data_asset_record_id").references(
+      (): AnyPgColumn => dataAssetRecords.id,
+      { onDelete: "restrict" }
+    ),
+    evidenceRole: text("evidence_role").notNull().default("claim_specific"),
+    referenceToken: text("reference_token").notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    check(
+      "tb_finding_structured_evidence_refs_source_type",
+      sql`${table.sourceType} IN ('data_observation', 'data_asset_record')`
+    ),
+    check(
+      "tb_finding_structured_evidence_refs_role",
+      sql`${table.evidenceRole} IN ('claim_specific', 'contextual', 'limitation')`
+    ),
+    check(
+      "tb_finding_structured_evidence_refs_exactly_one_source",
+      sql`((${table.dataObservationId} IS NOT NULL)::int + (${table.dataAssetRecordId} IS NOT NULL)::int) = 1`
+    ),
+    check(
+      "tb_finding_structured_evidence_refs_source_matches",
+      sql`(${table.sourceType} = 'data_observation' AND ${table.dataObservationId} IS NOT NULL)
+        OR (${table.sourceType} = 'data_asset_record' AND ${table.dataAssetRecordId} IS NOT NULL)`
+    ),
+    unique("uq_tb_finding_structured_evidence_ref").on(table.findingId, table.referenceToken),
+    index("idx_tb_finding_structured_evidence_finding").on(table.findingId, table.evidenceRole),
+    index("idx_tb_finding_structured_evidence_observation").on(table.dataObservationId),
+    index("idx_tb_finding_structured_evidence_record").on(table.dataAssetRecordId)
+  ]
+);
+
 export const tbMentionCodings = pgTable(
   "tb_mention_codings",
   {
@@ -2199,6 +2250,18 @@ export const analysisArtifactReviewEvents = pgTable(
     createdAt: now()
   },
   (table) => [
+    check(
+      "analysis_artifact_review_events_action",
+      sql`${table.action} IN ('accept', 'correct', 'limit', 'reject', 'accept_analysis')`
+    ),
+    check(
+      "analysis_artifact_review_events_previous_status",
+      sql`${table.previousStatus} IS NULL OR ${table.previousStatus} IN ('draft', 'needs_review', 'accepted', 'corrected', 'rejected', 'limited')`
+    ),
+    check(
+      "analysis_artifact_review_events_next_status",
+      sql`${table.nextStatus} IN ('draft', 'needs_review', 'accepted', 'corrected', 'rejected', 'limited')`
+    ),
     index("idx_analysis_artifact_review_events_artifact").on(table.artifactId, table.createdAt),
     index("idx_analysis_artifact_review_events_reviewer").on(table.reviewerUserId, table.createdAt)
   ]

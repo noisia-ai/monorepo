@@ -177,3 +177,23 @@ test("SB-07 persists versioned, budget-bounded interpretations without weakening
   assert.match(analysisMigration, /analysis_artifacts_exactly_one_analysis/);
   assert.doesNotMatch(migration, /ALTER TABLE analysis_artifacts/);
 });
+
+test("SB-08 enforces exact governed T&B evidence and immutable published review", async () => {
+  const [migration, hierarchy, persistence, reviewWriter] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0053_tb_structured_evidence_review.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-step-3-hierarchy.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-analysis-artifact-persistence.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/analysis-artifact-graph.ts"), "utf8")
+  ]);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS tb_finding_structured_evidence_refs/);
+  assert.match(migration, /evidence_quality_status <> 'accepted'/);
+  assert.match(migration, /structured_evidence_cross_corpus/);
+  assert.match(migration, /published_analysis_artifact_immutable/);
+  assert.match(hierarchy, /validateTbStructuredEvidenceRefs/);
+  assert.match(hierarchy, /'claim_specific'/);
+  assert.match(persistence, /governed_ref\.source_type/);
+  assert.match(persistence, /'storage_ref'/);
+  assert.match(persistence, /'source_sync_run'/);
+  assert.match(reviewWriter, /current\.revision \+ 1/);
+  assert.match(reviewWriter, /supersedes_artifact_id/);
+});

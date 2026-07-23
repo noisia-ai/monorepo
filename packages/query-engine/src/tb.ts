@@ -553,6 +553,8 @@ export type EvaluatedCluster = {
   protagonist_sample_index: number;
   /** Indices of additional supporting verbatims (max 4). */
   supporting_sample_indices: number[];
+  /** Governed tokens from the RAG packet: observation:<uuid> or record:<uuid>. */
+  structured_evidence_refs: string[];
 };
 
 export function buildHierarchyPrompt(args: {
@@ -603,6 +605,9 @@ export function buildHierarchyPrompt(args: {
     "Confidence: 'alta' (sample es robusto y consistente) | 'media' (señal clara pero sample limitado) | 'baja_direccional' (apenas para reportar como hipotesis).",
     "",
     "Por cada cluster tambien debes elegir UN verbatim protagonista (el mas representativo) y 1-4 verbatims de apoyo. Los indices son las posiciones en el array samples (0-based).",
+    "Si una observacion o fila estructurada sostiene ESTE finding, incluye su token exacto en `structured_evidence_refs`.",
+    "Solo usa tokens `observation:<uuid>` o `record:<uuid>` presentes en el contexto. No cites assets agregados como evidencia claim-specific.",
+    "Si la fuente sólo da contexto general, deja `structured_evidence_refs` vacío.",
     "",
     "Formato JSON obligatorio:",
     JSON.stringify(
@@ -616,7 +621,8 @@ export function buildHierarchyPrompt(args: {
             confidence: "alta",
             reason: "Verbatims muestran tono de traicion y abandono activo de aseguradora tras descubrir clausulas.",
             protagonist_sample_index: 2,
-            supporting_sample_indices: [0, 4, 7]
+            supporting_sample_indices: [0, 4, 7],
+            structured_evidence_refs: ["observation:11111111-1111-4111-8111-111111111111"]
           }
         ]
       },
@@ -668,6 +674,14 @@ export function parseHierarchyResponse(raw: string): { evaluated: EvaluatedClust
           const supporting = Array.isArray(e.supporting_sample_indices)
             ? e.supporting_sample_indices.map(Number).filter((n) => Number.isFinite(n) && n >= 0).slice(0, 4)
             : [];
+          const structuredEvidenceRefs = Array.isArray(e.structured_evidence_refs)
+            ? Array.from(new Set(e.structured_evidence_refs
+                .filter((value): value is string => typeof value === "string")
+                .map((value) => value.trim().toLowerCase())
+                .filter((value) => /^(?:observation|record):[0-9a-f-]{36}$/u.test(value))))
+              .sort()
+              .slice(0, 24)
+            : [];
           return {
             key: String(e.key ?? ""),
             nombre_comercial: typeof e.nombre_comercial === "string" ? e.nombre_comercial.slice(0, 80) : "Sin nombre",
@@ -680,12 +694,26 @@ export function parseHierarchyResponse(raw: string): { evaluated: EvaluatedClust
             protagonist_sample_index: Number.isFinite(Number(e.protagonist_sample_index))
               ? Math.max(0, Number(e.protagonist_sample_index))
               : 0,
-            supporting_sample_indices: supporting
+            supporting_sample_indices: supporting,
+            structured_evidence_refs: structuredEvidenceRefs
           };
         })
         .filter((e) => e.key.length > 0)
     : [];
   return { evaluated };
+}
+
+export function validateTbStructuredEvidenceRefs(
+  refs: string[],
+  availableTokens: string[]
+) {
+  const available = new Set(availableTokens.map((value) => value.toLowerCase()));
+  const normalized = Array.from(new Set(refs.map((value) => value.toLowerCase()))).sort();
+  const unknown = normalized.filter((value) => !available.has(value));
+  if (unknown.length > 0) {
+    throw new Error(`unknown_structured_evidence_ref:${unknown.join(",")}`);
+  }
+  return normalized;
 }
 
 /**

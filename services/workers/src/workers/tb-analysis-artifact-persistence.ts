@@ -467,6 +467,89 @@ async function insertEvidenceGraph(client: PoolClient, tbAnalysisId: string) {
   );
 
   await client.query(
+    `WITH governed_refs AS (
+       SELECT
+         ref.finding_id,
+         ref.source_type,
+         COALESCE(ref.data_observation_id, ref.data_asset_record_id) AS source_id,
+         ref.evidence_role,
+         ref.reference_token,
+         COALESCE(observation.data_asset_id, record.data_asset_id) AS data_asset_id,
+         COALESCE(observation.data_source_id, record.data_source_id) AS data_source_id,
+         COALESCE(observation.source_sync_run_id, record.source_sync_run_id) AS source_sync_run_id,
+         COALESCE(observation.knowledge_source_id, record.knowledge_source_id) AS knowledge_source_id,
+         COALESCE(observation.dataset_key, record.dataset_key) AS dataset_key,
+         COALESCE(observation.row_index, record.row_index) AS row_index,
+         observation.metric_key,
+         observation.metric_value,
+         observation.metric_unit,
+         COALESCE(observation.period_start, record.period_start) AS period_start,
+         COALESCE(observation.period_end, record.period_end) AS period_end,
+         COALESCE(observation.entity_type, record.entity_type) AS entity_type,
+         COALESCE(observation.entity_key, record.entity_key) AS entity_key,
+         COALESCE(observation.lineage, record.lineage) AS source_lineage,
+         asset.storage_ref,
+         asset.name AS asset_name
+       FROM tb_finding_structured_evidence_refs ref
+       LEFT JOIN data_observations observation ON observation.id = ref.data_observation_id
+       LEFT JOIN data_asset_records record ON record.id = ref.data_asset_record_id
+       LEFT JOIN data_assets asset
+         ON asset.id = COALESCE(observation.data_asset_id, record.data_asset_id)
+     )
+     INSERT INTO analysis_evidence_links (
+       evidence_group_id, source_type, source_id, relation_type,
+       evidence_role, locator, position, metadata
+     )
+     SELECT
+       evidence_group.id,
+       governed_ref.source_type,
+       governed_ref.source_id,
+       'supports',
+       governed_ref.evidence_role,
+       jsonb_strip_nulls(jsonb_build_object(
+         'reference_token', governed_ref.reference_token,
+         'asset_id', governed_ref.data_asset_id,
+         'asset_name', governed_ref.asset_name,
+         'storage_ref', governed_ref.storage_ref,
+         'dataset_key', governed_ref.dataset_key,
+         'row_index', governed_ref.row_index,
+         'metric_key', governed_ref.metric_key,
+         'metric_value', governed_ref.metric_value,
+         'metric_unit', governed_ref.metric_unit,
+         'period_start', governed_ref.period_start,
+         'period_end', governed_ref.period_end,
+         'entity_type', governed_ref.entity_type,
+         'entity_key', governed_ref.entity_key
+       )),
+       ROW_NUMBER() OVER (
+         PARTITION BY evidence_group.id
+         ORDER BY governed_ref.reference_token
+       )::integer - 1,
+       jsonb_strip_nulls(jsonb_build_object(
+         'claim_specific', governed_ref.evidence_role = 'claim_specific',
+         'data_asset_id', governed_ref.data_asset_id,
+         'data_source_id', governed_ref.data_source_id,
+         'source_sync_run_id', governed_ref.source_sync_run_id,
+         'knowledge_source_id', governed_ref.knowledge_source_id,
+         'source_lineage', governed_ref.source_lineage,
+         'contract', 'analysis-artifacts-v1'
+       ))
+     FROM analysis_artifacts artifact
+     JOIN analysis_evidence_groups evidence_group
+       ON evidence_group.artifact_id = artifact.id
+      AND evidence_group.group_key = 'primary-evidence'
+     JOIN governed_refs governed_ref
+       ON artifact.source_entity_type = 'tb_finding'
+      AND governed_ref.finding_id = artifact.source_entity_id
+     WHERE artifact.tb_analysis_id = $1
+     ON CONFLICT ON CONSTRAINT uq_analysis_evidence_links_source DO UPDATE SET
+       evidence_role = EXCLUDED.evidence_role,
+       locator = EXCLUDED.locator,
+       metadata = analysis_evidence_links.metadata || EXCLUDED.metadata`,
+    [tbAnalysisId]
+  );
+
+  await client.query(
     `INSERT INTO analysis_evidence_links (
        evidence_group_id, source_type, source_id, relation_type,
        evidence_role, position, metadata
@@ -727,6 +810,78 @@ async function projectArtifactLineage(client: PoolClient, tbAnalysisId: string) 
      JOIN analysis_evidence_groups evidence_group ON evidence_group.artifact_id = artifact.id
      JOIN analysis_evidence_links evidence_link ON evidence_link.evidence_group_id = evidence_group.id
      WHERE artifact.tb_analysis_id = $1
+     ON CONFLICT ON CONSTRAINT uq_lineage_edges_relation DO UPDATE SET
+       metadata = lineage_edges.metadata || EXCLUDED.metadata`,
+    [tbAnalysisId]
+  );
+
+  await client.query(
+    `WITH governed_sources AS (
+       SELECT
+         ref.source_type AS target_type,
+         COALESCE(ref.data_observation_id, ref.data_asset_record_id) AS target_id,
+         COALESCE(observation.data_asset_id, record.data_asset_id) AS data_asset_id,
+         COALESCE(observation.data_source_id, record.data_source_id) AS data_source_id,
+         COALESCE(observation.source_sync_run_id, record.source_sync_run_id) AS source_sync_run_id,
+         COALESCE(observation.knowledge_source_id, record.knowledge_source_id) AS knowledge_source_id,
+         COALESCE(observation.lineage, record.lineage) AS source_lineage,
+         asset.storage_ref
+       FROM tb_finding_structured_evidence_refs ref
+       JOIN tb_findings finding ON finding.id = ref.finding_id
+       LEFT JOIN data_observations observation ON observation.id = ref.data_observation_id
+       LEFT JOIN data_asset_records record ON record.id = ref.data_asset_record_id
+       LEFT JOIN data_assets asset
+         ON asset.id = COALESCE(observation.data_asset_id, record.data_asset_id)
+       WHERE finding.tb_analysis_id = $1
+     ),
+     candidates AS (
+       SELECT
+         'data_asset'::text AS source_type,
+         data_asset_id AS source_id,
+         target_type,
+         target_id,
+         'contains'::text AS relation_type,
+         jsonb_strip_nulls(jsonb_build_object('storage_ref', storage_ref)) AS metadata
+       FROM governed_sources
+       WHERE data_asset_id IS NOT NULL
+
+       UNION ALL
+
+       SELECT 'data_source', data_source_id, target_type, target_id, 'sourced_from', '{}'::jsonb
+       FROM governed_sources
+       WHERE data_source_id IS NOT NULL
+
+       UNION ALL
+
+       SELECT 'source_sync_run', source_sync_run_id, target_type, target_id, 'imported_as', '{}'::jsonb
+       FROM governed_sources
+       WHERE source_sync_run_id IS NOT NULL
+
+       UNION ALL
+
+       SELECT 'knowledge_source', knowledge_source_id, target_type, target_id, 'sourced_from', '{}'::jsonb
+       FROM governed_sources
+       WHERE knowledge_source_id IS NOT NULL
+
+       UNION ALL
+
+       SELECT
+         'import_batch',
+         (source_lineage->>'import_batch_id')::uuid,
+         target_type,
+         target_id,
+         'imported_as',
+         '{}'::jsonb
+       FROM governed_sources
+       WHERE COALESCE(source_lineage->>'import_batch_id', '')
+         ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     )
+     INSERT INTO lineage_edges (
+       source_type, source_id, target_type, target_id, relation_type, metadata
+     )
+     SELECT source_type, source_id, target_type, target_id, relation_type,
+       metadata || jsonb_build_object('contract', 'analysis-artifacts-v1')
+     FROM candidates
      ON CONFLICT ON CONSTRAINT uq_lineage_edges_relation DO UPDATE SET
        metadata = lineage_edges.metadata || EXCLUDED.metadata`,
     [tbAnalysisId]

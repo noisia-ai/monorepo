@@ -27,6 +27,7 @@ export async function loadTbRagPromptContext(tbAnalysisId: string): Promise<TbRa
   const scope = await loadAnalysisScope(tbAnalysisId);
   const rag = await loadAnalysisRagContext(scope.study_corpus_id, scope.brand_id);
   const structuredObservations = await loadStructuredObservationSnapshot(scope.study_corpus_id);
+  structuredObservations.evidence_tokens = await loadGovernedEvidenceTokens(scope.study_corpus_id);
   await recordStructuredObservationConsumption(tbAnalysisId, structuredObservations);
 
   return {
@@ -140,6 +141,24 @@ type StructuredObservationSnapshot = {
     temporal_join_ready: boolean;
   };
   guardrails: string[];
+  evidence_tokens: GovernedEvidenceToken[];
+};
+
+type GovernedEvidenceToken = {
+  token: string;
+  source_type: "data_observation" | "data_asset_record";
+  source_id: string;
+  data_asset_id: string | null;
+  data_source_id: string | null;
+  source_sync_run_id: string | null;
+  dataset_key: string;
+  row_index: number | null;
+  metric_key: string | null;
+  metric_value: number | null;
+  metric_unit: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  entity_key: string | null;
 };
 
 async function loadStructuredObservationSnapshot(corpusId: string): Promise<StructuredObservationSnapshot> {
@@ -398,6 +417,7 @@ async function loadStructuredObservationSnapshot(corpusId: string): Promise<Stru
         overlapping_months: selectedSeries.overlappingMonths,
         temporal_join_ready: selectedSeries.overlappingMonths > 0
       },
+      evidence_tokens: [],
       guardrails: [
         "Treat needs_mapping_review observations as context only, never as scored evidence.",
         "Canonical source records and static catalogs provide entities, dimensions, and join keys; numeric claims require accepted observations.",
@@ -568,8 +588,60 @@ function emptyStructuredObservationSnapshot(): StructuredObservationSnapshot {
       overlapping_months: 0,
       temporal_join_ready: false
     },
-    guardrails: ["No governed structured observations were available for this analysis run."]
+    guardrails: ["No governed structured observations were available for this analysis run."],
+    evidence_tokens: []
   };
+}
+
+async function loadGovernedEvidenceTokens(corpusId: string): Promise<GovernedEvidenceToken[]> {
+  const result = await pool.query<GovernedEvidenceToken>(`
+    SELECT * FROM (
+      SELECT
+        'observation:' || observation.id::text AS token,
+        'data_observation'::text AS source_type,
+        observation.id::text AS source_id,
+        observation.data_asset_id::text,
+        observation.data_source_id::text,
+        observation.source_sync_run_id::text,
+        observation.dataset_key,
+        observation.row_index,
+        observation.metric_key,
+        observation.metric_value::float8 AS metric_value,
+        observation.metric_unit,
+        observation.period_start::text,
+        observation.period_end::text,
+        observation.entity_key,
+        0 AS source_rank
+      FROM data_observations observation
+      WHERE observation.study_corpus_id = $1::uuid
+        AND observation.quality_status = 'accepted'
+
+      UNION ALL
+
+      SELECT
+        'record:' || record.id::text,
+        'data_asset_record'::text,
+        record.id::text,
+        record.data_asset_id::text,
+        record.data_source_id::text,
+        record.source_sync_run_id::text,
+        record.dataset_key,
+        record.row_index,
+        NULL::text,
+        NULL::float8,
+        NULL::text,
+        record.period_start::text,
+        record.period_end::text,
+        record.entity_key,
+        1
+      FROM data_asset_records record
+      WHERE record.study_corpus_id = $1::uuid
+        AND record.quality_status = 'accepted'
+    ) evidence
+    ORDER BY source_rank, period_start DESC NULLS LAST, dataset_key, row_index, source_id
+    LIMIT 120
+  `, [corpusId]);
+  return result.rows;
 }
 
 function numeric(value: number | string | null | undefined) {

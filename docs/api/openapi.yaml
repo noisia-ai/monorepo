@@ -21,6 +21,8 @@ tags:
     description: Structured Signal output for customers and external integrations.
   - name: Signal Workspace V1
     description: Protected workspace-centric live Social Listening APIs. Disabled by default.
+  - name: Data OS Review
+    description: Protected internal artifact review APIs. Disabled by default.
 paths:
   /api/public/v1/reports:
     get:
@@ -300,6 +302,54 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/corpora/{corpusId}/artifacts/{artifactId}/review:
+    get:
+      tags: [Data OS Review]
+      operationId: getAnalysisArtifactReviewHistory
+      summary: Get immutable editorial review history for one analysis artifact.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { name: corpusId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: artifactId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Artifact review event history. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Data OS Review]
+      operationId: reviewAnalysisArtifact
+      summary: Accept, correct, limit or reject one analysis artifact.
+      description: Corrections and limitations create a new immutable revision. Published revisions are never mutated.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { name: corpusId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: artifactId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [accept, correct, limit, reject] }
+                notes: { type: string, maxLength: 2000 }
+                patch:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    title: { type: [string, "null"] }
+                    summary: { type: [string, "null"] }
+                    content: {}
+                    confidence: { type: [string, "null"] }
+                    metadata: { type: object }
+      responses:
+        "200": { description: Reviewed artifact or newly created revision. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: The requested revision was already superseded. }
   /api/data-os/signal/{workspaceId}/series:
     get:
       tags: [Signal Workspace V1]

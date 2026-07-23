@@ -1,6 +1,14 @@
 import type { PoolClient } from "pg";
 
 import { pool } from "@/lib/db";
+import {
+  planAnalysisArtifactReview,
+  type AnalysisArtifactReviewAction,
+  type AnalysisArtifactReviewPatch,
+  type AnalysisArtifactReviewResult
+} from "@/lib/data-os/analysis-artifact-review";
+
+export { planAnalysisArtifactReview } from "@/lib/data-os/analysis-artifact-review";
 
 export type AnalysisArtifactNode = {
   id: string;
@@ -63,6 +71,53 @@ export type AnalysisArtifactGraph = {
   evidence_links: AnalysisArtifactEvidenceLink[];
   relations: AnalysisArtifactRelation[];
 };
+
+export async function loadAnalysisArtifactReviewHistory(args: {
+  corpusId: string;
+  artifactId: string;
+}) {
+  const result = await pool.query<{
+    id: string;
+    artifact_id: string;
+    reviewer_user_id: string | null;
+    action: string;
+    previous_status: string | null;
+    next_status: string;
+    patch: unknown;
+    notes: string | null;
+    created_at: string;
+  }>(
+    `SELECT
+       event.id::text,
+       event.artifact_id::text,
+       event.reviewer_user_id::text,
+       event.action,
+       event.previous_status,
+       event.next_status,
+       event.patch,
+       event.notes,
+       event.created_at::text
+     FROM analysis_artifact_review_events event
+     JOIN analysis_artifacts artifact ON artifact.id = event.artifact_id
+     WHERE artifact.study_corpus_id = $1::uuid
+       AND (
+         artifact.id = $2::uuid
+         OR artifact.supersedes_artifact_id = $2::uuid
+         OR EXISTS (
+           SELECT 1
+           FROM analysis_artifacts requested
+           WHERE requested.id = $2::uuid
+             AND requested.study_corpus_id = artifact.study_corpus_id
+             AND requested.artifact_key = artifact.artifact_key
+             AND requested.tb_analysis_id IS NOT DISTINCT FROM artifact.tb_analysis_id
+             AND requested.engine_analysis_id IS NOT DISTINCT FROM artifact.engine_analysis_id
+         )
+       )
+     ORDER BY event.created_at, event.id`,
+    [args.corpusId, args.artifactId]
+  );
+  return result.rows;
+}
 
 /**
  * Internal loader only. Callers must authorize corpus/output access before use.
@@ -283,6 +338,254 @@ export async function approveTbAnalysisWithArtifacts(args: {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Central artifact review writer. Corrections and limitations always create a
+ * new revision; any review of a published revision also forks it.
+ */
+export async function reviewAnalysisArtifact(args: {
+  corpusId: string;
+  artifactId: string;
+  reviewerUserId: string;
+  action: AnalysisArtifactReviewAction;
+  patch?: AnalysisArtifactReviewPatch;
+  notes?: string;
+}): Promise<AnalysisArtifactReviewResult | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const locked = await client.query<{
+      id: string;
+      review_status: string;
+      revision: number;
+      published: boolean;
+    }>(
+      `SELECT
+         artifact.id::text,
+         artifact.review_status,
+         artifact.revision,
+         EXISTS (
+           SELECT 1
+           FROM published_output_artifacts published
+           WHERE published.artifact_id = artifact.id
+             AND published.artifact_revision = artifact.revision
+         ) AS published
+       FROM analysis_artifacts artifact
+       WHERE artifact.id = $1::uuid
+         AND artifact.study_corpus_id = $2::uuid
+       FOR UPDATE`,
+      [args.artifactId, args.corpusId]
+    );
+    const artifact = locked.rows[0];
+    if (!artifact) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const plan = planAnalysisArtifactReview({ action: args.action, published: artifact.published });
+    const patch = args.patch ?? {};
+    const notes = args.notes ?? null;
+
+    if (!plan.createRevision) {
+      await client.query(
+        `INSERT INTO analysis_artifact_review_events (
+           artifact_id, reviewer_user_id, action, previous_status, next_status, patch, notes
+         ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)`,
+        [
+          artifact.id,
+          args.reviewerUserId,
+          args.action,
+          artifact.review_status,
+          plan.nextStatus,
+          JSON.stringify(patch),
+          notes
+        ]
+      );
+      await client.query(
+        `UPDATE analysis_artifacts
+         SET review_status = $2,
+             updated_at = NOW()
+         WHERE id = $1::uuid`,
+        [artifact.id, plan.nextStatus]
+      );
+      await client.query("COMMIT");
+      return {
+        artifact_id: artifact.id,
+        previous_artifact_id: null,
+        review_status: plan.nextStatus,
+        revision: artifact.revision,
+        created_revision: false
+      };
+    }
+
+    const superseded = await client.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM analysis_artifacts newer
+         JOIN analysis_artifacts current ON current.id = $1::uuid
+         WHERE newer.study_corpus_id = current.study_corpus_id
+           AND newer.artifact_key = current.artifact_key
+           AND newer.revision > current.revision
+           AND newer.tb_analysis_id IS NOT DISTINCT FROM current.tb_analysis_id
+           AND newer.engine_analysis_id IS NOT DISTINCT FROM current.engine_analysis_id
+       ) AS exists`,
+      [artifact.id]
+    );
+    if (superseded.rows[0]?.exists) throw new Error("analysis_artifact_revision_superseded");
+
+    const inserted = await client.query<{ id: string; revision: number }>(
+      `INSERT INTO analysis_artifacts (
+         study_corpus_id, tb_analysis_id, engine_analysis_id, artifact_key, artifact_type,
+         source_entity_type, source_entity_id, title, summary, content, confidence,
+         review_status, revision, position, supersedes_artifact_id, metadata
+       )
+       SELECT
+         current.study_corpus_id,
+         current.tb_analysis_id,
+         current.engine_analysis_id,
+         current.artifact_key,
+         current.artifact_type,
+         current.source_entity_type,
+         current.source_entity_id,
+         CASE WHEN $2::jsonb ? 'title' THEN $2::jsonb->>'title' ELSE current.title END,
+         CASE WHEN $2::jsonb ? 'summary' THEN $2::jsonb->>'summary' ELSE current.summary END,
+         CASE WHEN $2::jsonb ? 'content' THEN $2::jsonb->'content' ELSE current.content END,
+         CASE WHEN $2::jsonb ? 'confidence' THEN $2::jsonb->>'confidence' ELSE current.confidence END,
+         $3,
+         current.revision + 1,
+         current.position,
+         current.id,
+         current.metadata
+           || COALESCE($2::jsonb->'metadata', '{}'::jsonb)
+           || jsonb_build_object(
+             'review_action', $4::text,
+             'reviewed_at', NOW(),
+             'reviewed_by_user_id', $5::uuid
+           )
+       FROM analysis_artifacts current
+       WHERE current.id = $1::uuid
+       RETURNING id::text, revision`,
+      [artifact.id, JSON.stringify(patch), plan.nextStatus, args.action, args.reviewerUserId]
+    );
+    const revision = inserted.rows[0];
+    if (!revision) throw new Error("analysis_artifact_revision_insert_failed");
+
+    await cloneArtifactEvidence(client, artifact.id, revision.id);
+    await cloneArtifactRelationsAndLineage(client, artifact.id, revision.id);
+    await client.query(
+      `INSERT INTO analysis_artifact_review_events (
+         artifact_id, reviewer_user_id, action, previous_status, next_status, patch, notes
+       ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)`,
+      [
+        revision.id,
+        args.reviewerUserId,
+        args.action,
+        artifact.review_status,
+        plan.nextStatus,
+        JSON.stringify(patch),
+        notes
+      ]
+    );
+
+    await client.query("COMMIT");
+    return {
+      artifact_id: revision.id,
+      previous_artifact_id: artifact.id,
+      review_status: plan.nextStatus,
+      revision: revision.revision,
+      created_revision: true
+    };
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function cloneArtifactEvidence(client: PoolClient, sourceArtifactId: string, targetArtifactId: string) {
+  await client.query(
+    `WITH inserted_groups AS (
+       INSERT INTO analysis_evidence_groups (
+         artifact_id, group_key, role, label, summary, position, metadata
+       )
+       SELECT $2::uuid, group_key, role, label, summary, position, metadata
+       FROM analysis_evidence_groups
+       WHERE artifact_id = $1::uuid
+       RETURNING id, group_key
+     )
+     INSERT INTO analysis_evidence_links (
+       evidence_group_id, source_type, source_id, relation_type, evidence_role,
+       quote, locator, confidence, weight, position, metadata
+     )
+     SELECT
+       inserted_group.id,
+       link.source_type,
+       link.source_id,
+       link.relation_type,
+       link.evidence_role,
+       link.quote,
+       link.locator,
+       link.confidence,
+       link.weight,
+       link.position,
+       link.metadata
+     FROM analysis_evidence_links link
+     JOIN analysis_evidence_groups source_group ON source_group.id = link.evidence_group_id
+     JOIN inserted_groups inserted_group ON inserted_group.group_key = source_group.group_key
+     WHERE source_group.artifact_id = $1::uuid`,
+    [sourceArtifactId, targetArtifactId]
+  );
+}
+
+async function cloneArtifactRelationsAndLineage(
+  client: PoolClient,
+  sourceArtifactId: string,
+  targetArtifactId: string
+) {
+  await client.query(
+    `INSERT INTO analysis_artifact_relations (
+       source_artifact_id, target_artifact_id, relation_type, position, metadata
+     )
+     SELECT $2::uuid, relation.target_artifact_id, relation.relation_type, relation.position, relation.metadata
+     FROM analysis_artifact_relations relation
+     WHERE relation.source_artifact_id = $1::uuid
+     ON CONFLICT ON CONSTRAINT uq_analysis_artifact_relations_pair DO NOTHING`,
+    [sourceArtifactId, targetArtifactId]
+  );
+  await client.query(
+    `INSERT INTO analysis_artifact_relations (
+       source_artifact_id, target_artifact_id, relation_type, position, metadata
+     )
+     SELECT relation.source_artifact_id, $2::uuid, relation.relation_type, relation.position, relation.metadata
+     FROM analysis_artifact_relations relation
+     WHERE relation.target_artifact_id = $1::uuid
+       AND relation.source_artifact_id <> $2::uuid
+     ON CONFLICT ON CONSTRAINT uq_analysis_artifact_relations_pair DO NOTHING`,
+    [sourceArtifactId, targetArtifactId]
+  );
+  await client.query(
+    `INSERT INTO lineage_edges (
+       source_type, source_id, target_type, target_id, relation_type, metadata
+     )
+     SELECT
+       edge.source_type,
+       edge.source_id,
+       edge.target_type,
+       CASE WHEN edge.target_type = 'analysis_artifact' THEN $2::uuid ELSE edge.target_id END,
+       edge.relation_type,
+       edge.metadata || jsonb_build_object(
+         'revision_cloned_from', $1::uuid,
+         'contract', 'analysis-artifacts-v1'
+       )
+     FROM lineage_edges edge
+     WHERE edge.target_type = 'analysis_artifact'
+       AND edge.target_id = $1::uuid
+     ON CONFLICT ON CONSTRAINT uq_lineage_edges_relation DO UPDATE SET
+       metadata = lineage_edges.metadata || EXCLUDED.metadata`,
+    [sourceArtifactId, targetArtifactId]
+  );
 }
 
 export async function persistPublishedAnalysisArtifacts(args: {

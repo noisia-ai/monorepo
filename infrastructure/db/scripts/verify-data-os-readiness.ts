@@ -26,7 +26,8 @@ const REQUIRED_MIGRATIONS = [
   "0049_signal_metric_catalog_v1",
   "0050_signal_metric_materializations_v1",
   "0051_signal_backend_foundation_hardening",
-  "0052_signal_metric_interpretations_v1"
+  "0052_signal_metric_interpretations_v1",
+  "0053_tb_structured_evidence_review"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -91,7 +92,8 @@ const REQUIRED_TABLES = [
   "signal_interpretation_freshness",
   "metric_interpretation_runs",
   "metric_interpretations",
-  "metric_interpretation_evidence"
+  "metric_interpretation_evidence",
+  "tb_finding_structured_evidence_refs"
 ];
 
 const REQUIRED_ROUTES = [
@@ -101,6 +103,7 @@ const REQUIRED_ROUTES = [
   "apps/studio/src/app/api/data-os/corpora/[id]/lineage/route.ts",
   "apps/studio/src/app/api/data-os/corpora/[id]/readiness/route.ts",
   "apps/studio/src/app/api/data-os/corpora/[id]/review-queue/route.ts",
+  "apps/studio/src/app/api/data-os/corpora/[id]/artifacts/[artifactId]/review/route.ts",
   "apps/studio/src/app/api/data-os/corpora/[id]/sources/route.ts",
   "apps/studio/src/app/api/data-os/corpora/[id]/source-health/route.ts",
   "apps/studio/src/app/api/data-os/corpora/[id]/taxonomies/route.ts",
@@ -737,6 +740,12 @@ async function verifyImplementationContracts(repoRoot: string) {
   }
   if (!tbArtifactPersistence.includes("'claim_specific', false")) {
     missing.push("structured context claim-specific boundary");
+  }
+  if (!tbArtifactPersistence.includes("tb_finding_structured_evidence_refs")) {
+    missing.push("T&B exact structured evidence persistence");
+  }
+  if (!analysisArtifactGraph.includes("current.revision + 1")) {
+    missing.push("analysis artifact immutable revision review writer");
   }
   if (!analysisArtifactGraph.includes("published_output_artifacts")) {
     missing.push("published output artifact snapshot contract");
@@ -1410,7 +1419,8 @@ async function verifyImplementationContracts(repoRoot: string) {
     "signal_interpretation_freshness",
     "metric_interpretation_runs",
     "metric_interpretations",
-    "metric_interpretation_evidence"
+    "metric_interpretation_evidence",
+    "tb_finding_structured_evidence_refs"
   ]) {
     if (!schemaDoc.includes(table)) missing.push(`database schema missing ${table}`);
   }
@@ -1429,6 +1439,8 @@ async function verifyImplementationContracts(repoRoot: string) {
     "GET /api/data-os/corpora/:id/readiness",
     "GET /api/data-os/corpora/:id/review-queue",
     "POST /api/data-os/corpora/:id/review-queue",
+    "GET /api/data-os/corpora/:id/artifacts/:artifactId/review",
+    "POST /api/data-os/corpora/:id/artifacts/:artifactId/review",
     "GET /api/data-os/corpora/:id/sources",
     "GET /api/data-os/corpora/:id/source-health",
     "GET /api/data-os/corpora/:id/taxonomies",

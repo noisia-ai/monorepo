@@ -15,6 +15,10 @@ test("T&B prompts carry governed structured observations alongside listening", (
       structured_observations: {
         source: "data_observations_sql",
         contract: "noisia_data_os_cut_1",
+        evidence_tokens: [{
+          token: "observation:11111111-1111-4111-8111-111111111111",
+          source_type: "data_observation"
+        }],
         monthly_series: [
           { month: "2026-01", metric_key: "sales_monthly", value: 100 },
           { month: "2026-01", metric_key: "mentions_monthly", value: 40 }
@@ -27,6 +31,7 @@ test("T&B prompts carry governed structured observations alongside listening", (
   assert.match(prompt, /sales_monthly/);
   assert.match(prompt, /mentions_monthly/);
   assert.match(prompt, /noisia_data_os_cut_1/);
+  assert.match(prompt, /observation:11111111-1111-4111-8111-111111111111/);
 });
 
 test("T&B RAG compaction keeps valid JSON and every governed source inventory item", () => {

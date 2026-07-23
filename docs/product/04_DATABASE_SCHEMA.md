@@ -1239,6 +1239,7 @@ Tablas:
 - `analysis_artifact_relations`
 - `analysis_artifact_review_events`
 - `published_output_artifacts`
+- `tb_finding_structured_evidence_refs`
 
 Reglas:
 
@@ -1277,6 +1278,13 @@ Reglas:
 - `analysis_artifact_review_events` conserva decisiones editoriales y
   `published_output_artifacts` congela el `artifact_revision` exacto consumido por
   Signal. Solo estados `accepted`, `corrected` o `limited` son publicables.
+- `tb_finding_structured_evidence_refs` conserva la referencia exacta del finding a
+  una `data_observation` o `data_asset_record` aceptada. Un trigger rechaza evidencia
+  inexistente, cross-corpus o no aceptada para `claim_specific`.
+- Las acciones `correct` y `limit` crean una nueva fila de `analysis_artifacts` con
+  `revision + 1` y `supersedes_artifact_id`; nunca reescriben la revisión publicada.
+  El trigger `protect_published_analysis_artifact_revision` bloquea también bypasses
+  directos de `UPDATE`/`DELETE`.
 
 ### 16.6 Serving y rollout
 
@@ -1403,6 +1411,18 @@ packet persistido contiene únicamente materializaciones canónicas SB-05; su ha
 La evidencia referencia por FK la materialización y, cuando existe una cita numérica,
 el campo y valor exactos. La invalidación de SB-03 marca freshness e interpretación
 stale sin borrar history. Los switches LLM nacen apagados y el budget cap en cero.
+
+#### Evidencia estructurada y Review SB-08
+
+La migración `0053_tb_structured_evidence_review` conecta cada finding con tokens
+gobernados `observation:<uuid>` o `record:<uuid>`. El artifact graph los proyecta como
+links `supports` claim-specific y conserva locator hasta archivo (`storage_ref`), asset,
+data source, source sync/import y observation/record. Los assets presentes solo como
+contexto continúan marcados `claim_specific=false`.
+
+Readiness reporta artifacts resueltos/pendientes, cantidad de refs exactas y cobertura
+de findings con evidencia estructurada. La cobertura incompleta es explícita y no se
+convierte en evidencia por inferencia.
 
 ---
 

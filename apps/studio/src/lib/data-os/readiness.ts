@@ -73,6 +73,11 @@ export type DataOsCorpusReadiness = {
     rejectedRecords: number;
     includedMentions: number;
     analyses: number;
+    analysisArtifacts: number;
+    reviewedAnalysisArtifacts: number;
+    unresolvedAnalysisArtifacts: number;
+    structuredEvidenceRefs: number;
+    claimSpecificStructuredEvidenceRefs: number;
     outputs: number;
     publishedOutputs: number;
     dashboardRefs: number;
@@ -89,6 +94,9 @@ export type DataOsCorpusReadiness = {
     overlappingMonths: number;
     analysisConsumedStructuredData: boolean;
     latestConsumptionAt: string | null;
+    structuredFindings: number;
+    structuredFindingsWithEvidence: number;
+    structuredEvidenceCoverageRatio: number;
   };
   metricFamilies: DataOsMetricFamilySummary[];
   monthlySeries: DataOsMonthlySeriesPoint[];
@@ -121,6 +129,11 @@ type SummaryRow = {
   rejected_records: number | string;
   included_mentions: number | string;
   analyses: number | string;
+  analysis_artifacts: number | string;
+  reviewed_analysis_artifacts: number | string;
+  unresolved_analysis_artifacts: number | string;
+  structured_evidence_refs: number | string;
+  claim_specific_structured_evidence_refs: number | string;
   outputs: number | string;
   published_outputs: number | string;
   dashboard_refs: number | string;
@@ -135,6 +148,8 @@ type SummaryRow = {
   overlapping_months: number | string;
   analysis_consumed_structured_data: boolean;
   latest_consumption_at: string | null;
+  structured_findings: number | string;
+  structured_findings_with_evidence: number | string;
 };
 
 type MetricFamilyRow = {
@@ -185,6 +200,11 @@ const EMPTY_COUNTS: DataOsCorpusReadiness["counts"] = {
   rejectedRecords: 0,
   includedMentions: 0,
   analyses: 0,
+  analysisArtifacts: 0,
+  reviewedAnalysisArtifacts: 0,
+  unresolvedAnalysisArtifacts: 0,
+  structuredEvidenceRefs: 0,
+  claimSpecificStructuredEvidenceRefs: 0,
   outputs: 0,
   publishedOutputs: 0,
   dashboardRefs: 0
@@ -226,6 +246,11 @@ export async function getDataOsCorpusReadiness(corpusId: string): Promise<DataOs
       rejectedRecords: asNumber(row.rejected_records),
       includedMentions: asNumber(row.included_mentions),
       analyses: asNumber(row.analyses),
+      analysisArtifacts: asNumber(row.analysis_artifacts),
+      reviewedAnalysisArtifacts: asNumber(row.reviewed_analysis_artifacts),
+      unresolvedAnalysisArtifacts: asNumber(row.unresolved_analysis_artifacts),
+      structuredEvidenceRefs: asNumber(row.structured_evidence_refs),
+      claimSpecificStructuredEvidenceRefs: asNumber(row.claim_specific_structured_evidence_refs),
       outputs: asNumber(row.outputs),
       publishedOutputs: asNumber(row.published_outputs),
       dashboardRefs: asNumber(row.dashboard_refs)
@@ -241,7 +266,13 @@ export async function getDataOsCorpusReadiness(corpusId: string): Promise<DataOs
       listeningMonths: asNumber(row.listening_months),
       overlappingMonths: asNumber(row.overlapping_months),
       analysisConsumedStructuredData: row.analysis_consumed_structured_data === true,
-      latestConsumptionAt: row.latest_consumption_at
+      latestConsumptionAt: row.latest_consumption_at,
+      structuredFindings: asNumber(row.structured_findings),
+      structuredFindingsWithEvidence: asNumber(row.structured_findings_with_evidence),
+      structuredEvidenceCoverageRatio: ratio(
+        asNumber(row.structured_findings_with_evidence),
+        asNumber(row.structured_findings)
+      )
     };
     const metricFamilies = metricResult.rows.map((metric) => ({
       family: metric.metric_family,
@@ -333,6 +364,8 @@ function buildReadiness(args: {
     ? "empty"
     : counts.analyses === 0
       ? "building"
+      : counts.unresolvedAnalysisArtifacts > 0
+        ? "building"
       : acceptedDataEvidence > 0 && !coverage.analysisConsumedStructuredData
         ? "attention"
         : "ready";
@@ -344,6 +377,18 @@ function buildReadiness(args: {
   }
   if (coverage.observationMonths > 0 && coverage.listeningMonths > 0 && coverage.overlappingMonths === 0) {
     warnings.push("Listening y fuentes estructuradas no comparten meses; el cruce temporal no es válido todavía.");
+  }
+  if (counts.unresolvedAnalysisArtifacts > 0) {
+    warnings.push(`${counts.unresolvedAnalysisArtifacts} artefacto(s) de análisis requieren revisión editorial.`);
+  }
+  if (
+    coverage.analysisConsumedStructuredData
+    && coverage.structuredFindings > 0
+    && coverage.structuredFindingsWithEvidence < coverage.structuredFindings
+  ) {
+    warnings.push(
+      `${coverage.structuredFindingsWithEvidence}/${coverage.structuredFindings} finding(s) tienen evidencia estructurada claim-specific.`
+    );
   }
 
   const signalStatus: DataOsReadinessStatus = counts.outputs === 0
@@ -388,8 +433,10 @@ function buildReadiness(args: {
       label: "Engine",
       status: analysisStatus,
       summary: `${fmt(counts.includedMentions)} menciones · ${fmt(counts.analyses)} análisis`,
-      detail: coverage.analysisConsumedStructuredData
-        ? "T&B consumió observaciones estructuradas"
+      detail: counts.analysisArtifacts > 0
+        ? `${fmt(counts.reviewedAnalysisArtifacts)}/${fmt(counts.analysisArtifacts)} artefactos revisados · ${Math.round(coverage.structuredEvidenceCoverageRatio * 100)}% findings con evidencia estructurada`
+        : coverage.analysisConsumedStructuredData
+          ? "T&B consumió observaciones estructuradas"
         : acceptedDataEvidence > 0
           ? "Observaciones listas; falta consumo registrado"
           : "Opera con listening + Knowledge Base"
@@ -457,7 +504,10 @@ function unavailableReadiness(corpusId: string, reason: string): DataOsCorpusRea
       listeningMonths: 0,
       overlappingMonths: 0,
       analysisConsumedStructuredData: false,
-      latestConsumptionAt: null
+      latestConsumptionAt: null,
+      structuredFindings: 0,
+      structuredFindingsWithEvidence: 0,
+      structuredEvidenceCoverageRatio: 0
     },
     metricFamilies: [],
     monthlySeries: [],
@@ -474,6 +524,11 @@ function asNumber(value: number | string | null | undefined) {
 
 function fmt(value: number) {
   return new Intl.NumberFormat("es-MX").format(value);
+}
+
+function ratio(numerator: number, denominator: number) {
+  if (denominator <= 0) return 0;
+  return Math.min(1, Math.max(0, numerator / denominator));
 }
 
 const READINESS_SUMMARY_SQL = `
@@ -535,6 +590,43 @@ const READINESS_SUMMARY_SQL = `
     (SELECT COUNT(*) FROM data_asset_records WHERE study_corpus_id = $1::uuid AND quality_status = 'rejected') AS rejected_records,
     (SELECT COUNT(*) FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included') AS included_mentions,
     (SELECT COUNT(*) FROM tb_analyses WHERE study_corpus_id = $1::uuid) AS analyses,
+    (SELECT COUNT(*) FROM analysis_artifacts WHERE study_corpus_id = $1::uuid) AS analysis_artifacts,
+    (
+      SELECT COUNT(*)
+      FROM analysis_artifacts artifact
+      WHERE artifact.study_corpus_id = $1::uuid
+        AND artifact.review_status IN ('accepted', 'corrected', 'limited', 'rejected')
+    ) AS reviewed_analysis_artifacts,
+    (
+      SELECT COUNT(*)
+      FROM analysis_artifacts artifact
+      WHERE artifact.study_corpus_id = $1::uuid
+        AND artifact.review_status IN ('draft', 'needs_review')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM analysis_artifacts newer
+          WHERE newer.study_corpus_id = artifact.study_corpus_id
+            AND newer.artifact_key = artifact.artifact_key
+            AND newer.revision > artifact.revision
+            AND newer.tb_analysis_id IS NOT DISTINCT FROM artifact.tb_analysis_id
+            AND newer.engine_analysis_id IS NOT DISTINCT FROM artifact.engine_analysis_id
+        )
+    ) AS unresolved_analysis_artifacts,
+    (
+      SELECT COUNT(*)
+      FROM tb_finding_structured_evidence_refs ref
+      JOIN tb_findings finding ON finding.id = ref.finding_id
+      JOIN tb_analyses analysis ON analysis.id = finding.tb_analysis_id
+      WHERE analysis.study_corpus_id = $1::uuid
+    ) AS structured_evidence_refs,
+    (
+      SELECT COUNT(*)
+      FROM tb_finding_structured_evidence_refs ref
+      JOIN tb_findings finding ON finding.id = ref.finding_id
+      JOIN tb_analyses analysis ON analysis.id = finding.tb_analysis_id
+      WHERE analysis.study_corpus_id = $1::uuid
+        AND ref.evidence_role = 'claim_specific'
+    ) AS claim_specific_structured_evidence_refs,
     (SELECT COUNT(*) FROM published_outputs WHERE study_corpus_id = $1::uuid AND archived_at IS NULL) AS outputs,
     (SELECT COUNT(*) FROM published_outputs WHERE study_corpus_id = $1::uuid AND status = 'published' AND archived_at IS NULL) AS published_outputs,
     (SELECT COUNT(*) FROM dashboard_data_refs WHERE study_corpus_id = $1::uuid) AS dashboard_refs,
@@ -557,7 +649,25 @@ const READINESS_SUMMARY_SQL = `
       SELECT MAX(NULLIF(ta.meta_json #>> '{data_os_context,consumed_at}', '')::timestamptz)::text
       FROM tb_analyses ta
       WHERE ta.study_corpus_id = $1::uuid
-    ) AS latest_consumption_at
+    ) AS latest_consumption_at,
+    (
+      SELECT COUNT(*)
+      FROM tb_findings finding
+      JOIN tb_analyses analysis ON analysis.id = finding.tb_analysis_id
+      WHERE analysis.study_corpus_id = $1::uuid
+    ) AS structured_findings,
+    (
+      SELECT COUNT(*)
+      FROM tb_findings finding
+      JOIN tb_analyses analysis ON analysis.id = finding.tb_analysis_id
+      WHERE analysis.study_corpus_id = $1::uuid
+        AND EXISTS (
+          SELECT 1
+          FROM tb_finding_structured_evidence_refs ref
+          WHERE ref.finding_id = finding.id
+            AND ref.evidence_role = 'claim_specific'
+        )
+    ) AS structured_findings_with_evidence
   FROM scope
 `;
 

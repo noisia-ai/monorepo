@@ -58,7 +58,8 @@ test("live intelligence migrations are journaled in order", async () => {
     { idx: 49, tag: "0049_signal_metric_catalog_v1" },
     { idx: 50, tag: "0050_signal_metric_materializations_v1" },
     { idx: 51, tag: "0051_signal_backend_foundation_hardening" },
-    { idx: 52, tag: "0052_signal_metric_interpretations_v1" }
+    { idx: 52, tag: "0052_signal_metric_interpretations_v1" },
+    { idx: 53, tag: "0053_tb_structured_evidence_review" }
   ];
   const tail = journal.entries
     .slice(-expected.length)
@@ -235,6 +236,14 @@ test("analysis artifacts stay transactional, reviewable and revision-bound at pu
     resolve(repoRoot, "apps/studio/src/app/api/corpora/[id]/tb-analysis/[analysisId]/signal-output/route.ts"),
     "utf8"
   );
+  const reviewRoute = await readFile(
+    resolve(
+      repoRoot,
+      "apps/studio/src/app/api/data-os/corpora/[id]/artifacts/[artifactId]/review/route.ts"
+    ),
+    "utf8"
+  );
+  const structuredEvidenceMigration = await migration("0053_tb_structured_evidence_review");
   const backfill = await readFile(
     resolve(repoRoot, "apps/studio/scripts/backfill-signal-serving.ts"),
     "utf8"
@@ -244,11 +253,19 @@ test("analysis artifacts stay transactional, reviewable and revision-bound at pu
   assert.match(step6, /client\.query\("BEGIN"\)/);
   assert.match(workerPersistence, /JOIN tb_finding_citations citation/);
   assert.match(workerPersistence, /'claim_specific', false/);
+  assert.match(workerPersistence, /tb_finding_structured_evidence_refs/);
+  assert.match(workerPersistence, /'import_batch'/);
   assert.match(workerPersistence, /Reviewed analysis artifacts are immutable/);
   assert.match(graph, /artifact_revision = artifact\.revision/);
   assert.match(graph, /review_status IN \('accepted', 'corrected', 'limited'\)/);
   assert.match(approvalRoute, /approveTbAnalysisWithArtifacts/);
   assert.match(publishRoute, /persistPublishedAnalysisArtifacts/);
+  assert.match(reviewRoute, /reviewAnalysisArtifact/);
+  assert.match(reviewRoute, /loadDataOsCorpusContext/);
+  assert.match(structuredEvidenceMigration, /validate_tb_finding_structured_evidence_ref/);
+  assert.match(structuredEvidenceMigration, /structured_evidence_cross_corpus/);
+  assert.match(structuredEvidenceMigration, /protect_published_analysis_artifact_revision/);
+  assert.match(structuredEvidenceMigration, /published_analysis_artifact_immutable/);
   assert.match(backfill, /materializeHistoricalArtifactGraph/);
   assert.match(backfill, /persistPublishedAnalysisArtifacts/);
 });
@@ -260,7 +277,7 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
   const reviewQueueRouteFile = routeFiles.find((routeFile) => routeFile.includes("/review-queue/"));
   const readinessRouteFile = routeFiles.find((routeFile) => routeFile.endsWith("/readiness/route.ts"));
 
-  assert.equal(routeFiles.length, 22);
+  assert.equal(routeFiles.length, 23);
   assert.match(loader, /getAuthenticatedAppUser/);
   assert.match(loader, /canManageCorpus/);
   assert.match(loader, /canViewClientOutputs/);
