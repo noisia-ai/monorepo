@@ -59,7 +59,8 @@ test("live intelligence migrations are journaled in order", async () => {
     { idx: 50, tag: "0050_signal_metric_materializations_v1" },
     { idx: 51, tag: "0051_signal_backend_foundation_hardening" },
     { idx: 52, tag: "0052_signal_metric_interpretations_v1" },
-    { idx: 53, tag: "0053_tb_structured_evidence_review" }
+    { idx: 53, tag: "0053_tb_structured_evidence_review" },
+    { idx: 54, tag: "0054_tb_temporal_strategic_releases" }
   ];
   const tail = journal.entries
     .slice(-expected.length)
@@ -277,7 +278,7 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
   const reviewQueueRouteFile = routeFiles.find((routeFile) => routeFile.includes("/review-queue/"));
   const readinessRouteFile = routeFiles.find((routeFile) => routeFile.endsWith("/readiness/route.ts"));
 
-  assert.equal(routeFiles.length, 23);
+  assert.equal(routeFiles.length, 24);
   assert.match(loader, /getAuthenticatedAppUser/);
   assert.match(loader, /canManageCorpus/);
   assert.match(loader, /canViewClientOutputs/);

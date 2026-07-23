@@ -302,6 +302,58 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/releases:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceStrategicReleases
+      summary: Get current and immutable T&B strategic release history.
+      description: Clients receive only human-approved published/client releases. Internal users may also inspect drafts and review states. No payload source is read.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Current strategic release and ordered immutable history.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalStrategicReleasesV1" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+    post:
+      tags: [Signal Workspace V1]
+      operationId: reviewSignalWorkspaceStrategicRelease
+      summary: Create a review draft or human-promote a strategic release.
+      description: Internal corpus managers only. Promotion is fail-closed on analysis approval, quality gates, exact artifact revisions and workspace scope.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [action, tb_analysis_id]
+                  properties:
+                    action: { const: create_draft }
+                    tb_analysis_id: { type: string, format: uuid }
+                    title: { type: string, maxLength: 300 }
+                - type: object
+                  additionalProperties: false
+                  required: [action, release_id]
+                  properties:
+                    action: { const: promote }
+                    release_id: { type: string, format: uuid }
+      responses:
+        "200": { description: Idempotent draft or promoted release result. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
   /api/data-os/corpora/{corpusId}/artifacts/{artifactId}/review:
     get:
       tags: [Data OS Review]
@@ -621,6 +673,41 @@ components:
     SignalDimensionV1:
       type: string
       enum: [platform, source_type, entity, product, campaign, topic, taxonomy, signal, signal_lifecycle, audience, demographic, journey_stage, trigger, barrier, sentiment_polarity, emotion, country, language, content_format]
+    SignalStrategicReleasesV1:
+      type: object
+      required: [contract_version, strategic_release_contract_version, workspace_id, current, history]
+      properties:
+        contract_version: { const: signal-backend-v1 }
+        strategic_release_contract_version: { const: tb-temporal-v1 }
+        workspace_id: { type: string, format: uuid }
+        current:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalStrategicReleaseV1" }
+            - { type: "null" }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/SignalStrategicReleaseV1" }
+    SignalStrategicReleaseV1:
+      type: object
+      required: [release_id, release_key, title, status, visibility, period_start, period_end, corpus_revision, snapshot_id, is_current, artifact_count, temporal_metric_count, movement_counts, artifacts]
+      properties:
+        release_id: { type: string, format: uuid }
+        release_key: { type: string }
+        title: { type: string }
+        status: { type: string, enum: [draft, needs_review, published, rejected] }
+        visibility: { type: string, enum: [internal, client] }
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        corpus_revision: { type: integer, minimum: 0 }
+        snapshot_id: { type: string, format: uuid }
+        comparison_base_analysis_id: { type: [string, "null"], format: uuid }
+        approved_at: { type: [string, "null"], format: date-time }
+        published_at: { type: [string, "null"], format: date-time }
+        is_current: { type: boolean }
+        artifact_count: { type: integer, minimum: 0 }
+        temporal_metric_count: { type: integer, minimum: 0 }
+        movement_counts: { type: object, additionalProperties: { type: integer } }
+        artifacts: { type: array, items: { type: object, additionalProperties: true } }
     ErrorResponse:
       type: object
       required: [error, message]

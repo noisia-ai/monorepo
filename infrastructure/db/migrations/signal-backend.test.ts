@@ -197,3 +197,35 @@ test("SB-08 enforces exact governed T&B evidence and immutable published review"
   assert.match(reviewWriter, /current\.revision \+ 1/);
   assert.match(reviewWriter, /supersedes_artifact_id/);
 });
+
+test("SB-09 freezes T&B scope and human-promotes immutable strategic releases", async () => {
+  const [migration, temporalWorker, comparativeWorker, releaseServing, invarianceFixture] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0054_tb_temporal_strategic_releases.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-temporal-materialization.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-step-5-comparative.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-strategic-releases.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "fixtures/tb-temporal-release-invariance.sql"), "utf8")
+  ]);
+
+  for (const table of [
+    "tb_temporal_metrics",
+    "tb_finding_temporal_comparisons",
+    "signal_workspace_releases",
+    "signal_workspace_release_artifacts",
+    "signal_workspace_current_releases"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /protect_tb_analysis_frozen_scope/);
+  assert.match(migration, /signal_release_human_reviewer_required/);
+  assert.match(migration, /published_signal_workspace_release_immutable/);
+  assert.match(migration, /released_tb_temporal_materialization_immutable/);
+  assert.match(temporalWorker, /JOIN corpus_snapshot_mentions/);
+  assert.match(temporalWorker, /evaluateTbComparisonCompatibilityV1/);
+  assert.match(comparativeWorker, /ta_scope\.snapshot_id = snapshot_mention\.snapshot_id/);
+  assert.doesNotMatch(comparativeWorker, /SUM\(COALESCE\(ib\.included_count/);
+  assert.match(releaseServing, /promote_signal_workspace_release/);
+  assert.doesNotMatch(releaseServing, /published_outputs|payload/);
+  assert.match(invarianceFixture, /not a member of snapshot 1/);
+  assert.match(invarianceFixture, /recomputed_value <> published_value/);
+});

@@ -7,6 +7,7 @@ import {
   markStepRunning,
   releaseCorpusLock
 } from "./tb-shared";
+import { materializeTbTemporalAnalysis } from "./tb-temporal-materialization";
 import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
 
 type QualityGateJobData = {
@@ -113,6 +114,7 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
 
     const gates = runQualityGates({ analysis, findings, recommendations });
     await persistGates(tbAnalysisId, gates);
+    const temporal = await materializeTbTemporalTransaction(tbAnalysisId);
     await job.updateProgress(78);
 
     const failed = gates.filter((gate) => gate.level === "fail");
@@ -125,7 +127,12 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
         passed: gates.filter((gate) => gate.level === "pass").length,
         warned: warned.length,
         failed: failed.length,
-        blockers: failed.map((gate) => gate.id)
+        blockers: failed.map((gate) => gate.id),
+        temporal_metrics: temporal.metrics,
+        temporal_comparisons: temporal.comparisons,
+        comparison_base_analysis_id: temporal.comparisonBaseAnalysisId,
+        comparison_compatibility_state: temporal.compatibilityState,
+        comparison_compatibility_reasons: temporal.compatibilityReasons
       }
     });
 
@@ -171,6 +178,7 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
       gates_total: gates.length,
       failed: failed.map((gate) => gate.id),
       warnings: warned.map((gate) => gate.id),
+      temporal,
       selected_engine_lenses: selectedEngineLenses,
       pipeline_complete: true
     };
@@ -180,6 +188,21 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
     await markStepFailed({ pipelineStepId, errorMessage: msg });
     await releaseCorpusLock(tbAnalysisId);
     throw err;
+  }
+}
+
+async function materializeTbTemporalTransaction(tbAnalysisId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await materializeTbTemporalAnalysis(client, tbAnalysisId);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 

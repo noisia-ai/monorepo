@@ -27,7 +27,8 @@ const REQUIRED_MIGRATIONS = [
   "0050_signal_metric_materializations_v1",
   "0051_signal_backend_foundation_hardening",
   "0052_signal_metric_interpretations_v1",
-  "0053_tb_structured_evidence_review"
+  "0053_tb_structured_evidence_review",
+  "0054_tb_temporal_strategic_releases"
 ];
 const DATA_OS_BASE_BRANCH = "codex/signal-pulse";
 const DATA_OS_WORK_BRANCH = "codex/noisia-data-os-cut-1-wip";
@@ -93,7 +94,12 @@ const REQUIRED_TABLES = [
   "metric_interpretation_runs",
   "metric_interpretations",
   "metric_interpretation_evidence",
-  "tb_finding_structured_evidence_refs"
+  "tb_finding_structured_evidence_refs",
+  "tb_temporal_metrics",
+  "tb_finding_temporal_comparisons",
+  "signal_workspace_releases",
+  "signal_workspace_release_artifacts",
+  "signal_workspace_current_releases"
 ];
 
 const REQUIRED_ROUTES = [
@@ -119,7 +125,8 @@ const REQUIRED_ROUTES = [
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/comparison/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/mentions/route.ts",
   "apps/studio/src/app/api/data-os/signal/[workspaceId]/lineage/route.ts",
-  "apps/studio/src/app/api/data-os/signal/[workspaceId]/interpretations/route.ts"
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/interpretations/route.ts",
+  "apps/studio/src/app/api/data-os/signal/[workspaceId]/releases/route.ts"
 ];
 
 const REQUIRED_CONTRACT_FILES = [

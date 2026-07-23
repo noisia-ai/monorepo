@@ -119,8 +119,8 @@ flowchart LR
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
 | SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Completo local (2026-07-22) |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Completo local (2026-07-22) |
-| SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente / habilitada (2026-07-22) |
-| SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente |
+| SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Completo local (2026-07-22) |
+| SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente / habilitada (2026-07-22) |
 
 El tamaño es relativo, no una estimación de calendario. Cada tarea se divide internamente
 en commits solo si supera un cambio coherente revisable; nunca se mezcla con la tarea
@@ -941,6 +941,34 @@ y history, y la corrida anterior permanece idéntica después de nueva data.
 ### Commit Sugerido
 
 `Add T&B strategic releases`
+
+### Estado / Handoff SB-09
+
+**Completo local, 2026-07-22.** Cada corrida nueva congela period window, snapshot y
+digest, corpus revision y las versiones de metodología, pipeline, prompt y model antes
+de iniciar. `tb_temporal_metrics` materializa frequency/share/intensity/predictive
+capacity con denominadores al grain default/plataforma/entidad; la comparación y
+movilidad (`emerging`, `growing`, `declining`, `persistent`, `mutated`,
+`disappeared`) leen esas filas canónicas y sólo operan entre corridas compatibles.
+
+El brief comparativo y el materializador recorren el snapshot exacto, no el corpus
+operational vivo. La fixture ejecutable `tb-temporal-release-invariance.sql` codifica
+el invariante de nueva ingesta fuera del snapshot. `signal_workspace_releases`,
+artifacts y current pointer conservan histórico, filtran visibilidad y requieren
+aprobación T&B, quality gates y reviewer humano antes de promover. Triggers impiden
+reescribir scope, findings, métricas, comparaciones o artefactos de una release
+publicada. La API workspace-centric `GET/POST .../releases` no lee payload.
+
+Gates locales: DB 54 tests, Query Engine 183 tests, workers 127 tests, Studio 240
+tests, Studio build y `data-os:verify` verdes; `git diff --check` limpio. No hubo
+llamada ni gasto LLM.
+
+**Evidencia runtime pendiente:** `0054` y la fixture SQL no se ejecutaron por ausencia
+de Postgres local/Docker operativo y no se usó un target remoto. Esta limitación se
+mantiene como gate externo de SB-10.
+
+**Siguiente tarea habilitada:** SB-10 · Signal Backend Integration and Front-ready
+Gate. No se inició frontend.
 
 ### Prompt Para Tarea Nueva
 

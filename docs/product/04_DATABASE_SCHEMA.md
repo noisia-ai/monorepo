@@ -1364,6 +1364,16 @@ Tablas nuevas:
   recommendations por workspace/metric group/filter/watermark.
 - `metric_interpretation_evidence`: referencias exactas de cada claim y número a
   `metric_materializations`.
+- `tb_temporal_metrics`: métricas T&B snapshot-bound por finding y grain
+  default/plataforma/entidad, con denominador, sample y quality.
+- `tb_finding_temporal_comparisons`: movilidad determinística entre corridas
+  compatibles y sus deltas/reasons.
+- `signal_workspace_releases`: revisiones estratégicas ligadas al workspace y a una
+  corrida T&B aprobada.
+- `signal_workspace_release_artifacts`: revisiones exactas del artifact graph incluidas
+  en cada release.
+- `signal_workspace_current_releases`: puntero mutable a un histórico publicado
+  inmutable; sólo cambia mediante promoción humana.
 
 El catálogo V1 reutiliza `metric_definitions` y `semantic_models`; no existe un
 catálogo paralelo. La migración `0049_signal_metric_catalog_v1` agrega versión,
@@ -1423,6 +1433,16 @@ contexto continúan marcados `claim_specific=false`.
 Readiness reporta artifacts resueltos/pendientes, cantidad de refs exactas y cobertura
 de findings con evidencia estructurada. La cobertura incompleta es explícita y no se
 convierte en evidencia por inferencia.
+
+#### Temporalidad y releases estratégicos SB-09
+
+La migración `0054_tb_temporal_strategic_releases` congela scope y versiones en
+`tb_analyses`, materializa métricas desde el snapshot exacto y registra compatibilidad
+antes de calcular movilidad. El denominator de share se calcula dentro del mismo grain
+filtrado. Triggers protegen scope, findings, métricas, comparaciones, releases y
+artefactos publicados. El current release es un puntero separado validado contra un
+release publicado del mismo workspace; ingesta operational posterior no reescribe
+history estratégica.
 
 ---
 

@@ -847,6 +847,7 @@ independiente, también `false`: `NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED`.
 | `GET /api/data-os/signal/:workspaceId/facets` | facets y counts bajo el filtro actual; `source_type` sólo para usuarios internos |
 | `GET /api/data-os/signal/:workspaceId/metric-groups` | catálogo visible, versiones, grains, dimensiones y freshness |
 | `GET /api/data-os/signal/:workspaceId/interpretations` | interpretación versionada por metric group, ligada al filtro, packet y watermark exactos |
+| `GET /api/data-os/signal/:workspaceId/releases` | strategic release actual e histórico inmutable T&B; clientes sólo ven releases publicados/client |
 | `GET /api/data-os/signal/:workspaceId/series` | `SignalTimeSeriesV1` para `metric_key@metric_version` |
 | `GET /api/data-os/signal/:workspaceId/breakdowns` | `SignalBreakdownV1` para la dimensión gobernada de la métrica |
 | `GET /api/data-os/signal/:workspaceId/comparison` | periodos no traslapados de igual número de días |
@@ -939,6 +940,45 @@ timeout/error, se persiste un fallback descriptivo determinístico de costo cero
 motivo; nunca se llama a Claude desde page view. Un cambio de filtro, watermark,
 metric definition, prompt o model impide reutilizar texto previo y marca freshness
 stale/pending/unavailable según corresponda.
+
+#### T&B temporal y strategic releases V1 (SB-09)
+
+Cada corrida T&B nueva congela antes de ejecutar `period_start/end`, `snapshot_id`,
+digest y cantidad exacta de menciones, `corpus_revision`, methodology/pipeline,
+prompt y model version. Un trigger impide reescribir ese scope. El brief comparativo y
+las métricas sólo recorren `corpus_snapshot_mentions`; una importación operacional
+posterior no puede alterar una corrida ya ejecutada.
+
+`tb_temporal_metrics` materializa `finding.frequency`, `finding.share`,
+`finding.intensity` y `finding.predictive_capacity` con value, denominator, sample,
+quality y dimensiones gobernadas. Los denominadores se calculan al mismo grain
+`default | platform | entity`. Las comparaciones leen esas filas canónicas y sólo
+comparan corridas del mismo subject, metodología, pipeline, prompt y model con periodos
+ordenados no traslapados y snapshots distintos. Movilidad usa
+`emerging | growing | declining | persistent | mutated | disappeared`, con razón,
+deltas de share y estado de calidad; nunca compara frecuencia cruda entre muestras de
+tamaño distinto.
+
+`GET /api/data-os/signal/:workspaceId/releases` devuelve:
+
+```json
+{
+  "contract_version": "signal-backend-v1",
+  "strategic_release_contract_version": "tb-temporal-v1",
+  "workspace_id": "uuid",
+  "current": null,
+  "history": []
+}
+```
+
+Usuarios internos pueden ver drafts; clientes sólo `published + client`. Crear draft
+o promover usa `POST` en la misma ruta con `action=create_draft|promote`, requiere rol
+interno con gestión de corpus y conserva authZ del workspace. Un draft sólo acepta una
+corrida T&B human-approved, scope congelado, quality gates sin fallas y revisiones
+aceptadas/corregidas/limitadas. Promover requiere reviewer humano y actualiza un
+puntero separado `signal_workspace_current_releases`; el histórico, artefactos,
+findings y materializaciones de una release publicada son inmutables. No hay promoción
+automática y ninguna ruta lee `published_outputs.payload`.
 
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser

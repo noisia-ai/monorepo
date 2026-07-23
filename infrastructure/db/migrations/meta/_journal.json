@@ -379,6 +379,13 @@
       "when": 1785024000000,
       "tag": "0053_tb_structured_evidence_review",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1785027600000,
+      "tag": "0054_tb_temporal_strategic_releases",
+      "breakpoints": true
     }
   ]
 }

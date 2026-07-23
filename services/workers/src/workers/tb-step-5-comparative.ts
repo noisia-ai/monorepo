@@ -139,10 +139,9 @@ export async function rebuildAndPersistComparativeBrief(tbAnalysisId: string) {
 }
 
 async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]> {
-  // Use the per-batch included_count already persisted at ingest instead of
-  // re-counting every mention with a full-corpus JOIN. On large corpora the old
-  // COUNT(mentions) scan timed out; the stored counts are equivalent and read
-  // just a handful of import_batches rows.
+  // Strategic comparisons must remain bound to the exact analysis snapshot.
+  // Import-batch counters describe the live corpus and would let later
+  // operational ingestion rewrite a historical brief.
   const r = await pool.query<EntityCountRow>(
     `SELECT
        ib.competitor_id,
@@ -164,12 +163,12 @@ async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]>
            ELSE 'Sin atribucion'
          END
        ) AS entity_label,
-       SUM(COALESCE(ib.included_count, 0))::int AS mention_count
+       COUNT(DISTINCT snapshot_mention.mention_id)::int AS mention_count
      FROM tb_analyses ta
-     JOIN study_corpora sc ON sc.id = ta.study_corpus_id
-     JOIN import_batches ib
-       ON (ib.study_corpus_id = ta.study_corpus_id OR ib.study_corpus_id = sc.base_corpus_id)
-      AND ib.status = 'completed'
+     JOIN corpus_snapshot_mentions snapshot_mention
+       ON snapshot_mention.snapshot_id = ta.snapshot_id
+     JOIN mentions mention ON mention.id = snapshot_mention.mention_id
+     LEFT JOIN import_batches ib ON ib.id = mention.source_file_id
      WHERE ta.id = $1
      GROUP BY ib.competitor_id, 2, 3
      ORDER BY mention_count DESC`,
@@ -203,11 +202,13 @@ async function loadFindingEntityPresence(tbAnalysisId: string): Promise<Presence
            END
          ) AS resolved_entity_label
        FROM mentions m
+       JOIN corpus_snapshot_mentions snapshot_mention
+         ON snapshot_mention.mention_id = m.id
        LEFT JOIN import_batches ib ON ib.id = m.source_file_id
-       LEFT JOIN tb_analyses ta_scope ON ta_scope.id = $1
-       LEFT JOIN study_corpora sc_scope ON sc_scope.id = ta_scope.study_corpus_id
-       WHERE (m.study_corpus_id = ta_scope.study_corpus_id
-          OR m.study_corpus_id = sc_scope.base_corpus_id)
+       JOIN tb_analyses ta_scope
+         ON ta_scope.id = $1
+        AND ta_scope.snapshot_id = snapshot_mention.snapshot_id
+       WHERE
          -- Only coded mentions are ever used (the outer query joins on
          -- tb_mention_codings), so restrict the scan to them. Avoids
          -- materializing the entire corpus on large studies.

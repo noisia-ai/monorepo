@@ -379,6 +379,117 @@ export const signalWorkspaceCorpora = pgTable(
   ]
 );
 
+export const signalWorkspaceReleases = pgTable(
+  "signal_workspace_releases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    tbAnalysisId: uuid("tb_analysis_id")
+      .notNull()
+      .references((): AnyPgColumn => tbAnalyses.id, { onDelete: "restrict" }),
+    releaseKey: text("release_key").notNull(),
+    releaseType: text("release_type").notNull().default("strategic"),
+    title: text("title").notNull(),
+    status: text("status").notNull().default("draft"),
+    visibility: text("visibility").notNull().default("internal"),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    corpusRevision: integer("corpus_revision").notNull(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references((): AnyPgColumn => corpusSnapshots.id, { onDelete: "restrict" }),
+    comparisonBaseAnalysisId: uuid("comparison_base_analysis_id").references(
+      (): AnyPgColumn => tbAnalyses.id,
+      { onDelete: "restrict" }
+    ),
+    qualityGates: jsonb("quality_gates").notNull().default(sql`'[]'::jsonb`),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_workspace_releases_key").on(table.workspaceId, table.releaseKey),
+    unique("uq_signal_workspace_releases_analysis").on(table.workspaceId, table.tbAnalysisId),
+    check("signal_workspace_releases_type", sql`${table.releaseType} = 'strategic'`),
+    check(
+      "signal_workspace_releases_status",
+      sql`${table.status} IN ('draft', 'needs_review', 'published', 'rejected')`
+    ),
+    check(
+      "signal_workspace_releases_visibility",
+      sql`${table.visibility} IN ('internal', 'client')`
+    ),
+    check("signal_workspace_releases_period", sql`${table.periodStart} <= ${table.periodEnd}`),
+    check(
+      "signal_workspace_releases_approval",
+      sql`(${table.status} = 'published' AND ${table.approvedByUserId} IS NOT NULL
+        AND ${table.approvedAt} IS NOT NULL AND ${table.publishedAt} IS NOT NULL)
+        OR ${table.status} <> 'published'`
+    ),
+    index("idx_signal_workspace_releases_history").on(
+      table.workspaceId,
+      table.periodEnd,
+      table.createdAt
+    ),
+    index("idx_signal_workspace_releases_analysis").on(table.tbAnalysisId)
+  ]
+);
+
+export const signalWorkspaceReleaseArtifacts = pgTable(
+  "signal_workspace_release_artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => signalWorkspaceReleases.id, { onDelete: "cascade" }),
+    artifactId: uuid("artifact_id")
+      .notNull()
+      .references((): AnyPgColumn => analysisArtifacts.id, { onDelete: "restrict" }),
+    artifactRevision: integer("artifact_revision").notNull(),
+    position: integer("position").notNull().default(0),
+    visibility: text("visibility").notNull().default("client"),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_workspace_release_artifact").on(table.releaseId, table.artifactId),
+    check(
+      "signal_workspace_release_artifact_revision_positive",
+      sql`${table.artifactRevision} >= 1`
+    ),
+    check(
+      "signal_workspace_release_artifact_visibility",
+      sql`${table.visibility} IN ('internal', 'client')`
+    ),
+    index("idx_signal_workspace_release_artifacts_release").on(
+      table.releaseId,
+      table.visibility,
+      table.position
+    )
+  ]
+);
+
+export const signalWorkspaceCurrentReleases = pgTable(
+  "signal_workspace_current_releases",
+  {
+    workspaceId: uuid("workspace_id")
+      .primaryKey()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    releaseId: uuid("release_id")
+      .notNull()
+      .unique()
+      .references(() => signalWorkspaceReleases.id, { onDelete: "restrict" }),
+    promotedByUserId: uuid("promoted_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).notNull().defaultNow()
+  }
+);
+
 export const signalRefreshPolicies = pgTable(
   "signal_refresh_policies",
   {
@@ -1150,6 +1261,21 @@ export const tbAnalyses = pgTable(
       .references(() => corpusSnapshots.id),
     pipelineVersion: text("pipeline_version").notNull(),
     methodologyVersion: text("methodology_version").notNull(),
+    methodologySlug: text("methodology_slug"),
+    promptVersion: text("prompt_version"),
+    modelVersion: text("model_version"),
+    corpusRevision: integer("corpus_revision"),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    snapshotMentionCount: integer("snapshot_mention_count"),
+    snapshotDigest: text("snapshot_digest"),
+    scopeFrozenAt: timestamp("scope_frozen_at", { withTimezone: true }),
+    comparisonBaseAnalysisId: uuid("comparison_base_analysis_id").references(
+      (): AnyPgColumn => tbAnalyses.id,
+      { onDelete: "restrict" }
+    ),
+    comparisonCompatibilityState: text("comparison_compatibility_state"),
+    comparisonCompatibility: jsonb("comparison_compatibility").notNull().default(sql`'{}'::jsonb`),
 
     /** running | needs_review | approved_by_im | approved_by_kam | failed | aborted_preflight */
     status: text("status").notNull().default("running"),
@@ -1182,8 +1308,30 @@ export const tbAnalyses = pgTable(
     updatedAt: updatedAt()
   },
   (table) => [
+    check(
+      "tb_analyses_temporal_period",
+      sql`${table.periodStart} IS NULL OR ${table.periodEnd} IS NULL OR ${table.periodStart} <= ${table.periodEnd}`
+    ),
+    check(
+      "tb_analyses_corpus_revision_nonnegative",
+      sql`${table.corpusRevision} IS NULL OR ${table.corpusRevision} >= 0`
+    ),
+    check(
+      "tb_analyses_snapshot_mention_count_nonnegative",
+      sql`${table.snapshotMentionCount} IS NULL OR ${table.snapshotMentionCount} >= 0`
+    ),
+    check(
+      "tb_analyses_comparison_compatibility_state",
+      sql`${table.comparisonCompatibilityState} IS NULL OR ${table.comparisonCompatibilityState} IN ('not_evaluated', 'compatible', 'incompatible')`
+    ),
     index("idx_tb_analyses_corpus").on(table.studyCorpusId, table.createdAt),
-    index("idx_tb_analyses_status").on(table.status)
+    index("idx_tb_analyses_status").on(table.status),
+    index("idx_tb_analyses_temporal_scope").on(
+      table.studyCorpusId,
+      table.periodEnd,
+      table.scopeFrozenAt
+    ),
+    index("idx_tb_analyses_comparison_base").on(table.comparisonBaseAnalysisId)
   ]
 );
 
@@ -1299,6 +1447,114 @@ export const tbFindingStructuredEvidenceRefs = pgTable(
     index("idx_tb_finding_structured_evidence_finding").on(table.findingId, table.evidenceRole),
     index("idx_tb_finding_structured_evidence_observation").on(table.dataObservationId),
     index("idx_tb_finding_structured_evidence_record").on(table.dataAssetRecordId)
+  ]
+);
+
+export const tbTemporalMetrics = pgTable(
+  "tb_temporal_metrics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id")
+      .notNull()
+      .references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    tbFindingId: uuid("tb_finding_id").references(() => tbFindings.id, { onDelete: "cascade" }),
+    materializationKey: text("materialization_key").notNull().unique(),
+    metricKey: text("metric_key").notNull(),
+    metricVersion: integer("metric_version").notNull().default(1),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    platform: text("platform"),
+    entityType: text("entity_type"),
+    entityKey: text("entity_key"),
+    polarity: text("polarity"),
+    layer: text("layer"),
+    findingKey: text("finding_key"),
+    dimensions: jsonb("dimensions").notNull().default(sql`'{}'::jsonb`),
+    value: numeric("value"),
+    denominator: numeric("denominator"),
+    sampleSize: integer("sample_size"),
+    qualityState: text("quality_state").notNull().default("not_available"),
+    qualityReasons: jsonb("quality_reasons").notNull().default(sql`'[]'::jsonb`),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => corpusSnapshots.id, { onDelete: "restrict" }),
+    corpusRevision: integer("corpus_revision").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    check("tb_temporal_metrics_period", sql`${table.periodStart} <= ${table.periodEnd}`),
+    check("tb_temporal_metrics_version_positive", sql`${table.metricVersion} >= 1`),
+    check(
+      "tb_temporal_metrics_sample_nonnegative",
+      sql`${table.sampleSize} IS NULL OR ${table.sampleSize} >= 0`
+    ),
+    check(
+      "tb_temporal_metrics_quality_state",
+      sql`${table.qualityState} IN ('pass', 'partial', 'not_available')`
+    ),
+    index("idx_tb_temporal_metrics_analysis_metric").on(
+      table.tbAnalysisId,
+      table.metricKey,
+      table.periodStart,
+      table.periodEnd
+    ),
+    index("idx_tb_temporal_metrics_filter").on(
+      table.tbAnalysisId,
+      table.polarity,
+      table.layer,
+      table.platform,
+      table.entityType,
+      table.entityKey,
+      table.findingKey
+    ),
+    index("idx_tb_temporal_metrics_finding").on(table.tbFindingId, table.metricKey)
+  ]
+);
+
+export const tbFindingTemporalComparisons = pgTable(
+  "tb_finding_temporal_comparisons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id")
+      .notNull()
+      .references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    comparisonBaseAnalysisId: uuid("comparison_base_analysis_id").references(
+      () => tbAnalyses.id,
+      { onDelete: "restrict" }
+    ),
+    currentFindingId: uuid("current_finding_id").references(() => tbFindings.id, { onDelete: "cascade" }),
+    previousFindingId: uuid("previous_finding_id").references(() => tbFindings.id, { onDelete: "restrict" }),
+    semanticKey: text("semantic_key").notNull(),
+    movement: text("movement").notNull(),
+    reason: text("reason").notNull(),
+    currentValues: jsonb("current_values").notNull().default(sql`'{}'::jsonb`),
+    previousValues: jsonb("previous_values").notNull().default(sql`'{}'::jsonb`),
+    deltas: jsonb("deltas").notNull().default(sql`'{}'::jsonb`),
+    similarity: numeric("similarity", { precision: 7, scale: 6 }),
+    qualityState: text("quality_state").notNull(),
+    qualityReasons: jsonb("quality_reasons").notNull().default(sql`'[]'::jsonb`),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("uq_tb_finding_temporal_comparison").on(table.tbAnalysisId, table.semanticKey),
+    check(
+      "tb_finding_temporal_comparisons_movement",
+      sql`${table.movement} IN ('emerging', 'growing', 'declining', 'persistent', 'mutated', 'disappeared')`
+    ),
+    check(
+      "tb_finding_temporal_comparisons_quality",
+      sql`${table.qualityState} IN ('pass', 'partial', 'not_available')`
+    ),
+    check(
+      "tb_finding_temporal_comparisons_pair",
+      sql`${table.currentFindingId} IS NOT NULL OR ${table.previousFindingId} IS NOT NULL`
+    ),
+    index("idx_tb_finding_temporal_comparisons_analysis").on(
+      table.tbAnalysisId,
+      table.movement,
+      table.qualityState
+    ),
+    index("idx_tb_finding_temporal_comparisons_base").on(table.comparisonBaseAnalysisId)
   ]
 );
 

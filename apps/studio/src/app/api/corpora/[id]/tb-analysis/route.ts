@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { corpusSnapshots, studyCorpora, tbAnalyses } from "@noisia/db";
 import {
+  TB_METHODOLOGY_SLUG,
   TB_METHODOLOGY_VERSION,
+  TB_PROMPT_VERSION,
   TB_PIPELINE_VERSION,
   type DataOsCorpusAudit,
   type ListeningDataOsReconciliation
@@ -15,7 +17,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { auditCorpusDataOs } from "@/lib/data-os/corpus-audit";
 import { reconcileCorpusListeningDataOs } from "@/lib/data-os/listening";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 import { getTbAnalysisQueue } from "@/lib/queue/tb-analysis";
 
 const startBodySchema = z.object({
@@ -217,6 +219,39 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     corpusMentions: snapshot.mentionCount,
     requestedSize: requestedStudySize
   });
+  const scopeResult = await pool.query<{
+    period_start: string | null;
+    period_end: string | null;
+    mention_count: number;
+    snapshot_digest: string;
+  }>(
+    `SELECT
+       MIN(mention.published_at)::date::text AS period_start,
+       MAX(mention.published_at)::date::text AS period_end,
+       COUNT(snapshot_mention.mention_id)::integer AS mention_count,
+       'md5:' || md5(
+         COALESCE(string_agg(snapshot_mention.mention_id::text, ',' ORDER BY snapshot_mention.mention_id), '')
+       ) AS snapshot_digest
+     FROM corpus_snapshot_mentions snapshot_mention
+     JOIN mentions mention ON mention.id = snapshot_mention.mention_id
+     WHERE snapshot_mention.snapshot_id = $1::uuid
+       AND mention.study_corpus_id = $2::uuid`,
+    [snapshot.id, corpus.id]
+  );
+  const frozenScope = scopeResult.rows[0];
+  if (
+    !frozenScope?.period_start
+    || !frozenScope.period_end
+    || frozenScope.mention_count !== snapshot.mentionCount
+  ) {
+    return Response.json(
+      {
+        error: "snapshot_scope_invalid",
+        message: "El snapshot aprobado no reconcilia periodo, membresía y mention_count."
+      },
+      { status: 409 }
+    );
+  }
 
   // 2. Insert tb_analyses row
   const [analysis] = await db
@@ -226,6 +261,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       snapshotId: snapshot.id,
       pipelineVersion: TB_PIPELINE_VERSION,
       methodologyVersion: TB_METHODOLOGY_VERSION,
+      methodologySlug: TB_METHODOLOGY_SLUG,
+      promptVersion: TB_PROMPT_VERSION,
+      modelVersion: process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6",
+      corpusRevision: readinessRow.corpusRevision,
+      periodStart: frozenScope.period_start,
+      periodEnd: frozenScope.period_end,
+      snapshotMentionCount: frozenScope.mention_count,
+      snapshotDigest: frozenScope.snapshot_digest,
+      scopeFrozenAt: new Date(),
+      comparisonCompatibilityState: "not_evaluated",
       status: "running",
       currentStep: "preflight",
       businessQuestion: corpus.businessQuestion,
@@ -280,6 +325,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ok: true,
       tb_analysis_id: analysis.id,
       snapshot_id: snapshot.id,
+      run_scope: {
+        corpus_revision: readinessRow.corpusRevision,
+        period_start: frozenScope.period_start,
+        period_end: frozenScope.period_end,
+        snapshot_digest: frozenScope.snapshot_digest,
+        snapshot_mention_count: frozenScope.mention_count,
+        methodology_slug: TB_METHODOLOGY_SLUG,
+        methodology_version: TB_METHODOLOGY_VERSION,
+        pipeline_version: TB_PIPELINE_VERSION,
+        prompt_version: TB_PROMPT_VERSION,
+        model_version: process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6"
+      },
       study_plan: studyPlan,
       data_os: {
         listening: publicListeningDataOs(dataOs),
