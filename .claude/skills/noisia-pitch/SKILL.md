@@ -12,7 +12,9 @@ Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` f
 ## 1. Know what you have (read these first)
 - `packages/pitch-kit/slides/recipes.json` — **deck blueprints for common asks** (explain a methodology, propose/quote a study). Each recipe tells you what to ASK, what KB to LOAD, and which slides to use. Check here first — most requests match a recipe.
 - `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. How you know what's possible. Read it before proposing a structure.
-- `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md`; then the files the recipe lists.
+- `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md` **and `02-services/product-model.md`** (the offer is Reportes / Estudios / Data — the Foundation/Intelligence/Strategy tiers are internal calibration, not the sales structure); then the files the recipe lists.
+- **Sell studies by the question, not the method.** Never name a methodology on a pitch slide — use the question it answers ("¿qué empuja la compra y qué la detiene?", not "Triggers & Barriers"). The method detail is for when the client asks how. See `product-model.md`.
+- The **commercial KB lives in Google Drive**, not in this repo: pricing amounts, sales script, objections, client notes. If the deck needs those and you don't have the Drive folder in context, ask — don't invent a number and don't put currency amounts on a slide.
 - `packages/pitch-kit/engine/` — the brand engine: `noisia-tokens.css` (palette/type), `deck.css` (slide layout), `deck-stage.js` (16:9 viewer + print/PPTX), `deck-template.html` (the shell).
 
 ## 2. Build the deck
