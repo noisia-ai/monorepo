@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-06-25",
+  "updated": "2026-07-22",
   "note": "Deck blueprints for common commercial scenarios. Each recipe tells the agent what to ASK, what KB context to LOAD, and which slides to assemble. Add a recipe when a new pitch type recurs (see ../AGENTS.md → contribution loop).",
   "recipes": [
     {
@@ -11,9 +11,18 @@
         "¿Va dentro de un pitch más grande o es standalone? (ajusta footer NN/TOTAL)",
         "¿Quieres los ejemplos del diagrama T&B en la categoría del cliente? (por defecto: ejemplo automotriz ilustrativo)"
       ],
-      "load_kb": ["packages/kb/00-overview/positioning.md", "packages/kb/00-overview/principles.md"],
-      "slides": ["about-noisia", "about-pipeline", "about-method"],
-      "notes": "Slides READY: jálalas tal cual, solo corrige los footers NN/TOTAL. Si cambias la categoría de los ejemplos en about-method, mantén los números coherentes y sin data de cliente real. Opcional: añade 'applications' (para qué se usa) e 'industries' (para quién) para una intro de 5 slides."
+      "load_kb": [
+        "packages/kb/02-services/product-model.md",
+        "packages/kb/00-overview/positioning.md",
+        "packages/kb/00-overview/principles.md"
+      ],
+      "slides": [
+        "about-noisia",
+        "offer",
+        "about-pipeline",
+        "about-method"
+      ],
+      "notes": "Slides READY: jálalas tal cual, solo corrige los footers NN/TOTAL. 'offer' es obligatoria: es la que dice cómo se compra (Reportes / Estudios). Si cambias la categoría de los ejemplos en about-method, mantén los números coherentes y sin data de cliente real. Opcional: añade 'applications' e 'industries' para una intro más larga."
     },
     {
       "id": "methodology-explainer",
@@ -29,35 +38,91 @@
         "packages/kb/01-methodologies/<slug>.md",
         "packages/kb/05-ai-playbooks/run-<slug>.md"
       ],
-      "slides": ["cover", "methodology-overview", "framework-layers", "finding", "deliverables", "closing"],
+      "slides": [
+        "cover",
+        "methodology-overview",
+        "framework-layers",
+        "finding",
+        "deliverables",
+        "closing"
+      ],
       "notes": "framework-layers lleva los ejemplos (para T&B: 4 capas psicológico/personal/social/cultural con trigger+barrier cada una, sacados del .md). finding muestra cómo se ve un hallazgo real. Ejemplos siempre en la categoría del cliente."
     },
     {
-      "id": "study-proposal",
-      "name": "Propuesta / cotización de un estudio nuevo",
-      "use_when": "El comercial arma una propuesta de estudio nuevo, o le dieron una cotización a aterrizar.",
+      "id": "report-proposal",
+      "name": "Propuesta de REPORTE (iguala mensual)",
+      "use_when": "El comercial propone monitoreo continuo: R1 marca, R2 marca+competencia, o R3 lectura de campaña. Es el producto de entrada y el que instala a Noisia adentro del cliente.",
       "ask_first": [
-        "¿Cuál es la pregunta de negocio y qué decisión desbloquea?",
-        "¿Proyecto único o capacidad continua? → define Foundation/Intelligence (puntual, fee a hitos) vs Strategy (retainer mensual). NO asumas: pregúntalo.",
-        "¿Cuántas marcas / competidores? ¿Cuántos mercados? (cada marca y cada mercado mueve el alcance y el precio)",
-        "¿Qué fuentes y qué window temporal?",
-        "¿Hay deadline contraído? (urgencia mueve el pricing)"
+        "¿Es R1 (solo su marca), R2 (marca + competencia) o R3 (una campaña o momento puntual)?",
+        "Si es R2: ¿quiénes son los competidores REALES? Recomendado 2-4. Más de 4 diluye la lectura y encarece sin agregar claridad.",
+        "¿Qué marca y qué variantes de nombre usa la gente? ¿Qué mercados?",
+        "¿Ya tiene una herramienta de listening? (si sí, es MEJOR prospecto: ya entendió que el problema no era el acceso)",
+        "¿Quién va a consumir el reporte cada mes y hacia quién reporta esa persona?"
       ],
       "load_kb": [
-        "packages/kb/02-services/foundation.md",
-        "packages/kb/02-services/intelligence.md",
-        "packages/kb/02-services/strategy.md",
+        "packages/kb/02-services/product-model.md",
+        "packages/kb/02-services/pricing-logic.md"
+      ],
+      "slides": [
+        "cover",
+        "offer",
+        "study-scope",
+        "deliverables",
+        "timeline",
+        "pricing-scope",
+        "growth-ladder",
+        "how-to-buy",
+        "legal",
+        "closing"
+      ],
+      "rules": [
+        "El reporte se vende con MÍNIMO 3 MESES. El primer mes construye la línea base; sin comparación contra periodo anterior el reporte no puede decir qué cambió, que es la mitad de su valor. Dilo en el deck.",
+        "Di explícitamente QUÉ NO INCLUYE: recomendación estratégica o plan de acción (eso es un estudio), alertas en tiempo real, y competencia si es R1. Es lo que evita la pelea de alcance en el mes 2.",
+        "NO prometas monitoreo de crisis ni alertas 24/7: no existe el módulo. Se menciona como capacidad, no se cotiza.",
+        "NO nombres metodologías en un deck de reporte. Las metodologías son de los estudios.",
+        "La objeción que va a salir es 'eso ya me lo da mi plataforma'. La respuesta va en el deck: la plataforma te da acceso, nosotros te damos la lectura — los temas detrás del sentimiento y el top 3 priorizado con contexto.",
+        "growth-ladder es obligatoria: el reporte es el escalón 2, y el deck tiene que dejar ver el 3 (estudios).",
+        "NUNCA montos en slides. Todo el copy pasa por COPY_RULES.md."
+      ],
+      "notes": "Es la receta que más se va a usar y la que no existía. El reporte no es el producto más rentable por unidad: es el que genera el contexto para vender un estudio."
+    },
+    {
+      "id": "study-proposal",
+      "name": "Propuesta / cotización de un ESTUDIO",
+      "use_when": "El comercial arma la propuesta de un estudio (E1-E5), o le dieron una cotización a aterrizar.",
+      "ask_first": [
+        "¿Cuál es la pregunta de negocio y qué decisión desbloquea? (define cuál de los 5 estudios es)",
+        "¿Cuál de los 5 momentos es: lanzar (E1), entrar (E2), defender (E3), optimizar (E4) o innovar (E5)? NO asumas: pregúntalo.",
+        "¿Cuántas marcas / competidores? ¿Cuántos mercados? (cada uno mueve alcance y precio; cada mercado extra es ~+80%)",
+        "¿Qué fuentes y qué window temporal?",
+        "¿Hay deadline contraído? (la urgencia sube el precio porque obliga a paralelizar equipo)",
+        "¿El cliente ya tiene iguala de reportes con nosotros? (cambia el encuadre: es expansión, no venta nueva)"
+      ],
+      "load_kb": [
+        "packages/kb/02-services/product-model.md",
         "packages/kb/02-services/pricing-logic.md",
         "packages/kb/03-process/delivery-format.md"
       ],
-      "slides": ["cover", "study-scope", "methodology-overview", "deliverables", "timeline", "pricing-scope", "growth-ladder", "legal", "closing"],
+      "slides": [
+        "cover",
+        "study-scope",
+        "methodology-overview",
+        "deliverables",
+        "timeline",
+        "pricing-scope",
+        "growth-ladder",
+        "how-to-buy",
+        "legal",
+        "closing"
+      ],
       "rules": [
-        "growth-ladder es OBLIGATORIA (la slide 'cómo crecemos el negocio': Foundation→Intelligence→Strategy).",
-        "NUNCA pongas montos en las slides (regla dura de pricing-logic.md). La slide pricing-scope muestra la lógica y la modalidad, no cifras.",
-        "Define el tier (Foundation/Intelligence/Strategy) por # de metodologías y modalidad, y refléjalo en study-scope, deliverables y timeline de forma consistente.",
-        "Entregables y tiempos salen del tier en kb/02-services/<tier>.md — no los inventes.",
-        "Los tiers Foundation/Intelligence/Strategy son REFERENCIA, no límite. Si el alcance real no encaja, propón un scope a medida en study-scope/deliverables/timeline en vez de forzarlo a un tier.",
-        "Todo el copy pasa por COPY_RULES.md antes de renderizar: client-ready (sin texto interno/propósito), humanizado, y en español los anglicismos técnicos se quedan (Dashboard, no 'Panel de control')."
+        "growth-ladder es OBLIGATORIA. Hoy dice Workshop→Reporte→Estudio→Estudios recurrentes. Si ves Foundation/Intelligence/Strategy en un deck, está desactualizado.",
+        "VENDE LA PREGUNTA, NO EL MÉTODO. Nunca pongas el nombre de una metodología en un slide: usa la pregunta que responde ('¿qué empuja la compra y qué la detiene?', no 'Triggers & Barriers'). El método se explica solo si el cliente pregunta cómo.",
+        "NUNCA pongas montos en las slides (regla dura de pricing-logic.md). pricing-scope muestra la lógica y la modalidad, no cifras. Los montos reales viven en el KB comercial en Drive.",
+        "Entregables, tiempos y 'qué NO incluye' salen de la ficha del estudio en product-model.md + el KB comercial. No los inventes.",
+        "Si el alcance real no encaja en ninguno de los 5 estudios, propón un scope a medida honesto en vez de forzarlo.",
+        "E4 (optimizar) es el de mayor riesgo de expectativa: en experiencia de compra/app/e-commerce se puede INFERIR, no saber. Di el límite en el deck, no en la entrega.",
+        "Todo el copy pasa por COPY_RULES.md antes de renderizar."
       ]
     }
   ]
