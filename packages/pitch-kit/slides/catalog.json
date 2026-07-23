@@ -1,11 +1,15 @@
 {
   "$schema": "./catalog.schema.json",
   "version": 1,
-  "updated": "2026-06-25",
+  "updated": "2026-07-22",
   "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop).",
   "engine": {
     "canvas": "1920x1080",
-    "files": ["noisia-tokens.css", "deck.css", "deck-stage.js"],
+    "files": [
+      "noisia-tokens.css",
+      "deck.css",
+      "deck-stage.js"
+    ],
     "shell": "engine/deck-template.html"
   },
   "slides": [
@@ -15,8 +19,19 @@
       "file": "slides/cover/cover.html",
       "category": "opening",
       "when": "Siempre la primera. Marca + título-tesis + meta (para quién, fecha).",
-      "variants": ["light", "dark"],
-      "placeholders": ["EYEBROW", "TITLE", "SUBTITLE", "META_FOR", "META_DATE", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light",
+        "dark"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "TITLE",
+        "SUBTITLE",
+        "META_FOR",
+        "META_DATE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "statement",
@@ -24,17 +39,34 @@
       "file": "slides/statement/statement.html",
       "category": "narrative",
       "when": "Una sola idea grande que el cliente debe recordar. Fondo oscuro, alto contraste.",
-      "variants": ["dark"],
-      "placeholders": ["EYEBROW", "STATEMENT", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "dark"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "STATEMENT",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "three-up",
       "name": "Tres columnas",
       "file": "slides/three-up/three-up.html",
       "category": "structure",
-      "when": "Comparar 3 cosas en paralelo (ej. Foundation / Intelligence / Strategy, 3 fases).",
-      "variants": ["light"],
-      "placeholders": ["EYEBROW", "TITLE", "COL1_*", "COL2_*", "COL3_*", "FOOTER_NN", "FOOTER_TOTAL"]
+      "when": "Comparar 3 cosas en paralelo (ej. 3 fases, 3 territorios, 3 hallazgos). NO la uses para Foundation/Intelligence/Strategy: los tiers son calibración interna, no historia comercial.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "TITLE",
+        "COL1_*",
+        "COL2_*",
+        "COL3_*",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "finding",
@@ -42,8 +74,18 @@
       "file": "slides/finding/finding.html",
       "category": "evidence",
       "when": "Mostrar un hallazgo defendible: afirmación + evidencia trazable + confianza calibrada.",
-      "variants": ["light"],
-      "placeholders": ["EYEBROW", "CLAIM", "EVIDENCE_QUOTE", "EVIDENCE_SOURCE", "CONFIDENCE", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "CLAIM",
+        "EVIDENCE_QUOTE",
+        "EVIDENCE_SOURCE",
+        "CONFIDENCE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "signal-insight",
@@ -51,8 +93,19 @@
       "file": "slides/signal-insight/signal-insight.html",
       "category": "evidence",
       "when": "Insertar una métrica + quote traídos de Signal/Signal Pulse vía signal/fetch-insights.mjs.",
-      "variants": ["light", "dark"],
-      "placeholders": ["EYEBROW", "METRIC", "METRIC_LABEL", "QUOTE", "QUOTE_SOURCE", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light",
+        "dark"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "METRIC",
+        "METRIC_LABEL",
+        "QUOTE",
+        "QUOTE_SOURCE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "methodology-overview",
@@ -60,8 +113,17 @@
       "file": "slides/methodology-overview/methodology-overview.html",
       "category": "methodology",
       "when": "Explicar una metodología: la pregunta que responde + cuándo aplica / cuándo no. Contenido de kb/01-methodologies/<slug>.md.",
-      "variants": ["light"],
-      "placeholders": ["METHOD_NAME", "QUESTION", "WHEN_APPLIES", "WHEN_NOT", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "METHOD_NAME",
+        "QUESTION",
+        "WHEN_APPLIES",
+        "WHEN_NOT",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "framework-layers",
@@ -69,8 +131,20 @@
       "file": "slides/framework-layers/framework-layers.html",
       "category": "methodology",
       "when": "Enseñar cómo funciona una metodología por dentro con ejemplos. Para T&B: 4 capas (psicológico/personal/social/cultural) con trigger+barrier cada una.",
-      "variants": ["light"],
-      "placeholders": ["METHOD_NAME", "TITLE", "N_LAYERS", "L{1..4}_NAME", "L{1..4}_DESC", "L{1..4}_TRIGGER", "L{1..4}_BARRIER", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "METHOD_NAME",
+        "TITLE",
+        "N_LAYERS",
+        "L{1..4}_NAME",
+        "L{1..4}_DESC",
+        "L{1..4}_TRIGGER",
+        "L{1..4}_BARRIER",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "study-scope",
@@ -78,26 +152,60 @@
       "file": "slides/study-scope/study-scope.html",
       "category": "proposal",
       "when": "Propuesta de estudio nuevo: tipo, # marcas/competidores, mercados, metodologías, fuentes, window, modalidad. Maneja la cotización.",
-      "variants": ["light"],
-      "placeholders": ["TIER", "STUDY_TITLE", "BUSINESS_QUESTION", "STUDY_TYPE", "BRANDS", "MARKETS", "METHODOLOGIES", "SOURCES", "TIME_WINDOW", "MODALITY", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "TIER",
+        "STUDY_TITLE",
+        "BUSINESS_QUESTION",
+        "STUDY_TYPE",
+        "BRANDS",
+        "MARKETS",
+        "METHODOLOGIES",
+        "SOURCES",
+        "TIME_WINDOW",
+        "MODALITY",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "deliverables",
       "name": "Qué entregamos",
       "file": "slides/deliverables/deliverables.html",
       "category": "proposal",
-      "when": "Lista de entregables por tier. De kb/02-services/<tier>.md + delivery-format.md.",
-      "variants": ["light"],
-      "placeholders": ["TIER", "TITLE", "DELIVERABLES", "NOTE", "FOOTER_NN", "FOOTER_TOTAL"]
+      "when": "Lista de entregables del producto propuesto. De kb/02-services/product-model.md (catálogo R1-R3 / E1-E5) + delivery-format.md.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "TIER",
+        "TITLE",
+        "DELIVERABLES",
+        "NOTE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "timeline",
       "name": "Tiempo de desarrollo / fases",
       "file": "slides/timeline/timeline.html",
       "category": "proposal",
-      "when": "Fases y duración. Foundation 4-6 sem · Intelligence 6-10 sem · Strategy retainer.",
-      "variants": ["light"],
-      "placeholders": ["TOTAL_TIME", "TITLE", "P{1..4}_WHEN", "P{1..4}_NAME", "P{1..4}_DESC", "FOOTER_NN", "FOOTER_TOTAL"]
+      "when": "Fases y duración. Reportes: mensual, mínimo 3 meses. Estudios: 4-6 sem (E1) a 6-10 sem (E2/E4/E5). Saca los tiempos de la ficha del producto, no los inventes.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "TOTAL_TIME",
+        "TITLE",
+        "P{1..4}_WHEN",
+        "P{1..4}_NAME",
+        "P{1..4}_DESC",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "pricing-scope",
@@ -105,17 +213,35 @@
       "file": "slides/pricing-scope/pricing-scope.html",
       "category": "proposal",
       "when": "Explica la lógica de pricing y la modalidad (puntual vs retainer). NUNCA montos (regla de pricing-logic.md).",
-      "variants": ["light"],
-      "placeholders": ["TITLE", "SINGLE_TITLE", "SINGLE_DESC", "SINGLE_MILESTONES", "RETAINER_TITLE", "RETAINER_DESC", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "TITLE",
+        "SINGLE_TITLE",
+        "SINGLE_DESC",
+        "SINGLE_MILESTONES",
+        "RETAINER_TITLE",
+        "RETAINER_DESC",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "growth-ladder",
       "name": "Cómo crecemos el negocio (OBLIGATORIA en propuestas)",
       "file": "slides/growth-ladder/growth-ladder.html",
       "category": "proposal",
-      "when": "Slide obligatoria en propuestas. El camino Foundation→Intelligence→Strategy (land & expand). De kb/02-services.",
-      "variants": ["dark"],
-      "placeholders": ["TITLE", "CTA_LINE", "FOOTER_NN", "FOOTER_TOTAL"]
+      "when": "Slide obligatoria en propuestas. La escalera comercial Workshop→Reporte→Estudio→Estudios recurrentes (land & expand). Sustituye la versión Foundation/Intelligence/Strategy.",
+      "variants": [
+        "dark"
+      ],
+      "placeholders": [
+        "TITLE",
+        "CTA_LINE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "legal",
@@ -123,8 +249,15 @@
       "file": "slides/legal/legal.html",
       "category": "closing",
       "when": "Alcance, confidencialidad, limitaciones metodológicas, notas legales. Pedida seguido por clientes.",
-      "variants": ["light"],
-      "placeholders": ["TITLE", "BODY_POINTS", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "TITLE",
+        "BODY_POINTS",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "closing",
@@ -132,8 +265,16 @@
       "file": "slides/closing/closing.html",
       "category": "closing",
       "when": "Última slide. Llamado a la acción + contacto.",
-      "variants": ["dark"],
-      "placeholders": ["STATEMENT", "CONTACT", "CTA_LABEL", "FOOTER_NN", "FOOTER_TOTAL"]
+      "variants": [
+        "dark"
+      ],
+      "placeholders": [
+        "STATEMENT",
+        "CONTACT",
+        "CTA_LABEL",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "about-noisia",
@@ -141,9 +282,14 @@
       "file": "slides/about-noisia/about-noisia.html",
       "category": "about",
       "when": "Abrir el bloque 'qué es Noisia'. Tesis (inteligencia social, no listening) + 3 pilares. READY: ya rellena, jálala tal cual.",
-      "variants": ["dark"],
+      "variants": [
+        "dark"
+      ],
       "ready": true,
-      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+      "placeholders": [
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "about-pipeline",
@@ -151,9 +297,14 @@
       "file": "slides/about-pipeline/about-pipeline.html",
       "category": "about",
       "when": "Diagrama del toolstack: fuentes VoC + 6 pasos (Escucha→Traduciendo) con métricas. READY, datos ilustrativos del Home (públicos).",
-      "variants": ["light"],
+      "variants": [
+        "light"
+      ],
       "ready": true,
-      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+      "placeholders": [
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "about-method",
@@ -161,9 +312,14 @@
       "file": "slides/about-method/about-method.html",
       "category": "about",
       "when": "Diagrama T&B: 4 capas concéntricas + card driver y card fricción con donuts. READY, ejemplo ilustrativo (no cliente real).",
-      "variants": ["light"],
+      "variants": [
+        "light"
+      ],
       "ready": true,
-      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+      "placeholders": [
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "applications",
@@ -171,9 +327,14 @@
       "file": "slides/applications/applications.html",
       "category": "about",
       "when": "Grid de 8 cards de casos de uso (lanzamiento, medios, producto, defensa, reposicionamiento, tendencias, crisis, influencia). READY. Pega bien después del bloque 'qué es Noisia'.",
-      "variants": ["light"],
+      "variants": [
+        "light"
+      ],
       "ready": true,
-      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+      "placeholders": [
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     },
     {
       "id": "industries",
@@ -181,9 +342,53 @@
       "file": "slides/industries/industries.html",
       "category": "about",
       "when": "Grid de 8 cards por sector (CPG/food/beauty, retail/marketplaces, fintech, telecom, movilidad, gaming/tech, salud/farma, agencias). READY.",
-      "variants": ["light"],
+      "variants": [
+        "light"
+      ],
       "ready": true,
-      "placeholders": ["FOOTER_NN", "FOOTER_TOTAL"]
+      "placeholders": [
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "offer",
+      "name": "Cómo se compra Noisia (Reportes / Estudios)",
+      "file": "slides/offer/offer.html",
+      "category": "about",
+      "when": "Explicar la oferta: las DOS líneas que se venden (Reportes continuos / Estudios por pedido). Obligatoria en cualquier deck que presente a Noisia. Data NO va como tercera columna: se menciona de palabra.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "TITLE",
+        "R1",
+        "R2",
+        "R3",
+        "E1",
+        "E2",
+        "E3",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "how-to-buy",
+      "name": "¿Cómo te compro? (3 pasos)",
+      "file": "slides/how-to-buy/how-to-buy.html",
+      "category": "closing",
+      "when": "Cerca del cierre. Los 3 pasos de entrada: workshop sin costo → propuesta → ejecución. Desactiva la fricción real de la venta, que no es '¿qué hacen?' sino '¿cómo te compro?'.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "EYEBROW",
+        "TITLE",
+        "CTA_LINE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
     }
   ]
 }

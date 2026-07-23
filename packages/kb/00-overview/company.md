@@ -47,7 +47,28 @@ Seis metodologías propietarias. Ver `01-methodologies/` para cada una. Resumen:
 
 Las metodologías se aplican solas, en combinación o como sistema. La pregunta de negocio define cuáles y en qué orden — nunca al revés.
 
+## Modelo de producto
+
+Desde el workshop de producto de jul 2026, la oferta se organiza en **tres líneas** más una
+puerta de entrada. Detalle en `02-services/product-model.md`, que manda sobre esta sección y
+sobre los tiers de abajo.
+
+| Línea | Qué entrega | Cadencia | Modalidad |
+| ----- | ----------- | -------- | --------- |
+| **Reportes** (Reports as a Service) | Lo que está pasando con tu marca, competencia y categoría | Continuo | Iguala mensual |
+| **Estudios** (Insights as a Service) | Qué hacer al respecto — una pregunta de negocio respondida a profundidad | Por pedido | Fee de proyecto |
+| **Data** (Data as a Service) | Datos crudos, curados o enriquecidos para el equipo del cliente | Variable | Caso a caso |
+| **Consultoría** | Workshop inicial (gratis) que define la pregunta + workshop de cierre | Por proyecto | Incluida |
+
+> **El reporte te dice lo que hay. El estudio te dice qué hacer con eso.** Precio relativo 1x / 2x.
+
+Las seis metodologías son el **motor de los estudios**, no la estructura de la oferta. Se venden
+por la pregunta que responden, no por su nombre.
+
 ## Tiers de servicio
+
+> Los tiers siguen siendo válidos como calibración de profundidad interna. Ya no son la
+> estructura con la que se vende — ver `02-services/product-model.md`.
 
 | Tier         | Profundidad                                            | Modalidad        | Cuándo entra                                                                  |
 | ------------ | ------------------------------------------------------ | ---------------- | ----------------------------------------------------------------------------- |
