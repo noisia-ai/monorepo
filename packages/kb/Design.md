@@ -41,6 +41,7 @@ knowledge-base/
 │   └── decision-velocity.md
 │
 ├── 02-services/             ← cómo se empaqueta el trabajo
+│   ├── product-model.md     ← Reportes / Estudios / Data — manda sobre los tiers
 │   ├── foundation.md
 │   ├── intelligence.md
 │   ├── strategy.md
@@ -215,6 +216,10 @@ Reglas:
 | 2026-05-04  | Triggers & Barriers se estructura en 4 capas: psicológico → personal → social → cultural. | Sin estratificación, los analistas codifican todo como "trigger emocional" y se pierden patrones de capa social/cultural que son los que realmente mueven mercados. |
 | 2026-05-04  | KB vive en el monorepo del sitio, no en repo aparte.                                      | Trazabilidad junta de cambios de marketing y operación. Si el sitio dice X y el KB dice Y, el commit muestra cuál se desincronizó. |
 | 2026-05-20  | La paleta canónica de charts y UI pasa a usar tintas Noisia profundas, no neones funcionales ni amarillo/naranja por defecto. | Mantener estética glitch/anaglyph sin perder legibilidad ni consistencia de marca. |
+| 2026-07-21  | La oferta se organiza en tres líneas — **Reportes / Estudios / Data** — con consultoría de entrada. Los tiers Foundation/Intelligence/Strategy pasan a ser calibración interna. | Los tiers describían profundidad, no producto. El cliente no compra "un Intelligence"; compra un reporte o un estudio. Ver `02-services/product-model.md`. |
+| 2026-07-21  | Las metodologías son el motor de los estudios, no la estructura de la oferta. Se venden por la pregunta que responden. | Gustan pero no se entienden: la reacción típica es "qué chingón" seguido de "¿y cómo lo uso?". El nombre del método no abre la venta; la pregunta sí. |
+| 2026-07-21  | Noisia sí vende reportes recurrentes de social listening. Se construye la línea y se automatiza. | Es lo único que no habíamos intentado con nuestras capacidades técnicas, y sin automatizar consume a una persona de tiempo completo por un producto que no se puede vender caro. Revoca el criterio de mal-fit en `positioning.md`. |
+| 2026-07-21  | El **KB comercial vive en Google Drive**, no en este repo. Solo el modelo de producto se mantiene aquí. | El repo es público (no caben precios ni clientes) y el equipo comercial no es técnico (git garantiza que el KB se desactualice). Ver `README.md → Frontera Git / Drive`. |
 
 ## 8. Open questions
 
@@ -222,6 +227,10 @@ Reglas:
 - **OQ-2**: ¿Cómo versionar un playbook cuando cambia un criterio de codificación? Hoy: commit message. Evaluar si vale meter `## Changelog` adentro de cada playbook.
 - **OQ-3**: ¿Hay un séptimo método emergiendo (Decoding de tendencias)? Si la respuesta llega 3 veces en proyectos distintos, formalizarlo en `01-methodologies/`.
 - **OQ-4**: ¿Quién audita el KB y cada cuánto? Hoy: nadie formalmente. Proponer auditoría trimestral con un dueño rotativo.
+- **OQ-5**: ¿Cuál es el nombre paraguas del posicionamiento? Candidatos: *Advanced Social Listening Reports*, *Social Consumer Insights*, *Digital Insights Agency*. Bloquea el material comercial: mientras no se elija, cada presentación cuenta una historia distinta.
+- **OQ-6**: ¿Cómo se automatiza el contexto en la línea de Reportes? Hoy lo aporta un humano que sabe qué vale la pena contarle al cliente, y ese contexto solo aparece al consumir la data. El corpus (marca / empresa / industria) es la ventaja construida para atacarlo.
+- **OQ-7**: ¿Cuántas estructuras fijas de estudio existen y cuáles? El workshop asumió ~6. Sin cerrarlo, la táctica de "un estudio cada dos meses sin repetir" no es vendible.
+- **OQ-8**: ¿Qué del catálogo de reportes y estudios se puede producir **hoy**? Sin esa marca por producto, el material comercial vende promesas.
 
 ## 9. Referencias
 
