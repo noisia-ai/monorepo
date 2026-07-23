@@ -74,6 +74,16 @@ export type SignalMaterializationRowV1 = {
   quality_state: "pass" | "partial" | "failed" | "unknown";
 };
 
+export type SignalMetricQualityEvaluationV1 = {
+  state: "pass" | "partial" | "failed" | "unknown";
+  results: Array<{
+    key: string;
+    severity: "block" | "partial";
+    state: "pass" | "partial" | "failed";
+    reason: string | null;
+  }>;
+};
+
 export type SignalFixtureMentionV1 = {
   id: string;
   published_at: string;
@@ -195,7 +205,7 @@ function metricConstituentPredicateSql(metricKey: string) {
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
       WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
-        AND tag.review_status <> 'rejected'
+        AND tag.review_status = 'approved'
         AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'
     )`;
   }
@@ -215,10 +225,37 @@ export function buildSignalMetricMaterializationPlanV1(args: {
       metric_version: args.metric_version ?? 1
     });
   }
-  const predicate = buildSignalMentionPredicateV1(args.filter, args.study_corpus_ids);
-  validateMetricDimensions(metric, predicate.normalized_filter);
-  const granularity = predicate.normalized_filter.granularity;
-  const periodStart = periodStartSql(granularity, predicate.normalized_filter.timezone);
+  const visiblePredicate = buildSignalMentionPredicateV1(args.filter, args.study_corpus_ids);
+  validateMetricDimensions(metric, visiblePredicate.normalized_filter);
+  const granularity = visiblePredicate.normalized_filter.granularity;
+  const executionFilter = metric.key === "conversation.velocity"
+    ? {
+        ...visiblePredicate.normalized_filter,
+        date_range: {
+          ...visiblePredicate.normalized_filter.date_range,
+          start: previousSignalBucketStartV1(
+            visiblePredicate.normalized_filter.date_range.start,
+            granularity
+          )
+        }
+      }
+    : visiblePredicate.normalized_filter;
+  const executionPredicate = metric.key === "conversation.velocity"
+    ? buildSignalMentionPredicateV1(executionFilter, args.study_corpus_ids)
+    : visiblePredicate;
+  const predicate = metric.key === "conversation.velocity"
+    ? {
+        ...executionPredicate,
+        normalized_filter: visiblePredicate.normalized_filter,
+        filters_hash: visiblePredicate.filters_hash,
+        fingerprint: sha256(JSON.stringify({
+          sql: executionPredicate.sql,
+          params: executionPredicate.params,
+          visible_filters_hash: visiblePredicate.filters_hash
+        }))
+      }
+    : visiblePredicate;
+  const periodStart = periodStartSql(granularity, visiblePredicate.normalized_filter.timezone);
   const periodEnd = periodEndSql(granularity, "period_start");
   const base = `
     WITH base_mentions AS (
@@ -229,7 +266,15 @@ export function buildSignalMetricMaterializationPlanV1(args: {
       FROM mentions m
       WHERE ${predicate.sql}
     )`;
-  const sql = materializationSql(metric.key, base, periodEnd);
+  const sql = materializationSql(
+    metric.key,
+    base,
+    periodEnd,
+    periodBucketStartV1(visiblePredicate.normalized_filter.date_range.start, granularity),
+    periodBucketStartV1(executionFilter.date_range.start, granularity),
+    periodBucketStartV1(visiblePredicate.normalized_filter.date_range.end, granularity),
+    granularity
+  );
   return {
     contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
     metric,
@@ -238,6 +283,15 @@ export function buildSignalMetricMaterializationPlanV1(args: {
     sql,
     params: predicate.params
   };
+}
+
+export function previousSignalBucketStartV1(date: string, granularity: SignalGranularityV1) {
+  const current = periodBucketStartV1(date, granularity);
+  const value = new Date(`${current}T00:00:00.000Z`);
+  if (granularity === "day") value.setUTCDate(value.getUTCDate() - 1);
+  else if (granularity === "week") value.setUTCDate(value.getUTCDate() - 7);
+  else value.setUTCMonth(value.getUTCMonth() - 1);
+  return isoDate(value);
 }
 
 export function classifySignalFilterCacheScopeV1(filterInput: unknown): SignalMaterializationCacheScopeV1 {
@@ -441,7 +495,7 @@ function dimensionPredicate(dimension: SignalDimensionV1, valuesParameter: strin
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
       WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
-        AND tag.review_status <> 'rejected'
+        AND tag.review_status = 'approved'
         AND (lower(term.term_key) = ANY(${valuesParameter}) OR lower(COALESCE(tag.value, term.label)) = ANY(${valuesParameter}))
         ${dimension === "taxonomy" ? "" : `AND lower(taxonomy.taxonomy_key) LIKE '%${dimension}%'`}
     )`;
@@ -454,12 +508,29 @@ function dimensionPredicate(dimension: SignalDimensionV1, valuesParameter: strin
   )`;
 }
 
-function materializationSql(metricKey: string, base: string, periodEnd: string) {
+function materializationSql(
+  metricKey: string,
+  base: string,
+  periodEnd: string,
+  visiblePeriodStart: string,
+  executionPeriodStart: string,
+  visiblePeriodEnd: string,
+  granularity: SignalGranularityV1
+) {
   if (metricKey === "conversation.volume" || metricKey === "conversation.velocity") {
     const velocity = metricKey === "conversation.velocity";
-    return `${base}, counts AS (
-      SELECT period_start, COUNT(*)::numeric AS mention_count
-      FROM base_mentions GROUP BY period_start
+    const step = granularity === "day" ? "1 day" : granularity === "week" ? "1 week" : "1 month";
+    return `${base}, periods AS (
+      SELECT generate_series(
+        '${executionPeriodStart}'::date,
+        '${visiblePeriodEnd}'::date,
+        interval '${step}'
+      )::date AS period_start
+    ), counts AS (
+      SELECT periods.period_start, COUNT(base_mentions.id)::numeric AS mention_count
+      FROM periods
+      LEFT JOIN base_mentions USING (period_start)
+      GROUP BY periods.period_start
     ), values AS (
       SELECT period_start, mention_count,
         LAG(mention_count) OVER (ORDER BY period_start) AS previous_count
@@ -469,10 +540,16 @@ function materializationSql(metricKey: string, base: string, periodEnd: string) 
       ${velocity ? "CASE WHEN previous_count > 0 THEN (mention_count - previous_count) / previous_count ELSE NULL END" : "mention_count"} AS value,
       ${velocity ? "previous_count" : "NULL::numeric"} AS denominator,
       mention_count::int AS sample_size,
-      jsonb_build_object('kind', '${velocity ? "ratio" : "scalar"}', 'mention_count', mention_count) AS typed_payload,
+      jsonb_build_object(
+        'kind', '${velocity ? "period_change" : "scalar"}',
+        'mention_count', mention_count,
+        'previous_count', previous_count
+      ) AS typed_payload,
       CASE WHEN ${velocity ? "previous_count IS NULL OR previous_count = 0" : "false"} THEN 'not_available' ELSE 'fresh' END AS materialization_state,
       CASE WHEN ${velocity ? "previous_count IS NULL OR previous_count = 0" : "false"} THEN 'unknown' ELSE 'pass' END AS quality_state
-    FROM values ORDER BY period_start`;
+    FROM values
+    ${velocity ? `WHERE period_start >= '${visiblePeriodStart}'::date` : ""}
+    ORDER BY period_start`;
   }
 
   if (metricKey === "engagement.total" || metricKey === "engagement.average_per_mention") {
@@ -496,10 +573,13 @@ function materializationSql(metricKey: string, base: string, periodEnd: string) 
 
   const category = categorySql(metricKey);
   const share = metricKey.endsWith(".share");
+  const pendingReview = pendingReviewSql(metricKey);
   return `${base}, classified AS (
     SELECT b.id, b.period_start, category.key
     FROM base_mentions b
     JOIN LATERAL (${category}) category ON category.key IS NOT NULL
+  ), pending_reviews AS (
+    ${pendingReview}
   ), buckets AS (
     SELECT period_start, key, COUNT(DISTINCT id)::numeric AS bucket_value
     FROM classified GROUP BY period_start, key
@@ -510,26 +590,70 @@ function materializationSql(metricKey: string, base: string, periodEnd: string) 
     SELECT bucket.period_start, bucket.key, bucket.bucket_value, denominator.period_denominator
     FROM buckets bucket
     JOIN denominators denominator USING (period_start)
+  ), all_periods AS (
+    SELECT DISTINCT period_start FROM base_mentions
   ), periods AS (
-    SELECT period_start, MAX(period_denominator)::numeric AS denominator,
-      jsonb_agg(
-        jsonb_build_object(
-          'key', key,
-          'value', ${share ? "bucket_value / NULLIF(period_denominator, 0)" : "bucket_value"},
-          'denominator', ${share ? "period_denominator" : "NULL"},
-          'sample_size', bucket_value::int,
-          'state', 'available'
-        ) ORDER BY bucket_value DESC, key
-      ) AS buckets
-    FROM scored GROUP BY period_start
+    SELECT period.period_start,
+      denominator.period_denominator::numeric AS denominator,
+      COALESCE((
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'key', scored.key,
+            'value', ${share ? "scored.bucket_value / NULLIF(scored.period_denominator, 0)" : "scored.bucket_value"},
+            'denominator', ${share ? "scored.period_denominator" : "NULL"},
+            'sample_size', scored.bucket_value::int,
+            'state', 'available'
+          ) ORDER BY scored.bucket_value DESC, scored.key
+        )
+        FROM scored WHERE scored.period_start = period.period_start
+      ), '[]'::jsonb) AS buckets,
+      COALESCE(pending.pending_count, 0)::int AS pending_count
+    FROM all_periods period
+    LEFT JOIN denominators denominator USING (period_start)
+    LEFT JOIN pending_reviews pending USING (period_start)
   )
   SELECT period_start::text, ${periodEnd}::text AS period_end,
     ${share ? "NULL::numeric" : "denominator"} AS value,
     ${share ? "denominator" : "NULL::numeric"} AS denominator,
-    denominator::int AS sample_size,
-    jsonb_build_object('kind', 'breakdown', 'buckets', buckets) AS typed_payload,
-    'fresh'::text AS materialization_state, 'pass'::text AS quality_state
+    COALESCE(denominator, 0)::int AS sample_size,
+    jsonb_build_object(
+      'kind', 'breakdown',
+      'buckets', buckets,
+      'pending_review_count', pending_count,
+      'quality_reasons', CASE
+        WHEN pending_count > 0 THEN jsonb_build_array('review_pending')
+        ELSE '[]'::jsonb
+      END
+    ) AS typed_payload,
+    CASE
+      WHEN pending_count > 0 THEN 'partial'
+      WHEN denominator IS NULL OR denominator = 0 THEN 'not_available'
+      ELSE 'fresh'
+    END::text AS materialization_state,
+    CASE
+      WHEN pending_count > 0 THEN 'partial'
+      WHEN denominator IS NULL OR denominator = 0 THEN 'unknown'
+      ELSE 'pass'
+    END::text AS quality_state
   FROM periods ORDER BY period_start`;
+}
+
+function pendingReviewSql(metricKey: string) {
+  const taxonomyPattern = metricKey === "emotion.share" ? "emotion"
+    : metricKey === "topic.volume" ? "topic"
+      : metricKey === "narrative.volume" ? "narrative"
+        : null;
+  if (!taxonomyPattern) {
+    return "SELECT NULL::date AS period_start, 0::bigint AS pending_count WHERE false";
+  }
+  return `SELECT b.period_start, COUNT(DISTINCT b.id)::bigint AS pending_count
+    FROM base_mentions b
+    JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = b.id
+    JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
+    JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
+    WHERE tag.review_status NOT IN ('approved', 'rejected')
+      AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'
+    GROUP BY b.period_start`;
 }
 
 function categorySql(metricKey: string) {
@@ -554,8 +678,57 @@ function categorySql(metricKey: string) {
     JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
     JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
     WHERE tag.subject_type = 'mention' AND tag.subject_id = b.id
-      AND tag.review_status <> 'rejected'
+      AND tag.review_status = 'approved'
       AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'`;
+}
+
+export function evaluateSignalMetricQualityV1(args: {
+  metric: SignalMetricDefinitionV1;
+  row: Pick<SignalMaterializationRowV1, "denominator" | "sample_size" | "materialization_state" | "quality_state" | "typed_payload">;
+  data_freshness: "fresh" | "stale" | "partial" | "not_available";
+}): SignalMetricQualityEvaluationV1 {
+  const denominator = args.row.denominator == null ? null : Number(args.row.denominator);
+  const sampleSize = Number(args.row.sample_size);
+  const pendingReviewCount = Number(args.row.typed_payload.pending_review_count ?? 0);
+  const results = args.metric.quality_rules.map((rule) => {
+    let failed = false;
+    let partial = false;
+    let reason: string | null = null;
+    if (rule.key === "accepted_coverage") {
+      failed = args.data_freshness === "not_available";
+      partial = args.data_freshness === "partial";
+      reason = failed || partial ? "accepted_source_coverage_incomplete" : null;
+    } else if (rule.key === "known_source_gap" || rule.key === "watermark_comparability" || rule.key === "provider_component_coverage") {
+      partial = args.data_freshness === "partial" || args.data_freshness === "stale";
+      reason = partial ? "source_freshness_or_coverage_degraded" : null;
+    } else if (rule.key === "equal_period_days") {
+      failed = false;
+    } else if (rule.key === "positive_previous_denominator" || rule.key === "positive_measured_mentions") {
+      failed = denominator == null || denominator <= 0;
+      reason = failed ? "denominator_not_positive" : null;
+    } else if (rule.key === "observed_component" || rule.key.startsWith("classified_") || rule.key.startsWith("governed_")) {
+      failed = sampleSize <= 0 && pendingReviewCount <= 0;
+      reason = failed ? "accepted_evidence_not_available" : null;
+    } else if (rule.key === "review_pending") {
+      partial = pendingReviewCount > 0;
+      reason = partial ? "governed_classification_review_pending" : null;
+    } else if (rule.key === "classification_coverage") {
+      partial = pendingReviewCount > 0 || args.row.quality_state === "partial";
+      reason = partial ? "classification_coverage_incomplete" : null;
+    }
+    return {
+      key: rule.key,
+      severity: rule.severity,
+      state: failed ? "failed" as const : partial ? "partial" as const : "pass" as const,
+      reason
+    };
+  });
+  const state = results.some((result) => result.severity === "block" && result.state === "failed")
+    ? "failed"
+    : results.some((result) => result.state === "partial") || args.row.quality_state === "partial"
+      ? "partial"
+      : args.row.quality_state;
+  return { state, results };
 }
 
 function periodStartSql(granularity: SignalGranularityV1, timezone: string) {
@@ -567,6 +740,17 @@ function periodEndSql(granularity: SignalGranularityV1, expression: string) {
   if (granularity === "day") return expression;
   if (granularity === "week") return `(${expression} + 6)`;
   return `(date_trunc('month', ${expression}) + interval '1 month - 1 day')::date`;
+}
+
+function periodBucketStartV1(date: string, granularity: SignalGranularityV1) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  if (granularity === "week") {
+    const day = value.getUTCDay();
+    value.setUTCDate(value.getUTCDate() - (day === 0 ? 6 : day - 1));
+  } else if (granularity === "month") {
+    value.setUTCDate(1);
+  }
+  return isoDate(value);
 }
 
 function fixtureMatchesFilter(mention: SignalFixtureMentionV1, filter: SignalFilterV1) {

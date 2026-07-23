@@ -892,6 +892,21 @@ fallback legacy. Fixtures TypeScript para el futuro frontend viven en
 `signal-workspace-fixtures.ts`; el OpenAPI protegido está documentado en
 `docs/api/openapi.yaml`.
 
+Hardening post-SB-06:
+
+- bootstrap y metric groups calculan el cache desde el peor estado visible; sólo una
+  respuesta íntegramente `fresh` usa `private, max-age=30`. `stale`, `partial`,
+  `pending` o `not_available` usan `private, no-cache`;
+- `conversation.velocity` significa cambio del bucket contra su precedente inmediato.
+  El planner consulta ese precedente fuera de la ventana visible cuando hace falta y
+  period comparison usa el último cambio materializado, nunca un promedio de ratios;
+- facets, filtros, agregados y drill-down de topic/emotion/narrative sólo consideran
+  tags aprobados. Evidencia `unreviewed` o pending queda fuera del claim y hace
+  `partial` la materialización con `quality_reasons=["review_pending"]`;
+- si persisten varios corpora operational activos por datos históricos, el resolver
+  responde fail-closed `409 not_available` con
+  `reason=multiple_active_operational_corpora`.
+
 Endpoints de Studio para leer el primer corte de Noisia Data OS. No son el Public
 Reporting API. Las rutas `/corpora/*` son internas; las rutas `/pulse/*` pueden ser
 client-visible sólo después de shadow QA/release gate, porque se autorizan por output

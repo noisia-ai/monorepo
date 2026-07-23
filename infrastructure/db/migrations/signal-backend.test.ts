@@ -59,7 +59,7 @@ test("SB-03 wires existing imports and source syncs to the shared acceptance fun
     assert.match(source, /recordSignalDataAcceptance/);
   }
   assert.match(refreshWorker, /pg_try_advisory_lock/);
-  assert.match(refreshWorker, /FOR UPDATE SKIP LOCKED/);
+  assert.match(refreshWorker, /FOR UPDATE(?: OF policy)? SKIP LOCKED/);
   assert.match(refreshWorker, /materialization\.period_id IS NULL/);
   assert.match(refreshWorker, /dead_letter/);
   assert.match(envExample, /NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=false/);
@@ -131,4 +131,24 @@ test("SB-05 worker recalculates selective periods from accepted watermarks witho
   assert.match(invalidator, /materialization_state = CASE/);
   assert.match(invalidator, /SIGNAL_MATERIALIZE_JOB_NAME/);
   assert.match(queue, /signalMaterializationJob/);
+});
+
+test("post-SB-06 hardening adds a durable refresh outbox, policy freshness and one operational corpus", async () => {
+  const [migration, scheduler, fixture, backfill] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0051_signal_backend_foundation_hardening.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "fixtures/signal-materialization-reconciliation.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/backfill-signal-workspaces.ts"), "utf8")
+  ]);
+  assert.match(migration, /uq_signal_workspace_corpora_one_operational/);
+  assert.match(migration, /idx_signal_refresh_runs_outbox_recovery/);
+  assert.match(migration, /signal_refresh_freshness_tolerance/);
+  assert.match(migration, /derive_signal_watermark_freshness/);
+  assert.match(scheduler, /enqueueRecoverableSignalRefreshRun/);
+  assert.match(scheduler, /error_code = 'enqueue_failed'/);
+  assert.match(scheduler, /conversation_velocity_dependency_through/);
+  assert.match(backfill, /row_number\(\) OVER/);
+  assert.match(backfill, /superseded_operational_corpus/);
+  assert.match(fixture, /aggregate\/drill-down reconciliation failed/);
+  assert.match(fixture, /governed topic quality reconciliation failed/);
 });

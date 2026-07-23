@@ -21,7 +21,9 @@ process.env.DATABASE_URL ??= "postgres://unit:test@localhost:5432/noisia_test";
 
 const {
   parseSignalApiFilterV1,
-  signalJsonResponse
+  signalJsonResponse,
+  signalWorstResponseStateV1,
+  summarizeSignalMetricPointsV1
 } = await import("./signal-workspace-serving");
 
 test("Signal workspace fixtures satisfy the shared series and breakdown contract", () => {
@@ -54,6 +56,45 @@ test("workspace responses emit private ETags and honor conditional GET", async (
     headers: { "if-none-match": first.headers.get("etag") ?? "" }
   }), { ok: true }, { etagSeed: "watermark", state: "fresh" });
   assert.equal(conditional.status, 304);
+});
+
+test("cache policy derives from the worst visible state and never caches degraded groups as fresh", () => {
+  for (const state of ["stale", "partial", "pending", "not_available"]) {
+    const response = signalJsonResponse(
+      new Request("https://studio.test/api/data-os/signal/workspace/metric-groups"),
+      { state },
+      { etagSeed: state, state }
+    );
+    assert.equal(response.headers.get("cache-control"), "private, no-cache");
+  }
+  assert.equal(signalWorstResponseStateV1(["fresh", "stale", "fresh"]), "stale");
+  assert.equal(signalWorstResponseStateV1(["fresh", "partial"]), "partial");
+  assert.equal(signalWorstResponseStateV1(["fresh", "pending"]), "pending");
+  assert.equal(signalWorstResponseStateV1(["fresh", "not_available"]), "not_available");
+  assert.equal(signalWorstResponseStateV1(["fresh", "fresh"]), "fresh");
+});
+
+test("conversation velocity summaries never average non-additive period-change ratios", () => {
+  const points = [
+    {
+      period_start: "2026-06-01",
+      period_end: "2026-06-01",
+      value: 0.5,
+      denominator: 10,
+      sample_size: 15,
+      state: "available" as const
+    },
+    {
+      period_start: "2026-06-02",
+      period_end: "2026-06-02",
+      value: -0.25,
+      denominator: 20,
+      sample_size: 15,
+      state: "available" as const
+    }
+  ];
+  assert.equal(summarizeSignalMetricPointsV1(points, "conversation.velocity", "ratio"), -0.25);
+  assert.notEqual(summarizeSignalMetricPointsV1(points, "conversation.velocity", "ratio"), 0);
 });
 
 test("workspace loader fails closed for unauthenticated, suspended, disabled, paused and inaccessible users", async () => {
@@ -115,6 +156,28 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
   assert.equal("response" in paused ? paused.response?.status : 0, 404);
   const authorized = await loadSignalWorkspaceContextWithDependencies(SIGNAL_WORKSPACE_FIXTURE_IDS.workspace, dependencies);
   assert.equal("workspace" in authorized ? authorized.workspace?.id : null, SIGNAL_WORKSPACE_FIXTURE_IDS.workspace);
+
+  const ambiguous = await loadSignalWorkspaceContextWithDependencies(SIGNAL_WORKSPACE_FIXTURE_IDS.workspace, {
+    ...dependencies,
+    resolveWorkspace: async () => ({
+      ...workspace,
+      corpora: [
+        ...workspace.corpora,
+        {
+          ...workspace.corpora[0]!,
+          id: "60000000-0000-4000-8000-000000000002",
+          name: "Second Signal Pulse corpus"
+        }
+      ]
+    })
+  });
+  assert.equal("response" in ambiguous ? ambiguous.response?.status : 0, 409);
+  assert.equal(
+    "response" in ambiguous
+      ? (await ambiguous.response?.json())?.details?.reason
+      : null,
+    "multiple_active_operational_corpora"
+  );
 });
 
 test("workspace routes use authZ and canonical stores without published payload, raw metadata or legacy route edits", async () => {

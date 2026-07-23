@@ -64,11 +64,26 @@ export async function loadSignalWorkspaceContextWithDependencies(
     } as const;
   }
   const operationalCorpora = workspace.corpora.filter((corpus) => corpus.role === "operational");
-  const corpora = (operationalCorpora.length > 0
-    ? operationalCorpora
-    : workspace.corpora.filter((corpus) => corpus.role === "legacy"))
-    .sort((left, right) => right.validFrom.localeCompare(left.validFrom))
-    .slice(0, 1);
+  if (operationalCorpora.length > 1) {
+    return {
+      response: Response.json(new SignalBackendContractError(
+        "not_available",
+        "Signal workspace has an ambiguous operational corpus.",
+        { reason: "multiple_active_operational_corpora" }
+      ).toJSON(), { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    } as const;
+  }
+  const legacyCorpora = workspace.corpora.filter((corpus) => corpus.role === "legacy");
+  if (operationalCorpora.length === 0 && legacyCorpora.length > 1) {
+    return {
+      response: Response.json(new SignalBackendContractError(
+        "not_available",
+        "Signal workspace has an ambiguous legacy fallback corpus.",
+        { reason: "multiple_active_legacy_corpora" }
+      ).toJSON(), { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    } as const;
+  }
+  const corpora = operationalCorpora.length === 1 ? operationalCorpora : legacyCorpora;
   if (corpora.length === 0) {
     return {
       response: Response.json(new SignalBackendContractError(

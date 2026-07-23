@@ -117,7 +117,7 @@ flowchart LR
 | SB-04 | Social Listening Metric Catalog V1 | P1 | M | SB-01 | Completo (2026-07-22) |
 | SB-05 | Deterministic Metric Materialization Engine | P1 | XL | SB-03, SB-04 | Completo (2026-07-22) |
 | SB-06 | Signal Workspace Serving APIs and Drill-down | P1 | L | SB-05 | Completo (2026-07-22) |
-| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Bloqueada por hardening post-SB-06 |
+| SB-07 | Versioned Claude Metric Interpretations | P2 | XL | SB-06 | Pendiente / habilitada tras hardening (2026-07-22) |
 | SB-08 | T&B Structured Evidence and Artifact Review | P2 | XL | SB-05 | Pendiente |
 | SB-09 | T&B Temporal Comparison and Strategic Releases | P2 | L | SB-02, SB-08 | Pendiente |
 | SB-10 | Signal Backend Integration and Front-ready Gate | P3 | XL | SB-07, SB-09 | Pendiente |
@@ -681,6 +681,45 @@ staging.
   smoke contra Postgres no productivo.
 - Sólo después de este cierre SB-07 cambia de `Bloqueada` a `Pendiente/habilitada`.
   El orden posterior permanece SB-07→SB-10.
+
+### Estado / Handoff Del Hardening
+
+**Completo local, 2026-07-22.** La migración aditiva
+`0051_signal_backend_foundation_hardening` convierte `signal_refresh_runs` en outbox
+Postgres reconciliable: cada ocurrencia se persiste antes de `queue.add`,
+`expected_next_run` sólo avanza después de confirmación de BullMQ y una falla de Redis
+queda `failed/enqueue_failed` recuperable con el mismo idempotency key. El tick también
+reconcilia runs `queued/failed` tras deploy.
+
+Freshness usa tolerancias explícitas por cadencia (`hourly=15m`, `daily=6h`,
+`weekly=24h`, `monthly=72h`, `manual` sin deadline automático) sobre el
+`expected_next_run` calculado en timezone local. Source, data y materialization
+freshness se evalúan por separado; aceptación nueva recupera el watermark y el
+materializador dejó de inventar un TTL fijo de 24 horas.
+
+`conversation.velocity` incluye el bucket inmediatamente anterior aunque quede fuera
+del rango visible, genera buckets contiguos y declara su dependencia durante
+invalidación. Serving nunca promedia esos ratios no aditivos. El motor ejecuta los
+quality rules V1 y sólo acepta tags `approved`; `unreviewed/pending` queda excluido de
+evidencia aceptada y degrada la fila a `partial` con razón.
+
+El backfill ordena corpora Signal Pulse por publicación/revisión de corpus, cierra el
+operational anterior y el schema impone un único operational activo por workspace.
+Serving falla cerrado ante datos históricos ambiguos. Bootstrap y metric groups derivan
+cache del peor estado visible; `stale`, `partial`, `pending` y `not_available` usan
+`private, no-cache`.
+
+Gates locales de DB, Query Engine, Workers y Studio, build y `data-os:verify` quedaron
+verdes; los tests de regresión incluyen fallo de `queue.add`, transición/recovery de
+freshness, lookback de velocity, review pending, dos corpora operacionales y cache
+degradado. `git diff 0961c66..HEAD --check` quedó limpio.
+
+**Evidencia runtime pendiente:** no existe `DATABASE_URL` local, no hay `psql` y el
+daemon Docker no está disponible. Por ello 0047–0051 y el fixture SQL de reconciliación
+siguen pendientes de ejecución contra Postgres disposable o staging/preview aprobado.
+No se usó target remoto ni se inventó evidencia.
+
+**Siguiente tarea habilitada:** SB-07 · Versioned Claude Metric Interpretations.
 
 ### Prompt Para La Siguiente Tarea
 

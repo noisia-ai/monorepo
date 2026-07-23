@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildSignalRefreshRunOptions,
   buildSignalRefreshTickOptions,
+  enqueueRecoverableSignalRefreshRun,
   isSignalRefreshSchedulerEnabled
 } from "./signal-refresh-runtime";
 
@@ -32,3 +33,39 @@ test("Signal refresh jobs have deploy-stable dedupe and bounded retry/dead-lette
   });
 });
 
+test("a BullMQ enqueue failure leaves the durable occurrence recoverable and never advances the policy", async () => {
+  let advanced = false;
+  let failed = false;
+  const result = await enqueueRecoverableSignalRefreshRun({
+    add: async () => {
+      throw new Error("redis_unavailable");
+    },
+    markEnqueuedAndAdvance: async () => {
+      advanced = true;
+    },
+    markEnqueueFailed: async () => {
+      failed = true;
+    }
+  });
+  assert.equal(result.enqueued, false);
+  assert.equal(advanced, false);
+  assert.equal(failed, true);
+});
+
+test("the policy advances only after BullMQ confirms the durable occurrence", async () => {
+  const events: string[] = [];
+  const result = await enqueueRecoverableSignalRefreshRun({
+    add: async () => {
+      events.push("queue.add");
+      return { id: "stable-job" };
+    },
+    markEnqueuedAndAdvance: async () => {
+      events.push("advance");
+    },
+    markEnqueueFailed: async () => {
+      events.push("failed");
+    }
+  });
+  assert.equal(result.enqueued, true);
+  assert.deepEqual(events, ["queue.add", "advance"]);
+});

@@ -4,6 +4,7 @@ import {
   buildSignalMetricMaterializationPlanV1,
   buildSignalPrecomputedFiltersV1,
   dataWatermarkHashV1,
+  evaluateSignalMetricQualityV1,
   normalizeSignalFilterV1,
   SIGNAL_METRIC_DEFINITIONS_V1,
   SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN,
@@ -100,7 +101,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     const watermarkHash = dataWatermarkHashV1(watermark);
     const latestWatermarkId = watermarkRows.rows[0]?.id as string;
     const freshness = combinedFreshness(watermarkRows.rows, now);
-    const staleAfter = earliestStaleAfter(watermarkRows.rows) ?? new Date(now.getTime() + 24 * 60 * 60 * 1_000);
+    const staleAfter = earliestStaleAfter(watermarkRows.rows);
 
     const facetsResult = await client.query<{
       platforms: string[] | null;
@@ -223,8 +224,17 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
           const result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
           plansExecuted += 1;
           for (const row of result.rows) {
-            const state = effectiveState(row.materialization_state, freshness);
-            const qualityState = state === "partial" ? "partial" : row.quality_state;
+            const quality = evaluateSignalMetricQualityV1({
+              metric,
+              row,
+              data_freshness: freshness
+            });
+            const state = effectiveState(row.materialization_state, freshness, quality.state);
+            const qualityState = quality.state;
+            const typedPayload = {
+              ...row.typed_payload,
+              quality_rule_results: quality.results
+            };
             const materializationKey = signalMetricMaterializationKeyV1({
               workspace_id: scope.workspace_id,
               study_corpus_id: scope.study_corpus_id,
@@ -283,7 +293,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               row.period_end,
               JSON.stringify(plan.predicate.normalized_filter),
               plan.predicate.filters_hash,
-              JSON.stringify(row.typed_payload),
+              JSON.stringify(typedPayload),
               row.value,
               row.denominator,
               Number(row.sample_size),
@@ -293,7 +303,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               watermarkHash,
               state,
               plan.cache_scope,
-              staleAfter.toISOString()
+              staleAfter?.toISOString() ?? null
             ]);
             rowsWritten += 1;
           }
@@ -350,11 +360,13 @@ function combinedFreshness(rows: WatermarkRow[], now: Date): "fresh" | "stale" |
 
 function effectiveState(
   metricState: SignalMaterializationRowV1["materialization_state"],
-  freshness: "fresh" | "stale" | "partial"
+  freshness: "fresh" | "stale" | "partial",
+  quality: "pass" | "partial" | "failed" | "unknown"
 ) {
   if (metricState === "not_available") return metricState;
+  if (quality === "failed") return "not_available" as const;
   if (freshness === "stale") return "stale" as const;
-  if (freshness === "partial" || metricState === "partial") return "partial" as const;
+  if (freshness === "partial" || metricState === "partial" || quality === "partial") return "partial" as const;
   return "fresh" as const;
 }
 

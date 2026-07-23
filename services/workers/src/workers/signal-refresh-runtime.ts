@@ -27,3 +27,17 @@ export function buildSignalRefreshRunOptions(jobId: string): JobsOptions {
   };
 }
 
+export async function enqueueRecoverableSignalRefreshRun(input: {
+  add: () => Promise<{ id?: string | null }>;
+  markEnqueuedAndAdvance: (jobId: string | null) => Promise<void>;
+  markEnqueueFailed: (error: unknown) => Promise<void>;
+}) {
+  try {
+    const job = await input.add();
+    await input.markEnqueuedAndAdvance(job.id ?? null);
+    return { enqueued: true as const, job_id: job.id ?? null };
+  } catch (error) {
+    await input.markEnqueueFailed(error);
+    return { enqueued: false as const, error };
+  }
+}

@@ -1368,6 +1368,26 @@ Las APIs `/api/data-os/signal/:workspaceId/*` leen estas tablas y `mentions` baj
 mismo predicate de `SignalFilterV1`. No leen `published_outputs.payload` como source of
 truth. Las rutas Pulse y `/signal/{outputId}` conservan su comportamiento legacy.
 
+#### Hardening de Conversation Following
+
+La migración `0051_signal_backend_foundation_hardening` agrega tres invariantes:
+
+- `signal_refresh_runs` funciona como outbox durable. La corrida programada existe en
+  Postgres antes de BullMQ y puede reconciliarse si Redis o un deploy interrumpen el
+  enqueue; la policy avanza sólo después de confirmación de cola.
+- `signal_data_watermarks.stale_after` deriva de `cadence`, timezone,
+  `expected_next_run` y tolerancia explícita. Manual no recibe TTL automático; hourly,
+  daily, weekly y monthly tienen tolerancias distintas. Source, data y
+  materialization freshness no se colapsan.
+- el índice parcial `uq_signal_workspace_corpora_one_operational` permite como máximo
+  un corpus `operational` activo por workspace. La migración cierra duplicados de forma
+  determinística antes de crear el índice.
+
+Las métricas gobernadas por taxonomías sólo consideran `record_tags.review_status =
+'approved'`. Tags pendientes o no revisados no son evidencia aceptada: producen estado
+`partial` y una razón de calidad. `conversation.velocity` conserva el bucket precedente
+real y su invalidación incluye el siguiente bucket dependiente.
+
 ---
 
 ## Cierre

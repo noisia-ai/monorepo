@@ -16,7 +16,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     const payload = await loadSignalBootstrapV1(loaded.workspace, loaded.isInternalUser);
     return signalJsonResponse(request, payload, {
       etagSeed: JSON.stringify([payload.data_freshness, payload.metric_groups]),
-      state: payload.data_freshness.state
+      state: payload.state
     });
   } catch (error) {
     return signalBackendErrorResponse(error);

@@ -22,7 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     });
     return signalJsonResponse(request, payload, {
       etagSeed: `${payload.filters_hash}:${JSON.stringify(payload.groups)}`,
-      state: "fresh"
+      state: payload.state
     });
   } catch (error) {
     return signalBackendErrorResponse(error);

@@ -8,6 +8,7 @@ import {
   SIGNAL_REFRESH_CONTRACT_VERSION,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   buildSignalRefreshRunIdempotencyKeyV1,
+  expandSignalVelocityInvalidationThroughV1,
   type SignalInvalidationJobDataV1,
   type SignalMaterializeJobDataV1,
   type SignalRefreshRunJobDataV1,
@@ -15,60 +16,177 @@ import {
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
 import { getSignalRefreshQueue } from "../queues/signal-refresh";
-import { buildSignalRefreshRunOptions } from "./signal-refresh-runtime";
+import {
+  buildSignalRefreshRunOptions,
+  enqueueRecoverableSignalRefreshRun
+} from "./signal-refresh-runtime";
 
 type DuePolicy = {
   id: string;
   workspace_id: string;
   source_key: string;
+  cadence: "hourly" | "daily" | "weekly" | "monthly";
+  timezone: string;
   scheduled_for: Date;
+  study_corpus_id: string | null;
+};
+
+type RecoverableRun = {
+  id: string;
+  refresh_policy_id: string;
+  workspace_id: string;
+  source_key: string;
+  scheduled_for: Date;
+  idempotency_key: string;
 };
 
 export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>) {
-  const due = await pool.query<DuePolicy>(`
-    WITH due AS (
-      SELECT id, workspace_id, source_key, cadence, timezone, expected_next_run
-      FROM signal_refresh_policies
-      WHERE enabled = true
-        AND expected_next_run <= now()
-      ORDER BY expected_next_run, id
-      FOR UPDATE SKIP LOCKED
-      LIMIT 100
-    )
-    UPDATE signal_refresh_policies policy
-    SET expected_next_run = CASE due.cadence
-          WHEN 'hourly' THEN ((due.expected_next_run AT TIME ZONE due.timezone) + interval '1 hour') AT TIME ZONE due.timezone
-          WHEN 'daily' THEN ((due.expected_next_run AT TIME ZONE due.timezone) + interval '1 day') AT TIME ZONE due.timezone
-          WHEN 'weekly' THEN ((due.expected_next_run AT TIME ZONE due.timezone) + interval '1 week') AT TIME ZONE due.timezone
-          WHEN 'monthly' THEN ((due.expected_next_run AT TIME ZONE due.timezone) + interval '1 month') AT TIME ZONE due.timezone
-          ELSE NULL
+  await pool.query(`
+    UPDATE signal_data_watermarks
+    SET source_freshness_state = 'stale',
+        data_freshness_state = CASE
+          WHEN data_freshness_state = 'not_available' THEN data_freshness_state
+          ELSE 'stale'
         END,
         updated_at = now()
-    FROM due
-    WHERE policy.id = due.id
-    RETURNING due.id::text, due.workspace_id::text, due.source_key,
-      due.expected_next_run AS scheduled_for
+    WHERE stale_after IS NOT NULL
+      AND stale_after <= now()
+      AND (source_freshness_state <> 'stale' OR data_freshness_state NOT IN ('stale', 'not_available'))
+  `);
+
+  const client = await pool.connect();
+  let dueCount = 0;
+  try {
+    await client.query("BEGIN");
+    const due = await client.query<DuePolicy>(`
+      SELECT policy.id::text, policy.workspace_id::text, policy.source_key,
+        policy.cadence, policy.timezone, policy.expected_next_run AS scheduled_for,
+        membership.study_corpus_id::text
+      FROM signal_refresh_policies policy
+      LEFT JOIN LATERAL (
+        SELECT swc.study_corpus_id
+        FROM signal_workspace_corpora swc
+        WHERE swc.workspace_id = policy.workspace_id
+          AND swc.valid_to IS NULL
+          AND swc.role IN ('operational', 'legacy')
+        ORDER BY CASE swc.role WHEN 'operational' THEN 0 ELSE 1 END,
+          swc.valid_from DESC, swc.study_corpus_id
+        LIMIT 1
+      ) membership ON true
+      WHERE policy.enabled = true
+        AND policy.expected_next_run <= now()
+      ORDER BY policy.expected_next_run, policy.id
+      FOR UPDATE OF policy SKIP LOCKED
+      LIMIT 100
+    `);
+    dueCount = due.rowCount ?? 0;
+    for (const policy of due.rows) {
+      const idempotencyKey = buildSignalRefreshRunIdempotencyKeyV1({
+        refresh_policy_id: policy.id,
+        scheduled_for: policy.scheduled_for
+      });
+      await client.query(`
+        INSERT INTO signal_refresh_runs (
+          refresh_policy_id, workspace_id, study_corpus_id, source_key,
+          idempotency_key, trigger, status, attempt, scheduled_for,
+          error_code, error_summary, result_summary
+        ) VALUES (
+          $1::uuid, $2::uuid, $3::uuid, $4,
+          $5, 'scheduled', 'queued', 1, $6::timestamptz,
+          NULL, '{}'::jsonb, '{"outbox":"postgres"}'::jsonb
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [
+        policy.id,
+        policy.workspace_id,
+        policy.study_corpus_id,
+        policy.source_key,
+        idempotencyKey,
+        policy.scheduled_for
+      ]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const recoverable = await pool.query<RecoverableRun>(`
+    SELECT run.id::text, run.refresh_policy_id::text, run.workspace_id::text,
+      run.source_key, run.scheduled_for, run.idempotency_key
+    FROM signal_refresh_runs run
+    JOIN signal_refresh_policies policy ON policy.id = run.refresh_policy_id
+    WHERE policy.enabled = true
+      AND run.trigger = 'scheduled'
+      AND run.status IN ('queued', 'failed')
+      AND run.scheduled_for <= now()
+      AND run.completed_at IS NULL
+    ORDER BY run.scheduled_for, run.id
+    LIMIT 100
   `);
 
   const queue = getSignalRefreshQueue();
-  for (const policy of due.rows) {
-    const idempotencyKey = buildSignalRefreshRunIdempotencyKeyV1({
-      refresh_policy_id: policy.id,
-      scheduled_for: policy.scheduled_for
-    });
+  let policiesEnqueued = 0;
+  let policiesRecoverable = 0;
+  for (const run of recoverable.rows) {
     const data: SignalRefreshRunJobDataV1 = {
       contract_version: SIGNAL_REFRESH_CONTRACT_VERSION,
-      refresh_policy_id: policy.id,
-      workspace_id: policy.workspace_id,
-      source_key: policy.source_key,
-      scheduled_for: policy.scheduled_for.toISOString(),
-      idempotency_key: idempotencyKey
+      refresh_policy_id: run.refresh_policy_id,
+      workspace_id: run.workspace_id,
+      source_key: run.source_key,
+      scheduled_for: run.scheduled_for.toISOString(),
+      idempotency_key: run.idempotency_key
     };
-    await queue.add(
-      SIGNAL_REFRESH_RUN_JOB_NAME,
-      data,
-      buildSignalRefreshRunOptions(`signal-refresh-${idempotencyKey.slice(7, 39)}`)
-    );
+    const deterministicJobId = `signal-refresh-${run.idempotency_key.slice(7, 39)}`;
+    const result = await enqueueRecoverableSignalRefreshRun({
+      add: () => queue.add(
+        SIGNAL_REFRESH_RUN_JOB_NAME,
+        data,
+        buildSignalRefreshRunOptions(deterministicJobId)
+      ),
+      markEnqueuedAndAdvance: async (jobId) => {
+        const update = await pool.connect();
+        try {
+          await update.query("BEGIN");
+          await update.query(`
+            UPDATE signal_refresh_runs
+            SET status = 'queued', bullmq_job_id = $2,
+                error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
+            WHERE id = $1::uuid AND status IN ('queued', 'failed')
+          `, [run.id, jobId ?? deterministicJobId]);
+          await update.query(`
+            UPDATE signal_refresh_policies
+            SET expected_next_run = CASE cadence
+                  WHEN 'hourly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 hour') AT TIME ZONE timezone
+                  WHEN 'daily' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 day') AT TIME ZONE timezone
+                  WHEN 'weekly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 week') AT TIME ZONE timezone
+                  WHEN 'monthly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 month') AT TIME ZONE timezone
+                  ELSE expected_next_run
+                END,
+                updated_at = now()
+            WHERE id = $1::uuid AND expected_next_run = $2::timestamptz
+          `, [run.refresh_policy_id, run.scheduled_for]);
+          await update.query("COMMIT");
+        } catch (error) {
+          await update.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          update.release();
+        }
+      },
+      markEnqueueFailed: async (error) => {
+        await pool.query(`
+          UPDATE signal_refresh_runs
+          SET status = 'failed', error_code = 'enqueue_failed',
+              error_summary = jsonb_build_object('message', $2), updated_at = now()
+          WHERE id = $1::uuid AND status IN ('queued', 'failed')
+        `, [run.id, safeErrorMessage(error)]);
+      }
+    });
+    if (result.enqueued) policiesEnqueued += 1;
+    else policiesRecoverable += 1;
   }
 
   const invalidations = await pool.query<{ id: string }>(`
@@ -90,7 +208,12 @@ export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>
       buildSignalRefreshRunOptions(`signal-invalidation-${invalidation.id}`)
     );
   }
-  return { policies_enqueued: due.rowCount ?? 0, invalidations_enqueued: invalidations.rowCount ?? 0 };
+  return {
+    policies_due: dueCount,
+    policies_enqueued: policiesEnqueued,
+    policies_recoverable: policiesRecoverable,
+    invalidations_enqueued: invalidations.rowCount ?? 0
+  };
 }
 
 export async function signalRefreshRunJob(job: Job<SignalRefreshRunJobDataV1>) {
@@ -272,6 +395,7 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       return { reconciliation_only: true };
     }
 
+    const expandedVelocityThrough = expandSignalVelocityInvalidationThroughV1(invalidation.affected_through);
     const materializations = await client.query(`
       UPDATE metric_materializations materialization
       SET stale_after = LEAST(COALESCE(materialization.stale_after, now()), now()),
@@ -283,8 +407,17 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
         AND (
           (
             materialization.workspace_id IS NOT NULL
-            AND ($2::date IS NULL OR materialization.period_end >= $2::date)
-            AND ($3::date IS NULL OR materialization.period_start <= $3::date)
+            AND (
+              (
+                ($2::date IS NULL OR materialization.period_end >= $2::date)
+                AND ($3::date IS NULL OR materialization.period_start <= $3::date)
+              )
+              OR (
+                materialization.metric_key = 'conversation.velocity'
+                AND ($2::date IS NULL OR materialization.period_end >= $2::date)
+                AND ($4::date IS NULL OR materialization.period_start <= $4::date)
+              )
+            )
           )
           OR (
             materialization.workspace_id IS NULL
@@ -299,7 +432,12 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
             )
           )
         )
-    `, [invalidation.study_corpus_id, invalidation.affected_from, invalidation.affected_through]);
+    `, [
+      invalidation.study_corpus_id,
+      invalidation.affected_from,
+      invalidation.affected_through,
+      expandedVelocityThrough
+    ]);
     const interpretations = await client.query(`
       UPDATE signal_interpretation_freshness freshness
       SET state = 'stale', reason = 'data_watermark_advanced', updated_at = now()
@@ -317,7 +455,7 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       study_corpus_id: invalidation.study_corpus_id,
       invalidation_id: invalidation.id,
       affected_from: invalidation.affected_from,
-      affected_through: invalidation.affected_through
+      affected_through: expandedVelocityThrough
     };
     await getSignalRefreshQueue().add(
       SIGNAL_MATERIALIZE_JOB_NAME,
@@ -329,10 +467,16 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       SET status = 'completed', processed_at = now(),
           scope = scope || jsonb_build_object(
             'materializations_invalidated', $2::int,
-            'interpretations_invalidated', $3::int
+            'interpretations_invalidated', $3::int,
+            'conversation_velocity_dependency_through', $4::date
           )
       WHERE id = $1::uuid
-    `, [invalidation.id, materializations.rowCount ?? 0, interpretations.rowCount ?? 0]);
+    `, [
+      invalidation.id,
+      materializations.rowCount ?? 0,
+      interpretations.rowCount ?? 0,
+      expandedVelocityThrough
+    ]);
     await client.query("COMMIT");
     return {
       materializations_invalidated: materializations.rowCount ?? 0,

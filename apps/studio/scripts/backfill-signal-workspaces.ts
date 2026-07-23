@@ -30,7 +30,7 @@ function isApplyMode() {
 }
 
 const eligibleCorporaCte = `
-  WITH eligible_corpora AS (
+  WITH eligible_corpora_base AS (
     SELECT
       sc.id AS study_corpus_id,
       sc.brand_id,
@@ -66,6 +66,7 @@ const eligibleCorporaCte = `
         ELSE COALESCE(b.slug, t.slug)
       END AS subject_slug,
       m.slug AS methodology_slug,
+      sc.updated_at AS corpus_updated_at,
       EXISTS (
         SELECT 1 FROM published_outputs po WHERE po.study_corpus_id = sc.id
       ) AS has_published_output
@@ -78,6 +79,23 @@ const eligibleCorporaCte = `
         (sc.brand_id IS NOT NULL AND b.organization_id IS NOT NULL)
         OR (sc.theme_id IS NOT NULL AND t.organization_id IS NOT NULL)
       )
+  ),
+  eligible_corpora AS (
+    SELECT base.*,
+      row_number() OVER (
+        PARTITION BY organization_id, brand_id, theme_id, methodology_slug
+        ORDER BY has_published_output DESC, corpus_updated_at DESC NULLS LAST, study_corpus_id DESC
+      ) AS methodology_rank,
+      CASE
+        WHEN methodology_slug = 'signal-pulse'
+          AND row_number() OVER (
+            PARTITION BY organization_id, brand_id, theme_id, methodology_slug
+            ORDER BY has_published_output DESC, corpus_updated_at DESC NULLS LAST, study_corpus_id DESC
+          ) = 1 THEN 'operational'
+        WHEN methodology_slug = 'triggers-barriers' THEN 'strategic'
+        ELSE 'legacy'
+      END AS desired_role
+    FROM eligible_corpora_base base
   )
 `;
 
@@ -132,6 +150,49 @@ async function applyBackfill(pool: import("pg").Pool) {
       ON CONFLICT DO NOTHING
       RETURNING id
     `);
+    const membershipsClosed = await client.query(`${eligibleCorporaCte},
+      canonical_operational AS (
+        SELECT sw.id AS workspace_id, ec.study_corpus_id
+        FROM eligible_corpora ec
+        JOIN signal_workspaces sw
+          ON sw.organization_id = ec.organization_id
+         AND sw.brand_id IS NOT DISTINCT FROM ec.brand_id
+         AND sw.theme_id IS NOT DISTINCT FROM ec.theme_id
+        WHERE ec.desired_role = 'operational'
+      )
+      UPDATE signal_workspace_corpora membership
+      SET valid_to = GREATEST(now(), membership.valid_from + interval '1 microsecond'),
+          metadata = membership.metadata || jsonb_build_object(
+            'closed_by', 'signal-workspace-v1-backfill',
+            'reason', 'superseded_operational_corpus'
+          ),
+          updated_at = now()
+      FROM canonical_operational canonical
+      WHERE membership.workspace_id = canonical.workspace_id
+        AND membership.role = 'operational'
+        AND membership.valid_to IS NULL
+        AND membership.study_corpus_id <> canonical.study_corpus_id
+      RETURNING membership.id
+    `);
+    const membershipsUpdated = await client.query(`${eligibleCorporaCte}
+      UPDATE signal_workspace_corpora membership
+      SET role = ec.desired_role,
+          metadata = membership.metadata || jsonb_build_object(
+            'backfill', 'signal-workspace-v1',
+            'canonical_rank', ec.methodology_rank
+          ),
+          updated_at = now()
+      FROM eligible_corpora ec
+      JOIN signal_workspaces sw
+        ON sw.organization_id = ec.organization_id
+       AND sw.brand_id IS NOT DISTINCT FROM ec.brand_id
+       AND sw.theme_id IS NOT DISTINCT FROM ec.theme_id
+      WHERE membership.workspace_id = sw.id
+        AND membership.study_corpus_id = ec.study_corpus_id
+        AND membership.valid_to IS NULL
+        AND membership.role IS DISTINCT FROM ec.desired_role
+      RETURNING membership.id
+    `);
     const memberships = await client.query(`${eligibleCorporaCte}
       INSERT INTO signal_workspace_corpora (
         workspace_id, study_corpus_id, role, metadata
@@ -139,14 +200,11 @@ async function applyBackfill(pool: import("pg").Pool) {
       SELECT
         sw.id,
         ec.study_corpus_id,
-        CASE
-          WHEN ec.methodology_slug = 'signal-pulse' THEN 'operational'
-          WHEN ec.methodology_slug = 'triggers-barriers' THEN 'strategic'
-          ELSE 'legacy'
-        END,
+        ec.desired_role,
         jsonb_build_object(
           'backfill', 'signal-workspace-v1',
-          'published_output_seen', ec.has_published_output
+          'published_output_seen', ec.has_published_output,
+          'canonical_rank', ec.methodology_rank
         )
       FROM eligible_corpora ec
       JOIN signal_workspaces sw
@@ -166,6 +224,8 @@ async function applyBackfill(pool: import("pg").Pool) {
     await client.query("COMMIT");
     return {
       workspaces_inserted: workspaces.rowCount ?? 0,
+      memberships_closed: membershipsClosed.rowCount ?? 0,
+      memberships_updated: membershipsUpdated.rowCount ?? 0,
       memberships_inserted: memberships.rowCount ?? 0
     };
   } catch (error) {
@@ -197,7 +257,12 @@ async function main() {
     const before = await summarize(pool);
     const applied = apply
       ? await applyBackfill(pool)
-      : { workspaces_inserted: 0, memberships_inserted: 0 };
+      : {
+          workspaces_inserted: 0,
+          memberships_closed: 0,
+          memberships_updated: 0,
+          memberships_inserted: 0
+        };
     const after = apply ? await summarize(pool) : before;
     console.log(JSON.stringify({
       mode: apply ? "apply" : "dry-run",

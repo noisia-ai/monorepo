@@ -108,6 +108,17 @@ export function signalJsonResponse(request: Request, payload: unknown, options: 
   });
 }
 
+export function signalWorstResponseStateV1(states: string[]) {
+  if (states.length === 0 || states.every((state) => state === "not_available")) return "not_available";
+  if (states.includes("stale")) return "stale";
+  if (states.includes("partial")) return "partial";
+  if (states.includes("pending")) return "pending";
+  if (states.includes("not_available")) return "not_available";
+  return states.every((state) => state === "fresh" || state === "available")
+    ? "fresh"
+    : "partial";
+}
+
 export function signalMaterializationResultResponse(
   request: Request,
   result:
@@ -159,7 +170,10 @@ export async function loadSignalBootstrapV1(workspace: ResolvedSignalWorkspace, 
       materialized_at: Date;
       stale_after: Date | null;
     }>(`
-      SELECT watermark.data_freshness_state,
+      SELECT CASE
+          WHEN watermark.stale_after IS NOT NULL AND watermark.stale_after <= now() THEN 'stale'
+          ELSE watermark.data_freshness_state
+        END AS data_freshness_state,
         (
           SELECT materialization.data_watermark_hash
           FROM metric_materializations materialization
@@ -202,6 +216,12 @@ export async function loadSignalBootstrapV1(workspace: ResolvedSignalWorkspace, 
   ]);
   const coverageRow = coverage.rows[0] ?? { date_from: null, date_through: null, mentions: 0 };
   const freshnessState = worstState(watermarks.rows.map((row) => row.data_freshness_state));
+  const interpretationFreshness = { state: "not_available", reason: "SB-07_not_started" } as const;
+  const responseState = signalWorstResponseStateV1([
+    freshnessState,
+    interpretationFreshness.state,
+    ...metricStates.rows.map((row) => row.state)
+  ]);
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     workspace: {
@@ -222,13 +242,14 @@ export async function loadSignalBootstrapV1(workspace: ResolvedSignalWorkspace, 
       stale_after: minInstant(watermarks.rows.map((row) => row.stale_after)),
       watermark_hashes: watermarks.rows.map((row) => row.data_watermark_hash).filter(Boolean)
     },
-    interpretation_freshness: { state: "not_available", reason: "SB-07_not_started" },
+    interpretation_freshness: interpretationFreshness,
     metric_groups: metricStates.rows.map((row) => ({
       key: row.metric_group_key,
       state: row.state,
       computed_at: row.computed_at.toISOString()
     })),
-    visibility: { internal: isInternalUser, source_type: isInternalUser, quality_details: isInternalUser }
+    visibility: { internal: isInternalUser, source_type: isInternalUser, quality_details: isInternalUser },
+    state: responseState
   };
 }
 
@@ -270,7 +291,7 @@ export async function loadSignalFacetsV1(args: {
       SELECT filtered.id, 'taxonomy', lower(COALESCE(tag.value, term.label))
       FROM filtered JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = filtered.id
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
-      WHERE tag.review_status <> 'rejected'
+      WHERE tag.review_status = 'approved'
       UNION ALL
       SELECT filtered.id,
         CASE
@@ -284,7 +305,7 @@ export async function loadSignalFacetsV1(args: {
       FROM filtered JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = filtered.id
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
-      WHERE tag.review_status <> 'rejected'
+      WHERE tag.review_status = 'approved'
       UNION ALL
       SELECT filtered.id, feature.feature_key, lower(trim(both '"' from feature.feature_value::text))
       FROM filtered JOIN record_feature_values feature
@@ -335,32 +356,34 @@ export async function loadSignalMetricGroupsV1(args: {
     ORDER BY metric_key, metric_version, computed_at DESC
   `, [args.workspace.id, corpus.id, filtersHash]);
   const byMetric = new Map(states.rows.map((row) => [`${row.metric_key}@${row.metric_version}`, row]));
+  const groups = SIGNAL_METRIC_CATALOG_V1.map((group) => ({
+    key: group.key,
+    name: group.name,
+    metrics: group.metrics
+      .filter((metric) => args.isInternalUser || metric.visibility !== "internal")
+      .map((metric) => {
+        const state = byMetric.get(`${metric.key}@${metric.version}`);
+        return {
+          key: metric.key,
+          version: metric.version,
+          name: metric.name,
+          unit: metric.unit,
+          denominator: metric.denominator,
+          grains: metric.grains,
+          dimensions: metric.dimensions
+            .filter((dimension) => args.isInternalUser || dimension.visibility !== "internal")
+            .map((dimension) => dimension.key),
+          state: state?.materialization_state ?? "not_available",
+          computed_at: state?.computed_at.toISOString() ?? null,
+          stale_after: state?.stale_after?.toISOString() ?? null
+        };
+      })
+  }));
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     filters_hash: filtersHash,
-    groups: SIGNAL_METRIC_CATALOG_V1.map((group) => ({
-      key: group.key,
-      name: group.name,
-      metrics: group.metrics
-        .filter((metric) => args.isInternalUser || metric.visibility !== "internal")
-        .map((metric) => {
-          const state = byMetric.get(`${metric.key}@${metric.version}`);
-          return {
-            key: metric.key,
-            version: metric.version,
-            name: metric.name,
-            unit: metric.unit,
-            denominator: metric.denominator,
-            grains: metric.grains,
-            dimensions: metric.dimensions
-              .filter((dimension) => args.isInternalUser || dimension.visibility !== "internal")
-              .map((dimension) => dimension.key),
-            state: state?.materialization_state ?? "not_available",
-            computed_at: state?.computed_at.toISOString() ?? null,
-            stale_after: state?.stale_after?.toISOString() ?? null
-          };
-        })
-    }))
+    state: signalWorstResponseStateV1(groups.flatMap((group) => group.metrics.map((metric) => metric.state))),
+    groups
   };
 }
 
@@ -474,8 +497,8 @@ export async function loadSignalComparisonV1(args: {
   if (current.status !== "ready") return current;
   if (comparison.status !== "ready") return comparison;
   const metric = requireVisibleMetric(args.metricKey, args.metricVersion, args.isInternalUser);
-  const currentValue = summarizePoints(current.payload.points, metric.unit === "ratio");
-  const comparisonValue = summarizePoints(comparison.payload.points, metric.unit === "ratio");
+  const currentValue = summarizeSignalMetricPointsV1(current.payload.points, metric.key, metric.unit);
+  const comparisonValue = summarizeSignalMetricPointsV1(comparison.payload.points, metric.key, metric.unit);
   return {
     status: "ready" as const,
     etagSeed: `${current.etagSeed}:${comparison.etagSeed}`,
@@ -802,10 +825,17 @@ function mergeBreakdownBuckets(rows: MaterializationRow[], ratio: boolean): Sign
   })).sort((left, right) => (right.value ?? -Infinity) - (left.value ?? -Infinity) || left.key.localeCompare(right.key));
 }
 
-function summarizePoints(points: SignalMetricPointV1[], ratio: boolean) {
+export function summarizeSignalMetricPointsV1(
+  points: SignalMetricPointV1[],
+  metricKey: string,
+  unit: "count" | "ratio" | "score"
+) {
   const available = points.filter((point) => point.value != null);
   if (available.length === 0) return null;
-  if (!ratio) return available.reduce((total, point) => total + (point.value ?? 0), 0);
+  if (metricKey === "conversation.velocity") {
+    return available.at(-1)?.value ?? null;
+  }
+  if (unit !== "ratio") return available.reduce((total, point) => total + (point.value ?? 0), 0);
   const denominator = available.reduce((total, point) => total + (point.denominator ?? 0), 0);
   if (denominator === 0) return null;
   return available.reduce((total, point) => total + (point.value ?? 0) * (point.denominator ?? 0), 0) / denominator;

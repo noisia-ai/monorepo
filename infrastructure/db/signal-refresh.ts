@@ -55,4 +55,3 @@ export async function recordSignalDataAcceptance(
     changed: row.changed === true
   }));
 }
-

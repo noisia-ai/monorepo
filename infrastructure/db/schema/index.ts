@@ -367,6 +367,9 @@ export const signalWorkspaceCorpora = pgTable(
     uniqueIndex("uq_signal_workspace_corpora_active")
       .on(table.workspaceId, table.studyCorpusId)
       .where(sql`${table.validTo} IS NULL`),
+    uniqueIndex("uq_signal_workspace_corpora_one_operational")
+      .on(table.workspaceId)
+      .where(sql`${table.role} = 'operational' AND ${table.validTo} IS NULL`),
     index("idx_signal_workspace_corpora_workspace_active")
       .on(table.workspaceId, table.role, table.validFrom)
       .where(sql`${table.validTo} IS NULL`),
@@ -472,7 +475,10 @@ export const signalRefreshRuns = pgTable(
     check("signal_refresh_runs_attempt_positive", sql`${table.attempt} >= 1`),
     unique("uq_signal_refresh_runs_idempotency").on(table.idempotencyKey),
     index("idx_signal_refresh_runs_workspace_status").on(table.workspaceId, table.status, table.createdAt),
-    index("idx_signal_refresh_runs_policy_status").on(table.refreshPolicyId, table.status, table.createdAt)
+    index("idx_signal_refresh_runs_policy_status").on(table.refreshPolicyId, table.status, table.createdAt),
+    index("idx_signal_refresh_runs_outbox_recovery")
+      .on(table.scheduledFor, table.refreshPolicyId, table.id)
+      .where(sql`${table.trigger} = 'scheduled' AND ${table.status} IN ('queued', 'failed') AND ${table.completedAt} IS NULL`)
   ]
 );
 

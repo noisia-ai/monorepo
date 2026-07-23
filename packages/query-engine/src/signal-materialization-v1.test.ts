@@ -9,7 +9,9 @@ import {
   buildSignalMetricMaterializationPlanV1,
   buildSignalPrecomputedFiltersV1,
   classifySignalFilterCacheScopeV1,
+  evaluateSignalMetricQualityV1,
   materializeSignalFixtureV1,
+  previousSignalBucketStartV1,
   SIGNAL_MATERIALIZATION_MAX_PRECOMPUTED_FILTERS,
   signalMetricMaterializationKeyV1,
   splitSignalMaterializationDateRangeV1
@@ -94,6 +96,53 @@ test("all five catalog groups produce deterministic daily, weekly and monthly SQ
     }
   }
   assert.equal(groups.size, 5);
+});
+
+test("conversation velocity reads one real preceding bucket but only emits the visible range", () => {
+  const daily = buildSignalMetricMaterializationPlanV1({
+    metric_key: "conversation.velocity",
+    filter: { ...baseFilter, dimensions: {}, granularity: "day" },
+    study_corpus_ids: [corpusId]
+  });
+  assert.equal(daily.predicate.normalized_filter.date_range.start, "2026-06-01");
+  assert.ok(daily.params.includes("2026-05-31"));
+  assert.match(daily.sql, /WHERE period_start >= '2026-06-01'::date/u);
+  assert.match(daily.sql, /generate_series\(/u);
+  assert.match(daily.sql, /'2026-05-31'::date/u);
+  assert.match(daily.sql, /'previous_count', previous_count/u);
+  assert.equal(previousSignalBucketStartV1("2026-06-15", "month"), "2026-05-01");
+  assert.equal(previousSignalBucketStartV1("2026-06-03", "week"), "2026-05-25");
+});
+
+test("governed classification SQL excludes unreviewed evidence and marks provisional periods partial", () => {
+  const plan = buildSignalMetricMaterializationPlanV1({
+    metric_key: "topic.volume",
+    filter: { ...baseFilter, dimensions: {} },
+    study_corpus_ids: [corpusId]
+  });
+  assert.match(plan.sql, /tag\.review_status = 'approved'/u);
+  assert.match(plan.sql, /tag\.review_status NOT IN \('approved', 'rejected'\)/u);
+  assert.match(plan.sql, /'pending_review_count', pending_count/u);
+  assert.match(plan.sql, /WHEN pending_count > 0 THEN 'partial'/u);
+});
+
+test("catalog quality rules execute and pending governed evidence cannot pass", () => {
+  const metric = SIGNAL_METRIC_DEFINITIONS_V1.find((item) => item.key === "topic.volume");
+  assert.ok(metric);
+  const evaluation = evaluateSignalMetricQualityV1({
+    metric,
+    data_freshness: "fresh",
+    row: {
+      denominator: null,
+      sample_size: 2,
+      materialization_state: "partial",
+      quality_state: "partial",
+      typed_payload: { pending_review_count: 1 }
+    }
+  });
+  assert.equal(evaluation.state, "partial");
+  assert.equal(evaluation.results.find((item) => item.key === "review_pending")?.state, "partial");
+  assert.notEqual(evaluation.state, "pass");
 });
 
 test("planner rejects excessive ranges, cardinality and unsupported metric dimensions with typed errors", () => {
