@@ -114,7 +114,13 @@ export function buildSignalMentionPredicateV1(
       field: "study_corpus_ids"
     });
   }
+  return buildSignalMentionPredicateFromValidatedFilterV1(filter, corpusIds);
+}
 
+function buildSignalMentionPredicateFromValidatedFilterV1(
+  filter: SignalFilterV1,
+  corpusIds: string[]
+): SignalSqlPredicateV1 {
   const params: unknown[] = [];
   const parameter = (value: unknown, cast = "") => {
     params.push(value);
@@ -241,7 +247,10 @@ export function buildSignalMetricMaterializationPlanV1(args: {
       }
     : visiblePredicate.normalized_filter;
   const executionPredicate = metric.key === "conversation.velocity"
-    ? buildSignalMentionPredicateV1(executionFilter, args.study_corpus_ids)
+    ? buildSignalMentionPredicateFromValidatedFilterV1(
+        normalizeSignalFilterV1(executionFilter),
+        sortedUniqueUuids(args.study_corpus_ids, "study_corpus_ids")
+      )
     : visiblePredicate;
   const predicate = metric.key === "conversation.velocity"
     ? {

@@ -114,6 +114,23 @@ test("conversation velocity reads one real preceding bucket but only emits the v
   assert.equal(previousSignalBucketStartV1("2026-06-03", "week"), "2026-05-25");
 });
 
+test("conversation velocity permits its derived lookback at the maximum visible range", () => {
+  const plan = buildSignalMetricMaterializationPlanV1({
+    metric_key: "conversation.velocity",
+    filter: {
+      contract_version: "signal-backend-v1",
+      date_range: { start: "2025-01-01", end: "2026-01-01" },
+      timezone: "UTC",
+      granularity: "day",
+      dimensions: {}
+    },
+    study_corpus_ids: [corpusId]
+  });
+
+  assert.equal(plan.predicate.normalized_filter.date_range.start, "2025-01-01");
+  assert.ok(plan.params.includes("2024-12-31"));
+});
+
 test("governed classification SQL excludes unreviewed evidence and marks provisional periods partial", () => {
   const plan = buildSignalMetricMaterializationPlanV1({
     metric_key: "topic.volume",
