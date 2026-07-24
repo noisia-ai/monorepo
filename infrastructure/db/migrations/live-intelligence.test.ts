@@ -704,6 +704,10 @@ test("Data OS backfill is wired, safe by default and idempotent", async () => {
   assert.match(script, /dashboard_data_ref/);
   assert.match(script, /published_output/);
   assert.match(script, /backfillMentionTagsAndFeatures/);
+  assert.match(script, /MENTION_TAG_BATCH_SIZE = 100/);
+  assert.match(script, /jsonb_to_recordset\(\$1::jsonb\)/);
+  assert.match(script, /upsertMentionTagBatch/);
+  assert.match(script, /upsertMentionFeatureBatch/);
   assert.match(script, /MENTION_TAG_RULES/);
   assert.match(script, /trigger/);
   assert.match(script, /barrier/);

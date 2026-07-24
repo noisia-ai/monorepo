@@ -78,6 +78,7 @@ type TagCandidate = {
 const DATA_OS_CATALOG_VERSION = "cut_1";
 const TAGGING_RULE_SET_KEY = "data_os_cut_1_deterministic_mentions";
 const TAGGING_RULE_SET_VERSION = 1;
+const MENTION_TAG_BATCH_SIZE = 100;
 
 const BASE_TAXONOMIES: TaxonomySeed[] = [
   {
@@ -1897,57 +1898,8 @@ async function backfillEntities(ctx: BackfillContext, corpus: CorpusRow) {
   }
 }
 
-async function upsertMentionTag(ctx: BackfillContext, corpus: CorpusRow, mention: MentionRow, candidate: TagCandidate) {
-  const taxonomyTermId = ctx.termIds.get(`${candidate.taxonomyKey}:${candidate.termKey}`);
-  if (!taxonomyTermId) return;
-
-  await ctx.client.query(
-    `
-      INSERT INTO record_tags (
-        organization_id, brand_id, study_corpus_id, subject_type, subject_id,
-        taxonomy_term_id, value, score, confidence, evidence, source,
-        model_version_id, review_status
-      )
-      VALUES ($1, $2, $3, 'mention', $4, $5, $6, $7, $8, $9::jsonb, 'data_os_backfill_deterministic', $10, 'unreviewed')
-      ON CONFLICT (subject_type, subject_id, taxonomy_term_id, source) DO UPDATE SET
-        value = EXCLUDED.value,
-        score = EXCLUDED.score,
-        confidence = EXCLUDED.confidence,
-        evidence = EXCLUDED.evidence,
-        model_version_id = EXCLUDED.model_version_id
-    `,
-    [
-      corpus.organization_id,
-      corpus.brand_id,
-      corpus.id,
-      mention.id,
-      taxonomyTermId,
-      candidate.value,
-      candidate.score,
-      candidate.confidence,
-      json([
-        {
-          source: "deterministic_keyword_rule",
-          taxonomy_key: candidate.taxonomyKey,
-          term_key: candidate.termKey,
-          matched_keywords: candidate.matched,
-          snippet: compactText([mention.title, mention.text_snippet, mention.text_clean].filter(Boolean).join(" "), 260)
-        }
-      ]),
-      ctx.modelVersionId
-    ]
-  );
-  inc(ctx.counters, "record_tags_seen");
-  inc(ctx.counters, `record_tags_${candidate.taxonomyKey}_seen`);
-}
-
-async function upsertMentionFeatureValues(
-  ctx: BackfillContext,
-  corpus: CorpusRow,
-  mention: MentionRow,
-  candidates: TagCandidate[]
-) {
-  const featureValue = {
+function mentionFeatureValue(mention: MentionRow, candidates: TagCandidate[]) {
+  return {
     platform: mention.resolved_platform ?? mention.platform,
     source_system: mention.source_system,
     content_type: mention.content_type,
@@ -1963,30 +1915,88 @@ async function upsertMentionFeatureValues(
       source: "data_os_backfill_deterministic"
     }))
   };
+}
+
+async function upsertMentionTagBatch(
+  ctx: BackfillContext,
+  rows: Array<Record<string, unknown>>
+) {
+  if (rows.length === 0) return;
 
   await ctx.client.query(
     `
+      WITH input AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS row(
+          organization_id uuid,
+          brand_id uuid,
+          study_corpus_id uuid,
+          subject_id uuid,
+          taxonomy_term_id uuid,
+          value text,
+          score numeric,
+          confidence text,
+          evidence jsonb,
+          model_version_id uuid
+        )
+      )
+      INSERT INTO record_tags (
+        organization_id, brand_id, study_corpus_id, subject_type, subject_id,
+        taxonomy_term_id, value, score, confidence, evidence, source,
+        model_version_id, review_status
+      )
+      SELECT
+        organization_id, brand_id, study_corpus_id, 'mention', subject_id,
+        taxonomy_term_id, value, score, confidence, evidence,
+        'data_os_backfill_deterministic', model_version_id, 'unreviewed'
+      FROM input
+      ON CONFLICT (subject_type, subject_id, taxonomy_term_id, source) DO UPDATE SET
+        value = EXCLUDED.value,
+        score = EXCLUDED.score,
+        confidence = EXCLUDED.confidence,
+        evidence = EXCLUDED.evidence,
+        model_version_id = EXCLUDED.model_version_id
+    `,
+    [json(rows)]
+  );
+}
+
+async function upsertMentionFeatureBatch(
+  ctx: BackfillContext,
+  rows: Array<Record<string, unknown>>
+) {
+  if (rows.length === 0) return;
+
+  await ctx.client.query(
+    `
+      WITH input AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS row(
+          organization_id uuid,
+          brand_id uuid,
+          study_corpus_id uuid,
+          subject_id uuid,
+          feature_value jsonb,
+          model_version_id uuid
+        )
+      )
       INSERT INTO record_feature_values (
         organization_id, brand_id, study_corpus_id, subject_type, subject_id,
         feature_key, feature_value, value_type, confidence, source, model_version_id
       )
-      VALUES ($1, $2, $3, 'mention', $4, 'mention_operational_context', $5::jsonb, 'object', 'medium', 'data_os_backfill_deterministic', $6)
+      SELECT
+        organization_id, brand_id, study_corpus_id, 'mention', subject_id,
+        'mention_operational_context', feature_value, 'object', 'medium',
+        'data_os_backfill_deterministic', model_version_id
+      FROM input
       ON CONFLICT ON CONSTRAINT uq_record_feature_values_subject_key_source DO UPDATE SET
         feature_value = EXCLUDED.feature_value,
         value_type = EXCLUDED.value_type,
         confidence = EXCLUDED.confidence,
         model_version_id = EXCLUDED.model_version_id
     `,
-    [
-      corpus.organization_id,
-      corpus.brand_id,
-      corpus.id,
-      mention.id,
-      json(featureValue),
-      ctx.modelVersionId
-    ]
+    [json(rows)]
   );
-  inc(ctx.counters, "record_feature_values_seen");
 }
 
 async function backfillMentionTagsAndFeatures(ctx: BackfillContext, corpus: CorpusRow) {
@@ -2012,12 +2022,52 @@ async function backfillMentionTagsAndFeatures(ctx: BackfillContext, corpus: Corp
     [corpus.id]
   );
 
-  for (const mention of result.rows) {
-    const candidates = buildMentionTagCandidates(mention);
-    for (const candidate of candidates) {
-      await upsertMentionTag(ctx, corpus, mention, candidate);
+  for (let offset = 0; offset < result.rows.length; offset += MENTION_TAG_BATCH_SIZE) {
+    const tagRows: Array<Record<string, unknown>> = [];
+    const featureRows: Array<Record<string, unknown>> = [];
+    for (const mention of result.rows.slice(offset, offset + MENTION_TAG_BATCH_SIZE)) {
+      const candidates = buildMentionTagCandidates(mention);
+      for (const candidate of candidates) {
+        const taxonomyTermId = ctx.termIds.get(`${candidate.taxonomyKey}:${candidate.termKey}`);
+        if (!taxonomyTermId) continue;
+        tagRows.push({
+          organization_id: corpus.organization_id,
+          brand_id: corpus.brand_id,
+          study_corpus_id: corpus.id,
+          subject_id: mention.id,
+          taxonomy_term_id: taxonomyTermId,
+          value: candidate.value,
+          score: candidate.score,
+          confidence: candidate.confidence,
+          evidence: [
+            {
+              source: "deterministic_keyword_rule",
+              taxonomy_key: candidate.taxonomyKey,
+              term_key: candidate.termKey,
+              matched_keywords: candidate.matched,
+              snippet: compactText(
+                [mention.title, mention.text_snippet, mention.text_clean].filter(Boolean).join(" "),
+                260
+              )
+            }
+          ],
+          model_version_id: ctx.modelVersionId
+        });
+        inc(ctx.counters, "record_tags_seen");
+        inc(ctx.counters, `record_tags_${candidate.taxonomyKey}_seen`);
+      }
+      featureRows.push({
+        organization_id: corpus.organization_id,
+        brand_id: corpus.brand_id,
+        study_corpus_id: corpus.id,
+        subject_id: mention.id,
+        feature_value: mentionFeatureValue(mention, candidates),
+        model_version_id: ctx.modelVersionId
+      });
+      inc(ctx.counters, "record_feature_values_seen");
     }
-    await upsertMentionFeatureValues(ctx, corpus, mention, candidates);
+    await upsertMentionTagBatch(ctx, tagRows);
+    await upsertMentionFeatureBatch(ctx, featureRows);
   }
 }
 
