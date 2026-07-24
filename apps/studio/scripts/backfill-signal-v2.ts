@@ -15,7 +15,9 @@ type ScopeRow = {
   workspace_id: string;
   study_corpus_id: string;
   output_status: string;
+  output_kind: string;
   methodology_slug: string;
+  corpus_methodology_slug: string;
   membership_role: string | null;
   subject_matches: boolean;
   latest_import_batch_id: string | null;
@@ -69,7 +71,9 @@ async function loadScope(pool: import("pg").Pool, args: Args) {
        workspace.id::text AS workspace_id,
        output.study_corpus_id::text,
        output.status AS output_status,
+       output.kind AS output_kind,
        output.methodology_slug,
+       methodology.slug AS corpus_methodology_slug,
        membership.role AS membership_role,
        (
          workspace.organization_id = COALESCE(brand.organization_id, theme.organization_id)
@@ -89,6 +93,7 @@ async function loadScope(pool: import("pg").Pool, args: Args) {
        md5(output.payload::text) AS payload_digest
      FROM published_outputs output
      JOIN study_corpora corpus ON corpus.id = output.study_corpus_id
+     JOIN methodologies methodology ON methodology.id = corpus.methodology_id
      LEFT JOIN brands brand ON brand.id = output.brand_id
      LEFT JOIN themes theme ON theme.id = output.theme_id
      JOIN signal_workspaces workspace ON workspace.id = $2::uuid
@@ -117,8 +122,22 @@ async function loadScope(pool: import("pg").Pool, args: Args) {
   const row = result.rows[0];
   if (!row) throw new Error("Signal output/workspace pair was not found.");
   if (row.output_status !== "published") throw new Error("Signal output must be published.");
-  if (row.methodology_slug !== "signal-pulse") {
-    throw new Error("Signal V2 operational backfill requires a published signal-pulse output.");
+  const supportedFallback =
+    (
+      row.methodology_slug === "signal-pulse"
+      && row.corpus_methodology_slug === "signal-pulse"
+      && row.output_kind === "signal_pulse"
+    )
+    || (
+      row.methodology_slug === "triggers-barriers"
+      && row.corpus_methodology_slug === "triggers-barriers"
+      && row.output_kind === "signal"
+    );
+  if (!supportedFallback) {
+    throw new Error(
+      "Signal V2 operational backfill requires a published Signal Pulse output "
+      + "or a published Triggers & Barriers Signal fallback over the same governed corpus."
+    );
   }
   if (!row.subject_matches) throw new Error("Signal output and workspace subject/organization do not match.");
   if (!row.date_from || !row.date_through) throw new Error("Signal corpus has no included mention window.");
@@ -291,6 +310,15 @@ async function main() {
       identifiers_redacted: true,
       scope: {
         output_published: after.output_status === "published",
+        legacy_fallback_supported:
+          (
+            after.methodology_slug === "signal-pulse"
+            && after.output_kind === "signal_pulse"
+          )
+          || (
+            after.methodology_slug === "triggers-barriers"
+            && after.output_kind === "signal"
+          ),
         subject_matches: after.subject_matches,
         operational_membership: args.apply ? after.membership_role === "operational" : after.membership_role,
         included_window_available: Boolean(after.date_from && after.date_through),

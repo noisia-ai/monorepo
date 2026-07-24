@@ -100,6 +100,34 @@ preservacion en `true`. No cambia `published_outputs.payload`, status, version n
 `published_at`; solo materializa las entidades canonicas y actualiza el manifiesto.
 No ejecutar este comando contra produccion.
 
+### Bootstrap Signal V2 sobre un corpus T&B gobernado
+
+Si el workspace real todavía no tiene un output `signal-pulse`, no sustituirlo por un
+fixture de otra marca ni copiar sus menciones a un corpus artificial. El backfill
+Signal V2 puede usar el output T&B publicado del mismo corpus como fallback transitorio:
+
+```bash
+NOISIA_SIGNAL_V2_BACKFILL_ALLOW_REMOTE=true \
+NOISIA_SIGNAL_V2_BACKFILL_APPROVED=true \
+NOISIA_SIGNAL_INTERPRETATIONS_ENABLED=false \
+NOISIA_SIGNAL_INTERPRETATIONS_LLM_ENABLED=false \
+corepack pnpm --filter @noisia/studio signal:backfill-v2 -- \
+  --output-id=<published_tb_signal_output_uuid> \
+  --workspace-id=<signal_workspace_uuid> \
+  --apply
+```
+
+El comando sólo acepta las parejas exactas `signal-pulse`/`signal_pulse` o
+`triggers-barriers`/`signal`, exige que output, corpus y workspace compartan sujeto y
+organización, preserva `published_outputs.payload` y deja Claude apagado. Después se
+ejecutan `signal:v2:reconcile`, `signal:v2:explain` y `signal:v2:shadow` con los UUIDs
+del mismo workspace/corpus/output.
+
+Esta vía valida el facade unificado sobre datos reales, pero no convierte el output T&B
+en Signal Pulse ni satisface por sí sola el release gate de Data OS, cuyo evidence pack
+histórico sigue exigiendo un candidato Pulse. Los resultados de dos marcas distintas no
+se pueden combinar en un solo cierre.
+
 ## Paso 2: Shadow Run
 
 ```bash

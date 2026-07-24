@@ -276,6 +276,10 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(backfill, /NOISIA_SIGNAL_V2_BACKFILL_APPROVED/);
   assert.match(backfill, /requireSafeDatabaseWriteTarget/);
   assert.match(backfill, /payload_preserved/);
+  assert.match(backfill, /row\.methodology_slug === "signal-pulse"/);
+  assert.match(backfill, /row\.methodology_slug === "triggers-barriers"/);
+  assert.match(backfill, /row\.corpus_methodology_slug === "triggers-barriers"/);
+  assert.match(backfill, /row\.output_kind === "signal"/);
   assert.doesNotMatch(backfill, /UPDATE\s+published_outputs/iu);
   assert.match(reconcile, /buildSignalMetricMaterializationPlanV1/);
   assert.match(reconcile, /buildSignalMentionDrillDownPlanV1/);
@@ -283,6 +287,9 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(reconcile, /breakdown_payloads_match/);
   assert.match(explain, /EXPLAIN \(\$\{analyze/);
   assert.match(explain, /representativeVolume/);
+  assert.match(shadow, /output\.methodology_slug = 'signal-pulse'/);
+  assert.match(shadow, /output\.methodology_slug = 'triggers-barriers'/);
+  assert.match(shadow, /output\.kind = 'signal'/);
   assert.match(shadow, /five_metric_groups_materialized/);
   assert.match(shadow, /\(group\.metrics\?\.length \?\? 0\) > 0/);
   assert.match(shadow, /five_claude_interpretations_reviewed/);

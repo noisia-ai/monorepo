@@ -1081,6 +1081,41 @@ y una página acotada de drill-down por métrica. El evidence pack incluye estos
 en su manifest SHA-256 y `data-os:completion-audit` no puede declarar el Goal completo
 sin `backend_ready_for_signal_v2=true`.
 
+**Corrección runtime Laika, 2026-07-24.** La primera ejecución real distinguió dos
+targets que no deben confundirse: Seguros El Potosí es el único fixture histórico con
+un output `signal-pulse`, mientras que Laika tiene un output `signal` publicado de
+`triggers-barriers`. El shadow de Seguros prueba el camino Pulse, pero no constituye
+evidencia de Laika.
+
+Para evitar duplicar las menciones de Laika sólo para cambiar de metodología, el
+backfill dirigido acepta ahora dos parejas exactas y fail-closed:
+
+- corpus/output `signal-pulse` + `signal_pulse`;
+- corpus/output `triggers-barriers` + `signal`, usado únicamente como fallback legacy
+  mientras las métricas operativas se calculan desde las menciones gobernadas.
+
+En ambos casos deben coincidir corpus, metodología, sujeto, organización y workspace;
+el output debe estar publicado y su payload se preserva. La segunda pareja no convierte
+el payload T&B en fuente de métricas ni en un output Pulse: hace operacional el corpus
+existente para el facade workspace-centric y deja la inteligencia estratégica bajo
+`signal_workspace_releases`.
+
+Resultado de staging sobre Laika, con Claude y flags cliente apagados:
+
+- 4,581 menciones totales y 723 incluidas en la vista gobernada;
+- 14,953 materializaciones, 11 métricas, cinco metric groups y 48 filtros;
+- 125 periodos de serie, 77 breakdowns y 11 páginas de drill-down reconciliados;
+- cobertura facade/legacy: 723/723;
+- cinco queries representativas por debajo de 3 ms en `EXPLAIN ANALYZE`;
+- payload publicado preservado, gasto LLM USD 0 y activación cliente `false`.
+
+El gate permanece correctamente bloqueado. Las 723 menciones incluidas no alcanzan el
+umbral conservador de 1,000 para volumen representativo; faltan cinco interpretaciones
+Claude revisadas, una strategic release current y una segunda corrida T&B compatible.
+Además, la corrida T&B actual conserva un quality gate rojo: `M-PER-01` y `T-CUL-03`
+tienen dos citas cada uno, no las tres mínimas. No se debe fabricar evidencia para
+cerrarlo.
+
 Gates locales: DB 59 tests, Query Engine 185 tests, workers 130 tests, Studio 241
 tests; typecheck/lint/test monorepo, Studio build, `data-os:verify` y
 `git diff --check` verdes. El lint conserva únicamente los diez warnings preexistentes

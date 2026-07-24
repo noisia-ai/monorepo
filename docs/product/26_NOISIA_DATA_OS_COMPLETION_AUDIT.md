@@ -167,6 +167,43 @@ corepack pnpm --filter @noisia/studio build
 corepack pnpm data-os:verify
 ```
 
+## Evidencia Runtime Signal V2 Sobre Laika (2026-07-24)
+
+Se ejecutó el bootstrap operacional del workspace de Laika sobre su mismo corpus
+gobernado de Triggers & Barriers, sin duplicar menciones y sin usar el fixture de
+Seguros El Potosí como sustituto. El output T&B permanece como fallback legacy; las
+métricas leen tablas canónicas y no `published_outputs.payload`.
+
+| Control | Resultado |
+|---|---|
+| Corpus operacional | Laika Mascotas · Triggers & Barriers |
+| Menciones | 4,581 totales; 723 incluidas en el scope métrico |
+| Materialización | 14,953 filas; 11 métricas; cinco grupos; 48 filtros |
+| Reconciliación | 125 periodos, 77 breakdowns y 11 drill-downs, sin diferencias |
+| Facade vs. legacy | 723/723 menciones |
+| Performance | Todas las queries medidas debajo de 3 ms |
+| Payload/fallback | Preservado |
+| Claude | Apagado; USD 0 |
+| Cliente/producción | Sin activación |
+
+La integridad entre corpora se auditó antes de continuar: cero tags de mención,
+dashboard refs, memberships o materializaciones apuntan a un corpus/sujeto distinto.
+No existe ningún evento de review humano escrito para Laika ni para el fixture de
+Seguros.
+
+Este resultado todavía no completa SB-10:
+
+- el gate de volumen representativo exige 1,000 menciones incluidas y Laika tiene 723;
+- faltan cinco interpretaciones Claude con budget y review explícitos;
+- no existe una strategic release current;
+- sólo existe una corrida T&B, por lo que no hay comparación temporal compatible;
+- el quality gate `post_traceability_complete` está rojo porque `M-PER-01` y
+  `T-CUL-03` tienen dos citas cada uno.
+
+No se permite bajar silenciosamente el umbral, aprobar contenido sin review, reutilizar
+texto de otro corpus ni fabricar la tercera cita. El evidence pack de Seguros El Potosí
+prueba su propio camino Pulse y no cuenta como cierre de Laika.
+
 ## Evidencia Que Completa El Goal
 
 Desde terminal segura:

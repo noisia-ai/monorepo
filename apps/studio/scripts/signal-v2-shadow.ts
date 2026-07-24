@@ -78,7 +78,16 @@ async function main() {
            WHERE output.id = $3::uuid
              AND output.study_corpus_id = corpus.id
              AND output.status = 'published'
-             AND output.methodology_slug = 'signal-pulse'
+             AND (
+               (
+                 output.methodology_slug = 'signal-pulse'
+                 AND output.kind = 'signal_pulse'
+               )
+               OR (
+                 output.methodology_slug = 'triggers-barriers'
+                 AND output.kind = 'signal'
+               )
+             )
              AND output.brand_id IS NOT DISTINCT FROM workspace.brand_id
              AND output.theme_id IS NOT DISTINCT FROM workspace.theme_id
          ) AS legacy_output_matches,
