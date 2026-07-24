@@ -108,8 +108,9 @@ async function summarize(pool: import("pg").Pool) {
   }>(`${eligibleCorporaCte}
     SELECT
       COUNT(*)::int AS eligible_corpora,
-      COUNT(DISTINCT (organization_id, brand_id, theme_id))::int AS distinct_subjects,
-      COUNT(DISTINCT (organization_id, brand_id, theme_id)) FILTER (WHERE sw.id IS NULL)::int AS workspaces_missing,
+      COUNT(DISTINCT (ec.organization_id, ec.brand_id, ec.theme_id))::int AS distinct_subjects,
+      COUNT(DISTINCT (ec.organization_id, ec.brand_id, ec.theme_id))
+        FILTER (WHERE sw.id IS NULL)::int AS workspaces_missing,
       COUNT(*) FILTER (WHERE swc.id IS NULL)::int AS memberships_missing
     FROM eligible_corpora ec
     LEFT JOIN signal_workspaces sw

@@ -23,6 +23,7 @@ test("SB-02 backfill is dry-run by default, remote guarded, redacted and idempot
   assert.match(script, /ON CONFLICT DO NOTHING/);
   assert.match(script, /identifiers_redacted: true/);
   assert.match(script, /sw\.organization_id = ec\.organization_id/);
+  assert.match(script, /COUNT\(DISTINCT \(ec\.organization_id, ec\.brand_id, ec\.theme_id\)\)/);
 });
 
 test("SB-03 persists disabled refresh policy, independent freshness and idempotent invalidation", async () => {
