@@ -43,6 +43,8 @@ type WatermarkRow = {
   stale_after: Date | null;
 };
 
+const MATERIALIZATION_WRITE_BATCH_SIZE = 100;
+
 export async function signalMaterializationJob(job: Job<SignalMaterializeJobDataV1>) {
   const client = await pool.connect();
   const lockKey = `signal-materialize:${job.data.workspace_id}:${job.data.study_corpus_id}`;
@@ -259,7 +261,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
           });
           const result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
           plansExecuted += 1;
-          for (const row of result.rows) {
+          const materializationRows = result.rows.map((row) => {
             const quality = evaluateSignalMetricQualityV1({
               metric,
               row,
@@ -281,6 +283,35 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               period_end: row.period_end,
               filters_hash: plan.predicate.filters_hash
             });
+            return {
+              workspace_id: scope.workspace_id,
+              materialization_key: materializationKey,
+              metric_definition_id: definitionId,
+              metric_key: metric.key,
+              metric_version: metric.version,
+              metric_group_key: metric.group,
+              semantic_model_id: semanticModelId,
+              study_corpus_id: scope.study_corpus_id,
+              granularity,
+              period_start: row.period_start,
+              period_end: row.period_end,
+              normalized_filter: plan.predicate.normalized_filter,
+              filters_hash: plan.predicate.filters_hash,
+              typed_payload: typedPayload,
+              value: row.value,
+              denominator: row.denominator,
+              sample_size: Number(row.sample_size),
+              quality_state: qualityState,
+              data_watermark_id: latestWatermarkId,
+              data_watermark: watermark,
+              data_watermark_hash: watermarkHash,
+              materialization_state: state,
+              cache_scope: plan.cache_scope,
+              stale_after: staleAfter?.toISOString() ?? null
+            };
+          });
+          for (let offset = 0; offset < materializationRows.length; offset += MATERIALIZATION_WRITE_BATCH_SIZE) {
+            const batch = materializationRows.slice(offset, offset + MATERIALIZATION_WRITE_BATCH_SIZE);
             await client.query(`
               INSERT INTO metric_materializations (
                 workspace_id, materialization_key, metric_definition_id,
@@ -290,12 +321,41 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
                 value, denominator, sample_size, quality_state,
                 data_watermark_id, data_watermark, data_watermark_hash,
                 materialization_state, cache_scope, computed_at, stale_after, expires_at
-              ) VALUES (
-                $1::uuid, $2, $3::uuid, $4, $5, $6, $7::uuid, $8::uuid,
-                $9, $10::date, $11::date, $12::jsonb, $13, $14::jsonb, $14::jsonb,
-                $15::numeric, $16::numeric, $17::int, $18,
-                $19::uuid, $20::jsonb, $21, $22, $23, now(), $24::timestamptz,
-                CASE WHEN $23 = 'ad_hoc' THEN now() + interval '15 minutes' ELSE NULL END
+              )
+              SELECT
+                item.workspace_id, item.materialization_key, item.metric_definition_id,
+                item.metric_key, item.metric_version, item.metric_group_key, item.semantic_model_id,
+                item.study_corpus_id, item.granularity, item.period_start, item.period_end,
+                item.normalized_filter, item.filters_hash, item.typed_payload, item.typed_payload,
+                item.value, item.denominator, item.sample_size, item.quality_state,
+                item.data_watermark_id, item.data_watermark, item.data_watermark_hash,
+                item.materialization_state, item.cache_scope, now(), item.stale_after,
+                CASE WHEN item.cache_scope = 'ad_hoc' THEN now() + interval '15 minutes' ELSE NULL END
+              FROM jsonb_to_recordset($1::jsonb) AS item(
+                workspace_id uuid,
+                materialization_key text,
+                metric_definition_id uuid,
+                metric_key text,
+                metric_version integer,
+                metric_group_key text,
+                semantic_model_id uuid,
+                study_corpus_id uuid,
+                granularity text,
+                period_start date,
+                period_end date,
+                normalized_filter jsonb,
+                filters_hash text,
+                typed_payload jsonb,
+                value numeric,
+                denominator numeric,
+                sample_size integer,
+                quality_state text,
+                data_watermark_id uuid,
+                data_watermark jsonb,
+                data_watermark_hash text,
+                materialization_state text,
+                cache_scope text,
+                stale_after timestamptz
               )
               ON CONFLICT (materialization_key) WHERE materialization_key IS NOT NULL DO UPDATE SET
                 metric_definition_id = EXCLUDED.metric_definition_id,
@@ -315,34 +375,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
                 cache_scope = EXCLUDED.cache_scope,
                 computed_at = now(), stale_after = EXCLUDED.stale_after,
                 expires_at = EXCLUDED.expires_at
-            `, [
-              scope.workspace_id,
-              materializationKey,
-              definitionId,
-              metric.key,
-              metric.version,
-              metric.group,
-              semanticModelId,
-              scope.study_corpus_id,
-              granularity,
-              row.period_start,
-              row.period_end,
-              JSON.stringify(plan.predicate.normalized_filter),
-              plan.predicate.filters_hash,
-              JSON.stringify(typedPayload),
-              row.value,
-              row.denominator,
-              Number(row.sample_size),
-              qualityState,
-              latestWatermarkId,
-              JSON.stringify(watermark),
-              watermarkHash,
-              state,
-              plan.cache_scope,
-              staleAfter?.toISOString() ?? null
-            ]);
-            rowsWritten += 1;
+            `, [JSON.stringify(batch)]);
           }
+          rowsWritten += materializationRows.length;
         }
     }
     await client.query(`

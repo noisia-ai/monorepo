@@ -12,7 +12,7 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.match(materializer, /pg_try_advisory_lock/);
   assert.match(materializer, /SIGNAL_MATERIALIZATION_MAX_PRECOMPUTED_FILTERS|buildSignalPrecomputedFiltersV1/);
   assert.match(materializer, /ON CONFLICT \(materialization_key\)/);
-  assert.match(materializer, /CASE WHEN \$23 = 'ad_hoc' THEN now\(\) \+ interval '15 minutes'/);
+  assert.match(materializer, /CASE WHEN item\.cache_scope = 'ad_hoc' THEN now\(\) \+ interval '15 minutes'/);
   assert.match(materializer, /evaluateSignalMetricQualityV1/);
   assert.match(materializer, /signalDefaultWorkspaceHomeFilterV1/);
   assert.match(materializer, /homeFilter\?\.date_range/);
@@ -27,4 +27,7 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.doesNotMatch(materializer, /import \{ getSignalRefreshQueue \} from "\.\.\/queues\/signal-refresh"/);
   assert.match(materializer, /await import\("\.\.\/queues\/signal-refresh"\)/);
   assert.match(materializer, /FROM \(\s+SELECT DISTINCT normalized_filter[\s\S]+?\) cached\s+ORDER BY cached\.normalized_filter::text/);
+  assert.match(materializer, /MATERIALIZATION_WRITE_BATCH_SIZE = 100/);
+  assert.match(materializer, /FROM jsonb_to_recordset\(\$1::jsonb\) AS item/);
+  assert.doesNotMatch(materializer, /for \(const row of result\.rows\)/);
 });
