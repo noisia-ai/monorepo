@@ -24,4 +24,7 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.match(entrypoint, /isDataOsWorkerEnabled\(\)/);
   assert.doesNotMatch(materializer, /published_outputs|chart_aggregates|@ai-sdk\/anthropic|generateObject/iu);
   assert.match(materializer, /SIGNAL_INTERPRETATION_JOB_NAME/);
+  assert.doesNotMatch(materializer, /import \{ getSignalRefreshQueue \} from "\.\.\/queues\/signal-refresh"/);
+  assert.match(materializer, /await import\("\.\.\/queues\/signal-refresh"\)/);
+  assert.match(materializer, /FROM \(\s+SELECT DISTINCT normalized_filter[\s\S]+?\) cached\s+ORDER BY cached\.normalized_filter::text/);
 });

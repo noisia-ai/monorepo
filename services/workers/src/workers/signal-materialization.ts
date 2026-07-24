@@ -24,7 +24,6 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "../db/client";
-import { getSignalRefreshQueue } from "../queues/signal-refresh";
 import { prioritizeSignalMaterializationFiltersV1 } from "./signal-materialization-filters";
 
 type WorkspaceScope = {
@@ -185,16 +184,19 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     const semanticModelId = semanticModel.rows[0]?.id ?? null;
 
     const cachedFilters = requestedFilter ? [] : (await client.query<{ normalized_filter: SignalFilterV1 }>(`
-      SELECT DISTINCT normalized_filter
-      FROM metric_materializations
-      WHERE workspace_id = $1::uuid
-        AND study_corpus_id = $2::uuid
-        AND materialization_state <> 'pending'
-        AND normalized_filter IS NOT NULL
-        AND ($3::date IS NULL OR period_end >= $3::date)
-        AND ($4::date IS NULL OR period_start <= $4::date)
-        AND (cache_scope <> 'ad_hoc' OR expires_at > now())
-      ORDER BY normalized_filter::text
+      SELECT normalized_filter
+      FROM (
+        SELECT DISTINCT normalized_filter
+        FROM metric_materializations
+        WHERE workspace_id = $1::uuid
+          AND study_corpus_id = $2::uuid
+          AND materialization_state <> 'pending'
+          AND normalized_filter IS NOT NULL
+          AND ($3::date IS NULL OR period_end >= $3::date)
+          AND ($4::date IS NULL OR period_start <= $4::date)
+          AND (cache_scope <> 'ad_hoc' OR expires_at > now())
+      ) cached
+      ORDER BY cached.normalized_filter::text
       LIMIT $5::int
     `, [
       scope.workspace_id,
@@ -361,6 +363,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     }
     await client.query("COMMIT");
     if (process.env.NOISIA_SIGNAL_INTERPRETATIONS_ENABLED === "true") {
+      const { getSignalRefreshQueue } = await import("../queues/signal-refresh");
       const modelVersion = process.env.NOISIA_SIGNAL_INTERPRETATION_MODEL ?? "claude-sonnet-4-5";
       const budgetCap = finiteBudget(process.env.NOISIA_SIGNAL_INTERPRETATION_BUDGET_CAP_USD);
       for (const interpretationScope of interpretationScopes.values()) {
