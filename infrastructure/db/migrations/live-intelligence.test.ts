@@ -6,6 +6,11 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
+import {
+  safeJsonStringifyForPostgres,
+  sanitizeUnicodeForPostgresText
+} from "../scripts/postgres-json";
+
 const execFile = promisify(execFileCallback);
 
 const migrationsDir = resolve(process.cwd(), "migrations");
@@ -25,6 +30,22 @@ async function listRouteFiles(dir: string): Promise<string[]> {
   );
   return nested.flat().sort();
 }
+
+test("Data OS backfill JSON preserves valid emoji and replaces lone surrogates", () => {
+  assert.equal(sanitizeUnicodeForPostgresText("Laika 🐶"), "Laika 🐶");
+  assert.equal(sanitizeUnicodeForPostgresText("high \uD83E only"), "high � only");
+  assert.equal(sanitizeUnicodeForPostgresText("low \uDD00 only"), "low � only");
+  assert.deepEqual(
+    JSON.parse(safeJsonStringifyForPostgres({
+      nested: ["valid 🔥", "invalid \uD83E"],
+      "key-\uDD00": "value"
+    })),
+    {
+      nested: ["valid 🔥", "invalid �"],
+      "key-�": "value"
+    }
+  );
+});
 
 test("live intelligence migrations are journaled in order", async () => {
   const journal = JSON.parse(await readFile(resolve(migrationsDir, "meta/_journal.json"), "utf8")) as {

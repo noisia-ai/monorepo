@@ -2,6 +2,7 @@ import pg from "pg";
 
 import { getDatabaseSslConfig, requireSafeDatabaseWriteTarget } from "../seeds/connection.js";
 import { requireEnv } from "../seeds/env.js";
+import { safeJsonStringifyForPostgres } from "./postgres-json.js";
 
 type CounterMap = Record<string, number>;
 
@@ -581,7 +582,7 @@ function requireBackfillEnabled() {
 }
 
 function json(value: unknown) {
-  return JSON.stringify(value ?? {});
+  return safeJsonStringifyForPostgres(value ?? {});
 }
 
 function normalizeKey(value: string) {
