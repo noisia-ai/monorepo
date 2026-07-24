@@ -155,9 +155,10 @@ test("post-SB-06 hardening adds a durable refresh outbox, policy freshness and o
 });
 
 test("SB-07 persists versioned, budget-bounded interpretations without weakening analysis artifacts", async () => {
-  const [migration, worker, contract, serving, analysisMigration] = await Promise.all([
+  const [migration, worker, runner, contract, serving, analysisMigration] = await Promise.all([
     readFile(resolve(process.cwd(), "migrations/0052_signal_metric_interpretations_v1.sql"), "utf8"),
     readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-interpretation.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/scripts/run-signal-home-interpretations.ts"), "utf8"),
     readFile(resolve(process.cwd(), "../../packages/query-engine/src/signal-interpretation-v1.ts"), "utf8"),
     readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-serving.ts"), "utf8"),
     readFile(resolve(process.cwd(), "migrations/0046_analysis_artifact_evidence_graph.sql"), "utf8")
@@ -173,6 +174,10 @@ test("SB-07 persists versioned, budget-bounded interpretations without weakening
   assert.match(migration, /materialization_id uuid NOT NULL REFERENCES metric_materializations/);
   assert.match(worker, /FROM metric_materializations/);
   assert.match(worker, /executeSignalInterpretationV1/);
+  assert.match(runner, /NOISIA_SIGNAL_INTERPRETATION_TOTAL_BUDGET_USD/);
+  assert.match(runner, /NOISIA_SIGNAL_INTERPRETATION_RUN_APPROVED/);
+  assert.match(runner, /signalDefaultWorkspaceHomeFilterV1/);
+  assert.match(runner, /Persisted interpretation cost or budget exceeded the authorized total/);
   assert.match(contract, /Every number written in a claim must have an exact numeric_ref/);
   assert.match(serving, /FROM metric_interpretations interpretation/);
   assert.match(analysisMigration, /analysis_artifacts_exactly_one_analysis/);
@@ -286,13 +291,17 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(reconcile, /series_periods_checked/);
   assert.match(reconcile, /breakdown_payloads_match/);
   assert.match(explain, /EXPLAIN \(\$\{analyze/);
-  assert.match(explain, /representativeVolume/);
+  assert.match(explain, /operationalChartingEligible/);
+  assert.match(explain, /blocks_charting: !operationalChartingEligible/);
   assert.match(shadow, /output\.methodology_slug = 'signal-pulse'/);
   assert.match(shadow, /output\.methodology_slug = 'triggers-barriers'/);
   assert.match(shadow, /output\.kind = 'signal'/);
   assert.match(shadow, /five_metric_groups_materialized/);
   assert.match(shadow, /\(group\.metrics\?\.length \?\? 0\) > 0/);
   assert.match(shadow, /five_claude_interpretations_reviewed/);
+  assert.match(shadow, /capability_checks: capabilityChecks/);
+  assert.match(shadow, /capability_gaps: capabilityGaps/);
+  assert.match(shadow, /run\.filters_hash = \$3/);
   assert.match(shadow, /legacy_coverage_reconciled/);
   assert.match(shadow, /analysis\.comparison_compatibility_state = 'compatible'/);
   assert.doesNotMatch(shadow, /comparison\.compatible/);

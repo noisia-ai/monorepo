@@ -1065,12 +1065,13 @@ shadow usan los planners compartidos y producen artifacts redactados:
 - `serving-smoke.json`;
 - `backend-ready-signal-v2.json`.
 
-El gate exige `serving-smoke` verde con payload parity, fallback y visibilidad legacy,
-cobertura legacy exacta, cinco grupos materializados, cinco
-interpretaciones Claude revisadas, release estratégico current, comparación T&B
-compatible, cliente sanitizado, serie/breakdown/SQL/drill-down reconciliados, volumen representativo,
-índices y flags cliente apagadas. No activa producción y no enciende render ni API de
-workspace para clientes.
+El gate técnico exige `serving-smoke` verde con payload parity, fallback y visibilidad
+legacy, cobertura exacta, cinco grupos materializados, cliente sanitizado,
+serie/breakdown/SQL/drill-down reconciliados, al menos una observación, índices y flags
+cliente apagadas. Interpretaciones Claude, release estratégico current y comparación
+T&B compatible se reportan como capacidades independientes; pueden estar pendientes o
+`not_available` sin invalidar las series operativas. No activa producción ni enciende
+render/API de workspace para clientes.
 
 **Addendum de auditoría, 2026-07-23.** La revisión local posterior al checkpoint añadió
 dos cierres fail-closed: el gate
@@ -1109,17 +1110,38 @@ Resultado de staging sobre Laika, con Claude y flags cliente apagados:
 - cinco queries representativas por debajo de 3 ms en `EXPLAIN ANALYZE`;
 - payload publicado preservado, gasto LLM USD 0 y activación cliente `false`.
 
-El gate permanece correctamente bloqueado. Las 723 menciones incluidas no alcanzan el
-umbral conservador de 1,000 para volumen representativo; faltan cinco interpretaciones
-Claude revisadas, una strategic release current y una segunda corrida T&B compatible.
-Además, la corrida T&B actual conserva un quality gate rojo: `M-PER-01` y `T-CUL-03`
-tienen dos citas cada uno, no las tres mínimas. No se debe fabricar evidencia para
-cerrarlo.
+**Corrección de criterio operacional, 2026-07-24.** Las 723 menciones incluidas sí son
+elegibles para serving y gráficas. El referente de 1,000 mide evidencia de performance
+con volumen alto y queda como contexto; no es un mínimo de publicación de datos
+observados. Las cinco interpretaciones Claude, una strategic release current y una
+segunda corrida T&B compatible son estados de capacidad, no bloqueos técnicos.
+
+La corrida T&B actual conserva un quality gate rojo: `M-PER-01` y `T-CUL-03` tienen dos
+citas cada uno, no las tres mínimas. Esto bloquea aprobar/publicar esos hallazgos
+estratégicos, no las métricas ni los charts del corpus. No se debe fabricar evidencia
+para cerrarlo.
 
 Gates locales: DB 59 tests, Query Engine 185 tests, workers 130 tests, Studio 241
 tests; typecheck/lint/test monorepo, Studio build, `data-os:verify` y
 `git diff --check` verdes. El lint conserva únicamente los diez warnings preexistentes
 del deck estático. No hubo llamada ni gasto LLM.
+
+**Cierre contextual, 2026-07-24.** Después de corregir el gate, el mismo runtime de
+Laika reporta `operational_charting_eligible=true`,
+`ready_for_backend_signal_v2=true` y `backend_ready_for_signal_v2=true`. Las 723
+menciones se sirven y grafican; su volumen queda como `moderate_volume` sin bloquear.
+Los cinco planes midieron menos de 2 ms y los tres índices requeridos están presentes.
+
+Se ejecutaron los cinco scopes de interpretación con presupuesto total aprobado de
+USD 25. El prompt V2 produjo cuatro interpretaciones Claude válidas y un fallback
+seguro; contabilizó USD 0.416 bajo un cap de USD 24. El lote V1 rechazado tuvo un
+estimado conservador de USD 0.4731, por lo que la operación completa quedó debajo del
+cap humano. Tres interpretaciones válidas requieren review y una quedó
+`auto_published`; no hubo aprobación automática.
+
+Los faltantes de interpretación revisada, release estratégica current y segunda
+corrida comparable permanecen como `capability_gaps`. El quality gate de las dos citas
+continúa bloqueando esos hallazgos estratégicos, no el backend operativo.
 
 **Bloqueo externo real:** este checkout no tiene `DATABASE_URL`, Postgres local ni
 Docker operativo. Las migraciones `0047`–`0055`, backfill, workers, reconciliación,
@@ -1144,10 +1166,13 @@ No iniciar el rediseño frontend hasta que SB-10 demuestre, en un corpus/workspa
 1. Una carga nueva actualiza watermark, métricas y freshness sin reconstruir JSON.
 2. El mismo filtro produce métricas, breakdowns y drill-down reconciliados.
 3. Al menos los cinco metric groups V1 tienen series y denominadores auditables.
-4. Claude interpreta paquetes SQL versionados y nunca es source of truth numérico.
+4. Claude puede interpretar paquetes SQL versionados y nunca es source of truth
+   numérico; su ausencia produce un estado parcial explícito.
 5. Una interpretación incompatible aparece stale/pending, no como vigente.
-6. Una corrida T&B aprobada convive con la data operativa y no cambia con nueva ingesta.
-7. Dos corridas T&B compatibles pueden compararse con evidencia.
+6. El contrato admite que una corrida T&B aprobada conviva con la data operativa y no
+   cambie con nueva ingesta; si no existe, sirve `not_available`.
+7. El contrato compara dos corridas T&B compatibles con evidencia cuando existen; una
+   sola corrida no bloquea la operación diaria/semanal.
 8. El cliente se autoriza por workspace/brand, no por conocer un UUID de output.
 9. OpenAPI, fixtures y errores están congelados para el frontend.
 10. Build, tests, authZ, performance, shadow y rollback están documentados y verdes.
@@ -1155,14 +1180,16 @@ No iniciar el rediseño frontend hasta que SB-10 demuestre, en un corpus/workspa
 Pasar este gate no activa producción. Únicamente habilita que producto y Codex diseñen
 juntos Signal V2 sobre un backend confiable.
 
-**Estado al 2026-07-22:** no pasó. El código local y el contrato están cerrados, pero
-faltan aplicación runtime de `0047`–`0055`, backfill/shadow/reconciliación/EXPLAIN en
-staging o preview, cinco interpretaciones Claude con presupuesto y revisión aprobados,
-release estratégico current y comparación compatible. El gasto LLM local fue cero.
+**Estado corregido al 2026-07-24:** la aplicación runtime de `0047`–`0055`, el
+backfill, la reconciliación, el EXPLAIN y el shadow ya se ejecutaron sobre Laika.
+`backend-ready-signal-v2.json` está verde con cliente apagado. Interpretaciones,
+releases y comparación temporal se informan aparte como madurez
+analítica/estratégica.
 
 ## Con Qué Avanzar Ahora
 
-La siguiente acción no es otra SB ni frontend: un operador debe ejecutar el handoff de
-staging/preview de SB-10 con credenciales y aprobaciones reales. Sólo después de obtener
-`backend-ready-signal-v2.json` con `backend_ready_for_signal_v2: true` puede declararse
-SB-10 completa y comenzar el diseño de Signal V2.
+SB-10 ya permite comenzar el diseño de Signal V2 contra el facade y sus estados
+parciales. Antes de activación cliente todavía deben revisarse las interpretaciones
+pendientes, crear/promover releases estratégicas cuando existan corridas compatibles y
+cerrar el release gate productivo de Data OS. Diseñar el frontend no implica activar
+esas capacidades ni presentar hallazgos no aprobados.

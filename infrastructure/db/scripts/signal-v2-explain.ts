@@ -146,18 +146,33 @@ async function main() {
       ]]
     );
     const indexNames = indexes.rows.map((row) => row.indexrelname);
-    const representativeVolume = Number(selected.included_mentions) >= 1_000;
+    const includedMentions = Number(selected.included_mentions);
+    const operationalChartingEligible = includedMentions > 0;
+    const queryPlansWithinBudget = plans.every((plan) => plan.within_budget);
+    const requiredIndexesPresent = indexNames.length === 3;
+    const representativeVolume = includedMentions >= 1_000;
     const ok =
       analyze
-      && representativeVolume
-      && plans.every((plan) => plan.within_budget)
-      && indexNames.length === 3;
+      && operationalChartingEligible
+      && queryPlansWithinBudget
+      && requiredIndexesPresent;
     console.log(JSON.stringify({
       ok,
       identifiers_redacted: true,
       analyze,
+      operational_charting_eligible: operationalChartingEligible,
+      query_plans_within_budget: queryPlansWithinBudget,
+      required_indexes_present: requiredIndexesPresent,
       representative_volume: representativeVolume,
-      included_mentions: Number(selected.included_mentions),
+      included_mentions: includedMentions,
+      sample_context: {
+        state: sampleContextState(includedMentions),
+        high_volume_performance_reference: 1_000,
+        blocks_charting: !operationalChartingEligible,
+        note: operationalChartingEligible
+          ? "Mention volume is analytical context, not a minimum required to serve or chart observed data."
+          : "Charting requires at least one observed mention in the selected operational scope."
+      },
       budgets: { max_total_cost: MAX_TOTAL_COST, max_execution_ms: MAX_EXECUTION_MS },
       indexes_present: indexNames,
       plans
@@ -176,6 +191,13 @@ function collectNodeTypes(input: unknown): string[] {
     ? value.Plans.flatMap((plan) => collectNodeTypes(plan))
     : [];
   return Array.from(new Set([...own, ...nested])).sort();
+}
+
+function sampleContextState(includedMentions: number) {
+  if (includedMentions === 0) return "no_data";
+  if (includedMentions < 100) return "low_volume";
+  if (includedMentions < 1_000) return "moderate_volume";
+  return "high_volume";
 }
 
 function required(name: string) {

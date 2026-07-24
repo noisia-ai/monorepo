@@ -71,6 +71,37 @@ test("provider retries are bounded and end in a deterministic fallback", async (
   assert.equal(result.attempts, 2);
 });
 
+test("rejected Claude responses remain charged against the authorized cap", async () => {
+  let calls = 0;
+  const result = await executeSignalInterpretationV1({
+    packet,
+    provider_enabled: true,
+    budget_cap_usd: 1,
+    estimated_cost_usd: 0.2,
+    max_attempts: 2,
+    provider: async () => {
+      calls += 1;
+      return {
+        interpretation: {
+          contract_version: SIGNAL_INTERPRETATION_CONTRACT_VERSION,
+          summary: "Summary with 42",
+          claims: [],
+          limitations: [],
+          review_status: "auto_published"
+        },
+        input_tokens: 10,
+        output_tokens: 5,
+        cost_usd: 0.1
+      };
+    }
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.source, "deterministic_fallback");
+  assert.equal(result.cost_usd, 0.2);
+  assert.equal(result.input_tokens, 20);
+  assert.equal(result.output_tokens, 10);
+});
+
 test("valid fake output persists exact packet refs and zero test cost", async () => {
   const result = await executeSignalInterpretationV1({
     packet,

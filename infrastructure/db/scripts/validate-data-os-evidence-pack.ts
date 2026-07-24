@@ -153,24 +153,32 @@ async function validateSignalV2Artifacts(evidenceDir: string) {
   assertTrue(explain, "ok");
   assertTrue(explain, "identifiers_redacted");
   assertTrue(explain, "analyze");
-  assertTrue(explain, "representative_volume");
+  assertTrue(explain, "operational_charting_eligible");
+  assertTrue(explain, "query_plans_within_budget");
+  assertTrue(explain, "required_indexes_present");
 
   const shadow = await readJson(join(evidenceDir, "signal-v2-shadow.json"));
   assertTrue(shadow, "ready_for_backend_signal_v2");
   assertTrue(shadow, "identifiers_redacted");
   assertEmpty("signal-v2-shadow.json failures", shadow.failed);
-  if (numberValue(shadow, "llm_spend_usd") !== 0) fail("signal-v2-shadow.json LLM spend must be zero.");
+  assertSpendWithinAuthorizedBudget("signal-v2-shadow.json", shadow);
   if (shadow.client_activation !== false) fail("signal-v2-shadow.json must keep client activation false.");
 
   const backendReady = await readJson(join(evidenceDir, "backend-ready-signal-v2.json"));
   assertTrue(backendReady, "backend_ready_for_signal_v2");
   assertTrue(backendReady, "identifiers_redacted");
   assertEmpty("backend-ready-signal-v2.json failures", backendReady.failed);
-  if (numberValue(backendReady, "llm_spend_usd") !== 0) {
-    fail("backend-ready-signal-v2.json script LLM spend must be zero.");
-  }
+  assertSpendWithinAuthorizedBudget("backend-ready-signal-v2.json", backendReady);
   if (backendReady.client_activation !== false) {
     fail("backend-ready-signal-v2.json must keep client activation false.");
+  }
+}
+
+function assertSpendWithinAuthorizedBudget(label: string, record: JsonRecord) {
+  const actual = numberValue(record, "llm_spend_usd");
+  const authorized = numberValue(record, "llm_authorized_budget_usd");
+  if (actual < 0 || authorized < 0 || actual > authorized) {
+    fail(`${label} LLM spend must be non-negative and no greater than its authorized budget.`);
   }
 }
 

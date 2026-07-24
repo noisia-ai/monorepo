@@ -68,6 +68,17 @@ test("interpretations reject invented numbers and evidence outside the packet", 
     error instanceof Error && error.message.includes("does not exist exactly"));
 });
 
+test("interpretation summaries stay qualitative without unreferenced numbers", () => {
+  assert.throws(() => validateSignalMetricInterpretationV1({
+    contract_version: SIGNAL_INTERPRETATION_CONTRACT_VERSION,
+    summary: "El resumen contiene 42 menciones.",
+    claims: [],
+    limitations: [],
+    review_status: "auto_published"
+  }, packet()), (error: unknown) =>
+    error instanceof Error && error.message.includes("summaries must stay qualitative"));
+});
+
 test("causal, strategic and hypothesis language stays in human review", () => {
   const result = validateSignalMetricInterpretationV1({
     contract_version: SIGNAL_INTERPRETATION_CONTRACT_VERSION,

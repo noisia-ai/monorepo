@@ -11,7 +11,7 @@ import { SIGNAL_METRIC_CATALOG_V1 } from "./signal-metric-catalog-v1";
 
 export const SIGNAL_INTERPRETATION_CONTRACT_VERSION = "signal-interpretation-v1" as const;
 export const SIGNAL_INTERPRETATION_JOB_NAME = "signal.metric-interpretation.v1" as const;
-export const SIGNAL_INTERPRETATION_PROMPT_VERSION = "signal-metric-interpretation-v1" as const;
+export const SIGNAL_INTERPRETATION_PROMPT_VERSION = "signal-metric-interpretation-v2" as const;
 export const SIGNAL_INTERPRETATION_MAX_ATTEMPTS = 3;
 export const SIGNAL_INTERPRETATION_TIMEOUT_MS = 45_000;
 
@@ -173,6 +173,11 @@ export function validateSignalMetricInterpretationV1(
 ): SignalMetricInterpretationV1 {
   if (input.contract_version !== SIGNAL_INTERPRETATION_CONTRACT_VERSION) {
     throw invalidInterpretation("Unsupported interpretation contract version.");
+  }
+  if (extractNumbers(input.summary).length > 0) {
+    throw invalidInterpretation(
+      "Interpretation summaries must stay qualitative because the contract has no summary-level numeric refs."
+    );
   }
   const available = new Map<string, SignalMetricPacketRowV1>(
     packet.rows.map((row) => [row.materialization_id, row])

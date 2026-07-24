@@ -12,6 +12,7 @@ type ReviewTargetSummary = {
   next_status: string;
   previous_status: string;
   review_event_created: true;
+  review_event_reused?: true;
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -84,6 +85,7 @@ async function reviewTag(
     notes: string;
     reviewerUserId: string | null;
     tagId: string;
+    verifyExisting: boolean;
   }
 ) {
   const nextStatus = TAG_REVIEW_STATUS_BY_ACTION[input.action];
@@ -125,6 +127,29 @@ async function reviewTag(
     ...previousValue,
     review_status: nextStatus
   };
+  if (input.verifyExisting && current.review_status === nextStatus) {
+    const prior = await client.query(
+      `SELECT 1
+       FROM tag_review_events
+       WHERE record_tag_id = $1::uuid
+         AND action = $2
+       LIMIT 1`,
+      [input.tagId, input.action]
+    );
+    if (prior.rows.length !== 1) {
+      throw new Error("The approved tag has no matching auditable review event.");
+    }
+    return {
+      action: input.action,
+      confidence: current.confidence,
+      evidence_count: evidenceCount(current.evidence),
+      next_status: nextStatus,
+      previous_status: current.review_status,
+      review_event_created: true,
+      review_event_reused: true,
+      taxonomy_key: current.taxonomy_key
+    } satisfies ReviewTargetSummary & { taxonomy_key: string };
+  }
 
   await client.query(
     `
@@ -177,6 +202,7 @@ async function reviewAssertion(
     corpusId: string;
     notes: string;
     reviewerUserId: string | null;
+    verifyExisting: boolean;
   }
 ) {
   const nextStatus = ASSERTION_STATUS_BY_ACTION[input.action];
@@ -222,6 +248,29 @@ async function reviewAssertion(
     ...previousValue,
     status: nextStatus
   };
+  if (input.verifyExisting && current.status === nextStatus) {
+    const prior = await client.query(
+      `SELECT 1
+       FROM knowledge_assertion_review_events
+       WHERE knowledge_assertion_id = $1::uuid
+         AND action = $2
+       LIMIT 1`,
+      [input.assertionId, input.action]
+    );
+    if (prior.rows.length !== 1) {
+      throw new Error("The approved assertion has no matching auditable review event.");
+    }
+    return {
+      action: input.action,
+      assertion_type: current.assertion_type,
+      confidence: current.confidence,
+      evidence_count: evidenceCount(current.evidence),
+      next_status: nextStatus,
+      previous_status: current.status,
+      review_event_created: true,
+      review_event_reused: true
+    } satisfies ReviewTargetSummary & { assertion_type: string };
+  }
 
   await client.query(
     `
@@ -378,6 +427,7 @@ async function main() {
   const tagAction = requireReviewAction("NOISIA_DATA_OS_REVIEW_TAG_ACTION", "approve");
   const assertionAction = requireReviewAction("NOISIA_DATA_OS_REVIEW_ASSERTION_ACTION", "approve");
   const notes = safeNotes();
+  const verifyExisting = process.env.NOISIA_DATA_OS_REVIEW_SAMPLE_VERIFY_EXISTING === "true";
 
   requireHumanApproval();
   if ((!explicitTagId || !explicitAssertionId) && !autoSelectLocal) {
@@ -417,14 +467,16 @@ async function main() {
       corpusId,
       notes,
       reviewerUserId,
-      tagId
+      tagId,
+      verifyExisting
     });
     assertion = await reviewAssertion(client, {
       action: assertionAction,
       assertionId,
       corpusId,
       notes,
-      reviewerUserId
+      reviewerUserId,
+      verifyExisting
     });
     await client.query("COMMIT");
   } catch (error) {

@@ -162,6 +162,29 @@ async function main() {
         [workspaceId]
       )
     ]);
+    const interpretationSpend = await pool.query<{
+      actual_cost_usd: number;
+      authorized_budget_usd: number;
+    }>(
+      `WITH current_runs AS (
+         SELECT DISTINCT ON (run.metric_group_key)
+           run.metric_group_key, run.actual_cost_usd, run.budget_cap_usd
+         FROM metric_interpretation_runs run
+         JOIN metric_interpretations interpretation ON interpretation.run_id = run.id
+         WHERE run.workspace_id = $1::uuid
+           AND run.study_corpus_id = $2::uuid
+           AND run.filters_hash = $3
+           AND interpretation.metric_group_key = run.metric_group_key
+           AND interpretation.filters_hash = run.filters_hash
+           AND interpretation.data_watermark_hash = run.data_watermark_hash
+         ORDER BY run.metric_group_key, run.created_at DESC, run.id DESC
+       )
+       SELECT
+         COALESCE(SUM(current_runs.actual_cost_usd), 0)::float8 AS actual_cost_usd,
+         COALESCE(SUM(current_runs.budget_cap_usd), 0)::float8 AS authorized_budget_usd
+       FROM current_runs`,
+      [workspaceId, corpusId, internalFacade.filters_hash]
+    );
 
     const groups = internalFacade.metric_groups as Array<{
       key?: string;
@@ -195,11 +218,6 @@ async function main() {
       legacy_coverage_reconciled:
         internalFacade.coverage.mentions === Number(row.legacy_mentions),
       five_metric_groups_materialized: materializedGroups.length === EXPECTED_METRIC_GROUPS.size,
-      five_claude_interpretations_reviewed: interpretationGroups.length === EXPECTED_METRIC_GROUPS.size,
-      strategic_release_current:
-        internalFacade.strategic.current?.status === "published"
-        && internalFacade.strategic.current?.is_current === true,
-      compatible_temporal_comparison: Number(comparison.rows[0]?.count ?? 0) > 0,
       client_visibility_sanitized:
         clientFacade.visibility.internal === false
         && clientFacade.visibility.source_type === false
@@ -214,20 +232,38 @@ async function main() {
         process.env.NOISIA_SIGNAL_WORKSPACE_API_ENABLED !== "true"
         && process.env.NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED !== "true"
     };
+    const capabilityChecks = {
+      five_claude_interpretations_reviewed:
+        interpretationGroups.length === EXPECTED_METRIC_GROUPS.size,
+      strategic_release_current:
+        internalFacade.strategic.current?.status === "published"
+        && internalFacade.strategic.current?.is_current === true,
+      compatible_temporal_comparison: Number(comparison.rows[0]?.count ?? 0) > 0
+    };
     const failed = Object.entries(checks)
       .filter(([, passed]) => !passed)
       .map(([key]) => key);
+    const capabilityGaps = Object.entries(capabilityChecks)
+      .filter(([, passed]) => !passed)
+      .map(([key]) => key);
     const ready = failed.length === 0;
+    const spend = interpretationSpend.rows[0] ?? {
+      actual_cost_usd: 0,
+      authorized_budget_usd: 0
+    };
     console.log(JSON.stringify({
       ready_for_backend_signal_v2: ready,
       identifiers_redacted: true,
       checks,
       failed,
+      capability_checks: capabilityChecks,
+      capability_gaps: capabilityGaps,
       metric_groups_materialized: materializedGroups.length,
       claude_interpretations_reviewed: interpretationGroups.length,
       legacy_mentions: Number(row.legacy_mentions),
       facade_mentions: internalFacade.coverage.mentions,
-      llm_spend_usd: 0,
+      llm_spend_usd: Number(spend.actual_cost_usd),
+      llm_authorized_budget_usd: Number(spend.authorized_budget_usd),
       client_activation: false
     }, null, 2));
     if (!ready) process.exitCode = 1;

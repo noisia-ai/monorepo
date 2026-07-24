@@ -366,6 +366,8 @@ test("Data OS review sample CLI requires explicit human and remote write approva
   assert.match(reviewSample, /isLocalDatabaseUrl/);
   assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_ALLOW_REMOTE/);
   assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_SAMPLE_APPROVED/);
+  assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_SAMPLE_VERIFY_EXISTING/);
+  assert.match(reviewSample, /review_event_reused/);
   assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_SAMPLE_AUTO_SELECT_LOCAL/);
   assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_TAG_ID/);
   assert.match(reviewSample, /NOISIA_DATA_OS_REVIEW_ASSERTION_ID/);
@@ -2053,14 +2055,15 @@ async function writeValidStagingEvidencePack(
         legacy_visibility_safe: true,
         targeted_backfill_applied: true,
         metric_sql_drilldown_reconciled: true,
-        representative_query_plans_within_budget: true,
+        operational_query_plans_within_budget: true,
         facade_shadow_ready: true,
         identifiers_redacted: true,
-        zero_llm_spend: true,
+        llm_spend_accounted_and_within_budget: true,
         clients_not_activated: true
       },
       failed: [],
-      llm_spend_usd: 0,
+      llm_spend_usd: 1.25,
+      llm_authorized_budget_usd: 25,
       client_activation: false
     })
   );
@@ -2093,7 +2096,10 @@ async function writeValidStagingEvidencePack(
       ok: true,
       identifiers_redacted: true,
       analyze: true,
-      representative_volume: true
+      operational_charting_eligible: true,
+      query_plans_within_budget: true,
+      required_indexes_present: true,
+      representative_volume: false
     })
   );
   await writeFile(
@@ -2102,7 +2108,8 @@ async function writeValidStagingEvidencePack(
       ready_for_backend_signal_v2: true,
       identifiers_redacted: true,
       failed: [],
-      llm_spend_usd: 0,
+      llm_spend_usd: 1.25,
+      llm_authorized_budget_usd: 25,
       client_activation: false
     })
   );

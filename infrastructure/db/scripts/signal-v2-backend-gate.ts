@@ -54,10 +54,12 @@ async function main() {
       && backfill.mode === "apply"
       && backfill.payload_preserved === true,
     metric_sql_drilldown_reconciled: reconcile.ok === true,
-    representative_query_plans_within_budget:
+    operational_query_plans_within_budget:
       explain.ok === true
       && explain.analyze === true
-      && explain.representative_volume === true,
+      && explain.operational_charting_eligible === true
+      && explain.query_plans_within_budget === true
+      && explain.required_indexes_present === true,
     facade_shadow_ready: shadow.ready_for_backend_signal_v2 === true,
     identifiers_redacted:
       servingSmoke.corpus_id === "set_redacted"
@@ -66,9 +68,11 @@ async function main() {
       && REQUIRED_JSON
         .filter((name) => name !== "serving-smoke.json")
         .every((name) => evidence[name].identifiers_redacted === true),
-    zero_llm_spend:
+    llm_spend_accounted_and_within_budget:
       Number(backfill.llm_spend_usd) === 0
-      && Number(shadow.llm_spend_usd) === 0,
+      && nonNegativeNumber(shadow.llm_spend_usd) !== null
+      && nonNegativeNumber(shadow.llm_authorized_budget_usd) !== null
+      && Number(shadow.llm_spend_usd) <= Number(shadow.llm_authorized_budget_usd),
     clients_not_activated:
       backfill.client_activation === false
       && shadow.client_activation === false
@@ -83,10 +87,16 @@ async function main() {
     checks,
     failed,
     evidence_artifacts: ["staging-check.txt", ...REQUIRED_JSON],
-    llm_spend_usd: 0,
+    llm_spend_usd: Number(shadow.llm_spend_usd),
+    llm_authorized_budget_usd: Number(shadow.llm_authorized_budget_usd),
     client_activation: false
   }, null, 2));
   if (!ready) process.exitCode = 1;
+}
+
+function nonNegativeNumber(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
 async function parseJsonArtifact(path: string): Promise<JsonObject> {

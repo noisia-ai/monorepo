@@ -43,6 +43,7 @@
     "signal:v2:reconcile": "corepack pnpm --filter @noisia/db signal:v2:reconcile",
     "signal:v2:explain": "corepack pnpm --filter @noisia/db signal:v2:explain",
     "signal:v2:backend-gate": "corepack pnpm --filter @noisia/db signal:v2:backend-gate",
+    "signal:v2:interpret-home": "corepack pnpm --filter @noisia/workers signal:v2:interpret-home",
     "db:seed:methodologies": "corepack pnpm --filter @noisia/db db:seed:methodologies",
     "db:seed": "corepack pnpm --filter @noisia/db db:seed",
     "dev:studio": "corepack pnpm --filter @noisia/studio dev",

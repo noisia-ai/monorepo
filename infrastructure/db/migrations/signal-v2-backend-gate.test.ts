@@ -21,7 +21,8 @@ test("Signal V2 backend gate accepts only the complete redacted runtime evidence
     );
     const result = JSON.parse(stdout);
     assert.equal(result.backend_ready_for_signal_v2, true);
-    assert.equal(result.llm_spend_usd, 0);
+    assert.equal(result.llm_spend_usd, 1.25);
+    assert.equal(result.llm_authorized_budget_usd, 25);
     assert.equal(result.client_activation, false);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -34,7 +35,8 @@ test("Signal V2 backend gate fails closed when facade shadow is not ready", asyn
     await writeJson(dir, "signal-v2-shadow.json", {
       ready_for_backend_signal_v2: false,
       identifiers_redacted: true,
-      llm_spend_usd: 0,
+      llm_spend_usd: 1.25,
+      llm_authorized_budget_usd: 25,
       client_activation: false
     });
     await assert.rejects(
@@ -131,13 +133,17 @@ async function createEvidenceDir() {
   await writeJson(dir, "signal-v2-explain.json", {
     ok: true,
     analyze: true,
-    representative_volume: true,
+    operational_charting_eligible: true,
+    query_plans_within_budget: true,
+    required_indexes_present: true,
+    representative_volume: false,
     identifiers_redacted: true
   });
   await writeJson(dir, "signal-v2-shadow.json", {
     ready_for_backend_signal_v2: true,
     identifiers_redacted: true,
-    llm_spend_usd: 0,
+    llm_spend_usd: 1.25,
+    llm_authorized_budget_usd: 25,
     client_activation: false
   });
   return dir;

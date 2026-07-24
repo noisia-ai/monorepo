@@ -265,7 +265,10 @@ async function runClaudeMetricInterpretation(
     maxRetries: 0,
     prompt: [
       "Interpreta exclusivamente el packet JSON.",
-      "No calcules métricas ni inventes números. Cada número escrito requiere numeric_ref exacto.",
+      "No calcules métricas ni inventes números.",
+      "Mantén summary, claim.text, limitations y uncertainty completamente cualitativos: no escribas dígitos, porcentajes, fechas ni ordinales.",
+      "Usa numeric_refs para anclar evidencia cuantitativa sin repetir esas cifras en el texto.",
+      "Cada numeric_ref debe copiar exactamente materialization_id, field y value del packet.",
       "Distingue fact, hypothesis, causal_claim y recommendation.",
       "Toda hypothesis o causal_claim declara uncertainty.",
       "Causalidad, hipótesis y recomendaciones requieren review_status=needs_review.",

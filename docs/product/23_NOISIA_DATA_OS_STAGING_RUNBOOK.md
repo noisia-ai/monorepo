@@ -529,7 +529,7 @@ export NOISIA_SIGNAL_V2_EXPLAIN_ANALYZE_REMOTE_APPROVED=true
 
 1. backfill dirigido idempotente con interpretaciones y LLM forzados a `false`;
 2. reconciliación materialización → planner SQL → drill-down;
-3. EXPLAIN con volumen mínimo de 1,000 menciones e índices `0055`;
+3. EXPLAIN sobre el corpus observado, con índices `0055` y budgets de costo/tiempo;
 4. shadow del facade interno/cliente contra cobertura legacy;
 5. serving smoke legacy con payload parity, fallback y visibilidad;
 6. `signal:v2:backend-gate`.
@@ -540,9 +540,12 @@ Artifacts adicionales del evidence pack:
   activación cliente;
 - `signal-v2-reconcile.json`: serie canónica completa, breakdown payloads, value,
   denominator, sample y page bounded reconciliados;
-- `signal-v2-explain.json`: volumen, índices y budgets de costo/tiempo;
-- `signal-v2-shadow.json`: cinco metric groups, interpretaciones revisadas, release
-  current, comparación compatible, visibilidad y fallback;
+- `signal-v2-explain.json`: elegibilidad operativa (`included_mentions > 0`), volumen
+  como contexto de muestra, índices y budgets de costo/tiempo. El referente de 1,000
+  sirve para performance de alto volumen; no es un mínimo para graficar;
+- `signal-v2-shadow.json`: cinco metric groups, visibilidad y fallback como checks
+  técnicos; interpretaciones, release current y comparación compatible como
+  `capability_checks` que pueden estar pendientes o `not_available`;
 - `serving-smoke.json`: paridad legacy, kill-switch fallback y visibilidad interna/cliente
   verdes; el backend gate lo consume directamente;
 - `backend-ready-signal-v2.json`:
@@ -557,10 +560,39 @@ ejecutar `data-os:staging-finalize` sobre el mismo evidence dir; finalize vuelve
 correr reconciliación, EXPLAIN y shadow antes de decidir.
 
 Las cinco interpretaciones Claude requieren budget cap, credenciales y aprobación
-separados conforme SB-07. Este runbook no los enciende ni ejecuta un LLM. Si no existen
-interpretaciones Claude revisadas o release estratégico current/comparison compatible,
-`backend_ready_for_signal_v2` permanece `false`. Nunca resolverlo habilitando flags
-cliente, usando producción o aceptando fallback determinístico como si fuera Claude.
+separados conforme SB-07. Este runbook no los enciende ni ejecuta un LLM. Su ausencia,
+igual que no tener todavía una release estratégica o una segunda corrida comparable,
+degrada la capacidad correspondiente pero no invalida el backend operativo. Nunca
+resolver esos estados habilitando flags cliente, usando producción o presentando
+fallback determinístico como si fuera Claude.
+
+El gate distingue tres niveles:
+
+1. **Técnico:** datos observados, contrato, materialización, queries, authZ, lineage,
+   fallback y performance. Este nivel decide `backend_ready_for_signal_v2`.
+2. **Analítico:** volumen, cobertura, calidad y review determinan confianza y
+   advertencias por corte/filtro; no impiden chartear datos observados.
+3. **Estratégico:** una release T&B y su comparación temporal solo existen cuando hay
+   corridas aprobadas compatibles; mientras tanto el contrato sirve `not_available`.
+
+Para ejecutar exclusivamente los cinco grupos del filtro home, primero hacer dry-run y
+después aplicar con un cap total explícito:
+
+```bash
+NOISIA_SIGNAL_INTERPRETATION_TOTAL_BUDGET_USD=<total_usd> \
+NOISIA_SIGNAL_INTERPRETATION_ALLOW_REMOTE=true \
+corepack pnpm signal:v2:interpret-home
+
+NOISIA_SIGNAL_INTERPRETATION_TOTAL_BUDGET_USD=<total_usd> \
+NOISIA_SIGNAL_INTERPRETATION_ALLOW_REMOTE=true \
+NOISIA_SIGNAL_INTERPRETATION_RUN_APPROVED=true \
+corepack pnpm signal:v2:interpret-home -- --apply
+```
+
+El runner exige un solo corpus operacional, un único watermark compartido y los cinco
+grupos canónicos; distribuye el cap entre ellos, es idempotente y nunca activa clientes.
+Una respuesta Claude que no respete refs exactas se cobra dentro del cap y se degrada a
+fallback en lugar de persistir una interpretación numéricamente inválida.
 
 ## 7. Rollback
 

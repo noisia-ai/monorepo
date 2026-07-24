@@ -232,15 +232,17 @@ SB-10 tampoco se considera completa hasta que
 ```json
 {
   "backend_ready_for_signal_v2": true,
-  "llm_spend_usd": 0,
+  "llm_spend_usd": 0.0,
+  "llm_authorized_budget_usd": 0.0,
   "client_activation": false
 }
 ```
 
-El campo de gasto en este artifact describe los scripts de backfill/shadow, no autoriza
-las cinco interpretaciones Claude. Si estas faltan, el gate debe quedar bloqueado y el
-operador debe coordinar budget/credenciales/review fuera de este handoff antes de
-reintentar. No activar `NOISIA_SIGNAL_WORKSPACE_API_ENABLED` ni render cliente para
+El gasto debe ser no negativo, estar contabilizado y no superar el budget autorizado.
+Las interpretaciones Claude usan una aprobación y un cap separados; si faltan, el
+facade reporta esa capacidad como pendiente o `not_available`, sin bloquear las series
+operativas. Lo mismo aplica a una release estratégica o comparación todavía
+inexistentes. No activar `NOISIA_SIGNAL_WORKSPACE_API_ENABLED` ni render cliente para
 hacer pasar el gate.
 
 ## Que Pegar En La PR

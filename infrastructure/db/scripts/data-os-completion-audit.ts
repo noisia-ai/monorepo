@@ -221,10 +221,16 @@ async function main() {
       "backend-ready-signal-v2.json",
       backendReady.identifiers_redacted === true
     );
+    const llmSpend = Number(backendReady.llm_spend_usd);
+    const llmBudget = Number(backendReady.llm_authorized_budget_usd);
     checkRequirement(
-      "backend-ready-signal-v2 zero script LLM spend",
+      "backend-ready-signal-v2 accounted LLM spend within authorized budget",
       "backend-ready-signal-v2.json",
-      Number(backendReady.llm_spend_usd) === 0
+      Number.isFinite(llmSpend)
+      && Number.isFinite(llmBudget)
+      && llmSpend >= 0
+      && llmBudget >= 0
+      && llmSpend <= llmBudget
     );
     checkRequirement(
       "backend-ready-signal-v2 clients not activated",

@@ -139,9 +139,9 @@ Estado honesto del gate:
 | Migraciones `0047`–`0055` aplicadas a Postgres disposable/staging | Pendiente |
 | Backfill dirigido sobre Signal real | Pendiente |
 | Reconciliación de los cinco metric groups contra SQL/drill-down | Pendiente |
-| EXPLAIN con al menos 1,000 menciones | Pendiente |
-| Cinco interpretaciones Claude revisadas | Pendiente; no hubo llamada ni gasto local |
-| Release estratégico current + comparación compatible | Pendiente de fixture/staging y review humano |
+| EXPLAIN sobre datos observados, índices y budgets | Pendiente |
+| Cinco interpretaciones Claude | Capacidad independiente; no bloquea series operativas |
+| Release estratégico current + comparación compatible | Capacidad estratégica independiente |
 | `backend-ready-signal-v2.json=true` | Bloqueado |
 | Flags cliente / producción | Apagadas / no tocadas |
 
@@ -183,7 +183,7 @@ métricas leen tablas canónicas y no `published_outputs.payload`.
 | Facade vs. legacy | 723/723 menciones |
 | Performance | Todas las queries medidas debajo de 3 ms |
 | Payload/fallback | Preservado |
-| Claude | Apagado; USD 0 |
+| Claude | Cinco scopes ejecutados; cuatro válidos y un fallback; USD 0.416 contabilizados en V2 |
 | Cliente/producción | Sin activación |
 
 La integridad entre corpora se auditó antes de continuar: cero tags de mención,
@@ -191,18 +191,50 @@ dashboard refs, memberships o materializaciones apuntan a un corpus/sujeto disti
 No existe ningún evento de review humano escrito para Laika ni para el fixture de
 Seguros.
 
-Este resultado todavía no completa SB-10:
+La auditoría operacional posterior corrigió una mezcla de criterios: 1,000 menciones
+era un referente conservador de carga/performance, no un mínimo de producto. Laika
+puede servir y graficar sus 723 menciones incluidas porque existe data observada y las
+queries están reconciliadas. El volumen queda en `sample_context` para que cada corte,
+filtro y análisis comunique sus limitaciones.
 
-- el gate de volumen representativo exige 1,000 menciones incluidas y Laika tiene 723;
-- faltan cinco interpretaciones Claude con budget y review explícitos;
-- no existe una strategic release current;
-- sólo existe una corrida T&B, por lo que no hay comparación temporal compatible;
-- el quality gate `post_traceability_complete` está rojo porque `M-PER-01` y
-  `T-CUL-03` tienen dos citas cada uno.
+Las cinco interpretaciones Claude, una strategic release current y una segunda corrida
+T&B compatible son capacidades analíticas/estratégicas con estados parciales; no
+bloquean el backend operativo. El quality gate `post_traceability_complete` sigue rojo
+para la publicación estratégica porque `M-PER-01` y `T-CUL-03` tienen dos citas cada
+uno. No se permite fabricar una tercera cita ni presentar ese hallazgo como aprobado,
+pero esto tampoco impide chartear menciones y métricas canónicas.
 
-No se permite bajar silenciosamente el umbral, aprobar contenido sin review, reutilizar
-texto de otro corpus ni fabricar la tercera cita. El evidence pack de Seguros El Potosí
-prueba su propio camino Pulse y no cuenta como cierre de Laika.
+El evidence pack de Seguros El Potosí prueba su propio camino Pulse y no cuenta como
+evidencia de Laika.
+
+### Cierre Del Gate Técnico Contextual
+
+La repetición de EXPLAIN/shadow después de separar los criterios produjo:
+
+- `operational_charting_eligible: true` con 723 menciones;
+- cinco planes debajo de 2 ms y los tres índices requeridos;
+- `sample_context.state: moderate_volume` y `blocks_charting: false`;
+- facade/legacy reconciliado 723/723;
+- `ready_for_backend_signal_v2: true`;
+- `backend_ready_for_signal_v2: true`;
+- gasto V2 contabilizado USD 0.416 bajo cap vigente USD 24;
+- cliente y producción apagados.
+
+Claude completó cuatro grupos V2. `sentiment_emotion` quedó `auto_published`; tres
+quedaron `needs_review`. `platform_source_mix` rechazó tres respuestas con un
+`numeric_ref` no exacto y usó fallback determinístico. Los quince intentos del primer
+prompt rechazado representan un estimado conservador adicional de USD 0.4731; por ello
+la operación completa se mantuvo debajo del presupuesto total aprobado de USD 25.
+
+Los capability gaps permanecen visibles y no se falsearon:
+
+- no hay cinco interpretaciones Claude revisadas;
+- no existe strategic release current;
+- no existe segunda corrida T&B compatible.
+
+Esto habilita el backend para diseñar/consumir Signal V2 con estados parciales. No
+equivale a aprobar los hallazgos T&B con trazabilidad insuficiente ni a un release gate
+productivo completo.
 
 ## Evidencia Que Completa El Goal
 

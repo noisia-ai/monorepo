@@ -10,6 +10,7 @@
     "lint": "echo \"No lint configured for workers yet\"",
     "smoke:signal-pulse:local": "tsx scripts/smoke-signal-pulse-local.ts",
     "data-os:reconcile-sources": "tsx scripts/reconcile-data-os-sources.ts",
+    "signal:v2:interpret-home": "tsx scripts/run-signal-home-interpretations.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx src/workers/*.test.ts"
   },

@@ -28,9 +28,9 @@ export type SignalInterpretationExecutionResult =
       source: "deterministic_fallback";
       interpretation: SignalMetricInterpretationV1;
       attempts: number;
-      input_tokens: 0;
-      output_tokens: 0;
-      cost_usd: 0;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
       fallback_reason: string;
     };
 
@@ -55,39 +55,79 @@ export async function executeSignalInterpretationV1(args: {
     Math.floor(args.max_attempts ?? SIGNAL_INTERPRETATION_MAX_ATTEMPTS)
   ));
   let lastError = "interpretation_provider_failed";
+  let spentCostUsd = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (spentCostUsd + args.estimated_cost_usd > args.budget_cap_usd) {
+      return fallback(
+        args.packet,
+        "remaining_budget_below_estimated_attempt_cost",
+        attempt - 1,
+        spentCostUsd,
+        inputTokens,
+        outputTokens
+      );
+    }
     try {
       const result = await withTimeout(
         args.provider(args.packet),
         args.timeout_ms ?? SIGNAL_INTERPRETATION_TIMEOUT_MS
       );
-      if (!Number.isFinite(result.cost_usd) || result.cost_usd < 0 || result.cost_usd > args.budget_cap_usd) {
-        return fallback(args.packet, "actual_cost_exceeds_budget_cap", attempt);
+      if (!Number.isFinite(result.cost_usd) || result.cost_usd < 0) {
+        return fallback(
+          args.packet,
+          "provider_returned_invalid_cost",
+          attempt,
+          spentCostUsd,
+          inputTokens,
+          outputTokens
+        );
+      }
+      spentCostUsd += result.cost_usd;
+      inputTokens += result.input_tokens;
+      outputTokens += result.output_tokens;
+      if (spentCostUsd > args.budget_cap_usd) {
+        return fallback(
+          args.packet,
+          "actual_cost_exceeds_budget_cap",
+          attempt,
+          args.budget_cap_usd,
+          inputTokens,
+          outputTokens
+        );
       }
       return {
         source: "claude",
         interpretation: validateSignalMetricInterpretationV1(result.interpretation, args.packet),
         attempts: attempt,
-        input_tokens: result.input_tokens,
-        output_tokens: result.output_tokens,
-        cost_usd: result.cost_usd,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cost_usd: spentCostUsd,
         fallback_reason: null
       };
     } catch (error) {
       lastError = safeReason(error);
     }
   }
-  return fallback(args.packet, lastError, attempts);
+  return fallback(args.packet, lastError, attempts, spentCostUsd, inputTokens, outputTokens);
 }
 
-function fallback(packet: SignalMetricPacketV1, reason: string, attempts: number): SignalInterpretationExecutionResult {
+function fallback(
+  packet: SignalMetricPacketV1,
+  reason: string,
+  attempts: number,
+  costUsd = 0,
+  inputTokens = 0,
+  outputTokens = 0
+): SignalInterpretationExecutionResult {
   return {
     source: "deterministic_fallback",
     interpretation: buildDeterministicSignalInterpretationFallbackV1(packet, reason),
     attempts,
-    input_tokens: 0,
-    output_tokens: 0,
-    cost_usd: 0,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cost_usd: costUsd,
     fallback_reason: reason
   };
 }
