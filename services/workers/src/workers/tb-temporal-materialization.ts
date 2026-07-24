@@ -252,7 +252,7 @@ const MATERIALIZE_METRICS_SQL = `
       analysis_scope.period_end,
       snapshot_mention.mention_id,
       COALESCE(mention.resolved_platform, mention.platform) AS platform,
-      COALESCE(batch.entity_kind, mention.mention_type, 'unknown') AS entity_type,
+      COALESCE(batch.entity_kind, batch.mention_type, 'unknown') AS entity_type,
       COALESCE(batch.competitor_id::text, batch.corpus_entity_id::text, batch.entity_label) AS entity_key
     FROM analysis_scope
     JOIN corpus_snapshot_mentions snapshot_mention

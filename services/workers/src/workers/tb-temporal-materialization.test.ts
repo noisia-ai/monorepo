@@ -46,6 +46,8 @@ test("materializes a frozen T&B scope without reading current operational ingest
   assert.match(materialization, /snapshot_mention\.snapshot_id = analysis_scope\.snapshot_id/);
   assert.match(materialization, /dimension_kind = grouped\.dimension_kind/);
   assert.match(materialization, /WHEN 'finding\.share' THEN denominator_count::numeric/);
+  assert.match(materialization, /COALESCE\(batch\.entity_kind, batch\.mention_type, 'unknown'\)/);
+  assert.doesNotMatch(materialization, /mention\.mention_type/);
   assert.ok(queries.some((query) => query.includes("metric.dimensions ->> 'grain' = 'default'")));
   assert.doesNotMatch(materialization, /inclusion_status = 'included'/);
   assert.ok(queries.some((query) => query.includes("comparison_compatibility_state")));

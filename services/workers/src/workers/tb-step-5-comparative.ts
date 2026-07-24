@@ -208,11 +208,10 @@ async function loadFindingEntityPresence(tbAnalysisId: string): Promise<Presence
        JOIN tb_analyses ta_scope
          ON ta_scope.id = $1
         AND ta_scope.snapshot_id = snapshot_mention.snapshot_id
-       WHERE
-         -- Only coded mentions are ever used (the outer query joins on
-         -- tb_mention_codings), so restrict the scan to them. Avoids
-         -- materializing the entire corpus on large studies.
-         AND m.id IN (
+       -- Only coded mentions are ever used (the outer query joins on
+       -- tb_mention_codings), so restrict the scan to them. Avoids
+       -- materializing the entire corpus on large studies.
+       WHERE m.id IN (
            SELECT mention_id FROM tb_mention_codings
            WHERE tb_analysis_id = $1 AND mention_id IS NOT NULL
          )

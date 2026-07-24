@@ -11,6 +11,7 @@ import {
   type AnalysisStudySize,
   resolveAnalysisStudyPlan
 } from "@/lib/analysis/study-size";
+import { computeAnalysisProgress } from "@/lib/analysis/progress";
 import { Icon } from "@/components/ui/Icon";
 import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 
@@ -146,7 +147,10 @@ export function TbAnalysisRunPanel({
   const isRunning = analysis ? !TERMINAL_STATUSES.has(analysis.status) : false;
   const lowReadiness = corpusApproved && assessment?.ready_for_study === false;
   const canStart = corpusApproved && includedCount > 0 && !isRunning && !isStarting && (!lowReadiness || confirmedLowReadiness);
-  const progress = useMemo(() => computeProgress(state), [state]);
+  const progress = useMemo(
+    () => computeAnalysisProgress(state, PIPELINE_STEPS.map((step) => step.id)),
+    [state]
+  );
   const selectedPlan = useMemo(
     () => resolveAnalysisStudyPlan({ corpusMentions: includedCount, requestedSize: studySize }),
     [includedCount, studySize]
@@ -409,19 +413,6 @@ export function TbAnalysisRunPanel({
       </footer>
     </section>
   );
-}
-
-function computeProgress(state: AnalysisState) {
-  if (!state) return 0;
-  if (state.analysis.status === "needs_review" || state.analysis.status.startsWith("approved")) return 100;
-  if (state.analysis.status === "failed" || state.analysis.status === "aborted_preflight") return 100;
-
-  const completed = new Set(state.steps.filter((s) => s.status === "completed" || s.status === "skipped").map((s) => s.step));
-  let count = 1; // corpus approved
-  for (const step of PIPELINE_STEPS.slice(0, -1)) {
-    if (completed.has(step.id)) count += 1;
-  }
-  return Math.max(8, Math.min(96, Math.round((count / PIPELINE_STEPS.length) * 100)));
 }
 
 function nextStepId(state: AnalysisState) {
