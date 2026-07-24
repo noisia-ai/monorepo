@@ -290,6 +290,8 @@ test("analysis artifacts stay transactional, reviewable and revision-bound at pu
   assert.match(structuredEvidenceMigration, /protect_published_analysis_artifact_revision/);
   assert.match(structuredEvidenceMigration, /published_analysis_artifact_immutable/);
   assert.match(backfill, /materializeHistoricalArtifactGraph/);
+  assert.match(backfill, /'accept_analysis',\s+artifact\.review_status,\s+'accepted',\s+'\{\}'::jsonb/);
+  assert.doesNotMatch(backfill, /backfill_existing_approval/);
   assert.match(backfill, /persistPublishedAnalysisArtifacts/);
 });
 

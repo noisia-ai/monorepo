@@ -236,7 +236,7 @@ async function materializeHistoricalArtifactGraph(
        SELECT
          artifact.id,
          NULL,
-         'backfill_existing_approval',
+         'accept_analysis',
          artifact.review_status,
          'accepted',
          '{}'::jsonb,
