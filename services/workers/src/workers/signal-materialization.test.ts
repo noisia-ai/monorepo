@@ -30,4 +30,6 @@ test("Signal materialization is deterministic, bounded and behind the disabled D
   assert.match(materializer, /MATERIALIZATION_WRITE_BATCH_SIZE = 100/);
   assert.match(materializer, /FROM jsonb_to_recordset\(\$1::jsonb\) AS item/);
   assert.doesNotMatch(materializer, /for \(const row of result\.rows\)/);
+  assert.match(materializer, /signal_materialization_plan_failed:\$\{metric\.key\}:\$\{granularity\}:\$\{plan\.predicate\.filters_hash\}/);
+  assert.match(materializer, /'materialization_watermark_hash', \$4::text/);
 });

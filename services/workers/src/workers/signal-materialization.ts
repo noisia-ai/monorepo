@@ -1,4 +1,5 @@
 import type { Job } from "bullmq";
+import type { QueryResult } from "pg";
 
 import {
   buildSignalMetricMaterializationPlanV1,
@@ -259,7 +260,15 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
             filter: plan.predicate.normalized_filter,
             filtersHash: plan.predicate.filters_hash
           });
-          const result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
+          let result: QueryResult<SignalMaterializationRowV1>;
+          try {
+            result = await client.query<SignalMaterializationRowV1>(plan.sql, plan.params);
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new Error(
+              `signal_materialization_plan_failed:${metric.key}:${granularity}:${plan.predicate.filters_hash}:${detail}`
+            );
+          }
           plansExecuted += 1;
           const materializationRows = result.rows.map((row) => {
             const quality = evaluateSignalMetricQualityV1({
@@ -391,7 +400,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         SET scope = scope || jsonb_build_object(
           'materialization_plans_executed', $2::int,
           'materialization_rows_written', $3::int,
-          'materialization_watermark_hash', $4
+          'materialization_watermark_hash', $4::text
         )
         WHERE id = $1::uuid
       `, [job.data.invalidation_id, plansExecuted, rowsWritten, watermarkHash]);
