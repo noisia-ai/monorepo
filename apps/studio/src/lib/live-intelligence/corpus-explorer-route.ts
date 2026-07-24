@@ -120,6 +120,8 @@ export async function handleCorpusExplorerRequest(
           q: filters.q,
           platform: filters.platform,
           finding: filters.finding,
+          lens: filters.lens,
+          signalIntent: filters.signalIntent,
           tag: filters.tag,
           feature: filters.feature,
           entity: filters.entity,

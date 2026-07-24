@@ -5,6 +5,8 @@ export type PublishedCorpusExplorerFilters = {
   q: string;
   platform: string;
   finding: string;
+  lens: string;
+  signalIntent: string;
   tag: string;
   feature: string;
   entity: string;
@@ -49,15 +51,27 @@ function buildSqlParts(args: PublishedCorpusExplorerArgs): SqlParts {
     const param = addValue(filters.platform);
     conditions.push(`COALESCE(NULLIF(pm.resolved_platform, ''), NULLIF(pm.platform, ''), 'unknown') = ${param}`);
   }
+  const findingConditions: string[] = [];
   if (filters.finding) {
     const param = addValue(filters.finding);
+    findingConditions.push(`(f_filter.finding_id = ${param} OR f_filter.id::text = ${param})`);
+  }
+  if (filters.lens) {
+    const param = addValue(filters.lens);
+    findingConditions.push(`f_filter.layer = ${param}`);
+  }
+  if (filters.signalIntent) {
+    const param = addValue(filters.signalIntent);
+    findingConditions.push(`f_filter.polarity = ${param}`);
+  }
+  if (findingConditions.length > 0) {
     conditions.push(`EXISTS (
       SELECT 1
       FROM tb_mention_codings mc_filter
       JOIN tb_findings f_filter ON f_filter.id = mc_filter.finding_id
       WHERE mc_filter.tb_analysis_id = $2::uuid
         AND mc_filter.mention_id = pm.id
-        AND (f_filter.finding_id = ${param} OR f_filter.id::text = ${param})
+        AND ${findingConditions.join("\n        AND ")}
     )`);
   }
   if (filters.tag) {
@@ -67,7 +81,7 @@ function buildSqlParts(args: PublishedCorpusExplorerArgs): SqlParts {
       FROM record_tags rt_filter
       LEFT JOIN taxonomy_terms tt_filter ON tt_filter.id = rt_filter.taxonomy_term_id
       WHERE rt_filter.subject_type = 'mention'
-        AND rt_filter.subject_id = pm.id::text
+        AND rt_filter.subject_id = pm.id
         AND rt_filter.tb_analysis_id = $2::uuid
         AND COALESCE(rt_filter.review_status, 'pending') <> 'rejected'
         AND (
@@ -83,7 +97,7 @@ function buildSqlParts(args: PublishedCorpusExplorerArgs): SqlParts {
       SELECT 1
       FROM record_feature_values rfv_filter
       WHERE rfv_filter.subject_type = 'mention'
-        AND rfv_filter.subject_id = pm.id::text
+        AND rfv_filter.subject_id = pm.id
         AND rfv_filter.tb_analysis_id = $2::uuid
         AND rfv_filter.feature_key = ${param}
     )`);
@@ -94,7 +108,7 @@ function buildSqlParts(args: PublishedCorpusExplorerArgs): SqlParts {
       SELECT 1
       FROM record_entity_links rel_filter
       WHERE rel_filter.subject_type = 'mention'
-        AND rel_filter.subject_id = pm.id::text
+        AND rel_filter.subject_id = pm.id
         AND rel_filter.entity_id::text = ${param}
     )`);
   }
@@ -136,11 +150,16 @@ function buildSqlParts(args: PublishedCorpusExplorerArgs): SqlParts {
 
   return {
     cte: `
-      WITH published_mentions AS (
+      WITH explorer_scope AS (
+        SELECT
+          $1::uuid AS snapshot_id,
+          $2::uuid AS analysis_id
+      ),
+      published_mentions AS (
         SELECT m.*
         FROM corpus_snapshot_mentions csm
+        JOIN explorer_scope scope ON scope.snapshot_id = csm.snapshot_id
         JOIN mentions m ON m.id = csm.mention_id
-        WHERE csm.snapshot_id = $1::uuid
       )
     `,
     where: conditions.length > 0 ? conditions.join(" AND ") : "TRUE",
@@ -163,12 +182,47 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
       ? "fm.published_at DESC"
       : "COALESCE(primary_finding.intensity_score, 0) DESC, fm.published_at DESC";
 
-  const [countResult, rowsResult, platformFacetResult, findingFacetResult, tagFacetResult, featureFacetResult, entityFacetResult] = await Promise.all([
+  const [
+    countResult,
+    summaryResult,
+    rowsResult,
+    platformFacetResult,
+    findingFacetResult,
+    lensFacetResult,
+    tagFacetResult,
+    featureFacetResult,
+    entityFacetResult
+  ] = await Promise.all([
     pool.query<{ total: number }>(
       `
         ${sql.cte}
         SELECT COUNT(*)::int AS total
         FROM published_mentions pm
+        WHERE ${sql.where}
+      `,
+      sql.values
+    ),
+    pool.query<{ protagonist_count: number; finding_count: number; channel_count: number }>(
+      `
+        ${sql.cte}
+        SELECT
+          COUNT(DISTINCT pm.id) FILTER (
+            WHERE EXISTS (
+              SELECT 1
+              FROM tb_finding_citations fc_summary
+              JOIN tb_findings f_summary ON f_summary.id = fc_summary.finding_id
+              WHERE f_summary.tb_analysis_id = $2::uuid
+                AND fc_summary.mention_id = pm.id
+                AND fc_summary.is_protagonist = true
+            )
+          )::int AS protagonist_count,
+          COUNT(DISTINCT f_summary.finding_id)::int AS finding_count,
+          COUNT(DISTINCT COALESCE(NULLIF(pm.resolved_platform, ''), NULLIF(pm.platform, ''), 'unknown'))::int AS channel_count
+        FROM published_mentions pm
+        LEFT JOIN tb_mention_codings mc_summary
+          ON mc_summary.mention_id = pm.id
+          AND mc_summary.tb_analysis_id = $2::uuid
+        LEFT JOIN tb_findings f_summary ON f_summary.id = mc_summary.finding_id
         WHERE ${sql.where}
       `,
       sql.values
@@ -277,7 +331,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
           LEFT JOIN taxonomy_terms tt ON tt.id = rt.taxonomy_term_id
           LEFT JOIN taxonomies tx ON tx.id = tt.taxonomy_id
           WHERE rt.subject_type = 'mention'
-            AND rt.subject_id = fm.id::text
+            AND rt.subject_id = fm.id
             AND rt.tb_analysis_id = $2::uuid
             AND COALESCE(rt.review_status, 'pending') <> 'rejected'
         ) governed_tags ON true
@@ -292,7 +346,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
           ) AS items
           FROM record_feature_values rfv
           WHERE rfv.subject_type = 'mention'
-            AND rfv.subject_id = fm.id::text
+            AND rfv.subject_id = fm.id
             AND rfv.tb_analysis_id = $2::uuid
         ) governed_features ON true
         LEFT JOIN LATERAL (
@@ -308,7 +362,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
           FROM record_entity_links rel
           JOIN intelligence_entities ie ON ie.id = rel.entity_id
           WHERE rel.subject_type = 'mention'
-            AND rel.subject_id = fm.id::text
+            AND rel.subject_id = fm.id
         ) governed_entities ON true
         ORDER BY ${orderBy}, fm.id
         LIMIT ${limitParam} OFFSET ${offsetParam}
@@ -343,6 +397,25 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
       `,
       sql.values
     ),
+    pool.query<{ lens_slug: string; signal_intent: string; count: number }>(
+      `
+        ${sql.cte}
+        SELECT
+          COALESCE(NULLIF(f.layer, ''), 'unmapped') AS lens_slug,
+          COALESCE(NULLIF(f.polarity, ''), 'unmapped') AS signal_intent,
+          COUNT(DISTINCT pm.id)::int AS count
+        FROM published_mentions pm
+        JOIN tb_mention_codings mc
+          ON mc.mention_id = pm.id
+          AND mc.tb_analysis_id = $2::uuid
+        JOIN tb_findings f ON f.id = mc.finding_id
+        WHERE ${sql.where}
+        GROUP BY 1, 2
+        ORDER BY count DESC, lens_slug, signal_intent
+        LIMIT 80
+      `,
+      sql.values
+    ),
     pool.query<{ id: string; taxonomy_key: string; term_key: string; label: string; count: number }>(
       `
         ${sql.cte}
@@ -355,7 +428,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
         FROM published_mentions pm
         JOIN record_tags rt
           ON rt.subject_type = 'mention'
-          AND rt.subject_id = pm.id::text
+          AND rt.subject_id = pm.id
           AND rt.tb_analysis_id = $2::uuid
           AND COALESCE(rt.review_status, 'pending') <> 'rejected'
         LEFT JOIN taxonomy_terms tt ON tt.id = rt.taxonomy_term_id
@@ -374,7 +447,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
         FROM published_mentions pm
         JOIN record_feature_values rfv
           ON rfv.subject_type = 'mention'
-          AND rfv.subject_id = pm.id::text
+          AND rfv.subject_id = pm.id
           AND rfv.tb_analysis_id = $2::uuid
         WHERE ${sql.where}
         GROUP BY rfv.feature_key
@@ -392,7 +465,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
           ie.entity_type,
           COUNT(DISTINCT pm.id)::int AS count
         FROM published_mentions pm
-        JOIN record_entity_links rel ON rel.subject_type = 'mention' AND rel.subject_id = pm.id::text
+        JOIN record_entity_links rel ON rel.subject_type = 'mention' AND rel.subject_id = pm.id
         JOIN intelligence_entities ie ON ie.id = rel.entity_id
         WHERE ${sql.where}
         GROUP BY 1, 2, 3
@@ -403,15 +476,22 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
     )
   ]);
 
+  const summary = summaryResult.rows[0];
+
   return {
     total: countResult.rows[0]?.total ?? 0,
     page: args.filters.page,
     limit: args.filters.limit,
     rows: rowsResult.rows,
+    summary: {
+      protagonists: summary?.protagonist_count ?? 0,
+      findings: summary?.finding_count ?? 0,
+      channels: summary?.channel_count ?? 0
+    },
     facets: {
       platforms: platformFacetResult.rows,
       findings: findingFacetResult.rows,
-      lenses: [],
+      lenses: lensFacetResult.rows,
       entities: entityFacetResult.rows,
       signals: [],
       tags: tagFacetResult.rows,
@@ -422,7 +502,7 @@ export async function getPublishedCorpusExplorer(args: PublishedCorpusExplorerAr
       population: "published_snapshot",
       snapshot_id: args.snapshotId,
       analysis_id: args.analysisId,
-      dimensions: ["platform", "finding", "tag", "feature", "entity", "evidence_role", "date"]
+      dimensions: ["platform", "finding", "layer", "polarity", "tag", "feature", "entity", "evidence_role", "date"]
     },
     dataPolicy: {
       source: "relational_data_os",

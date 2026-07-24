@@ -49,6 +49,12 @@ type CorpusFacets = {
   features: Array<{ feature_key: string; count: number }>;
 };
 
+type CorpusSummary = {
+  protagonists: number;
+  findings: number;
+  channels: number;
+};
+
 const corpusCopy = {
   en: {
     title: "Corpus explorer",
@@ -241,6 +247,7 @@ export function SignalCorpusExplorer({
   const [serverRows, setServerRows] = useState<CorpusMention[] | null>(null);
   const [serverTotal, setServerTotal] = useState<number | null>(null);
   const [serverFacets, setServerFacets] = useState<CorpusFacets | null>(null);
+  const [serverSummary, setServerSummary] = useState<CorpusSummary | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [serverError, setServerError] = useState(strictRelational && !outputId);
 
@@ -287,13 +294,16 @@ export function SignalCorpusExplorer({
         setServerRows(Array.isArray(payload.rows) ? payload.rows.map(normalizeMention).filter((mention: CorpusMention) => mention.text) : []);
         setServerTotal(Number(payload.total ?? 0));
         setServerFacets(normalizeFacets(payload.facets));
+        setServerSummary(normalizeSummary(payload.summary));
         setServerError(false);
       })
       .catch((err) => {
         if (err instanceof Error && err.name === "AbortError") return;
+        console.error("Signal corpus explorer request failed", err);
         setServerRows(strictRelational ? [] : null);
         setServerTotal(strictRelational ? 0 : null);
         setServerFacets(null);
+        setServerSummary(null);
         setServerError(true);
       })
       .finally(() => setIsLoading(false));
@@ -382,6 +392,11 @@ export function SignalCorpusExplorer({
     : summarizePlatforms(filtered);
   const totalRows = serverTotal ?? rows.length;
   const pageCount = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const summary = serverSummary ?? {
+    protagonists: filtered.filter((mention) => mention.isProtagonist).length,
+    findings: new Set(filtered.map((mention) => mention.findingId).filter(Boolean)).size,
+    channels: new Set(filtered.map((mention) => mention.platform).filter(Boolean)).size
+  };
 
   function resetFilters() {
     setQuery("");
@@ -426,9 +441,9 @@ export function SignalCorpusExplorer({
           </span>
         </div>
         <div className="signal-corpus-summary">
-          <Metric label={copy.protagonists} value={String(filtered.filter((mention) => mention.isProtagonist).length)} />
-          <Metric label={copy.findings} value={String(new Set(filtered.map((mention) => mention.findingId).filter(Boolean)).size)} />
-          <Metric label={copy.channels} value={String(new Set(filtered.map((mention) => mention.platform).filter(Boolean)).size)} />
+          <Metric label={copy.protagonists} value={String(summary.protagonists)} />
+          <Metric label={copy.findings} value={String(summary.findings)} />
+          <Metric label={copy.channels} value={String(summary.channels)} />
         </div>
       </header>
 
@@ -491,14 +506,18 @@ export function SignalCorpusExplorer({
             {intents.map((item) => <option key={item} value={item}>{prettifyKey(item)}</option>)}
           </SelectBox>
         ) : null}
-        <SelectBox label={copy.entity} value={entity} onChange={setEntity}>
-          <option value="">{copy.allEntities}</option>
-          {entities.map((item) => <option key={item.entity_id} value={item.entity_id}>{item.entity_label || item.entity_id}</option>)}
-        </SelectBox>
-        <SelectBox label={copy.signal} value={signal} onChange={setSignal}>
-          <option value="">{copy.allSignals}</option>
-          {signals.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-        </SelectBox>
+        {entities.length > 0 || entity ? (
+          <SelectBox label={copy.entity} value={entity} onChange={setEntity}>
+            <option value="">{copy.allEntities}</option>
+            {entities.map((item) => <option key={item.entity_id} value={item.entity_id}>{item.entity_label || item.entity_id}</option>)}
+          </SelectBox>
+        ) : null}
+        {signals.length > 0 || signal ? (
+          <SelectBox label={copy.signal} value={signal} onChange={setSignal}>
+            <option value="">{copy.allSignals}</option>
+            {signals.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+          </SelectBox>
+        ) : null}
         {!isSignalPulse ? (
           <SelectBox label={copy.taxonomy} value={tag} onChange={setTag}>
             <option value="">{copy.allTaxonomy}</option>
@@ -731,6 +750,15 @@ function normalizeFacets(input: unknown): CorpusFacets {
       feature_key: stringValue(item.feature_key),
       count: numberValue(item.count)
     }))
+  };
+}
+
+function normalizeSummary(input: unknown): CorpusSummary {
+  const value = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  return {
+    protagonists: numberValue(value.protagonists),
+    findings: numberValue(value.findings),
+    channels: numberValue(value.channels)
   };
 }
 
