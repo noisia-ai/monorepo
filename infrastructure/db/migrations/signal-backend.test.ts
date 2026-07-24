@@ -284,8 +284,11 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(explain, /EXPLAIN \(\$\{analyze/);
   assert.match(explain, /representativeVolume/);
   assert.match(shadow, /five_metric_groups_materialized/);
+  assert.match(shadow, /\(group\.metrics\?\.length \?\? 0\) > 0/);
   assert.match(shadow, /five_claude_interpretations_reviewed/);
   assert.match(shadow, /legacy_coverage_reconciled/);
+  assert.match(shadow, /analysis\.comparison_compatibility_state = 'compatible'/);
+  assert.doesNotMatch(shadow, /comparison\.compatible/);
   assert.match(shadow, /client_flags_off/);
   assert.match(gate, /backend_ready_for_signal_v2/);
   assert.match(gate, /serving-smoke\.json/);

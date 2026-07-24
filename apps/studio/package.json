@@ -24,6 +24,7 @@
     "@noisia/query-engine": "workspace:*",
     "@noisia/types": "workspace:*",
     "bullmq": "^5.77.1",
+    "dotenv": "^16.6.1",
     "drizzle-orm": "^0.44.0",
     "ioredis": "^5.10.1",
     "next": "^15.5.15",

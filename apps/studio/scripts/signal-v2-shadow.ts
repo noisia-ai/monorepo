@@ -144,10 +144,12 @@ async function main() {
       pool.query<{ count: number }>(
         `SELECT COUNT(*)::integer AS count
          FROM tb_finding_temporal_comparisons comparison
+         JOIN tb_analyses analysis
+           ON analysis.id = comparison.tb_analysis_id
+          AND analysis.comparison_compatibility_state = 'compatible'
          JOIN signal_workspace_releases release
            ON release.tb_analysis_id = comparison.tb_analysis_id
-         WHERE release.workspace_id = $1::uuid
-           AND comparison.compatible = true`,
+         WHERE release.workspace_id = $1::uuid`,
         [workspaceId]
       )
     ]);
@@ -159,7 +161,7 @@ async function main() {
     const materializedGroups = groups.filter((group) =>
       group.key
       && EXPECTED_METRIC_GROUPS.has(group.key)
-      && group.metrics?.some((metric) => metric.state !== "pending" && metric.state !== "not_available")
+      && (group.metrics?.length ?? 0) > 0
     );
     const interpretations = internalFacade.interpretations as Array<{
       metric_group_key?: string;

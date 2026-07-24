@@ -38,6 +38,9 @@ importers:
       bullmq:
         specifier: ^5.77.1
         version: 5.77.1
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.44.0
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.21.0)
