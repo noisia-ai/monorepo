@@ -17,7 +17,17 @@ const MIGRATIONS_TO_APPLY = [
   "0042_data_os_static_catalog_semantics.sql",
   "0043_data_os_asset_records_metric_catalog.sql",
   "0044_query_pack_entity_identity.sql",
-  "0045_signal_serving_entities.sql"
+  "0045_signal_serving_entities.sql",
+  "0046_analysis_artifact_evidence_graph.sql",
+  "0047_signal_workspace_identity.sql",
+  "0048_signal_recurring_refresh.sql",
+  "0049_signal_metric_catalog_v1.sql",
+  "0050_signal_metric_materializations_v1.sql",
+  "0051_signal_backend_foundation_hardening.sql",
+  "0052_signal_metric_interpretations_v1.sql",
+  "0053_tb_structured_evidence_review.sql",
+  "0054_tb_temporal_strategic_releases.sql",
+  "0055_signal_v2_front_ready_indexes.sql"
 ];
 
 async function applyMigration(client: pg.Client, migrationPath: string) {
@@ -35,7 +45,7 @@ async function applyMigration(client: pg.Client, migrationPath: string) {
 async function main() {
   const databaseUrl = requireEnv("DATABASE_URL");
   requireSafeDatabaseWriteTarget(databaseUrl, {
-    operation: "apply Data OS DB migrations 0035-0045",
+    operation: "apply Data OS DB migrations 0035-0055",
     allowRemoteEnv: "NOISIA_DB_APPLY_EXISTING_ALLOW_REMOTE"
   });
 

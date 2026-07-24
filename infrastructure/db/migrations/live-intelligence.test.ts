@@ -544,6 +544,17 @@ test("local migration smoke uses a pgvector-enabled disposable database", async 
   assert.match(applyExisting, /0043_data_os_asset_records_metric_catalog\.sql/);
   assert.match(applyExisting, /0044_query_pack_entity_identity\.sql/);
   assert.match(applyExisting, /0045_signal_serving_entities\.sql/);
+  assert.match(applyExisting, /0046_analysis_artifact_evidence_graph\.sql/);
+  assert.match(applyExisting, /0047_signal_workspace_identity\.sql/);
+  assert.match(applyExisting, /0048_signal_recurring_refresh\.sql/);
+  assert.match(applyExisting, /0049_signal_metric_catalog_v1\.sql/);
+  assert.match(applyExisting, /0050_signal_metric_materializations_v1\.sql/);
+  assert.match(applyExisting, /0051_signal_backend_foundation_hardening\.sql/);
+  assert.match(applyExisting, /0052_signal_metric_interpretations_v1\.sql/);
+  assert.match(applyExisting, /0053_tb_structured_evidence_review\.sql/);
+  assert.match(applyExisting, /0054_tb_temporal_strategic_releases\.sql/);
+  assert.match(applyExisting, /0055_signal_v2_front_ready_indexes\.sql/);
+  assert.match(applyExisting, /apply Data OS DB migrations 0035-0055/);
   assert.doesNotMatch(applyExisting, /0034_signal_pulse_foundation\.sql/);
   assert.match(applyExisting, /NOISIA_DB_APPLY_EXISTING_ALLOW_REMOTE/);
   assert.match(smokeLocal, /run\("corepack", \["pnpm", "exec", "tsx", "scripts\/smoke-migrations\.ts"\]/);
