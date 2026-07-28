@@ -88,6 +88,7 @@ export type SignalFixtureMentionV1 = {
   id: string;
   published_at: string;
   included?: boolean;
+  text?: string;
   dimensions: Partial<Record<SignalDimensionV1, string[]>>;
   engagement?: number | null;
 };
@@ -147,6 +148,12 @@ function buildSignalMentionPredicateFromValidatedFilterV1(
     `(m.published_at AT TIME ZONE ${parameter(filter.timezone)})::date >= ${parameter(filter.date_range.start, "::date")}`,
     `(m.published_at AT TIME ZONE ${parameter(filter.timezone)})::date <= ${parameter(filter.date_range.end, "::date")}`
   ];
+  if (filter.text_search) {
+    conditions.push(`to_tsvector(
+      'simple',
+      concat_ws(' ', COALESCE(m.title, ''), COALESCE(m.text_clean, ''), COALESCE(m.text_snippet, ''))
+    ) @@ websearch_to_tsquery('simple', ${parameter(filter.text_search)})`);
+  }
 
   for (const [dimension, values] of Object.entries(filter.dimensions) as Array<[SignalDimensionV1, string[]]>) {
     if (!values.length) continue;
@@ -1193,6 +1200,10 @@ function fixtureMatchesFilter(mention: SignalFixtureMentionV1, filter: SignalFil
   if (mention.included === false) return false;
   const date = mention.published_at.slice(0, 10);
   if (date < filter.date_range.start || date > filter.date_range.end) return false;
+  if (
+    filter.text_search
+    && !(mention.text ?? "").normalize("NFC").toLocaleLowerCase("en-US").includes(filter.text_search)
+  ) return false;
   return (Object.entries(filter.dimensions) as Array<[SignalDimensionV1, string[]]>).every(([dimension, expected]) => {
     const actual = new Set((mention.dimensions[dimension] ?? []).map((value) => value.normalize("NFC").trim().toLocaleLowerCase("en-US")));
     return expected.some((value) => actual.has(value));

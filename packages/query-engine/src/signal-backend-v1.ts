@@ -43,6 +43,7 @@ export type SignalFilterV1 = {
   timezone: string;
   granularity: SignalGranularityV1;
   dimensions: SignalDimensionValuesV1;
+  text_search?: string;
 };
 
 export type SignalWorkspaceLocatorV1 = {
@@ -308,13 +309,17 @@ export function normalizeSignalFilterV1(input: unknown): SignalFilterV1 {
   const timezone = canonicalizeSignalTimezone(value.timezone ?? value.tz ?? "UTC");
   const granularity = normalizeGranularity(value.granularity ?? value.grain ?? "day");
   const dimensions = normalizeDimensions(value.dimensions ?? value.dimension_values ?? {});
+  const textSearch = normalizeTextSearch(
+    value.text_search ?? value.textSearch ?? value.search ?? value.query ?? value.q
+  );
 
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     date_range: dateRange,
     timezone,
     granularity,
-    dimensions
+    dimensions,
+    ...(textSearch ? { text_search: textSearch } : {})
   };
 }
 
@@ -326,10 +331,12 @@ export function parseSignalFilterQueryParamsV1(
   const end = firstParam(params, ["end", "to", "date_to", "dateRange.end", "date_range.end"]);
   const timezone = firstParam(params, ["timezone", "tz"]);
   const granularity = firstParam(params, ["granularity", "grain"]);
+  const textSearch = firstParam(params, ["text_search", "textSearch", "search", "query", "q"]);
   const controlKeys = new Set([
     "start", "from", "date_from", "dateRange.start", "date_range.start",
     "end", "to", "date_to", "dateRange.end", "date_range.end",
-    "timezone", "tz", "granularity", "grain", "contract_version"
+    "timezone", "tz", "granularity", "grain", "contract_version",
+    "text_search", "textSearch", "search", "query", "q"
   ]);
   const dimensions: Record<string, string[]> = {};
 
@@ -349,7 +356,8 @@ export function parseSignalFilterQueryParamsV1(
     date_range: { start, end },
     timezone,
     granularity,
-    dimensions
+    dimensions,
+    text_search: textSearch
   });
 }
 
@@ -387,7 +395,8 @@ export function canonicalSignalFilterJsonV1(filterInput: unknown): string {
     date_range: { start: filter.date_range.start, end: filter.date_range.end },
     timezone: filter.timezone,
     granularity: filter.granularity,
-    dimensions: dimensionEntries
+    dimensions: dimensionEntries,
+    ...(filter.text_search ? { text_search: filter.text_search } : {})
   });
 }
 
@@ -402,6 +411,7 @@ export function canonicalSignalFilterQueryV1(filterInput: unknown): string {
   params.append("end", filter.date_range.end);
   params.append("timezone", filter.timezone);
   params.append("granularity", filter.granularity);
+  if (filter.text_search) params.append("text_search", filter.text_search);
   for (const dimension of SIGNAL_DIMENSIONS) {
     for (const value of filter.dimensions[dimension] ?? []) {
       params.append(`dimension.${dimension}`, value);
@@ -691,6 +701,31 @@ function normalizedDimensionValue(input: unknown, field: string): string {
     .trim()
     .replace(/\s+/gu, " ")
     .toLocaleLowerCase("en-US");
+}
+
+function normalizeTextSearch(input: unknown): string | undefined {
+  if (input == null || input === "") return undefined;
+  if (typeof input !== "string") {
+    throw invalidFilter("text_search must be a string.", { field: "text_search" });
+  }
+  const value = input
+    .normalize("NFC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("en-US");
+  if (!value) return undefined;
+  if (value.length > 200) {
+    throw invalidFilter("text_search cannot exceed 200 characters.", {
+      field: "text_search",
+      max_length: 200
+    });
+  }
+  if (value.includes("\u0000")) {
+    throw invalidFilter("text_search contains an unsupported character.", {
+      field: "text_search"
+    });
+  }
+  return value;
 }
 
 function normalizeGranularity(input: unknown): SignalGranularityV1 {

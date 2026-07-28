@@ -67,6 +67,18 @@ test("workspace APIs use the canonical filter parser and ignore only route contr
   );
 });
 
+test("workspace filter parsing keeps canonical text search in the shared hash", () => {
+  const left = parseSignalApiFilterV1(new URLSearchParams(
+    "start=2026-06-01&end=2026-06-30&q=Entrega%20%20R%C3%81PIDA&narratives=la-entrega-genera-confianza"
+  ), "America/Mexico_City");
+  const right = parseSignalApiFilterV1(new URLSearchParams(
+    "dimension.narrative=la-entrega-genera-confianza&search=entrega+r%C3%A1pida&end=2026-06-30&start=2026-06-01"
+  ), "America/Mexico_City");
+  assert.deepEqual(left, right);
+  assert.equal(signalFiltersHashV1(left), signalFiltersHashV1(right));
+  assert.equal(left.text_search, "entrega rápida");
+});
+
 test("workspace responses emit private ETags and honor conditional GET", async () => {
   const request = new Request("https://studio.test/api/data-os/signal/workspace/bootstrap");
   const first = signalJsonResponse(request, { ok: true }, { etagSeed: "watermark", state: "fresh" });
@@ -272,4 +284,19 @@ test("TN promotion reconciles profiles, excludes pending tags and invalidates ap
   assert.match(review, /taxonomy_review_changed/);
   assert.match(review, /signalTaxonomyCoverageV1/);
   assert.doesNotMatch(review, /published_outputs|chart_aggregates/);
+});
+
+test("TN facets use exact active workspace profiles and keep narrative canonical", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "src/lib/data-os/signal-workspace-serving.ts"),
+    "utf8"
+  );
+  assert.match(source, /JOIN signal_taxonomy_profiles profile/);
+  assert.match(source, /profile\.workspace_id = \$\{workspaceParameter\}/);
+  assert.match(source, /profile\.status = 'active'/);
+  assert.match(source, /SELECT filtered\.id, profile\.kind/);
+  assert.match(source, /"narrative\.volume": "narrative"/);
+  assert.doesNotMatch(source, /LIKE '%topic%'/);
+  assert.doesNotMatch(source, /LIKE '%narrative%'/);
+  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
 });

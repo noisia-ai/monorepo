@@ -60,7 +60,7 @@ const NATURAL_BREAKDOWN_DIMENSION: Partial<Record<string, SignalDimensionV1>> = 
   "platform.share": "platform",
   "source_type.share": "source_type",
   "topic.volume": "topic",
-  "narrative.volume": "taxonomy",
+  "narrative.volume": "narrative",
   "governed_entity.volume": "entity"
 };
 
@@ -279,6 +279,8 @@ export async function loadSignalFacetsV1(args: {
   const featureDimensions = ["signal", "signal_lifecycle", "audience", "demographic", "journey_stage", "campaign", "product"];
   params.push(featureDimensions);
   const featureParameter = `$${params.length}::text[]`;
+  params.push(args.workspace.id);
+  const workspaceParameter = `$${params.length}::uuid`;
   const sourceTypeSelect = args.isInternalUser
     ? "UNION ALL SELECT id, 'source_type', lower(source_system) FROM filtered WHERE source_system IS NOT NULL"
     : "";
@@ -307,18 +309,17 @@ export async function loadSignalFacetsV1(args: {
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       WHERE tag.review_status = 'approved'
       UNION ALL
-      SELECT filtered.id,
-        CASE
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%topic%' THEN 'topic'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%emotion%' THEN 'emotion'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%trigger%' THEN 'trigger'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%barrier%' THEN 'barrier'
-          ELSE 'taxonomy'
-        END,
+      SELECT filtered.id, profile.kind,
         lower(COALESCE(tag.value, term.label))
       FROM filtered JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = filtered.id
-      JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
-      JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
+      JOIN signal_taxonomy_profiles profile
+        ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.workspace_id = ${workspaceParameter}
+       AND profile.status = 'active'
+      JOIN taxonomy_terms term
+        ON term.id = tag.taxonomy_term_id
+       AND term.taxonomy_id = profile.taxonomy_id
+       AND term.status = 'active'
       WHERE tag.review_status = 'approved'
       UNION ALL
       SELECT filtered.id, feature.feature_key, lower(trim(both '"' from feature.feature_value::text))

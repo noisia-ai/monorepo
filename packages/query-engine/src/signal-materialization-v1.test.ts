@@ -79,6 +79,25 @@ test("planner parameterizes dimension values and is stable for equivalent filter
   assert.doesNotMatch(left.sql, /\bX\b/u);
 });
 
+test("text search is parameterized and shared by aggregate, facets and drill-down predicates", () => {
+  const filter = { ...baseFilter, text_search: "Entrega rápida" };
+  const materialization = buildSignalMetricMaterializationPlanV1({
+    metric_key: "conversation.volume",
+    filter,
+    study_corpus_ids: [corpusId]
+  });
+  const drillDown = buildSignalMentionDrillDownPlanV1({
+    filter,
+    study_corpus_ids: [corpusId]
+  });
+
+  assert.equal(materialization.predicate.fingerprint, drillDown.predicate.fingerprint);
+  assert.equal(materialization.predicate.filters_hash, drillDown.predicate.filters_hash);
+  assert.match(materialization.predicate.sql, /websearch_to_tsquery\('simple', \$\d+\)/u);
+  assert.ok(materialization.predicate.params.includes("entrega rápida"));
+  assert.doesNotMatch(materialization.predicate.sql, /Entrega rápida/u);
+});
+
 test("topic and narrative filters bind exact active workspace profiles", () => {
   const narrative = buildSignalMentionPredicateV1({
     ...baseFilter,
