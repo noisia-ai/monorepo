@@ -719,7 +719,7 @@ async function completeRun(
     SET status = $2,
       completed_at = CASE WHEN $2 IN ('completed', 'skipped') THEN now() ELSE NULL END,
       heartbeat_at = now(),
-      result_summary = $3::jsonb,
+      result_summary = result_summary || $3::jsonb,
       error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
     WHERE id = $1::uuid AND run_type = 'taxonomy_enrichment'
   `, [

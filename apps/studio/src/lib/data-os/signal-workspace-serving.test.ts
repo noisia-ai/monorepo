@@ -464,6 +464,11 @@ test("TN serving routes reconcile canonical materializations, approved evidence 
   assert.match(service, /JOIN signal_taxonomy_profiles profile/);
   assert.match(service, /profile\.workspace_id =/);
   assert.match(service, /profile\.status = 'active'/);
+  assert.match(service, /profile\.approved_at AS activated_at/);
+  assert.doesNotMatch(
+    service,
+    /profile\.context_hash,\s+profile\.activated_at/
+  );
   assert.match(service, /cooccurrence_not_causality/);
   assert.match(worker, /'mention'.*'record_tag'/s);
   assert.match(worker, /'signal_taxonomy_profile'.*'record_tag'/s);

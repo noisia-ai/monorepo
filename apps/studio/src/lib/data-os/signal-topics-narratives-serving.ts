@@ -546,7 +546,7 @@ async function loadActiveProfiles(workspaceId: string) {
     SELECT profile.id::text AS profile_id,
       profile.taxonomy_id::text, profile.rule_set_id::text,
       profile.model_version_id::text, profile.kind, profile.version,
-      profile.context_hash, profile.activated_at,
+      profile.context_hash, profile.approved_at AS activated_at,
       count(term.id)::int AS term_count
     FROM signal_taxonomy_profiles profile
     LEFT JOIN taxonomy_terms term

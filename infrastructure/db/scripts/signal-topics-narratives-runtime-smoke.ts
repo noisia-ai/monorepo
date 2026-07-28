@@ -14,7 +14,7 @@ import {
   requireSafeDatabaseWriteTarget
 } from "../seeds/connection";
 
-const FIXTURE_SIZE = 5_000;
+const FIXTURE_SIZE = 10_050;
 
 type Fixture = {
   organizationId: string;
@@ -62,12 +62,14 @@ async function main() {
     for (const kind of ["topic", "narrative"] as const) {
       results.push(await reconcileKind(client, fixture, filter, kind));
     }
+    const activation = await verifyActivationLifecycle(client, fixture);
     console.log(JSON.stringify({
       ok: true,
       contract_version: "signal-topics-narratives-v1",
       fixture_mentions: FIXTURE_SIZE,
       postgres_runtime: true,
       paid_provider_invoked: false,
+      activation,
       results
     }, null, 2));
     await client.query("ROLLBACK");
@@ -293,6 +295,8 @@ async function seedProfile(client: pg.Client, args: {
   reviewerId: string;
   kind: SignalTaxonomyKindV1;
   terms: Array<[string, string]>;
+  version?: number;
+  status?: "active" | "draft";
 }) {
   const taxonomyId = randomUUID();
   const ruleSetId = randomUUID();
@@ -343,8 +347,9 @@ async function seedProfile(client: pg.Client, args: {
       context_hash, rule_set_id, model_version_id,
       approved_by_user_id, approved_at, metadata
     ) VALUES (
-      $1::uuid, $2::uuid, $3::uuid, $4, 1, 'active',
-      $5, $6::uuid, $7::uuid, $8::uuid, now(),
+      $1::uuid, $2::uuid, $3::uuid, $4, $5, $6,
+      $7, $8::uuid, $9::uuid, $10::uuid,
+      CASE WHEN $10::uuid IS NULL THEN NULL ELSE now() END,
       '{"fixture":true}'::jsonb
     )
   `, [
@@ -352,10 +357,12 @@ async function seedProfile(client: pg.Client, args: {
     args.workspaceId,
     taxonomyId,
     args.kind,
+    args.version ?? 1,
+    args.status ?? "active",
     `sha256:${"2".repeat(64)}`,
     ruleSetId,
     modelVersionId,
-    args.reviewerId
+    (args.status ?? "active") === "active" ? args.reviewerId : null
   ]);
   const terms: Record<string, string> = {};
   for (const [termKey, label] of args.terms) {
@@ -366,18 +373,115 @@ async function seedProfile(client: pg.Client, args: {
       ) VALUES (
         $1::uuid, $2::uuid, $3, $4, $5,
         '{"examples":["runtime fixture"],"exclusions":[]}'::jsonb,
-        'active'
+        $6
       )
     `, [
       termId,
       taxonomyId,
       termKey,
       label,
-      `${args.kind} runtime definition`
+      `${args.kind} runtime definition`,
+      (args.status ?? "active") === "active" ? "active" : "candidate"
     ]);
     terms[termKey] = termId;
   }
   return { id: profileId, modelVersionId, terms };
+}
+
+async function verifyActivationLifecycle(client: pg.Client, fixture: Fixture) {
+  const previousProfileId = fixture.profiles.topic.id;
+  const next = await seedProfile(client, {
+    workspaceId: fixture.workspaceId,
+    reviewerId: fixture.reviewerId,
+    kind: "topic",
+    version: 2,
+    status: "draft",
+    terms: [["runtime_v2", "Runtime V2"]]
+  });
+  await client.query(
+    `SELECT activate_signal_taxonomy_profile($1::uuid, $2::uuid)`,
+    [next.id, fixture.reviewerId]
+  );
+  const during = await client.query<{
+    active: number;
+    activating: number;
+    old_active: boolean;
+  }>(`
+    SELECT
+      count(*) FILTER (WHERE status = 'active')::int AS active,
+      count(*) FILTER (WHERE status = 'activating')::int AS activating,
+      bool_or(id = $2::uuid AND status = 'active') AS old_active
+    FROM signal_taxonomy_profiles
+    WHERE workspace_id = $1::uuid AND kind = 'topic'
+  `, [fixture.workspaceId, previousProfileId]);
+
+  await client.query("SAVEPOINT activation_incomplete");
+  let incompleteFailedClosed = false;
+  try {
+    await client.query(
+      `SELECT complete_signal_taxonomy_profile_activation($1::uuid)`,
+      [next.id]
+    );
+  } catch {
+    incompleteFailedClosed = true;
+    await client.query("ROLLBACK TO SAVEPOINT activation_incomplete");
+  }
+  await client.query("RELEASE SAVEPOINT activation_incomplete");
+
+  await client.query(`
+    INSERT INTO record_feature_values (
+      organization_id, brand_id, study_corpus_id,
+      subject_type, subject_id, feature_key, feature_value,
+      value_type, confidence, source, model_version_id
+    )
+    SELECT $1::uuid, $2::uuid, $3::uuid,
+      'mention', mention.id,
+      'signal_taxonomy_classification:' || $4::uuid::text,
+      '{"processed":true}'::jsonb,
+      'object', 'high',
+      'signal_taxonomy_profile:' || $4::uuid::text,
+      $5::uuid
+    FROM mentions mention
+    WHERE mention.study_corpus_id = $3::uuid
+  `, [
+    fixture.organizationId,
+    fixture.brandId,
+    fixture.corpusId,
+    next.id,
+    next.modelVersionId
+  ]);
+  await client.query(
+    `SELECT complete_signal_taxonomy_profile_activation($1::uuid)`,
+    [next.id]
+  );
+  const after = await client.query<{
+    active: number;
+    activating: number;
+    old_retired: boolean;
+    new_active: boolean;
+  }>(`
+    SELECT
+      count(*) FILTER (WHERE status = 'active')::int AS active,
+      count(*) FILTER (WHERE status = 'activating')::int AS activating,
+      bool_or(id = $2::uuid AND status = 'retired') AS old_retired,
+      bool_or(id = $3::uuid AND status = 'active') AS new_active
+    FROM signal_taxonomy_profiles
+    WHERE workspace_id = $1::uuid AND kind = 'topic'
+  `, [fixture.workspaceId, previousProfileId, next.id]);
+  return {
+    during_backfill: during.rows[0],
+    incomplete_failed_closed: incompleteFailedClosed,
+    after_cutover: after.rows[0],
+    no_empty_window:
+      during.rows[0]?.old_active === true
+      && during.rows[0]?.active === 1
+      && during.rows[0]?.activating === 1,
+    single_client_safe_profile:
+      after.rows[0]?.active === 1
+      && after.rows[0]?.activating === 0
+      && after.rows[0]?.old_retired === true
+      && after.rows[0]?.new_active === true
+  };
 }
 
 async function insertTags(client: pg.Client, args: {
@@ -393,7 +497,8 @@ async function insertTags(client: pg.Client, args: {
       organization_id, brand_id, study_corpus_id,
       subject_type, subject_id, taxonomy_term_id,
       value, score, confidence, evidence, source,
-      model_version_id, review_status, signal_taxonomy_profile_id
+      model_version_id, review_status, signal_taxonomy_profile_id,
+      approval_source, approved_at
     )
     SELECT $1::uuid, $2::uuid, $3::uuid,
       'mention', mention.id, $4::uuid,
@@ -407,7 +512,9 @@ async function insertTags(client: pg.Client, args: {
         ))
       ),
       'signal_taxonomy_profile:' || $6::uuid::text,
-      $7::uuid, $8, $6::uuid
+      $7::uuid, $8, $6::uuid,
+      CASE WHEN $8 = 'approved' THEN 'human' END,
+      CASE WHEN $8 = 'approved' THEN now() END
     FROM mentions mention
     WHERE mention.study_corpus_id = $3::uuid
       AND ${args.predicate}

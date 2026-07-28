@@ -38,6 +38,7 @@ test("taxonomy worker classifies incrementally into canonical tags with governed
   assert.match(source, /pending_mentions: pendingMentions/);
   assert.match(source, /approval_policy_version/);
   assert.match(source, /complete_signal_taxonomy_profile_activation/);
+  assert.match(source, /result_summary = result_summary \|\| \$3::jsonb/);
   assert.doesNotMatch(source, /LIMIT 10000/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates|tb_analyses/);
 });
