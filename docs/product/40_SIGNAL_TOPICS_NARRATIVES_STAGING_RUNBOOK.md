@@ -81,6 +81,19 @@ NOISIA_SIGNAL_TAXONOMY_HUMAN_APPROVED=false
 
 y el backfill apply debe fallar.
 
+Para una aprobación operator-only sin sesión web, usar el wrapper protegido. Resuelve
+exactamente un founder interno activo; nunca acepta un reviewer UUID por argumento:
+
+```bash
+export NOISIA_SIGNAL_TAXONOMY_REVIEW_ALLOW_REMOTE=true
+export NOISIA_SIGNAL_TAXONOMY_HUMAN_APPROVED=true
+corepack pnpm --filter @noisia/studio signal:review-topics-narratives -- \
+  --apply \
+  --notes "<DECISION_HUMANA>" \
+  --corpus-id 3d32472d-9720-4fae-b6d2-a73152c5f0a4 \
+  --historical-output-id aaafa040-ca2f-49a6-afd0-e872b6706476
+```
+
 ## 3. Apply y workers
 
 Sólo después de cap y aprobación:
@@ -102,6 +115,26 @@ El comando persiste dos runs idempotentes en el outbox Postgres y no llama al pr
 Workers aprobados reconcilian queued/failed runs, hacen batches, heartbeat, retry y
 dead-letter. Una nueva importación debe crear sólo enrichment incremental y sus
 invalidaciones; no debe ejecutar T&B.
+
+El runner operator-only permite consumir únicamente los runs gobernados de este
+corpus/output, sin iniciar workers de otras colas:
+
+```bash
+export NOISIA_SIGNAL_TAXONOMY_WORKER_ALLOW_REMOTE=true
+export NOISIA_SIGNAL_TAXONOMY_WORKER_APPROVED=true
+export NOISIA_DATA_OS_WORKER_ENABLED=true
+export NOISIA_SIGNAL_TAXONOMY_ENRICHMENT_ENABLED=true
+export NOISIA_SIGNAL_TAXONOMY_LLM_ENABLED=true
+export NOISIA_SIGNAL_TAXONOMY_PAID_BATCH_ATTEMPTS=1
+corepack pnpm --filter @noisia/workers signal:run-topics-narratives-backfill -- \
+  --corpus-id 3d32472d-9720-4fae-b6d2-a73152c5f0a4 \
+  --historical-output-id aaafa040-ca2f-49a6-afd0-e872b6706476
+```
+
+Una clasificación válida queda `pending`; aprobar el perfil no aprueba sus tags.
+Antes de materializar evidencia client-safe, un reviewer humano debe inspeccionar las
+asignaciones y registrar eventos accept/reject/needs_review. No promover en bloque por
+confianza ni convertir pending/rejected en métricas.
 
 ## 4. Evidence pack obligatorio
 

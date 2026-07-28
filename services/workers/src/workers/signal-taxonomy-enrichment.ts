@@ -39,6 +39,7 @@ type TaxonomyRunScope = {
   organization_id: string;
   brand_id: string | null;
   budget_cap_usd: string | null;
+  actual_cost_usd: string | null;
 };
 
 type TaxonomyTerm = {
@@ -126,7 +127,13 @@ export async function signalTaxonomyEnrichmentJob(
       });
     }
     const budgetCapUsd = Number(scope.budget_cap_usd ?? job.data.budget_cap_usd);
-    if (!Number.isFinite(budgetCapUsd) || budgetCapUsd <= 0) {
+    const priorCostUsd = Number(scope.actual_cost_usd ?? 0);
+    const remainingBudgetUsd = budgetCapUsd - priorCostUsd;
+    if (
+      !Number.isFinite(budgetCapUsd)
+      || !Number.isFinite(priorCostUsd)
+      || remainingBudgetUsd <= 0
+    ) {
       throw new Error("signal_taxonomy_budget_cap_required");
     }
 
@@ -138,20 +145,22 @@ export async function signalTaxonomyEnrichmentJob(
       throw new Error("signal_taxonomy_profile_has_no_active_terms");
     }
     if (mentions.length === 0) {
+      const accepted = await emitClassificationInvalidation(scope);
       return completeRun(scope.run_id, "completed", {
         classified_mentions: 0,
         tag_assertions: 0,
-        reason: "no_pending_mentions"
+        reason: "no_pending_mentions",
+        invalidation_id: accepted?.id ?? null
       });
     }
 
-    const batches = chunk(mentions, SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE);
+    const batches = chunk(mentions, readBatchSize());
     const model = process.env.NOISIA_SIGNAL_TAXONOMY_MODEL
       ?? process.env.ANTHROPIC_MODEL_DEFAULT
       ?? "claude-sonnet-4-6";
     const result = await executeSignalTaxonomyBatchesV1({
       batches,
-      budget_cap_usd: budgetCapUsd,
+      budget_cap_usd: remainingBudgetUsd,
       estimate: (batch) => estimateBatchCost(batch, terms, model),
       classify: (batch) => classifyBatch({
         scope,
@@ -171,7 +180,8 @@ export async function signalTaxonomyEnrichmentJob(
           SET heartbeat_at = now(), updated_at = now()
           WHERE id = $1::uuid AND status = 'running'
         `, [scope.run_id]);
-      }
+      },
+      batch_attempts: readPaidBatchAttempts()
     });
     const accepted = await emitClassificationInvalidation(scope);
     return completeRun(scope.run_id, "completed", {
@@ -186,7 +196,7 @@ export async function signalTaxonomyEnrichmentJob(
       SET status = $2, completed_at = CASE WHEN $2 = 'dead_letter' THEN now() ELSE NULL END,
         heartbeat_at = now(), attempt = GREATEST(attempt, $3),
         error_code = $4,
-        error_summary = jsonb_build_object('message', $5),
+        error_summary = jsonb_build_object('message', $5::text),
         updated_at = now()
       WHERE id = $1::uuid
         AND run_type = 'taxonomy_enrichment'
@@ -227,12 +237,13 @@ async function loadAndStartRun(job: Job<SignalTaxonomyEnrichmentJobDataV1>) {
     FROM signal_taxonomy_profiles profile
     JOIN tagging_model_versions model ON model.id = profile.model_version_id
     JOIN signal_workspaces workspace ON workspace.id = profile.workspace_id
-    JOIN study_corpora corpus ON corpus.id = run.study_corpus_id
+    CROSS JOIN study_corpora corpus
     WHERE run.id = $1::uuid
       AND run.run_type = 'taxonomy_enrichment'
       AND run.workspace_id = $4::uuid
       AND run.study_corpus_id = $5::uuid
       AND run.taxonomy_profile_id = $6::uuid
+      AND corpus.id = run.study_corpus_id
       AND profile.id = run.taxonomy_profile_id
     RETURNING run.id::text AS run_id, run.status AS run_status,
       run.workspace_id::text, run.study_corpus_id::text,
@@ -241,7 +252,7 @@ async function loadAndStartRun(job: Job<SignalTaxonomyEnrichmentJobDataV1>) {
       corpus.corpus_revision AS current_corpus_revision,
       model.id::text AS model_version_id, model.version AS model_version,
       workspace.organization_id::text, workspace.brand_id::text,
-      run.budget_cap_usd::text
+      run.budget_cap_usd::text, run.actual_cost_usd::text
   `, [
     job.data.run_id,
     job.id ?? null,
@@ -466,7 +477,7 @@ async function persistBatch(args: {
               ('mention', $1::uuid, 'record_tag', $2::uuid,
                 'classified_as', jsonb_build_object(
                   'taxonomy_profile_id', $3::uuid,
-                  'review_status', $6
+                  'review_status', $6::text
                 )),
               ('signal_taxonomy_profile', $3::uuid, 'record_tag', $2::uuid,
                 'governs', '{}'::jsonb),
@@ -522,6 +533,26 @@ async function persistBatch(args: {
         args.scope.model_version_id
       ]);
     }
+    const usage = await client.query(`
+      UPDATE signal_refresh_runs
+      SET actual_cost_usd = COALESCE(actual_cost_usd, 0) + $2,
+        input_tokens = COALESCE(input_tokens, 0) + $3,
+        output_tokens = COALESCE(output_tokens, 0) + $4,
+        heartbeat_at = now(),
+        updated_at = now()
+      WHERE id = $1::uuid
+        AND run_type = 'taxonomy_enrichment'
+        AND COALESCE(actual_cost_usd, 0) + $2 <= budget_cap_usd
+      RETURNING id
+    `, [
+      args.scope.run_id,
+      args.execution.cost_usd,
+      args.execution.input_tokens,
+      args.execution.output_tokens
+    ]);
+    if (!usage.rows[0]) {
+      throw new Error("signal_taxonomy_persisted_cost_exceeds_budget_cap");
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -567,7 +598,7 @@ async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
       affected.affected_from, affected.affected_through,
       jsonb_build_object(
         'taxonomy_profile_id', $5::uuid,
-        'taxonomy_kind', $6,
+        'taxonomy_kind', $6::text,
         'corpus_revision', $7::int
       )
     FROM watermark CROSS JOIN affected
@@ -590,22 +621,18 @@ async function completeRun(
   runId: string,
   status: "completed" | "skipped",
   summary: Record<string, unknown>,
-  usage?: { cost_usd: number; input_tokens: number; output_tokens: number }
+  _usage?: { cost_usd: number; input_tokens: number; output_tokens: number }
 ) {
   await pool.query(`
     UPDATE signal_refresh_runs
     SET status = $2, completed_at = now(), heartbeat_at = now(),
       result_summary = $3::jsonb,
-      actual_cost_usd = $4, input_tokens = $5, output_tokens = $6,
       error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
     WHERE id = $1::uuid AND run_type = 'taxonomy_enrichment'
   `, [
     runId,
     status,
-    JSON.stringify(summary),
-    usage?.cost_usd ?? 0,
-    usage?.input_tokens ?? 0,
-    usage?.output_tokens ?? 0
+    JSON.stringify(summary)
   ]);
   return { run_id: runId, status, ...summary };
 }
@@ -682,6 +709,23 @@ function chunk<T>(values: T[], size: number) {
 function finiteNonnegative(value: string | undefined, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function readBatchSize() {
+  const value = Number(process.env.NOISIA_SIGNAL_TAXONOMY_BATCH_SIZE ?? 20);
+  if (!Number.isFinite(value)) return 20;
+  return Math.max(
+    1,
+    Math.min(SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE, Math.floor(value))
+  );
+}
+
+function readPaidBatchAttempts() {
+  const value = Number(
+    process.env.NOISIA_SIGNAL_TAXONOMY_PAID_BATCH_ATTEMPTS ?? 1
+  );
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(2, Math.floor(value)));
 }
 
 function sha256(value: string) {

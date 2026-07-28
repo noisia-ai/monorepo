@@ -12,6 +12,7 @@
     "data-os:reconcile-sources": "tsx scripts/reconcile-data-os-sources.ts",
     "signal:v2:interpret-home": "tsx scripts/run-signal-home-interpretations.ts",
     "signal:discover-topics-narratives": "tsx scripts/discover-signal-topics-narratives.ts",
+    "signal:run-topics-narratives-backfill": "tsx scripts/run-signal-taxonomy-backfill.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx src/workers/*.test.ts"
   },

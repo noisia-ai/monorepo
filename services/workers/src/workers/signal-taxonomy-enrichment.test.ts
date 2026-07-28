@@ -23,6 +23,13 @@ test("taxonomy worker classifies incrementally into canonical tags with governed
   assert.match(source, /'tagging_model_version'.*'record_tag'/s);
   assert.match(source, /inclusion_status = 'included'/);
   assert.match(source, /signal_data_invalidations/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_PAID_BATCH_ATTEMPTS/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_BATCH_SIZE/);
+  assert.match(
+    source,
+    /actual_cost_usd = COALESCE\(actual_cost_usd, 0\) \+ \$2/
+  );
+  assert.match(source, /remainingBudgetUsd/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates|tb_analyses/);
 });
 

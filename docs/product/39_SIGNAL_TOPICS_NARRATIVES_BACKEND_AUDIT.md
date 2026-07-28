@@ -1,7 +1,8 @@
 # 39 · Signal Topics & Narratives Backend Audit
 
-> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika en
-> revisión humana, 2026-07-28.
+> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika con
+> perfiles aprobados y clasificación completa, pendiente revisión humana de tags,
+> 2026-07-28.
 > Alcance: inventario verificable, implementación local y runtime disposable; no
 > afirma evidencia staging/preview.
 
@@ -132,6 +133,25 @@ siendo los stores canónicos.
   contabilizados contra el cap de USD 10.
 - La ejecución se detiene en el gate humano: los términos, definiciones, ejemplos,
   exclusiones y statements deben revisarse antes de activación y backfill.
+
+## Addendum TN-08 clasificación
+
+- El reviewer interno gobernado aprobó los perfiles topic v1 y narrative v1, con
+  timestamp y notes persistidos. Ambos quedaron activos sin activar clientes.
+- El backfill resolvió 723 menciones incluidas y creó dos runs durables,
+  idempotentes y separados de T&B.
+- Los workers procesaron 723/723 menciones por perfil. Topic produjo 1,155 tags
+  pending y 77 rejected; narrative produjo 1,184 pending y 99 rejected.
+- El gasto de clasificación fue USD 3.558508 para topic y USD 3.469908 para
+  narrative. Sumado al discovery y las reservas conservadoras, el gasto total
+  contabilizado es USD 8.259545 de un cap explícito de USD 10.
+- Un fallo previo a persistencia se reservó conservadoramente dentro del cap. El
+  worker ahora acumula costo/tokens en la misma transacción de cada batch y resta
+  gasto previo antes de autorizar el siguiente batch.
+- Ambos runs terminaron `completed` y emitieron invalidaciones selectivas.
+- Ningún tag se aprobó automáticamente. Hasta revisión humana separada de las
+  asignaciones, métricas y evidence client-safe permanecen bloqueadas; TN-08 y el
+  backend-ready gate no se declaran completos.
 
 El procedimiento operativo y los formatos de evidencia están en
 `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.

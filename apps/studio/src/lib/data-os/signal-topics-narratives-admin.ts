@@ -125,18 +125,52 @@ export async function reviewSignalTaxonomyProfileV1(args: {
       );
     }
   }
-  const reviewed = args.action === "approve"
-    ? await pool.query(`
+  if (args.action === "approve") {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const reviewed = await client.query(`
         SELECT id::text, workspace_id::text, taxonomy_id::text,
           kind, version, status, context_hash, rule_set_id::text,
           model_version_id::text, approved_by_user_id::text, approved_at
         FROM activate_signal_taxonomy_profile($1::uuid, $2::uuid)
-      `, [args.profile_id, args.reviewer_user_id])
-    : await pool.query(`
-        SELECT id::text, workspace_id::text, taxonomy_id::text,
-          kind, version, status, context_hash, rule_set_id::text,
-          model_version_id::text, approved_by_user_id::text, approved_at
-        FROM reject_signal_taxonomy_profile($1::uuid, $2::uuid, $3)
-      `, [args.profile_id, args.reviewer_user_id, args.notes ?? ""]);
+      `, [
+        args.profile_id,
+        args.reviewer_user_id
+      ]);
+      const activated = reviewed.rows[0];
+      if (!activated) throw new Error("Taxonomy activation returned no profile.");
+      await client.query(`
+        UPDATE signal_taxonomy_profiles
+        SET metadata = metadata || jsonb_build_object(
+          'profile_review',
+          jsonb_build_object(
+            'action', 'approve',
+            'reviewer_user_id', $2::uuid,
+            'notes', NULLIF($3::text, ''),
+            'reviewed_at', approved_at
+          )
+        )
+        WHERE id = $1::uuid
+      `, [
+        args.profile_id,
+        args.reviewer_user_id,
+        args.notes?.trim() ?? ""
+      ]);
+      await client.query("COMMIT");
+      return activated;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  const reviewed = await pool.query(`
+    SELECT id::text, workspace_id::text, taxonomy_id::text,
+      kind, version, status, context_hash, rule_set_id::text,
+      model_version_id::text, approved_by_user_id::text, approved_at
+    FROM reject_signal_taxonomy_profile($1::uuid, $2::uuid, $3)
+  `, [args.profile_id, args.reviewer_user_id, args.notes ?? ""]);
   return reviewed.rows[0] ?? null;
 }

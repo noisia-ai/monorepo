@@ -384,6 +384,8 @@ test("TN taxonomy admin uses governed context, atomic activation and canonical s
   assert.match(store, /INSERT INTO tagging_model_versions/);
   assert.match(store, /INSERT INTO signal_taxonomy_profiles/);
   assert.match(source, /activate_signal_taxonomy_profile/);
+  assert.match(source, /profile_review/);
+  assert.match(source, /reviewed_at/);
   assert.match(source, /reject_signal_taxonomy_profile/);
   assert.match(store, /INSERT INTO lineage_edges/);
   assert.doesNotMatch(`${source}\n${store}`, /published_outputs|chart_aggregates/);
