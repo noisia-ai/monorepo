@@ -334,6 +334,26 @@ test("TN-01 adds one versioned active topic or narrative profile without paralle
   assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS (topic_tags|narrative_tags|signal_enrichment_runs)/);
 });
 
+test("TN-08 applies migration 0057 through a guarded, targeted and verified remote path", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/apply-signal-topics-narratives-migration.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /0057_signal_topics_narratives_profiles\.sql/);
+  assert.match(source, /requireSafeDatabaseWriteTarget/);
+  assert.match(source, /NOISIA_DB_APPLY_SIGNAL_TAXONOMY_ALLOW_REMOTE/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_SCHEMA_APPLY_APPROVED/);
+  assert.match(source, /pg_advisory_xact_lock/);
+  assert.match(source, /BEGIN/);
+  assert.match(source, /ROLLBACK/);
+  assert.match(source, /signal_taxonomy_profiles/);
+  assert.match(source, /uq_record_tags_signal_profile_assignment/);
+  assert.doesNotMatch(source, /drizzle-kit generate/);
+});
+
 test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation and EXPLAIN ANALYZE", async () => {
   const source = await readFile(
     resolve(

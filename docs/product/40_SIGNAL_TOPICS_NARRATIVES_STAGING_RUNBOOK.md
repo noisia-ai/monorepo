@@ -24,6 +24,19 @@ corepack pnpm --filter @noisia/studio signal:backfill-topics-narratives -- \
   --historical-output-id aaafa040-ca2f-49a6-afd0-e872b6706476
 ```
 
+Si el dry-run reporta que `signal_taxonomy_profiles` no existe, aplicar únicamente la
+migración forward-only TN mediante el wrapper protegido; no usar
+`drizzle-kit generate` ni reejecutar indiscriminadamente migraciones anteriores:
+
+```bash
+export NOISIA_DB_APPLY_SIGNAL_TAXONOMY_ALLOW_REMOTE=true
+export NOISIA_SIGNAL_TAXONOMY_SCHEMA_APPLY_APPROVED=true
+corepack pnpm --filter @noisia/db db:apply:signal-topics-narratives
+```
+
+El wrapper toma un advisory lock, ejecuta `0057` en una transacción y verifica tabla,
+columna, funciones e índices antes de reportar éxito. No imprime la URL ni IDs.
+
 El dry-run debe resolver exactamente un workspace operational, el periodo real, una
 revisión de corpus y los perfiles `topic`/`narrative`. Si falta un perfil activo,
 volver al endpoint interno de proposals/review; no crear rows manuales para saltar
@@ -37,6 +50,26 @@ en la tarea y configure las flags cerradas por defecto. Las propuestas deben dis
 - topic: sujeto concreto de conversación;
 - narrative: afirmación, historia o marco;
 - nunca trigger, barrier, decision layer, observed signal, finding o recommendation.
+
+El comando operator-only resuelve el workspace desde corpus/output, recupera contexto
+versionado con Voyage, aplica el cap antes de cada llamada y persiste únicamente drafts:
+
+```bash
+export NOISIA_REMOTE_DATABASE_TARGET=staging
+export NOISIA_SIGNAL_TAXONOMY_DISCOVERY_ALLOW_REMOTE=true
+export NOISIA_SIGNAL_TAXONOMY_DISCOVERY_APPROVED=true
+export NOISIA_SIGNAL_TAXONOMY_DISCOVERY_ENABLED=true
+export NOISIA_SIGNAL_TAXONOMY_LLM_ENABLED=true
+
+corepack pnpm --filter @noisia/workers signal:discover-topics-narratives -- \
+  --budget-cap-usd <CAP_USD_APROBADO> \
+  --corpus-id 3d32472d-9720-4fae-b6d2-a73152c5f0a4 \
+  --historical-output-id aaafa040-ca2f-49a6-afd0-e872b6706476
+```
+
+Si un intento pagado falla después de llegar al proveedor, reservar su costo de forma
+conservadora mediante `--prior-cost-usd` antes de reintentar. Un rerun con drafts ya
+persistidos no llama proveedores: devuelve `mode=existing_drafts`.
 
 Un reviewer interno inspecciona terms, definitions, examples, exclusions y statement.
 Debe aprobar ambos perfiles mediante los endpoints de review protegidos. Registrar

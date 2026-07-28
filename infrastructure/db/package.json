@@ -12,6 +12,7 @@
     "db:smoke:migrations": "tsx scripts/smoke-migrations.ts",
     "db:smoke:local": "tsx scripts/smoke-local.ts",
     "db:apply:existing": "tsx scripts/apply-existing-migrations.ts",
+    "db:apply:signal-topics-narratives": "tsx scripts/apply-signal-topics-narratives-migration.ts",
     "data-os:analyze": "tsx scripts/data-os-analyze.ts",
     "data-os:backfill": "tsx scripts/data-os-backfill.ts",
     "data-os:candidates": "tsx scripts/data-os-candidates.ts",

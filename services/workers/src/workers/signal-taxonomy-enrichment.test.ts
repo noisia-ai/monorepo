@@ -48,3 +48,22 @@ test("the Data OS queue dispatches taxonomy enrichment independently of T&B", as
   assert.match(source, /signalTaxonomyEnrichmentJob/);
   assert.doesNotMatch(source, /tbAnalysisWorker|tb-step/);
 });
+
+test("taxonomy discovery is budgeted, target-guarded, versioned and human-reviewed", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/discover-signal-topics-narratives.ts"),
+    "utf8"
+  );
+  assert.match(source, /requireSafeDatabaseWriteTarget/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_DISCOVERY_ALLOW_REMOTE/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_DISCOVERY_APPROVED/);
+  assert.match(source, /--budget-cap-usd/);
+  assert.match(source, /embedTexts/);
+  assert.match(source, /generateObject/);
+  assert.match(source, /createSignalTaxonomyDraftStoreV1/);
+  assert.match(source, /human_approval_required: true/);
+  assert.doesNotMatch(
+    source,
+    /published_outputs\.payload|chart_aggregates|tb_analyses/
+  );
+});

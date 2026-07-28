@@ -1,7 +1,7 @@
 # 39 · Signal Topics & Narratives Backend Audit
 
-> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika bloqueada,
-> 2026-07-27.
+> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika en
+> revisión humana, 2026-07-28.
 > Alcance: inventario verificable, implementación local y runtime disposable; no
 > afirma evidencia staging/preview.
 
@@ -117,6 +117,21 @@ siendo los stores canónicos.
 - TN-08 exige todavía target staging/preview, cap USD explícito y aprobación humana de
   las dos propuestas. Hasta entonces el Goal y el backend-ready gate permanecen
   incompletos.
+
+## Addendum TN-08 staging
+
+- El operador confirmó el target staging/preview y un cap total de USD 10.
+- `0057_signal_topics_narratives_profiles.sql` se aplicó mediante un wrapper remoto
+  específico, transaccional y verificado; no se ejecutó `drizzle-kit generate`.
+- El corpus/output de Laika resolvió exactamente un workspace operational gobernado y
+  una revisión de corpus real.
+- Voyage recuperó contexto versionado y Claude generó dos perfiles `draft` v1: 15
+  topics y 15 narratives. Ninguno está activo ni client-safe todavía.
+- El costo conocido del intento exitoso fue USD 0.231129. Se reservó USD 1 adicional
+  de forma conservadora por un intento previo no parseable, dejando USD 1.231129
+  contabilizados contra el cap de USD 10.
+- La ejecución se detiene en el gate humano: los términos, definiciones, ejemplos,
+  exclusiones y statements deben revisarse antes de activación y backfill.
 
 El procedimiento operativo y los formatos de evidencia están en
 `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.

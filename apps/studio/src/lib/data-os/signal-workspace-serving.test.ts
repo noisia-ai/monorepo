@@ -368,19 +368,25 @@ test("TN taxonomy admin uses governed context, atomic activation and canonical s
     resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-admin.ts"),
     "utf8"
   );
-  assert.match(source, /FROM brand_os_objectives/);
-  assert.match(source, /FROM knowledge_assertions/);
-  assert.match(source, /mention\.inclusion_status = 'included'/);
-  assert.match(source, /signalTaxonomyContextHashV1/);
-  assert.match(source, /INSERT INTO taxonomies/);
-  assert.match(source, /INSERT INTO taxonomy_terms/);
-  assert.match(source, /INSERT INTO tagging_rule_sets/);
-  assert.match(source, /INSERT INTO tagging_model_versions/);
-  assert.match(source, /INSERT INTO signal_taxonomy_profiles/);
+  const store = await readFile(
+    resolve(process.cwd(), "../../infrastructure/db/signal-taxonomy-profile.ts"),
+    "utf8"
+  );
+  assert.match(source, /loadSignalTaxonomyDiscoveryContextStoreV1/);
+  assert.match(source, /createSignalTaxonomyDraftStoreV1/);
+  assert.match(store, /FROM brand_os_objectives/);
+  assert.match(store, /FROM knowledge_assertions/);
+  assert.match(store, /mention\.inclusion_status = 'included'/);
+  assert.match(store, /signalTaxonomyContextHashV1/);
+  assert.match(store, /INSERT INTO taxonomies/);
+  assert.match(store, /INSERT INTO taxonomy_terms/);
+  assert.match(store, /INSERT INTO tagging_rule_sets/);
+  assert.match(store, /INSERT INTO tagging_model_versions/);
+  assert.match(store, /INSERT INTO signal_taxonomy_profiles/);
   assert.match(source, /activate_signal_taxonomy_profile/);
   assert.match(source, /reject_signal_taxonomy_profile/);
-  assert.match(source, /INSERT INTO lineage_edges/);
-  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+  assert.match(store, /INSERT INTO lineage_edges/);
+  assert.doesNotMatch(`${source}\n${store}`, /published_outputs|chart_aggregates/);
 });
 
 test("TN promotion reconciles profiles, excludes pending tags and invalidates approved review changes", async () => {
