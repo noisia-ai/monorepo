@@ -231,3 +231,23 @@ test("workspace routes use authZ and canonical stores without published payload,
   assert.match(fixtureSource, /SignalTimeSeriesV1/);
   assert.match(fixtureSource, /SignalBreakdownV1/);
 });
+
+test("TN taxonomy admin uses governed context, atomic activation and canonical stores", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-admin.ts"),
+    "utf8"
+  );
+  assert.match(source, /FROM brand_os_objectives/);
+  assert.match(source, /FROM knowledge_assertions/);
+  assert.match(source, /mention\.inclusion_status = 'included'/);
+  assert.match(source, /signalTaxonomyContextHashV1/);
+  assert.match(source, /INSERT INTO taxonomies/);
+  assert.match(source, /INSERT INTO taxonomy_terms/);
+  assert.match(source, /INSERT INTO tagging_rule_sets/);
+  assert.match(source, /INSERT INTO tagging_model_versions/);
+  assert.match(source, /INSERT INTO signal_taxonomy_profiles/);
+  assert.match(source, /activate_signal_taxonomy_profile/);
+  assert.match(source, /reject_signal_taxonomy_profile/);
+  assert.match(source, /INSERT INTO lineage_edges/);
+  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+});
