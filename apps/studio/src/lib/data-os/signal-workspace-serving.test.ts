@@ -449,3 +449,20 @@ test("TN serving routes reconcile canonical materializations, approved evidence 
   assert.match(worker, /INSERT INTO lineage_edges/);
   assert.doesNotMatch(service, /published_outputs|chart_aggregates|raw_metadata/);
 });
+
+test("Laika taxonomy backfill resolves governed scope and requires human and budget approvals", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/backfill-signal-topics-narratives.ts"),
+    "utf8"
+  );
+  assert.match(source, /output\.study_corpus_id = corpus\.id/);
+  assert.match(source, /membership\.role = 'operational'/);
+  assert.match(source, /active_operational_memberships !== 1/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_HUMAN_APPROVED/);
+  assert.match(source, /--budget-cap-usd is required for --apply/);
+  assert.match(source, /signal-taxonomy-backfill-v1/);
+  assert.match(source, /ON CONFLICT \(idempotency_key\) DO UPDATE/);
+  assert.match(source, /paid_provider_invoked: false/);
+  assert.doesNotMatch(source, /output\.payload/);
+  assert.doesNotMatch(source, /chart_aggregates/);
+});
