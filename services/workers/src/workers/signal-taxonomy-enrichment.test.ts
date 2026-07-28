@@ -30,6 +30,15 @@ test("taxonomy worker classifies incrementally into canonical tags with governed
     /actual_cost_usd = COALESCE\(actual_cost_usd, 0\) \+ \$2/
   );
   assert.match(source, /remainingBudgetUsd/);
+  assert.match(source, /completeRun\(scope\.run_id, "partial"/);
+  assert.match(source, /completeRun\(scope\.run_id, "blocked"/);
+  assert.match(source, /loadPendingMentionPage/);
+  assert.match(source, /ORDER BY mention\.published_at NULLS LAST, mention\.id/);
+  assert.match(source, /LIMIT \$4/);
+  assert.match(source, /pending_mentions: pendingMentions/);
+  assert.match(source, /approval_policy_version/);
+  assert.match(source, /complete_signal_taxonomy_profile_activation/);
+  assert.doesNotMatch(source, /LIMIT 10000/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates|tb_analyses/);
 });
 

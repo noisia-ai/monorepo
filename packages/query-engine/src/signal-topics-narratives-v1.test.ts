@@ -135,10 +135,22 @@ test("coverage treats reviewed unclassified mentions as processed without invent
   assert.deepEqual(coverage.limitations, []);
 });
 
-test("acceptance keeps qualifying tags pending for human review and rejects weak assignments", () => {
+test("acceptance autoapproves only high-confidence governed evidence", () => {
   assert.equal(signalTaxonomyAssignmentDispositionV1({
     term_key: "pet_health",
     score: 0.9,
+    confidence: "high",
+    evidence: [{ quote: "salud digestiva", start: 0, end: 16 }]
+  }), "approved");
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 0.99,
+    confidence: "medium",
+    evidence: [{ quote: "salud digestiva", start: 0, end: 16 }]
+  }), "pending");
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 0.89,
     confidence: "high",
     evidence: [{ quote: "salud digestiva", start: 0, end: 16 }]
   }), "pending");

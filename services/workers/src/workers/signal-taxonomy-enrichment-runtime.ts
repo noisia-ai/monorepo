@@ -36,6 +36,32 @@ export function buildSignalTaxonomyEnrichmentOptions(jobId: string): JobsOptions
   };
 }
 
+export async function drainSignalTaxonomyPagesV1<T>(args: {
+  page_size: number;
+  load_page: (limit: number) => Promise<T[]>;
+  process_page: (
+    page: T[]
+  ) => Promise<{ state: "completed" | "partial"; processed: number }>;
+}) {
+  let processed = 0;
+  let pages = 0;
+  while (true) {
+    const page = await args.load_page(args.page_size);
+    if (page.length === 0) {
+      return { state: "completed" as const, processed, pages };
+    }
+    pages += 1;
+    const result = await args.process_page(page);
+    if (result.processed < 0 || result.processed > page.length) {
+      throw new Error("signal_taxonomy_page_progress_invalid");
+    }
+    processed += result.processed;
+    if (result.state === "partial") {
+      return { state: "partial" as const, processed, pages };
+    }
+  }
+}
+
 export async function executeSignalTaxonomyBatchesV1<TBatch>(args: {
   batches: TBatch[];
   budget_cap_usd: number;

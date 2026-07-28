@@ -57,6 +57,7 @@ type RecoverableTaxonomyRun = {
   input_corpus_revision: number;
   budget_cap_usd: string;
   attempt: number;
+  continuation: number;
 };
 
 export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>) {
@@ -538,8 +539,22 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
               $7, $8, jsonb_build_object('invalidation_id', $9::uuid)
             )
             ON CONFLICT (idempotency_key) DO UPDATE
-              SET result_summary = signal_refresh_runs.result_summary
-                || EXCLUDED.result_summary
+              SET budget_cap_usd = GREATEST(
+                    COALESCE(signal_refresh_runs.budget_cap_usd, 0),
+                    EXCLUDED.budget_cap_usd
+                  ),
+                  status = CASE
+                    WHEN signal_refresh_runs.status IN ('blocked', 'failed')
+                      THEN 'queued'
+                    ELSE signal_refresh_runs.status
+                  END,
+                  completed_at = CASE
+                    WHEN signal_refresh_runs.status IN ('blocked', 'failed')
+                      THEN NULL
+                    ELSE signal_refresh_runs.completed_at
+                  END,
+                  result_summary = signal_refresh_runs.result_summary
+                    || EXCLUDED.result_summary
             RETURNING id::text
           `, [
             invalidation.workspace_id,
@@ -630,14 +645,18 @@ async function reconcileTaxonomyEnrichmentRuns(
     SELECT run.id::text, run.workspace_id::text,
       run.study_corpus_id::text, run.taxonomy_profile_id::text,
       profile.kind, run.input_corpus_revision,
-      run.budget_cap_usd::text, run.attempt
+      run.budget_cap_usd::text, run.attempt,
+      COALESCE((run.result_summary->>'continuation')::int, 0)
+        AS continuation
     FROM signal_refresh_runs run
     JOIN signal_taxonomy_profiles profile
       ON profile.id = run.taxonomy_profile_id
     WHERE run.run_type = 'taxonomy_enrichment'
-      AND run.status IN ('queued', 'failed')
-      AND run.attempt < 3
-      AND profile.status = 'active'
+      AND (
+        run.status = 'queued'
+        OR (run.status = 'failed' AND run.attempt < 3)
+      )
+      AND profile.status IN ('active', 'activating')
     ORDER BY run.created_at, run.id
     LIMIT 100
   `);
@@ -653,7 +672,8 @@ async function reconcileTaxonomyEnrichmentRuns(
       corpus_revision: run.input_corpus_revision,
       budget_cap_usd: Number(run.budget_cap_usd)
     };
-    const jobId = `signal-taxonomy-${run.id}-a${run.attempt}`;
+    const jobId =
+      `signal-taxonomy-${run.id}-c${run.continuation}-a${run.attempt}`;
     try {
       const queued = await queue.add(
         SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME,

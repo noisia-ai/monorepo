@@ -354,6 +354,23 @@ test("TN-08 applies migration 0057 through a guarded, targeted and verified remo
   assert.doesNotMatch(source, /drizzle-kit generate/);
 });
 
+test("TN operational hardening persists recoverable runs, policy provenance and safe activation", async () => {
+  const migration = await readFile(
+    resolve(
+      process.cwd(),
+      "migrations/0058_signal_taxonomy_operational_hardening.sql"
+    ),
+    "utf8"
+  );
+  assert.match(migration, /'partial', 'blocked'/);
+  assert.match(migration, /approval_source IN \('human', 'policy'\)/);
+  assert.match(migration, /approval_policy_version/);
+  assert.match(migration, /status = 'activating'/);
+  assert.match(migration, /complete_signal_taxonomy_profile_activation/);
+  assert.match(migration, /Activating profile backfill is incomplete/);
+  assert.doesNotMatch(migration, /DROP TABLE|DELETE FROM/);
+});
+
 test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation and EXPLAIN ANALYZE", async () => {
   const source = await readFile(
     resolve(

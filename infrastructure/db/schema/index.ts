@@ -408,11 +408,11 @@ export const signalTaxonomyProfiles = pgTable(
   (table) => [
     check("signal_taxonomy_profiles_kind", sql`${table.kind} IN ('topic', 'narrative')`),
     check("signal_taxonomy_profiles_version_positive", sql`${table.version} >= 1`),
-    check("signal_taxonomy_profiles_status", sql`${table.status} IN ('draft', 'active', 'retired')`),
+    check("signal_taxonomy_profiles_status", sql`${table.status} IN ('draft', 'activating', 'active', 'retired')`),
     check("signal_taxonomy_profiles_context_hash", sql`${table.contextHash} ~ '^sha256:[0-9a-f]{64}$'`),
     check(
       "signal_taxonomy_profiles_active_approval",
-      sql`${table.status} <> 'active' OR (${table.approvedByUserId} IS NOT NULL AND ${table.approvedAt} IS NOT NULL)`
+      sql`${table.status} NOT IN ('activating', 'active') OR (${table.approvedByUserId} IS NOT NULL AND ${table.approvedAt} IS NOT NULL)`
     ),
     unique("uq_signal_taxonomy_profiles_workspace_kind_version").on(
       table.workspaceId,
@@ -649,7 +649,7 @@ export const signalRefreshRuns = pgTable(
     updatedAt: updatedAt()
   },
   (table) => [
-    check("signal_refresh_runs_status", sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'dead_letter', 'skipped')`),
+    check("signal_refresh_runs_status", sql`${table.status} IN ('queued', 'running', 'partial', 'blocked', 'completed', 'failed', 'dead_letter', 'skipped')`),
     check("signal_refresh_runs_trigger", sql`${table.trigger} IN ('scheduled', 'manual', 'import')`),
     check("signal_refresh_runs_attempt_positive", sql`${table.attempt} >= 1`),
     check("signal_refresh_runs_run_type", sql`${table.runType} IN ('source_refresh', 'taxonomy_enrichment')`),
@@ -678,7 +678,7 @@ export const signalRefreshRuns = pgTable(
       .where(sql`${table.trigger} = 'scheduled' AND ${table.status} IN ('queued', 'failed') AND ${table.completedAt} IS NULL`),
     index("idx_signal_refresh_runs_taxonomy_recovery")
       .on(table.status, table.heartbeatAt, table.createdAt, table.id)
-      .where(sql`${table.runType} = 'taxonomy_enrichment' AND ${table.status} IN ('queued', 'running', 'failed')`)
+      .where(sql`${table.runType} = 'taxonomy_enrichment' AND ${table.status} IN ('queued', 'running', 'partial', 'blocked', 'failed')`)
   ]
 );
 
@@ -3432,6 +3432,9 @@ export const recordTags = pgTable(
     ),
     tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
     reviewStatus: text("review_status").notNull().default("unreviewed"),
+    approvalSource: text("approval_source"),
+    approvalPolicyVersion: text("approval_policy_version"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     createdAt: now()
   },
   (table) => [
@@ -3445,6 +3448,12 @@ export const recordTags = pgTable(
       .on(table.signalTaxonomyProfileId, table.reviewStatus, table.taxonomyTermId, table.subjectId)
       .where(sql`${table.subjectType} = 'mention' AND ${table.signalTaxonomyProfileId} IS NOT NULL`),
     index("idx_record_tags_tb_analysis").on(table.tbAnalysisId, table.subjectType, table.taxonomyTermId),
+    check("record_tags_approval_source", sql`${table.approvalSource} IS NULL OR ${table.approvalSource} IN ('human', 'policy')`),
+    check("record_tags_approved_provenance", sql`${table.reviewStatus} <> 'approved' OR (
+      ${table.approvalSource} IS NOT NULL
+      AND ${table.approvedAt} IS NOT NULL
+      AND (${table.approvalSource} <> 'policy' OR NULLIF(btrim(${table.approvalPolicyVersion}), '') IS NOT NULL)
+    )`),
     unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source),
     uniqueIndex("uq_record_tags_signal_profile_assignment")
       .on(table.subjectId, table.signalTaxonomyProfileId, table.taxonomyTermId, table.modelVersionId)

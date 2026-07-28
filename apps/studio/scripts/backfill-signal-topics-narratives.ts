@@ -212,7 +212,7 @@ async function loadProfiles(
       ON tag.signal_taxonomy_profile_id = profile.id
      AND tag.study_corpus_id = $2::uuid
     WHERE profile.workspace_id = $1::uuid
-      AND profile.status = 'active'
+      AND profile.status IN ('active', 'activating')
     GROUP BY profile.id
     ORDER BY profile.kind
   `, [workspaceId, corpusId]);
@@ -286,7 +286,31 @@ async function queueBackfillRuns(args: {
           '{"requested_by":"signal-topics-narratives-backfill","client_activation":false}'::jsonb
         )
         ON CONFLICT (idempotency_key) DO UPDATE
-        SET updated_at = signal_refresh_runs.updated_at
+        SET budget_cap_usd = GREATEST(
+              COALESCE(signal_refresh_runs.budget_cap_usd, 0),
+              EXCLUDED.budget_cap_usd
+            ),
+            status = CASE
+              WHEN signal_refresh_runs.status IN ('partial', 'blocked', 'failed')
+                THEN 'queued'
+              ELSE signal_refresh_runs.status
+            END,
+            completed_at = CASE
+              WHEN signal_refresh_runs.status IN ('partial', 'blocked', 'failed')
+                THEN NULL
+              ELSE signal_refresh_runs.completed_at
+            END,
+            result_summary = signal_refresh_runs.result_summary
+              || jsonb_build_object(
+                'continued_at', now(),
+                'continuation',
+                  COALESCE(
+                    (signal_refresh_runs.result_summary->>'continuation')::int,
+                    0
+                  ) + 1,
+                'continued_with_budget_cap_usd', EXCLUDED.budget_cap_usd
+              ),
+            updated_at = now()
         RETURNING id::text
       `, [
         args.scope.workspace_id,

@@ -9,6 +9,7 @@ import {
   getEmbeddingModel,
   normalizeSignalTaxonomyClassificationV1,
   signalTaxonomyAssignmentDispositionV1,
+  SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1,
   SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE,
   vectorLiteral,
   embedTexts,
@@ -40,6 +41,7 @@ type TaxonomyRunScope = {
   brand_id: string | null;
   budget_cap_usd: string | null;
   actual_cost_usd: string | null;
+  prior_classified_mentions: number;
 };
 
 type TaxonomyTerm = {
@@ -109,8 +111,8 @@ export async function signalTaxonomyEnrichmentJob(
     if (scope.run_status === "completed" || scope.run_status === "skipped") {
       return { run_id: scope.run_id, reconciliation_only: true };
     }
-    if (scope.profile_status !== "active") {
-      return completeRun(scope.run_id, "skipped", {
+    if (!["active", "activating"].includes(scope.profile_status)) {
+      return completeRun(scope.run_id, "blocked", {
         reason: "taxonomy_profile_not_active"
       });
     }
@@ -122,7 +124,7 @@ export async function signalTaxonomyEnrichmentJob(
       });
     }
     if (!isSignalTaxonomyLlmEnabled()) {
-      return completeRun(scope.run_id, "skipped", {
+      return completeRun(scope.run_id, "blocked", {
         reason: "paid_taxonomy_providers_not_enabled"
       });
     }
@@ -134,61 +136,97 @@ export async function signalTaxonomyEnrichmentJob(
       || !Number.isFinite(priorCostUsd)
       || remainingBudgetUsd <= 0
     ) {
-      throw new Error("signal_taxonomy_budget_cap_required");
-    }
-
-    const [terms, mentions] = await Promise.all([
-      loadTerms(scope.profile_id),
-      loadPendingMentions(scope)
-    ]);
-    if (terms.length === 0) {
-      throw new Error("signal_taxonomy_profile_has_no_active_terms");
-    }
-    if (mentions.length === 0) {
-      const accepted = await emitClassificationInvalidation(scope);
-      return completeRun(scope.run_id, "completed", {
+      return completeRun(scope.run_id, "partial", {
+        reason: "budget_cap_reached",
         classified_mentions: 0,
-        tag_assertions: 0,
-        reason: "no_pending_mentions",
-        invalidation_id: accepted?.id ?? null
+        pending_mentions: await countPendingMentions(scope)
       });
     }
 
-    const batches = chunk(mentions, readBatchSize());
+    const terms = await loadTerms(scope.profile_id);
+    if (terms.length === 0) {
+      throw new Error("signal_taxonomy_profile_has_no_active_terms");
+    }
     const model = process.env.NOISIA_SIGNAL_TAXONOMY_MODEL
       ?? process.env.ANTHROPIC_MODEL_DEFAULT
       ?? "claude-sonnet-4-6";
-    const result = await executeSignalTaxonomyBatchesV1({
-      batches,
-      budget_cap_usd: remainingBudgetUsd,
-      estimate: (batch) => estimateBatchCost(batch, terms, model),
-      classify: (batch) => classifyBatch({
-        scope,
-        terms,
-        mentions: batch,
-        model
-      }),
-      persist: (batch, execution) => persistBatch({
-        scope,
-        mentions: batch,
-        execution
-      }),
-      heartbeat: async (progress) => {
-        await job.updateProgress(progress);
-        await pool.query(`
-          UPDATE signal_refresh_runs
-          SET heartbeat_at = now(), updated_at = now()
-          WHERE id = $1::uuid AND status = 'running'
-        `, [scope.run_id]);
-      },
-      batch_attempts: readPaidBatchAttempts()
-    });
-    const accepted = await emitClassificationInvalidation(scope);
-    return completeRun(scope.run_id, "completed", {
-      ...result,
-      classified_mentions: mentions.length,
-      invalidation_id: accepted?.id ?? null
-    }, result);
+    let availableBudgetUsd = remainingBudgetUsd;
+    let classifiedMentions = scope.prior_classified_mentions;
+    let completedBatches = 0;
+    let pagesDrained = 0;
+    while (true) {
+      const mentions = await loadPendingMentionPage(scope, readPageSize());
+      if (mentions.length === 0) {
+        if (scope.profile_status === "activating") {
+          await pool.query(
+            `SELECT complete_signal_taxonomy_profile_activation($1::uuid)`,
+            [scope.profile_id]
+          );
+        }
+        const accepted = classifiedMentions > 0
+          ? await emitClassificationInvalidation(scope, {
+              complete: true,
+              classified_mentions: classifiedMentions,
+              pending_mentions: 0
+            })
+          : null;
+        return completeRun(scope.run_id, "completed", {
+          state: "completed",
+          classified_mentions: classifiedMentions,
+          pending_mentions: 0,
+          completed_batches: completedBatches,
+          pages_drained: pagesDrained,
+          actual_cost_usd:
+            priorCostUsd + (remainingBudgetUsd - availableBudgetUsd),
+          reason: classifiedMentions === 0 ? "no_pending_mentions" : null,
+          invalidation_id: accepted?.id ?? null
+        });
+      }
+      pagesDrained += 1;
+      const batches = chunk(mentions, readBatchSize());
+      const result = await executeSignalTaxonomyBatchesV1({
+        batches,
+        budget_cap_usd: availableBudgetUsd,
+        estimate: (batch) => estimateBatchCost(batch, terms, model),
+        classify: (batch) => classifyBatch({ scope, terms, mentions: batch, model }),
+        persist: (batch, execution) => persistBatch({ scope, mentions: batch, execution }),
+        heartbeat: async () => {
+          await job.updateProgress({ classified_mentions: classifiedMentions });
+          await pool.query(`
+            UPDATE signal_refresh_runs
+            SET heartbeat_at = now(), updated_at = now()
+            WHERE id = $1::uuid AND status = 'running'
+          `, [scope.run_id]);
+        },
+        batch_attempts: readPaidBatchAttempts()
+      });
+      const processedThisPage = batches
+        .slice(0, result.completed_batches)
+        .reduce((count, batch) => count + batch.length, 0);
+      classifiedMentions += processedThisPage;
+      completedBatches += result.completed_batches;
+      availableBudgetUsd -= result.cost_usd;
+      if (result.state === "partial") {
+        const pendingMentions = await countPendingMentions(scope);
+        const accepted = classifiedMentions > 0
+          ? await emitClassificationInvalidation(scope, {
+              complete: false,
+              classified_mentions: classifiedMentions,
+              pending_mentions: pendingMentions
+            })
+          : null;
+        return completeRun(scope.run_id, "partial", {
+          ...result,
+          classified_mentions: classifiedMentions,
+          pending_mentions: pendingMentions,
+          completed_batches: completedBatches,
+          pages_drained: pagesDrained,
+          actual_cost_usd:
+            priorCostUsd + (remainingBudgetUsd - availableBudgetUsd),
+          invalidation_id: accepted?.id ?? null
+        });
+      }
+    }
   } catch (error) {
     const finalAttempt = job.attemptsMade + 1 >= Number(job.opts.attempts ?? 1);
     await pool.query(`
@@ -227,6 +265,10 @@ async function loadAndStartRun(job: Job<SignalTaxonomyEnrichmentJobDataV1>) {
           WHEN run.status IN ('completed', 'skipped') THEN run.status
           ELSE 'running'
         END,
+        budget_cap_usd = GREATEST(
+          COALESCE(run.budget_cap_usd, 0),
+          $7::numeric
+        ),
         bullmq_job_id = $2,
         attempt = GREATEST(run.attempt, $3),
         started_at = COALESCE(run.started_at, now()),
@@ -252,14 +294,17 @@ async function loadAndStartRun(job: Job<SignalTaxonomyEnrichmentJobDataV1>) {
       corpus.corpus_revision AS current_corpus_revision,
       model.id::text AS model_version_id, model.version AS model_version,
       workspace.organization_id::text, workspace.brand_id::text,
-      run.budget_cap_usd::text, run.actual_cost_usd::text
+      run.budget_cap_usd::text, run.actual_cost_usd::text,
+      COALESCE((run.result_summary->>'classified_mentions')::int, 0)
+        AS prior_classified_mentions
   `, [
     job.data.run_id,
     job.id ?? null,
     job.attemptsMade + 1,
     job.data.workspace_id,
     job.data.study_corpus_id,
-    job.data.profile_id
+    job.data.profile_id,
+    job.data.budget_cap_usd
   ]);
   return result.rows[0] ?? null;
 }
@@ -280,14 +325,14 @@ async function loadTerms(profileId: string) {
     FROM signal_taxonomy_profiles profile
     JOIN taxonomy_terms term ON term.taxonomy_id = profile.taxonomy_id
     WHERE profile.id = $1::uuid
-      AND profile.status = 'active'
+      AND profile.status IN ('active', 'activating')
       AND term.status = 'active'
     ORDER BY term.term_key
   `, [profileId]);
   return result.rows;
 }
 
-async function loadPendingMentions(scope: TaxonomyRunScope) {
+async function loadPendingMentionPage(scope: TaxonomyRunScope, limit: number) {
   const result = await pool.query<MentionForClassification>(`
     SELECT mention.id::text, left(mention.text_clean, 3000) AS text,
       mention.published_at::text, mention.platform, mention.language
@@ -303,13 +348,35 @@ async function loadPendingMentions(scope: TaxonomyRunScope) {
           AND feature.source = $3
       )
     ORDER BY mention.published_at NULLS LAST, mention.id
-    LIMIT 10000
+    LIMIT $4
+  `, [
+    scope.study_corpus_id,
+    classificationFeatureKey(scope.profile_id),
+    classificationSource(scope.profile_id),
+    limit
+  ]);
+  return result.rows;
+}
+
+async function countPendingMentions(scope: TaxonomyRunScope) {
+  const result = await pool.query<{ count: number }>(`
+    SELECT count(*)::int
+    FROM mentions mention
+    WHERE mention.study_corpus_id = $1::uuid
+      AND mention.inclusion_status = 'included'
+      AND NOT EXISTS (
+        SELECT 1 FROM record_feature_values feature
+        WHERE feature.subject_type = 'mention'
+          AND feature.subject_id = mention.id
+          AND feature.feature_key = $2
+          AND feature.source = $3
+      )
   `, [
     scope.study_corpus_id,
     classificationFeatureKey(scope.profile_id),
     classificationSource(scope.profile_id)
   ]);
-  return result.rows;
+  return result.rows[0]?.count ?? 0;
 }
 
 async function classifyBatch(args: {
@@ -418,17 +485,22 @@ async function persistBatch(args: {
     for (const classification of classifications) {
       for (const assignment of classification.assignments) {
         const reviewStatus = signalTaxonomyAssignmentDispositionV1(assignment);
+        const policyApproved = reviewStatus === "approved";
         const persistedTag = await client.query<{ id: string }>(`
           INSERT INTO record_tags (
             organization_id, brand_id, study_corpus_id,
             subject_type, subject_id, taxonomy_term_id,
             value, score, confidence, evidence, source,
-            model_version_id, signal_taxonomy_profile_id, review_status
+            model_version_id, signal_taxonomy_profile_id, review_status,
+            approval_source, approval_policy_version, approved_at
           )
           SELECT $1::uuid, $2::uuid, $3::uuid,
             'mention', $4::uuid, term.id,
             term.term_key, $5, $6, $7::jsonb, $8,
-            $9::uuid, $10::uuid, $12
+            $9::uuid, $10::uuid, $12,
+            CASE WHEN $12 = 'approved' THEN 'policy' END,
+            CASE WHEN $12 = 'approved' THEN $13 END,
+            CASE WHEN $12 = 'approved' THEN now() END
           FROM taxonomy_terms term
           JOIN signal_taxonomy_profiles profile
             ON profile.taxonomy_id = term.taxonomy_id
@@ -465,7 +537,10 @@ async function persistBatch(args: {
           args.scope.model_version_id,
           args.scope.profile_id,
           assignment.term_key,
-          reviewStatus
+          reviewStatus,
+          policyApproved
+            ? SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.version
+            : null
         ]);
         const tagId = persistedTag.rows[0]?.id;
         if (tagId) {
@@ -562,7 +637,14 @@ async function persistBatch(args: {
   }
 }
 
-async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
+async function emitClassificationInvalidation(
+  scope: TaxonomyRunScope,
+  progress: {
+    complete: boolean;
+    classified_mentions: number;
+    pending_mentions: number;
+  }
+) {
   const result = await pool.query<{ id: string }>(`
     WITH watermark AS (
       SELECT id
@@ -599,7 +681,10 @@ async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
       jsonb_build_object(
         'taxonomy_profile_id', $5::uuid,
         'taxonomy_kind', $6::text,
-        'corpus_revision', $7::int
+        'corpus_revision', $7::int,
+        'coverage_state', CASE WHEN $8::boolean THEN 'complete' ELSE 'partial' END,
+        'classified_mentions', $9::int,
+        'pending_mentions', $10::int
       )
     FROM watermark CROSS JOIN affected
     ON CONFLICT (idempotency_key) DO UPDATE
@@ -609,23 +694,31 @@ async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
     scope.workspace_id,
     scope.study_corpus_id,
     `signal-taxonomy:${scope.kind}`,
-    sha256(`taxonomy-invalidation:${scope.profile_id}:${scope.input_corpus_revision}`),
+    sha256(
+      `taxonomy-invalidation:${scope.profile_id}:${scope.input_corpus_revision}`
+      + `:${progress.classified_mentions}:${progress.complete}`
+    ),
     scope.profile_id,
     scope.kind,
-    scope.input_corpus_revision
+    scope.input_corpus_revision,
+    progress.complete,
+    progress.classified_mentions,
+    progress.pending_mentions
   ]);
   return result.rows[0] ?? null;
 }
 
 async function completeRun(
   runId: string,
-  status: "completed" | "skipped",
+  status: "completed" | "partial" | "blocked" | "skipped",
   summary: Record<string, unknown>,
   _usage?: { cost_usd: number; input_tokens: number; output_tokens: number }
 ) {
   await pool.query(`
     UPDATE signal_refresh_runs
-    SET status = $2, completed_at = now(), heartbeat_at = now(),
+    SET status = $2,
+      completed_at = CASE WHEN $2 IN ('completed', 'skipped') THEN now() ELSE NULL END,
+      heartbeat_at = now(),
       result_summary = $3::jsonb,
       error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
     WHERE id = $1::uuid AND run_type = 'taxonomy_enrichment'
@@ -718,6 +811,14 @@ function readBatchSize() {
     1,
     Math.min(SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE, Math.floor(value))
   );
+}
+
+function readPageSize() {
+  const value = Number(
+    process.env.NOISIA_SIGNAL_TAXONOMY_PAGE_SIZE ?? 500
+  );
+  if (!Number.isFinite(value)) return 500;
+  return Math.max(50, Math.min(1_000, Math.floor(value)));
 }
 
 function readPaidBatchAttempts() {

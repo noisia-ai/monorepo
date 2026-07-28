@@ -7,6 +7,8 @@ export const SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME =
 export const SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE = 50;
 export const SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1 = {
   version: "signal-taxonomy-acceptance-v1",
+  autoapprove_min_score: 0.9,
+  autoapprove_confidence: "high",
   pending_min_score: 0.65,
   pending_confidence: ["medium", "high"]
 } as const;
@@ -58,7 +60,10 @@ export type SignalTaxonomyAssignmentV1 = {
   }>;
 };
 
-export type SignalTaxonomyAssignmentDispositionV1 = "pending" | "rejected";
+export type SignalTaxonomyAssignmentDispositionV1 =
+  | "approved"
+  | "pending"
+  | "rejected";
 
 export type SignalTaxonomyMentionClassificationV1 = {
   mention_id: string;
@@ -465,6 +470,14 @@ export function signalTaxonomyAssignmentDispositionV1(
   assignment: SignalTaxonomyAssignmentV1
 ): SignalTaxonomyAssignmentDispositionV1 {
   if (assignment.evidence.length === 0) return "rejected";
+  if (
+    assignment.confidence ===
+      SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.autoapprove_confidence
+    && assignment.score >=
+      SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.autoapprove_min_score
+  ) {
+    return "approved";
+  }
   const confidenceEligible = assignment.confidence === "medium"
     || assignment.confidence === "high";
   return assignment.score >= SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.pending_min_score

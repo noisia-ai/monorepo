@@ -9,7 +9,9 @@ import {
 } from "../seeds/connection.js";
 import { requireEnv } from "../seeds/env.js";
 
-const MIGRATION = "0057_signal_topics_narratives_profiles.sql";
+const PROFILE_MIGRATION = "0057_signal_topics_narratives_profiles.sql";
+const HARDENING_MIGRATION =
+  "0058_signal_taxonomy_operational_hardening.sql";
 const APPLY_APPROVAL_ENV = "NOISIA_SIGNAL_TAXONOMY_SCHEMA_APPLY_APPROVED";
 const ALLOW_REMOTE_ENV = "NOISIA_DB_APPLY_SIGNAL_TAXONOMY_ALLOW_REMOTE";
 
@@ -20,6 +22,8 @@ async function verifyMigration(client: pg.Client) {
     active_profile_index: boolean;
     assignment_index: boolean;
     activation_function: boolean;
+    hardening_column: boolean;
+    activation_completion_function: boolean;
   }>(`
     SELECT
       to_regclass('public.signal_taxonomy_profiles')::text AS profiles_table,
@@ -36,7 +40,15 @@ async function verifyMigration(client: pg.Client) {
         AS assignment_index,
       to_regprocedure(
         'public.activate_signal_taxonomy_profile(uuid,uuid)'
-      ) IS NOT NULL AS activation_function
+      ) IS NOT NULL AS activation_function,
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'record_tags'
+          AND column_name = 'approval_source'
+      ) AS hardening_column,
+      to_regprocedure(
+        'public.complete_signal_taxonomy_profile_activation(uuid)'
+      ) IS NOT NULL AS activation_completion_function
   `);
   return result.rows[0];
 }
@@ -44,7 +56,7 @@ async function verifyMigration(client: pg.Client) {
 async function main() {
   const databaseUrl = requireEnv("DATABASE_URL");
   requireSafeDatabaseWriteTarget(databaseUrl, {
-    operation: "apply Signal Topics & Narratives migration 0057",
+    operation: "apply Signal Topics & Narratives migrations 0057-0058",
     allowRemoteEnv: ALLOW_REMOTE_ENV
   });
   if (process.env[APPLY_APPROVAL_ENV] !== "true") {
@@ -52,7 +64,14 @@ async function main() {
   }
 
   const dbRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const sql = await readFile(join(dbRoot, "migrations", MIGRATION), "utf8");
+  const profileSql = await readFile(
+    join(dbRoot, "migrations", PROFILE_MIGRATION),
+    "utf8"
+  );
+  const hardeningSql = await readFile(
+    join(dbRoot, "migrations", HARDENING_MIGRATION),
+    "utf8"
+  );
   const client = new pg.Client({
     connectionString: databaseUrl,
     ssl: getDatabaseSslConfig()
@@ -62,17 +81,32 @@ async function main() {
   try {
     await client.query(`SET statement_timeout = '10min'`);
     const before = await verifyMigration(client);
-    let applied = false;
+    const applied: string[] = [];
     if (!before?.profiles_table) {
       await client.query("BEGIN");
       try {
         await client.query(
           "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-          [MIGRATION]
+          [PROFILE_MIGRATION]
         );
-        await client.query(sql);
+        await client.query(profileSql);
         await client.query("COMMIT");
-        applied = true;
+        applied.push(PROFILE_MIGRATION);
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    }
+    if (!before?.hardening_column) {
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [HARDENING_MIGRATION]
+        );
+        await client.query(hardeningSql);
+        await client.query("COMMIT");
+        applied.push(HARDENING_MIGRATION);
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -86,12 +120,14 @@ async function main() {
       || !verified.active_profile_index
       || !verified.assignment_index
       || !verified.activation_function
+      || !verified.hardening_column
+      || !verified.activation_completion_function
     ) {
       throw new Error("Signal Topics & Narratives migration verification failed.");
     }
     console.log(JSON.stringify({
       ok: true,
-      migration: MIGRATION,
+      migrations: [PROFILE_MIGRATION, HARDENING_MIGRATION],
       applied,
       target: process.env.NOISIA_REMOTE_DATABASE_TARGET ?? "local",
       verified: {
@@ -99,7 +135,9 @@ async function main() {
         record_tags_profile_column: true,
         active_profile_index: true,
         assignment_index: true,
-        activation_function: true
+        activation_function: true,
+        approval_provenance: true,
+        activation_completion_function: true
       }
     }, null, 2));
   } finally {

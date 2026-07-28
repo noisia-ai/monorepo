@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildSignalTaxonomyEnrichmentOptions,
+  drainSignalTaxonomyPagesV1,
   executeSignalTaxonomyBatchesV1,
   isSignalTaxonomyEnrichmentEnabled,
   isSignalTaxonomyLlmEnabled
@@ -101,4 +102,47 @@ test("provider spend beyond the approved cap fails closed", async () => {
     }),
     /exceeded_budget_cap/
   );
+});
+
+test("bounded drain processes more than 10,000 records without OFFSET", async () => {
+  const pending = Array.from({ length: 10_050 }, (_, index) => index + 1);
+  const seen = new Set<number>();
+  const result = await drainSignalTaxonomyPagesV1({
+    page_size: 500,
+    load_page: async (limit) =>
+      pending.filter((id) => !seen.has(id)).slice(0, limit),
+    process_page: async (page) => {
+      page.forEach((id) => seen.add(id));
+      return { state: "completed", processed: page.length };
+    }
+  });
+  assert.equal(result.state, "completed");
+  assert.equal(result.processed, 10_050);
+  assert.equal(seen.size, 10_050);
+  assert.equal(result.pages, 21);
+});
+
+test("budget continuation resumes only unpersisted batches", async () => {
+  const persisted = new Set<number>();
+  const execute = (budget: number) =>
+    executeSignalTaxonomyBatchesV1({
+      batches: [1, 2, 3].filter((batch) => !persisted.has(batch)),
+      budget_cap_usd: budget,
+      estimate: () => 0.1,
+      classify: async (batch) => ({
+        classifications: [{ mention_id: String(batch) }],
+        input_tokens: 1,
+        output_tokens: 1,
+        cost_usd: 0.1,
+        context_refs: []
+      }),
+      persist: async (batch) => { persisted.add(batch); },
+      heartbeat: async () => undefined
+    });
+  const partial = await execute(0.15);
+  assert.equal(partial.state, "partial");
+  assert.equal(partial.completed_batches, 1);
+  const resumed = await execute(0.25);
+  assert.equal(resumed.state, "completed");
+  assert.deepEqual([...persisted], [1, 2, 3]);
 });

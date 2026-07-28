@@ -228,7 +228,10 @@ async function applyReview(args: {
         RETURNING record_tag_id
       ), updated AS (
         UPDATE record_tags tag
-        SET review_status = 'approved'
+        SET review_status = 'approved',
+          approval_source = 'human',
+          approval_policy_version = NULL,
+          approved_at = now()
         FROM events
         WHERE tag.id = events.record_tag_id
         RETURNING tag.id
