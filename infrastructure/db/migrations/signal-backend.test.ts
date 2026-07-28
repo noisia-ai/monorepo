@@ -333,3 +333,21 @@ test("TN-01 adds one versioned active topic or narrative profile without paralle
   assert.match(migration, /idx_signal_refresh_runs_taxonomy_recovery/);
   assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS (topic_tags|narrative_tags|signal_enrichment_runs)/);
 });
+
+test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation and EXPLAIN ANALYZE", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/signal-topics-narratives-runtime-smoke.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(source, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(source, /EXPLAIN \(ANALYZE, BUFFERS, FORMAT JSON\)/);
+  assert.match(source, /fixture_mentions: FIXTURE_SIZE/);
+  assert.match(source, /exact_ids: true/);
+  assert.match(source, /pending_excluded/);
+  assert.match(source, /paid_provider_invoked: false/);
+  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+});

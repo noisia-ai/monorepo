@@ -64,6 +64,21 @@ test("metric drill-down adds the same governed constituent rule used by aggregat
   assert.doesNotMatch(topic.sql, /LIKE '%topic%'/u);
 });
 
+test("term-filtered taxonomy drill-down does not repeat the same accepted-tag existence scan", () => {
+  const topic = buildSignalMentionDrillDownPlanV1({
+    metric_key: "topic.volume",
+    filter: {
+      ...baseFilter,
+      dimensions: { topic: ["battery"] }
+    },
+    study_corpus_ids: [corpusId],
+    workspace_id: workspaceId
+  });
+  assert.equal(topic.sql.match(/SELECT 1 FROM record_tags tag/gu)?.length, 1);
+  assert.match(topic.sql, /term\.term_key/u);
+  assert.match(topic.sql, /tag\.review_status = 'approved'/u);
+});
+
 test("planner parameterizes dimension values and is stable for equivalent filters", () => {
   const left = buildSignalMentionPredicateV1(baseFilter, [corpusId]);
   const right = buildSignalMentionPredicateV1({

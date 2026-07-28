@@ -188,14 +188,27 @@ export function buildSignalMentionDrillDownPlanV1(args: {
     args.workspace_id
   );
   const params = [...predicate.params];
-  const metricWorkspaceParameter = args.metric_key === "topic.volume"
-    || args.metric_key === "narrative.volume"
+  const exactTaxonomyDimension = args.metric_key === "topic.volume"
+    ? "topic"
+    : args.metric_key === "narrative.volume"
+      ? "narrative"
+      : null;
+  const needsMetricPredicate = Boolean(
+    args.metric_key
+    && !(
+      exactTaxonomyDimension
+      && predicate.normalized_filter.dimensions[exactTaxonomyDimension]?.length
+    )
+  );
+  const metricWorkspaceParameter = needsMetricPredicate
+    && (args.metric_key === "topic.volume"
+      || args.metric_key === "narrative.volume")
     ? (() => {
         params.push(requiredWorkspaceId(optionalWorkspaceId(args.workspace_id)));
         return `$${params.length}::uuid`;
       })()
     : null;
-  const metricPredicate = args.metric_key
+  const metricPredicate = args.metric_key && needsMetricPredicate
     ? metricConstituentPredicateSql(args.metric_key, metricWorkspaceParameter)
     : null;
   const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
