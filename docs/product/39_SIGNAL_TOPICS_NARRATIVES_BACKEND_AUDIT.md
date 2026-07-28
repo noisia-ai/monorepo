@@ -185,6 +185,18 @@ siendo los stores canónicos.
   contenga un `release-gate.json` Data OS real con
   `ready_for_production_review=true`. La aprobación de perfiles/tags TN no sustituye
   la muestra humana general de assertions/tags exigida por ese gate.
+- `data-os:staging-check` pasó contra la base remota redacted y confirmó target
+  `staging`, formato Postgres y las tres aprobaciones de shadow/backfill/EXPLAIN.
+- `data-os:staging-shadow` se detuvo correctamente en su preflight anterior a crear
+  evidence. El output histórico obligatorio de Laika es
+  `methodology=triggers-barriers`, `kind=signal`, y su corpus también es
+  `triggers-barriers`; el wrapper general exige un par Signal Pulse con
+  `report_periods`, `canonical_signals` y `signal_period_metrics`.
+- No se sustituyó el output por otro ID. Por esa incompatibilidad de contrato no
+  existen `release-gate.json` ni un backend-ready gate válido para este run. El
+  unblock requiere que un operador designe un output/corpus Signal Pulse real
+  compatible, o que el release gate incorpore explícitamente un preflight TN
+  workspace-centric revisado; ninguna de las dos decisiones se asume aquí.
 
 El procedimiento operativo y los formatos de evidencia están en
 `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.

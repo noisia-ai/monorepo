@@ -195,6 +195,12 @@ Además, `release-gate.json` debe contener
 `ready_for_production_review: true` y `database_format: "postgres_url"`.
 Pasar estos gates no habilita frontend ni clientes.
 
+El wrapper general de Data OS valida un par Signal Pulse antes de crear su evidence
+pack. El output histórico T&B usado únicamente para resolver el scope de Laika no
+satisface ese preflight. No reemplazarlo por un UUID supuesto: el operador debe
+proporcionar un output/corpus Signal Pulse real compatible o aprobar una evolución
+del release gate para aceptar evidencia TN workspace-centric.
+
 ## 6. Fallo y rollback operacional
 
 - Desactivar las dos flags TN detiene gasto y nuevos enqueues.
