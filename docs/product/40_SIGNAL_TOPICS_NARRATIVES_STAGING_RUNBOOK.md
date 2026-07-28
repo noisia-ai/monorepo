@@ -240,3 +240,42 @@ Al aprobar una nueva versión, el estado queda `activating` y el perfil anterior
 en serving. Ejecutar su backfill; el worker sólo completa el cutover cuando coverage del
 nuevo perfil está drenado. Si se bloquea, recuperar el run: no retirar manualmente el
 perfil anterior.
+
+## 8. Evidencia runtime de continuación y política
+
+La validación de 2026-07-28 aplicó 0058 en staging y usó una importación etiquetada
+`tn_runtime_validation` de 6 menciones, sin reclasificar las 723 existentes.
+
+Procedimiento reproducible:
+
+1. Ejecutar `data-os:staging-check` y verificar un solo corpus operational.
+2. Aplicar el wrapper de migración dos veces: la primera debe listar únicamente 0058 y
+   la segunda `applied=[]`.
+3. Crear los runs con un subcap capaz de pagar un batch pero no todo el fixture. El
+   estado esperado es `partial`, con `classified_mentions` y `pending_mentions`
+   exactos e invalidación `coverage_state=partial`.
+4. Repetir el backfill apply con un cap mayor. Debe reutilizar idempotency key y revisión
+   de corpus, reencolar el run y conservar features ya persistidos.
+5. Verificar cero duplicados en
+   `(subject_id, profile_id, term_id, model_version_id)`, provenance de policy para
+   autoaprobados y pending/rejected fuera de serving.
+6. Procesar invalidaciones y materializar con enrichment e interpretations apagados.
+   Repetir la materialización y comparar claves, valores y conteos.
+7. Ejecutar overview, detail, evidence paginada y lineage con el resolver authZ real;
+   reconciliar sus IDs contra SQL base.
+
+El ledger del run es la fuente de costo. `completeRun` debe fusionar
+`result_summary`; reemplazarlo borraría `continuation`, `continued_at` y la auditoría
+del incremento de presupuesto. El costo Voyage es una estimación versionada por tokens;
+los tokens Claude provienen del usage real de cada respuesta.
+
+La validación real produjo 6 assignments policy-approved y 9 pending. No aprobar los
+pending para “poner verde” el smoke: permanecen como excepciones que requieren review
+humano y obligan a serving a declarar `partial`.
+
+Proyección observada del fixture deliberadamente pequeño (batch size 2): USD 0.03509
+por mención para ambos perfiles; aproximadamente USD 3.51/100, USD 35.09/1,000 y
+USD 350.90/10,000. No usar esta cifra como tarifa de producción: el backfill inicial
+de Laika amortizó prompt/contexto con batches mayores y costó cerca de USD 0.00972 por
+mención para ambos perfiles. Recalcular siempre con modelo, terms, RAG y batch size
+reales antes de autorizar un cap.

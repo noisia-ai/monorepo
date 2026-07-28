@@ -237,3 +237,67 @@ El procedimiento operativo y los formatos de evidencia están en
   ni ventana vacía.
 - Estas correcciones hacen recurrente el backend para workspaces elegibles, pero no
   resuelven el release blocker general Signal Pulse/T&B descrito arriba.
+
+## Addendum de validación runtime del hardening
+
+Fecha: 2026-07-28. Target: `staging` remoto redactado; no producción.
+
+- `0058_signal_taxonomy_operational_hardening.sql` se aplicó con el wrapper
+  transaccional protegido. `0057` ya existía y no se reejecutó. Una segunda ejecución
+  del wrapper reportó `applied=[]`, con columnas, constraints, índices y funciones
+  verificadas. No se tocó `published_outputs.payload`, no se ejecutó T&B y los dos
+  perfiles v1 de Laika siguieron activos.
+- El runtime descubrió y corrigió dos incompatibilidades que los tests estáticos no
+  detectaban: el fixture SQL no poblaba la nueva provenance de tags aprobados y serving
+  consultaba un `profile.activated_at` inexistente en vez de exponer
+  `approved_at AS activated_at`. También se corrigió `completeRun` para fusionar el
+  resumen final con el historial y no borrar el marker durable de continuación.
+- Una importación de staging aislada y etiquetada agregó 6 menciones al corpus
+  operational de Laika y avanzó su revisión una sola vez. Los 723 registros anteriores
+  conservaron sus checkpoints; únicamente las 6 menciones nuevas se clasificaron para
+  topic y narrative.
+- Con subcap inicial de USD 0.09 total, ambos runs reales quedaron `partial` después de
+  un batch: 2 clasificadas y 4 pendientes por perfil. Emitieron dos invalidaciones
+  `coverage_state=partial`, conservaron costo/tokens y no duplicaron assignments.
+  Al ampliar el mismo trabajo a USD 0.30, los mismos runs y la misma revisión drenaron
+  6/6 por perfil y emitieron dos invalidaciones finales `complete`.
+- Resultado de aceptación: 6 assignments autoaprobados cumplieron evidence no vacío,
+  `confidence=high`, score `>=0.90`, `approval_source=policy`,
+  `approval_policy_version=signal-taxonomy-acceptance-v1` y `approved_at`; 9
+  assignments quedaron pending para revisión humana y no se sirven. El proveedor no
+  produjo assignments low-confidence en este fixture; los casos sin evidencia quedaron
+  sin assignment. La transición low → rejected permanece cubierta por los tests de
+  política, no se presenta como evidencia real del proveedor.
+- Se procesaron las cuatro invalidaciones con enrichment/interpretations apagados. La
+  materialización ejecutó 539 planes y escribió por upsert 15,144 filas; una segunda
+  ejecución repitió esos conteos sin duplicados. El `watermark_hash` cambia cuando
+  cambia `materialized_at`, por lo que idempotencia significa igualdad de claves,
+  valores y cardinalidad, no identidad del timestamp de cómputo.
+- Serving real del periodo 2026-07-01→2026-07-25 resolvió un único corpus operational,
+  rechazó un usuario de otra organización, devolvió 13 topics, 12 narratives, 15
+  coocurrencias, paginación sin solapamiento y lineage gobernado. El estado fue
+  `partial` por las 9 excepciones pendientes, que es la semántica correcta. Después de
+  materializar el periodo anterior, la comparación cargó 15 terms de cada kind.
+- Para un term topic, materialización, SQL base y drill-down reconciliaron exactamente
+  6 mention IDs; denominador 32 y sample size 21. Las consultas no leen
+  `published_outputs.payload` ni `chart_aggregates`.
+- El fixture Postgres transaccional recorrió 10,050 menciones sin proveedores, con
+  reconciliation exacta para agregado y drill-down. La activación v2 mantuvo un perfil
+  anterior client-safe durante `activating`, falló cerrado con backfill incompleto y
+  cortó a exactamente un perfil activo al completar coverage.
+- `EXPLAIN ANALYZE` sobre Laika quedó dentro de presupuesto. Los planes generales
+  materialization/drill-down/series/facets tardaron 0.199–1.905 ms. Los planes TN
+  overview/series/breakdown/cooccurrence/detail/evidence/lineage/pending/cursor tardaron
+  0.223–104.169 ms; overview, series, breakdown y cooccurrence usaron
+  `idx_metric_materializations_signal_facade`, evidence usó
+  `idx_record_tags_signal_approved_subject`, y cursor usó
+  `idx_mentions_signal_materialization`. Lineage hizo seq scan en 17.660 ms sobre el
+  volumen actual; se conserva como observación, no como blocker.
+- Gasto de esta validación: USD 0.210538 total, 6 requests Claude y 6 Voyage,
+  61,479 input tokens y 1,736 output tokens. Desglose modelado por el ledger:
+  Claude USD 0.210502 y Voyage USD 0.000036. Saldo del cap USD 15:
+  USD 14.789462. No hubo llamadas pagadas durante materialización o serving.
+- El release gate general sigue bloqueado por su preflight Signal Pulse: el output
+  histórico de referencia de Laika es T&B y no se sustituyó por un ID inventado. Esta
+  limitación no invalida la evidencia workspace-centric TN, pero impide declarar el
+  release Data OS general aprobado.
