@@ -132,6 +132,19 @@ test("query-param order, aliases, repeated values and comma lists do not change 
   );
 });
 
+test("narrative is canonical while taxonomy remains an explicit legacy dimension", () => {
+  const narrative = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&narratives=care-is-prevention"
+  );
+  assert.deepEqual(narrative.dimensions.narrative, ["care-is-prevention"]);
+  assert.equal(narrative.dimensions.taxonomy, undefined);
+  const legacy = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&taxonomy=legacy-tag"
+  );
+  assert.deepEqual(legacy.dimensions.taxonomy, ["legacy-tag"]);
+  assert.notEqual(signalFiltersHashV1(narrative), signalFiltersHashV1(legacy));
+});
+
 test("unknown dimensions and invalid date ranges fail with typed errors", () => {
   expectContractError(
     () => normalizeSignalFilterV1({ ...BASE_FILTER, dimensions: { algorithm_guess: ["x"] } }),

@@ -79,6 +79,7 @@ const COMMON_DIMENSIONS: SignalDimensionV1[] = [
   "product",
   "campaign",
   "topic",
+  "narrative",
   "taxonomy",
   "signal",
   "signal_lifecycle",
@@ -98,6 +99,7 @@ const TOPIC_DIMENSIONS: SignalDimensionV1[] = [
   "platform",
   "entity",
   "topic",
+  "narrative",
   "taxonomy",
   "signal",
   "trigger",
@@ -248,8 +250,8 @@ export const SIGNAL_METRIC_CATALOG_V1: SignalMetricGroupV1[] = [
     name: "Topics, narratives and governed entities",
     description: "Counts of accepted governed classifications linked to canonical mentions.",
     metrics: [
-      governedVolumeMetric("topic.volume", "Topic volume", "topic", "accepted topic tag"),
-      governedVolumeMetric("narrative.volume", "Narrative volume", "taxonomy", "accepted narrative taxonomy tag"),
+      governedVolumeMetric("topic.volume", "Topic volume", "topic", "accepted topic tag", true),
+      governedVolumeMetric("narrative.volume", "Narrative volume", "narrative", "accepted narrative tag", true),
       governedVolumeMetric("governed_entity.volume", "Governed entity volume", "entity", "accepted governed entity link")
     ]
   }
@@ -391,7 +393,8 @@ function governedVolumeMetric(
   key: string,
   name: string,
   dimension: SignalDimensionV1,
-  acceptedPredicate: string
+  acceptedPredicate: string,
+  declaresCoverageDenominator = false
 ) {
   return metric({
     key,
@@ -403,7 +406,12 @@ function governedVolumeMetric(
       `mentions.inclusion_status = 'included' AND ${acceptedPredicate}`
     ),
     unit: "count",
-    denominator: none("A governed mention count has no denominator."),
+    denominator: declaresCoverageDenominator
+      ? countDenominator(
+          "included_mentions",
+          "All included mentions in the same canonical SignalFilterV1 scope."
+        )
+      : none("A governed mention count has no denominator."),
     dimensions: Array.from(new Set([...TOPIC_DIMENSIONS, dimension])),
     nullRule: `not_available when no governed ${dimension} classification coverage exists`,
     quality: [

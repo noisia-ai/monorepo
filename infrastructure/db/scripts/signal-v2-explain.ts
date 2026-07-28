@@ -59,12 +59,14 @@ async function main() {
     const metricPlan = buildSignalMetricMaterializationPlanV1({
       metric_key: "conversation.volume",
       filter: selected.normalized_filter,
-      study_corpus_ids: [selected.corpus_id]
+      study_corpus_ids: [selected.corpus_id],
+      workspace_id: workspaceId
     });
     const drill = buildSignalMentionDrillDownPlanV1({
       metric_key: "conversation.volume",
       filter: selected.normalized_filter,
       study_corpus_ids: [selected.corpus_id],
+      workspace_id: workspaceId,
       limit: 50
     });
     const queries = [

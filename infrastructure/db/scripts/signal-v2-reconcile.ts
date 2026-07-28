@@ -107,7 +107,8 @@ async function main() {
         metric_key: first.metric_key,
         metric_version: first.metric_version,
         filter,
-        study_corpus_ids: [workspaceScope.study_corpus_id]
+        study_corpus_ids: [workspaceScope.study_corpus_id],
+        workspace_id: workspaceId
       });
       const base = await pool.query<{
         period_start: string;
@@ -152,6 +153,7 @@ async function main() {
       const drillDown = buildSignalMentionDrillDownPlanV1({
         filter: periodFilter,
         study_corpus_ids: [workspaceScope.study_corpus_id],
+        workspace_id: workspaceId,
         metric_key: first.metric_key,
         limit: 100
       });

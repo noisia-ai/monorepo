@@ -50,6 +50,17 @@ test("supported dimensions come from SignalFilterV1 and carry explicit visibilit
   }
   assert.equal(signalMetricDefinitionV1("source_type.share")?.visibility, "internal");
   assert.equal(signalMetricDefinitionV1("conversation.volume")?.visibility, "both");
+  const narrative = signalMetricDefinitionV1("narrative.volume");
+  assert.ok(narrative?.dimensions.some((dimension) => dimension.key === "narrative"));
+  assert.equal(narrative?.denominator.kind, "count");
+  assert.equal(
+    narrative?.denominator.kind === "count" ? narrative.denominator.key : null,
+    "included_mentions"
+  );
+  assert.equal(
+    signalMetricDefinitionV1("topic.volume")?.denominator.kind,
+    "count"
+  );
 });
 
 test("formula hashes change with formula semantics and the validator rejects silent mutation", () => {

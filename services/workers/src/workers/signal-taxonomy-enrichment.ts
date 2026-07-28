@@ -503,13 +503,28 @@ async function persistBatch(args: {
 async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
   const result = await pool.query<{ id: string }>(`
     WITH watermark AS (
-      SELECT id, min(max_observed_at)::date AS affected_from,
-        max(max_observed_at)::date AS affected_through
+      SELECT id
       FROM signal_data_watermarks
       WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
-      GROUP BY id
-      ORDER BY max(max_observed_at) DESC NULLS LAST, id
+      ORDER BY accepted_at DESC, id
       LIMIT 1
+    ), affected AS (
+      SELECT
+        min((mention.published_at AT TIME ZONE workspace.timezone)::date)
+          AS affected_from,
+        max((mention.published_at AT TIME ZONE workspace.timezone)::date)
+          AS affected_through
+      FROM signal_workspaces workspace
+      JOIN record_feature_values feature
+        ON feature.study_corpus_id = $2::uuid
+       AND feature.subject_type = 'mention'
+       AND feature.feature_key =
+         'signal_taxonomy_classification:' || $5::uuid::text
+       AND feature.source = 'signal_taxonomy_profile:' || $5::uuid::text
+      JOIN mentions mention
+        ON mention.id = feature.subject_id
+       AND mention.study_corpus_id = feature.study_corpus_id
+      WHERE workspace.id = $1::uuid
     )
     INSERT INTO signal_data_invalidations (
       workspace_id, study_corpus_id, data_watermark_id,
@@ -518,13 +533,13 @@ async function emitClassificationInvalidation(scope: TaxonomyRunScope) {
     )
     SELECT $1::uuid, $2::uuid, watermark.id,
       $3, $4, 'taxonomy_classification_accepted',
-      watermark.affected_from, watermark.affected_through,
+      affected.affected_from, affected.affected_through,
       jsonb_build_object(
         'taxonomy_profile_id', $5::uuid,
         'taxonomy_kind', $6,
         'corpus_revision', $7::int
       )
-    FROM watermark
+    FROM watermark CROSS JOIN affected
     ON CONFLICT (idempotency_key) DO UPDATE
       SET scope = signal_data_invalidations.scope || EXCLUDED.scope
     RETURNING id::text

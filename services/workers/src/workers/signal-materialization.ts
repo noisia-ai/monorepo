@@ -253,7 +253,8 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
             metric_key: metric.key,
             metric_version: metric.version,
             filter: normalizedFilter,
-            study_corpus_ids: [scope.study_corpus_id]
+            study_corpus_ids: [scope.study_corpus_id],
+            workspace_id: scope.workspace_id
           });
           interpretationScopes.set(`${metric.group}:${plan.predicate.filters_hash}`, {
             metricGroupKey: metric.group,

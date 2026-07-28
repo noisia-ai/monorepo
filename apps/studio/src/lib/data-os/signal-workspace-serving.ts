@@ -270,7 +270,11 @@ export async function loadSignalFacetsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const predicate = buildSignalMentionPredicateV1(args.filter, [corpus.id]);
+  const predicate = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  );
   const params = [...predicate.params];
   const featureDimensions = ["signal", "signal_lifecycle", "audience", "demographic", "journey_stage", "campaign", "product"];
   params.push(featureDimensions);
@@ -345,7 +349,11 @@ export async function loadSignalMetricGroupsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const states = await pool.query<{
     metric_key: string;
     metric_version: number;
@@ -423,7 +431,11 @@ export async function loadSignalInterpretationsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const result = await pool.query<{
     metric_group_key: string;
     metric_group_version: number;
@@ -637,6 +649,7 @@ export async function loadSignalMentionsV1(args: {
   const plan = buildSignalMentionDrillDownPlanV1({
     filter: args.filter,
     study_corpus_ids: [corpus.id],
+    workspace_id: args.workspace.id,
     metric_key: args.metricKey,
     limit: args.limit,
     ...(decoded ? { cursor: decoded.sort } : {})
@@ -688,7 +701,11 @@ export async function loadSignalLineageV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const params: unknown[] = [args.workspace.id, corpus.id, filtersHash];
   const metricPredicate = args.metricKey ? `AND materialization.metric_key = $4` : "";
   if (args.metricKey) {
@@ -748,7 +765,11 @@ async function loadMaterializationRows(
   metricVersion: number
 ) {
   const corpus = requireServingCorpus(workspace);
-  const predicate = buildSignalMentionPredicateV1(filter, [corpus.id]);
+  const predicate = buildSignalMentionPredicateV1(
+    filter,
+    [corpus.id],
+    workspace.id
+  );
   const result = await pool.query<MaterializationRow>(`
     SELECT metric_key, metric_version, metric_group_key,
       period_start::text, period_end::text, value, denominator, sample_size,

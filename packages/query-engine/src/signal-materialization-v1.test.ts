@@ -11,6 +11,7 @@ import {
   classifySignalFilterCacheScopeV1,
   evaluateSignalMetricQualityV1,
   materializeSignalFixtureV1,
+  materializeSignalTaxonomyFixtureV1,
   previousSignalBucketStartV1,
   SIGNAL_MATERIALIZATION_MAX_PRECOMPUTED_FILTERS,
   signalMetricMaterializationKeyV1,
@@ -53,11 +54,14 @@ test("metric drill-down adds the same governed constituent rule used by aggregat
   const topic = buildSignalMentionDrillDownPlanV1({
     metric_key: "topic.volume",
     filter: baseFilter,
-    study_corpus_ids: [corpusId]
+    study_corpus_ids: [corpusId],
+    workspace_id: workspaceId
   });
   assert.match(engagement.sql, /jsonb_typeof\(m\.engagement->'likes'\) = 'number'/u);
   assert.match(topic.sql, /record_tags tag/u);
-  assert.match(topic.sql, /taxonomy\.taxonomy_key\) LIKE '%topic%'/u);
+  assert.match(topic.sql, /signal_taxonomy_profiles profile/u);
+  assert.match(topic.sql, /profile\.kind = 'topic'/u);
+  assert.doesNotMatch(topic.sql, /LIKE '%topic%'/u);
 });
 
 test("planner parameterizes dimension values and is stable for equivalent filters", () => {
@@ -75,6 +79,27 @@ test("planner parameterizes dimension values and is stable for equivalent filter
   assert.doesNotMatch(left.sql, /\bX\b/u);
 });
 
+test("topic and narrative filters bind exact active workspace profiles", () => {
+  const narrative = buildSignalMentionPredicateV1({
+    ...baseFilter,
+    dimensions: { narrative: ["care-is-prevention"] }
+  }, [corpusId], workspaceId);
+  assert.match(narrative.sql, /signal_taxonomy_profiles profile/u);
+  assert.match(narrative.sql, /profile\.kind = 'narrative'/u);
+  assert.match(narrative.sql, /profile\.workspace_id = \$\d+::uuid/u);
+  assert.match(narrative.sql, /tag\.review_status = 'approved'/u);
+  assert.doesNotMatch(narrative.sql, /LIKE '%narrative%'/u);
+  assert.throws(
+    () => buildSignalMentionPredicateV1({
+      ...baseFilter,
+      dimensions: { topic: ["nutrition"] }
+    }, [corpusId]),
+    (error: unknown) => error instanceof Error
+      && "code" in error
+      && error.code === "invalid_filter"
+  );
+});
+
 test("all five catalog groups produce deterministic daily, weekly and monthly SQL plans", () => {
   const groups = new Set<string>();
   for (const metric of SIGNAL_METRIC_DEFINITIONS_V1) {
@@ -84,7 +109,8 @@ test("all five catalog groups produce deterministic daily, weekly and monthly SQ
         metric_key: metric.key,
         metric_version: metric.version,
         filter: { ...baseFilter, granularity, dimensions: {} },
-        study_corpus_ids: [corpusId]
+        study_corpus_ids: [corpusId],
+        workspace_id: workspaceId
       });
       assert.match(plan.sql, /period_start/u);
       assert.match(plan.sql, /typed_payload/u);
@@ -135,12 +161,20 @@ test("governed classification SQL excludes unreviewed evidence and marks provisi
   const plan = buildSignalMetricMaterializationPlanV1({
     metric_key: "topic.volume",
     filter: { ...baseFilter, dimensions: {} },
-    study_corpus_ids: [corpusId]
+    study_corpus_ids: [corpusId],
+    workspace_id: workspaceId
   });
   assert.match(plan.sql, /tag\.review_status = 'approved'/u);
-  assert.match(plan.sql, /tag\.review_status NOT IN \('approved', 'rejected'\)/u);
-  assert.match(plan.sql, /'pending_review_count', pending_count/u);
-  assert.match(plan.sql, /WHEN pending_count > 0 THEN 'partial'/u);
+  assert.match(plan.sql, /signal_taxonomy_profiles profile/u);
+  assert.match(plan.sql, /'included_mentions'/u);
+  assert.match(plan.sql, /'classified_mentions'/u);
+  assert.match(plan.sql, /'unclassified_mentions'/u);
+  assert.match(plan.sql, /'tag_assertions'/u);
+  assert.match(plan.sql, /'share_of_included'/u);
+  assert.match(plan.sql, /'share_of_classified'/u);
+  assert.match(plan.sql, /'cooccurrences'/u);
+  assert.match(plan.sql, /classification_review_pending/u);
+  assert.doesNotMatch(plan.sql, /LIKE '%topic%'/u);
 });
 
 test("catalog quality rules execute and pending governed evidence cannot pass", () => {
@@ -154,7 +188,7 @@ test("catalog quality rules execute and pending governed evidence cannot pass", 
       sample_size: 2,
       materialization_state: "partial",
       quality_state: "partial",
-      typed_payload: { pending_review_count: 1 }
+      typed_payload: { pending_mentions: 1, processed_mentions: 2 }
     }
   });
   assert.equal(evaluation.state, "partial");
@@ -185,7 +219,8 @@ test("planner rejects excessive ranges, cardinality and unsupported metric dimen
     () => buildSignalMetricMaterializationPlanV1({
       metric_key: "platform.share",
       filter: { ...baseFilter, dimensions: { topic: ["service"] } },
-      study_corpus_ids: [corpusId]
+      study_corpus_ids: [corpusId],
+      workspace_id: workspaceId
     }),
     (error: unknown) => error instanceof Error && "code" in error && error.code === "unsupported_dimension"
   );
@@ -227,6 +262,78 @@ test("fixture aggregate, breakdown and drill-down constituents reconcile under o
   assert.equal(average.value, 4);
   assert.equal(average.denominator, average.constituent_ids.length);
   assert.deepEqual(average.constituent_ids, ["m1", "m2"]);
+});
+
+test("topic aggregate, denominator, buckets, cooccurrences and mention ids reconcile exactly", () => {
+  const result = materializeSignalTaxonomyFixtureV1({
+    kind: "topic",
+    filter: { ...baseFilter, dimensions: {} },
+    mentions: [
+      {
+        id: "m1",
+        published_at: "2026-06-02T01:00:00Z",
+        dimensions: { platform: ["x"] },
+        processed_profiles: ["topic"],
+        taxonomy_assignments: [
+          { kind: "topic", term_key: "nutrition", review_status: "approved" },
+          { kind: "topic", term_key: "digestion", review_status: "approved" }
+        ]
+      },
+      {
+        id: "m2",
+        published_at: "2026-06-03T01:00:00Z",
+        dimensions: { platform: ["x"] },
+        processed_profiles: ["topic"],
+        taxonomy_assignments: [
+          { kind: "topic", term_key: "nutrition", review_status: "approved" },
+          { kind: "topic", term_key: "price", review_status: "pending" }
+        ]
+      },
+      {
+        id: "m3",
+        published_at: "2026-06-04T01:00:00Z",
+        dimensions: { platform: ["x"] },
+        processed_profiles: ["topic"],
+        taxonomy_assignments: [
+          { kind: "topic", term_key: "availability", review_status: "rejected" }
+        ]
+      }
+    ]
+  });
+  assert.equal(result.included_mentions, 3);
+  assert.equal(result.classified_mentions, result.classified_mention_ids.length);
+  assert.deepEqual(result.classified_mention_ids, ["m1", "m2"]);
+  assert.equal(result.tag_assertions, 3);
+  assert.equal(result.buckets.find((bucket) => bucket.key === "nutrition")?.value, 2);
+  assert.deepEqual(
+    result.cooccurrences.find((pair) => pair.left_term_key === "digestion"),
+    {
+      left_term_key: "digestion",
+      right_term_key: "nutrition",
+      mention_count: 1,
+      mention_ids: ["m1"]
+    }
+  );
+  assert.equal(result.pending_mentions, 1);
+  assert.equal(result.rejected_mentions, 1);
+  assert.equal(result.quality_state, "partial");
+});
+
+test("explicitly processed small windows can report observed zero without an arbitrary minimum", () => {
+  const result = materializeSignalTaxonomyFixtureV1({
+    kind: "narrative",
+    filter: { ...baseFilter, dimensions: {} },
+    mentions: [{
+      id: "m1",
+      published_at: "2026-06-02T01:00:00Z",
+      dimensions: { platform: ["x"] },
+      processed_profiles: ["narrative"],
+      taxonomy_assignments: []
+    }]
+  });
+  assert.equal(result.included_mentions, 1);
+  assert.equal(result.classified_mentions, 0);
+  assert.equal(result.quality_state, "ready");
 });
 
 test("materialization identities are deterministic and exclude the watermark so invalidation updates in place", () => {
