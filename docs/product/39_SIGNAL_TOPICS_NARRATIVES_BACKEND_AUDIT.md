@@ -200,3 +200,40 @@ siendo los stores canónicos.
 
 El procedimiento operativo y los formatos de evidencia están en
 `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.
+
+## Addendum de hardening operativo
+
+- `0058_signal_taxonomy_operational_hardening.sql` agrega estados recuperables
+  `partial` y `blocked`, provenance de aprobación y activación de perfiles en dos
+  fases. Es forward-only y no toca payloads legacy.
+- Un run que agota presupuesto persiste el número realmente clasificado y pendiente,
+  conserva costo/tokens y queda `partial`. Un nuevo apply operator-only puede aumentar
+  el cap y continuar el mismo run/idempotency key; los features y tags canónicos
+  impiden repetir assignments ya persistidos.
+- Flags apagadas, credenciales ausentes o un perfil todavía no activo producen
+  `blocked`, no un `skipped` terminal. Corregir configuración y reencolar mediante el
+  wrapper gobernado conserva auditoría sin retries infinitos. `skipped` queda reservado
+  para condiciones permanentemente no aplicables, como una revisión de corpus
+  reemplazada.
+- El worker drena páginas de hasta 500 menciones, configurable entre 50 y 1,000,
+  ordenadas por `(published_at NULLS LAST, id)`. Cada página vuelve a excluir features
+  ya persistidos; no usa `OFFSET`, no carga el corpus completo y admite más de 10,000
+  menciones sin cambiar artificialmente `corpus_revision`.
+- Invalidaciones parciales declaran `coverage_state=partial`,
+  `classified_mentions` y `pending_mentions`. Sólo el drenado total declara cobertura
+  completa.
+- Todo caller TN usa `requireOperationalCorpus`. Cero o más de un operational vigente
+  falla cerrado con `not_available`; strategic y legacy nunca se seleccionan por
+  posición.
+- La política `signal-taxonomy-acceptance-v1` autoaprueba únicamente evidencia no
+  vacía, confidence `high` y score `>=0.90` sobre términos activos de un perfil
+  aprobado. Persiste `approval_source=policy`, versión, score, modelo, evidence y
+  timestamp sin inventar reviewer. Medium o high bajo threshold queda pending; baja
+  confianza queda rejected. El override humano posterior sigue creando su review
+  event y cambia provenance a `human`.
+- Una aprobación de perfil nuevo lo deja `activating`; el perfil anterior sigue siendo
+  el único client-safe. Cuando el backfill demuestra cero menciones pendientes, una
+  función transaccional retira el anterior y activa el nuevo. Así no hay doble serving
+  ni ventana vacía.
+- Estas correcciones hacen recurrente el backend para workspaces elegibles, pero no
+  resuelven el release blocker general Signal Pulse/T&B descrito arriba.

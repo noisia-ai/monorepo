@@ -209,3 +209,34 @@ del release gate para aceptar evidencia TN workspace-centric.
 - No borrar profiles, tags, runs ni payload legacy. Corregir mediante una nueva
   versión de perfil y rematerialización.
 - Un run queued/failed permanece reconciliable en Postgres después de Redis/deploy.
+
+## 7. Operación recurrente y recuperación
+
+Una importación sobre el único corpus `operational` crea o recupera los runs por perfil
+activo sin ejecutar T&B. El estado esperado es:
+
+- `queued/running`: trabajo en curso;
+- `partial`: presupuesto agotado con progreso y pendientes exactos;
+- `blocked`: configuración, providers o activación todavía recuperables;
+- `completed`: no quedan menciones sin feature para el perfil/revisión;
+- `skipped`: condición permanente para ese scope;
+- `failed/dead_letter`: error técnico con retries acotados.
+
+Para continuar un `partial` o `blocked`, corregir flags/credenciales o autorizar un cap
+mayor y repetir el backfill operator-only con el mismo corpus/output. El upsert conserva
+el run, costo y tokens, incrementa `continuation` y genera un job ID nuevo sin duplicar
+tags. Nunca modificar `corpus_revision` para forzar el resume.
+
+Cada página usa orden `(published_at, id)`, máximo 500 por default y cero `OFFSET`.
+Features ya confirmados son el checkpoint durable. Un crash repite como máximo la
+página/batch no confirmado; la transacción y los unique indexes evitan duplicados.
+
+La política automática v1 publica directamente sólo assignments con evidence,
+confidence high y score mínimo 0.90 contra términos/perfil ya aprobados. El resto va a
+review o rejected. Un reviewer humano puede hacer override y queda registrado sin
+falsificar identidad automática.
+
+Al aprobar una nueva versión, el estado queda `activating` y el perfil anterior continúa
+en serving. Ejecutar su backfill; el worker sólo completa el cutover cuando coverage del
+nuevo perfil está drenado. Si se bloquea, recuperar el run: no retirar manualmente el
+perfil anterior.
