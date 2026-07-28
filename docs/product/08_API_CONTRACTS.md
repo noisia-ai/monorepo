@@ -766,8 +766,8 @@ Catálogo V1:
 | platform and source mix | `source_type.share@1` | bucket source type / mentions clasificadas | ratio | internal |
 | engagement | `engagement.total@1` | suma de componentes gobernados observados / ninguno | count | both |
 | engagement | `engagement.average_per_mention@1` | engagement / mentions con medición | ratio | both |
-| topics, narratives and governed entities | `topic.volume@1` | mentions distintas con topic aceptado / ninguno | count | both |
-| topics, narratives and governed entities | `narrative.volume@1` | mentions distintas con taxonomy narrativa aceptada / ninguno | count | both |
+| topics, narratives and governed entities | `topic.volume@1` | mentions distintas con topic aprobado; shares / included o classified mentions | count | both |
+| topics, narratives and governed entities | `narrative.volume@1` | mentions distintas con narrative aprobada; shares / included o classified mentions | count | both |
 | topics, narratives and governed entities | `governed_entity.volume@1` | mentions distintas con entity link aceptado / ninguno | count | both |
 
 Cada definición incluye fórmula estructurada, SHA-256 de fórmula, grains
@@ -947,6 +947,16 @@ Los clientes nunca reciben model IDs, context refs, import batch IDs ni edges in
 Fixtures TypeScript congeladas para el futuro frontend viven en
 `signal-workspace-fixtures.ts`.
 
+El facade raíz `GET /api/data-os/signal/:workspaceId` incluye
+`topics_narratives: SignalTopicsNarrativesOverviewV1 | null`, su capability y su
+partial state. El ETag incorpora la sección. El filtro default es idéntico al de
+metric groups y no dispara clasificación ni proveedores en lectura.
+
+El backfill y el evidence pack staging/preview se operan según
+`40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`. Un gate separado exige profiles
+human-approved, worker real, reconciliación exacta, authZ negativa, lineage y el
+release gate Data OS válido antes de declarar este backend listo.
+
 #### Signal metric interpretations V1 (SB-07)
 
 `GET /api/data-os/signal/:workspaceId/interpretations` usa el mismo
@@ -1040,6 +1050,7 @@ Respuesta congelada:
   "freshness": {},
   "metric_groups": [],
   "interpretations": [],
+  "topics_narratives": null,
   "strategic": { "current": null, "history": [] },
   "visibility": { "internal": false, "source_type": false, "quality_details": false },
   "lineage": [],

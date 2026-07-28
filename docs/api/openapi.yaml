@@ -915,7 +915,7 @@ components:
     SignalWorkspaceHomeV1:
       type: object
       additionalProperties: false
-      required: [contract_version, facade_version, workspace, corpus, coverage, default_filter, filters_hash, capabilities, facets, freshness, metric_groups, interpretations, strategic, visibility, lineage, partial_states, legacy_fallback, state]
+      required: [contract_version, facade_version, workspace, corpus, coverage, default_filter, filters_hash, capabilities, facets, freshness, metric_groups, interpretations, topics_narratives, strategic, visibility, lineage, partial_states, legacy_fallback, state]
       properties:
         contract_version: { const: signal-backend-v1 }
         facade_version: { const: signal-workspace-home-v1 }
@@ -952,6 +952,10 @@ components:
         freshness: { type: object, additionalProperties: true }
         metric_groups: { type: array, items: { type: object, additionalProperties: true } }
         interpretations: { type: array, items: { type: object, additionalProperties: true } }
+        topics_narratives:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalTopicsNarrativesOverviewV1" }
+            - { type: "null" }
         strategic:
           type: object
           required: [current, history]

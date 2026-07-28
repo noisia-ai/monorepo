@@ -5,6 +5,7 @@ import type {
   SignalFilterV1,
   SignalMetricValueStateV1
 } from "./signal-backend-v1";
+import type { SignalTopicsNarrativesOverviewV1 } from "./signal-topics-narratives-v1";
 
 export type SignalWorkspaceHomeStateV1 =
   | DataFreshnessStateV1
@@ -47,6 +48,7 @@ export type SignalWorkspaceHomeV1 = {
   };
   metric_groups: Array<Record<string, unknown>>;
   interpretations: Array<Record<string, unknown>>;
+  topics_narratives: SignalTopicsNarrativesOverviewV1 | null;
   strategic: {
     current: Record<string, unknown> | null;
     history: Array<Record<string, unknown>>;
@@ -58,7 +60,12 @@ export type SignalWorkspaceHomeV1 = {
   };
   lineage: Array<Record<string, unknown>>;
   partial_states: Array<{
-    section: "data" | "metrics" | "interpretations" | "strategic";
+    section:
+      | "data"
+      | "metrics"
+      | "interpretations"
+      | "topics_narratives"
+      | "strategic";
     state: SignalWorkspaceHomeStateV1 | SignalMetricValueStateV1;
     reason: string;
   }>;

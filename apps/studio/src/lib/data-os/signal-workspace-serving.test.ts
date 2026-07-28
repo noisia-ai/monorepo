@@ -48,6 +48,15 @@ test("Signal workspace fixtures satisfy the shared series and breakdown contract
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.default_filter, SIGNAL_FILTER_FIXTURE_V1);
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.coverage.mentions, 128);
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.facade_version, "signal-workspace-home-v1");
+  assert.equal(
+    SIGNAL_WORKSPACE_HOME_FIXTURE_V1.topics_narratives.contract_version,
+    "signal-topics-narratives-v1"
+  );
+  assert.ok(
+    SIGNAL_WORKSPACE_HOME_FIXTURE_V1.capabilities.some(
+      (capability) => capability.key === "topics_narratives"
+    )
+  );
 });
 
 test("Topics and Narratives fixtures freeze overview, detail, evidence and lineage contracts", () => {
@@ -422,13 +431,17 @@ test("TN serving routes reconcile canonical materializations, approved evidence 
     readFile(resolve(routeRoot, "[kind]/[termKey]/evidence/route.ts"), "utf8"),
     readFile(resolve(routeRoot, "[kind]/[termKey]/lineage/route.ts"), "utf8")
   ]);
-  const [service, worker] = await Promise.all([
+  const [service, worker, home] = await Promise.all([
     readFile(
       resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-serving.ts"),
       "utf8"
     ),
     readFile(
       resolve(process.cwd(), "../../services/workers/src/workers/signal-taxonomy-enrichment.ts"),
+      "utf8"
+    ),
+    readFile(
+      resolve(process.cwd(), "src/lib/data-os/signal-workspace-home.ts"),
       "utf8"
     )
   ]);
@@ -447,7 +460,11 @@ test("TN serving routes reconcile canonical materializations, approved evidence 
   assert.match(worker, /'mention'.*'record_tag'/s);
   assert.match(worker, /'signal_taxonomy_profile'.*'record_tag'/s);
   assert.match(worker, /INSERT INTO lineage_edges/);
+  assert.match(home, /loadSignalTopicsNarrativesOverviewV1/);
+  assert.match(home, /topics_narratives: topicsNarratives/);
+  assert.match(home, /\["topics_narratives", "\/topics-narratives"\]/);
   assert.doesNotMatch(service, /published_outputs|chart_aggregates|raw_metadata/);
+  assert.doesNotMatch(home, /published_outputs|chart_aggregates|raw_metadata/);
 });
 
 test("Laika taxonomy backfill resolves governed scope and requires human and budget approvals", async () => {

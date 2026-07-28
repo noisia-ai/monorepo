@@ -1374,6 +1374,18 @@ Tablas nuevas:
   en cada release.
 - `signal_workspace_current_releases`: puntero mutable a un histórico publicado
   inmutable; sólo cambia mediante promoción humana.
+- `signal_taxonomy_profiles`: selecciona una taxonomía, ruleset, model version y
+  `context_hash` versionados por workspace y kind. Un índice parcial permite como
+  máximo un perfil `active` de `topic` y uno de `narrative`; activar exige reviewer y
+  timestamp humanos.
+
+La migración forward-only `0057_signal_topics_narratives_profiles` extiende los stores
+canónicos existentes. `record_tags.signal_taxonomy_profile_id` hace idempotente la
+asignación `mention + profile + term + model_version`; un trigger rechaza términos,
+modelos o menciones fuera del scope del perfil. `signal_refresh_runs` incorpora
+`run_type=taxonomy_enrichment`, profile/model/revision, heartbeat y costo, por lo que
+el enrichment reutiliza el outbox durable con retries y dead-letter. No existen tablas
+paralelas de topics, narratives o runs.
 
 El catálogo V1 reutiliza `metric_definitions` y `semantic_models`; no existe un
 catálogo paralelo. La migración `0049_signal_metric_catalog_v1` agrega versión,
@@ -1391,6 +1403,13 @@ en cero.
 Las APIs `/api/data-os/signal/:workspaceId/*` leen estas tablas y `mentions` bajo el
 mismo predicate de `SignalFilterV1`. No leen `published_outputs.payload` como source of
 truth. Las rutas Pulse y `/signal/{outputId}` conservan su comportamiento legacy.
+
+`topic.volume@1` y `narrative.volume@1` usan `included_mentions` como denominador de
+share y `classified_mentions` para el share de cobertura; el count conserva como
+`value` las mentions distintas aprobadas. `record_feature_values` registra que una
+mención fue procesada aun si no recibió término. Esto permite cero observado en
+ventanas pequeñas sin confundirlo con ausencia de clasificación. Pending/rejected no
+entran a buckets client-safe.
 
 #### Hardening de Conversation Following
 

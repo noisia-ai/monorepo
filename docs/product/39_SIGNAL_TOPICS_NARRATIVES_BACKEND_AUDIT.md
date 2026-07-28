@@ -1,7 +1,9 @@
 # 39 · Signal Topics & Narratives Backend Audit
 
-> Estado: TN-00 completo sobre `ba4f93f`, 2026-07-27.
-> Alcance: inventario verificable y contrato congelado; no afirma evidencia runtime.
+> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika bloqueada,
+> 2026-07-27.
+> Alcance: inventario verificable, implementación local y runtime disposable; no
+> afirma evidencia staging/preview.
 
 ## Resultado ejecutivo
 
@@ -98,3 +100,23 @@ en ADR 012. `taxonomies`, `taxonomy_terms`, `record_tags`, `signal_refresh_runs`
 `metric_materializations`, `signal_data_invalidations` y `lineage_edges` continúan
 siendo los stores canónicos.
 
+## Addendum de ejecución
+
+- `0057_signal_topics_narratives_profiles.sql` se aplicó junto con las 56 migraciones
+  anteriores en Postgres 16 + pgvector disposable.
+- El runtime fixture procesó 5,000 menciones. `topic.volume@1` reconcilió buckets de
+  5,000 y 1,000 IDs; `narrative.volume@1`, 2,500 y 1,666 IDs. Agregado, SQL base y
+  drill-down paginado fueron idénticos.
+- Pending topic tags quedaron fuera de los conteos aprobados y produjeron `partial`;
+  narrative sin pending quedó `fresh`.
+- `EXPLAIN ANALYZE` usó los índices idempotentes de `record_tags` y
+  `record_feature_values`. No hubo Claude/Voyage ni gasto.
+- El dry-run de Laika con corpus `3d32472d-9720-4fae-b6d2-a73152c5f0a4` y referencia
+  histórica `aaafa040-ca2f-49a6-afd0-e872b6706476` se detuvo antes de resolver IDs
+  porque no existe `DATABASE_URL`.
+- TN-08 exige todavía target staging/preview, cap USD explícito y aprobación humana de
+  las dos propuestas. Hasta entonces el Goal y el backend-ready gate permanecen
+  incompletos.
+
+El procedimiento operativo y los formatos de evidencia están en
+`40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.

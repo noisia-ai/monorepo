@@ -16,6 +16,7 @@ import {
   signalWorstResponseStateV1
 } from "@/lib/data-os/signal-workspace-serving";
 import { loadSignalStrategicReleasesV1 } from "@/lib/data-os/signal-strategic-releases";
+import { loadSignalTopicsNarrativesOverviewV1 } from "@/lib/data-os/signal-topics-narratives-serving";
 
 export async function loadSignalWorkspaceHomeV1(
   workspace: ResolvedSignalWorkspace,
@@ -47,6 +48,7 @@ export async function loadSignalWorkspaceHomeV1(
       },
       metric_groups: bootstrap.metric_groups,
       interpretations: [],
+      topics_narratives: null,
       strategic: { current: null, history: [] },
       visibility: bootstrap.visibility,
       lineage: [],
@@ -54,6 +56,7 @@ export async function loadSignalWorkspaceHomeV1(
         { section: "data", state: "not_available", reason: "workspace_has_no_included_mentions" },
         { section: "metrics", state: "not_available", reason: "default_filter_not_available" },
         { section: "interpretations", state: "not_available", reason: "default_filter_not_available" },
+        { section: "topics_narratives", state: "not_available", reason: "default_filter_not_available" },
         { section: "strategic", state: "not_available", reason: "strategic_release_not_available" }
       ],
       legacy_fallback: legacyFallback(),
@@ -61,10 +64,22 @@ export async function loadSignalWorkspaceHomeV1(
     };
   }
 
-  const [facets, metrics, interpretations, releases, lineage] = await Promise.all([
+  const [
+    facets,
+    metrics,
+    interpretations,
+    topicsNarratives,
+    releases,
+    lineage
+  ] = await Promise.all([
     loadSignalFacetsV1({ workspace, filter: defaultFilter, isInternalUser }),
     loadSignalMetricGroupsV1({ workspace, filter: defaultFilter, isInternalUser }),
     loadSignalInterpretationsV1({ workspace, filter: defaultFilter, isInternalUser }),
+    loadSignalTopicsNarrativesOverviewV1({
+      workspace,
+      filter: defaultFilter,
+      isInternalUser
+    }),
     loadSignalStrategicReleasesV1(workspace, isInternalUser),
     loadSignalLineageV1({ workspace, filter: defaultFilter, isInternalUser })
   ]);
@@ -75,6 +90,7 @@ export async function loadSignalWorkspaceHomeV1(
     bootstrap.state,
     metrics.state,
     interpretations.state,
+    topicsNarratives.state,
     strategicState
   ]));
   const partialStates: SignalWorkspaceHomeV1["partial_states"] = [];
@@ -97,6 +113,13 @@ export async function loadSignalWorkspaceHomeV1(
       section: "interpretations",
       state: homeState(interpretations.state),
       reason: "interpretations_not_fresh"
+    });
+  }
+  if (topicsNarratives.state !== "fresh") {
+    partialStates.push({
+      section: "topics_narratives",
+      state: homeState(topicsNarratives.state),
+      reason: "topics_narratives_not_fresh"
     });
   }
   if (!releases.current) {
@@ -125,6 +148,7 @@ export async function loadSignalWorkspaceHomeV1(
       period_comparison: capabilityState(metrics.state),
       drill_down: capabilityState(metrics.state),
       interpretations: capabilityState(interpretations.state),
+      topics_narratives: capabilityState(topicsNarratives.state),
       strategic_releases: capabilityState(strategicState),
       lineage: capabilityState(metrics.state)
     }),
@@ -136,6 +160,7 @@ export async function loadSignalWorkspaceHomeV1(
     },
     metric_groups: metrics.groups,
     interpretations: interpretations.interpretations,
+    topics_narratives: topicsNarratives,
     strategic: { current: releases.current, history: releases.history },
     visibility: bootstrap.visibility,
     lineage: lineage.materializations,
@@ -174,6 +199,7 @@ function homeCapabilities(
     ["period_comparison", "/comparison"],
     ["drill_down", "/mentions"],
     ["interpretations", "/interpretations"],
+    ["topics_narratives", "/topics-narratives"],
     ["strategic_releases", "/releases"],
     ["lineage", "/lineage"]
   ];

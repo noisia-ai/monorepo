@@ -308,6 +308,7 @@ export const SIGNAL_WORKSPACE_HOME_FIXTURE_V1 = {
     { key: "metric_groups", state: "available", href: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/metric-groups` },
     { key: "drill_down", state: "available", href: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/mentions` },
     { key: "interpretations", state: "available", href: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/interpretations` },
+    { key: "topics_narratives", state: "available", href: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/topics-narratives` },
     { key: "strategic_releases", state: "available", href: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/releases` }
   ],
   facets: {
@@ -333,6 +334,7 @@ export const SIGNAL_WORKSPACE_HOME_FIXTURE_V1 = {
     review_status: "needs_review",
     interpretation: null
   }],
+  topics_narratives: SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1,
   strategic: {
     current: {
       release_id: "70000000-0000-4000-8000-000000000001",

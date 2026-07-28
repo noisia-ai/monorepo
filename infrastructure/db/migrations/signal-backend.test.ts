@@ -351,3 +351,26 @@ test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation an
   assert.match(source, /paid_provider_invoked: false/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
 });
+
+test("TN backend gate requires real Laika review, runtime, authZ and release evidence", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/signal-topics-narratives-backend-gate.ts"),
+    "utf8"
+  );
+  for (const artifact of [
+    "laika-taxonomy-backfill.json",
+    "signal-topics-narratives-worker.json",
+    "signal-topics-narratives-reconcile.json",
+    "signal-topics-narratives-serving.json",
+    "release-gate.json"
+  ]) {
+    assert.match(source, new RegExp(artifact.replaceAll(".", "\\.")));
+  }
+  assert.match(source, /human_approved/);
+  assert.match(source, /topic_exact_ids/);
+  assert.match(source, /narrative_exact_ids/);
+  assert.match(source, /authz_negative_passed/);
+  assert.match(source, /published_payload_read === false/);
+  assert.match(source, /ready_for_production_review === true/);
+  assert.match(source, /client_activation: false/);
+});
