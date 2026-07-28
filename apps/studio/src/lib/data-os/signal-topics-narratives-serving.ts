@@ -22,7 +22,10 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
-import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import {
+  requireOperationalCorpus,
+  type ResolvedSignalWorkspace
+} from "@/lib/data-os/signal-workspace";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -941,16 +944,7 @@ function worstState(states: SignalTaxonomyServingStateV1[]) {
   return "fresh" as const;
 }
 
-function requireCorpus(workspace: ResolvedSignalWorkspace) {
-  const corpus = workspace.corpora[0];
-  if (!corpus) {
-    throw new SignalBackendContractError(
-      "not_available",
-      "Workspace has no operational serving corpus."
-    );
-  }
-  return corpus;
-}
+const requireCorpus = requireOperationalCorpus;
 
 function assertClientSafeFilter(
   filter: SignalFilterV1,

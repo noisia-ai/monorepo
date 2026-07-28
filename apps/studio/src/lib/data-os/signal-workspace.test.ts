@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  requireOperationalCorpus,
   resolveSignalWorkspaceWithStore,
   type SignalWorkspaceResolverStore,
   type SignalWorkspaceStoreRow,
@@ -84,4 +85,32 @@ test("missing workspaces resolve to null without leaking scope", async () => {
     { workspaceId: WORKSPACE_ID }
   );
   assert.equal(result, null);
+});
+
+test("operational corpus selection ignores unordered strategic and legacy memberships", () => {
+  const operational = workspace.corpora[0]!;
+  assert.equal(requireOperationalCorpus({
+    corpora: [
+      { ...operational, id: "40000000-0000-4000-8000-000000000002", role: "legacy" },
+      { ...operational, id: "40000000-0000-4000-8000-000000000003", role: "strategic" },
+      operational
+    ]
+  }).id, operational.id);
+});
+
+test("operational corpus selection fails closed for zero or ambiguous memberships", () => {
+  const corpus = workspace.corpora[0]!;
+  assert.throws(
+    () => requireOperationalCorpus({ corpora: [{ ...corpus, role: "legacy" }] }),
+    /no active operational corpus/
+  );
+  assert.throws(
+    () => requireOperationalCorpus({
+      corpora: [
+        corpus,
+        { ...corpus, id: "40000000-0000-4000-8000-000000000004" }
+      ]
+    }),
+    /contract is ambiguous/
+  );
 });

@@ -1,4 +1,8 @@
-import { canonicalizeSignalTimezone, validateSignalWorkspaceIdentityV1 } from "@noisia/query-engine";
+import {
+  SignalBackendContractError,
+  canonicalizeSignalTimezone,
+  validateSignalWorkspaceIdentityV1
+} from "@noisia/query-engine";
 
 export type SignalWorkspaceCorpusRole = "operational" | "strategic" | "legacy";
 
@@ -30,6 +34,28 @@ export type ResolvedSignalWorkspace = {
   status: string;
   corpora: SignalWorkspaceCorpus[];
 };
+
+export function requireOperationalCorpus(
+  workspace: Pick<ResolvedSignalWorkspace, "corpora">
+) {
+  const operational = workspace.corpora.filter(
+    (corpus) => corpus.role === "operational"
+  );
+  if (operational.length === 0) {
+    throw new SignalBackendContractError(
+      "not_available",
+      "Workspace has no active operational corpus."
+    );
+  }
+  if (operational.length > 1) {
+    throw new SignalBackendContractError(
+      "not_available",
+      "Workspace operational corpus contract is ambiguous.",
+      { operational_corpora: operational.length }
+    );
+  }
+  return operational[0]!;
+}
 
 export type SignalWorkspaceStoreRow = Omit<ResolvedSignalWorkspace, "contractVersion"> & {
   hasBrandAccess: boolean;

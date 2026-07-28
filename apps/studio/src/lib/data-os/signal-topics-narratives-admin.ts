@@ -11,7 +11,10 @@ import {
 
 import { pool } from "@/lib/db";
 import { canManageCorpus } from "@/lib/auth/roles";
-import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import {
+  requireOperationalCorpus,
+  type ResolvedSignalWorkspace
+} from "@/lib/data-os/signal-workspace";
 import { reconcileSignalTaxonomyProfileV1 } from "@/lib/data-os/signal-topics-narratives-review";
 
 export function canAdministerSignalTaxonomyV1(role: string) {
@@ -75,8 +78,7 @@ export async function loadSignalTaxonomyDiscoveryContextV1(
   workspace: ResolvedSignalWorkspace,
   kind: SignalTaxonomyKindV1
 ): Promise<SignalTaxonomyDiscoveryContextV1> {
-  const corpus = workspace.corpora[0];
-  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const corpus = requireOperationalCorpus(workspace);
   return loadSignalTaxonomyDiscoveryContextStoreV1({
     pool,
     workspace_id: workspace.id,
@@ -89,8 +91,7 @@ export async function createSignalTaxonomyDraftV1(args: {
   workspace: ResolvedSignalWorkspace;
   input: CreateSignalTaxonomyDraftInput;
 }) {
-  const corpus = args.workspace.corpora[0];
-  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const corpus = requireOperationalCorpus(args.workspace);
   return createSignalTaxonomyDraftStoreV1({
     pool,
     workspace_id: args.workspace.id,

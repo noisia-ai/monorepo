@@ -4,7 +4,10 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
-import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import {
+  requireOperationalCorpus,
+  type ResolvedSignalWorkspace
+} from "@/lib/data-os/signal-workspace";
 
 const FORBIDDEN_TERM_KEYS = new Set([
   "trigger",
@@ -93,7 +96,9 @@ export async function reconcileSignalTaxonomyProfileV1(args: {
     status: profile.status,
     term_count: terms.length,
     ready_for_activation: profile.status === "draft" && blockers.length === 0,
-    ready_for_backfill: profile.status === "active" && blockers.length === 0,
+    ready_for_backfill:
+      ["active", "activating"].includes(profile.status)
+      && blockers.length === 0,
     blockers
   };
 }
@@ -103,8 +108,7 @@ export async function loadSignalTaxonomyCoverageV1(args: {
   profile_id?: string;
   include_emerging_candidates?: boolean;
 }) {
-  const corpus = args.workspace.corpora[0];
-  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const corpus = requireOperationalCorpus(args.workspace);
   const profiles = await pool.query<{
     profile_id: string;
     kind: SignalTaxonomyKindV1;
@@ -229,8 +233,7 @@ export async function reviewSignalTaxonomyTagV1(args: {
   action: "approve" | "reject" | "needs_review";
   notes?: string;
 }) {
-  const corpus = args.workspace.corpora[0];
-  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const corpus = requireOperationalCorpus(args.workspace);
   const nextStatus = {
     approve: "approved",
     reject: "rejected",
@@ -264,7 +267,10 @@ export async function reviewSignalTaxonomyTagV1(args: {
     }
     const updated = await client.query(`
       UPDATE record_tags
-      SET review_status = $2
+      SET review_status = $2,
+        approval_source = CASE WHEN $2 = 'approved' THEN 'human' END,
+        approval_policy_version = NULL,
+        approved_at = CASE WHEN $2 = 'approved' THEN now() END
       WHERE id = $1::uuid
       RETURNING id::text, subject_id::text, review_status
     `, [args.tag_id, nextStatus]);
@@ -342,8 +348,7 @@ export async function loadSignalTaxonomyTagV1(args: {
   profile_id: string;
   tag_id: string;
 }) {
-  const corpus = args.workspace.corpora[0];
-  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const corpus = requireOperationalCorpus(args.workspace);
   const result = await pool.query(`
     SELECT tag.id::text, tag.subject_id::text, tag.value,
       tag.score::float8, tag.confidence, tag.evidence, tag.review_status,

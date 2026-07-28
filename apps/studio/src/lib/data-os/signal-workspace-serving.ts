@@ -26,7 +26,10 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
-import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import {
+  requireOperationalCorpus,
+  type ResolvedSignalWorkspace
+} from "@/lib/data-os/signal-workspace";
 import { isSignalAdHocMaterializationEnabled } from "@/lib/data-os/serving";
 import { enqueueSignalAdHocMaterialization } from "@/lib/queue/data-os";
 
@@ -816,11 +819,7 @@ async function queueMissingMaterialization(workspace: ResolvedSignalWorkspace, f
   };
 }
 
-function requireServingCorpus(workspace: ResolvedSignalWorkspace) {
-  const corpus = workspace.corpora[0];
-  if (!corpus) throw new SignalBackendContractError("not_available", "Workspace has no serving corpus.");
-  return corpus;
-}
+const requireServingCorpus = requireOperationalCorpus;
 
 function requireVisibleMetric(metricKey: string, version: number, isInternalUser: boolean) {
   const metric = signalMetricDefinitionV1(metricKey, version);
