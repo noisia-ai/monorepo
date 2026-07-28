@@ -12,6 +12,7 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
+import { canManageCorpus } from "@/lib/auth/roles";
 import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
 import { reconcileSignalTaxonomyProfileV1 } from "@/lib/data-os/signal-topics-narratives-review";
 
@@ -21,6 +22,10 @@ type DiscoveryContextRow = {
   version: string;
   content: string;
 };
+
+export function canAdministerSignalTaxonomyV1(role: string) {
+  return canManageCorpus(role);
+}
 
 export type SignalTaxonomyDiscoveryContextV1 = {
   workspace_id: string;

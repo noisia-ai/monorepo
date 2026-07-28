@@ -335,3 +335,53 @@ export async function reviewSignalTaxonomyTagV1(args: {
     client.release();
   }
 }
+
+export async function loadSignalTaxonomyTagV1(args: {
+  workspace: ResolvedSignalWorkspace;
+  profile_id: string;
+  tag_id: string;
+}) {
+  const corpus = args.workspace.corpora[0];
+  if (!corpus) throw new Error("Signal workspace has no serving corpus.");
+  const result = await pool.query(`
+    SELECT tag.id::text, tag.subject_id::text, tag.value,
+      tag.score::float8, tag.confidence, tag.evidence, tag.review_status,
+      tag.created_at, term.term_key, term.label, term.description,
+      profile.id::text AS profile_id, profile.kind, profile.version,
+      profile.context_hash, profile.model_version_id::text,
+      COALESCE(mention.text_snippet, left(mention.text_clean, 500))
+        AS mention_preview,
+      mention.published_at,
+      COALESCE(
+        jsonb_agg(jsonb_build_object(
+          'id', event.id,
+          'action', event.action,
+          'reviewer_user_id', event.reviewer_user_id,
+          'notes', event.notes,
+          'created_at', event.created_at
+        ) ORDER BY event.created_at, event.id)
+          FILTER (WHERE event.id IS NOT NULL),
+        '[]'::jsonb
+      ) AS review_events
+    FROM record_tags tag
+    JOIN signal_taxonomy_profiles profile
+      ON profile.id = tag.signal_taxonomy_profile_id
+    JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id
+    JOIN mentions mention
+      ON mention.id = tag.subject_id
+     AND mention.study_corpus_id = tag.study_corpus_id
+    LEFT JOIN tag_review_events event ON event.record_tag_id = tag.id
+    WHERE tag.id = $1::uuid
+      AND profile.id = $2::uuid
+      AND profile.workspace_id = $3::uuid
+      AND tag.study_corpus_id = $4::uuid
+    GROUP BY tag.id, term.id, profile.id, mention.id
+  `, [args.tag_id, args.profile_id, args.workspace.id, corpus.id]);
+  if (!result.rows[0]) return null;
+  return {
+    contract_version: "signal-topics-narratives-v1",
+    workspace_id: args.workspace.id,
+    study_corpus_id: corpus.id,
+    tag: result.rows[0]
+  };
+}

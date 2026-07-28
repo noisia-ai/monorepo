@@ -302,7 +302,7 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
   const reviewQueueRouteFile = routeFiles.find((routeFile) => routeFile.includes("/review-queue/"));
   const readinessRouteFile = routeFiles.find((routeFile) => routeFile.endsWith("/readiness/route.ts"));
 
-  assert.equal(routeFiles.length, 25);
+  assert.ok(routeFiles.length >= 25, "Data OS routes are additive and all must remain guarded.");
   assert.match(loader, /getAuthenticatedAppUser/);
   assert.match(loader, /canManageCorpus/);
   assert.match(loader, /canViewClientOutputs/);

@@ -2,8 +2,10 @@ import { z } from "zod";
 
 import { loadSignalWorkspaceContext } from "@/app/api/data-os/_lib/load";
 import { forbidden, validationError } from "@/lib/api/responses";
-import { canManageCorpus } from "@/lib/auth/roles";
-import { reviewSignalTaxonomyProfileV1 } from "@/lib/data-os/signal-topics-narratives-admin";
+import {
+  canAdministerSignalTaxonomyV1,
+  reviewSignalTaxonomyProfileV1
+} from "@/lib/data-os/signal-topics-narratives-admin";
 import {
   loadSignalTaxonomyCoverageV1,
   reconcileSignalTaxonomyProfileV1
@@ -34,7 +36,7 @@ export async function GET(
   if ("response" in loaded) return loaded.response;
   if (
     !loaded.isInternalUser
-    || !canManageCorpus(loaded.session.appUser.primaryRole)
+    || !canAdministerSignalTaxonomyV1(loaded.session.appUser.primaryRole)
   ) return forbidden();
   const [reconciliation, coverage] = await Promise.all([
     reconcileSignalTaxonomyProfileV1({
@@ -70,7 +72,7 @@ export async function POST(
   if ("response" in loaded) return loaded.response;
   if (
     !loaded.isInternalUser
-    || !canManageCorpus(loaded.session.appUser.primaryRole)
+    || !canAdministerSignalTaxonomyV1(loaded.session.appUser.primaryRole)
   ) return forbidden();
   const parsed = reviewSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return validationError(parsed.error);

@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { loadSignalWorkspaceContext } from "@/app/api/data-os/_lib/load";
 import { forbidden, validationError } from "@/lib/api/responses";
-import { canManageCorpus } from "@/lib/auth/roles";
 import {
+  canAdministerSignalTaxonomyV1,
   createSignalTaxonomyDraftV1,
   listSignalTaxonomyProfilesV1,
   loadSignalTaxonomyDiscoveryContextV1
@@ -40,7 +40,7 @@ export async function GET(
   if ("response" in loaded) return loaded.response;
   if (
     !loaded.isInternalUser
-    || !canManageCorpus(loaded.session.appUser.primaryRole)
+    || !canAdministerSignalTaxonomyV1(loaded.session.appUser.primaryRole)
   ) return forbidden();
   const kind = new URL(request.url).searchParams.get("discovery_context");
   const searchParams = new URL(request.url).searchParams;
@@ -75,7 +75,7 @@ export async function POST(
   if ("response" in loaded) return loaded.response;
   if (
     !loaded.isInternalUser
-    || !canManageCorpus(loaded.session.appUser.primaryRole)
+    || !canAdministerSignalTaxonomyV1(loaded.session.appUser.primaryRole)
   ) return forbidden();
   const parsed = proposalSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return validationError(parsed.error);
