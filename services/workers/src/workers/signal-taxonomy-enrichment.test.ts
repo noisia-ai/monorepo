@@ -18,6 +18,9 @@ test("taxonomy worker classifies incrementally into canonical tags with governed
   assert.match(source, /semantic_embeddings/);
   assert.match(source, /provider: "voyage"/);
   assert.match(source, /context_refs/);
+  assert.match(source, /INSERT INTO lineage_edges/);
+  assert.match(source, /'mention'.*'record_tag'/s);
+  assert.match(source, /'tagging_model_version'.*'record_tag'/s);
   assert.match(source, /inclusion_status = 'included'/);
   assert.match(source, /signal_data_invalidations/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates|tb_analyses/);

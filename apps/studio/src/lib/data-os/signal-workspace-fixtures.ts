@@ -2,6 +2,10 @@ import {
   signalFiltersHashV1,
   type SignalBreakdownV1,
   type SignalFilterV1,
+  type SignalTaxonomyEvidencePageV1,
+  type SignalTaxonomyLineageV1,
+  type SignalTaxonomyTermDetailV1,
+  type SignalTopicsNarrativesOverviewV1,
   type SignalTimeSeriesV1,
   type SignalWorkspaceHomeV1
 } from "@noisia/query-engine";
@@ -87,6 +91,193 @@ export const SIGNAL_DRILL_DOWN_FIXTURE_V1 = {
   }],
   page: { limit: 50, next_cursor: null }
 };
+
+export const SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1 = {
+  contract_version: "signal-topics-narratives-v1",
+  workspace_id: SIGNAL_WORKSPACE_FIXTURE_IDS.workspace,
+  corpus_id: SIGNAL_WORKSPACE_FIXTURE_IDS.corpus,
+  filters_hash: SIGNAL_SERIES_FIXTURE_V1.filters_hash,
+  comparison_filters_hash: null,
+  profiles: [
+    {
+      kind: "topic",
+      version: 1,
+      status: "active",
+      activated_at: "2026-07-01T01:00:00.000Z",
+      term_count: 8
+    },
+    {
+      kind: "narrative",
+      version: 1,
+      status: "active",
+      activated_at: "2026-07-01T01:00:00.000Z",
+      term_count: 6
+    }
+  ],
+  topics: {
+    kind: "topic",
+    metric_key: "topic.volume",
+    state: "fresh",
+    coverage: {
+      included_mentions: 128,
+      processed_mentions: 128,
+      classified_mentions: 80,
+      unclassified_mentions: 48,
+      tag_assertions: 92,
+      pending_mentions: 0,
+      rejected_mentions: 12,
+      coverage: 0.625,
+      quality_state: "ready",
+      limitations: []
+    },
+    terms: [{
+      term_key: "pet_health",
+      label: "Pet health",
+      mention_count: 40,
+      denominator: 128,
+      share_of_included: 0.3125,
+      share_of_classified: 0.5,
+      comparison_mention_count: null,
+      delta: null,
+      comparison_share_of_included: null,
+      share_delta: null,
+      state: "fresh"
+    }],
+    series: [{
+      period_start: "2026-06-01",
+      period_end: "2026-06-30",
+      mention_count: 80,
+      denominator: 128,
+      share_of_included: 0.625,
+      state: "fresh"
+    }],
+    cooccurrences: [],
+    data_watermark_hashes: ["sha256:fixture-watermark"],
+    computed_at: "2026-07-01T01:05:00.000Z"
+  },
+  narratives: {
+    kind: "narrative",
+    metric_key: "narrative.volume",
+    state: "fresh",
+    coverage: {
+      included_mentions: 128,
+      processed_mentions: 128,
+      classified_mentions: 60,
+      unclassified_mentions: 68,
+      tag_assertions: 64,
+      pending_mentions: 0,
+      rejected_mentions: 8,
+      coverage: 0.46875,
+      quality_state: "ready",
+      limitations: []
+    },
+    terms: [{
+      term_key: "care_is_prevention",
+      label: "Care is prevention",
+      mention_count: 30,
+      denominator: 128,
+      share_of_included: 0.234375,
+      share_of_classified: 0.5,
+      comparison_mention_count: null,
+      delta: null,
+      comparison_share_of_included: null,
+      share_delta: null,
+      state: "fresh"
+    }],
+    series: [{
+      period_start: "2026-06-01",
+      period_end: "2026-06-30",
+      mention_count: 60,
+      denominator: 128,
+      share_of_included: 0.46875,
+      state: "fresh"
+    }],
+    cooccurrences: [],
+    data_watermark_hashes: ["sha256:fixture-watermark"],
+    computed_at: "2026-07-01T01:05:00.000Z"
+  },
+  state: "fresh",
+  limitations: [],
+  visibility: { internal: false, classification_details: false }
+} as const satisfies SignalTopicsNarrativesOverviewV1;
+
+export const SIGNAL_TAXONOMY_TERM_DETAIL_FIXTURE_V1 = {
+  contract_version: "signal-topics-narratives-v1",
+  workspace_id: SIGNAL_WORKSPACE_FIXTURE_IDS.workspace,
+  corpus_id: SIGNAL_WORKSPACE_FIXTURE_IDS.corpus,
+  filters_hash: SIGNAL_SERIES_FIXTURE_V1.filters_hash,
+  kind: "topic",
+  metric_key: "topic.volume",
+  term: {
+    ...SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.topics.terms[0],
+    definition: "Conversation about the health and wellbeing of pets.",
+    statement: null
+  },
+  series: [{
+    period_start: "2026-06-01",
+    period_end: "2026-06-30",
+    mention_count: 40,
+    denominator: 128,
+    share_of_included: 0.3125,
+    state: "fresh"
+  }],
+  related_terms: [],
+  coverage: SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.topics.coverage,
+  state: "fresh",
+  limitations: [],
+  links: {
+    evidence: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/topics-narratives/topic/pet_health/evidence`,
+    lineage: `/api/data-os/signal/${SIGNAL_WORKSPACE_FIXTURE_IDS.workspace}/topics-narratives/topic/pet_health/lineage`
+  }
+} as const satisfies SignalTaxonomyTermDetailV1;
+
+export const SIGNAL_TAXONOMY_EVIDENCE_FIXTURE_V1 = {
+  contract_version: "signal-topics-narratives-v1",
+  workspace_id: SIGNAL_WORKSPACE_FIXTURE_IDS.workspace,
+  corpus_id: SIGNAL_WORKSPACE_FIXTURE_IDS.corpus,
+  filters_hash: signalFiltersHashV1({
+    ...SIGNAL_FILTER_FIXTURE_V1,
+    dimensions: {
+      ...SIGNAL_FILTER_FIXTURE_V1.dimensions,
+      topic: ["pet_health"]
+    }
+  }),
+  kind: "topic",
+  term_key: "pet_health",
+  records: [{
+    mention_id: SIGNAL_DRILL_DOWN_FIXTURE_V1.records[0]!.subject_id,
+    occurred_at: SIGNAL_DRILL_DOWN_FIXTURE_V1.records[0]!.occurred_at,
+    text_snippet: "La salud preventiva de mi mascota importa.",
+    title: null,
+    url: "https://example.test/mention/1",
+    platform: "instagram",
+    language: "es",
+    country: "mx",
+    evidence_quotes: [{
+      quote: "salud preventiva",
+      start: 3,
+      end: 19
+    }]
+  }],
+  page: { limit: 50, total_count: 40, next_cursor: null }
+} as const satisfies SignalTaxonomyEvidencePageV1;
+
+export const SIGNAL_TAXONOMY_LINEAGE_FIXTURE_V1 = {
+  contract_version: "signal-topics-narratives-v1",
+  workspace_id: SIGNAL_WORKSPACE_FIXTURE_IDS.workspace,
+  corpus_id: SIGNAL_WORKSPACE_FIXTURE_IDS.corpus,
+  filters_hash: SIGNAL_SERIES_FIXTURE_V1.filters_hash,
+  kind: "topic",
+  term_key: "pet_health",
+  profile: SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.profiles[0],
+  materializations: [{
+    materialization_key: "sha256:fixture-topic-materialization",
+    data_watermark_hash: "sha256:fixture-watermark",
+    state: "fresh",
+    computed_at: "2026-07-01T01:05:00.000Z"
+  }],
+  source_summary: { mention_count: 40, import_batch_count: 1 }
+} as const satisfies SignalTaxonomyLineageV1;
 
 export const SIGNAL_WORKSPACE_HOME_FIXTURE_V1 = {
   contract_version: "signal-backend-v1",

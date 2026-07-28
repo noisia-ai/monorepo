@@ -407,7 +407,7 @@ async function persistBatch(args: {
     for (const classification of classifications) {
       for (const assignment of classification.assignments) {
         const reviewStatus = signalTaxonomyAssignmentDispositionV1(assignment);
-        await client.query(`
+        const persistedTag = await client.query<{ id: string }>(`
           INSERT INTO record_tags (
             organization_id, brand_id, study_corpus_id,
             subject_type, subject_id, taxonomy_term_id,
@@ -435,6 +435,7 @@ async function persistBatch(args: {
             confidence = EXCLUDED.confidence,
             evidence = EXCLUDED.evidence
           WHERE record_tags.review_status NOT IN ('approved', 'rejected')
+          RETURNING id::text
         `, [
           args.scope.organization_id,
           args.scope.brand_id,
@@ -455,6 +456,36 @@ async function persistBatch(args: {
           assignment.term_key,
           reviewStatus
         ]);
+        const tagId = persistedTag.rows[0]?.id;
+        if (tagId) {
+          await client.query(`
+            INSERT INTO lineage_edges (
+              source_type, source_id, target_type, target_id,
+              relation_type, metadata
+            ) VALUES
+              ('mention', $1::uuid, 'record_tag', $2::uuid,
+                'classified_as', jsonb_build_object(
+                  'taxonomy_profile_id', $3::uuid,
+                  'review_status', $6
+                )),
+              ('signal_taxonomy_profile', $3::uuid, 'record_tag', $2::uuid,
+                'governs', '{}'::jsonb),
+              ('tagging_model_version', $4::uuid, 'record_tag', $2::uuid,
+                'generated', jsonb_build_object(
+                  'corpus_revision', $5::int
+                ))
+            ON CONFLICT (
+              source_type, source_id, target_type, target_id, relation_type
+            ) DO UPDATE SET metadata = lineage_edges.metadata || EXCLUDED.metadata
+          `, [
+            classification.mention_id,
+            tagId,
+            args.scope.profile_id,
+            args.scope.model_version_id,
+            args.scope.input_corpus_revision,
+            reviewStatus
+          ]);
+        }
       }
       await client.query(`
         INSERT INTO record_feature_values (

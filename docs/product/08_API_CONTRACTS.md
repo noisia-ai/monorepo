@@ -551,6 +551,7 @@ DB antes de devolver identidad o corpora.
   "date_range": { "start": "2026-05-01", "end": "2026-05-31" },
   "timezone": "America/Mexico_City",
   "granularity": "day",
+  "text_search": "entrega rápida",
   "dimensions": {
     "platform": ["instagram", "tiktok"],
     "sentiment_polarity": ["negative", "positive"]
@@ -568,11 +569,13 @@ Reglas de canonicalización:
 - valores multiselect usan Unicode NFC, trim, espacios internos colapsados y lowercase;
 - vacíos y duplicados se eliminan; arrays se ordenan por bytes UTF-8;
 - dimensiones se emiten siempre en el orden de `SIGNAL_DIMENSIONS`;
+- `text_search` es opcional, Unicode NFC, whitespace colapsado, lowercase,
+  case-insensitive y máximo 200 caracteres; aliases `search`, `query` y `q`;
 - una dimensión desconocida responde `unsupported_dimension`, nunca se ignora.
 
 Dimensiones V1, en orden canónico:
 
-`platform`, `source_type`, `entity`, `product`, `campaign`, `topic`, `taxonomy`,
+`platform`, `source_type`, `entity`, `product`, `campaign`, `topic`, `narrative`, `taxonomy`,
 `signal`, `signal_lifecycle`, `audience`, `demographic`, `journey_stage`, `trigger`,
 `barrier`, `sentiment_polarity`, `emotion`, `country`, `language`, `content_format`.
 
@@ -590,7 +593,8 @@ El algoritmo V1 es determinístico y no depende del orden de objetos recibido:
 
 1. Validar y normalizar el filtro con las reglas anteriores.
 2. Serializar JSON UTF-8 sin whitespace con claves top-level en este orden:
-   `contract_version`, `date_range`, `timezone`, `granularity`, `dimensions`.
+   `contract_version`, `date_range`, `timezone`, `granularity`, `dimensions` y,
+   sólo cuando existe, `text_search`.
 3. Serializar `date_range` como `start`, `end` y `dimensions` como una lista ordenada
    de tuplas `[dimension, values]` para no depender del orden de claves JSON.
 4. Calcular SHA-256 sobre esos bytes.
@@ -908,6 +912,40 @@ Hardening post-SB-06:
 - si persisten varios corpora operational activos por datos históricos, el resolver
   responde fail-closed `409 not_available` con
 `reason=multiple_active_operational_corpora`.
+
+#### Signal Topics & Narratives serving V1 (TN-07)
+
+El contrato compartido `signal-topics-narratives-v1` vive en
+`@noisia/query-engine`. Topics responde de qué se habla; Narratives responde qué
+afirmación, historia o marco se construye. Ninguna ruta transforma triggers, barriers,
+decision layers, observed signals, findings u oportunidades en estas dimensiones.
+
+Todas las rutas usan el resolver/authZ workspace-centric y el mismo
+`SignalFilterV1`, incluida búsqueda textual. Sólo consumen perfiles activos exactos,
+`record_tags.review_status='approved'`, `metric_materializations` y `mentions`.
+Pending/rejected quedan fuera de métricas y evidencia client-safe. No se consulta
+`published_outputs.payload` ni `chart_aggregates`.
+
+| Route | Semántica |
+|---|---|
+| `GET /api/data-os/signal/:workspaceId/topics-narratives` | overview conjunto con perfiles, coverage, rankings, shares, series, comparación y coocurrencias |
+| `GET /api/data-os/signal/:workspaceId/topics-narratives/:kind/:termKey` | detail gobernado de un topic/narrative, serie y términos relacionados |
+| `GET /api/data-os/signal/:workspaceId/topics-narratives/:kind/:termKey/evidence` | mention IDs/citas aprobadas reconciliadas, cursor y límite máximo 100 |
+| `GET /api/data-os/signal/:workspaceId/topics-narratives/:kind/:termKey/lineage` | perfil, metric materialization, watermark y resumen de imports; IDs/edges sólo internos |
+
+`kind` sólo acepta `topic|narrative`; `termKey` debe ser una key canónica del perfil
+activo. `comparison_start` y `comparison_end` deben enviarse juntos, con ventana de
+igual número de días y sin traslape. Toda cifra de overview/detail proviene de
+`topic.volume@1` o `narrative.volume@1`: mention count, denominador, share sobre
+incluidas, share sobre clasificadas, delta y coverage. Coocurrencia se etiqueta
+explícitamente `cooccurrence_not_causality`.
+
+Ventanas de una sola mención son válidas. Un perfil procesado sin asignación devuelve
+cero observado y coverage cero; un perfil sin procesamiento devuelve
+`not_available`. Procesamiento incompleto o revisión pending devuelve `partial`.
+Los clientes nunca reciben model IDs, context refs, import batch IDs ni edges internos.
+Fixtures TypeScript congeladas para el futuro frontend viven en
+`signal-workspace-fixtures.ts`.
 
 #### Signal metric interpretations V1 (SB-07)
 

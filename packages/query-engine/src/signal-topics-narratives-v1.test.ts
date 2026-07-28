@@ -106,6 +106,7 @@ test("classification accepts only governed terms and requires evidence", () => {
 test("coverage keeps small windows valid and exposes incomplete review", () => {
   assert.deepEqual(signalTaxonomyCoverageV1({
     included_mentions: 3,
+    processed_mentions: 2,
     classified_mentions: 2,
     tag_assertions: 4,
     pending_mentions: 1
@@ -120,6 +121,18 @@ test("coverage keeps small windows valid and exposes incomplete review", () => {
     quality_state: "partial",
     limitations: ["classification_review_pending", "classification_coverage_incomplete"]
   });
+});
+
+test("coverage treats reviewed unclassified mentions as processed without inventing a minimum", () => {
+  const coverage = signalTaxonomyCoverageV1({
+    included_mentions: 1,
+    processed_mentions: 1,
+    classified_mentions: 0,
+    tag_assertions: 0
+  });
+  assert.equal(coverage.quality_state, "ready");
+  assert.equal(coverage.coverage, 0);
+  assert.deepEqual(coverage.limitations, []);
 });
 
 test("acceptance keeps qualifying tags pending for human review and rejects weak assignments", () => {

@@ -11,8 +11,13 @@ import {
 
 import {
   SIGNAL_BREAKDOWN_FIXTURE_V1,
+  SIGNAL_DRILL_DOWN_FIXTURE_V1,
   SIGNAL_FILTER_FIXTURE_V1,
   SIGNAL_SERIES_FIXTURE_V1,
+  SIGNAL_TAXONOMY_EVIDENCE_FIXTURE_V1,
+  SIGNAL_TAXONOMY_LINEAGE_FIXTURE_V1,
+  SIGNAL_TAXONOMY_TERM_DETAIL_FIXTURE_V1,
+  SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1,
   SIGNAL_WORKSPACE_HOME_FIXTURE_V1,
   SIGNAL_WORKSPACE_FIXTURE_IDS
 } from "./signal-workspace-fixtures";
@@ -27,6 +32,12 @@ const {
   summarizeSignalMetricPointsV1
 } = await import("./signal-workspace-serving");
 const { defaultSignalHomeFilter } = await import("./signal-workspace-home");
+const {
+  aggregateSignalTaxonomyServingFixtureV1,
+  signalTaxonomyComparisonRangeV1,
+  signalTaxonomyKindV1,
+  signalTaxonomyTermKeyV1
+} = await import("./signal-topics-narratives-serving");
 
 test("Signal workspace fixtures satisfy the shared series and breakdown contract", () => {
   assert.deepEqual(validateSignalTimeSeriesV1(SIGNAL_SERIES_FIXTURE_V1), SIGNAL_SERIES_FIXTURE_V1);
@@ -37,6 +48,105 @@ test("Signal workspace fixtures satisfy the shared series and breakdown contract
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.default_filter, SIGNAL_FILTER_FIXTURE_V1);
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.coverage.mentions, 128);
   assert.equal(SIGNAL_WORKSPACE_HOME_FIXTURE_V1.facade_version, "signal-workspace-home-v1");
+});
+
+test("Topics and Narratives fixtures freeze overview, detail, evidence and lineage contracts", () => {
+  assert.equal(
+    SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.contract_version,
+    "signal-topics-narratives-v1"
+  );
+  assert.equal(
+    SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.topics.metric_key,
+    "topic.volume"
+  );
+  assert.equal(
+    SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.narratives.metric_key,
+    "narrative.volume"
+  );
+  assert.equal(
+    SIGNAL_TAXONOMY_TERM_DETAIL_FIXTURE_V1.term.mention_count,
+    SIGNAL_TAXONOMY_LINEAGE_FIXTURE_V1.source_summary.mention_count
+  );
+  assert.equal(SIGNAL_TAXONOMY_EVIDENCE_FIXTURE_V1.records.length, 1);
+  assert.equal(
+    SIGNAL_TAXONOMY_EVIDENCE_FIXTURE_V1.page.total_count,
+    SIGNAL_TAXONOMY_TERM_DETAIL_FIXTURE_V1.term.mention_count
+  );
+  assert.equal(
+    SIGNAL_TAXONOMY_EVIDENCE_FIXTURE_V1.records[0]?.mention_id,
+    SIGNAL_DRILL_DOWN_FIXTURE_V1.records[0]?.subject_id
+  );
+});
+
+test("Topics and Narratives route keys and comparison controls fail closed", () => {
+  assert.equal(signalTaxonomyKindV1("narrative"), "narrative");
+  assert.equal(signalTaxonomyTermKeyV1(" Pet_Health "), "pet_health");
+  assert.equal(signalTaxonomyComparisonRangeV1(new URLSearchParams()), null);
+  assert.deepEqual(signalTaxonomyComparisonRangeV1(new URLSearchParams(
+    "comparison_start=2026-05-01&comparison_end=2026-05-31"
+  )), { start: "2026-05-01", end: "2026-05-31" });
+  assert.throws(() => signalTaxonomyKindV1("trigger"));
+  assert.throws(() => signalTaxonomyTermKeyV1("not a key"));
+  assert.throws(() => signalTaxonomyComparisonRangeV1(new URLSearchParams(
+    "comparison_start=2026-05-01"
+  )));
+});
+
+test("TN serving aggregates all denominators, emits period zero and retains disappeared terms", () => {
+  const payload = (included: number, classified: number, buckets: unknown[]) => ({
+    included_mentions: included,
+    processed_mentions: included,
+    classified_mentions: classified,
+    tag_assertions: classified,
+    pending_mentions: 0,
+    rejected_mentions: 0,
+    buckets,
+    cooccurrences: []
+  });
+  const section = aggregateSignalTaxonomyServingFixtureV1({
+    kind: "topic",
+    current: [
+      {
+        period_start: "2026-06-01",
+        period_end: "2026-06-01",
+        typed_payload: payload(2, 1, [{
+          key: "pet_health",
+          label: "Pet health",
+          value: 1,
+          denominator: 2
+        }]),
+        state: "fresh"
+      },
+      {
+        period_start: "2026-06-02",
+        period_end: "2026-06-02",
+        typed_payload: payload(1, 0, []),
+        state: "fresh"
+      }
+    ],
+    comparison: [{
+      period_start: "2026-05-31",
+      period_end: "2026-05-31",
+      typed_payload: payload(2, 1, [{
+        key: "delivery_trust",
+        label: "Delivery trust",
+        value: 1,
+        denominator: 2
+      }]),
+      state: "fresh"
+    }]
+  });
+  const petHealth = section.terms.find((term) => term.term_key === "pet_health");
+  const disappeared = section.terms.find((term) => term.term_key === "delivery_trust");
+  assert.equal(petHealth?.denominator, 3);
+  assert.equal(petHealth?.share_of_included, 1 / 3);
+  assert.deepEqual(
+    section.series.map((point) => point.denominator),
+    [2, 1]
+  );
+  assert.equal(disappeared?.mention_count, 0);
+  assert.equal(disappeared?.comparison_mention_count, 1);
+  assert.equal(disappeared?.delta, -1);
 });
 
 test("home facade chooses the latest covered month without inventing dates", () => {
@@ -299,4 +409,43 @@ test("TN facets use exact active workspace profiles and keep narrative canonical
   assert.doesNotMatch(source, /LIKE '%topic%'/);
   assert.doesNotMatch(source, /LIKE '%narrative%'/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+});
+
+test("TN serving routes reconcile canonical materializations, approved evidence and lineage", async () => {
+  const routeRoot = resolve(
+    process.cwd(),
+    "src/app/api/data-os/signal/[workspaceId]/topics-narratives"
+  );
+  const routeSources = await Promise.all([
+    readFile(resolve(routeRoot, "route.ts"), "utf8"),
+    readFile(resolve(routeRoot, "[kind]/[termKey]/route.ts"), "utf8"),
+    readFile(resolve(routeRoot, "[kind]/[termKey]/evidence/route.ts"), "utf8"),
+    readFile(resolve(routeRoot, "[kind]/[termKey]/lineage/route.ts"), "utf8")
+  ]);
+  const [service, worker] = await Promise.all([
+    readFile(
+      resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-serving.ts"),
+      "utf8"
+    ),
+    readFile(
+      resolve(process.cwd(), "../../services/workers/src/workers/signal-taxonomy-enrichment.ts"),
+      "utf8"
+    )
+  ]);
+  for (const route of routeSources) {
+    assert.match(route, /loadSignalWorkspaceContext/);
+    assert.match(route, /export async function GET/);
+    assert.doesNotMatch(route, /published_outputs|chart_aggregates|raw_metadata/);
+  }
+  assert.match(service, /FROM metric_materializations/);
+  assert.match(service, /buildSignalMentionPredicateV1/);
+  assert.match(service, /tag\.review_status = 'approved'/);
+  assert.match(service, /JOIN signal_taxonomy_profiles profile/);
+  assert.match(service, /profile\.workspace_id =/);
+  assert.match(service, /profile\.status = 'active'/);
+  assert.match(service, /cooccurrence_not_causality/);
+  assert.match(worker, /'mention'.*'record_tag'/s);
+  assert.match(worker, /'signal_taxonomy_profile'.*'record_tag'/s);
+  assert.match(worker, /INSERT INTO lineage_edges/);
+  assert.doesNotMatch(service, /published_outputs|chart_aggregates|raw_metadata/);
 });

@@ -207,6 +207,7 @@ export async function loadSignalTaxonomyCoverageV1(args: {
       processed_mentions: Number(row.processed_mentions),
       ...signalTaxonomyCoverageV1({
         included_mentions: Number(row.included_mentions),
+        processed_mentions: Number(row.processed_mentions),
         classified_mentions: Number(row.approved_mentions),
         tag_assertions: Number(row.approved_tag_assertions),
         pending_mentions: Number(row.pending_mentions),

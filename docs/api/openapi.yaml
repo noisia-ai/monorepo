@@ -561,6 +561,124 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/topics-narratives:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalTopicsNarrativesOverview
+      summary: Get canonical topic and narrative metrics for one workspace filter.
+      description: Reads approved active-profile classifications and deterministic topic.volume@1/narrative.volume@1 materializations. SQL owns every count, share, denominator and comparison.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalTextSearch" }
+        - { $ref: "#/components/parameters/SignalComparisonStart" }
+        - { $ref: "#/components/parameters/SignalComparisonEnd" }
+      responses:
+        "200":
+          description: Topic and narrative rankings, series, shares, cooccurrences and coverage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicsNarrativesOverviewV1" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/topics-narratives/{kind}/{termKey}:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalTaxonomyTermDetail
+      summary: Get one active topic or narrative with series, comparison and related terms.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalTaxonomyKind" }
+        - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalTextSearch" }
+        - { $ref: "#/components/parameters/SignalComparisonStart" }
+        - { $ref: "#/components/parameters/SignalComparisonEnd" }
+      responses:
+        "200":
+          description: Governed term detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTaxonomyTermDetailV1" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/topics-narratives/{kind}/{termKey}/evidence:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalTaxonomyTermEvidence
+      summary: Page approved mention evidence for one topic or narrative.
+      description: Uses the same SignalFilterV1 predicate as the aggregate. Pending and rejected tags are never claim-specific evidence.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalTaxonomyKind" }
+        - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalTextSearch" }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Sanitized approved evidence page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTaxonomyEvidencePageV1" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/topics-narratives/{kind}/{termKey}/lineage:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalTaxonomyTermLineage
+      summary: Get profile, materialization, watermark and source lineage for one term.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalTaxonomyKind" }
+        - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalTextSearch" }
+      responses:
+        "200":
+          description: Governed lineage; IDs and edges are internal-only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTaxonomyLineageV1" }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
 components:
   securitySchemes:
     bearerAuth:
@@ -612,6 +730,36 @@ components:
       in: query
       required: false
       schema: { type: string, enum: [day, week, month], default: day }
+    SignalTextSearch:
+      name: text_search
+      in: query
+      required: false
+      description: Canonical case-insensitive full-text search, maximum 200 characters. Aliases search, query and q are accepted.
+      schema: { type: string, maxLength: 200 }
+    SignalTaxonomyKind:
+      name: kind
+      in: path
+      required: true
+      schema: { type: string, enum: [topic, narrative] }
+    SignalTaxonomyTermKey:
+      name: termKey
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$'
+    SignalComparisonStart:
+      name: comparison_start
+      in: query
+      required: false
+      description: Inclusive comparison start; must be paired with comparison_end.
+      schema: { type: string, format: date }
+    SignalComparisonEnd:
+      name: comparison_end
+      in: query
+      required: false
+      description: Inclusive comparison end; must be paired with comparison_start.
+      schema: { type: string, format: date }
     SignalMetricKey:
       name: metric_key
       in: query
@@ -691,7 +839,79 @@ components:
         details: { type: object, additionalProperties: true }
     SignalDimensionV1:
       type: string
-      enum: [platform, source_type, entity, product, campaign, topic, taxonomy, signal, signal_lifecycle, audience, demographic, journey_stage, trigger, barrier, sentiment_polarity, emotion, country, language, content_format]
+      enum: [platform, source_type, entity, product, campaign, topic, narrative, taxonomy, signal, signal_lifecycle, audience, demographic, journey_stage, trigger, barrier, sentiment_polarity, emotion, country, language, content_format]
+    SignalTopicsNarrativesOverviewV1:
+      type: object
+      required: [contract_version, workspace_id, corpus_id, filters_hash, comparison_filters_hash, profiles, topics, narratives, state, limitations, visibility]
+      properties:
+        contract_version: { const: signal-topics-narratives-v1 }
+        workspace_id: { type: string, format: uuid }
+        corpus_id: { type: string, format: uuid }
+        filters_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        comparison_filters_hash: { type: [string, "null"] }
+        profiles: { type: array, items: { type: object, additionalProperties: true } }
+        topics: { $ref: "#/components/schemas/SignalTaxonomyOverviewSectionV1" }
+        narratives: { $ref: "#/components/schemas/SignalTaxonomyOverviewSectionV1" }
+        state: { type: string, enum: [fresh, stale, pending, partial, not_available] }
+        limitations: { type: array, items: { type: string } }
+        visibility: { type: object, additionalProperties: true }
+    SignalTaxonomyOverviewSectionV1:
+      type: object
+      required: [kind, metric_key, state, coverage, terms, series, cooccurrences, data_watermark_hashes, computed_at]
+      properties:
+        kind: { type: string, enum: [topic, narrative] }
+        metric_key: { type: string, enum: [topic.volume, narrative.volume] }
+        state: { type: string, enum: [fresh, stale, pending, partial, not_available] }
+        coverage: { type: object, additionalProperties: true }
+        terms: { type: array, items: { type: object, additionalProperties: true } }
+        series: { type: array, items: { type: object, additionalProperties: true } }
+        cooccurrences: { type: array, items: { type: object, additionalProperties: true } }
+        data_watermark_hashes: { type: array, items: { type: string } }
+        computed_at: { type: [string, "null"], format: date-time }
+    SignalTaxonomyTermDetailV1:
+      type: object
+      required: [contract_version, workspace_id, corpus_id, filters_hash, kind, metric_key, term, series, related_terms, coverage, state, limitations, links]
+      properties:
+        contract_version: { const: signal-topics-narratives-v1 }
+        workspace_id: { type: string, format: uuid }
+        corpus_id: { type: string, format: uuid }
+        filters_hash: { type: string }
+        kind: { type: string, enum: [topic, narrative] }
+        metric_key: { type: string, enum: [topic.volume, narrative.volume] }
+        term: { type: object, additionalProperties: true }
+        series: { type: array, items: { type: object, additionalProperties: true } }
+        related_terms: { type: array, items: { type: object, additionalProperties: true } }
+        coverage: { type: object, additionalProperties: true }
+        state: { type: string, enum: [fresh, stale, pending, partial, not_available] }
+        limitations: { type: array, items: { type: string } }
+        links: { type: object, additionalProperties: true }
+    SignalTaxonomyEvidencePageV1:
+      type: object
+      required: [contract_version, workspace_id, corpus_id, filters_hash, kind, term_key, records, page]
+      properties:
+        contract_version: { const: signal-topics-narratives-v1 }
+        workspace_id: { type: string, format: uuid }
+        corpus_id: { type: string, format: uuid }
+        filters_hash: { type: string }
+        kind: { type: string, enum: [topic, narrative] }
+        term_key: { type: string }
+        records: { type: array, items: { type: object, additionalProperties: true } }
+        page: { type: object, additionalProperties: true }
+    SignalTaxonomyLineageV1:
+      type: object
+      required: [contract_version, workspace_id, corpus_id, filters_hash, kind, term_key, profile, materializations, source_summary]
+      properties:
+        contract_version: { const: signal-topics-narratives-v1 }
+        workspace_id: { type: string, format: uuid }
+        corpus_id: { type: string, format: uuid }
+        filters_hash: { type: string }
+        kind: { type: string, enum: [topic, narrative] }
+        term_key: { type: string }
+        profile: { type: object, additionalProperties: true }
+        materializations: { type: array, items: { type: object, additionalProperties: true } }
+        source_summary: { type: object, additionalProperties: true }
+        governed_edges: { type: array, items: { type: object, additionalProperties: true } }
+        import_batch_ids: { type: array, items: { type: string, format: uuid } }
     SignalWorkspaceHomeV1:
       type: object
       additionalProperties: false

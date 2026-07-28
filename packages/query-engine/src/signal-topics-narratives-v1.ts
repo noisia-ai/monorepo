@@ -89,6 +89,178 @@ export type SignalTaxonomyCoverageV1 = {
   limitations: string[];
 };
 
+export type SignalTaxonomyServingStateV1 =
+  | "fresh"
+  | "stale"
+  | "pending"
+  | "partial"
+  | "not_available";
+
+export type SignalTaxonomyServingProfileV1 = {
+  kind: SignalTaxonomyKindV1;
+  version: number;
+  status: "active";
+  activated_at: string | null;
+  term_count: number;
+  profile_id?: string;
+  taxonomy_id?: string;
+  rule_set_id?: string;
+  model_version_id?: string;
+  context_hash?: string;
+};
+
+export type SignalTaxonomyTermMetricV1 = {
+  term_key: string;
+  label: string;
+  mention_count: number;
+  denominator: number;
+  share_of_included: number | null;
+  share_of_classified: number | null;
+  comparison_mention_count: number | null;
+  delta: number | null;
+  comparison_share_of_included: number | null;
+  share_delta: number | null;
+  state: SignalTaxonomyServingStateV1;
+};
+
+export type SignalTaxonomySeriesPointV1 = {
+  period_start: string;
+  period_end: string;
+  mention_count: number;
+  denominator: number;
+  share_of_included: number | null;
+  state: SignalTaxonomyServingStateV1;
+};
+
+export type SignalTaxonomyCooccurrenceV1 = {
+  left_term_key: string;
+  right_term_key: string;
+  mention_count: number;
+  meaning: "cooccurrence_not_causality";
+};
+
+export type SignalTaxonomyOverviewSectionV1 = {
+  kind: SignalTaxonomyKindV1;
+  metric_key: "topic.volume" | "narrative.volume";
+  state: SignalTaxonomyServingStateV1;
+  coverage: SignalTaxonomyCoverageV1 & {
+    processed_mentions: number;
+  };
+  terms: SignalTaxonomyTermMetricV1[];
+  series: SignalTaxonomySeriesPointV1[];
+  cooccurrences: SignalTaxonomyCooccurrenceV1[];
+  data_watermark_hashes: string[];
+  computed_at: string | null;
+};
+
+export type SignalTopicsNarrativesOverviewV1 = {
+  contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
+  workspace_id: string;
+  corpus_id: string;
+  filters_hash: string;
+  comparison_filters_hash: string | null;
+  profiles: SignalTaxonomyServingProfileV1[];
+  topics: SignalTaxonomyOverviewSectionV1;
+  narratives: SignalTaxonomyOverviewSectionV1;
+  state: SignalTaxonomyServingStateV1;
+  limitations: string[];
+  visibility: {
+    internal: boolean;
+    classification_details: boolean;
+  };
+};
+
+export type SignalTaxonomyTermDetailV1 = {
+  contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
+  workspace_id: string;
+  corpus_id: string;
+  filters_hash: string;
+  kind: SignalTaxonomyKindV1;
+  metric_key: "topic.volume" | "narrative.volume";
+  term: SignalTaxonomyTermMetricV1 & {
+    definition: string | null;
+    statement: string | null;
+  };
+  series: SignalTaxonomySeriesPointV1[];
+  related_terms: Array<{
+    term_key: string;
+    mention_count: number;
+    meaning: "cooccurrence_not_causality";
+  }>;
+  coverage: SignalTaxonomyOverviewSectionV1["coverage"];
+  state: SignalTaxonomyServingStateV1;
+  limitations: string[];
+  links: {
+    evidence: string;
+    lineage: string;
+  };
+};
+
+export type SignalTaxonomyEvidencePageV1 = {
+  contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
+  workspace_id: string;
+  corpus_id: string;
+  filters_hash: string;
+  kind: SignalTaxonomyKindV1;
+  term_key: string;
+  records: Array<{
+    mention_id: string;
+    occurred_at: string;
+    text_snippet: string | null;
+    title: string | null;
+    url: string | null;
+    platform: string | null;
+    language: string | null;
+    country: string | null;
+    evidence_quotes: Array<{
+      quote: string;
+      start: number | null;
+      end: number | null;
+    }>;
+    classification?: {
+      score: number | null;
+      confidence: string | null;
+      model_version_id: string | null;
+      profile_id: string;
+      import_batch_id: string | null;
+      context_refs: unknown[];
+    };
+  }>;
+  page: {
+    limit: number;
+    total_count: number;
+    next_cursor: string | null;
+  };
+};
+
+export type SignalTaxonomyLineageV1 = {
+  contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
+  workspace_id: string;
+  corpus_id: string;
+  filters_hash: string;
+  kind: SignalTaxonomyKindV1;
+  term_key: string;
+  profile: SignalTaxonomyServingProfileV1;
+  materializations: Array<{
+    materialization_key: string;
+    data_watermark_hash: string;
+    state: SignalTaxonomyServingStateV1;
+    computed_at: string;
+  }>;
+  source_summary: {
+    mention_count: number;
+    import_batch_count: number;
+  };
+  governed_edges?: Array<{
+    source_type: string;
+    source_id: string;
+    target_type: string;
+    target_id: string;
+    relation_type: string;
+  }>;
+  import_batch_ids?: string[];
+};
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -246,6 +418,7 @@ export function normalizeSignalTaxonomyClassificationV1(
 
 export function signalTaxonomyCoverageV1(input: {
   included_mentions: number;
+  processed_mentions?: number;
   classified_mentions: number;
   tag_assertions: number;
   pending_mentions?: number;
@@ -253,14 +426,20 @@ export function signalTaxonomyCoverageV1(input: {
   failed?: boolean;
 }): SignalTaxonomyCoverageV1 {
   const included = nonnegativeInteger(input.included_mentions, "included_mentions");
+  const processed = nonnegativeInteger(
+    input.processed_mentions ?? input.classified_mentions,
+    "processed_mentions"
+  );
   const classified = nonnegativeInteger(input.classified_mentions, "classified_mentions");
   const assertions = nonnegativeInteger(input.tag_assertions, "tag_assertions");
   const pending = nonnegativeInteger(input.pending_mentions ?? 0, "pending_mentions");
   const rejected = nonnegativeInteger(input.rejected_mentions ?? 0, "rejected_mentions");
   if (classified > included) throw new Error("classified_mentions cannot exceed included_mentions.");
+  if (processed > included) throw new Error("processed_mentions cannot exceed included_mentions.");
+  if (classified > processed) throw new Error("classified_mentions cannot exceed processed_mentions.");
   const limitations: string[] = [];
   if (pending > 0) limitations.push("classification_review_pending");
-  if (classified < included) limitations.push("classification_coverage_incomplete");
+  if (processed < included) limitations.push("classification_coverage_incomplete");
   if (input.failed) limitations.push("classification_run_failed");
   const state = input.failed
     ? "failed"
