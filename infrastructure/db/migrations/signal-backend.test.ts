@@ -315,3 +315,21 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(openapi, /SignalWorkspaceHomeV1/);
   assert.match(openapi, /\/api\/data-os\/signal\/\{workspaceId\}:/);
 });
+
+test("TN-01 adds one versioned active topic or narrative profile without parallel stores", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0057_signal_topics_narratives_profiles.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_taxonomy_profiles/);
+  assert.match(migration, /kind IN \('topic', 'narrative'\)/);
+  assert.match(migration, /uq_signal_taxonomy_profiles_active_kind/);
+  assert.match(migration, /activate_signal_taxonomy_profile/);
+  assert.match(migration, /Human reviewer is required/);
+  assert.match(migration, /validate_signal_taxonomy_record_tag/);
+  assert.match(migration, /uq_record_tags_signal_profile_assignment/);
+  assert.match(migration, /ALTER TABLE signal_refresh_runs/);
+  assert.match(migration, /run_type IN \('source_refresh', 'taxonomy_enrichment'\)/);
+  assert.match(migration, /idx_signal_refresh_runs_taxonomy_recovery/);
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS (topic_tags|narrative_tags|signal_enrichment_runs)/);
+});
