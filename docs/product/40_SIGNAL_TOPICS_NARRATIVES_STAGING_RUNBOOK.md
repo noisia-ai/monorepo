@@ -136,6 +136,26 @@ Antes de materializar evidencia client-safe, un reviewer humano debe inspecciona
 asignaciones y registrar eventos accept/reject/needs_review. No promover en bloque por
 confianza ni convertir pending/rejected en métricas.
 
+Cuando el reviewer humano apruebe explícitamente el conjunto revisado, el wrapper
+operator-only puede persistir la decisión y rematerializar. Resuelve exactamente un
+founder interno configurado, crea un `tag_review_event` por assignment, conserva
+rejected, emite invalidación selectiva y fuerza Claude/interpretations apagados:
+
+```bash
+export NOISIA_SIGNAL_TAXONOMY_TAG_REVIEW_ALLOW_REMOTE=true
+export NOISIA_SIGNAL_TAXONOMY_TAG_REVIEW_APPROVED=true
+corepack pnpm --filter @noisia/studio \
+  signal:review-topics-narratives-tags -- \
+  --apply \
+  --notes "<DECISION_HUMANA>" \
+  --corpus-id 3d32472d-9720-4fae-b6d2-a73152c5f0a4 \
+  --historical-output-id aaafa040-ca2f-49a6-afd0-e872b6706476
+```
+
+El dry-run usa el mismo comando sin `--apply` ni la flag de aprobación. No ejecutar
+el apply si la decisión humana no cubre todos los assignments pending reportados.
+La revisión es gobernada, no una regla de promoción automática.
+
 ## 4. Evidence pack obligatorio
 
 Guardar outputs redactados en `NOISIA_SIGNAL_TAXONOMY_EVIDENCE_DIR`:

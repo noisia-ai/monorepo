@@ -1,10 +1,10 @@
 # 39 · Signal Topics & Narratives Backend Audit
 
-> Estado: TN-00→TN-07, TN-09 y TN-10 local completos; TN-08 staging/Laika con
-> perfiles aprobados y clasificación completa, pendiente revisión humana de tags,
-> 2026-07-28.
-> Alcance: inventario verificable, implementación local y runtime disposable; no
-> afirma evidencia staging/preview.
+> Estado: TN-00→TN-10 implementados; TN-08 validado con datos reales de Laika en
+> staging/preview. El release gate Data OS general permanece separado y exige su
+> muestra humana de review antes de declarar backend-ready, 2026-07-28.
+> Alcance: inventario verificable, implementación local, runtime disposable y
+> reconciliación staging/preview; no activa frontend ni clientes.
 
 ## Resultado ejecutivo
 
@@ -152,6 +152,39 @@ siendo los stores canónicos.
 - Ningún tag se aprobó automáticamente. Hasta revisión humana separada de las
   asignaciones, métricas y evidence client-safe permanecen bloqueadas; TN-08 y el
   backend-ready gate no se declaran completos.
+
+## Addendum TN-08 revisión y materialización
+
+- El usuario autorizó explícitamente la revisión en bloque de los 2,339 assignments
+  `pending` después de revisar y aprobar ambos perfiles v1.
+- El wrapper operator-only resolvió un único reviewer interno gobernado y registró un
+  `tag_review_event` por assignment. No acepta un reviewer UUID por argumento y no
+  aprueba por umbral de confidence.
+- Quedaron 1,155 topic tags y 1,184 narrative tags `approved`. Los 77 topic y 99
+  narrative `rejected` permanecieron sin cambios; no quedan tags `pending`.
+- La revisión emitió una invalidación selectiva y ejecutó el materializer SQL con
+  interpretaciones y LLM apagados. Se ejecutaron 528 planes y se escribieron 14,953
+  filas; el estado resultante fue `fresh`.
+- La reconciliación real comprobó 11 métricas, 125 periodos de series, 77 periodos de
+  breakdown y 11 recorridos paginados de drill-down. Valor, denominador, sample size,
+  breakdown y mention IDs coincidieron con SQL base; no hubo materializaciones
+  pendientes.
+- `topic.volume@1` y `narrative.volume@1` reconciliaron 11 periodos cada uno y
+  excluyeron asignaciones rejected.
+- `EXPLAIN ANALYZE` en staging/preview verificó
+  `idx_mentions_signal_facets`,
+  `idx_metric_materializations_signal_facade` e
+  `idx_record_tags_signal_approved_subject`. Los planes críticos quedaron entre
+  0.040 ms y 1.975 ms para las 723 menciones reales de Laika.
+- El gasto total conservador de Claude/Voyage se mantiene en USD 8.259545 de un cap
+  explícito de USD 10. La revisión, invalidación, materialización y reconciliación no
+  invocaron proveedores pagados.
+- No se ejecutó T&B, no se leyó `published_outputs.payload` ni `chart_aggregates`, no
+  se activó frontend o clientes y no se usó producción.
+- El gate TN sólo puede declararse backend-ready cuando el evidence pack también
+  contenga un `release-gate.json` Data OS real con
+  `ready_for_production_review=true`. La aprobación de perfiles/tags TN no sustituye
+  la muestra humana general de assertions/tags exigida por ese gate.
 
 El procedimiento operativo y los formatos de evidencia están en
 `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`.

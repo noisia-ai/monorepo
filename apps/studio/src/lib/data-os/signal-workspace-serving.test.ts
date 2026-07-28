@@ -491,3 +491,20 @@ test("Laika taxonomy backfill resolves governed scope and requires human and bud
   assert.doesNotMatch(source, /output\.payload/);
   assert.doesNotMatch(source, /chart_aggregates/);
 });
+
+test("bulk TN tag review records one audit event per pending tag and materializes without LLMs", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/review-signal-taxonomy-tags.ts"),
+    "utf8"
+  );
+  assert.match(source, /INSERT INTO tag_review_events/);
+  assert.match(source, /SET review_status = 'approved'/);
+  assert.match(source, /review_status = 'pending'/);
+  assert.match(source, /signal_data_invalidations/);
+  assert.match(source, /signalMaterializationJob/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_TAG_REVIEW_APPROVED/);
+  assert.doesNotMatch(
+    source,
+    /published_outputs\.payload|chart_aggregates|generateObject|anthropic/
+  );
+});

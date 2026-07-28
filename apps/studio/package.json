@@ -14,6 +14,7 @@
     "signal:backfill-serving": "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-signal-serving.ts",
     "signal:backfill-topics-narratives": "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-signal-topics-narratives.ts",
     "signal:review-topics-narratives": "../../infrastructure/db/node_modules/.bin/tsx scripts/review-signal-topics-narratives.ts",
+    "signal:review-topics-narratives-tags": "../../infrastructure/db/node_modules/.bin/tsx scripts/review-signal-taxonomy-tags.ts",
     "signal:backfill-workspaces": "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-signal-workspaces.ts",
     "signal:backfill-v2": "../../infrastructure/db/node_modules/.bin/tsx scripts/backfill-signal-v2.ts",
     "signal:v2:shadow": "../../infrastructure/db/node_modules/.bin/tsx scripts/signal-v2-shadow.ts",
