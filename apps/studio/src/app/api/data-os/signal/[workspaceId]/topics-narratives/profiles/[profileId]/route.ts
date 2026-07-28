@@ -4,6 +4,10 @@ import { loadSignalWorkspaceContext } from "@/app/api/data-os/_lib/load";
 import { forbidden, validationError } from "@/lib/api/responses";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { reviewSignalTaxonomyProfileV1 } from "@/lib/data-os/signal-topics-narratives-admin";
+import {
+  loadSignalTaxonomyCoverageV1,
+  reconcileSignalTaxonomyProfileV1
+} from "@/lib/data-os/signal-topics-narratives-review";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +24,42 @@ const reviewSchema = z.object({
     });
   }
 });
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ workspaceId: string; profileId: string }> }
+) {
+  const { workspaceId, profileId } = await context.params;
+  const loaded = await loadSignalWorkspaceContext(workspaceId);
+  if ("response" in loaded) return loaded.response;
+  if (
+    !loaded.isInternalUser
+    || !canManageCorpus(loaded.session.appUser.primaryRole)
+  ) return forbidden();
+  const [reconciliation, coverage] = await Promise.all([
+    reconcileSignalTaxonomyProfileV1({
+      workspace: loaded.workspace,
+      profile_id: profileId
+    }),
+    loadSignalTaxonomyCoverageV1({
+      workspace: loaded.workspace,
+      profile_id: profileId,
+      include_emerging_candidates:
+        new URL(request.url).searchParams.get("include_emerging_candidates") === "true"
+    })
+  ]);
+  if (!reconciliation) {
+    return Response.json({
+      error: "not_available",
+      message: "Taxonomy profile was not found in this workspace."
+    }, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+  }
+  return Response.json({
+    contract_version: "signal-topics-narratives-v1",
+    reconciliation,
+    coverage
+  }, { headers: { "Cache-Control": "private, no-store" } });
+}
 
 export async function POST(
   request: Request,
@@ -59,4 +99,3 @@ export async function POST(
     }, { status: 409, headers: { "Cache-Control": "private, no-store" } });
   }
 }
-

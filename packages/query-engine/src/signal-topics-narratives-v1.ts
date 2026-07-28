@@ -5,6 +5,11 @@ export const SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION =
 export const SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME =
   "signal.taxonomy-enrichment.v1" as const;
 export const SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE = 50;
+export const SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1 = {
+  version: "signal-taxonomy-acceptance-v1",
+  pending_min_score: 0.65,
+  pending_confidence: ["medium", "high"]
+} as const;
 
 export const SIGNAL_TAXONOMY_KINDS = ["topic", "narrative"] as const;
 export type SignalTaxonomyKindV1 = (typeof SIGNAL_TAXONOMY_KINDS)[number];
@@ -52,6 +57,8 @@ export type SignalTaxonomyAssignmentV1 = {
     end: number | null;
   }>;
 };
+
+export type SignalTaxonomyAssignmentDispositionV1 = "pending" | "rejected";
 
 export type SignalTaxonomyMentionClassificationV1 = {
   mention_id: string;
@@ -273,6 +280,18 @@ export function signalTaxonomyCoverageV1(input: {
     quality_state: state,
     limitations
   };
+}
+
+export function signalTaxonomyAssignmentDispositionV1(
+  assignment: SignalTaxonomyAssignmentV1
+): SignalTaxonomyAssignmentDispositionV1 {
+  if (assignment.evidence.length === 0) return "rejected";
+  const confidenceEligible = assignment.confidence === "medium"
+    || assignment.confidence === "high";
+  return assignment.score >= SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.pending_min_score
+    && confidenceEligible
+    ? "pending"
+    : "rejected";
 }
 
 function normalizeCandidate(

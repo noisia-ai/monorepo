@@ -13,6 +13,7 @@ import {
 
 import { pool } from "@/lib/db";
 import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import { reconcileSignalTaxonomyProfileV1 } from "@/lib/data-os/signal-topics-narratives-review";
 
 type DiscoveryContextRow = {
   source_type: SignalTaxonomyContextRefV1["source_type"];
@@ -340,6 +341,19 @@ export async function reviewSignalTaxonomyProfileV1(args: {
     WHERE id = $1::uuid AND workspace_id = $2::uuid
   `, [args.profile_id, args.workspace.id]);
   if (!profile.rows[0]) return null;
+  if (args.action === "approve") {
+    const reconciliation = await reconcileSignalTaxonomyProfileV1({
+      workspace: args.workspace,
+      profile_id: args.profile_id
+    });
+    if (!reconciliation?.ready_for_activation) {
+      throw new Error(
+        `Taxonomy profile reconciliation failed: ${
+          reconciliation?.blockers.join(", ") || "profile_not_available"
+        }`
+      );
+    }
+  }
   const reviewed = args.action === "approve"
     ? await pool.query(`
         SELECT id::text, workspace_id::text, taxonomy_id::text,
@@ -458,4 +472,3 @@ function requiredId(value: string | undefined, label: string) {
 function sha256(value: string) {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
-

@@ -14,7 +14,7 @@ test("taxonomy worker classifies incrementally into canonical tags with governed
   assert.match(source, /record_feature_values/);
   assert.match(source, /signal_taxonomy_profile_id/);
   assert.match(source, /review_status NOT IN \('approved', 'rejected'\)/);
-  assert.match(source, /review_status[\s\S]*'pending'/);
+  assert.match(source, /signalTaxonomyAssignmentDispositionV1/);
   assert.match(source, /semantic_embeddings/);
   assert.match(source, /provider: "voyage"/);
   assert.match(source, /context_refs/);

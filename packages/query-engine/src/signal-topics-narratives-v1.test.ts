@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   normalizeSignalTaxonomyClassificationV1,
   normalizeSignalTaxonomyProposalV1,
+  signalTaxonomyAssignmentDispositionV1,
   signalTaxonomyContextHashV1,
   signalTaxonomyCoverageV1,
   signalTaxonomyEnrichmentIdempotencyKeyV1,
@@ -121,6 +122,27 @@ test("coverage keeps small windows valid and exposes incomplete review", () => {
   });
 });
 
+test("acceptance keeps qualifying tags pending for human review and rejects weak assignments", () => {
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 0.9,
+    confidence: "high",
+    evidence: [{ quote: "salud digestiva", start: 0, end: 16 }]
+  }), "pending");
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 0.64,
+    confidence: "high",
+    evidence: [{ quote: "salud", start: 0, end: 5 }]
+  }), "rejected");
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 0.99,
+    confidence: "low",
+    evidence: [{ quote: "salud", start: 0, end: 5 }]
+  }), "rejected");
+});
+
 test("profile and enrichment identities are deterministic", () => {
   assert.equal(
     signalTaxonomyProfileKeyV1({
@@ -141,4 +163,3 @@ test("profile and enrichment identities are deterministic", () => {
     signalTaxonomyEnrichmentIdempotencyKeyV1({ ...input })
   );
 });
-

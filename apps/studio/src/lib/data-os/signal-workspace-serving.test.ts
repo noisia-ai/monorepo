@@ -251,3 +251,25 @@ test("TN taxonomy admin uses governed context, atomic activation and canonical s
   assert.match(source, /INSERT INTO lineage_edges/);
   assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
 });
+
+test("TN promotion reconciles profiles, excludes pending tags and invalidates approved review changes", async () => {
+  const [admin, review] = await Promise.all([
+    readFile(
+      resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-admin.ts"),
+      "utf8"
+    ),
+    readFile(
+      resolve(process.cwd(), "src/lib/data-os/signal-topics-narratives-review.ts"),
+      "utf8"
+    )
+  ]);
+  assert.match(admin, /ready_for_activation/);
+  assert.match(review, /review_status = 'approved'/);
+  assert.match(review, /review_status IN \('pending', 'unreviewed', 'needs_review'\)/);
+  assert.match(review, /emerging_candidates_visibility/);
+  assert.match(review, /internal_review_only/);
+  assert.match(review, /INSERT INTO tag_review_events/);
+  assert.match(review, /taxonomy_review_changed/);
+  assert.match(review, /signalTaxonomyCoverageV1/);
+  assert.doesNotMatch(review, /published_outputs|chart_aggregates/);
+});

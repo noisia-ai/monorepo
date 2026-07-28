@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   getEmbeddingModel,
   normalizeSignalTaxonomyClassificationV1,
+  signalTaxonomyAssignmentDispositionV1,
   SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE,
   vectorLiteral,
   embedTexts,
@@ -405,6 +406,7 @@ async function persistBatch(args: {
     await client.query("BEGIN");
     for (const classification of classifications) {
       for (const assignment of classification.assignments) {
+        const reviewStatus = signalTaxonomyAssignmentDispositionV1(assignment);
         await client.query(`
           INSERT INTO record_tags (
             organization_id, brand_id, study_corpus_id,
@@ -415,7 +417,7 @@ async function persistBatch(args: {
           SELECT $1::uuid, $2::uuid, $3::uuid,
             'mention', $4::uuid, term.id,
             term.term_key, $5, $6, $7::jsonb, $8,
-            $9::uuid, $10::uuid, 'pending'
+            $9::uuid, $10::uuid, $12
           FROM taxonomy_terms term
           JOIN signal_taxonomy_profiles profile
             ON profile.taxonomy_id = term.taxonomy_id
@@ -450,7 +452,8 @@ async function persistBatch(args: {
           classificationSource(args.scope.profile_id),
           args.scope.model_version_id,
           args.scope.profile_id,
-          assignment.term_key
+          assignment.term_key,
+          reviewStatus
         ]);
       }
       await client.query(`

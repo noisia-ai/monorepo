@@ -8,6 +8,7 @@ import {
   listSignalTaxonomyProfilesV1,
   loadSignalTaxonomyDiscoveryContextV1
 } from "@/lib/data-os/signal-topics-narratives-admin";
+import { loadSignalTaxonomyCoverageV1 } from "@/lib/data-os/signal-topics-narratives-review";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,17 @@ export async function GET(
     || !canManageCorpus(loaded.session.appUser.primaryRole)
   ) return forbidden();
   const kind = new URL(request.url).searchParams.get("discovery_context");
+  const searchParams = new URL(request.url).searchParams;
+  if (searchParams.get("coverage") === "true") {
+    return Response.json(
+      await loadSignalTaxonomyCoverageV1({
+        workspace: loaded.workspace,
+        include_emerging_candidates:
+          searchParams.get("include_emerging_candidates") === "true"
+      }),
+      { headers: { "Cache-Control": "private, no-store" } }
+    );
+  }
   if (kind === "topic" || kind === "narrative") {
     return Response.json(
       await loadSignalTaxonomyDiscoveryContextV1(loaded.workspace, kind),
@@ -89,4 +101,3 @@ export async function POST(
     }, { status: 400, headers: { "Cache-Control": "private, no-store" } });
   }
 }
-
