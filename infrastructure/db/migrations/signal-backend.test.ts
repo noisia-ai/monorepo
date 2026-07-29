@@ -329,3 +329,99 @@ test("Signal workspace navigation automatically attaches every new named study",
   assert.match(migration, /AFTER INSERT\s+ON study_corpora/u);
   assert.doesNotMatch(migration, /DELETE FROM|published_outputs\.payload/u);
 });
+
+test("TN-01 adds one versioned active topic or narrative profile without parallel stores", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0057_signal_topics_narratives_profiles.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_taxonomy_profiles/);
+  assert.match(migration, /kind IN \('topic', 'narrative'\)/);
+  assert.match(migration, /uq_signal_taxonomy_profiles_active_kind/);
+  assert.match(migration, /activate_signal_taxonomy_profile/);
+  assert.match(migration, /Human reviewer is required/);
+  assert.match(migration, /validate_signal_taxonomy_record_tag/);
+  assert.match(migration, /uq_record_tags_signal_profile_assignment/);
+  assert.match(migration, /ALTER TABLE signal_refresh_runs/);
+  assert.match(migration, /run_type IN \('source_refresh', 'taxonomy_enrichment'\)/);
+  assert.match(migration, /idx_signal_refresh_runs_taxonomy_recovery/);
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS (topic_tags|narrative_tags|signal_enrichment_runs)/);
+});
+
+test("TN-08 applies migration 0057 through a guarded, targeted and verified remote path", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/apply-signal-topics-narratives-migration.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /0057_signal_topics_narratives_profiles\.sql/);
+  assert.match(source, /requireSafeDatabaseWriteTarget/);
+  assert.match(source, /NOISIA_DB_APPLY_SIGNAL_TAXONOMY_ALLOW_REMOTE/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_SCHEMA_APPLY_APPROVED/);
+  assert.match(source, /pg_advisory_xact_lock/);
+  assert.match(source, /BEGIN/);
+  assert.match(source, /ROLLBACK/);
+  assert.match(source, /signal_taxonomy_profiles/);
+  assert.match(source, /uq_record_tags_signal_profile_assignment/);
+  assert.doesNotMatch(source, /drizzle-kit generate/);
+});
+
+test("TN operational hardening persists recoverable runs, policy provenance and safe activation", async () => {
+  const migration = await readFile(
+    resolve(
+      process.cwd(),
+      "migrations/0058_signal_taxonomy_operational_hardening.sql"
+    ),
+    "utf8"
+  );
+  assert.match(migration, /'partial', 'blocked'/);
+  assert.match(migration, /approval_source IN \('human', 'policy'\)/);
+  assert.match(migration, /approval_policy_version/);
+  assert.match(migration, /status = 'activating'/);
+  assert.match(migration, /complete_signal_taxonomy_profile_activation/);
+  assert.match(migration, /Activating profile backfill is incomplete/);
+  assert.doesNotMatch(migration, /DROP TABLE|DELETE FROM/);
+});
+
+test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation and EXPLAIN ANALYZE", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/signal-topics-narratives-runtime-smoke.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(source, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(source, /EXPLAIN \(ANALYZE, BUFFERS, FORMAT JSON\)/);
+  assert.match(source, /fixture_mentions: FIXTURE_SIZE/);
+  assert.match(source, /exact_ids: true/);
+  assert.match(source, /pending_excluded/);
+  assert.match(source, /paid_provider_invoked: false/);
+  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+});
+
+test("TN backend gate requires real Laika review, runtime, authZ and release evidence", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/signal-topics-narratives-backend-gate.ts"),
+    "utf8"
+  );
+  for (const artifact of [
+    "laika-taxonomy-backfill.json",
+    "signal-topics-narratives-worker.json",
+    "signal-topics-narratives-reconcile.json",
+    "signal-topics-narratives-serving.json",
+    "release-gate.json"
+  ]) {
+    assert.match(source, new RegExp(artifact.replaceAll(".", "\\.")));
+  }
+  assert.match(source, /human_approved/);
+  assert.match(source, /topic_exact_ids/);
+  assert.match(source, /narrative_exact_ids/);
+  assert.match(source, /authz_negative_passed/);
+  assert.match(source, /published_payload_read === false/);
+  assert.match(source, /ready_for_production_review === true/);
+  assert.match(source, /client_activation: false/);
+});

@@ -350,3 +350,34 @@ Cut 1 **no esta listo para PR de produccion** hasta obtener el evidence pack y
 - `evidence.json` crudo pegado en PR o chat.
 - Live render encendido antes del gate.
 - Review queue sin eventos humanos auditables.
+
+## Addendum · Topics & Narratives backend (2026-07-27)
+
+La implementación local TN-00→TN-10 extiende los stores Signal/Data OS existentes con
+perfiles `topic`/`narrative` aprobables, enrichment incremental, materialización SQL,
+facets/filtros y serving workspace-centric. No crea payload editorial paralelo.
+
+Evidencia local real:
+
+- 57 migraciones aplicadas en Postgres 16 + pgvector disposable;
+- fixture runtime de 5,000 mentions;
+- `topic.volume@1`: buckets de 5,000 y 1,000 IDs reconciliados exactamente;
+- `narrative.volume@1`: buckets de 2,500 y 1,666 IDs reconciliados exactamente;
+- pending excluido y estado `partial`;
+- `EXPLAIN ANALYZE` con índices canónicos;
+- suites DB, Query Engine, Workers y Studio verdes;
+- gasto Claude/Voyage: USD 0.
+
+Esto no completa el Goal TN. Faltan, sobre Laika staging/preview:
+
+1. resolver el workspace real desde corpus/output;
+2. discovery con cap USD explícito;
+3. aprobación humana de ambos perfiles;
+4. worker real y tags no vacíos;
+5. reconciliación/serving/authZ/lineage real;
+6. `release-gate.json` válido;
+7. `backend_ready_for_signal_topics_narratives: true`.
+
+El runbook y el gate están en
+`40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md`. Hasta obtener esos artifacts,
+el estado honesto es `implementación local completa pero runtime bloqueado`.

@@ -379,6 +379,59 @@ export const signalWorkspaceCorpora = pgTable(
   ]
 );
 
+export const signalTaxonomyProfiles = pgTable(
+  "signal_taxonomy_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    taxonomyId: uuid("taxonomy_id")
+      .notNull()
+      .references((): AnyPgColumn => taxonomies.id, { onDelete: "restrict" }),
+    kind: text("kind").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    contextHash: text("context_hash").notNull(),
+    ruleSetId: uuid("rule_set_id")
+      .notNull()
+      .references((): AnyPgColumn => taggingRuleSets.id, { onDelete: "restrict" }),
+    modelVersionId: uuid("model_version_id")
+      .notNull()
+      .references((): AnyPgColumn => taggingModelVersions.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    check("signal_taxonomy_profiles_kind", sql`${table.kind} IN ('topic', 'narrative')`),
+    check("signal_taxonomy_profiles_version_positive", sql`${table.version} >= 1`),
+    check("signal_taxonomy_profiles_status", sql`${table.status} IN ('draft', 'activating', 'active', 'retired')`),
+    check("signal_taxonomy_profiles_context_hash", sql`${table.contextHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check(
+      "signal_taxonomy_profiles_active_approval",
+      sql`${table.status} NOT IN ('activating', 'active') OR (${table.approvedByUserId} IS NOT NULL AND ${table.approvedAt} IS NOT NULL)`
+    ),
+    unique("uq_signal_taxonomy_profiles_workspace_kind_version").on(
+      table.workspaceId,
+      table.kind,
+      table.version
+    ),
+    unique("uq_signal_taxonomy_profiles_taxonomy").on(table.taxonomyId),
+    uniqueIndex("uq_signal_taxonomy_profiles_active_kind")
+      .on(table.workspaceId, table.kind)
+      .where(sql`${table.status} = 'active'`),
+    index("idx_signal_taxonomy_profiles_workspace_history").on(
+      table.workspaceId,
+      table.kind,
+      table.version
+    ),
+    index("idx_signal_taxonomy_profiles_model").on(table.modelVersionId, table.ruleSetId)
+  ]
+);
+
 export const signalWorkspaceReleases = pgTable(
   "signal_workspace_releases",
   {
@@ -577,19 +630,55 @@ export const signalRefreshRuns = pgTable(
     errorCode: text("error_code"),
     errorSummary: jsonb("error_summary").notNull().default(sql`'{}'::jsonb`),
     resultSummary: jsonb("result_summary").notNull().default(sql`'{}'::jsonb`),
+    runType: text("run_type").notNull().default("source_refresh"),
+    taxonomyProfileId: uuid("taxonomy_profile_id").references(
+      () => signalTaxonomyProfiles.id,
+      { onDelete: "set null" }
+    ),
+    modelVersionId: uuid("model_version_id").references(
+      (): AnyPgColumn => taggingModelVersions.id,
+      { onDelete: "set null" }
+    ),
+    inputCorpusRevision: integer("input_corpus_revision"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    budgetCapUsd: numeric("budget_cap_usd", { precision: 12, scale: 6 }),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
     createdAt: now(),
     updatedAt: updatedAt()
   },
   (table) => [
-    check("signal_refresh_runs_status", sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'dead_letter', 'skipped')`),
+    check("signal_refresh_runs_status", sql`${table.status} IN ('queued', 'running', 'partial', 'blocked', 'completed', 'failed', 'dead_letter', 'skipped')`),
     check("signal_refresh_runs_trigger", sql`${table.trigger} IN ('scheduled', 'manual', 'import')`),
     check("signal_refresh_runs_attempt_positive", sql`${table.attempt} >= 1`),
+    check("signal_refresh_runs_run_type", sql`${table.runType} IN ('source_refresh', 'taxonomy_enrichment')`),
+    check(
+      "signal_refresh_runs_enrichment_scope",
+      sql`${table.runType} <> 'taxonomy_enrichment' OR (
+        ${table.taxonomyProfileId} IS NOT NULL
+        AND ${table.modelVersionId} IS NOT NULL
+        AND ${table.inputCorpusRevision} IS NOT NULL
+        AND ${table.inputCorpusRevision} >= 0
+      )`
+    ),
+    check(
+      "signal_refresh_runs_enrichment_cost",
+      sql`(${table.budgetCapUsd} IS NULL OR ${table.budgetCapUsd} >= 0)
+        AND (${table.actualCostUsd} IS NULL OR ${table.actualCostUsd} >= 0)
+        AND (${table.budgetCapUsd} IS NULL OR ${table.actualCostUsd} IS NULL OR ${table.actualCostUsd} <= ${table.budgetCapUsd})
+        AND (${table.inputTokens} IS NULL OR ${table.inputTokens} >= 0)
+        AND (${table.outputTokens} IS NULL OR ${table.outputTokens} >= 0)`
+    ),
     unique("uq_signal_refresh_runs_idempotency").on(table.idempotencyKey),
     index("idx_signal_refresh_runs_workspace_status").on(table.workspaceId, table.status, table.createdAt),
     index("idx_signal_refresh_runs_policy_status").on(table.refreshPolicyId, table.status, table.createdAt),
     index("idx_signal_refresh_runs_outbox_recovery")
       .on(table.scheduledFor, table.refreshPolicyId, table.id)
-      .where(sql`${table.trigger} = 'scheduled' AND ${table.status} IN ('queued', 'failed') AND ${table.completedAt} IS NULL`)
+      .where(sql`${table.trigger} = 'scheduled' AND ${table.status} IN ('queued', 'failed') AND ${table.completedAt} IS NULL`),
+    index("idx_signal_refresh_runs_taxonomy_recovery")
+      .on(table.status, table.heartbeatAt, table.createdAt, table.id)
+      .where(sql`${table.runType} = 'taxonomy_enrichment' AND ${table.status} IN ('queued', 'running', 'partial', 'blocked', 'failed')`)
   ]
 );
 
@@ -3337,8 +3426,15 @@ export const recordTags = pgTable(
     evidence: jsonb("evidence").notNull().default(sql`'[]'::jsonb`),
     source: text("source").notNull().default("system"),
     modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "set null" }),
+    signalTaxonomyProfileId: uuid("signal_taxonomy_profile_id").references(
+      () => signalTaxonomyProfiles.id,
+      { onDelete: "restrict" }
+    ),
     tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
     reviewStatus: text("review_status").notNull().default("unreviewed"),
+    approvalSource: text("approval_source"),
+    approvalPolicyVersion: text("approval_policy_version"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     createdAt: now()
   },
   (table) => [
@@ -3348,8 +3444,20 @@ export const recordTags = pgTable(
     index("idx_record_tags_signal_approved_subject")
       .on(table.subjectType, table.subjectId, table.taxonomyTermId)
       .where(sql`${table.reviewStatus} = 'approved'`),
+    index("idx_record_tags_signal_profile_review")
+      .on(table.signalTaxonomyProfileId, table.reviewStatus, table.taxonomyTermId, table.subjectId)
+      .where(sql`${table.subjectType} = 'mention' AND ${table.signalTaxonomyProfileId} IS NOT NULL`),
     index("idx_record_tags_tb_analysis").on(table.tbAnalysisId, table.subjectType, table.taxonomyTermId),
-    unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source)
+    check("record_tags_approval_source", sql`${table.approvalSource} IS NULL OR ${table.approvalSource} IN ('human', 'policy')`),
+    check("record_tags_approved_provenance", sql`${table.reviewStatus} <> 'approved' OR (
+      ${table.approvalSource} IS NOT NULL
+      AND ${table.approvedAt} IS NOT NULL
+      AND (${table.approvalSource} <> 'policy' OR NULLIF(btrim(${table.approvalPolicyVersion}), '') IS NOT NULL)
+    )`),
+    unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source),
+    uniqueIndex("uq_record_tags_signal_profile_assignment")
+      .on(table.subjectId, table.signalTaxonomyProfileId, table.taxonomyTermId, table.modelVersionId)
+      .where(sql`${table.subjectType} = 'mention' AND ${table.signalTaxonomyProfileId} IS NOT NULL`)
   ]
 );
 

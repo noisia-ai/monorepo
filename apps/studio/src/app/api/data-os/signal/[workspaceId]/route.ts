@@ -22,6 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
         payload.filters_hash,
         payload.state,
         payload.metric_groups,
+        payload.topics_narratives,
         payload.strategic.current
       ]),
       state: payload.state

@@ -19,12 +19,14 @@ async function main() {
   const pool = new Pool({ connectionString: databaseUrl, ssl: getDatabaseSslConfig() });
   try {
     const fixture = await pool.query<{
+      workspace_id: string;
       corpus_id: string;
       timezone: string;
       date_from: string;
       date_through: string;
     }>(`
-      SELECT membership.study_corpus_id::text AS corpus_id, workspace.timezone,
+      SELECT workspace.id::text AS workspace_id,
+        membership.study_corpus_id::text AS corpus_id, workspace.timezone,
         GREATEST(MAX((mention.published_at AT TIME ZONE workspace.timezone)::date) - 29, MIN((mention.published_at AT TIME ZONE workspace.timezone)::date))::text AS date_from,
         MAX((mention.published_at AT TIME ZONE workspace.timezone)::date)::text AS date_through
       FROM signal_workspaces workspace
@@ -35,7 +37,7 @@ async function main() {
         ON mention.study_corpus_id = membership.study_corpus_id
        AND mention.inclusion_status = 'included'
       WHERE workspace.status = 'active'
-      GROUP BY membership.study_corpus_id, workspace.timezone
+      GROUP BY workspace.id, membership.study_corpus_id, workspace.timezone
       ORDER BY MAX(mention.published_at) DESC
       LIMIT 1
     `);
@@ -44,6 +46,7 @@ async function main() {
     const plan = buildSignalMetricMaterializationPlanV1({
       metric_key: "conversation.volume",
       study_corpus_ids: [selected.corpus_id],
+      workspace_id: selected.workspace_id,
       filter: {
         date_range: { start: selected.date_from, end: selected.date_through },
         timezone: selected.timezone,

@@ -148,6 +148,44 @@ test("query-param order, aliases, repeated values and comma lists do not change 
   );
 });
 
+test("text search aliases normalize deterministically and remain part of the filter hash", () => {
+  const first = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&timezone=UTC&granularity=day&q=Entrega%20%20R%C3%81PIDA"
+  );
+  const second = parseSignalFilterQueryParamsV1(
+    "?search=entrega+r%C3%A1pida&grain=daily&to=2026-05-31&from=2026-05-01&tz=utc"
+  );
+  const withoutSearch = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&timezone=UTC&granularity=day"
+  );
+
+  assert.deepEqual(first, second);
+  assert.equal(first.text_search, "entrega rápida");
+  assert.equal(signalFiltersHashV1(first), signalFiltersHashV1(second));
+  assert.notEqual(signalFiltersHashV1(first), signalFiltersHashV1(withoutSearch));
+  assert.match(canonicalSignalFilterQueryV1(first), /text_search=entrega\+r%C3%A1pida/u);
+});
+
+test("text search rejects unbounded input with a typed invalid_filter", () => {
+  expectContractError(() => normalizeSignalFilterV1({
+    ...BASE_FILTER,
+    text_search: "x".repeat(201)
+  }), "invalid_filter");
+});
+
+test("narrative is canonical while taxonomy remains an explicit legacy dimension", () => {
+  const narrative = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&narratives=care-is-prevention"
+  );
+  assert.deepEqual(narrative.dimensions.narrative, ["care-is-prevention"]);
+  assert.equal(narrative.dimensions.taxonomy, undefined);
+  const legacy = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&taxonomy=legacy-tag"
+  );
+  assert.deepEqual(legacy.dimensions.taxonomy, ["legacy-tag"]);
+  assert.notEqual(signalFiltersHashV1(narrative), signalFiltersHashV1(legacy));
+});
+
 test("unknown dimensions and invalid date ranges fail with typed errors", () => {
   expectContractError(
     () => normalizeSignalFilterV1({ ...BASE_FILTER, dimensions: { algorithm_guess: ["x"] } }),

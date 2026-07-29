@@ -31,7 +31,10 @@ import {
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
-import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import {
+  requireOperationalCorpus,
+  type ResolvedSignalWorkspace
+} from "@/lib/data-os/signal-workspace";
 import { isSignalAdHocMaterializationEnabled } from "@/lib/data-os/serving";
 import { enqueueSignalAdHocMaterialization } from "@/lib/queue/data-os";
 
@@ -76,7 +79,7 @@ const NATURAL_BREAKDOWN_DIMENSION: Partial<Record<string, SignalDimensionV1>> = 
   "platform.share": "platform",
   "source_type.share": "source_type",
   "topic.volume": "topic",
-  "narrative.volume": "taxonomy",
+  "narrative.volume": "narrative",
   "governed_entity.volume": "entity"
 };
 
@@ -286,11 +289,17 @@ export async function loadSignalFacetsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const predicate = buildSignalMentionPredicateV1(args.filter, [corpus.id]);
+  const predicate = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  );
   const params = [...predicate.params];
   const featureDimensions = ["signal", "signal_lifecycle", "audience", "demographic", "journey_stage", "campaign", "product"];
   params.push(featureDimensions);
   const featureParameter = `$${params.length}::text[]`;
+  params.push(args.workspace.id);
+  const workspaceParameter = `$${params.length}::uuid`;
   const sourceTypeSelect = args.isInternalUser
     ? "UNION ALL SELECT id, 'source_type', lower(source_system) FROM filtered WHERE source_system IS NOT NULL"
     : "";
@@ -359,18 +368,17 @@ export async function loadSignalFacetsV1(args: {
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       WHERE tag.review_status = 'approved'
       UNION ALL
-      SELECT filtered.id,
-        CASE
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%topic%' THEN 'topic'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%emotion%' THEN 'emotion'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%trigger%' THEN 'trigger'
-          WHEN lower(taxonomy.taxonomy_key) LIKE '%barrier%' THEN 'barrier'
-          ELSE 'taxonomy'
-        END,
+      SELECT filtered.id, profile.kind,
         lower(COALESCE(tag.value, term.label))
       FROM filtered JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = filtered.id
-      JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
-      JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
+      JOIN signal_taxonomy_profiles profile
+        ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.workspace_id = ${workspaceParameter}
+       AND profile.status = 'active'
+      JOIN taxonomy_terms term
+        ON term.id = tag.taxonomy_term_id
+       AND term.taxonomy_id = profile.taxonomy_id
+       AND term.status = 'active'
       WHERE tag.review_status = 'approved'
       UNION ALL
       SELECT filtered.id, feature.feature_key, lower(trim(both '"' from feature.feature_value::text))
@@ -414,7 +422,11 @@ export async function loadSignalMetricGroupsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const states = await pool.query<{
     metric_key: string;
     metric_version: number;
@@ -492,7 +504,11 @@ export async function loadSignalInterpretationsV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const result = await pool.query<{
     metric_group_key: string;
     metric_group_version: number;
@@ -795,6 +811,7 @@ export async function loadSignalMentionsV1(args: {
   const plan = buildSignalMentionDrillDownPlanV1({
     filter: args.filter,
     study_corpus_ids: [corpus.id],
+    workspace_id: args.workspace.id,
     metric_key: metricKey,
     limit: args.limit,
     offset: args.offset,
@@ -884,7 +901,11 @@ export async function loadSignalLineageV1(args: {
 }) {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
-  const filtersHash = buildSignalMentionPredicateV1(args.filter, [corpus.id]).filters_hash;
+  const filtersHash = buildSignalMentionPredicateV1(
+    args.filter,
+    [corpus.id],
+    args.workspace.id
+  ).filters_hash;
   const params: unknown[] = [args.workspace.id, corpus.id, filtersHash];
   const metricPredicate = args.metricKey ? `AND materialization.metric_key = $4` : "";
   if (args.metricKey) {
@@ -944,7 +965,11 @@ async function loadMaterializationRows(
   metricVersion: number
 ) {
   const corpus = requireServingCorpus(workspace);
-  const predicate = buildSignalMentionPredicateV1(filter, [corpus.id]);
+  const predicate = buildSignalMentionPredicateV1(
+    filter,
+    [corpus.id],
+    workspace.id
+  );
   const result = await pool.query<MaterializationRow>(`
     SELECT metric_key, metric_version, metric_group_key,
       period_start::text, period_end::text, value, denominator, sample_size,
@@ -1149,11 +1174,7 @@ async function queueMissingMaterialization(workspace: ResolvedSignalWorkspace, f
   };
 }
 
-function requireServingCorpus(workspace: ResolvedSignalWorkspace) {
-  const corpus = workspace.corpora[0];
-  if (!corpus) throw new SignalBackendContractError("not_available", "Workspace has no serving corpus.");
-  return corpus;
-}
+const requireServingCorpus = requireOperationalCorpus;
 
 function requireVisibleMetric(metricKey: string, version: number, isInternalUser: boolean) {
   const metric = signalMetricDefinitionV1(metricKey, version);

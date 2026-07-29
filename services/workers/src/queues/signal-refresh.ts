@@ -14,7 +14,8 @@ export type SignalDataOsJobData =
   | import("@noisia/query-engine").SignalRefreshRunJobDataV1
   | import("@noisia/query-engine").SignalInvalidationJobDataV1
   | import("@noisia/query-engine").SignalMaterializeJobDataV1
-  | import("@noisia/query-engine").SignalInterpretationJobDataV1;
+  | import("@noisia/query-engine").SignalInterpretationJobDataV1
+  | import("@noisia/query-engine").SignalTaxonomyEnrichmentJobDataV1;
 
 let signalRefreshQueue: Queue<SignalDataOsJobData> | null = null;
 

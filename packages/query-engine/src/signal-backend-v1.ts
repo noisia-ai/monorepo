@@ -13,6 +13,7 @@ export const SIGNAL_DIMENSIONS = [
   "product",
   "campaign",
   "topic",
+  "narrative",
   "taxonomy",
   "signal",
   "signal_lifecycle",
@@ -48,6 +49,7 @@ export type SignalFilterV1 = {
   granularity: SignalGranularityV1;
   dimensions: SignalDimensionValuesV1;
   search_query?: string;
+  text_search?: string;
 };
 
 export type SignalWorkspaceLocatorV1 = {
@@ -212,7 +214,6 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const METRIC_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
-const MAX_SEARCH_QUERY_LENGTH = 160;
 
 const GRANULARITY_ALIASES: Record<string, SignalGranularityV1> = {
   day: "day",
@@ -232,6 +233,7 @@ const DIMENSION_ALIASES: Record<string, SignalDimensionV1> = {
   products: "product",
   campaigns: "campaign",
   topics: "topic",
+  narratives: "narrative",
   tag: "taxonomy",
   tags: "taxonomy",
   signals: "signal",
@@ -313,8 +315,16 @@ export function normalizeSignalFilterV1(input: unknown): SignalFilterV1 {
   const timezone = canonicalizeSignalTimezone(value.timezone ?? value.tz ?? "UTC");
   const granularity = normalizeGranularity(value.granularity ?? value.grain ?? "day");
   const dimensions = normalizeDimensions(value.dimensions ?? value.dimension_values ?? {});
+  const hasCanonicalSearchQuery = Object.prototype.hasOwnProperty.call(value, "search_query");
   const searchQuery = normalizeSearchQuery(
-    value.search_query ?? value.searchQuery ?? value.query ?? value.q
+    hasCanonicalSearchQuery
+      ? value.search_query
+      : value.searchQuery
+        ?? value.text_search
+        ?? value.textSearch
+        ?? value.search
+        ?? value.query
+        ?? value.q
   );
 
   return {
@@ -323,7 +333,7 @@ export function normalizeSignalFilterV1(input: unknown): SignalFilterV1 {
     timezone,
     granularity,
     dimensions,
-    ...(searchQuery ? { search_query: searchQuery } : {})
+    ...(searchQuery ? { search_query: searchQuery, text_search: searchQuery } : {})
   };
 }
 
@@ -335,12 +345,14 @@ export function parseSignalFilterQueryParamsV1(
   const end = firstParam(params, ["end", "to", "date_to", "dateRange.end", "date_range.end"]);
   const timezone = firstParam(params, ["timezone", "tz"]);
   const granularity = firstParam(params, ["granularity", "grain"]);
+  const textSearch = firstParam(params, ["text_search", "textSearch", "search", "query", "q"]);
   const controlKeys = new Set([
     "start", "from", "date_from", "dateRange.start", "date_range.start",
     "end", "to", "date_to", "dateRange.end", "date_range.end",
     "timezone", "tz", "granularity", "grain", "contract_version",
     "q", "query", "search", "search_query", "searchQuery",
-    "limit", "offset", "cursor", "sort", "direction", "metric_key"
+    "limit", "offset", "cursor", "sort", "direction", "metric_key",
+    "text_search", "textSearch"
   ]);
   const dimensions: Record<string, string[]> = {};
 
@@ -362,6 +374,7 @@ export function parseSignalFilterQueryParamsV1(
     granularity,
     dimensions,
     search_query: firstParam(params, ["q", "query", "search", "search_query", "searchQuery"])
+      ?? textSearch
   });
 }
 
@@ -415,7 +428,10 @@ export function canonicalSignalFilterQueryV1(filterInput: unknown): string {
   params.append("end", filter.date_range.end);
   params.append("timezone", filter.timezone);
   params.append("granularity", filter.granularity);
-  if (filter.search_query) params.append("q", filter.search_query);
+  if (filter.search_query) {
+    params.append("q", filter.search_query);
+    params.append("text_search", filter.search_query);
+  }
   for (const dimension of SIGNAL_DIMENSIONS) {
     for (const value of filter.dimensions[dimension] ?? []) {
       params.append(`dimension.${dimension}`, value);
@@ -712,13 +728,22 @@ function normalizeSearchQuery(input: unknown): string | undefined {
   if (typeof input !== "string") {
     throw invalidFilter("search_query must be a string.", { field: "search_query" });
   }
-  const value = input.normalize("NFC").trim().replace(/\s+/gu, " ");
+  const value = input
+    .normalize("NFC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("en-US");
   if (!value) return undefined;
-  if (value.length > MAX_SEARCH_QUERY_LENGTH) {
+  if (value.length > 200) {
     throw invalidFilter(
-      `search_query cannot exceed ${MAX_SEARCH_QUERY_LENGTH} characters.`,
-      { field: "search_query", maximum_length: MAX_SEARCH_QUERY_LENGTH }
+      "search_query cannot exceed 200 characters.",
+      { field: "search_query", maximum_length: 200 }
     );
+  }
+  if (value.includes("\u0000")) {
+    throw invalidFilter("search_query contains an unsupported character.", {
+      field: "search_query"
+    });
   }
   return value;
 }
