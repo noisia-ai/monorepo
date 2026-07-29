@@ -18,6 +18,8 @@ export type SignalWorkspaceCorpus = {
   role: SignalWorkspaceCorpusRole;
   status: string;
   validFrom: string;
+  methodologySlug: string | null;
+  outputId: string | null;
 };
 
 export type ResolvedSignalWorkspace = {
@@ -25,6 +27,7 @@ export type ResolvedSignalWorkspace = {
   id: string;
   organizationId: string;
   slug: string;
+  name: string;
   subject: { type: "brand" | "theme"; id: string };
   timezone: string;
   status: string;
@@ -39,6 +42,13 @@ type NormalizedSignalWorkspaceLookup = (
   | { workspaceId: string; workspaceSlug?: never }
   | { workspaceId?: never; workspaceSlug: string }
 ) & { organizationId: string | null };
+
+export type SignalWorkspaceOption = {
+  id: string;
+  slug: string;
+  name: string;
+  subjectType: "brand" | "theme";
+};
 
 export interface SignalWorkspaceResolverStore {
   loadWorkspace(lookup: NormalizedSignalWorkspaceLookup, userId: string): Promise<SignalWorkspaceStoreRow | null>;
@@ -84,12 +94,72 @@ export async function resolveLegacyOutputSignalWorkspaceForUser(
   return publicWorkspace(row);
 }
 
+export async function listSignalWorkspaceOptionsForUser(
+  user: SignalWorkspaceUser
+): Promise<SignalWorkspaceOption[]> {
+  const { pool } = await import("@/lib/db");
+  const isInternal = user.userType === "noisia_internal";
+  const result = await pool.query<{
+    id: string;
+    slug: string;
+    name: string;
+    subject_type: "brand" | "theme";
+  }>(
+    `SELECT
+       workspace.id::text,
+       workspace.slug,
+       CASE
+         WHEN workspace.brand_id IS NOT NULL
+           THEN COALESCE(brand.display_name, brand.name, workspace.slug)
+         ELSE COALESCE(theme.name, workspace.slug)
+       END AS name,
+       CASE WHEN workspace.brand_id IS NOT NULL THEN 'brand' ELSE 'theme' END AS subject_type
+     FROM signal_workspaces workspace
+     LEFT JOIN brands brand ON brand.id = workspace.brand_id
+     LEFT JOIN themes theme ON theme.id = workspace.theme_id
+     WHERE workspace.status = 'active'
+       AND (
+         $2::boolean
+         OR (
+           workspace.organization_id = $3::uuid
+           AND (
+             workspace.theme_id IS NOT NULL
+             OR EXISTS (
+               SELECT 1
+               FROM user_brand_access access
+               WHERE access.user_id = $1::uuid
+                 AND access.brand_id = workspace.brand_id
+                 AND access.revoked_at IS NULL
+             )
+           )
+         )
+       )
+     ORDER BY lower(
+       CASE
+         WHEN workspace.brand_id IS NOT NULL
+           THEN COALESCE(brand.display_name, brand.name, workspace.slug)
+         ELSE COALESCE(theme.name, workspace.slug)
+       END
+     ), workspace.id`,
+    [user.id, isInternal, user.organizationId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    subjectType: row.subject_type
+  }));
+}
+
 function normalizeLookup(
   user: SignalWorkspaceUser,
   lookup: SignalWorkspaceLookup
 ): NormalizedSignalWorkspaceLookup {
   const organizationId = (lookup.organizationId ?? user.organizationId)?.trim().toLowerCase();
-  if ((!organizationId || !UUID_PATTERN.test(organizationId)) && !(user.userType === "noisia_internal" && lookup.workspaceId)) {
+  if (
+    (!organizationId || !UUID_PATTERN.test(organizationId))
+    && user.userType !== "noisia_internal"
+  ) {
     throw new Error("organizationId is required and must be a UUID when resolving a Signal workspace.");
   }
   if (lookup.workspaceId) {
@@ -116,6 +186,7 @@ function publicWorkspace(row: SignalWorkspaceStoreRow): ResolvedSignalWorkspace 
     id: identity.workspace_id,
     organizationId: identity.organization_id,
     slug: identity.workspace_slug,
+    name: row.name,
     subject: identity.subject,
     timezone: identity.timezone,
     status: row.status,
@@ -130,6 +201,18 @@ const postgresSignalWorkspaceStore: SignalWorkspaceResolverStore = {
       const result = await pool.query(
         workspaceSelectSql("sw.id = $1::uuid", 2),
         [lookup.workspaceId, userId]
+      );
+      return mapWorkspaceRow(result.rows[0]);
+    }
+    if (lookup.workspaceSlug && !lookup.organizationId) {
+      const result = await pool.query(
+        workspaceSelectSql(`sw.slug = $1 AND (
+          SELECT COUNT(*)
+          FROM signal_workspaces candidate
+          WHERE candidate.slug = $1
+            AND candidate.status <> 'archived'
+        ) = 1`, 2),
+        [lookup.workspaceSlug, userId]
       );
       return mapWorkspaceRow(result.rows[0]);
     }
@@ -168,6 +251,18 @@ function workspaceSelectSql(predicate: string, userParameter: number) {
       sw.id::text,
       sw.organization_id::text,
       sw.slug,
+      CASE
+        WHEN sw.brand_id IS NOT NULL THEN (
+          SELECT COALESCE(brand.display_name, brand.name, sw.slug)
+          FROM brands brand
+          WHERE brand.id = sw.brand_id
+        )
+        ELSE (
+          SELECT COALESCE(theme.name, sw.slug)
+          FROM themes theme
+          WHERE theme.id = sw.theme_id
+        )
+      END AS subject_name,
       sw.brand_id::text,
       sw.theme_id::text,
       sw.timezone,
@@ -186,7 +281,17 @@ function workspaceSelectSql(predicate: string, userParameter: number) {
             'name', sc.name,
             'role', swc.role,
             'status', sc.status,
-            'validFrom', swc.valid_from
+            'validFrom', swc.valid_from,
+            'methodologySlug', methodology.slug,
+            'outputId', (
+              SELECT output.id::text
+              FROM published_outputs output
+              WHERE output.study_corpus_id = sc.id
+                AND output.status = 'published'
+                AND output.archived_at IS NULL
+              ORDER BY output.published_at DESC NULLS LAST, output.updated_at DESC, output.id
+              LIMIT 1
+            )
           ) ORDER BY swc.role, swc.valid_from DESC, sc.id
         ) FILTER (WHERE swc.id IS NOT NULL),
         '[]'::jsonb
@@ -196,6 +301,7 @@ function workspaceSelectSql(predicate: string, userParameter: number) {
       ON swc.workspace_id = sw.id
      AND swc.valid_to IS NULL
     LEFT JOIN study_corpora sc ON sc.id = swc.study_corpus_id
+    LEFT JOIN methodologies methodology ON methodology.id = sc.methodology_id
     WHERE sw.status <> 'archived'
       AND ${predicate}
     GROUP BY sw.id
@@ -214,6 +320,7 @@ function mapWorkspaceRow(input: unknown): SignalWorkspaceStoreRow | null {
     id: String(row.id),
     organizationId: String(row.organization_id),
     slug: String(row.slug),
+    name: typeof row.subject_name === "string" ? row.subject_name : String(row.slug),
     subject: brandId ? { type: "brand", id: brandId } : { type: "theme", id: themeId as string },
     timezone: String(row.timezone),
     status: String(row.status),
@@ -225,7 +332,10 @@ function mapWorkspaceRow(input: unknown): SignalWorkspaceStoreRow | null {
         name: corpus.name == null ? null : String(corpus.name),
         role: String(corpus.role) as SignalWorkspaceCorpusRole,
         status: String(corpus.status),
-        validFrom: new Date(String(corpus.validFrom)).toISOString()
+        validFrom: new Date(String(corpus.validFrom)).toISOString(),
+        methodologySlug:
+          typeof corpus.methodologySlug === "string" ? corpus.methodologySlug : null,
+        outputId: typeof corpus.outputId === "string" ? corpus.outputId : null
       };
     })
   };

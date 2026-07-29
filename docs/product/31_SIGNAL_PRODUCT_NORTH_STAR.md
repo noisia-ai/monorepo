@@ -10,6 +10,12 @@ un payload JSON o una URL por publicación, este North Star gobierna la direcci�
 objetivo. No autoriza por sí solo una migración destructiva ni una activación en
 producción.
 
+La referencia inspeccionada para el lenguaje de interacción y el primer app shell de
+Signal V2 vive en `33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md`.
+
+El primer slice funcional —Monitoreo de marca— vive en
+`34_SIGNAL_BRAND_MONITORING_V1.md`.
+
 ## North Star
 
 **Signal es el dashboard vivo y permanente de inteligencia de un cliente.** Su corpus se
@@ -38,8 +44,8 @@ reconstruir manualmente un reporte JSON para enseñar el último corte.
 ## Una Sola Superficie Para El Cliente
 
 La URL de Signal es una entrada estable al workspace de inteligencia de una marca o
-tema. El identificador definitivo de esa URL se decidirá durante la migración, pero no
-debe depender conceptualmente de un único `published_output`.
+tema. Su identidad canónica es `/signal/{workspaceSlug}` y no depende de un
+`published_output`.
 
 La ruta actual `/signal/{outputId}` es una transición report-centric. El destino es una
 Signal home estable que resuelva:
@@ -51,6 +57,13 @@ Signal home estable que resuelva:
 - el histórico de revisiones estratégicas;
 - un estado de filtros compartido;
 - evidencia y lineage navegables.
+
+Para marcas, existe un solo workspace por organización. La flecha junto al nombre del
+workspace cambia entre marcas asignadas al usuario. Los estudios Triggers & Barriers no
+crean workspaces adicionales: cada `study_corpus` es una página nombrada dentro del
+workspace y cada corrida aprobada es un release versionado de esa página. El contrato
+detallado vive en `37_SIGNAL_WORKSPACE_INFORMATION_ARCHITECTURE.md` y la decisión
+estructural en ADR 011.
 
 La futura arquitectura de información puede incluir módulos como Overview,
 Conversation, Topics, Triggers & Barriers, Evidence e History. Esos nombres no fijan el

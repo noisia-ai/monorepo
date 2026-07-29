@@ -42,6 +42,18 @@ test("materialization and drill-down use the exact same canonical predicate", ()
   assert.deepEqual(materialization.predicate.params, drillDown.predicate.params);
   assert.match(materialization.sql, /FROM mentions m/u);
   assert.doesNotMatch(materialization.sql, /published_outputs|chart_aggregates/u);
+  assert.match(drillDown.sql, /record_tags tag/u);
+  assert.match(drillDown.sql, /record_entity_links relation/u);
+  assert.match(drillDown.sql, /record_feature_values feature/u);
+  assert.match(drillDown.sql, /mention_query_sources source/u);
+  assert.match(drillDown.sql, /COALESCE\(attribution\.items, '\[\]'::jsonb\) AS attribution/u);
+  assert.match(drillDown.sql, /feature\.feature_key = 'tb_coding'/u);
+  assert.match(
+    drillDown.sql,
+    /analysis\.status IN \('approved_by_im', 'approved_by_kam'\)/u
+  );
+  assert.match(drillDown.sql, /count\(\*\) OVER\(\)::int AS total_count/u);
+  assert.match(drillDown.sql, /tag\.review_status = 'approved'/u);
 });
 
 test("metric drill-down adds the same governed constituent rule used by aggregation", () => {
@@ -73,6 +85,59 @@ test("planner parameterizes dimension values and is stable for equivalent filter
   assert.equal(left.filters_hash, right.filters_hash);
   assert.ok(left.params.some((value) => Array.isArray(value) && value.includes("x")));
   assert.doesNotMatch(left.sql, /\bX\b/u);
+});
+
+test("mention drill-down keeps enriched filters, sorting and offset server-side", () => {
+  const plan = buildSignalMentionDrillDownPlanV1({
+    filter: {
+      ...baseFilter,
+      dimensions: {
+        corpus_scope: ["brand"],
+        conversation_role: ["comment"],
+        tb_polarity: ["barrier"],
+        tb_layer: ["personal"],
+        observed_signal: ["la promo no era lo que decía"]
+      }
+    },
+    limit: 50,
+    offset: 100,
+    order_by: { field: "conversation_role", direction: "asc" },
+    study_corpus_ids: [corpusId]
+  });
+
+  assert.match(plan.sql, /mention_query_sources source/u);
+  assert.match(plan.sql, /feature\.feature_key = 'tb_coding'/u);
+  assert.match(plan.sql, /ORDER BY CASE[\s\S]*lower\(COALESCE\([\s\S]*m\.content_type/u);
+  assert.match(plan.sql, /LIMIT \$\d+::int/u);
+  assert.match(plan.sql, /OFFSET \$\d+::int/u);
+  assert.ok(plan.params.includes(51));
+  assert.ok(plan.params.includes(100));
+});
+
+test("mention engagement sorting accepts numeric JSON values and numeric strings", () => {
+  const plan = buildSignalMentionDrillDownPlanV1({
+    filter: baseFilter,
+    limit: 25,
+    offset: 0,
+    order_by: { field: "engagement", direction: "desc" },
+    study_corpus_ids: [corpusId]
+  });
+
+  assert.match(plan.sql, /COALESCE\(m\.engagement->>'likes', ''\) ~/u);
+  assert.match(plan.sql, /\(m\.engagement->>'likes'\)::numeric/u);
+  assert.match(plan.sql, /ORDER BY \([\s\S]*\) DESC, m\.published_at DESC, m\.id DESC/u);
+});
+
+test("planner parameterizes escaped client search across governed mention text", () => {
+  const predicate = buildSignalMentionPredicateV1({
+    ...baseFilter,
+    search_query: "precio_50%"
+  }, [corpusId]);
+
+  assert.match(predicate.sql, /concat_ws\(/u);
+  assert.match(predicate.sql, /ILIKE \$\d+ ESCAPE/u);
+  assert.ok(predicate.params.includes("%precio\\_50\\%%"));
+  assert.doesNotMatch(predicate.sql, /precio_50%/u);
 });
 
 test("all five catalog groups produce deterministic daily, weekly and monthly SQL plans", () => {
@@ -162,7 +227,7 @@ test("catalog quality rules execute and pending governed evidence cannot pass", 
   assert.notEqual(evaluation.state, "pass");
 });
 
-test("planner rejects excessive ranges, cardinality and unsupported metric dimensions with typed errors", () => {
+test("planner rejects excessive ranges and dimension cardinality with typed errors", () => {
   assert.throws(
     () => buildSignalMentionPredicateV1({
       date_range: { start: "2025-01-01", end: "2026-12-31" },
@@ -180,14 +245,6 @@ test("planner rejects excessive ranges, cardinality and unsupported metric dimen
       dimensions: { platform: Array.from({ length: 51 }, (_, index) => `platform-${index}`) }
     }, [corpusId]),
     (error: unknown) => error instanceof Error && "code" in error && error.code === "invalid_filter"
-  );
-  assert.throws(
-    () => buildSignalMetricMaterializationPlanV1({
-      metric_key: "platform.share",
-      filter: { ...baseFilter, dimensions: { topic: ["service"] } },
-      study_corpus_ids: [corpusId]
-    }),
-    (error: unknown) => error instanceof Error && "code" in error && error.code === "unsupported_dimension"
   );
 });
 

@@ -391,7 +391,8 @@
     "objective": {
       "eyebrow": "Study Brief",
       "title": "Objective, hypotheses, and limits",
-      "studyName": "Study name",
+      "studyName": "Signal page name",
+      "studyNameHint": "Clients will see this name as a Triggers & Barriers page inside the brand’s single Signal workspace. A new study no longer creates a separate Signal URL.",
       "studyContextEyebrow": "Study inputs",
       "studyContextTitle": "Prior context and sources",
       "studyContextCopy": "Paste diagnostic work, a prior brief, or client notes. Text files are read to prepare the objective; the rest stay attached as corpus sources.",
@@ -569,6 +570,667 @@
       "knowledgeTimeout": "Knowledge Base analysis took too long.",
       "knowledgeStillProcessing": "Data OS accepted the sources. Some semantic summaries are still being enriched in the background.",
       "noWorker": "No worker is processing the queue. Start the workers service (pnpm --filter @noisia/workers dev) and retry."
+    }
+  },
+  "SignalV2": {
+    "title": "Brand monitoring",
+    "subtitle": "What people are saying, how it changes, and which conversations explain it.",
+    "status": { "beta": "V2 beta" },
+    "a11y": { "skip": "Skip to content" },
+    "nav": {
+      "label": "Signal navigation",
+      "open": "Open navigation",
+      "close": "Close navigation",
+      "workspace": "Signal workspace",
+      "monitoring": "Brand monitoring",
+      "mentions": "Mentions",
+      "topics": "Topics and narratives",
+      "tb": "Triggers & Barriers",
+      "tbStudies": "Triggers & Barriers studies",
+      "opportunities": "Opportunities",
+      "evidence": "Evidence",
+      "reports": "Strategic reports",
+      "strategic": "Latest release",
+      "history": "History",
+      "settings": "Settings"
+    },
+    "workspaceSwitcher": {
+      "title": "Your Signal workspaces",
+      "brand": "Brand workspace",
+      "theme": "Theme workspace"
+    },
+    "strategicStudy": {
+      "status": "Strategic study",
+      "subtitle": "A named Triggers & Barriers page inside this brand workspace.",
+      "backToMonitoring": "Back to monitoring",
+      "currentRelease": "Current approved release",
+      "period": "{start} – {end}",
+      "artifacts": "reviewed components",
+      "temporalMetrics": "temporal metrics",
+      "corpusRevision": "corpus revision",
+      "analysisContents": "Published analysis",
+      "reviewedArtifacts": "Reviewed components",
+      "temporalReading": "Change over time",
+      "movements": "Detected movements",
+      "noClientArtifacts": "This release has no client-visible components yet.",
+      "noComparison": "This is the first release for this study, so there is no prior strategic cut to compare.",
+      "openCurrentView": "Open current T&B view",
+      "linkedStudy": "Study linked to this workspace",
+      "pendingTitle": "This study is already linked to the workspace",
+      "pendingBody": "Its current Triggers & Barriers report remains available below. Adapting its reviewed components to the new Signal V2 layout is the only pending step."
+    },
+    "search": {
+      "placeholder": "Search Signal",
+      "label": "Global Signal search",
+      "close": "Close search",
+      "quick": "Go to"
+    },
+    "actions": {
+      "notifications": "Notifications",
+      "cancel": "Cancel",
+      "apply": "Apply",
+      "loading": "Updating…",
+      "why": "See why",
+      "whyItMatters": "Why it matters",
+      "limitations": "Limits of this read",
+      "openEvidence": "Open evidence",
+      "openMentions": "Open mentions"
+    },
+    "filters": {
+      "period": "Period",
+      "dateDialog": "Select period",
+      "dateRange": "Date range",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "last": "Last",
+      "lastDays": "Last {count} days",
+      "toDate": "Period to date",
+      "weekToDate": "Week to date",
+      "monthToDate": "Month to date",
+      "quarterToDate": "Quarter to date",
+      "yearToDate": "Year to date",
+      "quarters": "Quarters",
+      "customRange": "Custom range",
+      "previousMonth": "Previous month",
+      "nextMonth": "Next month",
+      "last30": "Last 30 days",
+      "last90": "Last 90 days",
+      "allCoverage": "All coverage",
+      "from": "From",
+      "to": "To",
+      "equalWindow": "The comparison automatically uses the preceding window with the same number of days.",
+      "previous": "Previous period",
+      "previousEqual": "Equivalent previous period",
+      "corpus": "Active corpus",
+      "dataScope": "Data: {brand}",
+      "more": "More filters",
+      "comparison": {
+        "label": "Compare with",
+        "none": "No comparison",
+        "yesterday": "Yesterday",
+        "previousPeriod": "Previous period",
+        "previousYear": "Previous year",
+        "previousYearWeekday": "Previous year (same day of week)",
+        "custom": "Custom",
+        "customDialog": "Select custom comparison",
+        "customDateRange": "Comparison range",
+        "noOverlap": "The comparison cannot overlap the primary period.",
+        "equalDays": "Select exactly {count} days to keep the comparison equivalent."
+      }
+    },
+    "dataScope": {
+      "eyebrow": "Live data scope",
+      "body": "Brand Monitoring always reads the approved operational corpus for this workspace. Internal study names do not change the client view.",
+      "mentions": "Included mentions",
+      "coverage": "Available coverage",
+      "open": "Open mentions"
+    },
+    "mentions": {
+      "title": "Mentions",
+      "status": "Live corpus",
+      "subtitle": "Explore the approved conversation behind {brand}, with its governed context attached.",
+      "summary": "{count, number} mentions in this view",
+      "views": { "all": "All mentions" },
+      "search": {
+        "label": "Search mentions",
+        "placeholder": "Search words or an exact phrase",
+        "clear": "Clear mention search"
+      },
+      "actions": {
+        "columns": "Columns",
+        "export": "Export",
+        "copyLinks": "Copy links",
+        "clearSelection": "Clear selection"
+      },
+      "layout": {
+        "label": "Mention layout",
+        "table": "Show table",
+        "cards": "Show cards"
+      },
+      "columns": {
+        "title": "Columns",
+        "order": "Column order",
+        "manual": "Custom",
+        "drag": "Drag to reorder",
+        "required": "Mention is required and cannot be hidden.",
+        "hide": "Hide {column}",
+        "show": "Show {column}"
+      },
+      "sort": {
+        "label": "Sort mentions",
+        "publishedDesc": "Newest first",
+        "publishedAsc": "Oldest first",
+        "platformAsc": "Source A–Z",
+        "platformDesc": "Source Z–A",
+        "roleAsc": "Conversation role A–Z",
+        "roleDesc": "Conversation role Z–A",
+        "engagementDesc": "Most interactions",
+        "engagementAsc": "Fewest interactions"
+      },
+      "selection": "{count, plural, one {# mention selected} other {# mentions selected}}",
+      "selectionAll": "Select all mentions on this page",
+      "selectionClearAll": "Clear all mentions on this page",
+      "selectionAdd": "Select mention",
+      "selectionRemove": "Remove mention from selection",
+      "table": {
+        "mention": "Mention",
+        "platform": "Source",
+        "scope": "Corpus scope",
+        "role": "Conversation role",
+        "published": "Published",
+        "sentiment": "Sentiment",
+        "engagement": "Interactions",
+        "context": "Context"
+      },
+      "roles": { "root_post": "Root post", "comment": "Comment" },
+      "sentiment": {
+        "positive": "Positive",
+        "neutral": "Neutral",
+        "negative": "Negative",
+        "unclassified": "Not classified"
+      },
+      "scope": {
+        "brand": "Brand",
+        "competitor": "Competitor",
+        "category": "Category",
+        "unknown": "Unattributed",
+        "help": "Shows which listening scope found the mention: brand, competitor or category. It does not mean the post was authored by an official brand account.",
+        "multiple": "Also matched: {scopes}"
+      },
+      "tb": {
+        "title": "Triggers & Barriers classification",
+        "analysisApproved": "Approved analysis",
+        "reviewNote": "The role and decision layer are structured T&B classifications. Observed signals are short evidence phrases found in the mention; they are not a separate taxonomy.",
+        "ambiguous": "Ambiguous",
+        "compactClassification": "T&B",
+        "compactSignal": "Signal",
+        "observedSignals": "Observed signals",
+        "polarity": {
+          "trigger": "Trigger",
+          "barrier": "Barrier",
+          "mixed": "Mixed",
+          "irrelevant": "Not relevant to T&B"
+        },
+        "layer": {
+          "personal": "Personal",
+          "psicologico": "Psychological",
+          "social": "Social",
+          "cultural": "Cultural"
+        }
+      },
+      "card": { "mention": "Mention" },
+      "pagination": {
+        "range": "{start, number}–{end, number} of {total, number}",
+        "perPage": "Rows per page",
+        "previous": "Previous",
+        "next": "Next"
+      },
+      "empty": {
+        "title": "No mentions match this view",
+        "body": "Change the period, search or filters to widen the conversation."
+      },
+      "detail": {
+        "title": "Mention detail",
+        "close": "Close mention detail",
+        "noText": "This record has no client-visible text.",
+        "openOriginal": "Open original",
+        "performance": "Observed performance",
+        "scope": "Corpus scope",
+        "tbEnrichment": "Triggers & Barriers",
+        "enrichment": "Enriched context",
+        "noEnrichment": "No approved topic or narrative is attached to this mention yet.",
+        "attributes": "Analyzed attributes",
+        "present": "Detected",
+        "entities": "Entities mentioned",
+        "metadata": "Record details",
+        "language": "Language",
+        "country": "Country"
+      },
+      "helpers": {
+        "scope": {
+          "title": "What corpus scope means",
+          "body": "The listening query or import scope that captured this mention: brand, competitor or category. It describes why the record entered the corpus, not who authored it.",
+          "process": "Assigned during ingestion from the approved source and query catalog. A mention can match more than one scope."
+        },
+        "tb": {
+          "title": "Where T&B comes from",
+          "body": "A structured decision classification from the most recent Triggers & Barriers analysis approved by a Noisia analyst.",
+          "process": "New mentions remain without this label until they are included in a new T&B coding run and that analysis is approved."
+        },
+        "enrichment": {
+          "title": "What enriched context is",
+          "body": "Approved topics, narratives, entities and other governed tags attached to the mention so it can be grouped and traced beyond keyword matching.",
+          "process": "Populated by Data OS enrichment and human review. It can update independently from the T&B analysis."
+        },
+        "attributes": {
+          "title": "What analyzed attributes are",
+          "body": "Typed features detected or calculated for this record by an approved analysis or ETL step.",
+          "process": "Detected means the boolean feature exists for this mention. It is not a quality score or an approval by itself."
+        },
+        "observedSignals": {
+          "title": "What an observed signal is",
+          "body": "A short evidence phrase that summarizes what is happening in this exact mention, such as a misleading promotion or a registration problem.",
+          "process": "It is produced during open T&B coding and remains linked to the approved analysis and original mention."
+        }
+      },
+      "errors": { "load": "Mentions could not be loaded." }
+    },
+    "filterControls": {
+      "title": "Controls",
+      "close": "Close controls",
+      "filters": "Filters",
+      "scope": "Data scope",
+      "approvedCorpus": "Approved live corpus",
+      "scopeCount": "{count, number} included mentions",
+      "search": "Search",
+      "searchPlaceholder": "Word or exact phrase",
+      "searchHelp": "Searches the included mention text and recalculates every metric in this view.",
+      "clearSearch": "Clear search",
+      "addFilter": "Add filter",
+      "filterBy": "Filter by",
+      "closeFilter": "Close filter",
+      "findValue": "Find a value",
+      "any": "Any",
+      "summary": "{count, plural, =0 {No active filters} one {# active filter} other {# active filters}}",
+      "clearAll": "Clear all",
+      "apply": "Apply filters",
+      "loading": "Loading available filters",
+      "facetsError": "Available filters could not be loaded.",
+      "noFacets": "There are no governed dimensions available for this period.",
+      "dimensions": {
+        "platform": "Platform",
+        "sentiment": "Sentiment",
+        "contentFormat": "Content type",
+        "language": "Language",
+        "country": "Country",
+        "topic": "Topic",
+        "entity": "Brand or entity",
+        "campaign": "Campaign",
+        "corpusScope": "Corpus scope",
+        "conversationRole": "Conversation role",
+        "tbPolarity": "T&B classification",
+        "tbLayer": "Decision layer",
+        "observedSignal": "Observed signal"
+      }
+    },
+    "freshness": {
+      "fresh": "Data up to date",
+      "stale": "Data out of date",
+      "pending": "Update in progress",
+      "partial": "Partial coverage",
+      "notAvailable": "Data unavailable"
+    },
+    "insight": {
+      "label": "Useful information",
+      "pending": "Period volume is still being materialized",
+      "volume": "{count} mentions in the period ({delta} vs. previous)",
+      "volumeNoComparison": "{count} mentions in the selected period",
+      "context": "Compared with {previous}; open the evidence to understand the movement.",
+      "noComparison": "Showing the selected period without a comparison."
+    },
+    "monthlyInsights": {
+      "aria": "Insights from the last 30 days",
+      "useful": "Useful information",
+      "window": "{start}–{end}",
+      "fixedWindow": "Fixed window; report filters do not change it",
+      "why": "See why",
+      "whyItMatters": "Why it matters",
+      "limitations": "Limits of this read",
+      "openEvidence": "Open evidence",
+      "refresh": {
+        "action": "Refresh insights",
+        "queued": "Preparing…",
+        "running": "Analyzing…",
+        "updated": "Insights updated",
+        "error": "We could not update the monthly insights.",
+        "help": "Analyzes the last 30 days with the study's approved context. Live charts remain available while it runs."
+      },
+      "chart": {
+        "current": "Last 30 days",
+        "previous": "Previous 30 days",
+        "mentions": "Mentions in this conversation",
+        "sentiment": {
+          "positive": "Positive",
+          "neutral": "Neutral",
+          "negative": "Negative"
+        },
+        "metrics": {
+          "root_posts": "Posts",
+          "comments": "Comments",
+          "active_share": "Active share",
+          "interactions_per_active_post": "Interactions per active post",
+          "total_interactions": "Interactions",
+          "p90_interactions": "Top 10%",
+          "active_root_posts": "With activity"
+        }
+      },
+      "items": {
+        "volume": {
+          "up": {
+            "short": "The conversation is growing",
+            "headline": "Conversation grew {delta} to {count} mentions",
+            "explanation": "The period closed with {current} mentions versus {previous} in the prior 30 days ({delta})."
+          },
+          "down": {
+            "short": "The conversation lost volume",
+            "headline": "Conversation fell {delta} to {count} mentions",
+            "explanation": "The period closed with {current} mentions versus {previous} in the prior 30 days ({delta})."
+          },
+          "steady": {
+            "short": "The conversation held steady",
+            "headline": "Conversation held near {count} mentions",
+            "explanation": "Volume was {current} mentions versus {previous} in the previous window ({delta})."
+          },
+          "noComparison": "{count} mentions are available; there is not yet a complete previous window to compare.",
+          "chartAria": "Daily conversation volume in the last 30 days"
+        },
+        "concentration": {
+          "short": "A few conversations concentrate volume",
+          "headline": "Three conversations explain {share} of monthly volume",
+          "explanation": "These conversations contain {count} mentions. A high share means the movement depends on a few threads and should be checked in the evidence.",
+          "chartAria": "Conversations with the largest number of mentions"
+        },
+        "depth": {
+          "up": {
+            "short": "Conversation became deeper",
+            "headline": "{share} of mentions are comments",
+            "explanation": "The comment share increased: more activity is happening inside existing threads than in posts starting new conversations."
+          },
+          "down": {
+            "short": "Conversation became more dispersed",
+            "headline": "{share} of mentions are comments",
+            "explanation": "The comment share fell: the period depends relatively more on new posts than replies inside the same thread."
+          },
+          "steady": {
+            "short": "Conversation depth held steady",
+            "headline": "{share} of mentions are comments",
+            "explanation": "The mix of posts starting conversations and comments stayed without a meaningful change."
+          },
+          "chartAria": "Comparison of original posts and comments"
+        },
+        "sentiment": {
+          "positive": {
+            "short": "Sentiment balance favors the brand",
+            "headline": "Net sentiment balance is {balance} points",
+            "explanation": "The calculation uses {count} classified mentions. A positive value means positive mentions outweigh negative ones."
+          },
+          "negative": {
+            "short": "Sentiment balance needs attention",
+            "headline": "Net sentiment balance is {balance} points",
+            "explanation": "The calculation uses {count} classified mentions. A negative value means negative mentions outweigh positive ones."
+          },
+          "balanced": {
+            "short": "Sentiment is divided",
+            "headline": "Net sentiment balance is {balance} points",
+            "explanation": "The calculation uses {count} classified mentions. A value near zero means a similar mix of positive and negative conversation."
+          },
+          "chartAria": "Sentiment distribution in the last 30 days"
+        },
+        "platform": {
+          "short": "{platform} leads conversation",
+          "headline": "{platform} concentrates {share} of monthly mentions",
+          "explanation": "Origin is calculated over {count} observed mentions. High concentration means the result depends especially on that channel.",
+          "chartAria": "Platforms with the most mentions in the last 30 days"
+        },
+        "attention": {
+          "up": {
+            "short": "Conversation gained interaction",
+            "headline": "Posts generated {count} interactions, up {delta}",
+            "explanation": "{current} interactions were observed versus {previous} in the previous window ({delta})."
+          },
+          "down": {
+            "short": "Conversation lost interaction",
+            "headline": "Posts generated {count} interactions, down {delta}",
+            "explanation": "{current} interactions were observed versus {previous} in the previous window ({delta})."
+          },
+          "steady": {
+            "short": "Interaction held steady",
+            "headline": "Posts generated {count} interactions",
+            "explanation": "{current} interactions were observed versus {previous} in the previous window ({delta})."
+          },
+          "noComparison": "{count} interactions were observed; there is not yet a complete previous window to compare.",
+          "chartAria": "Comparison of post interaction in the last 30 days"
+        }
+      }
+    },
+    "sections": { "metrics": "Brand monitoring metrics" },
+    "kpis": {
+      "label": "Conversation units for the period",
+      "mentions": "Mentions",
+      "conversations": "Conversations",
+      "root_posts": "Root posts",
+      "comments": "Comments",
+      "help": {
+        "mentions": {
+          "title": "Mentions",
+          "body": "Every public item captured in the selected period that matches the monitored brand or topic. A mention may be an original publication or a comment.",
+          "reading": "Mentions measure how much content exists. They do not equal unique people: one person can create several mentions."
+        },
+        "conversations": {
+          "title": "Conversations",
+          "body": "Distinct discussions. One conversation groups the publication that started it and every comment linked to that publication.",
+          "reading": "More conversations means more independent discussions. Many mentions inside few conversations means the volume is concentrated."
+        },
+        "root_posts": {
+          "title": "Root posts",
+          "body": "Original publications that start a conversation. Replies and comments are not counted here.",
+          "reading": "They show how many independent starting points generated discussion, not how many responses each one received."
+        },
+        "comments": {
+          "title": "Comments",
+          "body": "Responses attached to an original publication. Every comment is also a mention, but it does not start a new conversation.",
+          "reading": "Many comments signal a deep or contested discussion. They do not necessarily mean that many independent conversations exist."
+        }
+      }
+    },
+    "charts": { "current": "Current period", "previous": "Previous period" },
+    "helpers": {
+      "open": "Explain {title}",
+      "howToRead": "How to read it"
+    },
+    "cards": {
+      "volume": {
+        "eyebrow": "Conversation",
+        "title": "Volume over time",
+        "titleByUnit": "{unit} over time",
+        "selector": "Select conversation unit",
+        "units": {
+          "mentions": "Mentions",
+          "conversations": "Conversations",
+          "root_posts": "Posts",
+          "comments": "Comments"
+        },
+        "aria": "Conversation volume for the current period compared with the previous period",
+        "ariaNoComparison": "Conversation volume for the selected period",
+        "help": {
+          "title": "Volume over time",
+          "body": "Shows how many mentions, conversations, original publications or comments appeared in each interval of the selected period.",
+          "reading": "Use the previous-period line as a baseline. Change units to tell broad growth across many discussions from a spike caused by one heavily commented publication."
+        }
+      },
+      "sentiment": {
+        "eyebrow": "Classification",
+        "title": "Sentiment distribution",
+        "aria": "Distribution of mentions by sentiment",
+        "legend": "Sentiment detail",
+        "total": "Mentions",
+        "mentions": "mentions",
+        "coverage": "{classified} of {total} mentions have a classifiable sentiment.",
+        "noComparison": "No comparison",
+        "vsPrevious": "vs. previous period",
+        "help": {
+          "title": "Sentiment distribution",
+          "body": "Groups the mentions whose tone can be identified as positive, neutral or negative. Mentions without a reliable tone stay outside the donut.",
+          "reading": "Check the classified count below the chart before drawing conclusions. A negative share is more important when it represents many mentions, not only a large percentage of a small base."
+        }
+      },
+      "composition": {
+        "eyebrow": "Structure",
+        "title": "How the conversation is composed",
+        "aria": "Composition of root posts and comments over time",
+        "roots": "Root posts",
+        "comments": "Comments",
+        "help": {
+          "title": "How the conversation is composed",
+          "body": "Separates original publications, which start a conversation, from comments, which continue an existing conversation.",
+          "reading": "More original publications usually means broader spread. More comments means deeper discussion or concentration around fewer starting points. Use sentiment to know whether that depth helps or hurts the brand."
+        }
+      },
+      "sentimentTrend": {
+        "eyebrow": "Movement",
+        "title": "Sentiment balance over time",
+        "aria": "Net sentiment balance by period",
+        "net": "Net balance",
+        "help": {
+          "title": "Sentiment balance over time",
+          "body": "Condenses the difference between positive and negative conversation into one value from −100 to +100. Neutral mentions count in the base but do not push the value up or down.",
+          "formula": "Sentiment balance = (positive mentions − negative mentions) ÷ classified mentions × 100",
+          "reading": "Above zero means positive mentions outweigh negative ones; below zero means the opposite. A rising balance is favorable only when enough mentions were classified, so always check volume and coverage."
+        }
+      },
+      "platforms": {
+        "eyebrow": "Origin",
+        "title": "Where the conversation comes from",
+        "aria": "Distribution of mentions by platform",
+        "mentions": "mentions",
+        "help": {
+          "title": "Where the conversation comes from",
+          "body": "Shows how many captured mentions came from each channel during the selected period.",
+          "reading": "Use it to see whether a movement is broad or driven by one channel. A large bar means more observed conversation there, not automatically better brand performance."
+        }
+      },
+      "engagement": {
+        "eyebrow": "Attention",
+        "title": "Observed engagement",
+        "total": "Total interactions",
+        "average": "Average per measured mention",
+        "note": "Only observed components are summed; missing fields are not estimated."
+      },
+      "attention": {
+        "eyebrow": "Attention",
+        "title": "Root post performance",
+        "totalInteractions": "Total interactions",
+        "median": "Median per post",
+        "p90": "90th percentile",
+        "active": "Posts with interaction",
+        "views": "Observed views",
+        "viewedPosts": "Posts with views",
+        "coverage": "{value} coverage",
+        "noComparableBaseline": "No comparable baseline",
+        "vsPrevious": "vs. previous",
+        "note": "Calculated only across {count} root posts; comments do not inflate engagement or views.",
+        "help": {
+          "title": "Root post performance",
+          "body": "Measures attention received by original publications only. Comments are excluded so a long discussion does not make the starting publication look stronger than it was.",
+          "reading": "Median is the typical post: half received less and half received more. The 90th percentile is not a score; it is the level reached by only the top 10% of posts. If it rises while the median stays flat, a few posts are concentrating attention. “Posts with interaction” is the share with at least one reaction. View coverage shows how many posts supplied that data. Green or red means the metric rose or fell versus the previous period—not that the conversation was positive or negative."
+        }
+      },
+      "emotions": {
+        "eyebrow": "Enrichment",
+        "title": "Detected emotions",
+        "help": {
+          "title": "Detected emotions",
+          "body": "Groups mentions by the emotion expressed in their text, such as joy, anger or concern.",
+          "reading": "This describes the language in the conversation, not the identity or personality of the people posting. Open the evidence to verify the context."
+        }
+      },
+      "topics": {
+        "eyebrow": "What is behind it",
+        "title": "Active topics and narratives",
+        "empty": "No governed topics are available for this period yet.",
+        "columnName": "Topic / narrative",
+        "columnType": "Type",
+        "columnMentions": "Mentions",
+        "columnShare": "Share",
+        "topic": "Topic",
+        "narrative": "Narrative",
+        "help": {
+          "title": "Active topics and narratives",
+          "body": "Topics are the subjects being discussed. Narratives are recurring ways people explain or frame those subjects.",
+          "reading": "A larger share means the topic or narrative occupies more of the selected conversation. Growth shows attention, not whether it benefits the brand; combine it with sentiment and evidence."
+        }
+      },
+      "drivers": {
+        "eyebrow": "Concentration",
+        "title": "Conversations that explain volume",
+        "subtitle": "Each bar groups one original publication and every comment attached to it.",
+        "aria": "Conversation ranking by number of mentions in each discussion",
+        "mentions": "mentions in the conversation",
+        "comments": "comments",
+        "interactions": "root post interactions",
+        "help": {
+          "title": "Conversations that explain volume",
+          "body": "Ranks complete conversations by adding the original publication and every comment attached to it.",
+          "reading": "A large bar means one discussion explains a meaningful part of the period’s volume. This is concentration, not reach. Open it to see whether it is an opportunity, an issue or irrelevant noise."
+        }
+      },
+      "conversations": {
+        "eyebrow": "Prioritized evidence",
+        "title": "Highlighted conversations in the period",
+        "positive": "3 positive signals",
+        "negative": "3 negative signals",
+        "emptyPositive": "No positively classified mentions in this period.",
+        "emptyNegative": "No negatively classified mentions in this period.",
+        "openOriginal": "Open original conversation",
+        "tonePositive": "Positive signal",
+        "toneNegative": "Negative signal",
+        "explanationEngagement": "{tone} prioritized by {count} observed interactions.",
+        "explanationReach": "{tone} with observed potential reach, but no comparable interaction.",
+        "explanationRecency": "{tone} prioritized by intensity and recency; engagement unavailable.",
+        "help": {
+          "title": "Highlighted conversations",
+          "body": "Selects the positive and negative items most useful for understanding what happened in the period.",
+          "reading": "These examples explain the aggregate but do not represent every mention. Open the original item before using it in a decision or report."
+        }
+      }
+    },
+    "sentiment": {
+      "positive": "Positive",
+      "negative": "Negative",
+      "neutral": "Neutral",
+      "unknown": "Unclassified"
+    },
+    "states": {
+      "pending": "The metric is being materialized for this filter.",
+      "stale": "The metric exists but needs to be refreshed.",
+      "partial": "Data is present with a declared coverage limitation.",
+      "notAvailable": "Data OS does not yet have this metric for the period."
+    },
+    "stateShort": {
+      "fresh": "Live",
+      "pending": "In progress",
+      "partial": "Partial",
+      "stale": "Out of date",
+      "notAvailable": "No data"
+    },
+    "coverage": {
+      "title": "Coverage and traceability",
+      "body": "{count} included mentions from {start} to {end}. Charts retain access to the governed corpus.",
+      "open": "Open corpus"
+    },
+    "errors": {
+      "load": "The period could not be updated.",
+      "noOperationalOutput": "This workspace does not have an operational corpus available yet."
     }
   },
   "Team": {

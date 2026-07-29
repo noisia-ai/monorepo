@@ -1184,7 +1184,17 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
 
         {step === 2 && (
           <WizardPanel eyebrow={t("objective.eyebrow")} title={t("objective.title")}>
-            <TextField label={t("objective.studyName")} value={draft.studyName} onChange={(value) => { setStudyNameTouched(true); updateDraft("studyName", value); }} error={fieldErrors.studyName} required />
+            <TextField
+              error={fieldErrors.studyName}
+              hint={t("objective.studyNameHint")}
+              label={t("objective.studyName")}
+              onChange={(value) => {
+                setStudyNameTouched(true);
+                updateDraft("studyName", value);
+              }}
+              required
+              value={draft.studyName}
+            />
             <TextAreaField
               label={t("objective.businessQuestion")}
               value={draft.businessQuestion}
@@ -2197,7 +2207,8 @@ function TextField({
   placeholder,
   required,
   list,
-  error
+  error,
+  hint
 }: {
   label: string;
   value: string;
@@ -2206,6 +2217,7 @@ function TextField({
   required?: boolean;
   list?: string;
   error?: string;
+  hint?: string;
 }) {
   const inputId = useId();
   return (
@@ -2220,6 +2232,7 @@ function TextField({
         list={list}
       />
       {error && <small className="new-study-field-error">{error}</small>}
+      {hint && <small className="new-study-hint">{hint}</small>}
     </Field>
   );
 }

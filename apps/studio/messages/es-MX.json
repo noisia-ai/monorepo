@@ -391,7 +391,8 @@
     "objective": {
       "eyebrow": "Study Brief",
       "title": "Objetivo, hipótesis y límites",
-      "studyName": "Nombre del estudio",
+      "studyName": "Nombre de la página en Signal",
+      "studyNameHint": "El cliente verá este nombre como una página de Triggers & Barriers dentro del único workspace de la marca. Un estudio nuevo ya no crea otra URL de Signal.",
       "studyContextEyebrow": "Study inputs",
       "studyContextTitle": "Contexto previo y fuentes",
       "studyContextCopy": "Pega diagnósticos, brief previo o notas del cliente. Los archivos de texto se leen para preparar el objetivo; los demás quedan como fuentes del corpus.",
@@ -569,6 +570,667 @@
       "knowledgeTimeout": "El análisis del Knowledge Base tardó demasiado.",
       "knowledgeStillProcessing": "Data OS aceptó las fuentes. Algunos resúmenes semánticos siguen enriqueciéndose en segundo plano.",
       "noWorker": "No hay ningún worker procesando la cola. Levanta el servicio de workers (pnpm --filter @noisia/workers dev) y reintenta."
+    }
+  },
+  "SignalV2": {
+    "title": "Monitoreo de marca",
+    "subtitle": "Qué se está diciendo, cómo cambia y qué conversaciones lo explican.",
+    "status": { "beta": "V2 beta" },
+    "a11y": { "skip": "Saltar al contenido" },
+    "nav": {
+      "label": "Navegación de Signal",
+      "open": "Abrir navegación",
+      "close": "Cerrar navegación",
+      "workspace": "Workspace de Signal",
+      "monitoring": "Monitoreo de marca",
+      "mentions": "Menciones",
+      "topics": "Tópicos y narrativas",
+      "tb": "Triggers & Barriers",
+      "tbStudies": "Estudios de Triggers & Barriers",
+      "opportunities": "Oportunidades",
+      "evidence": "Evidencia",
+      "reports": "Reportes estratégicos",
+      "strategic": "Último release",
+      "history": "Historial",
+      "settings": "Configuración"
+    },
+    "workspaceSwitcher": {
+      "title": "Tus workspaces de Signal",
+      "brand": "Workspace de marca",
+      "theme": "Workspace temático"
+    },
+    "strategicStudy": {
+      "status": "Estudio estratégico",
+      "subtitle": "Una página nombrada de Triggers & Barriers dentro de este workspace de marca.",
+      "backToMonitoring": "Volver a monitoreo",
+      "currentRelease": "Release aprobado vigente",
+      "period": "{start} – {end}",
+      "artifacts": "componentes revisados",
+      "temporalMetrics": "métricas temporales",
+      "corpusRevision": "revisión del corpus",
+      "analysisContents": "Análisis publicado",
+      "reviewedArtifacts": "Componentes revisados",
+      "temporalReading": "Cambio en el tiempo",
+      "movements": "Movimientos detectados",
+      "noClientArtifacts": "Este release aún no tiene componentes visibles para el cliente.",
+      "noComparison": "Este es el primer release del estudio, así que todavía no existe un corte estratégico anterior para comparar.",
+      "openCurrentView": "Abrir vista T&B actual",
+      "linkedStudy": "Estudio vinculado a este workspace",
+      "pendingTitle": "Este estudio ya está vinculado al workspace",
+      "pendingBody": "Su reporte actual de Triggers & Barriers sigue disponible abajo. Lo único pendiente es adaptar sus componentes revisados al nuevo layout de Signal V2."
+    },
+    "search": {
+      "placeholder": "Buscar en Signal",
+      "label": "Búsqueda global de Signal",
+      "close": "Cerrar búsqueda",
+      "quick": "Ir a"
+    },
+    "actions": {
+      "notifications": "Notificaciones",
+      "cancel": "Cancelar",
+      "apply": "Aplicar",
+      "loading": "Actualizando…",
+      "why": "Ver por qué",
+      "whyItMatters": "Por qué importa",
+      "limitations": "Límites de esta lectura",
+      "openEvidence": "Abrir evidencia",
+      "openMentions": "Abrir menciones"
+    },
+    "filters": {
+      "period": "Periodo",
+      "dateDialog": "Seleccionar periodo",
+      "dateRange": "Rango de fechas",
+      "today": "Hoy",
+      "yesterday": "Ayer",
+      "last": "Últimos",
+      "lastDays": "Últimos {count} días",
+      "toDate": "Periodo hasta la fecha",
+      "weekToDate": "Semana hasta la fecha",
+      "monthToDate": "Mes hasta la fecha",
+      "quarterToDate": "Trimestre hasta la fecha",
+      "yearToDate": "Año hasta la fecha",
+      "quarters": "Trimestres",
+      "customRange": "Rango personalizado",
+      "previousMonth": "Mes anterior",
+      "nextMonth": "Mes siguiente",
+      "last30": "Últimos 30 días",
+      "last90": "Últimos 90 días",
+      "allCoverage": "Toda la cobertura",
+      "from": "Desde",
+      "to": "Hasta",
+      "equalWindow": "La comparación usa automáticamente la ventana anterior con el mismo número de días.",
+      "previous": "Periodo anterior",
+      "previousEqual": "Periodo anterior equivalente",
+      "corpus": "Corpus activo",
+      "dataScope": "Datos: {brand}",
+      "more": "Más filtros",
+      "comparison": {
+        "label": "Comparar con",
+        "none": "Sin comparación",
+        "yesterday": "Ayer",
+        "previousPeriod": "Periodo anterior",
+        "previousYear": "Año anterior",
+        "previousYearWeekday": "Año anterior (mismo día de la semana)",
+        "custom": "Personalizado",
+        "customDialog": "Seleccionar comparación personalizada",
+        "customDateRange": "Rango de comparación",
+        "noOverlap": "La comparación no puede cruzarse con el periodo principal.",
+        "equalDays": "Selecciona exactamente {count} días para mantener una comparación equivalente."
+      }
+    },
+    "dataScope": {
+      "eyebrow": "Alcance de datos vivos",
+      "body": "Monitoreo de marca siempre consulta el corpus operativo aprobado de este workspace. Los nombres internos de los estudios no cambian la vista del cliente.",
+      "mentions": "Menciones incluidas",
+      "coverage": "Cobertura disponible",
+      "open": "Abrir menciones"
+    },
+    "mentions": {
+      "title": "Menciones",
+      "status": "Corpus vivo",
+      "subtitle": "Explora la conversación aprobada detrás de {brand}, con su contexto gobernado conectado.",
+      "summary": "{count, number} menciones en esta vista",
+      "views": { "all": "Todas las menciones" },
+      "search": {
+        "label": "Buscar menciones",
+        "placeholder": "Busca palabras o una frase exacta",
+        "clear": "Limpiar búsqueda de menciones"
+      },
+      "actions": {
+        "columns": "Columnas",
+        "export": "Exportar",
+        "copyLinks": "Copiar enlaces",
+        "clearSelection": "Limpiar selección"
+      },
+      "layout": {
+        "label": "Vista de menciones",
+        "table": "Mostrar tabla",
+        "cards": "Mostrar tarjetas"
+      },
+      "columns": {
+        "title": "Columnas",
+        "order": "Orden de columnas",
+        "manual": "Personalizado",
+        "drag": "Arrastra para ordenar",
+        "required": "Mención es obligatoria y no puede ocultarse.",
+        "hide": "Ocultar {column}",
+        "show": "Mostrar {column}"
+      },
+      "sort": {
+        "label": "Ordenar menciones",
+        "publishedDesc": "Más nuevas primero",
+        "publishedAsc": "Más antiguas primero",
+        "platformAsc": "Fuente A–Z",
+        "platformDesc": "Fuente Z–A",
+        "roleAsc": "Rol de conversación A–Z",
+        "roleDesc": "Rol de conversación Z–A",
+        "engagementDesc": "Más interacciones",
+        "engagementAsc": "Menos interacciones"
+      },
+      "selection": "{count, plural, one {# mención seleccionada} other {# menciones seleccionadas}}",
+      "selectionAll": "Seleccionar todas las menciones de esta página",
+      "selectionClearAll": "Limpiar todas las menciones de esta página",
+      "selectionAdd": "Seleccionar mención",
+      "selectionRemove": "Quitar mención de la selección",
+      "table": {
+        "mention": "Mención",
+        "platform": "Fuente",
+        "scope": "Alcance del corpus",
+        "role": "Rol en la conversación",
+        "published": "Publicada",
+        "sentiment": "Sentimiento",
+        "engagement": "Interacciones",
+        "context": "Contexto"
+      },
+      "roles": { "root_post": "Post raíz", "comment": "Comentario" },
+      "sentiment": {
+        "positive": "Positivo",
+        "neutral": "Neutral",
+        "negative": "Negativo",
+        "unclassified": "Sin clasificar"
+      },
+      "scope": {
+        "brand": "Marca",
+        "competitor": "Competencia",
+        "category": "Categoría",
+        "unknown": "Sin atribuir",
+        "help": "Indica qué alcance de escucha encontró la mención: marca, competencia o categoría. No significa que la publicación sea de una cuenta oficial de la marca.",
+        "multiple": "También coincidió con: {scopes}"
+      },
+      "tb": {
+        "title": "Clasificación de Triggers & Barriers",
+        "analysisApproved": "Análisis aprobado",
+        "reviewNote": "El rol y la capa de decisión son clasificaciones estructuradas de T&B. Las señales observadas son frases breves de evidencia encontradas en la mención; no forman otra taxonomía.",
+        "ambiguous": "Ambigua",
+        "compactClassification": "T&B",
+        "compactSignal": "Señal",
+        "observedSignals": "Señales observadas",
+        "polarity": {
+          "trigger": "Trigger",
+          "barrier": "Barrier",
+          "mixed": "Mixta",
+          "irrelevant": "No relevante para T&B"
+        },
+        "layer": {
+          "personal": "Personal",
+          "psicologico": "Psicológica",
+          "social": "Social",
+          "cultural": "Cultural"
+        }
+      },
+      "card": { "mention": "Mención" },
+      "pagination": {
+        "range": "{start, number}–{end, number} de {total, number}",
+        "perPage": "Resultados por página",
+        "previous": "Anterior",
+        "next": "Siguiente"
+      },
+      "empty": {
+        "title": "No hay menciones para esta vista",
+        "body": "Cambia el periodo, la búsqueda o los filtros para ampliar la conversación."
+      },
+      "detail": {
+        "title": "Detalle de la mención",
+        "close": "Cerrar detalle de la mención",
+        "noText": "Este registro no tiene texto visible para cliente.",
+        "openOriginal": "Abrir original",
+        "performance": "Desempeño observado",
+        "scope": "Alcance del corpus",
+        "tbEnrichment": "Triggers & Barriers",
+        "enrichment": "Contexto enriquecido",
+        "noEnrichment": "Esta mención todavía no tiene un tópico o narrativa aprobada conectada.",
+        "attributes": "Atributos analizados",
+        "present": "Detectado",
+        "entities": "Entidades mencionadas",
+        "metadata": "Detalles del registro",
+        "language": "Idioma",
+        "country": "País"
+      },
+      "helpers": {
+        "scope": {
+          "title": "Qué significa alcance del corpus",
+          "body": "Es la consulta o alcance de escucha que capturó esta mención: marca, competencia o categoría. Explica por qué entró al corpus, no quién la publicó.",
+          "process": "Se asigna durante la ingesta desde el catálogo aprobado de fuentes y consultas. Una mención puede coincidir con más de un alcance."
+        },
+        "tb": {
+          "title": "De dónde viene T&B",
+          "body": "Es una clasificación estructurada de decisión que proviene del análisis de Triggers & Barriers más reciente aprobado por un analista de Noisia.",
+          "process": "Las menciones nuevas quedan sin esta etiqueta hasta que entren a una nueva corrida de codificación T&B y ese análisis sea aprobado."
+        },
+        "enrichment": {
+          "title": "Qué es el contexto enriquecido",
+          "body": "Son tópicos, narrativas, entidades y otras etiquetas gobernadas conectadas a la mención para agruparla y rastrearla más allá de palabras clave.",
+          "process": "Se puebla mediante el enriquecimiento de Data OS y la revisión humana. Puede actualizarse de forma independiente al análisis T&B."
+        },
+        "attributes": {
+          "title": "Qué son los atributos analizados",
+          "body": "Son variables tipificadas que una etapa aprobada de análisis o ETL detectó o calculó para este registro.",
+          "process": "Detectado significa que el atributo booleano existe en esta mención. No es una calificación de calidad ni una aprobación por sí misma."
+        },
+        "observedSignals": {
+          "title": "Qué es una señal observada",
+          "body": "Es una frase breve de evidencia que resume qué ocurre en esta mención concreta, por ejemplo una promoción confusa o un problema de registro.",
+          "process": "Se genera durante la codificación abierta de T&B y queda ligada al análisis aprobado y a la mención original."
+        }
+      },
+      "errors": { "load": "No fue posible cargar las menciones." }
+    },
+    "filterControls": {
+      "title": "Controles",
+      "close": "Cerrar controles",
+      "filters": "Filtros",
+      "scope": "Alcance de datos",
+      "approvedCorpus": "Corpus vivo aprobado",
+      "scopeCount": "{count, number} menciones incluidas",
+      "search": "Búsqueda",
+      "searchPlaceholder": "Palabra o frase exacta",
+      "searchHelp": "Busca dentro del texto de las menciones incluidas y recalcula todas las métricas de esta vista.",
+      "clearSearch": "Limpiar búsqueda",
+      "addFilter": "Agregar filtro",
+      "filterBy": "Filtrar por",
+      "closeFilter": "Cerrar filtro",
+      "findValue": "Buscar un valor",
+      "any": "Cualquiera",
+      "summary": "{count, plural, =0 {Sin filtros activos} one {# filtro activo} other {# filtros activos}}",
+      "clearAll": "Limpiar todo",
+      "apply": "Aplicar filtros",
+      "loading": "Cargando filtros disponibles",
+      "facetsError": "No fue posible cargar los filtros disponibles.",
+      "noFacets": "No hay dimensiones gobernadas disponibles para este periodo.",
+      "dimensions": {
+        "platform": "Plataforma",
+        "sentiment": "Sentimiento",
+        "contentFormat": "Tipo de contenido",
+        "language": "Idioma",
+        "country": "País",
+        "topic": "Tópico",
+        "entity": "Marca o entidad",
+        "campaign": "Campaña",
+        "corpusScope": "Alcance del corpus",
+        "conversationRole": "Rol en la conversación",
+        "tbPolarity": "Clasificación T&B",
+        "tbLayer": "Capa de decisión",
+        "observedSignal": "Señal observada"
+      }
+    },
+    "freshness": {
+      "fresh": "Datos actualizados",
+      "stale": "Datos desactualizados",
+      "pending": "Actualización en proceso",
+      "partial": "Cobertura parcial",
+      "notAvailable": "Datos no disponibles"
+    },
+    "insight": {
+      "label": "Información útil",
+      "pending": "El volumen del periodo todavía se está materializando",
+      "volume": "{count} menciones en el periodo ({delta} vs. anterior)",
+      "volumeNoComparison": "{count} menciones en el periodo seleccionado",
+      "context": "Comparado con {previous}; abre la evidencia para entender el movimiento.",
+      "noComparison": "Mostrando el periodo seleccionado sin una comparación."
+    },
+    "monthlyInsights": {
+      "aria": "Insights de los últimos 30 días",
+      "useful": "Información útil",
+      "window": "{start}–{end}",
+      "fixedWindow": "Ventana fija; no cambia con los filtros del reporte",
+      "why": "Ver por qué",
+      "whyItMatters": "Por qué importa",
+      "limitations": "Límites de esta lectura",
+      "openEvidence": "Abrir evidencia",
+      "refresh": {
+        "action": "Actualizar insights",
+        "queued": "Preparando…",
+        "running": "Analizando…",
+        "updated": "Insights actualizados",
+        "error": "No pudimos actualizar los insights mensuales.",
+        "help": "Analiza los últimos 30 días con el contexto aprobado del estudio. Las gráficas en vivo siguen disponibles mientras termina."
+      },
+      "chart": {
+        "current": "Últimos 30 días",
+        "previous": "30 días anteriores",
+        "mentions": "Menciones en esta conversación",
+        "sentiment": {
+          "positive": "Positivo",
+          "neutral": "Neutral",
+          "negative": "Negativo"
+        },
+        "metrics": {
+          "root_posts": "Publicaciones",
+          "comments": "Comentarios",
+          "active_share": "Proporción activa",
+          "interactions_per_active_post": "Interacciones por publicación activa",
+          "total_interactions": "Interacciones",
+          "p90_interactions": "Top 10%",
+          "active_root_posts": "Con actividad"
+        }
+      },
+      "items": {
+        "volume": {
+          "up": {
+            "short": "La conversación está creciendo",
+            "headline": "La conversación creció {delta} y llegó a {count} menciones",
+            "explanation": "El periodo cerró con {current} menciones frente a {previous} en los 30 días anteriores ({delta})."
+          },
+          "down": {
+            "short": "La conversación perdió volumen",
+            "headline": "La conversación cayó {delta} y quedó en {count} menciones",
+            "explanation": "El periodo cerró con {current} menciones frente a {previous} en los 30 días anteriores ({delta})."
+          },
+          "steady": {
+            "short": "La conversación se mantuvo estable",
+            "headline": "La conversación se mantuvo cerca de {count} menciones",
+            "explanation": "El volumen fue de {current} menciones frente a {previous} en la ventana anterior ({delta})."
+          },
+          "noComparison": "Hay {count} menciones disponibles; todavía no existe una ventana anterior completa para comparar.",
+          "chartAria": "Volumen diario de conversación en los últimos 30 días"
+        },
+        "concentration": {
+          "short": "Pocas conversaciones concentran el volumen",
+          "headline": "Tres conversaciones explican {share} del volumen del mes",
+          "explanation": "Estas conversaciones reúnen {count} menciones. Una proporción alta indica que el movimiento depende de pocos hilos y debe revisarse en evidencia.",
+          "chartAria": "Conversaciones con mayor número de menciones"
+        },
+        "depth": {
+          "up": {
+            "short": "La conversación se volvió más profunda",
+            "headline": "{share} de las menciones son comentarios",
+            "explanation": "La proporción de comentarios aumentó: hay más respuesta dentro de hilos existentes que publicaciones que inician conversaciones."
+          },
+          "down": {
+            "short": "La conversación se volvió más dispersa",
+            "headline": "{share} de las menciones son comentarios",
+            "explanation": "La proporción de comentarios bajó: el periodo depende relativamente más de publicaciones nuevas que de respuestas dentro de un mismo hilo."
+          },
+          "steady": {
+            "short": "La profundidad de conversación se mantuvo",
+            "headline": "{share} de las menciones son comentarios",
+            "explanation": "La mezcla entre publicaciones que inician conversación y comentarios se mantuvo sin un cambio relevante."
+          },
+          "chartAria": "Comparación de publicaciones originales y comentarios"
+        },
+        "sentiment": {
+          "positive": {
+            "short": "El balance de sentimiento favorece a la marca",
+            "headline": "El balance neto de sentimiento es {balance} puntos",
+            "explanation": "El cálculo usa {count} menciones clasificadas. Un valor positivo significa que las menciones positivas superan a las negativas."
+          },
+          "negative": {
+            "short": "El balance de sentimiento exige atención",
+            "headline": "El balance neto de sentimiento es {balance} puntos",
+            "explanation": "El cálculo usa {count} menciones clasificadas. Un valor negativo significa que las menciones negativas superan a las positivas."
+          },
+          "balanced": {
+            "short": "El sentimiento está dividido",
+            "headline": "El balance neto de sentimiento es {balance} puntos",
+            "explanation": "El cálculo usa {count} menciones clasificadas. Un valor cercano a cero indica una mezcla similar de conversación positiva y negativa."
+          },
+          "chartAria": "Distribución de sentimiento de los últimos 30 días"
+        },
+        "platform": {
+          "short": "{platform} lidera la conversación",
+          "headline": "{platform} concentra {share} de las menciones del mes",
+          "explanation": "El origen se calcula sobre {count} menciones observadas. Una alta concentración significa que el resultado depende especialmente de ese canal.",
+          "chartAria": "Plataformas con más menciones en los últimos 30 días"
+        },
+        "attention": {
+          "up": {
+            "short": "La conversación ganó interacción",
+            "headline": "Las publicaciones generaron {count} interacciones, {delta} más",
+            "explanation": "Se observaron {current} interacciones frente a {previous} en la ventana anterior ({delta})."
+          },
+          "down": {
+            "short": "La conversación perdió interacción",
+            "headline": "Las publicaciones generaron {count} interacciones, {delta} menos",
+            "explanation": "Se observaron {current} interacciones frente a {previous} en la ventana anterior ({delta})."
+          },
+          "steady": {
+            "short": "La interacción se mantuvo estable",
+            "headline": "Las publicaciones generaron {count} interacciones",
+            "explanation": "Se observaron {current} interacciones frente a {previous} en la ventana anterior ({delta})."
+          },
+          "noComparison": "Se observaron {count} interacciones; todavía no existe una ventana anterior completa para comparar.",
+          "chartAria": "Comparación de interacción de publicaciones en los últimos 30 días"
+        }
+      }
+    },
+    "sections": { "metrics": "Métricas de monitoreo de marca" },
+    "kpis": {
+      "label": "Unidades de conversación del periodo",
+      "mentions": "Menciones",
+      "conversations": "Conversaciones",
+      "root_posts": "Publicaciones raíz",
+      "comments": "Comentarios",
+      "help": {
+        "mentions": {
+          "title": "Menciones",
+          "body": "Cada contenido público capturado en el periodo seleccionado que coincide con la marca o tema monitoreado. Una mención puede ser una publicación original o un comentario.",
+          "reading": "Las menciones miden cuánto contenido existe. No equivalen a personas únicas: una misma persona puede generar varias menciones."
+        },
+        "conversations": {
+          "title": "Conversaciones",
+          "body": "Discusiones distintas. Una conversación agrupa la publicación que la inició y todos los comentarios vinculados a ella.",
+          "reading": "Más conversaciones significa más discusiones independientes. Muchas menciones dentro de pocas conversaciones indican concentración."
+        },
+        "root_posts": {
+          "title": "Publicaciones raíz",
+          "body": "Publicaciones originales que inician una conversación. Aquí no se cuentan respuestas ni comentarios.",
+          "reading": "Muestran cuántos puntos de inicio independientes generaron discusión, no cuántas respuestas recibió cada uno."
+        },
+        "comments": {
+          "title": "Comentarios",
+          "body": "Respuestas ligadas a una publicación original. Cada comentario también es una mención, pero no inicia una nueva conversación.",
+          "reading": "Muchos comentarios indican una discusión profunda o disputada. No significan necesariamente que existan muchas conversaciones independientes."
+        }
+      }
+    },
+    "charts": { "current": "Periodo actual", "previous": "Periodo anterior" },
+    "helpers": {
+      "open": "Explicar {title}",
+      "howToRead": "Cómo leerlo"
+    },
+    "cards": {
+      "volume": {
+        "eyebrow": "Conversación",
+        "title": "Volumen a lo largo del tiempo",
+        "titleByUnit": "{unit} a lo largo del tiempo",
+        "selector": "Seleccionar unidad de conversación",
+        "units": {
+          "mentions": "Menciones",
+          "conversations": "Conversaciones",
+          "root_posts": "Publicaciones",
+          "comments": "Comentarios"
+        },
+        "aria": "Serie de volumen de conversación del periodo actual contra el periodo anterior",
+        "ariaNoComparison": "Serie de volumen de conversación del periodo seleccionado",
+        "help": {
+          "title": "Volumen a lo largo del tiempo",
+          "body": "Muestra cuántas menciones, conversaciones, publicaciones originales o comentarios aparecieron en cada intervalo del periodo seleccionado.",
+          "reading": "Usa la línea del periodo anterior como referencia. Cambia de unidad para distinguir crecimiento amplio de un pico causado por una sola publicación con muchos comentarios."
+        }
+      },
+      "sentiment": {
+        "eyebrow": "Clasificación",
+        "title": "Distribución de sentimiento",
+        "aria": "Distribución de menciones por sentimiento",
+        "legend": "Detalle de sentimiento",
+        "total": "Menciones",
+        "mentions": "menciones",
+        "coverage": "{classified} de {total} menciones tienen sentimiento clasificable.",
+        "noComparison": "Sin comparación",
+        "vsPrevious": "vs. periodo anterior",
+        "help": {
+          "title": "Distribución de sentimiento",
+          "body": "Agrupa las menciones cuyo tono puede identificarse como positivo, neutral o negativo. Las menciones sin un tono confiable quedan fuera de la dona.",
+          "reading": "Revisa cuántas menciones fueron clasificadas debajo de la gráfica antes de concluir. La proporción negativa importa más cuando representa muchas menciones, no sólo un porcentaje alto de una base pequeña."
+        }
+      },
+      "composition": {
+        "eyebrow": "Estructura",
+        "title": "Cómo se compone la conversación",
+        "aria": "Composición temporal de publicaciones raíz y comentarios",
+        "roots": "Publicaciones raíz",
+        "comments": "Comentarios",
+        "help": {
+          "title": "Cómo se compone la conversación",
+          "body": "Separa las publicaciones originales, que inician una conversación, de los comentarios, que continúan una conversación existente.",
+          "reading": "Más publicaciones originales suele significar mayor amplitud. Más comentarios significa discusión profunda o concentrada en pocos puntos de inicio. Usa el sentimiento para saber si esa profundidad ayuda o perjudica a la marca."
+        }
+      },
+      "sentimentTrend": {
+        "eyebrow": "Movimiento",
+        "title": "Balance de sentimiento en el tiempo",
+        "aria": "Balance neto de sentimiento por periodo",
+        "net": "Balance neto",
+        "help": {
+          "title": "Balance de sentimiento en el tiempo",
+          "body": "Resume la diferencia entre conversación positiva y negativa en un valor de −100 a +100. Las menciones neutrales cuentan en la base, pero no empujan el valor hacia arriba ni hacia abajo.",
+          "formula": "Balance de sentimiento = (menciones positivas − menciones negativas) ÷ menciones clasificadas × 100",
+          "reading": "Arriba de cero significa que las menciones positivas superan a las negativas; debajo de cero, lo contrario. Una subida es favorable sólo si se clasificaron suficientes menciones, así que revisa también volumen y cobertura."
+        }
+      },
+      "platforms": {
+        "eyebrow": "Origen",
+        "title": "De dónde sale la conversación",
+        "aria": "Distribución de menciones por plataforma",
+        "mentions": "menciones",
+        "help": {
+          "title": "De dónde sale la conversación",
+          "body": "Muestra cuántas menciones capturadas provienen de cada canal durante el periodo seleccionado.",
+          "reading": "Sirve para saber si un movimiento es amplio o depende de un solo canal. Una barra grande significa más conversación observada ahí, no automáticamente mejor desempeño de marca."
+        }
+      },
+      "engagement": {
+        "eyebrow": "Atención",
+        "title": "Engagement observado",
+        "total": "Interacciones totales",
+        "average": "Promedio por mención medida",
+        "note": "Sólo suma componentes observados; los campos faltantes no se estiman."
+      },
+      "attention": {
+        "eyebrow": "Atención",
+        "title": "Rendimiento de publicaciones raíz",
+        "totalInteractions": "Interacciones totales",
+        "median": "Mediana por publicación",
+        "p90": "Percentil 90",
+        "active": "Publicaciones con interacción",
+        "views": "Views observadas",
+        "viewedPosts": "Publicaciones con views",
+        "coverage": "{value} de cobertura",
+        "noComparableBaseline": "Sin referencia comparable",
+        "vsPrevious": "vs. anterior",
+        "note": "Calculado sólo sobre {count} publicaciones raíz; los comentarios no inflan engagement ni views.",
+        "help": {
+          "title": "Rendimiento de publicaciones raíz",
+          "body": "Mide la atención que recibieron sólo las publicaciones originales. Los comentarios se excluyen para que una discusión larga no haga parecer más fuerte a la publicación que la inició.",
+          "reading": "La mediana representa la publicación típica: la mitad recibió menos y la mitad recibió más. El percentil 90 no es una calificación; es el nivel que sólo alcanzó el 10% con mayor respuesta. Si sube mientras la mediana queda plana, pocas publicaciones concentran la atención. “Con interacción” es la proporción con al menos una reacción. La cobertura de views indica cuántas publicaciones entregaron ese dato. Verde o rojo significa que la métrica subió o bajó frente al periodo anterior, no que la conversación sea positiva o negativa."
+        }
+      },
+      "emotions": {
+        "eyebrow": "Enriquecimiento",
+        "title": "Emociones detectadas",
+        "help": {
+          "title": "Emociones detectadas",
+          "body": "Agrupa las menciones según la emoción expresada en su texto, como alegría, enojo o preocupación.",
+          "reading": "Esto describe el lenguaje de la conversación, no la identidad ni la personalidad de quienes publican. Abre la evidencia para validar el contexto."
+        }
+      },
+      "topics": {
+        "eyebrow": "Qué hay detrás",
+        "title": "Tópicos y narrativas activas",
+        "empty": "Aún no hay tópicos gobernados para este periodo.",
+        "columnName": "Tópico / narrativa",
+        "columnType": "Tipo",
+        "columnMentions": "Menciones",
+        "columnShare": "Share",
+        "topic": "Tópico",
+        "narrative": "Narrativa",
+        "help": {
+          "title": "Tópicos y narrativas activas",
+          "body": "Los tópicos son los temas discutidos. Las narrativas son las formas recurrentes en que las personas explican o enmarcan esos temas.",
+          "reading": "Una proporción mayor significa que el tópico o narrativa ocupa más de la conversación seleccionada. Crecer indica atención, no beneficio para la marca; combínalo con sentimiento y evidencia."
+        }
+      },
+      "drivers": {
+        "eyebrow": "Concentración",
+        "title": "Conversaciones que explican el volumen",
+        "subtitle": "Cada barra agrupa una publicación original y todos sus comentarios.",
+        "aria": "Ranking de conversaciones por número de menciones en cada discusión",
+        "mentions": "menciones en la conversación",
+        "comments": "comentarios",
+        "interactions": "interacciones de la publicación raíz",
+        "help": {
+          "title": "Conversaciones que explican el volumen",
+          "body": "Ordena conversaciones completas sumando la publicación original y todos los comentarios vinculados.",
+          "reading": "Una barra grande significa que una discusión explica una parte relevante del volumen del periodo. Esto mide concentración, no alcance. Ábrela para saber si es oportunidad, problema o ruido irrelevante."
+        }
+      },
+      "conversations": {
+        "eyebrow": "Evidencia priorizada",
+        "title": "Conversaciones destacadas del periodo",
+        "positive": "3 señales positivas",
+        "negative": "3 señales negativas",
+        "emptyPositive": "No hay menciones positivas clasificadas en este periodo.",
+        "emptyNegative": "No hay menciones negativas clasificadas en este periodo.",
+        "openOriginal": "Abrir conversación original",
+        "tonePositive": "Señal positiva",
+        "toneNegative": "Señal negativa",
+        "explanationEngagement": "{tone} priorizada por {count} interacciones observadas.",
+        "explanationReach": "{tone} con alcance potencial observado, aunque sin interacción comparable.",
+        "explanationRecency": "{tone} priorizada por intensidad y recencia; engagement no disponible.",
+        "help": {
+          "title": "Conversaciones destacadas",
+          "body": "Selecciona los contenidos positivos y negativos más útiles para entender qué ocurrió en el periodo.",
+          "reading": "Estos ejemplos explican el agregado, pero no representan todas las menciones. Abre el contenido original antes de usarlo en una decisión o reporte."
+        }
+      }
+    },
+    "sentiment": {
+      "positive": "Positivo",
+      "negative": "Negativo",
+      "neutral": "Neutral",
+      "unknown": "Sin clasificar"
+    },
+    "states": {
+      "pending": "La métrica se está materializando para este filtro.",
+      "stale": "La métrica existe, pero necesita actualizarse.",
+      "partial": "Hay datos, con una limitación de cobertura declarada.",
+      "notAvailable": "Data OS todavía no tiene esta métrica para el periodo."
+    },
+    "stateShort": {
+      "fresh": "Live",
+      "pending": "En proceso",
+      "partial": "Parcial",
+      "stale": "Desactualizado",
+      "notAvailable": "Sin datos"
+    },
+    "coverage": {
+      "title": "Cobertura y trazabilidad",
+      "body": "{count} menciones incluidas entre {start} y {end}. Los charts conservan acceso al corpus gobernado.",
+      "open": "Abrir corpus"
+    },
+    "errors": {
+      "load": "No se pudo actualizar el periodo.",
+      "noOperationalOutput": "Este workspace todavía no tiene un corpus operativo disponible."
     }
   },
   "Team": {

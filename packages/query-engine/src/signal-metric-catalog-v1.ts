@@ -91,20 +91,14 @@ const COMMON_DIMENSIONS: SignalDimensionV1[] = [
   "emotion",
   "country",
   "language",
-  "content_format"
+  "content_format",
+  "corpus_scope",
+  "conversation_role",
+  "tb_polarity",
+  "tb_layer",
+  "observed_signal"
 ];
-const MIX_DIMENSIONS: SignalDimensionV1[] = ["platform", "source_type", "country", "language", "content_format"];
-const TOPIC_DIMENSIONS: SignalDimensionV1[] = [
-  "platform",
-  "entity",
-  "topic",
-  "taxonomy",
-  "signal",
-  "trigger",
-  "barrier",
-  "country",
-  "language"
-];
+const TOPIC_DIMENSIONS: SignalDimensionV1[] = [...COMMON_DIMENSIONS];
 
 export const SIGNAL_METRIC_CATALOG_V1: SignalMetricGroupV1[] = [
   {
@@ -211,7 +205,7 @@ export const SIGNAL_METRIC_CATALOG_V1: SignalMetricGroupV1[] = [
         },
         unit: "count",
         denominator: none("An interaction sum has no denominator."),
-        dimensions: ["platform", "source_type", "entity", "campaign", "content_format", "country", "language"],
+        dimensions: COMMON_DIMENSIONS,
         nullRule: "not_available when no included mention has a governed engagement component",
         quality: [
           block("observed_component", "At least one governed engagement component must be observed."),
@@ -234,7 +228,7 @@ export const SIGNAL_METRIC_CATALOG_V1: SignalMetricGroupV1[] = [
           "mentions_with_engagement_measurement",
           "Included mentions with at least one governed engagement component."
         ),
-        dimensions: ["platform", "source_type", "entity", "campaign", "content_format", "country", "language"],
+        dimensions: COMMON_DIMENSIONS,
         nullRule: "not_available when the measured-mention denominator is missing or zero",
         quality: [
           block("positive_measured_mentions", "Measured-mention denominator must be greater than zero."),
@@ -377,7 +371,7 @@ function shareMetric(input: {
       `mentions_classified_by_${input.dimension}`,
       `Included mentions with an accepted ${input.dimension} value.`
     ),
-    dimensions: Array.from(new Set([...MIX_DIMENSIONS, input.dimension])),
+    dimensions: Array.from(new Set([...COMMON_DIMENSIONS, input.dimension])),
     nullRule: `not_available when no included mention has an accepted ${input.dimension} value`,
     quality: [
       block(`classified_${input.dimension}`, `At least one accepted ${input.dimension} value is required.`),

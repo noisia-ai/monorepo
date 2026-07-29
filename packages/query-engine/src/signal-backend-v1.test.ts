@@ -116,6 +116,22 @@ test("different filter scopes produce different hashes", () => {
   assert.notEqual(signalFiltersHashV1(BASE_FILTER), signalFiltersHashV1(differentDimension));
 });
 
+test("search is canonical, hash-scoped and query-param compatible without changing empty-filter hashes", () => {
+  const parsed = parseSignalFilterQueryParamsV1(
+    "?start=2026-05-01&end=2026-05-31&timezone=America%2FMexico_City&granularity=day&q=%20precio%20de%20env%C3%ADo%20"
+  );
+  assert.equal(parsed.search_query, "precio de envío");
+  assert.match(canonicalSignalFilterQueryV1(parsed), /q=precio\+de\+env%C3%ADo/u);
+  assert.notEqual(signalFiltersHashV1(parsed), signalFiltersHashV1({
+    ...parsed,
+    search_query: undefined
+  }));
+  assert.equal(
+    signalFiltersHashV1(BASE_FILTER),
+    "sha256:7d6586513c509b03e9510f201bb750fc6667f21208d18e0fee12b80762564a50"
+  );
+});
+
 test("query-param order, aliases, repeated values and comma lists do not change the hash", () => {
   const first = parseSignalFilterQueryParamsV1(
     "?from=2026-05-01&to=2026-05-31&tz=America%2FMexico_City&grain=daily&platform=TikTok&platform=instagram&sentiment=positive,negative"

@@ -26,6 +26,8 @@ Branch-local canon:
 - Data OS completion audit: `docs/product/26_NOISIA_DATA_OS_COMPLETION_AUDIT.md`.
 - Signal product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`.
 - Signal backend execution roadmap: `docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`.
+- Signal V2 Shopify UI reference: `docs/product/33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md`.
+- Signal Brand Monitoring V1: `docs/product/34_SIGNAL_BRAND_MONITORING_V1.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
 - Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
 - Signal always-on/strategic architecture ADR: `docs/adr/009-signal-always-on-strategic-dashboard.md`.

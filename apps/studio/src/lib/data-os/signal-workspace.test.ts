@@ -17,6 +17,7 @@ const workspace: SignalWorkspaceStoreRow = {
   id: WORKSPACE_ID,
   organizationId: ORGANIZATION_ID,
   slug: "acme-signal",
+  name: "Acme",
   subject: { type: "brand", id: BRAND_ID },
   timezone: "America/Mexico_City",
   status: "active",
@@ -26,7 +27,9 @@ const workspace: SignalWorkspaceStoreRow = {
     name: "Acme listening",
     role: "operational",
     status: "corpus_approved",
-    validFrom: "2026-07-22T00:00:00.000Z"
+    validFrom: "2026-07-22T00:00:00.000Z",
+    methodologySlug: "signal-pulse",
+    outputId: "60000000-0000-4000-8000-000000000001"
   }]
 };
 
@@ -51,6 +54,15 @@ test("internal users resolve a workspace and its governed corpora", async () => 
   );
   assert.equal(result?.id, WORKSPACE_ID);
   assert.equal(result?.corpora[0]?.role, "operational");
+});
+
+test("internal users can resolve a unique canonical workspace slug without organization context", async () => {
+  const result = await resolveSignalWorkspaceWithStore(
+    storeWith({ ...workspace, hasBrandAccess: false }),
+    user({ userType: "noisia_internal", organizationId: null }),
+    { workspaceSlug: "acme-signal" }
+  );
+  assert.equal(result?.slug, "acme-signal");
 });
 
 test("authorized clients resolve brand workspaces through active brand access", async () => {

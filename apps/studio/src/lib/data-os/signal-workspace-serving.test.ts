@@ -133,6 +133,7 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
     id: SIGNAL_WORKSPACE_FIXTURE_IDS.workspace,
     organizationId: SIGNAL_WORKSPACE_FIXTURE_IDS.organization,
     slug: "fixture-signal",
+    name: "Fixture brand",
     subject: { type: "brand" as const, id: SIGNAL_WORKSPACE_FIXTURE_IDS.brand },
     timezone: "America/Mexico_City",
     status: "active",
@@ -141,7 +142,9 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
       name: "Fixture",
       role: "operational" as const,
       status: "corpus_approved",
-      validFrom: "2026-07-01T00:00:00.000Z"
+      validFrom: "2026-07-01T00:00:00.000Z",
+      methodologySlug: "signal-pulse",
+      outputId: null
     }]
   };
   const dependencies = {
@@ -220,6 +223,9 @@ test("workspace routes use authZ and canonical stores without published payload,
   }
   assert.doesNotMatch(service, /published_outputs|raw_metadata|chart_aggregates/u);
   assert.match(service, /FROM metric_materializations/);
+  assert.match(service, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(service, /serving_mode: "live_read_through"/);
+  assert.match(service, /evaluateSignalMetricQualityV1/);
   assert.match(service, /FROM metric_interpretations interpretation/);
   assert.match(service, /FROM mentions m WHERE \$\{predicate\.sql\}/);
   assert.match(service, /sourceTypeSelect = args\.isInternalUser/);

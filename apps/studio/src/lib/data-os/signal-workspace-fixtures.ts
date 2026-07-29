@@ -85,7 +85,7 @@ export const SIGNAL_DRILL_DOWN_FIXTURE_V1 = {
     language: "es",
     country: "mx"
   }],
-  page: { limit: 50, next_cursor: null }
+  page: { limit: 50, offset: 0, next_cursor: null, next_offset: null }
 };
 
 export const SIGNAL_WORKSPACE_HOME_FIXTURE_V1 = {

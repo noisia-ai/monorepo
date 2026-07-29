@@ -133,6 +133,16 @@ function buildSignalMentionPredicateFromValidatedFilterV1(
     `(m.published_at AT TIME ZONE ${parameter(filter.timezone)})::date <= ${parameter(filter.date_range.end, "::date")}`
   ];
 
+  if (filter.search_query) {
+    const searchParameter = parameter(`%${escapeLikePattern(filter.search_query)}%`);
+    conditions.push(`concat_ws(
+      ' ',
+      NULLIF(m.title, ''),
+      NULLIF(m.text_clean, ''),
+      NULLIF(m.text_snippet, '')
+    ) ILIKE ${searchParameter} ESCAPE '\\'`);
+  }
+
   for (const [dimension, values] of Object.entries(filter.dimensions) as Array<[SignalDimensionV1, string[]]>) {
     if (!values.length) continue;
     const valuesParameter = parameter(values, "::text[]");
@@ -155,6 +165,11 @@ export function buildSignalMentionDrillDownPlanV1(args: {
   metric_key?: string;
   limit?: number;
   cursor?: { occurred_at: string; subject_id: string };
+  offset?: number;
+  order_by?: {
+    field: "published" | "platform" | "conversation_role" | "engagement";
+    direction: "asc" | "desc";
+  };
 }) {
   const predicate = buildSignalMentionPredicateV1(args.filter, args.study_corpus_ids);
   const metricPredicate = args.metric_key ? metricConstituentPredicateSql(args.metric_key) : null;
@@ -162,21 +177,174 @@ export function buildSignalMentionDrillDownPlanV1(args: {
   const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
   let cursor = "";
   if (args.cursor) {
+    if (
+      args.offset
+      || args.order_by?.field !== undefined && (
+        args.order_by.field !== "published" || args.order_by.direction !== "desc"
+      )
+    ) {
+      throw new SignalBackendContractError(
+        "invalid_filter",
+        "Cursor pagination only supports the default published-descending order.",
+        { field: "cursor" }
+      );
+    }
     params.push(args.cursor.occurred_at, args.cursor.subject_id);
     cursor = `\n        AND (m.published_at, m.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
   }
-  params.push(limit + 1);
+  const offset = Math.max(0, Math.min(100_000, Math.floor(args.offset ?? 0)));
+  const orderBy = mentionOrderBySql(args.order_by);
+  params.push(limit + 1, offset);
+  const limitParameter = `$${params.length - 1}::int`;
+  const offsetParameter = `$${params.length}::int`;
   return {
     predicate,
     sql: `
       SELECT m.id::text AS subject_id, m.published_at AS occurred_at,
-        m.text_snippet, m.title, m.url,
+        COALESCE(NULLIF(m.text_snippet, ''), left(m.text_clean, 420), '') AS text_snippet,
+        m.title, m.url,
         COALESCE(m.resolved_platform, m.platform) AS platform,
-        m.language, m.country
+        m.language, m.country,
+        lower(COALESCE(
+          NULLIF(m.content_type, ''),
+          NULLIF(m.raw_metadata->'row'->>'specific type', ''),
+          'unknown'
+        )) AS content_type,
+        CASE
+          WHEN m.sentiment_score > 0.2 THEN 'positive'
+          WHEN m.sentiment_score < -0.2 THEN 'negative'
+          WHEN m.sentiment_score IS NULL THEN NULL
+          ELSE 'neutral'
+        END AS sentiment,
+        m.sentiment_score,
+        COALESCE(m.engagement, '{}'::jsonb) AS engagement,
+        COALESCE(NULLIF(m.raw_metadata->'row'->>'thread id', ''), m.id::text) AS thread_key,
+        COALESCE(tags.items, '[]'::jsonb) AS tags,
+        COALESCE(entities.items, '[]'::jsonb) AS entities,
+        COALESCE(features.items, '[]'::jsonb) AS features,
+        COALESCE(attribution.items, '[]'::jsonb) AS attribution,
+        COALESCE(tb_classification.value, '{}'::jsonb) AS tb_classification,
+        tb_classification.analysis_status AS tb_analysis_status,
+        count(*) OVER()::int AS total_count
       FROM mentions m
+      LEFT JOIN import_batches import_batch
+        ON import_batch.id = m.source_file_id
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+          'taxonomy_key', taxonomy.taxonomy_key,
+          'taxonomy_name', taxonomy.name,
+          'term_key', term.term_key,
+          'label', term.label,
+          'value', tag.value,
+          'score', tag.score
+        ) ORDER BY taxonomy.taxonomy_key, term.sort_order NULLS LAST, term.label) AS items
+        FROM record_tags tag
+        JOIN taxonomy_terms term
+          ON term.id = tag.taxonomy_term_id
+          AND term.status = 'active'
+        JOIN taxonomies taxonomy
+          ON taxonomy.id = term.taxonomy_id
+          AND taxonomy.status = 'active'
+        WHERE tag.subject_type = 'mention'
+          AND tag.subject_id = m.id
+          AND tag.review_status = 'approved'
+      ) tags ON true
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+          'type', entity.entity_type,
+          'name', entity.canonical_name,
+          'relation', relation.relation_type,
+          'confidence', relation.confidence
+        ) ORDER BY entity.entity_type, entity.canonical_name) AS items
+        FROM record_entity_links relation
+        JOIN intelligence_entities entity
+          ON entity.id = relation.entity_id
+          AND entity.status = 'active'
+        WHERE relation.subject_type = 'mention'
+          AND relation.subject_id = m.id
+      ) entities ON true
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+          'key', scoped.feature_key,
+          'value', scoped.feature_value,
+          'value_type', scoped.value_type,
+          'confidence', scoped.confidence
+        ) ORDER BY scoped.feature_key) AS items
+        FROM (
+          SELECT feature.feature_key, feature.feature_value, feature.value_type, feature.confidence
+          FROM record_feature_values feature
+          WHERE feature.subject_type = 'mention'
+            AND feature.subject_id = m.id
+          ORDER BY feature.feature_key
+          LIMIT 12
+        ) scoped
+      ) features ON true
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(jsonb_build_object(
+          'scope', scoped.scope,
+          'label', scoped.label
+        ) ORDER BY scoped.rank, scoped.label) AS items
+        FROM (
+          SELECT DISTINCT
+            CASE
+              WHEN lower(COALESCE(source.scope, '')) = 'brand' THEN 'brand'
+              WHEN lower(COALESCE(source.scope, '')) IN ('competitor', 'competitors') THEN 'competitor'
+              WHEN lower(COALESCE(source.scope, '')) = 'category' THEN 'category'
+              ELSE 'unknown'
+            END AS scope,
+            COALESCE(
+              NULLIF(entity.name, ''),
+              NULLIF(import_batch.entity_label, ''),
+              NULLIF(source.entity_id, ''),
+              'Unattributed'
+            ) AS label,
+            CASE
+              WHEN lower(COALESCE(source.scope, '')) = 'brand' THEN 1
+              WHEN lower(COALESCE(source.scope, '')) IN ('competitor', 'competitors') THEN 2
+              WHEN lower(COALESCE(source.scope, '')) = 'category' THEN 3
+              ELSE 4
+            END AS rank
+          FROM mention_query_sources source
+          LEFT JOIN corpus_entities entity
+            ON entity.id = source.corpus_entity_id
+          WHERE source.mention_id = m.id
+          UNION
+          SELECT
+            CASE
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('brand', 'primary_brand') THEN 'brand'
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('competitor', 'competitors') THEN 'competitor'
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) = 'category' THEN 'category'
+              ELSE 'unknown'
+            END AS scope,
+            COALESCE(NULLIF(import_batch.entity_label, ''), 'Unattributed') AS label,
+            CASE
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('brand', 'primary_brand') THEN 1
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('competitor', 'competitors') THEN 2
+              WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) = 'category' THEN 3
+              ELSE 4
+            END AS rank
+          WHERE import_batch.id IS NOT NULL
+        ) scoped
+      ) attribution ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          feature.feature_value AS value,
+          analysis.status AS analysis_status
+        FROM record_feature_values feature
+        JOIN tb_analyses analysis
+          ON analysis.id = feature.tb_analysis_id
+          AND analysis.study_corpus_id = m.study_corpus_id
+          AND analysis.status IN ('approved_by_im', 'approved_by_kam')
+        WHERE feature.subject_type = 'mention'
+          AND feature.subject_id = m.id
+          AND feature.feature_key = 'tb_coding'
+        ORDER BY analysis.created_at DESC, feature.created_at DESC, feature.id DESC
+        LIMIT 1
+      ) tb_classification ON true
       WHERE ${predicate.sql}${metricPredicate ? `\n        AND (${metricPredicate})` : ""}${cursor}
-      ORDER BY m.published_at DESC, m.id DESC
-      LIMIT $${params.length}::int
+      ORDER BY ${orderBy}
+      LIMIT ${limitParameter}
+      OFFSET ${offsetParameter}
     `,
     params
   };
@@ -485,6 +653,14 @@ function dimensionPredicate(dimension: SignalDimensionV1, valuesParameter: strin
     country: "lower(m.country)",
     language: "lower(m.language)",
     content_format: "lower(m.content_type)",
+    conversation_role: `CASE
+      WHEN lower(COALESCE(
+        NULLIF(m.content_type, ''),
+        NULLIF(m.raw_metadata->'row'->>'specific type', ''),
+        'unknown'
+      )) = 'comment' THEN 'comment'
+      ELSE 'root_post'
+    END`,
     product: "lower(m.batch_entity_label)",
     sentiment_polarity: "CASE WHEN m.sentiment_score > 0.2 THEN 'positive' WHEN m.sentiment_score < -0.2 THEN 'negative' WHEN m.sentiment_score IS NULL THEN NULL ELSE 'neutral' END"
   };
@@ -495,6 +671,68 @@ function dimensionPredicate(dimension: SignalDimensionV1, valuesParameter: strin
       JOIN intelligence_entities entity ON entity.id = rel.entity_id AND entity.status = 'active'
       WHERE rel.subject_type = 'mention' AND rel.subject_id = m.id
         AND lower(entity.canonical_name) = ANY(${valuesParameter})
+    )`;
+  }
+  if (dimension === "corpus_scope") {
+    return `EXISTS (
+      SELECT 1
+      FROM (
+        SELECT CASE
+          WHEN lower(COALESCE(source.scope, '')) = 'brand' THEN 'brand'
+          WHEN lower(COALESCE(source.scope, '')) IN ('competitor', 'competitors') THEN 'competitor'
+          WHEN lower(COALESCE(source.scope, '')) = 'category' THEN 'category'
+          ELSE 'unknown'
+        END AS scope
+        FROM mention_query_sources source
+        WHERE source.mention_id = m.id
+        UNION ALL
+        SELECT CASE
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) IN ('brand', 'primary_brand') THEN 'brand'
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) IN ('competitor', 'competitors') THEN 'competitor'
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) = 'category' THEN 'category'
+          ELSE 'unknown'
+        END
+        FROM import_batches batch
+        WHERE batch.id = m.source_file_id
+      ) scoped
+      WHERE scoped.scope = ANY(${valuesParameter})
+    )`;
+  }
+  if (dimension === "tb_polarity" || dimension === "tb_layer" || dimension === "observed_signal") {
+    const codingValue = dimension === "tb_polarity"
+      ? "lower(coding.item->>'polarity')"
+      : dimension === "tb_layer"
+        ? "lower(coding.item->>'layer')"
+        : "lower(signal.value)";
+    const observedSignalJoin = dimension === "observed_signal"
+      ? "CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(coding.item->'emergent_tags', '[]'::jsonb)) signal(value)"
+      : "";
+    return `EXISTS (
+      SELECT 1
+      FROM record_feature_values feature
+      JOIN tb_analyses analysis
+        ON analysis.id = feature.tb_analysis_id
+        AND analysis.study_corpus_id = m.study_corpus_id
+        AND analysis.status IN ('approved_by_im', 'approved_by_kam')
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(feature.feature_value->'codings', '[]'::jsonb)) coding(item)
+      ${observedSignalJoin}
+      WHERE feature.subject_type = 'mention'
+        AND feature.subject_id = m.id
+        AND feature.feature_key = 'tb_coding'
+        AND feature.id = (
+          SELECT latest_feature.id
+          FROM record_feature_values latest_feature
+          JOIN tb_analyses latest_analysis
+            ON latest_analysis.id = latest_feature.tb_analysis_id
+            AND latest_analysis.study_corpus_id = m.study_corpus_id
+            AND latest_analysis.status IN ('approved_by_im', 'approved_by_kam')
+          WHERE latest_feature.subject_type = 'mention'
+            AND latest_feature.subject_id = m.id
+            AND latest_feature.feature_key = 'tb_coding'
+          ORDER BY latest_analysis.created_at DESC, latest_feature.created_at DESC, latest_feature.id DESC
+          LIMIT 1
+        )
+        AND ${codingValue} = ANY(${valuesParameter})
     )`;
   }
   const taxonomyDimensions = new Set<SignalDimensionV1>(["topic", "taxonomy", "trigger", "barrier", "emotion"]);
@@ -515,6 +753,41 @@ function dimensionPredicate(dimension: SignalDimensionV1, valuesParameter: strin
       AND feature.feature_key = '${dimension}'
       AND lower(trim(both '"' from feature.feature_value::text)) = ANY(${valuesParameter})
   )`;
+}
+
+function mentionOrderBySql(orderBy?: {
+  field: "published" | "platform" | "conversation_role" | "engagement";
+  direction: "asc" | "desc";
+}) {
+  const direction = orderBy?.direction === "asc" ? "ASC" : "DESC";
+  if (orderBy?.field === "platform") {
+    return `lower(COALESCE(m.resolved_platform, m.platform, '')) ${direction}, m.published_at DESC, m.id DESC`;
+  }
+  if (orderBy?.field === "conversation_role") {
+    return `CASE
+      WHEN lower(COALESCE(
+        NULLIF(m.content_type, ''),
+        NULLIF(m.raw_metadata->'row'->>'specific type', ''),
+        'unknown'
+      )) = 'comment' THEN 'comment'
+      ELSE 'root_post'
+    END ${direction}, m.published_at DESC, m.id DESC`;
+  }
+  if (orderBy?.field === "engagement") {
+    const interactionTotal = ["likes", "comments", "shares", "reposts", "saves"]
+      .map((key) => `CASE
+        WHEN COALESCE(m.engagement->>'${key}', '') ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+          THEN (m.engagement->>'${key}')::numeric
+        ELSE 0
+      END`)
+      .join(" + ");
+    return `(${interactionTotal}) ${direction}, m.published_at DESC, m.id DESC`;
+  }
+  return `m.published_at ${direction}, m.id ${direction}`;
+}
+
+function escapeLikePattern(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
 function materializationSql(

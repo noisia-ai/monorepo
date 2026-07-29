@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { normalizeEngineMethodologyBlock } from "@noisia/query-engine";
 import { SessionBadge } from "@/components/layout/SessionBadge";
+import { SignalV2WorkspacePage } from "@/components/signal-v2/SignalV2WorkspacePage";
 import { SignalCorpusChat } from "@/components/signal/SignalCorpusChat";
 import { FindingDetailWorkspace } from "@/components/signal/FindingDetailWorkspace";
 import { SignalCorpusExplorer } from "@/components/signal/SignalCorpusExplorer";
@@ -46,9 +47,12 @@ import { defaultSignalManifest, normalizeSignalDemoMode, signalModuleMeta, type 
 import { hasSignalServingContract } from "@/lib/signal/semantics";
 import { buildTbDecisionFieldNodes } from "@/lib/signal/tb-decision-field";
 
+import "../../signal-v2/signal-v2.css";
+
 export const dynamic = "force-dynamic";
 
 type JsonRecord = Record<string, unknown>;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 /* ============================================================
    Noisia Signal — Client report.
@@ -58,10 +62,20 @@ type JsonRecord = Record<string, unknown>;
 
 export default async function SignalOutputPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ outputId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { outputId } = await params;
+  if (!UUID_PATTERN.test(outputId)) {
+    return (
+      <SignalV2WorkspacePage
+        searchParams={searchParams}
+        workspaceSlug={outputId}
+      />
+    );
+  }
   const session = await requirePortalUser(`/signal/${outputId}`);
   const output = await getSignalOutputForUser(session.appUser, outputId);
   if (!output) notFound();

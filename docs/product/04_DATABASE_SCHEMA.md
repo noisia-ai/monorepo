@@ -1375,6 +1375,11 @@ Tablas nuevas:
 - `signal_workspace_current_releases`: puntero mutable a un histórico publicado
   inmutable; sólo cambia mediante promoción humana.
 
+La migración `0056_signal_workspace_auto_membership` aplica la identidad de producto:
+cada `study_corpus` nuevo resuelve o crea el único workspace de su marca/tema y queda
+vinculado automáticamente. El nombre del corpus es el título de navegación; T&B entra
+como `strategic`, el primer Signal Pulse como `operational` y el resto como `legacy`.
+
 El catálogo V1 reutiliza `metric_definitions` y `semantic_models`; no existe un
 catálogo paralelo. La migración `0049_signal_metric_catalog_v1` agrega versión,
 formula hash, denominator, dimensions, null semantics, comparability, quality rules,

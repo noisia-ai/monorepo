@@ -52,6 +52,11 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 30 | `30_QUERY_CONSTRUCTION_V2.md` | Compilador gobernado de queries: modos, identidad, ambigüedad, configuración, tags y lineage |
 | 31 | `31_SIGNAL_PRODUCT_NORTH_STAR.md` | North Star de Signal: dashboard casi always-on, interpretaciones Claude y reportes estratégicos en una URL estable |
 | 32 | `32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md` | Roadmap backend de Signal V2 ejecutable por tareas secuenciales con gates y handoffs |
+| 33 | `33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md` | Referencia inspeccionada para el shell de Signal V2: navegación, búsqueda, filtros, densidad y arquitectura de render |
+| 34 | `34_SIGNAL_BRAND_MONITORING_V1.md` | Contrato de producto y métricas para la primera vista always-on de Signal V2: Monitoreo de marca |
+| 35 | `35_SIGNAL_FILTERING_ARCHITECTURE.md` | Contrato de filtros de Signal V2 y paridad entre URL, serving y visualizaciones |
+| 36 | `36_SIGNAL_MONTHLY_INSIGHTS_V1.md` | Arquitectura de insights mensuales versionados para Monitoreo de marca |
+| 37 | `37_SIGNAL_WORKSPACE_INFORMATION_ARCHITECTURE.md` | Una URL por marca, selector de workspaces y estudios T&B nombrados como páginas con releases |
 
 ---
 
@@ -186,7 +191,13 @@ noisia_studio_product_spec/
 ├── 27_BRAND_OS_DATA_OS_PERSISTENCE_AUDIT.md
 ├── 28_CORPUS_ENGINE_VALIDATION_CONTRACT.md
 ├── 29_STUDY_TO_DECK_FEATURE.md
-└── 30_QUERY_CONSTRUCTION_V2.md
+├── 30_QUERY_CONSTRUCTION_V2.md
+├── 31_SIGNAL_PRODUCT_NORTH_STAR.md
+├── 32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md
+├── 33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md
+├── 34_SIGNAL_BRAND_MONITORING_V1.md
+├── 35_SIGNAL_FILTERING_ARCHITECTURE.md
+└── 36_SIGNAL_MONTHLY_INSIGHTS_V1.md
 ```
 
-Este índice es un paquete vivo; el canon vigente incluye los documentos 00-30 y los YAMLs de metodología.
+Este índice es un paquete vivo; el canon vigente incluye los documentos 00-36 y los YAMLs de metodología.

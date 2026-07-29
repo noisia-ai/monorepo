@@ -25,7 +25,12 @@ export const SIGNAL_DIMENSIONS = [
   "emotion",
   "country",
   "language",
-  "content_format"
+  "content_format",
+  "corpus_scope",
+  "conversation_role",
+  "tb_polarity",
+  "tb_layer",
+  "observed_signal"
 ] as const;
 
 export type SignalDimensionV1 = (typeof SIGNAL_DIMENSIONS)[number];
@@ -42,6 +47,7 @@ export type SignalFilterV1 = {
   timezone: string;
   granularity: SignalGranularityV1;
   dimensions: SignalDimensionValuesV1;
+  search_query?: string;
 };
 
 export type SignalWorkspaceLocatorV1 = {
@@ -206,6 +212,7 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const METRIC_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u;
+const MAX_SEARCH_QUERY_LENGTH = 160;
 
 const GRANULARITY_ALIASES: Record<string, SignalGranularityV1> = {
   day: "day",
@@ -306,13 +313,17 @@ export function normalizeSignalFilterV1(input: unknown): SignalFilterV1 {
   const timezone = canonicalizeSignalTimezone(value.timezone ?? value.tz ?? "UTC");
   const granularity = normalizeGranularity(value.granularity ?? value.grain ?? "day");
   const dimensions = normalizeDimensions(value.dimensions ?? value.dimension_values ?? {});
+  const searchQuery = normalizeSearchQuery(
+    value.search_query ?? value.searchQuery ?? value.query ?? value.q
+  );
 
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     date_range: dateRange,
     timezone,
     granularity,
-    dimensions
+    dimensions,
+    ...(searchQuery ? { search_query: searchQuery } : {})
   };
 }
 
@@ -327,7 +338,9 @@ export function parseSignalFilterQueryParamsV1(
   const controlKeys = new Set([
     "start", "from", "date_from", "dateRange.start", "date_range.start",
     "end", "to", "date_to", "dateRange.end", "date_range.end",
-    "timezone", "tz", "granularity", "grain", "contract_version"
+    "timezone", "tz", "granularity", "grain", "contract_version",
+    "q", "query", "search", "search_query", "searchQuery",
+    "limit", "offset", "cursor", "sort", "direction", "metric_key"
   ]);
   const dimensions: Record<string, string[]> = {};
 
@@ -347,7 +360,8 @@ export function parseSignalFilterQueryParamsV1(
     date_range: { start, end },
     timezone,
     granularity,
-    dimensions
+    dimensions,
+    search_query: firstParam(params, ["q", "query", "search", "search_query", "searchQuery"])
   });
 }
 
@@ -385,7 +399,8 @@ export function canonicalSignalFilterJsonV1(filterInput: unknown): string {
     date_range: { start: filter.date_range.start, end: filter.date_range.end },
     timezone: filter.timezone,
     granularity: filter.granularity,
-    dimensions: dimensionEntries
+    dimensions: dimensionEntries,
+    ...(filter.search_query ? { search_query: filter.search_query } : {})
   });
 }
 
@@ -400,6 +415,7 @@ export function canonicalSignalFilterQueryV1(filterInput: unknown): string {
   params.append("end", filter.date_range.end);
   params.append("timezone", filter.timezone);
   params.append("granularity", filter.granularity);
+  if (filter.search_query) params.append("q", filter.search_query);
   for (const dimension of SIGNAL_DIMENSIONS) {
     for (const value of filter.dimensions[dimension] ?? []) {
       params.append(`dimension.${dimension}`, value);
@@ -689,6 +705,22 @@ function normalizedDimensionValue(input: unknown, field: string): string {
     .trim()
     .replace(/\s+/gu, " ")
     .toLocaleLowerCase("en-US");
+}
+
+function normalizeSearchQuery(input: unknown): string | undefined {
+  if (input == null || input === "") return undefined;
+  if (typeof input !== "string") {
+    throw invalidFilter("search_query must be a string.", { field: "search_query" });
+  }
+  const value = input.normalize("NFC").trim().replace(/\s+/gu, " ");
+  if (!value) return undefined;
+  if (value.length > MAX_SEARCH_QUERY_LENGTH) {
+    throw invalidFilter(
+      `search_query cannot exceed ${MAX_SEARCH_QUERY_LENGTH} characters.`,
+      { field: "search_query", maximum_length: MAX_SEARCH_QUERY_LENGTH }
+    );
+  }
+  return value;
 }
 
 function normalizeGranularity(input: unknown): SignalGranularityV1 {

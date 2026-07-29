@@ -4,12 +4,17 @@ import Redis from "ioredis";
 import {
   DATA_OS_QUEUE_NAME,
   DATA_OS_SHADOW_RUN_JOB_NAME,
+  SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_MATERIALIZE_JOB_NAME,
   type DataOsShadowRunJobData,
+  type SignalMonthlyInsightJobDataV1,
   type SignalMaterializeJobDataV1
 } from "@noisia/query-engine";
 
-type DataOsStudioJobData = DataOsShadowRunJobData | SignalMaterializeJobDataV1;
+type DataOsStudioJobData =
+  | DataOsShadowRunJobData
+  | SignalMaterializeJobDataV1
+  | SignalMonthlyInsightJobDataV1;
 
 declare global {
   var noisiaDataOsQueue: Queue<DataOsStudioJobData> | undefined;
@@ -64,6 +69,22 @@ export async function enqueueDataOsShadowRun(data: DataOsShadowRunJobData) {
 
 export async function enqueueSignalAdHocMaterialization(data: SignalMaterializeJobDataV1, jobId: string) {
   return getDataOsQueue().add(SIGNAL_MATERIALIZE_JOB_NAME, data, buildSignalAdHocMaterializationJobOptions(jobId));
+}
+
+export async function enqueueSignalMonthlyInsights(
+  data: SignalMonthlyInsightJobDataV1,
+  jobId: string
+) {
+  return getDataOsQueue().add(
+    SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
+    data,
+    {
+      jobId,
+      attempts: 1,
+      removeOnComplete: { age: 86_400, count: 100 },
+      removeOnFail: { age: 604_800, count: 200 }
+    }
+  );
 }
 
 export function buildSignalAdHocMaterializationJobOptions(jobId: string): JobsOptions {

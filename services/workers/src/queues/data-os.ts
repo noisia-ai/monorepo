@@ -6,6 +6,7 @@ import {
   SIGNAL_INVALIDATION_JOB_NAME,
   SIGNAL_INTERPRETATION_JOB_NAME,
   SIGNAL_MATERIALIZE_JOB_NAME,
+  SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME
 } from "@noisia/query-engine";
@@ -17,6 +18,7 @@ import {
 } from "../workers/signal-refresh";
 import { signalMaterializationJob } from "../workers/signal-materialization";
 import { signalInterpretationJob } from "../workers/signal-interpretation";
+import { signalMonthlyInsightJob } from "../workers/signal-monthly-insights";
 import { redisConnection } from "./query-engine";
 
 export function startDataOsWorker() {
@@ -31,6 +33,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_INVALIDATION_JOB_NAME) return signalInvalidationJob(job);
       if (job.name === SIGNAL_MATERIALIZE_JOB_NAME) return signalMaterializationJob(job);
       if (job.name === SIGNAL_INTERPRETATION_JOB_NAME) return signalInterpretationJob(job);
+      if (job.name === SIGNAL_MONTHLY_INSIGHT_JOB_NAME) return signalMonthlyInsightJob(job);
 
       throw new Error(`Unsupported Data OS job: ${job.name}`);
     },

@@ -315,3 +315,17 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(openapi, /SignalWorkspaceHomeV1/);
   assert.match(openapi, /\/api\/data-os\/signal\/\{workspaceId\}:/);
 });
+
+test("Signal workspace navigation automatically attaches every new named study", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0056_signal_workspace_auto_membership.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE OR REPLACE FUNCTION attach_study_corpus_to_signal_workspace/);
+  assert.match(migration, /uq_signal_workspaces_brand|ON CONFLICT DO NOTHING/);
+  assert.match(migration, /methodology_slug = 'triggers-barriers' THEN 'strategic'/);
+  assert.match(migration, /methodology_slug = 'signal-pulse'/);
+  assert.match(migration, /navigation_title_source', 'study_corpora\.name'/);
+  assert.match(migration, /AFTER INSERT\s+ON study_corpora/u);
+  assert.doesNotMatch(migration, /DELETE FROM|published_outputs\.payload/u);
+});

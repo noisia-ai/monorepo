@@ -5,11 +5,14 @@ import {
   SIGNAL_DIMENSIONS,
   SIGNAL_METRIC_CATALOG_V1,
   SignalBackendContractError,
+  buildSignalMetricMaterializationPlanV1,
   buildSignalMentionPredicateV1,
   buildSignalAdHocMaterializationJobV1,
   buildSignalMentionDrillDownPlanV1,
+  dataWatermarkHashV1,
   decodeSignalDrillDownCursorV1,
   encodeSignalDrillDownCursorV1,
+  evaluateSignalMetricQualityV1,
   parseSignalFilterQueryParamsV1,
   normalizeSignalMetricQueryV1,
   signalFiltersHashV1,
@@ -22,6 +25,8 @@ import {
   type SignalBreakdownBucketV1,
   type SignalDimensionV1,
   type SignalFilterV1,
+  type SignalMaterializationRowV1,
+  type SignalMetricDefinitionV1,
   type SignalMetricPointV1
 } from "@noisia/query-engine";
 
@@ -47,6 +52,17 @@ type MaterializationRow = {
   data_watermark: DataWatermarkV1;
   data_watermark_hash: string;
   computed_at: Date;
+  stale_after: Date | null;
+};
+
+type LiveWatermarkRow = {
+  corpus_revision: number;
+  last_source_sync_run_id: string | null;
+  last_import_batch_id: string | null;
+  max_observed_at: Date | null;
+  accepted_at: Date;
+  materialized_at: Date;
+  data_freshness_state: "fresh" | "stale" | "partial" | "not_available";
   stale_after: Date | null;
 };
 
@@ -280,19 +296,59 @@ export async function loadSignalFacetsV1(args: {
     : "";
   const result = await pool.query<{ dimension: SignalDimensionV1; key: string; count: number }>(`
     WITH filtered AS (
-      SELECT m.id, m.sentiment_score, m.source_system,
+      SELECT m.id, m.study_corpus_id, m.source_file_id, m.sentiment_score, m.source_system,
         COALESCE(m.resolved_platform, m.platform) AS platform,
-        m.language, m.country, m.content_type
+        m.language, m.country,
+        lower(COALESCE(
+          NULLIF(m.content_type, ''),
+          'unknown'
+        )) AS content_type
       FROM mentions m WHERE ${predicate.sql}
+    ), latest_tb_feature AS (
+      SELECT DISTINCT ON (feature.subject_id)
+        feature.subject_id AS id,
+        feature.feature_value
+      FROM record_feature_values feature
+      JOIN filtered ON filtered.id = feature.subject_id
+      JOIN tb_analyses analysis
+        ON analysis.id = feature.tb_analysis_id
+        AND analysis.study_corpus_id = filtered.study_corpus_id
+        AND analysis.status IN ('approved_by_im', 'approved_by_kam')
+      WHERE feature.subject_type = 'mention'
+        AND feature.feature_key = 'tb_coding'
+      ORDER BY feature.subject_id, analysis.created_at DESC, feature.created_at DESC, feature.id DESC
     ), facet_values AS (
       SELECT id, 'platform'::text AS dimension, lower(platform) AS key FROM filtered WHERE platform IS NOT NULL
       UNION ALL SELECT id, 'country', lower(country) FROM filtered WHERE country IS NOT NULL
       UNION ALL SELECT id, 'language', lower(language) FROM filtered WHERE language IS NOT NULL
       UNION ALL SELECT id, 'content_format', lower(content_type) FROM filtered WHERE content_type IS NOT NULL
+      UNION ALL SELECT id, 'conversation_role',
+        CASE WHEN content_type = 'comment' THEN 'comment' ELSE 'root_post' END
+      FROM filtered
       UNION ALL SELECT id, 'sentiment_polarity', CASE
         WHEN sentiment_score > 0.2 THEN 'positive' WHEN sentiment_score < -0.2 THEN 'negative'
         WHEN sentiment_score IS NULL THEN NULL ELSE 'neutral' END FROM filtered
       ${sourceTypeSelect}
+      UNION ALL
+      SELECT filtered.id, 'corpus_scope',
+        CASE
+          WHEN lower(COALESCE(source.scope, '')) = 'brand' THEN 'brand'
+          WHEN lower(COALESCE(source.scope, '')) IN ('competitor', 'competitors') THEN 'competitor'
+          WHEN lower(COALESCE(source.scope, '')) = 'category' THEN 'category'
+          ELSE 'unknown'
+        END
+      FROM filtered
+      JOIN mention_query_sources source ON source.mention_id = filtered.id
+      UNION ALL
+      SELECT filtered.id, 'corpus_scope',
+        CASE
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) IN ('brand', 'primary_brand') THEN 'brand'
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) IN ('competitor', 'competitors') THEN 'competitor'
+          WHEN lower(COALESCE(batch.entity_kind, batch.mention_type, '')) = 'category' THEN 'category'
+          ELSE 'unknown'
+        END
+      FROM filtered
+      JOIN import_batches batch ON batch.id = filtered.source_file_id
       UNION ALL
       SELECT filtered.id, 'entity', lower(entity.canonical_name)
       FROM filtered JOIN record_entity_links link ON link.subject_type = 'mention' AND link.subject_id = filtered.id
@@ -321,6 +377,19 @@ export async function loadSignalFacetsV1(args: {
       FROM filtered JOIN record_feature_values feature
         ON feature.subject_type = 'mention' AND feature.subject_id = filtered.id
       WHERE feature.feature_key = ANY(${featureParameter})
+      UNION ALL
+      SELECT latest.id, 'tb_polarity', lower(coding.item->>'polarity')
+      FROM latest_tb_feature latest
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(latest.feature_value->'codings', '[]'::jsonb)) coding(item)
+      UNION ALL
+      SELECT latest.id, 'tb_layer', lower(coding.item->>'layer')
+      FROM latest_tb_feature latest
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(latest.feature_value->'codings', '[]'::jsonb)) coding(item)
+      UNION ALL
+      SELECT latest.id, 'observed_signal', lower(signal.value)
+      FROM latest_tb_feature latest
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(latest.feature_value->'codings', '[]'::jsonb)) coding(item)
+      CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(coding.item->'emergent_tags', '[]'::jsonb)) signal(value)
     ), counted AS (
       SELECT dimension, key, COUNT(DISTINCT id)::int AS count,
         row_number() OVER (PARTITION BY dimension ORDER BY COUNT(DISTINCT id) DESC, key) AS position
@@ -616,20 +685,109 @@ export async function loadSignalComparisonV1(args: {
   };
 }
 
+export type SignalMentionTagV1 = {
+  taxonomy_key: string;
+  taxonomy_name: string;
+  term_key: string;
+  label: string;
+  value: string | null;
+  score: number | null;
+};
+
+export type SignalMentionEntityV1 = {
+  type: string;
+  name: string;
+  relation: string;
+  confidence: string | null;
+};
+
+export type SignalMentionFeatureV1 = {
+  key: string;
+  value: unknown;
+  value_type: string | null;
+  confidence: string | null;
+};
+
+export type SignalMentionAttributionV1 = {
+  scope: "brand" | "competitor" | "category" | "unknown";
+  label: string;
+};
+
+export type SignalMentionTbCodingV1 = {
+  finding_id: string | null;
+  polarity: "trigger" | "barrier" | "mixed" | "irrelevant" | null;
+  layer: "personal" | "psicologico" | "social" | "cultural" | null;
+  intensity_score: number | null;
+  emergent_tags: string[];
+  ambiguous: boolean;
+};
+
+export type SignalMentionTbClassificationV1 = {
+  contract: string;
+  analysis_id: string;
+  analysis_status: string | null;
+  codings: SignalMentionTbCodingV1[];
+};
+
+export type SignalMentionRecordV1 = {
+  subject_id: string;
+  occurred_at: string;
+  text_snippet: string;
+  title: string | null;
+  url: string | null;
+  platform: string | null;
+  language: string | null;
+  country: string | null;
+  content_type: string;
+  conversation_role: "root_post" | "comment";
+  sentiment: "positive" | "neutral" | "negative" | null;
+  sentiment_score: number | null;
+  engagement: JsonRecord;
+  interaction_count: number;
+  thread_key: string;
+  tags: SignalMentionTagV1[];
+  entities: SignalMentionEntityV1[];
+  features: SignalMentionFeatureV1[];
+  attribution: SignalMentionAttributionV1[];
+  tb_classification: SignalMentionTbClassificationV1 | null;
+};
+
+export type SignalMentionsPayloadV1 = {
+  contract_version: typeof SIGNAL_BACKEND_CONTRACT_VERSION;
+  metric_key: string;
+  filters_hash: string;
+  total_count: number;
+  records: SignalMentionRecordV1[];
+  page: {
+    limit: number;
+    offset: number;
+    next_cursor: string | null;
+    next_offset: number | null;
+  };
+};
+
+export type SignalMentionSortV1 = {
+  field: "published" | "platform" | "conversation_role" | "engagement";
+  direction: "asc" | "desc";
+};
+
 export async function loadSignalMentionsV1(args: {
   workspace: ResolvedSignalWorkspace;
   filter: SignalFilterV1;
-  metricKey: string;
+  metricKey?: string;
   cursor?: string | null;
   limit?: number;
+  offset?: number;
+  sort?: SignalMentionSortV1;
   isInternalUser: boolean;
-}) {
+}): Promise<SignalMentionsPayloadV1> {
   assertVisibleFilterDimensions(args.filter, args.isInternalUser);
-  requireVisibleMetric(args.metricKey, 1, args.isInternalUser);
+  const metricKey = args.metricKey ?? "conversation.volume";
+  requireVisibleMetric(metricKey, 1, args.isInternalUser);
   const corpus = requireServingCorpus(args.workspace);
   const filtersHash = signalFiltersHashV1(args.filter);
   const decoded = args.cursor ? decodeSignalDrillDownCursorV1(args.cursor) : null;
-  if (decoded && (decoded.metric_key !== args.metricKey || decoded.filters_hash !== filtersHash)) {
+  if (decoded && (decoded.metric_key !== metricKey || decoded.filters_hash !== filtersHash)) {
     throw new SignalBackendContractError("invalid_filter", "Drill-down cursor does not match the active metric/filter.", {
       field: "cursor"
     });
@@ -637,11 +795,14 @@ export async function loadSignalMentionsV1(args: {
   const plan = buildSignalMentionDrillDownPlanV1({
     filter: args.filter,
     study_corpus_ids: [corpus.id],
-    metric_key: args.metricKey,
+    metric_key: metricKey,
     limit: args.limit,
+    offset: args.offset,
+    order_by: args.sort,
     ...(decoded ? { cursor: decoded.sort } : {})
   });
   const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
+  const offset = Math.max(0, Math.min(100_000, Math.floor(args.offset ?? 0)));
   const result = await pool.query<{
     subject_id: string;
     occurred_at: Date;
@@ -651,32 +812,67 @@ export async function loadSignalMentionsV1(args: {
     platform: string | null;
     language: string | null;
     country: string | null;
+    content_type: string | null;
+    sentiment: "positive" | "neutral" | "negative" | null;
+    sentiment_score: string | number | null;
+    engagement: unknown;
+    thread_key: string;
+    tags: unknown;
+    entities: unknown;
+    features: unknown;
+    attribution: unknown;
+    tb_classification: unknown;
+    tb_analysis_status: string | null;
+    total_count: number;
   }>(plan.sql, plan.params);
   const hasNext = result.rows.length > limit;
   const records = result.rows.slice(0, limit).map((row) => ({
     subject_id: row.subject_id,
     occurred_at: row.occurred_at.toISOString(),
-    text_snippet: row.text_snippet,
-    title: row.title,
+    text_snippet: row.text_snippet ?? "",
+    title: clientSafeMentionTitle(row.title),
     url: row.url,
     platform: row.platform,
-    language: row.language,
-    country: row.country
+    language: clientSafeMentionScalar(row.language),
+    country: clientSafeMentionScalar(row.country),
+    content_type: row.content_type ?? "unknown",
+    conversation_role: row.content_type === "comment" ? "comment" as const : "root_post" as const,
+    sentiment: row.sentiment,
+    sentiment_score: numeric(row.sentiment_score),
+    engagement: isRecord(row.engagement) ? row.engagement : {},
+    interaction_count: mentionInteractionTotal(row.engagement),
+    thread_key: row.thread_key,
+    tags: mentionTags(row.tags),
+    entities: mentionEntities(row.entities),
+    features: mentionFeatures(row.features),
+    attribution: mentionAttribution(row.attribution),
+    tb_classification: mentionTbClassification(
+      row.tb_classification,
+      row.tb_analysis_status
+    )
   }));
   const last = records.at(-1);
-  const nextCursor = hasNext && last ? encodeSignalDrillDownCursorV1({
+  const defaultCursorOrder = !args.sort
+    || (args.sort.field === "published" && args.sort.direction === "desc");
+  const nextCursor = defaultCursorOrder && hasNext && last ? encodeSignalDrillDownCursorV1({
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
-    metric_key: args.metricKey,
+    metric_key: metricKey,
     filters_hash: filtersHash,
     direction: "next",
     sort: { occurred_at: last.occurred_at, subject_id: last.subject_id }
   }) : null;
   return {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
-    metric_key: args.metricKey,
+    metric_key: metricKey,
     filters_hash: filtersHash,
+    total_count: result.rows[0]?.total_count ?? 0,
     records,
-    page: { limit, next_cursor: nextCursor }
+    page: {
+      limit,
+      offset,
+      next_cursor: nextCursor,
+      next_offset: hasNext ? offset + limit : null
+    }
   };
 }
 
@@ -761,7 +957,166 @@ async function loadMaterializationRows(
       AND (cache_scope <> 'ad_hoc' OR expires_at > now())
     ORDER BY period_start
   `, [workspace.id, corpus.id, metricKey, metricVersion, predicate.filters_hash, filter.granularity]);
-  return result.rows;
+  if (result.rows.length > 0) return result.rows;
+
+  const metric = signalMetricDefinitionV1(metricKey, metricVersion);
+  if (!metric) return [];
+  const liveRows = await loadLiveMaterializationRows(workspace, filter, metric);
+  if (liveRows.length > 0 && isSignalAdHocMaterializationEnabled()) {
+    const job = buildSignalAdHocMaterializationJobV1({
+      workspace_id: workspace.id,
+      study_corpus_id: corpus.id,
+      filter,
+      metric_keys: [metric.key]
+    });
+    await enqueueSignalAdHocMaterialization(job.data, job.job_id);
+  }
+  return liveRows;
+}
+
+async function loadLiveMaterializationRows(
+  workspace: ResolvedSignalWorkspace,
+  filter: SignalFilterV1,
+  metric: SignalMetricDefinitionV1
+): Promise<MaterializationRow[]> {
+  const corpus = requireServingCorpus(workspace);
+  const plan = buildSignalMetricMaterializationPlanV1({
+    metric_key: metric.key,
+    metric_version: metric.version,
+    filter,
+    study_corpus_ids: [corpus.id]
+  });
+  const [computed, watermarkResult] = await Promise.all([
+    pool.query<SignalMaterializationRowV1>(plan.sql, plan.params),
+    pool.query<LiveWatermarkRow>(`
+      SELECT corpus_revision, last_source_sync_run_id::text,
+        last_import_batch_id::text, max_observed_at, accepted_at,
+        materialized_at, data_freshness_state, stale_after
+      FROM signal_data_watermarks
+      WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
+      ORDER BY accepted_at DESC, id
+    `, [workspace.id, corpus.id])
+  ]);
+  if (watermarkResult.rows.length === 0) return [];
+
+  const watermark = combinedLiveWatermark(workspace, corpus.id, watermarkResult.rows);
+  const watermarkHash = dataWatermarkHashV1(watermark);
+  const freshness = combinedLiveFreshness(watermarkResult.rows);
+  const staleAfter = earliestLiveStaleAfter(watermarkResult.rows);
+  const computedAt = new Date(watermark.materialized_at);
+  const rows = computed.rows.length > 0
+    ? computed.rows
+    : [emptyLiveMetricRow(filter, metric)];
+
+  return rows.map((row) => {
+    const quality = evaluateSignalMetricQualityV1({
+      metric,
+      row,
+      data_freshness: freshness
+    });
+    return {
+      metric_key: metric.key,
+      metric_version: metric.version,
+      metric_group_key: metric.group,
+      period_start: row.period_start,
+      period_end: row.period_end,
+      value: row.value,
+      denominator: row.denominator,
+      sample_size: Number(row.sample_size),
+      typed_payload: {
+        ...row.typed_payload,
+        quality_rule_results: quality.results,
+        serving_mode: "live_read_through"
+      },
+      materialization_state: effectiveLiveState(
+        row.materialization_state,
+        freshness,
+        quality.state
+      ),
+      quality_state: quality.state,
+      data_watermark: watermark,
+      data_watermark_hash: watermarkHash,
+      computed_at: computedAt,
+      stale_after: staleAfter
+    };
+  });
+}
+
+function emptyLiveMetricRow(
+  filter: SignalFilterV1,
+  metric: SignalMetricDefinitionV1
+): SignalMaterializationRowV1 {
+  return {
+    period_start: filter.date_range.start,
+    period_end: filter.date_range.end,
+    value: null,
+    denominator: null,
+    sample_size: 0,
+    typed_payload: {
+      kind: metric.key.endsWith(".share") || metric.key.endsWith(".volume")
+        ? "breakdown"
+        : "scalar",
+      buckets: []
+    },
+    materialization_state: "not_available",
+    quality_state: "unknown"
+  };
+}
+
+function combinedLiveWatermark(
+  workspace: ResolvedSignalWorkspace,
+  corpusId: string,
+  rows: LiveWatermarkRow[]
+) {
+  const acceptedAt = new Date(Math.max(...rows.map((row) => row.accepted_at.getTime())));
+  const materializedAt = new Date(Math.max(
+    acceptedAt.getTime(),
+    ...rows.map((row) => row.materialized_at.getTime())
+  ));
+  const observed = rows.flatMap((row) => row.max_observed_at ? [row.max_observed_at.getTime()] : []);
+  const maxObserved = observed.length
+    ? new Date(Math.min(Math.max(...observed), acceptedAt.getTime()))
+    : null;
+  return validateDataWatermarkV1({
+    contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
+    workspace_id: workspace.id,
+    corpus_id: corpusId,
+    corpus_revision: Math.max(...rows.map((row) => row.corpus_revision)),
+    source_sync_run_ids: Array.from(new Set(rows.flatMap((row) => [
+      row.last_source_sync_run_id,
+      row.last_import_batch_id
+    ]).filter((id): id is string => Boolean(id)))),
+    data_through_at: maxObserved?.toISOString() ?? null,
+    accepted_at: acceptedAt.toISOString(),
+    materialized_at: materializedAt.toISOString()
+  });
+}
+
+function combinedLiveFreshness(rows: LiveWatermarkRow[]): DataFreshnessStateV1 {
+  const now = new Date();
+  if (rows.some((row) => row.data_freshness_state === "stale" || (row.stale_after && row.stale_after <= now))) {
+    return "stale";
+  }
+  if (rows.some((row) => row.data_freshness_state === "partial" || row.data_freshness_state === "not_available")) {
+    return "partial";
+  }
+  return "fresh";
+}
+
+function earliestLiveStaleAfter(rows: LiveWatermarkRow[]) {
+  const values = rows.flatMap((row) => row.stale_after ? [row.stale_after.getTime()] : []);
+  return values.length ? new Date(Math.min(...values)) : null;
+}
+
+function effectiveLiveState(
+  metricState: SignalMaterializationRowV1["materialization_state"],
+  freshness: DataFreshnessStateV1,
+  quality: ReturnType<typeof evaluateSignalMetricQualityV1>["state"]
+): MaterializationRow["materialization_state"] {
+  if (metricState === "not_available" || quality === "failed") return "not_available";
+  if (freshness === "stale") return "stale";
+  if (freshness === "partial" || metricState === "partial" || quality === "partial") return "partial";
+  return "fresh";
 }
 
 async function queueMissingMaterialization(workspace: ResolvedSignalWorkspace, filter: SignalFilterV1, metricKeys: string[]) {
@@ -954,6 +1309,137 @@ function groupFacets(rows: Array<{ dimension: SignalDimensionV1; key: string; co
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mentionInteractionTotal(value: unknown) {
+  if (!isRecord(value)) return 0;
+  return ["likes", "comments", "shares", "reposts", "saves"].reduce((total, key) => (
+    total + (numeric(value[key]) ?? 0)
+  ), 0);
+}
+
+function mentionTags(value: unknown): SignalMentionTagV1[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const taxonomyKey = String(item.taxonomy_key ?? "").trim();
+    const label = String(item.label ?? "").trim();
+    if (!taxonomyKey || !label) return [];
+    return [{
+      taxonomy_key: taxonomyKey,
+      taxonomy_name: String(item.taxonomy_name ?? taxonomyKey),
+      term_key: String(item.term_key ?? label),
+      label,
+      value: item.value == null ? null : String(item.value),
+      score: numeric(item.score)
+    }];
+  });
+}
+
+function mentionEntities(value: unknown): SignalMentionEntityV1[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const name = String(item.name ?? "").trim();
+    if (!name) return [];
+    return [{
+      type: String(item.type ?? "entity"),
+      name,
+      relation: String(item.relation ?? "mentions"),
+      confidence: item.confidence == null ? null : String(item.confidence)
+    }];
+  });
+}
+
+function mentionFeatures(value: unknown): SignalMentionFeatureV1[] {
+  if (!Array.isArray(value)) return [];
+  const features = value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const key = String(item.key ?? "").trim();
+    if (!key) return [];
+    return [{
+      key,
+      value: item.value ?? null,
+      value_type: item.value_type == null ? null : String(item.value_type),
+      confidence: item.confidence == null ? null : String(item.confidence)
+    }];
+  });
+  return features.filter((feature, index) => (
+    features.findIndex((candidate) => (
+      candidate.key === feature.key
+      && JSON.stringify(candidate.value) === JSON.stringify(feature.value)
+    )) === index
+  ));
+}
+
+function mentionAttribution(value: unknown): SignalMentionAttributionV1[] {
+  if (!Array.isArray(value)) return [];
+  const attribution = value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const scope = String(item.scope ?? "").trim();
+    if (!["brand", "competitor", "category", "unknown"].includes(scope)) return [];
+    const label = String(item.label ?? "").trim();
+    return [{
+      scope: scope as SignalMentionAttributionV1["scope"],
+      label: label || "Unattributed"
+    }];
+  });
+  return attribution.filter((item, index) => (
+    attribution.findIndex((candidate) => (
+      candidate.scope === item.scope && candidate.label === item.label
+    )) === index
+  ));
+}
+
+function mentionTbClassification(
+  value: unknown,
+  analysisStatus: string | null
+): SignalMentionTbClassificationV1 | null {
+  if (!isRecord(value) || !Array.isArray(value.codings)) return null;
+  const analysisId = String(value.tb_analysis_id ?? "").trim();
+  const contract = String(value.contract ?? "").trim();
+  if (!analysisId || !contract) return null;
+  const codings = value.codings.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const polarity = item.polarity == null ? null : String(item.polarity);
+    const layer = item.layer == null ? null : String(item.layer);
+    if (
+      polarity != null
+      && !["trigger", "barrier", "mixed", "irrelevant"].includes(polarity)
+    ) return [];
+    if (
+      layer != null
+      && !["personal", "psicologico", "social", "cultural"].includes(layer)
+    ) return [];
+    return [{
+      finding_id: item.finding_id == null ? null : String(item.finding_id),
+      polarity: polarity as SignalMentionTbCodingV1["polarity"],
+      layer: layer as SignalMentionTbCodingV1["layer"],
+      intensity_score: numeric(item.intensity_score),
+      emergent_tags: Array.isArray(item.emergent_tags)
+        ? item.emergent_tags.map((tag) => String(tag).trim()).filter(Boolean)
+        : [],
+      ambiguous: item.ambiguous === true
+    }];
+  });
+  if (codings.length === 0) return null;
+  return {
+    contract,
+    analysis_id: analysisId,
+    analysis_status: analysisStatus,
+    codings
+  };
+}
+
+function clientSafeMentionTitle(value: string | null) {
+  return clientSafeMentionScalar(value);
+}
+
+function clientSafeMentionScalar(value: string | null) {
+  if (!value) return null;
+  const scalar = value.trim();
+  if (!scalar || /^[\s"'“”‘’«»]+$/u.test(scalar)) return null;
+  return scalar;
 }
 
 function numeric(value: unknown) {

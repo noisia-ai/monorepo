@@ -6,6 +6,7 @@ import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
 
 export type SignalStrategicReleaseSummary = {
   release_id: string;
+  study_corpus_id: string;
   release_key: string;
   title: string;
   status: string;
@@ -55,6 +56,7 @@ export async function loadSignalStrategicReleasesV1(
   const result = await pool.query<ReleaseRow>(
     `SELECT
        release.id::text AS release_id,
+       analysis.study_corpus_id::text,
        release.release_key,
        release.title,
        release.status,
@@ -107,6 +109,7 @@ export async function loadSignalStrategicReleasesV1(
            AND ($2::boolean OR release_artifact.visibility = 'client')
        ), '[]'::jsonb) AS artifacts
      FROM signal_workspace_releases release
+     JOIN tb_analyses analysis ON analysis.id = release.tb_analysis_id
      LEFT JOIN signal_workspace_current_releases current_release
        ON current_release.workspace_id = release.workspace_id
       AND current_release.release_id = release.id

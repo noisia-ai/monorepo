@@ -122,6 +122,7 @@ async function main() {
       id: row.workspace_id,
       organizationId: row.organization_id,
       slug: row.slug,
+      name: row.slug,
       subject: row.brand_id
         ? { type: "brand", id: row.brand_id }
         : { type: "theme", id: row.theme_id as string },
@@ -132,7 +133,9 @@ async function main() {
         name: row.corpus_name,
         role: row.membership_role,
         status: row.corpus_status,
-        validFrom: row.membership_valid_from.toISOString()
+        validFrom: row.membership_valid_from.toISOString(),
+        methodologySlug: null,
+        outputId
       }]
     };
     const [internalFacade, clientFacade, tables, comparison] = await Promise.all([
