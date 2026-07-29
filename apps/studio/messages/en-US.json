@@ -685,6 +685,126 @@
       "coverage": "Available coverage",
       "open": "Open mentions"
     },
+    "topicsNarratives": {
+      "title": "Topics and narratives",
+      "status": "Live intelligence",
+      "subtitle": "See what the conversation is about and which stories or frames are taking shape.",
+      "states": {
+        "fresh": "Up to date",
+        "stale": "Update pending",
+        "pending": "Processing",
+        "partial": "Partial coverage",
+        "not_available": "Not available"
+      },
+      "partial": {
+        "title": "This view is still useful, with declared partial coverage",
+        "body": "{classified, number} of {included, number} mentions are classified. {pending, number} still need processing or review and are excluded from client-safe metrics."
+      },
+      "kpis": {
+        "coverage": "Classified coverage",
+        "coverageSecondary": "{classified, number} of {included, number} included mentions",
+        "activeTerms": "Active terms",
+        "profileVersion": "Governed profile v{version}",
+        "assertions": "Tag assertions",
+        "assertionsSecondary": "Approved topic or narrative links",
+        "pending": "Pending mentions",
+        "pendingSecondary": "Excluded until processing or review"
+      },
+      "tabs": {
+        "topics": "Topics",
+        "narratives": "Narratives"
+      },
+      "ranking": {
+        "eyebrow": "Conversation map",
+        "unit": "Selected period",
+        "term": "Term",
+        "volume": "Mentions",
+        "share": "Share",
+        "change": "Share change",
+        "topics": "Topics in the period",
+        "narratives": "Narratives in the period"
+      },
+      "detail": {
+        "eyebrow": "Movement",
+        "title": "Select a term",
+        "notAvailable": "The governed ranking is available, but this term's trend and lineage are temporarily unavailable.",
+        "openEvidence": "Open evidence",
+        "sourceSummary": "{mentions, number} source mentions across {batches, number} import batches"
+      },
+      "charts": {
+        "currentPeriod": "Selected period",
+        "termTrend": "{term} over time"
+      },
+      "cooccurrence": {
+        "eyebrow": "Relationships",
+        "title": "Terms that appear together",
+        "empty": "No approved co-occurrences are available in this view."
+      },
+      "companion": {
+        "eyebrow": "Other lens",
+        "narratives": "Narratives shaping these topics",
+        "topics": "Topics carrying these narratives"
+      },
+      "evidence": {
+        "title": "Source evidence",
+        "close": "Close evidence",
+        "body": "Every item below is an approved source mention connected to this term. Open the original to inspect it in context.",
+        "unknownSource": "Unknown source",
+        "noText": "No text excerpt is available.",
+        "openOriginal": "Open original",
+        "loadMore": "Load more evidence"
+      },
+      "empty": {
+        "title": "No approved terms in this view",
+        "body": "Change the period or filters. Pending and rejected classifications remain excluded from client-safe results."
+      },
+      "errors": {
+        "detail": "Could not load the selected term.",
+        "evidence": "Could not load its evidence."
+      },
+      "helpers": {
+        "coverage": {
+          "title": "Classified coverage",
+          "body": "The share of included corpus mentions that currently have at least one approved term in this lens.",
+          "reading": "Higher coverage means the map represents more of the selected conversation. Partial coverage is disclosed rather than filled with assumptions."
+        },
+        "terms": {
+          "title": "Active terms",
+          "body": "The approved terms from the active governed profile that appear at least once in the selected view.",
+          "reading": "A larger count means more variety, not necessarily a better or worse result."
+        },
+        "assertions": {
+          "title": "Tag assertions",
+          "body": "Approved links between source mentions and topic or narrative terms. One mention can support more than one term.",
+          "reading": "This is why assertions can be higher than classified mentions; it is not a count of unique people or posts."
+        },
+        "pending": {
+          "title": "Pending mentions",
+          "body": "Included mentions whose classification is still processing or waiting for governed review.",
+          "reading": "They are not silently treated as unclassified and do not enter client-safe term counts until approved."
+        },
+        "topic": {
+          "title": "Topics",
+          "body": "Topics answer what people are discussing: a product, service, need, event, problem or subject found in the source conversation.",
+          "reading": "Use volume and share to see prominence. A topic can rise without implying positive or negative meaning."
+        },
+        "narrative": {
+          "title": "Narratives",
+          "body": "Narratives answer what story, belief or interpretive frame people are building around the subjects they discuss.",
+          "reading": "Unlike a topic, a narrative is a claim or frame. Read it with its evidence before treating it as a strategic conclusion."
+        },
+        "trend": {
+          "title": "Term movement",
+          "body": "Shows how many approved source mentions supported the selected term in each interval of the chosen period.",
+          "reading": "Use the shape to distinguish a sustained pattern from a one-day spike, then open evidence to understand why it moved."
+        },
+        "cooccurrence": {
+          "title": "Co-occurrence",
+          "body": "Counts source mentions in which two approved terms appear together.",
+          "reading": "Appearing together suggests a relationship worth exploring, but it does not prove that one term caused the other."
+        }
+      }
+    },
     "mentions": {
       "title": "Mentions",
       "status": "Live corpus",

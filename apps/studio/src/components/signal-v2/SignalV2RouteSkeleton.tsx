@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 export function SignalV2RouteSkeleton({
   variant = "monitoring"
 }: {
-  variant?: "monitoring" | "mentions";
+  variant?: "monitoring" | "mentions" | "topics";
 }) {
   const t = useTranslations("SignalV2");
 
@@ -40,7 +40,7 @@ export function SignalV2RouteSkeleton({
         <nav className="signal-v2-route-skeleton__nav">
           {Array.from({ length: 6 }, (_, index) => (
             <div
-              className={index === (variant === "mentions" ? 1 : 0) ? "is-active" : ""}
+              className={index === (variant === "mentions" ? 1 : variant === "topics" ? 2 : 0) ? "is-active" : ""}
               key={index}
             >
               <span />
@@ -65,7 +65,7 @@ export function SignalV2RouteSkeleton({
 export function SignalV2ModuleSkeleton({
   variant
 }: {
-  variant: "monitoring" | "mentions";
+  variant: "monitoring" | "mentions" | "topics";
 }) {
   const t = useTranslations("SignalV2");
 
@@ -104,6 +104,30 @@ export function SignalV2ModuleSkeleton({
           ))}
           <footer><span /><div><i /><i /></div></footer>
         </section>
+      ) : variant === "topics" ? (
+        <>
+          <section className="signal-v2-route-skeleton__taxonomy-kpis">
+            {Array.from({ length: 4 }, (_, index) => (
+              <article key={index}><span /><strong /><i /></article>
+            ))}
+          </section>
+          <div className="signal-v2-route-skeleton__taxonomy-tabs"><span /><span /></div>
+          <section className="signal-v2-route-skeleton__taxonomy-grid">
+            <article className="is-ranking">
+              <header><span /><strong /></header>
+              {Array.from({ length: 7 }, (_, index) => (
+                <div key={index}><span /><i /><i /><i /></div>
+              ))}
+            </article>
+            <article className="is-trend">
+              <header><span /><strong /></header>
+              <p />
+              <div />
+            </article>
+            <article><header><span /><strong /></header><div /></article>
+            <article><header><span /><strong /></header><div /></article>
+          </section>
+        </>
       ) : (
         <>
           <section className="signal-v2-route-skeleton__insight">

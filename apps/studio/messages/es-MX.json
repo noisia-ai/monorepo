@@ -685,6 +685,126 @@
       "coverage": "Cobertura disponible",
       "open": "Abrir menciones"
     },
+    "topicsNarratives": {
+      "title": "Tópicos y narrativas",
+      "status": "Inteligencia viva",
+      "subtitle": "Entiende de qué trata la conversación y qué historias o marcos están tomando forma.",
+      "states": {
+        "fresh": "Actualizado",
+        "stale": "Actualización pendiente",
+        "pending": "Procesando",
+        "partial": "Cobertura parcial",
+        "not_available": "No disponible"
+      },
+      "partial": {
+        "title": "Esta vista sigue siendo útil, con cobertura parcial declarada",
+        "body": "{classified, number} de {included, number} menciones están clasificadas. {pending, number} aún requieren procesamiento o revisión y no entran en métricas seguras para cliente."
+      },
+      "kpis": {
+        "coverage": "Cobertura clasificada",
+        "coverageSecondary": "{classified, number} de {included, number} menciones incluidas",
+        "activeTerms": "Términos activos",
+        "profileVersion": "Perfil gobernado v{version}",
+        "assertions": "Asignaciones de etiquetas",
+        "assertionsSecondary": "Vínculos aprobados a tópicos o narrativas",
+        "pending": "Menciones pendientes",
+        "pendingSecondary": "Excluidas hasta procesar o revisar"
+      },
+      "tabs": {
+        "topics": "Tópicos",
+        "narratives": "Narrativas"
+      },
+      "ranking": {
+        "eyebrow": "Mapa de conversación",
+        "unit": "Periodo seleccionado",
+        "term": "Término",
+        "volume": "Menciones",
+        "share": "Participación",
+        "change": "Cambio de participación",
+        "topics": "Tópicos del periodo",
+        "narratives": "Narrativas del periodo"
+      },
+      "detail": {
+        "eyebrow": "Movimiento",
+        "title": "Selecciona un término",
+        "notAvailable": "El ranking gobernado está disponible, pero la tendencia y el linaje de este término no están disponibles temporalmente.",
+        "openEvidence": "Abrir evidencia",
+        "sourceSummary": "{mentions, number} menciones fuente en {batches, number} lotes de importación"
+      },
+      "charts": {
+        "currentPeriod": "Periodo seleccionado",
+        "termTrend": "{term} a lo largo del tiempo"
+      },
+      "cooccurrence": {
+        "eyebrow": "Relaciones",
+        "title": "Términos que aparecen juntos",
+        "empty": "No hay coocurrencias aprobadas disponibles en esta vista."
+      },
+      "companion": {
+        "eyebrow": "Otra lente",
+        "narratives": "Narrativas que dan forma a estos tópicos",
+        "topics": "Tópicos que sostienen estas narrativas"
+      },
+      "evidence": {
+        "title": "Evidencia fuente",
+        "close": "Cerrar evidencia",
+        "body": "Cada elemento es una mención fuente aprobada y conectada con este término. Abre el original para revisarlo en contexto.",
+        "unknownSource": "Fuente desconocida",
+        "noText": "No hay un fragmento de texto disponible.",
+        "openOriginal": "Abrir original",
+        "loadMore": "Cargar más evidencia"
+      },
+      "empty": {
+        "title": "No hay términos aprobados en esta vista",
+        "body": "Cambia el periodo o los filtros. Las clasificaciones pendientes o rechazadas siguen fuera de resultados seguros para cliente."
+      },
+      "errors": {
+        "detail": "No se pudo cargar el término seleccionado.",
+        "evidence": "No se pudo cargar su evidencia."
+      },
+      "helpers": {
+        "coverage": {
+          "title": "Cobertura clasificada",
+          "body": "La proporción de menciones incluidas del corpus que actualmente tiene al menos un término aprobado en esta lente.",
+          "reading": "Una cobertura mayor significa que el mapa representa más de la conversación seleccionada. La cobertura parcial se declara; no se rellena con supuestos."
+        },
+        "terms": {
+          "title": "Términos activos",
+          "body": "Los términos aprobados del perfil gobernado activo que aparecen al menos una vez en la vista seleccionada.",
+          "reading": "Un número mayor significa más variedad, no necesariamente un resultado mejor o peor."
+        },
+        "assertions": {
+          "title": "Asignaciones de etiquetas",
+          "body": "Vínculos aprobados entre menciones fuente y términos de tópico o narrativa. Una mención puede sostener más de un término.",
+          "reading": "Por eso las asignaciones pueden superar a las menciones clasificadas; no representan personas ni publicaciones únicas."
+        },
+        "pending": {
+          "title": "Menciones pendientes",
+          "body": "Menciones incluidas cuya clasificación sigue procesándose o espera revisión gobernada.",
+          "reading": "No se tratan silenciosamente como no clasificadas y no entran en conteos seguros para cliente hasta ser aprobadas."
+        },
+        "topic": {
+          "title": "Tópicos",
+          "body": "Los tópicos responden de qué habla la gente: un producto, servicio, necesidad, evento, problema o asunto presente en la conversación fuente.",
+          "reading": "Usa volumen y participación para ver prominencia. Que un tópico suba no implica por sí mismo una lectura positiva o negativa."
+        },
+        "narrative": {
+          "title": "Narrativas",
+          "body": "Las narrativas responden qué historia, creencia o marco interpretativo se construye alrededor de los asuntos discutidos.",
+          "reading": "A diferencia de un tópico, una narrativa es una afirmación o marco. Lee su evidencia antes de tratarla como conclusión estratégica."
+        },
+        "trend": {
+          "title": "Movimiento del término",
+          "body": "Muestra cuántas menciones fuente aprobadas sostuvieron el término seleccionado en cada intervalo del periodo.",
+          "reading": "Usa la forma para distinguir un patrón sostenido de un pico de un día y abre la evidencia para entender por qué se movió."
+        },
+        "cooccurrence": {
+          "title": "Coocurrencia",
+          "body": "Cuenta las menciones fuente en las que aparecen juntos dos términos aprobados.",
+          "reading": "Aparecer juntos sugiere una relación que vale la pena explorar, pero no prueba que un término haya causado al otro."
+        }
+      }
+    },
     "mentions": {
       "title": "Menciones",
       "status": "Corpus vivo",

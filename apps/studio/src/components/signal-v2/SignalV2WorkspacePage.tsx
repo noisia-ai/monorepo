@@ -16,6 +16,7 @@ import {
   resolveSignalWorkspaceForUser
 } from "@/lib/data-os/signal-workspace";
 import { loadSignalStrategicReleasesV1 } from "@/lib/data-os/signal-strategic-releases";
+import { loadSignalTopicsNarrativesOverviewV1 } from "@/lib/data-os/signal-topics-narratives-serving";
 import { loadSignalBrandMonitoringV1 } from "@/lib/signal-v2/brand-monitoring";
 import {
   buildSignalStrategicStudyNavigation,
@@ -29,7 +30,7 @@ export async function SignalV2WorkspacePage({
   searchParams,
   workspaceSlug
 }: {
-  activeModule?: "monitoring" | "mentions";
+  activeModule?: "monitoring" | "mentions" | "topics";
   legacyOutputId?: string;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
   workspaceSlug?: string;
@@ -81,7 +82,13 @@ export async function SignalV2WorkspacePage({
   }
 
   const isInternalUser = session.appUser.userType === "noisia_internal";
-  const [initialData, initialMentions, workspaceOptions, releases] = await Promise.all([
+  const [
+    initialData,
+    initialMentions,
+    initialTopicsNarratives,
+    workspaceOptions,
+    releases
+  ] = await Promise.all([
     loadSignalBrandMonitoringV1({
       workspace,
       filter,
@@ -93,6 +100,14 @@ export async function SignalV2WorkspacePage({
           workspace,
           filter,
           limit: 50,
+          isInternalUser
+        })
+      : Promise.resolve(null),
+    activeModule === "topics"
+      ? loadSignalTopicsNarrativesOverviewV1({
+          workspace,
+          filter,
+          comparisonRange: comparison.date_range ?? null,
           isInternalUser
         })
       : Promise.resolve(null),
@@ -124,6 +139,7 @@ export async function SignalV2WorkspacePage({
       initialMentions={initialMentions
         ? { ...initialMentions, filter, comparison }
         : null}
+      initialTopicsNarratives={initialTopicsNarratives}
       legacyOutputId={primaryOutputId}
       strategicStudies={strategicStudies}
       userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}

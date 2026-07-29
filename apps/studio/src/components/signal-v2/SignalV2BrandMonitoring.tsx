@@ -29,6 +29,11 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsCoreOption } from "echarts/core";
+import type {
+  SignalComparisonV1,
+  SignalFilterV1,
+  SignalTopicsNarrativesOverviewV1
+} from "@noisia/query-engine";
 
 import type {
   BrandMonitoringBreakdown,
@@ -52,6 +57,7 @@ import {
   SignalV2Mentions,
   type SignalMentionsViewData
 } from "@/components/signal-v2/SignalV2Mentions";
+import { SignalV2TopicsNarratives } from "@/components/signal-v2/SignalV2TopicsNarratives";
 import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
 import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCarousel";
 
@@ -93,17 +99,19 @@ export function SignalV2BrandMonitoring({
   canRefreshInsights,
   initialData,
   initialMentions,
+  initialTopicsNarratives,
   legacyOutputId,
   strategicStudies,
   userName,
   workspaceOptions
 }: {
-  activeModule: "monitoring" | "mentions";
+  activeModule: "monitoring" | "mentions" | "topics";
   activeStudy: SignalStrategicStudyNavigationItem | null;
   brandName: string;
   canRefreshInsights: boolean;
   initialData: SignalBrandMonitoringV1;
   initialMentions: SignalMentionsViewData | null;
+  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | null;
   legacyOutputId: string | null;
   strategicStudies: SignalStrategicStudyNavigationItem[];
   userName: string;
@@ -112,14 +120,15 @@ export function SignalV2BrandMonitoring({
   const t = useTranslations("SignalV2");
   const [data, setData] = useState(initialData);
   const [mentionsData, setMentionsData] = useState(initialMentions);
-  const [currentModule, setCurrentModule] = useState<"monitoring" | "mentions">(activeModule);
+  const [topicsNarrativesData, setTopicsNarrativesData] = useState(initialTopicsNarratives);
+  const [currentModule, setCurrentModule] = useState<"monitoring" | "mentions" | "topics">(activeModule);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [pendingModule, setPendingModule] = useState<"monitoring" | "mentions" | null>(null);
+  const [pendingModule, setPendingModule] = useState<"monitoring" | "mentions" | "topics" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [conversationMetric, setConversationMetric] = useState<ConversationMetric>("mentions");
   const [insightRunState, setInsightRunState] = useState<
@@ -200,13 +209,20 @@ export function SignalV2BrandMonitoring({
       for (const [dimension, values] of Object.entries(dimensions)) {
         for (const value of values ?? []) params.append(`dimension.${dimension}`, value);
       }
-      if (!legacyOutputId) throw new Error(t("errors.noOperationalOutput"));
-      const endpoint = currentModule === "mentions" ? "mentions" : "brand-monitoring";
-      const response = await fetch(`/api/signal-v2/${legacyOutputId}/${endpoint}?${params}`, {
+      if (currentModule !== "topics" && !legacyOutputId) {
+        throw new Error(t("errors.noOperationalOutput"));
+      }
+      const endpoint = currentModule === "mentions"
+        ? `/api/signal-v2/${legacyOutputId}/mentions`
+        : currentModule === "topics"
+          ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
+          : `/api/signal-v2/${legacyOutputId}/brand-monitoring`;
+      if (currentModule === "topics") addTaxonomyComparisonParams(params);
+      const response = await fetch(`${endpoint}?${params}`, {
         cache: "no-store"
       });
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
       ) & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
       if (currentModule === "mentions") {
@@ -216,6 +232,24 @@ export function SignalV2BrandMonitoring({
           ...current,
           filter: mentions.filter,
           comparison: mentions.comparison
+        }));
+      } else if (currentModule === "topics") {
+        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
+        const parsed = localSignalAnalyticsSelection({
+          comparisonMode: selection.comparisonMode,
+          comparisonStart: selection.comparisonStart,
+          comparisonEnd: selection.comparisonEnd,
+          dimensions,
+          end: selection.end,
+          granularity: preferredGranularity(selection.start, selection.end),
+          searchQuery: searchQuery ?? "",
+          start: selection.start,
+          timezone: data.workspace.timezone
+        });
+        setData((current) => ({
+          ...current,
+          filter: parsed.filter,
+          comparison: parsed.comparison
         }));
       } else {
         setData(payload as SignalBrandMonitoringV1);
@@ -230,10 +264,18 @@ export function SignalV2BrandMonitoring({
     } finally {
       setLoading(false);
     }
-  }, [currentModule, data.filter.dimensions, data.filter.search_query, data.workspace.timezone, legacyOutputId, t]);
+  }, [
+    currentModule,
+    data.filter.dimensions,
+    data.filter.search_query,
+    data.workspace.id,
+    data.workspace.timezone,
+    legacyOutputId,
+    t
+  ]);
 
   const navigateToModule = useCallback(async (
-    target: "monitoring" | "mentions",
+    target: "monitoring" | "mentions" | "topics",
     historyMode: "push" | "none" = "push"
   ) => {
     if (target === currentModule || pendingModule || activeStudy) return;
@@ -242,7 +284,9 @@ export function SignalV2BrandMonitoring({
     setError(null);
 
     try {
-      if (!legacyOutputId) throw new Error(t("errors.noOperationalOutput"));
+      if (target !== "topics" && !legacyOutputId) {
+        throw new Error(t("errors.noOperationalOutput"));
+      }
       const query = new URLSearchParams(window.location.search);
       query.delete("study");
       if (!query.has("start")) query.set("start", data.filter.date_range.start);
@@ -258,12 +302,17 @@ export function SignalV2BrandMonitoring({
         for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
       }
 
-      const endpoint = target === "mentions" ? "mentions" : "brand-monitoring";
-      const response = await fetch(`/api/signal-v2/${legacyOutputId}/${endpoint}?${query}`, {
+      const endpoint = target === "mentions"
+        ? `/api/signal-v2/${legacyOutputId}/mentions`
+        : target === "topics"
+          ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
+          : `/api/signal-v2/${legacyOutputId}/brand-monitoring`;
+      if (target === "topics") addTaxonomyComparisonParams(query);
+      const response = await fetch(`${endpoint}?${query}`, {
         cache: "no-store"
       });
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
       ) & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
 
@@ -275,6 +324,8 @@ export function SignalV2BrandMonitoring({
           filter: mentions.filter,
           comparison: mentions.comparison
         }));
+      } else if (target === "topics") {
+        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
       } else {
         setData(payload as SignalBrandMonitoringV1);
       }
@@ -283,7 +334,9 @@ export function SignalV2BrandMonitoring({
       if (historyMode === "push") {
         const pathname = target === "mentions"
           ? `/signal/${data.workspace.slug}/mentions`
-          : `/signal/${data.workspace.slug}`;
+          : target === "topics"
+            ? `/signal/${data.workspace.slug}/topics-narratives`
+            : `/signal/${data.workspace.slug}`;
         window.history.pushState(null, "", `${pathname}?${query}`);
       }
     } catch (navigationError) {
@@ -296,6 +349,7 @@ export function SignalV2BrandMonitoring({
     currentModule,
     data.comparison.mode,
     data.filter,
+    data.workspace.id,
     data.workspace.slug,
     data.workspace.timezone,
     legacyOutputId,
@@ -307,7 +361,9 @@ export function SignalV2BrandMonitoring({
     const onPopState = () => {
       const target = window.location.pathname.endsWith("/mentions")
         ? "mentions"
-        : "monitoring";
+        : window.location.pathname.endsWith("/topics-narratives")
+          ? "topics"
+          : "monitoring";
       void navigateToModule(target, "none");
     };
     window.addEventListener("popstate", onPopState);
@@ -670,6 +726,7 @@ export function SignalV2BrandMonitoring({
 
   const canonicalHome = `/signal/${data.workspace.slug}`;
   const canonicalMentions = `${canonicalHome}/mentions`;
+  const canonicalTopicsNarratives = `${canonicalHome}/topics-narratives`;
   const legacyReport = legacyOutputId ? `/signal/${legacyOutputId}` : canonicalHome;
   const firstStrategicStudy = strategicStudies[0] ?? null;
   const activeGlobalFilterCount = Object.values(data.filter.dimensions)
@@ -778,7 +835,12 @@ export function SignalV2BrandMonitoring({
             label={t("nav.mentions")}
             onNavigate={() => void navigateToModule("mentions")}
           />
-          <NavLink href={`${legacyReport}#emerging-patterns`} icon={<Pulse />} label={t("nav.topics")} />
+          <NavLink
+            active={(pendingModule ?? currentModule) === "topics"}
+            href={canonicalTopicsNarratives}
+            icon={<Pulse />}
+            label={t("nav.topics")}
+          />
           <NavLink
             active={Boolean(activeStudy)}
             href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`}
@@ -840,6 +902,17 @@ export function SignalV2BrandMonitoring({
             onDataChange={setMentionsData}
             onOpenControls={() => setControlsOpen(true)}
             outputId={legacyOutputId}
+          />
+        ) : currentModule === "topics" && topicsNarrativesData ? (
+          <SignalV2TopicsNarratives
+            brandName={brandName}
+            comparison={data.comparison}
+            coverage={data.coverage}
+            data={topicsNarrativesData}
+            filter={data.filter}
+            loading={loading}
+            onApplyFilter={loadFilter}
+            onOpenControls={() => setControlsOpen(true)}
           />
         ) : (
           <>
@@ -1918,6 +1991,119 @@ function preferredGranularity(start: string, end: string) {
   if (days <= 90) return "day";
   if (days <= 365) return "week";
   return "month";
+}
+
+function addTaxonomyComparisonParams(params: URLSearchParams) {
+  const comparison = resolveLocalSignalComparison({
+    mode: params.get("compare") ?? "previous_period",
+    start: params.get("start") ?? "",
+    end: params.get("end") ?? "",
+    customStart: params.get("compareStart"),
+    customEnd: params.get("compareEnd")
+  });
+  if (!comparison.date_range) return;
+  params.set("comparison_start", comparison.date_range.start);
+  params.set("comparison_end", comparison.date_range.end);
+}
+
+function localSignalAnalyticsSelection(args: {
+  comparisonMode: SignalComparisonV1["mode"];
+  comparisonStart?: string | null;
+  comparisonEnd?: string | null;
+  dimensions: SignalFilterV1["dimensions"];
+  end: string;
+  granularity: SignalFilterV1["granularity"];
+  searchQuery: string;
+  start: string;
+  timezone: string;
+}): { filter: SignalFilterV1; comparison: SignalComparisonV1 } {
+  const filter: SignalFilterV1 = {
+    contract_version: "signal-backend-v1",
+    date_range: { start: args.start, end: args.end },
+    timezone: args.timezone,
+    granularity: args.granularity,
+    dimensions: args.dimensions,
+    ...(args.searchQuery ? { search_query: args.searchQuery } : {})
+  };
+  return {
+    filter,
+    comparison: resolveLocalSignalComparison({
+      mode: args.comparisonMode,
+      start: args.start,
+      end: args.end,
+      customStart: args.comparisonStart,
+      customEnd: args.comparisonEnd
+    })
+  };
+}
+
+function resolveLocalSignalComparison(args: {
+  mode: string;
+  start: string;
+  end: string;
+  customStart?: string | null;
+  customEnd?: string | null;
+}): SignalComparisonV1 {
+  const mode = args.mode as SignalComparisonV1["mode"];
+  if (mode === "none") return { mode, date_range: null };
+  if (mode === "custom") {
+    return {
+      mode,
+      date_range: args.customStart && args.customEnd
+        ? { start: args.customStart, end: args.customEnd }
+        : null
+    };
+  }
+  if (mode === "previous_year") {
+    const start = shiftCalendarYear(args.start, -1);
+    return {
+      mode,
+      date_range: {
+        start,
+        end: addCalendarDays(start, inclusiveCalendarDays(args.start, args.end) - 1)
+      }
+    };
+  }
+  if (mode === "previous_year_same_weekday") {
+    return {
+      mode,
+      date_range: {
+        start: addCalendarDays(args.start, -364),
+        end: addCalendarDays(args.end, -364)
+      }
+    };
+  }
+  const duration = inclusiveCalendarDays(args.start, args.end);
+  const end = addCalendarDays(args.start, -1);
+  return {
+    mode: "previous_period",
+    date_range: {
+      start: addCalendarDays(end, -(duration - 1)),
+      end
+    }
+  };
+}
+
+function inclusiveCalendarDays(start: string, end: string) {
+  return Math.round((epochDay(end) - epochDay(start)) / 86_400_000) + 1;
+}
+
+function addCalendarDays(value: string, amount: number) {
+  return new Date(epochDay(value) + amount * 86_400_000).toISOString().slice(0, 10);
+}
+
+function shiftCalendarYear(value: string, amount: number) {
+  const date = new Date(epochDay(value));
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const shifted = new Date(Date.UTC(date.getUTCFullYear() + amount, month, 1));
+  const lastDay = new Date(Date.UTC(shifted.getUTCFullYear(), month + 1, 0)).getUTCDate();
+  shifted.setUTCDate(Math.min(day, lastDay));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function epochDay(value: string) {
+  return Date.parse(`${value}T00:00:00.000Z`);
 }
 
 function alignStructuredPrevious(
