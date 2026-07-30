@@ -31,6 +31,7 @@ Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` f
 4. Render:
    - **PDF:** `node packages/pitch-kit/builders/build-pdf.mjs <work>/index.html <work>/deck.pdf`
    - **PPTX (editable):** write a `deck.json` (shape in `builders/build-pptx.py` header) then `python3 packages/pitch-kit/builders/build-pptx.py <work>/deck.json <work>/deck.pptx`
+   - **Portable single file (no-clone / for a non-technical teammate):** `node packages/pitch-kit/builders/build-portable.mjs <work>/index.html <work>/deck.portable.html` — inlines the whole engine (CSS + JS as base64 + logo as data URI) into ONE `.html`. The teammate opens it in Chrome → Print → Save as PDF, with no repo, no Node, no server. Same 1920×1080 output.
 5. Verify: open the PDF; every slide is 1920×1080, no overflow, footers numbered, no `{{PLACEHOLDER}}` left.
 
 ## 2.5 Humanize + client-ready sanitize (mandatory — before you render)
