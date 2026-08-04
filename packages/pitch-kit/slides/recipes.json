@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-07-22",
+  "updated": "2026-07-30",
   "note": "Deck blueprints for common commercial scenarios. Each recipe tells the agent what to ASK, what KB context to LOAD, and which slides to assemble. Add a recipe when a new pitch type recurs (see ../AGENTS.md → contribution loop).",
   "recipes": [
     {
@@ -124,6 +124,41 @@
         "E4 (optimizar) es el de mayor riesgo de expectativa: en experiencia de compra/app/e-commerce se puede INFERIR, no saber. Di el límite en el deck, no en la entrega.",
         "Todo el copy pasa por COPY_RULES.md antes de renderizar."
       ]
+    },
+    {
+      "id": "credentials",
+      "name": "Deck de credenciales / capabilities de Noisia",
+      "use_when": "Presentar Noisia como agencia (quiénes somos, qué vendemos, cómo lo hacemos, para quién) SIN ser una propuesta a un cliente específico. La clásica 'creds' de agencia.",
+      "ask_first": [
+        "¿Para qué audiencia o industria aterrizo los ejemplos? (about-method, applications, industries)",
+        "¿Con o sin precios? (una creds normalmente va SIN precios)",
+        "¿Español o bilingüe?",
+        "¿Standalone o dentro de un pitch más grande? (ajusta el footer NN/TOTAL)"
+      ],
+      "load_kb": [
+        "packages/kb/00-overview/positioning.md",
+        "packages/kb/00-overview/principles.md",
+        "packages/kb/02-services/product-model.md"
+      ],
+      "slides": [
+        "cover",
+        "about-noisia",
+        "offer",
+        "about-pipeline",
+        "about-method",
+        "applications",
+        "industries",
+        "closing"
+      ],
+      "rules": [
+        "Es CREDENCIALES, no propuesta: la growth-ladder NO es obligatoria y NO va slide de precio (salvo que el usuario pida precios).",
+        "Vende la pregunta, no el método: nunca pongas el nombre de una metodología en un slide; usa la pregunta que responde.",
+        "Di el engine lo mínimo: el cliente compra claridad y decisiones, no tecnología.",
+        "Aterriza los ejemplos de about-method/applications/industries en la industria que pida el usuario; sin data de cliente real.",
+        "La verdad comercial más actualizada vive en el KB Comercial de Drive (no en el repo). Si el usuario lo conecta o lo pasa, gana Drive sobre packages/kb.",
+        "Todo el copy pasa por COPY_RULES.md antes de renderizar."
+      ],
+      "notes": "Estructura base de una creds: portada → quiénes somos → qué vendemos → cómo lo hacemos (pipeline + método) → para qué/para quién (applications, industries) → cierre. Si el usuario quiere casos, intercala 'finding' o 'signal-insight' antes del cierre."
     }
   ]
 }
