@@ -235,3 +235,56 @@ sha256:fca380bc6273d0ba479553da158146ffbb80f0f601f726e6c3e1b16beab4953c
 This evidence authorizes creating the isolated Preview infrastructure. It does
 not authorize production access, paid product runs, a governed-reader cutover
 or marking Preview online-ready.
+
+## 11. Online deployment evidence — 2026-08-19T03:45Z
+
+The first isolated Preview deployment is online from commit
+`433f5f75e2896a616173cd92950b796e4d4f82ba` on branch
+`codex/noisia-data-os-cut-1-uat-2026-08-18`.
+
+- Preview hostname: `studio-uat-uat.up.railway.app`.
+- Railway project identity:
+  `sha256:747e39fc86c84c345387d519c5101171bf9334f04a53c320937760c149d71ac2`.
+- Railway environment identity:
+  `sha256:2b1d77fc590f81dffef04e0ef0025a8fc07337a9c4640a10fac4fdaff3885cb1`.
+- Studio deployment identity:
+  `sha256:49d7508857c325e86a94ab7f87c9e1168a93e38070020463b4f9cf973efd0cf5`.
+- Workers deployment identity:
+  `sha256:59cdcd6a48aaa65af63cb7c0276c9f9ba55d2b7ac238791e9019ee434ce33a63`.
+- Supabase project-ref identity:
+  `sha256:030c5a33e3b28881c4d77983a6049bbfa16c995da232454081cbccfcfa78aa32`.
+- Redis connection identity:
+  `sha256:63267aa0a500c613ffebeab7efccad637d3de6daa790c347fdad05c928db0f86`.
+- Kinde uses the separate `Preview UAT` environment and a dedicated back-end
+  web application. Its application identity is
+  `sha256:9a39da7c09ed4895e77fc24f8f8066dd6c33b5e7400c0596c7a9230f4a1512c9`.
+
+Verified online:
+
+- `studio-uat` and `workers-uat` are both `Online`, one replica each;
+- `GET /api/health` returned HTTP 200 with app/env/provider checks green;
+- `GET /api/health?deep=1` returned HTTP 200 with database and UAT identity
+  checks green and no missing environment or capabilities;
+- Worker startup passed with profile `uat`, mode `empty-cut`, five distinct
+  `-uat` queues, zero executable Redis jobs and zero claimable strategic,
+  strategic-step or workspace-import outbox rows;
+- engine, Data OS refresh, taxonomy enrichment and paid T&B execution remain
+  disabled; Query Engine and T&B queue consumers are online;
+- the Preview home page and Kinde UAT sign-in page load, and the OAuth request
+  returns to the exact Preview callback;
+- no production service, database, Redis, domain, branch or Kinde environment
+  was modified.
+
+Still required before changing the readiness marker:
+
+- complete the first passwordless Kinde login and verify logout;
+- verify the authenticated brand list and Amazon Alexa workspace under DB AuthZ;
+- exercise Acquisition Plan/query evidence in the online UI;
+- run one bounded asynchronous CSV smoke and confirm Mentions/Semantic Review;
+- rehearse application rollback in Preview.
+
+Therefore the current status remains:
+
+```text
+NOISIA_PREVIEW_UAT_ONLINE_READY=false
+```
