@@ -1,10 +1,12 @@
 # Noisia Preview/UAT — operator handoff and greenfield QA
 
-Status: `uat_operator_qa_in_progress`  
-Recorded: `2026-08-19T00:52:00-06:00` (`America/Mexico_City`)  
-Owner: Product + Engineering  
-Environment: **Noisia Preview/UAT**, never production  
-Canonical release cut: [doc 60](./60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md)  
+| Field | Value |
+|---|---|
+| Status | `uat_operator_qa_in_progress` |
+| Recorded | `2026-08-19T00:52:00-06:00` (`America/Mexico_City`) |
+| Owner | Product + Engineering |
+| Environment | **Noisia Preview/UAT**, never production |
+| Canonical release cut | [doc 60](./60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md) |
 
 This document is an additive handoff. It does not replace the historical evidence in
 the North Star, the semantic-cascade execution plan or the Preview release cut.
