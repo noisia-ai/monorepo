@@ -5,10 +5,17 @@ import { canAccessPortal, canAccessStudio, defaultAuthenticatedPath } from "@/li
 // decide el destino por rol preservando `next`.
 export function loginPath(next = "/studio") {
   const safeNext = safeRelativePath(next, "/studio");
-  const relativePath = `/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath(safeNext))}`;
-  const siteUrl = parseSiteUrl(process.env.KINDE_SITE_URL);
+  const postLoginRedirectUrl = canonicalAppUrl(authContinuePath(safeNext));
+  const relativePath = `/api/auth/login?post_login_redirect_url=${encodeURIComponent(postLoginRedirectUrl)}`;
 
-  return siteUrl ? new URL(relativePath, siteUrl).toString() : relativePath;
+  return canonicalAppUrl(relativePath);
+}
+
+export function canonicalAppUrl(path: string) {
+  const siteUrl = parseSiteUrl(process.env.KINDE_SITE_URL)
+    ?? parseSiteUrl(process.env.NEXT_PUBLIC_APP_URL);
+
+  return siteUrl ? new URL(path, siteUrl).toString() : path;
 }
 
 export function authContinuePath(next?: string | null) {
