@@ -1,29 +1,4 @@
 {
-  "Auth": {
-    "brand": "Noisia Studio",
-    "eyebrow": "Internal research workspace",
-    "title": "Enter the analysis engine.",
-    "description": "Configure corpora, validate mentions, and version studies before turning them into client deliverables.",
-    "enter": "Enter",
-    "createAccount": "Create account",
-    "vitals": {
-      "queryEngine": "Query engine",
-      "queryEngineDetail": "Listening + AI",
-      "corpusQa": "Corpus QA",
-      "corpusQaDetail": "cleanup and snapshots",
-      "outputs": "Outputs",
-      "outputsDetail": "T&B first"
-    }
-  },
-  "Login": {
-    "brand": "Studio access",
-    "eyebrow": "Secure access",
-    "title": "Noisia Studio",
-    "description": "Sign in with your Noisia account. Analysts go to the engine; clients go to Signal, the published report experience.",
-    "enter": "Enter",
-    "createAccount": "Create account",
-    "hint": "If you came from an internal link, we will send you back there after sign-in."
-  },
   "Unauthorized": {
     "brand": "Restricted access",
     "eyebrow": "Permissions",

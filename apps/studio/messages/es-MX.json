@@ -1,29 +1,4 @@
 {
-  "Auth": {
-    "brand": "Noisia Studio",
-    "eyebrow": "Internal research workspace",
-    "title": "Entra al motor de análisis.",
-    "description": "Configura corpora, valida menciones y versiona estudios antes de convertirlos en entregables para clientes.",
-    "enter": "Entrar",
-    "createAccount": "Crear cuenta",
-    "vitals": {
-      "queryEngine": "Query engine",
-      "queryEngineDetail": "Listening + IA",
-      "corpusQa": "Corpus QA",
-      "corpusQaDetail": "limpieza y snapshots",
-      "outputs": "Outputs",
-      "outputsDetail": "T&B primero"
-    }
-  },
-  "Login": {
-    "brand": "Studio access",
-    "eyebrow": "Acceso seguro",
-    "title": "Noisia Studio",
-    "description": "Entra con tu cuenta de Noisia. Si eres analista irás al engine; si eres cliente, entrarás a Signal, la experiencia de reportes publicados.",
-    "enter": "Entrar",
-    "createAccount": "Crear cuenta",
-    "hint": "Si vienes de un link interno, regresamos a esa pantalla después de iniciar sesión."
-  },
   "Unauthorized": {
     "brand": "Acceso restringido",
     "eyebrow": "Permisos",

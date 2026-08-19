@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getLocaleFromPreferences, localeCookieName } from "@/i18n/locales";
-import { postLoginPath } from "@/lib/auth/redirects";
+import { loginPath, postLoginPath } from "@/lib/auth/redirects";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +11,7 @@ export async function GET(request: NextRequest) {
   const next = request.nextUrl.searchParams.get("next");
 
   if (!session) {
-    const loginUrl = new URL("/login", request.url);
-    if (next) loginUrl.searchParams.set("next", next);
+    const loginUrl = new URL(loginPath(next || "/studio"), request.url);
     return noStoreRedirect(loginUrl);
   }
 
