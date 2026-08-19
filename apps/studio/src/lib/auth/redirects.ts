@@ -11,26 +11,6 @@ export function loginPath(next = "/studio") {
   return siteUrl ? new URL(relativePath, siteUrl).toString() : relativePath;
 }
 
-export function canonicalAuthStartUrl(
-  requestUrl: string,
-  endpoint: string | undefined,
-  configuredSiteUrl = process.env.KINDE_SITE_URL
-) {
-  if (endpoint !== "login" && endpoint !== "register") return null;
-
-  const siteUrl = parseSiteUrl(configuredSiteUrl);
-  if (!siteUrl) return null;
-
-  const incomingUrl = new URL(requestUrl);
-  if (incomingUrl.origin === siteUrl.origin) return null;
-
-  const canonicalUrl = new URL(siteUrl);
-  canonicalUrl.pathname = incomingUrl.pathname;
-  canonicalUrl.search = incomingUrl.search;
-  canonicalUrl.hash = "";
-  return canonicalUrl;
-}
-
 export function authContinuePath(next?: string | null) {
   const safeNext = safeRelativePath(next, "");
   return safeNext ? `/auth/continue?next=${encodeURIComponent(safeNext)}` : "/auth/continue";
