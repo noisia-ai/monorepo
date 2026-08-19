@@ -4,13 +4,15 @@ import test from "node:test";
 process.env.DATABASE_URL ??= "postgres://unit:test@localhost:5432/noisia_test";
 
 import { isLocalAuthOverrideEnabled } from "./local-auth";
+import { canonicalAuthStartUrl, loginPath } from "./redirects";
 
 const ENV_KEYS = [
   "NOISIA_ENABLE_LOCAL_AUTH_OVERRIDE",
   "NOISIA_LOCAL_AUTH_EMAIL",
   "NODE_ENV",
   "VERCEL_ENV",
-  "RAILWAY_ENVIRONMENT"
+  "RAILWAY_ENVIRONMENT",
+  "KINDE_SITE_URL"
 ] as const;
 
 function withEnv(values: Partial<Record<typeof ENV_KEYS[number], string | undefined>>, run: () => void) {
@@ -55,4 +57,49 @@ test("local auth override requires explicit dev-only flags", () => {
   }, () => {
     assert.equal(isLocalAuthOverrideEnabled(), false);
   });
+});
+
+test("login paths start on the configured canonical Kinde site", () => {
+  withEnv({ KINDE_SITE_URL: "https://studio-uat.example.com" }, () => {
+    assert.equal(
+      loginPath("/studio/brands"),
+      "https://studio-uat.example.com/api/auth/login?post_login_redirect_url=%2Fauth%2Fcontinue%3Fnext%3D%252Fstudio%252Fbrands"
+    );
+  });
+
+  withEnv({ KINDE_SITE_URL: undefined }, () => {
+    assert.equal(
+      loginPath("/studio"),
+      "/api/auth/login?post_login_redirect_url=%2Fauth%2Fcontinue%3Fnext%3D%252Fstudio"
+    );
+  });
+});
+
+test("auth starts are canonicalized before Kinde creates the state cookie", () => {
+  const canonical = canonicalAuthStartUrl(
+    "https://0.0.0.0:8080/api/auth/login?post_login_redirect_url=%2Fauth%2Fcontinue",
+    "login",
+    "https://studio-uat.example.com"
+  );
+
+  assert.equal(
+    canonical?.toString(),
+    "https://studio-uat.example.com/api/auth/login?post_login_redirect_url=%2Fauth%2Fcontinue"
+  );
+  assert.equal(
+    canonicalAuthStartUrl(
+      "https://studio-uat.example.com/api/auth/register",
+      "register",
+      "https://studio-uat.example.com"
+    ),
+    null
+  );
+  assert.equal(
+    canonicalAuthStartUrl(
+      "https://0.0.0.0:8080/api/auth/kinde_callback",
+      "kinde_callback",
+      "https://studio-uat.example.com"
+    ),
+    null
+  );
 });

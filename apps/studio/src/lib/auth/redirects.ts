@@ -5,7 +5,30 @@ import { canAccessPortal, canAccessStudio, defaultAuthenticatedPath } from "@/li
 // decide el destino por rol preservando `next`.
 export function loginPath(next = "/studio") {
   const safeNext = safeRelativePath(next, "/studio");
-  return `/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath(safeNext))}`;
+  const relativePath = `/api/auth/login?post_login_redirect_url=${encodeURIComponent(authContinuePath(safeNext))}`;
+  const siteUrl = parseSiteUrl(process.env.KINDE_SITE_URL);
+
+  return siteUrl ? new URL(relativePath, siteUrl).toString() : relativePath;
+}
+
+export function canonicalAuthStartUrl(
+  requestUrl: string,
+  endpoint: string | undefined,
+  configuredSiteUrl = process.env.KINDE_SITE_URL
+) {
+  if (endpoint !== "login" && endpoint !== "register") return null;
+
+  const siteUrl = parseSiteUrl(configuredSiteUrl);
+  if (!siteUrl) return null;
+
+  const incomingUrl = new URL(requestUrl);
+  if (incomingUrl.origin === siteUrl.origin) return null;
+
+  const canonicalUrl = new URL(siteUrl);
+  canonicalUrl.pathname = incomingUrl.pathname;
+  canonicalUrl.search = incomingUrl.search;
+  canonicalUrl.hash = "";
+  return canonicalUrl;
 }
 
 export function authContinuePath(next?: string | null) {
@@ -36,4 +59,15 @@ export function safeRelativePath(value: unknown, fallback = "/studio") {
   if (!value.startsWith("/") || value.startsWith("//")) return fallback;
   if (value.startsWith("/api/")) return fallback;
   return value;
+}
+
+function parseSiteUrl(value: string | undefined) {
+  if (!value?.trim()) return null;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
 }
