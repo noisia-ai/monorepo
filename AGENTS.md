@@ -41,6 +41,7 @@ Branch-local canon:
 - Signal Acquisition Plan schema/contract audit: `docs/product/57_SIGNAL_ACQUISITION_PLAN_SCHEMA_CONTRACT_AUDIT.md`.
 - Signal 10C.1 corrective benchmark handoff: `docs/product/59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md`.
 - Noisia Preview/UAT release cut: `docs/product/60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md`.
+- Noisia Preview/UAT operator handoff: `docs/product/61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
 - Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
 - Signal always-on/strategic architecture ADR: `docs/adr/009-signal-always-on-strategic-dashboard.md`.

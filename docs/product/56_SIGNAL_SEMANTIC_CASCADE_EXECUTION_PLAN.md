@@ -1221,3 +1221,58 @@ query ejecutada y query no disponible con motivo cerrado. La ausencia legítima 
 governance mantiene el upload fail-closed sin ocultar la preparación de lineage. Las cinco
 colas auditadas permanecieron en cero, ambos heartbeats estaban vigentes y ningún outbox
 era reclamable. Provider calls, imports, paid jobs y gasto permanecieron en cero.
+
+## 22. Preview/UAT y gate previo a 10C.2
+
+**Registrado:** 2026-08-19T00:52:00-06:00 (`America/Mexico_City`)
+
+El plan 10A–10H no salta de Query Evidence V2 a otro benchmark sólo porque la aplicación
+ya está hospedada. Antes de volver a modelar, Preview/UAT debe demostrar el recorrido
+greenfield con la topología de producción pero recursos aislados de UAT.
+
+Estado confirmado:
+
+- Preview HTTPS y deep health están verdes;
+- Kinde ya completa login sobre el origen canónico Preview;
+- Studio y un Worker UAT están en línea;
+- database y Redis pasan sus fingerprints fail-closed;
+- las colas son exclusivas `-uat`;
+- el read mode visible sigue `legacy` deliberadamente;
+- 10C.1 permanece `no_adoption` y 10D permanece bloqueado.
+
+Gate operativo pendiente, en orden:
+
+1. logout y segundo login desde sesión limpia;
+2. Brand list y workspace bajo AuthZ real;
+3. Acquisition Plan, Brief y Query Evidence V2 en línea;
+4. import pequeño por slot con transporte asíncrono y cierre atómico;
+5. Mentions y Semantic Review consumiendo sólo provenance aceptada;
+6. rollback de aplicación Railway hacia el commit autenticado conocido como bueno.
+
+Después se crea un corpus **Amazon Alexa** nuevo y multi-scope. Primary brand, category
+y cada competitor se importan en slots distintos. El corpus Alexa anterior, marcado de
+forma homogénea como `primary_brand`, conserva valor histórico de diagnóstico pero no es
+evidence para 10C.2.
+
+La apertura de 10C.2 requiere, como mínimo:
+
+- primary, category y dos competitors reconciliados;
+- typed observations sin roots inexplicadas;
+- query evidence honesta por import;
+- provenance aceptada y denominadores congelados;
+- preregistro nuevo con criterios locale-aware y multi-scope;
+- cero cambio a readers, pointers o 10D.
+
+El runbook operativo, custodia de secretos, defect protocol y prompt ejecutable viven en
+[doc 61](./61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md). La misión UAT no autoriza provider
+spend ni clustering. El resultado válido puede ser un checklist incompleto con defectos
+P0/P1 bien diagnosticados; no puede ser un flujo marcado verde mediante fixture logic,
+SQL directo o relajación de gates.
+
+| Gate | Estado 2026-08-19 | Próxima autoridad |
+|---|---|---|
+| Preview/UAT | `operator_qa_in_progress` | Completar doc 61 y registrar evidence |
+| Amazon Alexa acquisition | `not_started_clean` | Sólo después del auth/infra smoke |
+| 10C.2 | `blocked_by_clean_multiscope_corpus` | Preregistro separado |
+| 10D | `blocked_by_no_adoption` | Artifact adoptado + decisión operativa separada |
+| Reader cutover | `not_authorized` | Canary gobernado posterior |

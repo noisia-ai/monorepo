@@ -1120,3 +1120,48 @@ category y competitor los caminos `operator_attested`, registrar una query ejecu
 browser. Cuando falta quality/retention/licensing/provenance, el drawer permite preparar
 la evidencia pero mantiene archivo y submit bloqueados. No se creó ningún import batch,
 query version o job y no hubo provider calls ni acceso a producción.
+
+## Checkpoint operativo · Preview/UAT autenticado y siguiente prueba greenfield
+
+**Registrado:** 2026-08-19T00:52:00-06:00 (`America/Mexico_City`)
+
+Noisia Preview/UAT está en línea usando la topología real de la plataforma: Railway para
+Studio y Workers, Supabase `noisia-staging`, Redis Upstash aislado y una aplicación Kinde
+Preview UAT. El commit autenticado conocido como bueno es
+`787b7d1178131dfbf3e427920d92f116a328b3af`. El login canónico regresa a
+`https://studio-uat-uat.up.railway.app/studio`, el rol efectivo continúa siendo propiedad
+de la base de datos y el deep health valida app, entorno, database e identidades UAT.
+
+Este checkpoint no declara UAT terminada. Permanecen por demostrar en una sola sesión
+operatoria: logout y segundo login limpio; Brand list/workspace bajo AuthZ; Acquisition
+Plan y Query Evidence V2 en línea; un import CSV pequeño asíncrono; Admin Mentions y
+Semantic Review sobre provenance aceptada; y rollback de aplicación Railway.
+
+`NOISIA_SIGNAL_OPERATIONAL_READ_MODE=legacy` continúa intencionalmente. Significa que los
+readers visibles de Signal aún no hacen cutover a governed serving; no convierte Preview
+en una aplicación legacy ni autoriza mover pointers. Producción, paid T&B, provider runs,
+10C.2 y 10D permanecen fuera de esta prueba.
+
+La secuencia de producto vigente es:
+
+1. cerrar el checklist UAT sin relajar contratos;
+2. crear un workspace limpio **Amazon Alexa**, no reutilizar el corpus mezclado anterior;
+3. capturar primary, category y cada competitor en slots distintos con query evidence
+   honesta y typed observations;
+4. probar primero un CSV pequeño y reconciliar import/provenance;
+5. cargar después el corpus multi-scope curado y congelar sus digests;
+6. preregistrar un nuevo benchmark 10C.2;
+7. mantener 10D bloqueado hasta una adopción técnica y decisión operativa separadas.
+
+El runbook y prompt de takeover están en
+[doc 61](./61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md). Su regla central es que cualquier
+defecto encontrado en navegador se corrige en el contrato o componente canónico, con
+regresión y repetición del flujo; no se acepta lógica específica para Alexa, Laika, UUIDs
+o archivos ni SQL directo para hacer que el fixture pase.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

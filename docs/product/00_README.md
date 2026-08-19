@@ -80,6 +80,7 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 58 | `58_SIGNAL_LOCAL_MODELING_BENCHMARK.md` | Gates 10C/10C.1: export canónico read-only, benchmark locale-aware full-pop y resultado `no_adoption` con packet diagnóstico, sin providers ni writes a serving |
 | 59 | `59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md` | Handoff 10C.0/10C.1: reparación de canon, benchmark locale-aware y contratos offline de contexto/naming |
 | 60 | `60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md` | Corte online Preview/UAT: Railway aislado, Supabase staging, Redis UAT, guardas de Worker, QA y rollback |
+| 61 | `61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md` | Handoff operativo UAT: custodia de accesos, checklist browser/async, rollback, defect protocol y continuación greenfield Amazon Alexa |
 
 ---
 
@@ -244,7 +245,8 @@ noisia_studio_product_spec/
 ├── 57_SIGNAL_ACQUISITION_PLAN_SCHEMA_CONTRACT_AUDIT.md
 ├── 58_SIGNAL_LOCAL_MODELING_BENCHMARK.md
 ├── 59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md
-└── 60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md
+├── 60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md
+└── 61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md
 ```
 
-Este índice es un paquete vivo; el canon vigente incluye los documentos 00-60 y los YAMLs de metodología.
+Este índice es un paquete vivo; el canon vigente incluye los documentos 00-61 y los YAMLs de metodología.

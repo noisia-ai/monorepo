@@ -144,13 +144,14 @@ No secret value belongs in Git, docs, evidence packs, build logs or chat.
 
 ## 6. Online acceptance checklist
 
-- [ ] Preview domain returns HTTPS 200.
-- [ ] `/api/health` reports liveness even when Anthropic is absent.
-- [ ] `/api/health?deep=1` reports core environment and database healthy.
-- [ ] Kinde login/logout return to Preview, never production or localhost.
-- [ ] Worker startup says `profile=uat`, `startup_mode=empty-cut` and zero work.
-- [ ] Query Engine and T&B heartbeat names end in `-uat`.
-- [ ] Production health and production data are unchanged.
+- [x] Preview domain returns HTTPS 200.
+- [x] `/api/health` reports liveness even when Anthropic is absent.
+- [x] `/api/health?deep=1` reports core environment and database healthy.
+- [x] Kinde login returns to Preview, never production, localhost or `0.0.0.0`.
+- [ ] Kinde logout returns to Preview and a second login succeeds from a clean session.
+- [x] Worker startup says `profile=uat`, `startup_mode=empty-cut` and zero work.
+- [x] Query Engine and T&B heartbeat names end in `-uat`.
+- [x] Production health and production data are unchanged.
 - [ ] Brand list and Amazon Alexa workspace load under real AuthZ.
 - [ ] Acquisition Plan loads and its query-evidence choices persist.
 - [ ] One small CSV uploads, returns `202`, processes asynchronously and polls to
@@ -287,4 +288,44 @@ Therefore the current status remains:
 
 ```text
 NOISIA_PREVIEW_UAT_ONLINE_READY=false
+```
+
+## 12. Authenticated runtime checkpoint — 2026-08-19T00:52:00-06:00
+
+This checkpoint is additive to the first deployment evidence above. It records the
+canonical-auth remediation and does not claim the remaining operator flow has passed.
+
+- Active authenticated runtime commit:
+  `787b7d1178131dfbf3e427920d92f116a328b3af`.
+- The standalone legacy Studio auth landing was removed. The Preview root now starts the
+  Kinde UAT flow directly.
+- Callback state and post-login continuation remain on the canonical Preview HTTPS
+  origin. A successful login landed on `/studio`, never `localhost` or `0.0.0.0`.
+- The authenticated session resolved the DB-owned role `Admin Noisia`; Kinde remains
+  authentication only.
+- `GET /api/health?deep=1` returned HTTP 200 at `2026-08-19T06:52:17.961Z` with
+  `app`, `env`, `database`, `llm_provider` and `uat_identity` all `ok`.
+- The user observed a material responsiveness improvement after the hosted auth path
+  stabilized. This is a qualitative observation, not a performance SLO.
+
+The remaining online gate is now one coherent operator run:
+
+1. logout and second clean login;
+2. brand list and workspace AuthZ;
+3. Acquisition Plan and Query Evidence V2 online;
+4. one small asynchronous CSV import;
+5. Admin Mentions and Semantic Review from accepted provenance;
+6. Railway application rollback after a later deployment exists.
+
+The executable takeover, access-custody rules, defect protocol and Amazon Alexa
+greenfield sequence live in
+[doc 61](./61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md). `Serving Legacy` remains the
+intentional Signal-reader posture and is not permission to change a pointer or read mode.
+
+Current markers:
+
+```text
+NOISIA_PREVIEW_UAT_ONLINE_READY=false
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+SIGNAL_10D_READY=false
 ```
