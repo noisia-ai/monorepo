@@ -19,10 +19,14 @@ export type SignalMetricHelpContent = {
 
 export function SignalMetricHelp({
   content,
-  label
+  display,
+  label,
+  variant = "title"
 }: {
   content: SignalMetricHelpContent;
+  display?: React.ReactNode;
   label: string;
+  variant?: "icon" | "title";
 }) {
   const t = useTranslations("SignalV2");
   const tooltipId = useId();
@@ -120,9 +124,10 @@ export function SignalMetricHelp({
   return (
     <>
       <button
+        aria-label={variant === "icon" ? label : undefined}
         aria-describedby={open ? tooltipId : undefined}
         aria-expanded={open}
-        className="signal-v2-metric-help signal-v2-metric-help--title"
+        className={`signal-v2-metric-help signal-v2-metric-help--${variant}`}
         onBlur={() => {
           if (!pinned) setOpen(false);
         }}
@@ -141,7 +146,7 @@ export function SignalMetricHelp({
         ref={anchorRef}
         type="button"
       >
-        {label}
+        {display ?? label}
       </button>
       {popover}
     </>

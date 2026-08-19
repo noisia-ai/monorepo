@@ -28,9 +28,24 @@ Branch-local canon:
 - Signal backend execution roadmap: `docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`.
 - Signal V2 Shopify UI reference: `docs/product/33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md`.
 - Signal Brand Monitoring V1: `docs/product/34_SIGNAL_BRAND_MONITORING_V1.md`.
+- Signal workspace ownership canon: `docs/product/42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md`.
+- Signal V2 frontend system: `docs/product/43_SIGNAL_V2_FRONTEND_SYSTEM.md`.
+- Signal workspace migration handoff: `docs/product/44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md`.
+- Workspace OS branch context: `docs/product/49_NOISIA_WORKSPACE_OS_BRANCH_CONTEXT_HANDOFF.md`.
+- Signal governed views and population policies: `docs/product/50_SIGNAL_GOVERNED_VIEWS_AND_POPULATION_POLICIES.md`.
+- Signal governed serving orchestration: `docs/product/51_SIGNAL_GOVERNED_SERVING_ORCHESTRATION/EXECUTION_STATE.md`.
+- Noisia feature catalog V0.2 and Linear-ready backlog: `docs/product/52_NOISIA_FEATURES_DESCRIPTION_V02.md`.
+- Alexa greenfield operator QA: `docs/product/54_ALEXA_GREENFIELD_OPERATOR_QA.md`.
+- Signal acquisition, semantic cascade and topic contracts: `docs/product/55_SIGNAL_ACQUISITION_SEMANTIC_CASCADE_AND_TOPIC_CONTRACTS.md`.
+- Signal semantic cascade execution plan: `docs/product/56_SIGNAL_SEMANTIC_CASCADE_EXECUTION_PLAN.md`.
+- Signal Acquisition Plan schema/contract audit: `docs/product/57_SIGNAL_ACQUISITION_PLAN_SCHEMA_CONTRACT_AUDIT.md`.
+- Signal 10C.1 corrective benchmark handoff: `docs/product/59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md`.
+- Noisia Preview/UAT release cut: `docs/product/60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md`.
 - Data OS ADR: `docs/adr/007-noisia-data-os-cut-1.md`.
 - Analysis artifact/evidence graph ADR: `docs/adr/008-analysis-artifact-evidence-graph.md`.
 - Signal always-on/strategic architecture ADR: `docs/adr/009-signal-always-on-strategic-dashboard.md`.
+- Signal workspace-owned data plane ADR: `docs/adr/014-signal-workspace-owned-data-plane.md`.
+- Signal semantic cascade and topic contracts ADR: `docs/adr/015-signal-semantic-cascade-and-topic-contracts.md`.
 - Branch status: `docs/BRANCHES.md`.
 - Production guardrails: `docs/AGENT_GUARDRAILS.md`.
 - Schema canon: `docs/product/04_DATABASE_SCHEMA.md`, section "Data OS Cut 1".

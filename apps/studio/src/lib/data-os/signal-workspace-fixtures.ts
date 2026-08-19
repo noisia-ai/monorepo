@@ -222,6 +222,16 @@ export const SIGNAL_TAXONOMY_TERM_DETAIL_FIXTURE_V1 = {
     state: "fresh"
   }],
   related_terms: [],
+  sentiment: {
+    positive_mentions: 22,
+    neutral_mentions: 11,
+    negative_mentions: 7,
+    unclassified_mentions: 0,
+    classified_mentions: 40,
+    total_mentions: 40,
+    dominant: "positive",
+    meaning: "evidence_sentiment_not_term_polarity"
+  },
   coverage: SIGNAL_TOPICS_NARRATIVES_OVERVIEW_FIXTURE_V1.topics.coverage,
   state: "fresh",
   limitations: [],

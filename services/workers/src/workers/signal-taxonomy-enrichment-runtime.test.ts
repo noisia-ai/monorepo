@@ -3,146 +3,30 @@ import test from "node:test";
 
 import {
   buildSignalTaxonomyEnrichmentOptions,
-  drainSignalTaxonomyPagesV1,
-  executeSignalTaxonomyBatchesV1,
   isSignalTaxonomyEnrichmentEnabled,
-  isSignalTaxonomyLlmEnabled
+  isSignalTaxonomyLlmEnabled,
+  SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON,
+  SignalTaxonomyEnrichmentRetiredError
 } from "./signal-taxonomy-enrichment-runtime";
 
-test("taxonomy enrichment and its paid providers are closed by default", () => {
-  assert.equal(isSignalTaxonomyEnrichmentEnabled({}), false);
-  assert.equal(isSignalTaxonomyLlmEnabled({}), false);
-  assert.equal(isSignalTaxonomyLlmEnabled({
+test("taxonomy enrichment cannot be reactivated by flags or provider keys", () => {
+  const allEnabled = {
     NOISIA_DATA_OS_WORKER_ENABLED: "true",
     NOISIA_SIGNAL_TAXONOMY_ENRICHMENT_ENABLED: "true",
     NOISIA_SIGNAL_TAXONOMY_LLM_ENABLED: "true",
     ANTHROPIC_API_KEY: "fake",
     VOYAGE_API_KEY: "fake"
-  }), true);
+  };
+  assert.equal(isSignalTaxonomyEnrichmentEnabled({}), false);
+  assert.equal(isSignalTaxonomyLlmEnabled({}), false);
+  assert.equal(isSignalTaxonomyEnrichmentEnabled(allEnabled), false);
+  assert.equal(isSignalTaxonomyLlmEnabled(allEnabled), false);
 });
 
-test("taxonomy jobs use stable dedupe, bounded retries and dead-letter retention", () => {
-  const options = buildSignalTaxonomyEnrichmentOptions("taxonomy-stable");
-  assert.equal(options.jobId, "taxonomy-stable");
-  assert.equal(options.attempts, 3);
-  assert.deepEqual(options.backoff, { type: "exponential", delay: 10_000 });
-});
-
-test("incremental batches retry, heartbeat and persist exactly once", async () => {
-  let calls = 0;
-  const persisted: number[] = [];
-  const heartbeats: number[] = [];
-  const result = await executeSignalTaxonomyBatchesV1({
-    batches: [1, 2],
-    budget_cap_usd: 1,
-    estimate: () => 0.1,
-    classify: async (batch) => {
-      calls += 1;
-      if (batch === 1 && calls === 1) throw new Error("transient");
-      return {
-        classifications: [{ mention_id: String(batch) }],
-        input_tokens: 10,
-        output_tokens: 5,
-        cost_usd: 0.1,
-        context_refs: []
-      };
-    },
-    persist: async (batch) => {
-      persisted.push(batch);
-    },
-    heartbeat: async (progress) => {
-      heartbeats.push(progress);
-    }
-  });
-  assert.equal(result.state, "completed");
-  assert.equal(calls, 3);
-  assert.deepEqual(persisted, [1, 2]);
-  assert.deepEqual(heartbeats, [50, 100]);
-});
-
-test("budget exhaustion returns partial without classifying the unaffordable batch", async () => {
-  const classified: number[] = [];
-  const result = await executeSignalTaxonomyBatchesV1({
-    batches: [1, 2],
-    budget_cap_usd: 0.15,
-    estimate: () => 0.1,
-    classify: async (batch) => {
-      classified.push(batch);
-      return {
-        classifications: [],
-        input_tokens: 1,
-        output_tokens: 1,
-        cost_usd: 0.1,
-        context_refs: []
-      };
-    },
-    persist: async () => undefined,
-    heartbeat: async () => undefined
-  });
-  assert.equal(result.state, "partial");
-  assert.equal(result.reason, "budget_cap_reached");
-  assert.deepEqual(classified, [1]);
-});
-
-test("provider spend beyond the approved cap fails closed", async () => {
-  await assert.rejects(
-    executeSignalTaxonomyBatchesV1({
-      batches: [1],
-      budget_cap_usd: 0.1,
-      estimate: () => 0.05,
-      classify: async () => ({
-        classifications: [],
-        input_tokens: 1,
-        output_tokens: 1,
-        cost_usd: 0.2,
-        context_refs: []
-      }),
-      persist: async () => undefined,
-      heartbeat: async () => undefined
-    }),
-    /exceeded_budget_cap/
+test("legacy enqueue options always throw the stable retirement error", () => {
+  assert.throws(
+    () => buildSignalTaxonomyEnrichmentOptions("taxonomy-stable"),
+    (error) => error instanceof SignalTaxonomyEnrichmentRetiredError
+      && error.code === SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON
   );
-});
-
-test("bounded drain processes more than 10,000 records without OFFSET", async () => {
-  const pending = Array.from({ length: 10_050 }, (_, index) => index + 1);
-  const seen = new Set<number>();
-  const result = await drainSignalTaxonomyPagesV1({
-    page_size: 500,
-    load_page: async (limit) =>
-      pending.filter((id) => !seen.has(id)).slice(0, limit),
-    process_page: async (page) => {
-      page.forEach((id) => seen.add(id));
-      return { state: "completed", processed: page.length };
-    }
-  });
-  assert.equal(result.state, "completed");
-  assert.equal(result.processed, 10_050);
-  assert.equal(seen.size, 10_050);
-  assert.equal(result.pages, 21);
-});
-
-test("budget continuation resumes only unpersisted batches", async () => {
-  const persisted = new Set<number>();
-  const execute = (budget: number) =>
-    executeSignalTaxonomyBatchesV1({
-      batches: [1, 2, 3].filter((batch) => !persisted.has(batch)),
-      budget_cap_usd: budget,
-      estimate: () => 0.1,
-      classify: async (batch) => ({
-        classifications: [{ mention_id: String(batch) }],
-        input_tokens: 1,
-        output_tokens: 1,
-        cost_usd: 0.1,
-        context_refs: []
-      }),
-      persist: async (batch) => { persisted.add(batch); },
-      heartbeat: async () => undefined
-    });
-  const partial = await execute(0.15);
-  assert.equal(partial.state, "partial");
-  assert.equal(partial.completed_batches, 1);
-  const resumed = await execute(0.25);
-  assert.equal(resumed.state, "completed");
-  assert.deepEqual([...persisted], [1, 2, 3]);
 });

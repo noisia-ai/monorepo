@@ -274,6 +274,15 @@ test("watermarks canonicalize instants and sync identifiers deterministically", 
     ...watermark,
     source_sync_run_ids: [SYNC_B, SYNC_A]
   }));
+  assert.equal(dataWatermarkHashV1(watermark), dataWatermarkHashV1({
+    ...watermark,
+    materialized_at: "2026-06-01T01:05:00Z"
+  }));
+  assert.notEqual(dataWatermarkHashV1(watermark), dataWatermarkHashV1({
+    ...watermark,
+    accepted_at: "2026-06-01T01:00:00Z",
+    materialized_at: "2026-06-01T01:05:00Z"
+  }));
 });
 
 test("data and interpretation freshness stay separate and validate their own scope", () => {

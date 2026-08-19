@@ -28,31 +28,38 @@ export function DataOsReadinessPanel({ readiness }: { readiness: DataOsCorpusRea
         </span>
       </header>
 
-      <ol className="engine-data-os__pipeline">
-        {readiness.stages.map((stage, index) => (
-          <li className={`engine-data-os__stage engine-data-os__stage--${stage.status}`} key={stage.key}>
-            <div className="engine-data-os__stage-topline">
-              <span className="engine-data-os__step">{String(index + 1).padStart(2, "0")}</span>
-              <StatusIcon status={stage.status} />
-            </div>
-            <strong>{stage.label}</strong>
-            <span>{stage.summary}</span>
-            <small>{stage.detail}</small>
-          </li>
-        ))}
-      </ol>
+      <p className={primaryIssue ? "engine-data-os__issue" : "engine-data-os__next"}>
+        <Icon name={primaryIssue ? "alert" : "check"} size={14} />
+        {primaryIssue ?? readiness.nextAction}
+      </p>
 
-      <footer className="engine-data-os__footer">
-        <div className="engine-data-os__coverage">
-          <span><strong>{formatCount(readiness.coverage.metricFamilies)}</strong> familias de métricas</span>
-          <span><strong>{formatCount(readiness.coverage.overlappingMonths)}</strong> meses cruzables</span>
-          <span><strong>{formatCount(readiness.counts.dashboardRefs)}</strong> refs de Signal</span>
-        </div>
-        <p className={primaryIssue ? "engine-data-os__issue" : "engine-data-os__next"}>
-          <Icon name={primaryIssue ? "alert" : "arrow-right"} size={14} />
-          {primaryIssue ?? readiness.nextAction}
-        </p>
-      </footer>
+      <details className="engine-data-os__disclosure">
+        <summary>
+          <span>Trazabilidad completa</span>
+          <Icon name="chevron-down" size={15} />
+        </summary>
+        <ol className="engine-data-os__pipeline">
+          {readiness.stages.map((stage, index) => (
+            <li className={`engine-data-os__stage engine-data-os__stage--${stage.status}`} key={stage.key}>
+              <div className="engine-data-os__stage-topline">
+                <span className="engine-data-os__step">{String(index + 1).padStart(2, "0")}</span>
+                <StatusIcon status={stage.status} />
+              </div>
+              <strong>{stage.label}</strong>
+              <span>{stage.summary}</span>
+              <small>{stage.detail}</small>
+            </li>
+          ))}
+        </ol>
+
+        <footer className="engine-data-os__footer">
+          <div className="engine-data-os__coverage">
+            <span><strong>{formatCount(readiness.coverage.metricFamilies)}</strong> familias de métricas</span>
+            <span><strong>{formatCount(readiness.coverage.overlappingMonths)}</strong> meses cruzables</span>
+            <span><strong>{formatCount(readiness.counts.dashboardRefs)}</strong> refs de Signal</span>
+          </div>
+        </footer>
+      </details>
     </section>
   );
 }

@@ -32,6 +32,20 @@ from the Kinde token (`lib/auth/session.ts`, `lib/auth/roles.ts`, `lib/auth/guar
 New Study, Engine analysis and Signal Pulse runs enqueue jobs to Upstash. **Start
 `pnpm dev:workers`** or the wizard hangs. See `services/workers/AGENTS.md`.
 
+## Signal V2 — preserve the shared system
+
+Before editing `/signal/{workspace}` read:
+
+- `docs/product/38_SIGNAL_LOADING_AND_NAVIGATION_STANDARD.md`;
+- `docs/product/42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md` when changing ingestion/serving;
+- `docs/product/43_SIGNAL_V2_FRONTEND_SYSTEM.md` when changing UI;
+- `docs/product/44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md` for the current migration.
+
+`SignalV2ModuleHeader`, the persistent shell/navigation, shared filters,
+`SignalEChart`/runtime, module skeletons and `SignalEvidenceDrawer` are governed patterns.
+Do not create per-module replacements. A backend migration must keep compact/paginated
+serving; never hydrate Signal from a complete snapshot or `published_outputs.payload`.
+
 ## Press deck (Signal)
 
 `signal/[outputId]/deck/page.tsx` renders a 16:9 view-only deck reusing the `deck-stage`

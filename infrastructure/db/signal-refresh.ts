@@ -16,6 +16,23 @@ export type SignalDataAcceptance = {
   changed: boolean;
 };
 
+export type SignalWorkspaceDataAcceptanceInput = {
+  workspaceId: string;
+  sourceKey: string;
+  dataSourceId: string;
+  importBatchId: string;
+  acceptedAt?: Date;
+  materializedAt?: Date;
+};
+
+export type SignalWorkspaceDataAcceptance = {
+  watermarkId: string;
+  invalidationId: string | null;
+  workspaceId: string;
+  populationId: string | null;
+  changed: boolean;
+};
+
 type Queryable = {
   query: (
     text: string,
@@ -32,6 +49,8 @@ export async function recordSignalDataAcceptance(
   if (Boolean(input.sourceSyncRunId) === Boolean(input.importBatchId)) {
     throw new Error("Exactly one of sourceSyncRunId or importBatchId is required.");
   }
+  const acceptedAt = input.acceptedAt ?? new Date();
+  const materializedAt = input.materializedAt ?? acceptedAt;
   const result = await queryable.query(
     `
       SELECT watermark_id::text, invalidation_id::text, workspace_id::text, changed
@@ -44,8 +63,8 @@ export async function recordSignalDataAcceptance(
       input.sourceSyncRunId ?? null,
       input.importBatchId ?? null,
       input.corpusRevision ?? null,
-      input.acceptedAt ?? new Date(),
-      input.materializedAt ?? new Date()
+      acceptedAt,
+      materializedAt
     ]
   );
   return result.rows.map((row) => ({
@@ -54,4 +73,38 @@ export async function recordSignalDataAcceptance(
     workspaceId: String(row.workspace_id),
     changed: row.changed === true
   }));
+}
+
+export async function recordSignalWorkspaceDataAcceptance(
+  queryable: Queryable,
+  input: SignalWorkspaceDataAcceptanceInput
+): Promise<SignalWorkspaceDataAcceptance> {
+  const sourceKey = input.sourceKey.trim();
+  if (!sourceKey) throw new Error("sourceKey is required.");
+  const acceptedAt = input.acceptedAt ?? new Date();
+  const materializedAt = input.materializedAt ?? acceptedAt;
+  const result = await queryable.query(
+    `
+      SELECT watermark_id::text, invalidation_id::text,
+        workspace_id::text, population_id::text, changed
+      FROM record_signal_workspace_data_acceptance_v2($1::uuid, $2, $3::uuid, $4::uuid, $5, $6)
+    `,
+    [
+      input.workspaceId,
+      sourceKey,
+      input.dataSourceId,
+      input.importBatchId,
+      acceptedAt,
+      materializedAt
+    ]
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("Workspace acceptance did not return a watermark.");
+  return {
+    watermarkId: String(row.watermark_id),
+    invalidationId: row.invalidation_id == null ? null : String(row.invalidation_id),
+    workspaceId: String(row.workspace_id),
+    populationId: row.population_id == null ? null : String(row.population_id),
+    changed: row.changed === true
+  };
 }

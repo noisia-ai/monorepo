@@ -1,5 +1,5 @@
 import { forbidden, unauthorized } from "@/lib/api/responses";
-import { canManageCorpus, canViewClientOutputs } from "@/lib/auth/roles";
+import { canApproveAnalysis, canManageCorpus, canViewClientOutputs } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { getSignalOutputForUser } from "@/lib/data/signal";
@@ -15,6 +15,14 @@ import {
   loadSignalWorkspaceContextWithDependencies,
   type SignalWorkspaceSession
 } from "@/lib/data-os/signal-workspace-context";
+import {
+  finalizeSignalModuleServingScopeV1,
+  resolveSignalModuleServingScopeV1,
+  signalClientServingViewFromRequestV1,
+  type SignalBrandServingModuleKeyV1
+} from "@/lib/data-os/signal-module-serving-scope";
+import type { SignalFilterV1 } from "@noisia/query-engine";
+import { signalBackendErrorResponse } from "@/lib/data-os/signal-workspace-serving";
 import { isSignalPulseOutput } from "@/lib/signal-pulse/pulse-api";
 import {
   resolveSignalPulseVisibility,
@@ -78,11 +86,62 @@ export async function loadDataOsPulseContext(outputId: string, options: {
   return { output, session, visibility } as const;
 }
 
-export function loadSignalWorkspaceContext(workspaceId: string) {
-  return loadSignalWorkspaceContextWithDependencies(workspaceId, {
+export async function loadSignalWorkspaceModuleContext(
+  workspaceId: string,
+  moduleKey: SignalBrandServingModuleKeyV1,
+  request?: Request
+) {
+  const loaded = await loadSignalWorkspaceContextWithDependencies(workspaceId, {
     getSession: getAuthenticatedAppUser as () => Promise<SignalWorkspaceSession | null>,
     isEnabled: isSignalWorkspaceApiEnabled,
     canView: canViewClientOutputs,
+    resolveWorkspace: resolveSignalWorkspaceForUser
+  });
+  if (!("workspace" in loaded)) return { response: loaded.response } as const;
+  const workspace = loaded.workspace;
+  if (!workspace) {
+    return { response: signalBackendErrorResponse(new Error("Workspace context is unavailable.")) } as const;
+  }
+  try {
+    const viewKey = request
+      ? signalClientServingViewFromRequestV1(request)
+      : "brand";
+    const servingScope = await resolveSignalModuleServingScopeV1(workspace, moduleKey, {
+      viewKey
+    });
+    return {
+      ...loaded,
+      workspace,
+      servingScope,
+      readScope: servingScope.readScope,
+      finalizeServingScope: (filter: SignalFilterV1 | null) => (
+        finalizeSignalModuleServingScopeV1({ scope: servingScope, filter })
+      )
+    } as const;
+  } catch (error) {
+    return { response: signalBackendErrorResponse(error) } as const;
+  }
+}
+
+/** @deprecated Serving routes must resolve their closed module identity explicitly. */
+export function loadSignalWorkspaceContext(workspaceId: string) {
+  return loadSignalWorkspaceModuleContext(workspaceId, "brand-monitoring");
+}
+
+export function loadSignalWorkspaceContextForManagement(workspaceId: string) {
+  return loadSignalWorkspaceContextWithDependencies(workspaceId, {
+    getSession: getAuthenticatedAppUser as () => Promise<SignalWorkspaceSession | null>,
+    isEnabled: isSignalWorkspaceApiEnabled,
+    canView: canManageCorpus,
+    resolveWorkspace: resolveSignalWorkspaceForUser
+  });
+}
+
+export function loadSignalWorkspaceContextForStrategicReview(workspaceId: string) {
+  return loadSignalWorkspaceContextWithDependencies(workspaceId, {
+    getSession: getAuthenticatedAppUser as () => Promise<SignalWorkspaceSession | null>,
+    isEnabled: isSignalWorkspaceApiEnabled,
+    canView: canApproveAnalysis,
     resolveWorkspace: resolveSignalWorkspaceForUser
   });
 }

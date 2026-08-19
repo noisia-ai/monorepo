@@ -8,16 +8,54 @@ import {
   startQueryEngineHeartbeat,
   startQueryEngineWorker
 } from "./queues/query-engine";
-import { startDataOsWorker } from "./queues/data-os";
+import { closeDataOsProducer, startDataOsHeartbeat, startDataOsWorker } from "./queues/data-os";
+import {
+  closeSignalSemanticResolutionProducer,
+  startSignalSemanticResolutionHeartbeat,
+  startSignalSemanticResolutionWorker
+} from "./queues/semantic-resolution";
 import { closeSignalRefreshScheduler, startSignalRefreshScheduler } from "./queues/signal-refresh";
 import { isSignalRefreshSchedulerEnabled } from "./workers/signal-refresh-runtime";
 import { startEngineAnalysisWorker } from "./queues/engine-analysis";
-import { startTbAnalysisWorker } from "./queues/tb-analysis";
+import {
+  closeTbAnalysisProducer,
+  startTbAnalysisHeartbeat,
+  startTbAnalysisWorker
+} from "./queues/tb-analysis";
+import { startSignalStrategicRunOutboxDrainer } from "./workers/signal-strategic-run-outbox";
+import { startSignalStrategicStepOutboxDrainer } from "./workers/signal-strategic-step-outbox";
+import { startSignalWorkspaceImportOutboxDrainer } from "./workers/signal-workspace-import-outbox";
+import { startSignalSemanticReviewProjectionOutboxDrainer } from "./workers/signal-semantic-review-projection-outbox";
+import { startSignalSemanticResolutionChildOutboxDrainer } from "./workers/signal-semantic-resolution-child-outbox";
+import { assertUatWorkerStartup } from "./workers/uat-runtime-preflight";
+
+const startupEvidence = await assertUatWorkerStartup({
+  database: pool,
+  redis: redisConnection
+});
+console.log("Worker runtime preflight passed.", startupEvidence);
 
 const queryEngineWorker = startQueryEngineWorker();
 const tbAnalysisWorker = startTbAnalysisWorker();
+const strategicRunOutboxDrainer = startSignalStrategicRunOutboxDrainer();
+const strategicStepOutboxDrainer = startSignalStrategicStepOutboxDrainer();
+const workspaceImportOutboxDrainer = startSignalWorkspaceImportOutboxDrainer();
+const tbHeartbeat = startTbAnalysisHeartbeat();
 const engineAnalysisWorker = isEngineRuntimeEnabled() ? startEngineAnalysisWorker() : null;
 const dataOsWorker = isDataOsWorkerEnabled() ? startDataOsWorker() : null;
+const semanticResolutionWorker = isDataOsWorkerEnabled()
+  ? startSignalSemanticResolutionWorker()
+  : null;
+const semanticReviewProjectionOutboxDrainer = semanticResolutionWorker
+  ? startSignalSemanticReviewProjectionOutboxDrainer()
+  : null;
+const semanticResolutionChildOutboxDrainer = semanticResolutionWorker
+  ? startSignalSemanticResolutionChildOutboxDrainer()
+  : null;
+const semanticResolutionHeartbeat = semanticResolutionWorker
+  ? startSignalSemanticResolutionHeartbeat()
+  : null;
+const dataOsHeartbeat = dataOsWorker ? startDataOsHeartbeat() : null;
 const signalRefreshScheduler = dataOsWorker && isSignalRefreshSchedulerEnabled()
   ? startSignalRefreshScheduler().catch((error) => {
       console.error("Signal refresh scheduler failed to start:", error);
@@ -63,13 +101,29 @@ if (dataOsWorker) {
   console.log("Data OS worker disabled. Set NOISIA_DATA_OS_WORKER_ENABLED=true only for approved shadow runs.");
 }
 
+let shuttingDown = false;
+
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   clearInterval(keepAlive);
   clearInterval(heartbeat);
+  if (dataOsHeartbeat) clearInterval(dataOsHeartbeat);
+  if (semanticResolutionHeartbeat) clearInterval(semanticResolutionHeartbeat);
+  await tbHeartbeat.close();
+  await strategicStepOutboxDrainer.close();
+  await workspaceImportOutboxDrainer.close();
+  await semanticReviewProjectionOutboxDrainer?.close();
+  await semanticResolutionChildOutboxDrainer?.close();
+  await strategicRunOutboxDrainer.close();
+  await closeTbAnalysisProducer();
   await queryEngineWorker.close();
   await tbAnalysisWorker.close();
   await engineAnalysisWorker?.close();
   await dataOsWorker?.close();
+  await semanticResolutionWorker?.close();
+  await closeDataOsProducer();
+  await closeSignalSemanticResolutionProducer();
   if (signalRefreshScheduler) await signalRefreshScheduler;
   await closeSignalRefreshScheduler();
   await closeQueryEngineProducer();

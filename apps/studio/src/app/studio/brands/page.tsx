@@ -1,183 +1,177 @@
 import Link from "next/link";
-import { getTranslations } from "next-intl/server";
+import { ArrowLeft, ArrowRight, Buildings, Plus } from "@phosphor-icons/react/dist/ssr";
+import { getLocale, getTranslations } from "next-intl/server";
 
+import {
+  AdminResourceSection,
+  AdminStatus,
+  AdminWorkspaceHeader,
+  formatAdminDate,
+  formatAdminNumber
+} from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminBrandFilters } from "@/components/admin/AdminBrandFilters";
 import { PermanentDeleteBrandButton } from "@/components/brands/AdminEntityActions";
-import { StudioNav } from "@/components/layout/StudioNav";
-import { Icon } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { listBrandsForUser } from "@/lib/data/brands";
+import { listAdminBrandWorkspaces } from "@/lib/data/admin-workspace";
 import {
   getPositiveNumber,
   getSearchParam,
   resolveSearchParams,
-  type StudioSearchParams,
+  type StudioSearchParams
 } from "@/lib/url/search";
 
 export const dynamic = "force-dynamic";
 
 export default async function BrandsPage({ searchParams }: { searchParams?: StudioSearchParams }) {
-  const t = await getTranslations("Brands");
-  const session = await requireStudioUser("/studio/brands");
-
-  const params = await resolveSearchParams(searchParams);
-  const filters = {
-    organization: getSearchParam(params, "organization"),
-    industry: getSearchParam(params, "industry"),
-    status: getSearchParam(params, "status"),
-    page: getPositiveNumber(getSearchParam(params, "page"), 1),
-    pageSize: 25,
-  };
-  const result = await listBrandsForUser(session.appUser, filters);
-  const totalPages = Math.max(1, Math.ceil(result.pagination.total / result.pagination.pageSize));
+  const [t, locale, session, params] = await Promise.all([
+    getTranslations("AdminWorkspace"),
+    getLocale(),
+    requireStudioUser("/studio/brands"),
+    resolveSearchParams(searchParams)
+  ]);
+  const query = getSearchParam(params, "q")?.trim().toLocaleLowerCase() ?? "";
+  const organization = getSearchParam(params, "organization")?.trim().toLocaleLowerCase() ?? "";
+  const status = getSearchParam(params, "status") ?? "";
+  const page = getPositiveNumber(getSearchParam(params, "page"), 1);
+  const pageSize = 30;
+  const rows = (await listAdminBrandWorkspaces(session.appUser)).filter((brand) => {
+    const queryMatches = !query || [brand.brandName, brand.brandSlug, brand.industry]
+      .some((value) => value?.toLocaleLowerCase().includes(query));
+    const organizationMatches = !organization
+      || brand.organizationName.toLocaleLowerCase().includes(organization)
+      || brand.organizationId.toLocaleLowerCase() === organization;
+    return queryMatches && organizationMatches && (!status || brand.brandStatus === status);
+  });
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visible = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
-    <>
-      <StudioNav activeSection="brands" crumbs={[{ label: t("crumb") }]} user={session.appUser} />
-      <main className="app-content">
-        <div className="studio-page">
-          {/* Header */}
-          <header className="page-head">
-            <div>
-              <p className="vitals-eyebrow">{t("eyebrow")}</p>
-              <h1 className="page-head-title">{t("title")}</h1>
-              <p className="page-head-sub">
-                {result.pagination.total} {result.pagination.total === 1 ? t("countSingular") : t("countPlural")} ·
-                {t("page", { page: result.pagination.page, totalPages })}
-              </p>
-            </div>
-            <div className="page-head-actions">
-              <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href="/studio/brands/new">
-                <Icon name="sparkle" size={14} /> {t("newBrand")}
-              </Link>
-              <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href="/studio/brands?status=archived">
-                <Icon name="filter" size={14} /> {t("archivedBrands")}
-              </Link>
-              <Link prefetch={false} className="wizard-cta" href="/studio/corpora/new">
-                <Icon name="play" size={14} /> {t("newStudy")}
-              </Link>
-            </div>
-          </header>
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <Link className="admin-button admin-button--primary" href="/studio/brands/new" prefetch={false}>
+            <Plus aria-hidden size={15} weight="bold" />{t("brands.actions.create")}
+          </Link>
+        )}
+        eyebrow={t("brands.eyebrow")}
+        icon={<Buildings aria-hidden size={21} weight="fill" />}
+        subtitle={t("brands.subtitle", { count: rows.length })}
+        title={t("brands.title")}
+      />
 
-          {/* Filter bar */}
-          <form className="filter-bar-v2">
-            <label className="filter-field">
-              <span className="filter-label">{t("filters.organization")}</span>
-              <input
-                className="filter-input"
-                defaultValue={filters.organization ?? ""}
-                name="organization"
-                placeholder={t("filters.organizationPlaceholder")}
-              />
-            </label>
-            <label className="filter-field">
-              <span className="filter-label">{t("filters.industry")}</span>
-              <input
-                className="filter-input"
-                defaultValue={filters.industry ?? ""}
-                name="industry"
-                placeholder={t("filters.industryPlaceholder")}
-              />
-            </label>
-            <label className="filter-field">
-              <span className="filter-label">{t("filters.status")}</span>
-              <select className="filter-input" defaultValue={filters.status ?? ""} name="status">
-                <option value="">{t("filters.all")}</option>
-                <option value="active">{t("filters.active")}</option>
-                <option value="paused">{t("filters.paused")}</option>
-                <option value="archived">{t("filters.archived")}</option>
-              </select>
-            </label>
-            <button className="wizard-cta wizard-cta--secondary" type="submit">
-              <Icon name="play" size={13} /> {t("filters.submit")}
-            </button>
-          </form>
-
-          {/* Brand cards grid */}
-          {result.data.length === 0 ? (
-            <div className="empty-card">
-              <Icon name="info" size={20} className="empty-card-icon" />
-              <p>{t("empty")}</p>
-            </div>
-          ) : (
-            <ul className="brand-grid">
-              {result.data.map((brand) => (
-                <li key={brand.id}>
-                  <Link prefetch={false} href={`/studio/brands/${brand.id}`} className="brand-card">
-                    <div className="brand-card-head">
-                      <div>
-                        <p className="brand-card-eyebrow">
-                          {brand.organizationName ?? brand.organizationSlug ?? "—"}
-                        </p>
-                        <h3 className="brand-card-name">{brand.displayName ?? brand.name}</h3>
+      <AdminResourceSection
+        actions={<span className="admin-table__muted">{t("brands.table.count", { count: rows.length })}</span>}
+        className="admin-brands-index"
+        subtitle={t("brands.table.subtitle")}
+        title={t("brands.table.title")}
+      >
+        <AdminBrandFilters
+          labels={{
+            apply: t("brands.filters.apply"),
+            organization: t("brands.filters.organization"),
+            organizationPlaceholder: t("brands.filters.organizationPlaceholder"),
+            search: t("brands.filters.search"),
+            searchPlaceholder: t("brands.filters.searchPlaceholder"),
+            status: t("brands.filters.status"),
+            statuses: {
+              active: t("states.active"),
+              all: t("brands.filters.allStatuses"),
+              archived: t("states.archived"),
+              paused: t("states.paused")
+            }
+          }}
+          organization={getSearchParam(params, "organization") ?? ""}
+          query={getSearchParam(params, "q") ?? ""}
+          status={status}
+        />
+        {visible.length === 0 ? (
+          <div className="admin-empty">
+            <strong>{t("brands.empty.title")}</strong>
+            <p>{t("brands.empty.body")}</p>
+          </div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table admin-table--brands">
+              <thead><tr>
+                <th>{t("brands.columns.brand")}</th>
+                <th>{t("brands.columns.mentions")}</th>
+                <th>{t("brands.columns.coverage")}</th>
+                <th>{t("brands.columns.health")}</th>
+                <th>{t("brands.columns.report")}</th>
+                <th>{t("brands.columns.activity")}</th>
+                <th aria-label={t("brands.columns.actions")} />
+              </tr></thead>
+              <tbody>
+                {visible.map((brand) => (
+                  <tr key={brand.brandId}>
+                    <td>
+                      <div className="admin-table__primary">
+                        <Link href={`/studio/brands/${brand.brandId}`} prefetch={false}>{brand.brandName}</Link>
+                        <small>{brand.organizationName}{brand.industry ? ` · ${brand.industry}` : ""}</small>
                       </div>
-                      {brand.status === "active" ? (
-                        <SuccessPill>Activa</SuccessPill>
+                    </td>
+                    <td>{formatAdminNumber(brand.governedMentions, locale)}</td>
+                    <td>
+                      <AdminStatus state={brand.coverageState}>
+                        {brand.coverageFrom && brand.coverageThrough
+                          ? `${formatAdminDate(brand.coverageFrom, locale)} – ${formatAdminDate(brand.coverageThrough, locale)}`
+                          : t("coverage.notAvailable")}
+                      </AdminStatus>
+                    </td>
+                    <td>
+                      <div className="admin-status-stack">
+                        <AdminStatus state={brand.freshnessState}>{t(`states.${brand.freshnessLabel}`)}</AdminStatus>
+                        <AdminStatus state={brand.qualityState}>{t(`quality.${brand.qualityState}`)}</AdminStatus>
+                      </div>
+                    </td>
+                    <td><AdminStatus state={reportTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
+                    <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
+                    <td>
+                      {brand.brandStatus === "archived" && !brand.workspaceId ? (
+                        <PermanentDeleteBrandButton brandId={brand.brandId} brandName={brand.brandName} />
                       ) : (
-                        <StatusPill tone="idle">{brand.status}</StatusPill>
+                        <Link aria-label={t("brands.actions.open", { brand: brand.brandName })} className="admin-button" href={`/studio/brands/${brand.brandId}`} prefetch={false}>
+                          <ArrowRight aria-hidden size={14} />
+                        </Link>
                       )}
-                    </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AdminResourceSection>
 
-                    <p className="brand-card-meta">
-                          {[brand.industry, brand.industrySub].filter(Boolean).join(" / ") || t("noIndustry")}
-                      {brand.countries && brand.countries.length > 0 && (
-                        <> · {brand.countries.join(", ")}</>
-                      )}
-                    </p>
-
-                    <footer className="brand-card-foot">
-                      <div className="brand-card-stat">
-                        <span className="brand-card-stat-value">{brand.corporaCount}</span>
-                        <span className="brand-card-stat-label">
-                          {brand.corporaCount === 1 ? t("corpusSingular") : t("corpusPlural")}
-                        </span>
-                      </div>
-                      {brand.corporaApproved > 0 && (
-                        <div className="brand-card-stat brand-card-stat--good">
-                          <span className="brand-card-stat-value">{brand.corporaApproved}</span>
-                          <span className="brand-card-stat-label">{t("approved")}</span>
-                        </div>
-                      )}
-                      <Icon name="arrow-right" size={16} className="brand-card-arrow" />
-                    </footer>
-                  </Link>
-                  {brand.status === "archived" ? (
-                    <div className="brand-card-admin-actions">
-                      <PermanentDeleteBrandButton
-                        brandId={brand.id}
-                        brandName={brand.displayName ?? brand.name}
-                      />
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <nav className="pagination-v2" aria-label={t("pagination.label")}>
-              <Link prefetch={false}
-                aria-disabled={filters.page <= 1}
-                className="wizard-cta wizard-cta--ghost"
-                href={`/studio/brands?page=${Math.max(1, filters.page - 1)}`}
-              >
-                <Icon name="chevron-down" size={13} className="icon--flip" /> {t("pagination.previous")}
-              </Link>
-              <span className="pagination-position">
-                {filters.page} / {totalPages}
-              </span>
-              <Link prefetch={false}
-                aria-disabled={filters.page >= totalPages}
-                className="wizard-cta wizard-cta--ghost"
-                href={`/studio/brands?page=${Math.min(totalPages, filters.page + 1)}`}
-              >
-                {t("pagination.next")} <Icon name="arrow-right" size={13} />
-              </Link>
-            </nav>
-          )}
-        </div>
-      </main>
-    </>
+      {totalPages > 1 ? (
+        <nav aria-label={t("brands.pagination.label")} className="admin-workspace-actions" style={{ marginTop: 14 }}>
+          <Link className="admin-button" href={pageHref(params, Math.max(1, safePage - 1))} prefetch={false}>
+            <ArrowLeft aria-hidden size={14} />{t("brands.pagination.previous")}
+          </Link>
+          <span className="admin-table__muted">{t("brands.pagination.position", { page: safePage, total: totalPages })}</span>
+          <Link className="admin-button" href={pageHref(params, Math.min(totalPages, safePage + 1))} prefetch={false}>
+            {t("brands.pagination.next")}<ArrowRight aria-hidden size={14} />
+          </Link>
+        </nav>
+      ) : null}
+    </div>
   );
+}
+
+function pageHref(params: Record<string, string | string[] | undefined>, page: number) {
+  const next = new URLSearchParams();
+  for (const [key, rawValue] of Object.entries(params)) {
+    for (const value of Array.isArray(rawValue) ? rawValue : [rawValue]) {
+      if (value != null) next.append(key, value);
+    }
+  }
+  next.set("page", String(page));
+  return `/studio/brands?${next}`;
+}
+
+function reportTone(state: string) {
+  if (state === "published") return "good" as const;
+  if (state === "needs_review" || state === "running") return "warning" as const;
+  return "not_available" as const;
 }

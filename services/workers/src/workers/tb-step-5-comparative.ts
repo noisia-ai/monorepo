@@ -4,6 +4,7 @@ import { pool } from "../db/client";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  isGovernedStrategicRun,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
@@ -139,6 +140,28 @@ export async function rebuildAndPersistComparativeBrief(tbAnalysisId: string) {
 }
 
 async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]> {
+  if (await isGovernedStrategicRun(tbAnalysisId)) {
+    const governed = await pool.query<EntityCountRow>(
+      `SELECT CASE WHEN semantic.scope='competitor' THEN semantic.entity_id::text END AS competitor_id,
+         CASE WHEN semantic.scope IN ('primary_brand','competitor','category')
+           THEN semantic.scope ELSE 'unknown' END AS entity_kind,
+         COALESCE(NULLIF(semantic.entity_label,''),semantic.scope) AS entity_label,
+         COUNT(DISTINCT sealed.mention_id)::int AS mention_count
+       FROM signal_strategic_run_controls control
+       JOIN signal_strategic_sealed_sample_items sealed ON sealed.run_control_id=control.id
+       JOIN signal_mention_attributions semantic
+         ON semantic.workspace_id=control.workspace_id
+        AND semantic.mention_id=sealed.mention_id
+        AND semantic.attribution_basis='mention_semantic'
+        AND semantic.is_current=true
+        AND semantic.review_status='approved'
+        AND semantic.eligibility_status='eligible'
+       WHERE control.tb_analysis_id=$1::uuid
+       GROUP BY 1,2,3 ORDER BY mention_count DESC,3`,
+      [tbAnalysisId]
+    );
+    return governed.rows;
+  }
   // Strategic comparisons must remain bound to the exact analysis snapshot.
   // Import-batch counters describe the live corpus and would let later
   // operational ingestion rewrite a historical brief.
@@ -178,6 +201,41 @@ async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]>
 }
 
 async function loadFindingEntityPresence(tbAnalysisId: string): Promise<PresenceRow[]> {
+  if (await isGovernedStrategicRun(tbAnalysisId)) {
+    const governed = await pool.query<PresenceRow>(
+      `WITH attributed_mentions AS (
+         SELECT sealed.mention_id,
+           CASE WHEN semantic.scope='competitor' THEN semantic.entity_id::text END AS competitor_id,
+           CASE WHEN semantic.scope IN ('primary_brand','competitor','category')
+             THEN semantic.scope ELSE 'unknown' END AS resolved_entity_kind,
+           COALESCE(NULLIF(semantic.entity_label,''),semantic.scope) AS resolved_entity_label
+         FROM signal_strategic_run_controls control
+         JOIN signal_strategic_sealed_sample_items sealed ON sealed.run_control_id=control.id
+         JOIN signal_mention_attributions semantic
+           ON semantic.workspace_id=control.workspace_id
+          AND semantic.mention_id=sealed.mention_id
+          AND semantic.attribution_basis='mention_semantic'
+          AND semantic.is_current=true
+          AND semantic.review_status='approved'
+          AND semantic.eligibility_status='eligible'
+         WHERE control.tb_analysis_id=$1::uuid
+       )
+       SELECT f.finding_id,f.id AS finding_uuid,f.nombre_comercial AS finding_name,
+         f.polarity,f.layer,f.movilidad,am.competitor_id,
+         am.resolved_entity_kind AS entity_kind,am.resolved_entity_label AS entity_label,
+         COUNT(DISTINCT coding.mention_id)::int AS mention_count
+       FROM tb_mention_codings coding
+       JOIN tb_findings f ON f.id=coding.finding_id
+       JOIN attributed_mentions am ON am.mention_id=coding.mention_id
+       WHERE coding.tb_analysis_id=$1::uuid AND coding.finding_id IS NOT NULL
+         AND coding.polarity!='irrelevant'
+       GROUP BY f.finding_id,f.id,f.nombre_comercial,f.polarity,f.layer,f.movilidad,
+         am.competitor_id,am.resolved_entity_kind,am.resolved_entity_label
+       ORDER BY f.finding_id,mention_count DESC`,
+      [tbAnalysisId]
+    );
+    return governed.rows;
+  }
   const r = await pool.query<PresenceRow>(
     `WITH attributed_mentions AS (
        SELECT

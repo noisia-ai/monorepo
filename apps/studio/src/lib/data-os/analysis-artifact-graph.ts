@@ -248,6 +248,17 @@ export async function approveTbAnalysisWithArtifacts(args: {
   analysisId: string;
   reviewerUserId: string;
   limitations: unknown;
+  reusableAssertions?: Array<{
+    recordTagId: string;
+    decision: "approve" | "correct" | "reject";
+    idempotencyKey: string;
+    notes?: string;
+    correction?: {
+      value?: string;
+      score?: number;
+      confidence?: string;
+    };
+  }>;
 }) {
   const client = await pool.connect();
   try {
@@ -283,6 +294,28 @@ export async function approveTbAnalysisWithArtifacts(args: {
     }
     if (blocked > 0) {
       throw new Error("analysis_artifact_review_state_conflict");
+    }
+
+    await client.query(
+      `SELECT assert_signal_tb_snapshot_containment($1::uuid, 'human_review')`,
+      [args.analysisId]
+    );
+    for (const assertion of args.reusableAssertions ?? []) {
+      await client.query(
+        `SELECT review_signal_tb_reusable_assertion(
+           $1::uuid, $2::uuid, $3::uuid, $4::text,
+           $5::text, $6::text, $7::jsonb
+         )`,
+        [
+          args.analysisId,
+          assertion.recordTagId,
+          args.reviewerUserId,
+          assertion.decision,
+          assertion.notes ?? null,
+          assertion.idempotencyKey,
+          JSON.stringify(assertion.correction ?? {})
+        ]
+      );
     }
 
     await client.query(

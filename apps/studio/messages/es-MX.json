@@ -97,7 +97,7 @@
       "organizationPlaceholder": "slug o UUID",
       "industry": "Industria",
       "industryPlaceholder": "ej. seguros",
-      "status": "Status",
+      "status": "Estado",
       "all": "Todos",
       "active": "Activa",
       "paused": "Pausada",
@@ -127,7 +127,7 @@
       "identityEyebrow": "Brand OS",
       "identityTitle": "Identidad y categoría",
       "brand": "Marca",
-      "displayName": "Display name",
+      "displayName": "Nombre visible",
       "organization": "Organización",
       "slug": "Slug",
       "slugPlaceholder": "se-autogenera si lo dejas vacío",
@@ -136,6 +136,8 @@
       "subindustry": "Subindustria",
       "subindustryPlaceholder": "Agrega una o más: Pet Food, Marketplace, Accessories...",
       "subindustryDisabled": "Primero selecciona una industria",
+      "timezone": "Zona horaria del workspace",
+      "timezoneHelp": "Usa una zona horaria IANA válida. Los periodos de Signal y reportes estratégicos la heredan.",
       "description": "Descripción estratégica",
       "seedsEyebrow": "Knowledge seeds",
       "seedsTitle": "Aliases, competidores y contexto base",
@@ -212,7 +214,7 @@
     "subtitle": "Actualiza identidad, categoría, relaciones y Knowledge Base sin recrear la marca.",
     "back": "Volver a marca",
     "formTitle": "Editar identidad y categoría",
-    "status": "Status",
+    "status": "Estado",
     "active": "Activa",
     "paused": "Pausada",
     "archived": "Archivada",
@@ -300,7 +302,7 @@
   },
   "NewStudyPage": {
     "crumb": "Nuevo estudio",
-    "eyebrow": "Corpus setup",
+    "eyebrow": "Configuración del estudio",
     "title": "Nuevo estudio",
     "subtitle": "Crea el contenedor del estudio y abre el Engine para generar queries, importar CSVs y aprobar el corpus.",
     "workspace": "Workspace",
@@ -310,13 +312,13 @@
     "steps": {
       "brand": "Sujeto",
       "objective": "Objetivo",
-      "lenses": "Lentes",
+      "lenses": "Análisis",
       "sources": "Fuentes",
-      "brief": "Brief",
-      "launch": "Launch"
+      "brief": "Revisión",
+      "launch": "Crear"
     },
     "rail": {
-      "eyebrow": "New study",
+      "eyebrow": "Nuevo estudio",
       "fallbackTitle": "Nuevo estudio",
       "newBrand": "Marca nueva",
       "noBrand": "Sin marca",
@@ -350,7 +352,7 @@
       "create": "Crear marca",
       "methodology": "Metodología",
       "organization": "Organización",
-      "displayName": "Display name",
+      "displayName": "Nombre visible",
       "slug": "Slug",
       "industry": "Industria",
       "subindustry": "Subindustria",
@@ -389,7 +391,7 @@
       "descriptionPlaceholder": "Qué cubre el estudio, qué jugadores incluye, qué límites debe respetar..."
     },
     "objective": {
-      "eyebrow": "Study Brief",
+      "eyebrow": "Brief del estudio",
       "title": "Objetivo, hipótesis y límites",
       "studyName": "Nombre de la página en Signal",
       "studyNameHint": "El cliente verá este nombre como una página de Triggers & Barriers dentro del único workspace de la marca. Un estudio nuevo ya no crea otra URL de Signal.",
@@ -428,7 +430,7 @@
       "countries": "Países",
       "window": "Ventana",
       "months": "{count} meses",
-      "aiEyebrow": "Smart fields",
+      "aiEyebrow": "Campos asistidos",
       "aiStartTitle": "Usar Brand OS, fuentes y Knowledge Base para redactar el objetivo",
       "aiStart": "Preparar objetivo",
       "aiGenerating": "Preparando objetivo...",
@@ -450,9 +452,10 @@
       "aiSuccessTitle": "Criterios de éxito sugeridos"
     },
     "trace": {
-      "eyebrow": "Data OS trace",
-      "title": "Contrato de intake",
-      "copy": "Este brief no vive solo como texto libre. Se guarda como context form del corpus, Knowledge Source, objetivo/brief de Brand OS, seed terms, assertions, links y usage events.",
+      "eyebrow": "Trazabilidad",
+      "title": "Cómo se guardará este estudio",
+      "summary": "Ver el registro técnico y la procedencia de los datos.",
+      "copy": "El objetivo, las fuentes y el contexto se guardan como registros gobernados y conectados con su procedencia. Esta sección muestra el detalle técnico para operadores.",
       "objective": "Objetivo",
       "brief": "Brief",
       "context": "Contexto",
@@ -463,12 +466,28 @@
       "pending": "Pendiente",
       "items": "{count} items"
     },
+    "plan": {
+      "eyebrow": "Plan de análisis",
+      "title": "Análisis que producirá este estudio",
+      "pulseTitle": "Configuración de Signal Pulse",
+      "contractEyebrow": "Método gobernado",
+      "contractTitle": "Triggers & Barriers",
+      "contractCopy": "Este estudio conecta el contexto de marca, las fuentes y la evidencia con un único método aprobado. Las nuevas menciones enriquecen el mismo workspace; no crean otro producto ni otra página.",
+      "methodologyCount": "método activo",
+      "governed": "Gobernado",
+      "productionPath": "Método activo",
+      "selected": "Seleccionado",
+      "add": "Agregar",
+      "requiresCompetitors": "Necesita competidores definidos",
+      "noCompetitors": "Puede ejecutarse sin competidores",
+      "minimumMentions": "{count}+ menciones por entidad"
+    },
     "sources": {
-      "eyebrow": "Data Sources",
-      "title": "Motor de fuentes del estudio",
-      "engineEyebrow": "Data OS",
-      "engineTitle": "Primero conecta datos, después redacta el objetivo",
-      "engineCopy": "Sube ventas, tickets, social reports, search data, decks o contexto previo. Noisia perfila cada fuente, la guarda con lineage y la usa para preparar el objetivo sin duplicar menciones ni convertir todo en texto muerto.",
+      "eyebrow": "Fuentes del estudio",
+      "title": "Agrega el contexto que sostendrá el análisis",
+      "engineEyebrow": "Datos conectados",
+      "engineTitle": "Las fuentes conservan su procedencia",
+      "engineCopy": "Sube ventas, tickets, reportes sociales, búsqueda, presentaciones o contexto previo. Noisia perfila cada fuente y la conecta con el objetivo sin duplicar menciones.",
       "engineCode": "sources -> objective",
       "type": "Tipo de fuente",
       "files": "Archivos",
@@ -482,7 +501,7 @@
       "empty": "No hay archivos seleccionados. Puedes lanzar Engine sólo con el brief si todavía no tienes fuentes.",
       "context": "Notas o contexto adicional",
       "contextPlaceholder": "Pega diagnóstico previo, hallazgos, supuestos, restricciones o instrucciones para leer las fuentes. Si subes un Excel, usa este campo para decir qué importa.",
-      "previewEyebrow": "Source profiling",
+      "previewEyebrow": "Perfilado de fuentes",
       "previewTitle": "Inventario detectado",
       "previewEmpty": "Sube una fuente para ver hojas, campos y snapshots antes de redactar el objetivo.",
       "previewLoading": "Perfilando fuentes...",
@@ -505,8 +524,8 @@
       }
     },
     "brief": {
-      "eyebrow": "Compiled Brief",
-      "title": "Lo que Noisia va a usar para arrancar",
+      "eyebrow": "Revisión del estudio",
+      "title": "Confirma el objetivo, las fuentes y el alcance",
       "brand": "Marca",
       "subject": "Sujeto",
       "subjectType": "Tipo",
@@ -528,10 +547,20 @@
       "success": "Criterio de éxito",
       "sources": "Fuentes",
       "sourceInventory": "Inventario de fuentes",
-      "noFiles": "Sin archivos"
+      "noFiles": "Sin archivos",
+      "pending": "Pendiente",
+      "constraints": "Restricciones",
+      "sourceCount": " fuentes",
+      "decisionCount": " decisiones",
+      "audienceCount": " audiencias",
+      "budget": "Límite de presupuesto",
+      "campaigns": "Campañas activas",
+      "allowedClaims": "Claims permitidos",
+      "prohibitedClaims": "Claims prohibidos",
+      "performance": "Performance estructurado"
     },
     "launch": {
-      "eyebrow": "Launch",
+      "eyebrow": "Crear estudio",
       "readyTitle": "Estudio listo",
       "createTitle": "Crear estudio y preparar Engine",
       "preparing": "Preparando estudio...",
@@ -576,6 +605,18 @@
     "title": "Monitoreo de marca",
     "subtitle": "Qué se está diciendo, cómo cambia y qué conversaciones lo explican.",
     "status": { "beta": "V2 beta" },
+    "emptyWorkspace": {
+      "status": "Workspace listo",
+      "subtitle": "Signal para {brand}, sin depender de un estudio.",
+      "eyebrow": "Primer ingreso",
+      "title": "Conecta una fuente para empezar a escuchar.",
+      "body": "Las menciones aceptadas vivirán una sola vez en este workspace. Después podrás usar la misma población gobernada en Monitoreo, Menciones, Tópicos y Narrativas, y estudios estratégicos.",
+      "action": "Configurar datos de la marca",
+      "sourceTitle": "Registra una fuente",
+      "sourceBody": "Carga un CSV o conecta una fuente directamente a la marca.",
+      "scopeTitle": "Define a quién pertenece",
+      "scopeBody": "Separa marca principal, competidores, categoría y referencias antes de calcular métricas."
+    },
     "a11y": { "skip": "Saltar al contenido" },
     "nav": {
       "label": "Navegación de Signal",
@@ -589,7 +630,7 @@
       "tbStudies": "Estudios de Triggers & Barriers",
       "opportunities": "Oportunidades",
       "evidence": "Evidencia",
-      "reports": "Reportes estratégicos",
+      "reports": "Reportes",
       "strategic": "Último release",
       "history": "Historial",
       "settings": "Configuración"
@@ -619,6 +660,354 @@
       "pendingTitle": "Este estudio ya está vinculado al workspace",
       "pendingBody": "Su reporte actual de Triggers & Barriers sigue disponible abajo. Lo único pendiente es adaptar sus componentes revisados al nuevo layout de Signal V2."
     },
+    "triggersBarriers": {
+      "status": "Análisis publicado",
+      "subtitle": "Entiende qué mueve decisiones, qué genera fricción y la evidencia gobernada detrás de cada hallazgo.",
+    "publishedCut": "Corte publicado",
+    "releaseScope": "Cobertura del release: {start} – {end}",
+    "periodStatus": {
+      "updating": "Actualizando todos los datos del Campo de decisión para {period}…",
+      "applied": "Periodo aplicado: {period}. Hallazgos, evidencia, matriz, detalle y serie usan esta ventana."
+    },
+    "selection": {
+      "updating": "Actualizando el detalle conectado de {finding}…"
+    },
+      "dataScope": {
+        "eyebrow": "Datos del estudio publicado",
+        "body": "Esta vista usa el corte gobernado de Triggers & Barriers para esta marca. El periodo puede acotar la evidencia publicada sin cambiar las conclusiones del release.",
+        "mentions": "Menciones codificadas",
+        "coverage": "Cobertura publicada",
+        "open": "Abrir menciones"
+      },
+      "filters": {
+        "polarityLabel": "Filtrar hallazgos por tipo",
+        "polarity": {
+          "all": "Todos los hallazgos",
+          "trigger": "Sólo triggers",
+          "barrier": "Sólo barriers",
+          "mixed": "Sólo mixtos"
+        },
+        "empty": {
+          "title": "No hay hallazgos de este tipo",
+          "body": "El corte no contiene hallazgos activos que coincidan con este filtro. Prueba otra selección."
+        }
+      },
+      "views": {
+        "label": "Vistas de Triggers y Barriers",
+        "decisionField": "Campo de decisión",
+        "evidence": "Evidencia"
+      },
+      "summary": {
+        "label": "Resumen del corte publicado",
+        "findings": "Hallazgos",
+        "triggers": "Triggers",
+        "barriers": "Barriers",
+        "directAction": "Acción directa"
+      },
+      "decision": {
+        "eyebrow": "Campo de decisión",
+        "title": "Dónde puede actuar la marca",
+        "body": "Las filas muestran movilidad y las columnas la capa de decisión. El área de cada burbuja sigue las menciones codificadas al hallazgo.",
+        "matrixLabel": "Matriz semántica de tres por cuatro con hallazgos por movilidad y capa",
+        "denominatorLabel": "Cómo se cuenta la frecuencia",
+      "layerCount": "{count, plural, one {# hallazgo} other {# hallazgos}}",
+      "emptyCell": "Sin hallazgos activos",
+      "moreFindings": "{count, plural, one {# hallazgo más en esta celda} other {# hallazgos más en esta celda}}",
+      "bubbleLabel": "{name}, {polarity}, {frequency, number} de {total, number} menciones codificadas",
+      "tooltipClassification": "{polarity} · {layer} · {mobility}",
+      "tooltipFrequencyShort": "{frequency, plural, one {# mención sostiene este hallazgo} other {# menciones sostienen este hallazgo}}",
+      "tooltipEvidence": "Vínculos curados de evidencia: {count, number}",
+        "tooltipShare": "Participación de códigos: {share, number}% de {total, number} códigos de hallazgo",
+        "tooltipScore": "Score compuesto: {score, number}"
+      },
+      "layers": {
+        "personal": "Personal",
+        "psicologico": "Psicológica",
+        "social": "Social",
+        "cultural": "Cultural"
+      },
+      "mobility": {
+        "movible_por_marca": { "label": "Actuar", "hint": "Control directo de marca" },
+        "parcialmente_movible": { "label": "Moldear", "hint": "Influencia en el tiempo" },
+        "estructural": { "label": "Respetar", "hint": "Categoría o cultura" }
+      },
+      "polarity": {
+        "trigger": "Trigger",
+        "barrier": "Barrier",
+        "mixed": "Mixto"
+      },
+      "confidence": {
+        "alta": "Alta",
+        "media": "Media",
+        "baja_direccional": "Direccional"
+      },
+      "ranking": {
+        "eyebrow": "Selección compartida",
+        "title": "Hallazgos prioritarios",
+        "meta": "Prioridad {score, number} / 5 · {frequency, number} menciones",
+        "priority": "Prioridad {score, number} / 5",
+        "mentions": "{count, plural, one {# mención} other {# menciones}}"
+      },
+      "snapshot": {
+        "eyebrow": "Lectura visual",
+        "title": "Hallazgo seleccionado",
+        "channels": "Canales",
+        "noChannels": "Sin canal identificado",
+        "frequency": "Frecuencia en el periodo",
+        "noSeries": "Sin serie disponible"
+      },
+      "brief": {
+        "eyebrow": "Lectura para decidir",
+        "title": "Qué puede decidir la marca",
+        "actionEyebrow": "Acción vinculada",
+        "owner": "Responsable",
+        "effort": "Esfuerzo",
+        "impact": "Impacto",
+        "successSignal": "Señal de éxito",
+        "moreActions": "{count, plural, one {# acción vinculada adicional} other {# acciones vinculadas adicionales}}",
+        "noActionTitle": "Sin acción vinculada en este release",
+        "noActionBody": "El hallazgo sigue siendo válido, pero el análisis gobernado no vinculó una ficha de ejecución. La interfaz no inventa una recomendación."
+      },
+      "action": {
+        "teams": {
+          "brand_strategy": "Estrategia de marca",
+          "creative_content": "Creatividad y contenido",
+          "product_cx": "Producto y CX",
+          "retail_media": "Retail y medios",
+          "measurement": "Medición",
+          "cultural_guardrails": "Guardrails culturales"
+        },
+        "effort": { "baja": "Bajo", "media": "Medio", "alta": "Alto", "unknown": "No especificado" },
+        "impact": { "bajo": "Bajo", "medio": "Medio", "alto": "Alto", "unknown": "No especificado" }
+      },
+      "empty": {
+        "title": "No hay hallazgos activos en este periodo",
+        "body": "El estudio publicado está disponible, pero ningún hallazgo tiene presencia codificada dentro de las fechas seleccionadas. Prueba un periodo más amplio."
+      },
+    "balance": {
+      "eyebrow": "Polaridad por capa",
+      "title": "Composición del periodo por capa de decisión",
+      "body": "Conteos de los {count, number} hallazgos activos en {period}. El hallazgo seleccionado sólo resalta su capa.",
+      "selected": "Capa seleccionada",
+        "findingCount": "{count, plural, one {# hallazgo} other {# hallazgos}}",
+        "chartLabel": "Conteos divergentes de hallazgos trigger y barrier por capa",
+        "denominator": "Denominador: {count, number} hallazgos. Los hallazgos mixtos aparecen en la tabla."
+      },
+      "table": {
+        "show": "Mostrar tabla de datos accesible",
+        "layer": "Capa"
+      },
+      "reading": {
+        "frequency": "Menciones codificadas",
+        "evidence": "Vínculos de evidencia",
+        "intensity": "Intensidad",
+        "confidence": "Confianza",
+        "priority": "Prioridad",
+        "mobilityReason": "Por qué puede moverse",
+        "channel": "Canal",
+        "format": "Formato",
+        "period": "Periodo",
+        "competition": "Competencia",
+        "notAvailable": "No disponible",
+        "limitations": "Límite de esta lectura"
+      },
+    "presence": {
+      "eyebrow": "Tendencia del hallazgo seleccionado",
+      "title": "Menciones codificadas por mes",
+      "chartLabel": "Menciones codificadas mensuales de {finding}",
+      "summary": "{finding} · {count, number} menciones codificadas durante {period}.",
+      "xAxis": "Mes",
+      "yAxis": "Menciones codificadas",
+      "tooltipCount": "{count, plural, one {# mención codificada} other {# menciones codificadas}}",
+      "tooltipPeriod": "Ventana seleccionada: {period}",
+      "denominator": "Menciones distintas del snapshot codificadas a este hallazgo durante el mes."
+    },
+    "evidenceChain": {
+      "label": "Relación entre menciones y evidencia",
+      "coded": "menciones codificadas",
+      "links": "vínculos curados de evidencia",
+      "records": "registros de evidencia legibles",
+      "explanation": "Una mención codificada contribuye a la frecuencia del hallazgo. Sólo las citas revisadas se convierten en vínculos de evidencia; cada vínculo abre una publicación fuente en Menciones."
+    },
+      "preview": {
+        "eyebrow": "Evidencia gobernada",
+        "title": "Preview de cinco menciones",
+        "count": "{count, plural, one {# mención} other {# menciones}}",
+        "viewMention": "Ver mención enriquecida",
+        "openingMention": "Abriendo mención enriquecida",
+        "openOriginal": "Abrir original",
+        "more": "+ {count, number} menciones más",
+        "complete": "Toda la evidencia está visible",
+        "open": "Abrir evidencia"
+      },
+      "index": {
+        "eyebrow": "Índice de hallazgos",
+        "title": "Elige un hallazgo para leer",
+        "body": "Los {count, number} hallazgos y su evidencia permanecen ligados al mismo corte publicado.",
+        "meta": "{evidence, plural, one {# vínculo de evidencia} other {# vínculos de evidencia}} · {frequency, number} menciones codificadas"
+      },
+      "drawer": {
+        "label": "Evidencia de {finding}",
+        "close": "Cerrar evidencia",
+        "body": "Estas son las {count, plural, one {# mención revisada que sostiene} other {# menciones revisadas que sostienen}} este hallazgo. Abre el registro enriquecido para revisar el contexto completo.",
+        "empty": "No hay menciones de evidencia disponibles para este hallazgo.",
+        "count": "{loaded, number} de {total, number} menciones",
+        "more": "Cargar más",
+        "loading": "Cargando evidencia…",
+        "complete": "Fin de la evidencia"
+      },
+      "errors": {
+        "finding": "No se pudo cargar el hallazgo seleccionado.",
+        "evidence": "No se pudo cargar la evidencia.",
+        "period": "No se pudo cargar el periodo seleccionado."
+      },
+      "helpers": {
+      "activeFindings": {
+        "title": "Hallazgos activos",
+        "body": "Ideas del estudio que aparecen al menos una vez en las conversaciones del periodo.",
+        "reading": "Cuenta hallazgos, no menciones. Un mismo hallazgo puede estar sostenido por muchas conversaciones."
+      },
+      "triggers": {
+        "title": "Triggers",
+        "body": "Hallazgos que ayudan a una persona a avanzar hacia una decisión o una acción.",
+        "reading": "Úsalo para ubicar qué conviene facilitar, reforzar o hacer más visible."
+      },
+      "barriers": {
+        "title": "Barriers",
+        "body": "Hallazgos que frenan, complican o generan duda durante una decisión.",
+        "reading": "Úsalo para ubicar fricciones que la marca puede resolver o reducir."
+      },
+      "directAction": {
+        "title": "Acción directa",
+        "body": "Hallazgos sobre los que la marca tiene control suficiente para intervenir ahora.",
+        "reading": "No significa que sean automáticamente la prioridad; señala dónde existe capacidad de respuesta inmediata."
+      },
+      "codedCoverage": {
+        "title": "Cobertura codificada",
+        "body": "Proporción de menciones fuente distintas del periodo asignadas a por lo menos un hallazgo gobernado.",
+        "reading": "Cálculo: menciones codificadas ÷ menciones publicadas × 100. Úsala para juzgar cuánto del periodo sostiene el campo de decisión."
+      },
+      "evidenceCoverage": {
+        "title": "Cobertura de evidencia",
+        "body": "Proporción de hallazgos activos con al menos una cita revisada dentro del periodo.",
+        "reading": "Cálculo: hallazgos activos con evidencia ÷ todos los hallazgos activos × 100. Mide soporte entre hallazgos, no cantidad de citas."
+      },
+      "evidenceLinks": {
+        "title": "Vínculos de evidencia",
+        "body": "Vínculos revisados entre hallazgo y mención, asociados a hallazgos activos y fechados dentro de la ventana seleccionada.",
+        "reading": "Cálculo: suma de sus vínculos curados. Cambia con las fechas; abre Evidencia para leer los registros fuente vinculados."
+      },
+      "movability": {
+        "title": "Hallazgos movibles",
+        "body": "Proporción de hallazgos presentes en el periodo que están clasificados como directamente movibles por la marca.",
+        "reading": "Cálculo: hallazgos activos movibles ÷ todos los hallazgos activos × 100. Cambia cuando cambia el conjunto activo; úsalo para dimensionar la acción inmediata."
+      },
+      "population": {
+        "title": "Menciones publicadas",
+        "body": "Publicaciones fuente distintas del snapshot congelado cuya fecha de publicación cae dentro de la ventana seleccionada.",
+        "reading": "Cambia con las fechas y da la población del periodo. No toda mención publicada está codificada a un hallazgo ni promovida como evidencia."
+        },
+        "decisionField": {
+          "title": "Cómo leer el Campo de decisión",
+          "body": "Cada burbuja es un hallazgo. Las columnas muestran qué parte de la decisión toca; las filas, cuánto control tiene la marca. El verde impulsa y el rojo frena.",
+          "reading": "El área es proporcional a las menciones codificadas y, dentro de cada cuadrante, las burbujas se ordenan de mayor a menor volumen. La prioridad gobernada se consulta por separado."
+        },
+        "denominator": {
+          "title": "Qué significa frecuencia",
+          "body": "El periodo contiene {count, number} menciones clasificadas para este estudio. El tamaño de cada burbuja usa sólo las que sostienen ese hallazgo.",
+          "reading": "Una conversación puede sostener más de un hallazgo, por eso no debes sumar las burbujas como si fueran personas distintas."
+        },
+        "mobility": {
+          "movible_por_marca": {
+            "title": "Actuar",
+            "body": "La marca puede cambiar esta condición de forma directa, por ejemplo en precio, servicio, comunicación o proceso.",
+            "reading": "Busca aquí decisiones que pueden convertirse en una intervención concreta de corto plazo."
+          },
+          "parcialmente_movible": {
+            "title": "Moldear",
+            "body": "La marca puede influir en esta condición, pero necesita consistencia y tiempo para moverla.",
+            "reading": "Busca aquí expectativas, percepciones o hábitos que no cambian con una sola acción."
+          },
+          "estructural": {
+            "title": "Respetar",
+            "body": "La condición viene de la categoría, el contexto o la cultura y no está bajo control directo de la marca.",
+            "reading": "Úsala como límite o contexto para adaptar la estrategia, no como una promesa de cambio inmediato."
+          }
+        },
+        "ranking": {
+          "title": "Hallazgos prioritarios",
+          "body": "Hallazgos activos ordenados por el score compuesto de prioridad gobernado; las menciones codificadas sólo desempatan.",
+          "reading": "El score combina las dimensiones de decisión revisadas del estudio. Seleccionar una fila actualiza el mismo brief, lectura y evidencia."
+        },
+      "layerMix": {
+        "title": "Composición del periodo por capa de decisión",
+        "body": "Cuenta hallazgos activos —no menciones— por polaridad trigger, barrier o mixta en cada columna de la matriz.",
+        "reading": "Cambia con el conjunto activo filtrado por fecha. Seleccionar un hallazgo resalta su capa, pero no filtra los totales de las demás."
+        },
+        "findingIndex": {
+          "title": "Índice de hallazgos",
+          "body": "Lista del release restringida a hallazgos con presencia observada en el periodo seleccionado.",
+          "reading": "Elige un hallazgo para mantener sincronizadas su lectura y su evidencia gobernada."
+        },
+        "frequency": {
+          "title": "Menciones codificadas",
+          "body": "Menciones distintas del snapshot asignadas a este hallazgo dentro del periodo seleccionado.",
+          "reading": "Una mención puede sostener más de un hallazgo; por eso los totales de hallazgos no son aditivos."
+        },
+        "priority": {
+          "title": "Prioridad",
+          "body": "Score compuesto gobernado que combina relevancia para la decisión, capacidad de acción y soporte del hallazgo.",
+          "reading": "Ordena la lista de hallazgos. El volumen de menciones se muestra por separado y sólo desempata scores iguales."
+        },
+        "findingEvidence": {
+          "title": "Vínculos de evidencia",
+          "body": "Citas revisadas conectadas con este hallazgo y presentes en el periodo seleccionado.",
+          "reading": "Abre Evidencia para inspeccionar una sola vez cada mención citada."
+        },
+        "intensity": {
+          "title": "Intensidad",
+          "body": "Intensidad promedio de las codificaciones de mención para este hallazgo dentro del periodo.",
+          "reading": "Los valores altos indican una expresión más fuerte, no necesariamente más menciones."
+        },
+        "confidence": {
+          "title": "Confianza",
+          "body": "Confianza gobernada asignada al hallazgo publicado durante la revisión.",
+          "reading": "La confianza califica la interpretación; el filtro de fecha no la recalcula."
+        },
+      "presence": {
+        "title": "Menciones codificadas por mes",
+        "body": "Codificaciones relacionales de menciones distintas para el hallazgo seleccionado, agrupadas por mes de publicación dentro del periodo.",
+        "reading": "Los puntos mensuales suman las menciones codificadas del hallazgo en la ventana; los vínculos de evidencia son un subconjunto revisado y pueden ser menos."
+        },
+      "evidencePreview": {
+          "title": "Preview de evidencia gobernada",
+          "body": "Las primeras cinco citas estables del hallazgo y periodo seleccionados.",
+        "reading": "Abre el drawer para paginar por cursor o abre una mención para consultar su registro enriquecido."
+      },
+      "layers": {
+        "personal": {
+          "title": "Personal",
+          "body": "Lo que una persona vive de forma práctica al decidir: precio, acceso, servicio, tiempo o conveniencia.",
+          "reading": "Ejemplo: una promoción sí cabe en su presupuesto o una entrega tarda demasiado."
+        },
+        "psicologico": {
+          "title": "Psicológica",
+          "body": "Lo que la persona cree o siente: confianza, riesgo, valor percibido, seguridad o expectativa.",
+          "reading": "Ejemplo: teme que una oferta sea engañosa o siente que la marca la entiende."
+        },
+        "social": {
+          "title": "Social",
+          "body": "Lo que otras personas influyen en la decisión mediante recomendaciones, reseñas, comunidades o normas de grupo.",
+          "reading": "Ejemplo: una recomendación de otros dueños de mascotas reduce la duda."
+        },
+        "cultural": {
+          "title": "Cultural",
+          "body": "Hábitos y significados compartidos que van más allá de una persona o una compra.",
+          "reading": "Ejemplo: expectativas arraigadas sobre cómo debe cuidarse a una mascota."
+        }
+      }
+      }
+    },
     "search": {
       "placeholder": "Buscar en Signal",
       "label": "Búsqueda global de Signal",
@@ -630,6 +1019,7 @@
       "cancel": "Cancelar",
       "apply": "Aplicar",
       "loading": "Actualizando…",
+      "loadingModule": "Abriendo {module}…",
       "why": "Ver por qué",
       "whyItMatters": "Por qué importa",
       "limitations": "Límites de esta lectura",
@@ -661,7 +1051,7 @@
       "equalWindow": "La comparación usa automáticamente la ventana anterior con el mismo número de días.",
       "previous": "Periodo anterior",
       "previousEqual": "Periodo anterior equivalente",
-      "corpus": "Corpus activo",
+      "corpus": "Datos activos",
       "dataScope": "Datos: {brand}",
       "more": "Más filtros",
       "comparison": {
@@ -680,7 +1070,7 @@
     },
     "dataScope": {
       "eyebrow": "Alcance de datos vivos",
-      "body": "Monitoreo de marca siempre consulta el corpus operativo aprobado de este workspace. Los nombres internos de los estudios no cambian la vista del cliente.",
+      "body": "Monitoreo de marca consulta las menciones primary brand aprobadas de este workspace. Los estudios no cambian la población visible al cliente.",
       "mentions": "Menciones incluidas",
       "coverage": "Cobertura disponible",
       "open": "Abrir menciones"
@@ -688,7 +1078,7 @@
     "topicsNarratives": {
       "title": "Tópicos y narrativas",
       "status": "Inteligencia viva",
-      "subtitle": "Entiende de qué trata la conversación y qué historias o marcos están tomando forma.",
+      "subtitle": "Detecta de qué se habla, qué relatos ganan espacio y abre la evidencia para decidir dónde investigar o actuar.",
       "states": {
         "fresh": "Actualizado",
         "stale": "Actualización pendiente",
@@ -698,7 +1088,32 @@
       },
       "partial": {
         "title": "Esta vista sigue siendo útil, con cobertura parcial declarada",
-        "body": "{classified, number} de {included, number} menciones están clasificadas. {pending, number} aún requieren procesamiento o revisión y no entran en métricas seguras para cliente."
+        "body": "{classified, number} de {included, number} menciones están clasificadas. {pending, number} aún requieren procesamiento o revisión y no entran en métricas seguras para cliente.",
+        "dismiss": "Ocultar aviso de cobertura"
+      },
+      "insights": {
+        "aria": "Insights de tópicos y narrativas",
+        "eyebrow": "Insight investigado",
+        "fixedWindow": "Ventana móvil de treinta días",
+        "why": "Ver por qué",
+        "whyItMatters": "Por qué importa",
+        "limitations": "Límites de esta lectura",
+        "openEvidence": "Abrir evidencia enriquecida",
+        "action": "Encontrar insights",
+        "refresh": "Actualizar insights",
+        "actionWithBudget": "Encontrar insights · hasta {budget}",
+        "refreshWithBudget": "Actualizar insights · hasta {budget}",
+        "queued": "Insight en cola",
+        "running": "Investigando",
+        "budgetHelp": "Lee hasta {limit, number} menciones gobernadas y contexto aprobado. Presupuesto máximo: {budget}.",
+        "error": "No se pudo completar la investigación de Tópicos y Narrativas.",
+        "emptyTitle": "Insights de Tópicos y Narrativas",
+        "emptyBody": "Ejecuta una investigación gobernada sobre hasta {limit, number} menciones de los últimos treinta días, con tope de {budget}. Cada mención analizada queda enriquecida en Data OS.",
+        "loadingBody": "Cargando la investigación gobernada más reciente.",
+        "pendingBody": "Claude está leyendo {analyzed, number} de {population, number} menciones elegibles, contexto interno aprobado y fuentes externas acotadas.",
+        "noFindings": "La investigación leyó {analyzed, number} menciones, pero no encontró un patrón no obvio con evidencia suficiente para publicarlo.",
+        "sampleMeta": "{analyzed, number} de {population, number} menciones analizadas",
+        "chartAria": "Evidencia gobernada de términos para {title}"
       },
       "kpis": {
         "coverage": "Cobertura clasificada",
@@ -719,26 +1134,75 @@
         "unit": "Periodo seleccionado",
         "term": "Término",
         "volume": "Menciones",
+        "engagement": "Interacciones",
         "share": "Participación",
         "change": "Cambio de participación",
         "topics": "Tópicos del periodo",
-        "narratives": "Narrativas del periodo"
+        "narratives": "Narrativas del periodo",
+        "viewLabel": "Vista del mapa de conversación",
+        "sentimentLegend": "Sentimiento predominante de la evidencia",
+        "map": "Mapa",
+        "list": "Lista",
+        "mapReading": "Cada burbuja es un término. La posición horizontal muestra las menciones que lo sostienen, la vertical las interacciones observadas en escala logarítmica y el tamaño su participación en el periodo.",
+        "mapReadingNoComparison": "Cada burbuja es un término. La posición horizontal muestra las menciones que lo sostienen, la vertical las interacciones observadas en escala logarítmica y el tamaño su participación en el periodo."
       },
       "detail": {
-        "eyebrow": "Movimiento",
+        "eyebrow": "Lectura del término",
         "title": "Selecciona un término",
-        "notAvailable": "El ranking gobernado está disponible, pero la tendencia y el linaje de este término no están disponibles temporalmente.",
+        "topicDetail": "Detalle del tópico",
+        "narrativeDetail": "Detalle de la narrativa",
+        "notAvailable": "No pudimos cargar el detalle de este término. El ranking sigue disponible y puedes intentar otro periodo.",
+        "retry": "Reintentar",
+        "mentions": "Menciones que lo sostienen",
+        "share": "Participación del periodo",
+        "previousPeriod": "{change} vs. periodo anterior",
+        "sentiment": "Sentimiento de la evidencia",
+        "supportingTotal": "Menciones de soporte",
+        "sentimentComposition": "Sentimiento de la evidencia",
+        "sentimentMix": "{positive, number} positivas · {neutral, number} neutrales · {negative, number} negativas",
+        "sentimentCaveat": "El término no es positivo ni negativo por sí mismo. Este balance describe el tono de la evidencia que lo compone.",
+        "presence": "Presencia en el tiempo",
+        "composition": "Qué compone este término",
+        "compositionBody": "Fragmentos de evidencia aprobada; abre el detalle para revisar todas las menciones.",
         "openEvidence": "Abrir evidencia",
+        "additionalEvidence": "{count, plural, one {# mención más} other {# menciones más}}",
         "sourceSummary": "{mentions, number} menciones fuente en {batches, number} lotes de importación"
+      },
+      "sentiment": {
+        "positive": "Positivo",
+        "neutral": "Neutral",
+        "negative": "Negativo",
+        "mixed": "Mixto",
+        "not_available": "Sin clasificación"
       },
       "charts": {
         "currentPeriod": "Periodo seleccionado",
-        "termTrend": "{term} a lo largo del tiempo"
+        "termTrend": "{term} a lo largo del tiempo",
+        "topicMap": "Prominencia y movimiento de tópicos",
+        "narrativeMap": "Prominencia y movimiento de narrativas",
+        "sentimentMix": "Composición de sentimiento de {term}",
+        "relationships": "Términos que aparecen juntos",
+        "topicRelationships": "Red de asociación de tópicos",
+        "narrativeRelationships": "Red de asociación de narrativas",
+        "otherNarratives": "Narrativas presentes en el periodo seleccionado",
+        "otherTopics": "Tópicos presentes en el periodo seleccionado"
       },
       "cooccurrence": {
         "eyebrow": "Relaciones",
         "title": "Términos que aparecen juntos",
-        "empty": "No hay coocurrencias aprobadas disponibles en esta vista."
+        "topicTitle": "Asociaciones entre tópicos",
+        "narrativeTitle": "Asociaciones entre narrativas",
+        "empty": "No hay evidencia suficiente para mostrar asociaciones por encima de la tasa base esperada en este periodo.",
+        "mapContext": "Relaciones alrededor de {term}",
+        "topicMapContext": "Red de tópicos · {term} seleccionado",
+        "narrativeMapContext": "Red de narrativas · {term} seleccionada",
+        "navigationHint": "Arrastra para mover · desplázate para acercar",
+        "listTitle": "Más fuertes de lo esperado",
+        "listBody": "Los pares mostrados comparten al menos dos menciones y aparecen al menos 1.1× más de lo esperado según la tasa base de cada término. Es asociación, no causalidad.",
+        "selectedEmpty": "Este término no tiene asociaciones por encima del mínimo de evidencia y tasa base.",
+        "sharedMentions": "{count, plural, one {# mención compartida} other {# menciones compartidas}}",
+        "termMentions": "{count, plural, one {# mención de soporte} other {# menciones de soporte}}",
+        "associationLift": "{value}× lo esperado"
       },
       "companion": {
         "eyebrow": "Otra lente",
@@ -748,10 +1212,13 @@
       "evidence": {
         "title": "Evidencia fuente",
         "close": "Cerrar evidencia",
-        "body": "Cada elemento es una mención fuente aprobada y conectada con este término. Abre el original para revisarlo en contexto.",
+        "body": "Estas son las menciones que sostienen este término. Abre el original para revisar su contexto completo.",
+        "empty": "No hay menciones de evidencia disponibles para este término.",
         "unknownSource": "Fuente desconocida",
         "noText": "No hay un fragmento de texto disponible.",
         "openOriginal": "Abrir original",
+        "viewEnriched": "Ver mención enriquecida",
+        "openingEnriched": "Abriendo mención enriquecida",
         "loadMore": "Cargar más evidencia"
       },
       "empty": {
@@ -765,7 +1232,7 @@
       "helpers": {
         "coverage": {
           "title": "Cobertura clasificada",
-          "body": "La proporción de menciones incluidas del corpus que actualmente tiene al menos un término aprobado en esta lente.",
+          "body": "La proporción de menciones incluidas que actualmente tiene al menos un término aprobado en esta lente.",
           "reading": "Una cobertura mayor significa que el mapa representa más de la conversación seleccionada. La cobertura parcial se declara; no se rellena con supuestos."
         },
         "terms": {
@@ -798,16 +1265,36 @@
           "body": "Muestra cuántas menciones fuente aprobadas sostuvieron el término seleccionado en cada intervalo del periodo.",
           "reading": "Usa la forma para distinguir un patrón sostenido de un pico de un día y abre la evidencia para entender por qué se movió."
         },
+        "interpretation": {
+          "title": "Cómo leer el término",
+          "body": "Reúne su definición gobernada, relevancia en el periodo, mezcla de sentimiento, evolución y evidencia fuente.",
+          "reading": "No asigna automáticamente un área responsable ni convierte el término en riesgo. Usa el tono y la evidencia para decidir si requiere atención de marca, producto, experiencia o servicio."
+        },
+        "supportingMentions": {
+          "title": "Menciones que lo sostienen",
+          "body": "Menciones fuente únicas vinculadas con este término en el periodo seleccionado.",
+          "reading": "Abre la evidencia para ver exactamente qué conversaciones entran en el conteo."
+        },
+        "periodShare": {
+          "title": "Participación del periodo",
+          "body": "El porcentaje de menciones incluidas y clasificadas de esta lente que sostienen el término seleccionado.",
+          "reading": "Úsala para evaluar su prominencia dentro de esta vista; no es cuota de mercado."
+        },
+        "sentimentEvidence": {
+          "title": "Sentimiento de la evidencia",
+          "body": "El tono positivo, neutral y negativo de las menciones fuente que sostienen este término.",
+          "reading": "El término no es positivo ni negativo por sí mismo. Lee esta mezcla junto con la evidencia para decidir si representa impulso, fricción o una señal mixta."
+        },
         "cooccurrence": {
-          "title": "Coocurrencia",
-          "body": "Cuenta las menciones fuente en las que aparecen juntos dos términos aprobados.",
-          "reading": "Aparecer juntos sugiere una relación que vale la pena explorar, pero no prueba que un término haya causado al otro."
+          "title": "Red de asociaciones",
+          "body": "Compara la coocurrencia observada con la cantidad esperada según la tasa base de cada término, usando sólo menciones fuente aprobadas.",
+          "reading": "El grosor de la línea muestra menciones compartidas; la lista lateral incluye pares con al menos dos menciones compartidas que aparecen al menos 1.1× más de lo esperado. Es una asociación exploratoria, no causalidad ni prueba de correlación."
         }
       }
     },
     "mentions": {
       "title": "Menciones",
-      "status": "Corpus vivo",
+      "status": "Evidencia viva",
       "subtitle": "Explora la conversación aprobada detrás de {brand}, con su contexto gobernado conectado.",
       "summary": "{count, number} menciones en esta vista",
       "views": { "all": "Todas las menciones" },
@@ -838,6 +1325,7 @@
       },
       "sort": {
         "label": "Ordenar menciones",
+        "ariaLabel": "Ordenar menciones",
         "publishedDesc": "Más nuevas primero",
         "publishedAsc": "Más antiguas primero",
         "platformAsc": "Fuente A–Z",
@@ -855,13 +1343,14 @@
       "table": {
         "mention": "Mención",
         "platform": "Fuente",
-        "scope": "Alcance del corpus",
+        "scope": "Alcance de fuente",
         "role": "Rol en la conversación",
         "published": "Publicada",
         "sentiment": "Sentimiento",
         "engagement": "Interacciones",
         "context": "Contexto"
       },
+      "multiEntity": { "yes": "Múltiple", "no": "Única" },
       "roles": { "root_post": "Post raíz", "comment": "Comentario" },
       "sentiment": {
         "positive": "Positivo",
@@ -915,7 +1404,7 @@
         "noText": "Este registro no tiene texto visible para cliente.",
         "openOriginal": "Abrir original",
         "performance": "Desempeño observado",
-        "scope": "Alcance del corpus",
+        "scope": "Alcance de fuente",
         "tbEnrichment": "Triggers & Barriers",
         "enrichment": "Contexto enriquecido",
         "noEnrichment": "Esta mención todavía no tiene un tópico o narrativa aprobada conectada.",
@@ -928,8 +1417,8 @@
       },
       "helpers": {
         "scope": {
-          "title": "Qué significa alcance del corpus",
-          "body": "Es la consulta o alcance de escucha que capturó esta mención: marca, competencia o categoría. Explica por qué entró al corpus, no quién la publicó.",
+          "title": "Qué significa alcance de fuente",
+          "body": "Es el alcance de escucha que capturó esta mención: marca, competencia o categoría. Explica por qué se incorporó a los datos, no quién la publicó.",
           "process": "Se asigna durante la ingesta desde el catálogo aprobado de fuentes y consultas. Una mención puede coincidir con más de un alcance."
         },
         "tb": {
@@ -960,7 +1449,7 @@
       "close": "Cerrar controles",
       "filters": "Filtros",
       "scope": "Alcance de datos",
-      "approvedCorpus": "Corpus vivo aprobado",
+      "approvedCorpus": "Menciones de marca aprobadas",
       "scopeCount": "{count, number} menciones incluidas",
       "search": "Búsqueda",
       "searchPlaceholder": "Palabra o frase exacta",
@@ -986,7 +1475,7 @@
         "topic": "Tópico",
         "entity": "Marca o entidad",
         "campaign": "Campaña",
-        "corpusScope": "Alcance del corpus",
+        "corpusScope": "Alcance de fuente",
         "conversationRole": "Rol en la conversación",
         "tbPolarity": "Clasificación T&B",
         "tbLayer": "Capa de decisión",
@@ -1324,6 +1813,57 @@
         }
       }
     },
+    "settings": {
+      "status": "Configuración del workspace",
+      "title": "Configuración",
+      "subtitle": "Configuración segura para cliente, frescura de datos y disponibilidad de reportes.",
+      "workspace": {
+        "title": "Workspace",
+        "subtitle": "La configuración que gobierna este workspace de Signal.",
+        "status": "Estado",
+        "timezone": "Zona horaria",
+        "access": "Acceso",
+        "allowed": "Tienes acceso a este workspace"
+      },
+      "data": {
+        "title": "Datos y fuentes",
+        "subtitle": "Aquí sólo se muestra información de fuentes visible para clientes.",
+        "sources": "Fuentes activas",
+        "freshness": "Frescura",
+        "sourceMeta": "{cadence} · {freshness}",
+        "cadence": { "manual": "Manual", "hourly": "Cada hora", "daily": "Diaria", "weekly": "Semanal", "monthly": "Mensual" },
+        "noVisibleSources": "Todavía no hay detalles de fuentes publicados en este workspace."
+      },
+      "profiles": {
+        "title": "Perfiles publicados",
+        "subtitle": "Los perfiles de clasificación activos que utiliza Signal.",
+        "empty": "No hay perfiles publicados disponibles.",
+        "kinds": {
+          "topics": "Temas",
+          "narratives": "Narrativas",
+          "topic": "Temas",
+          "narrative": "Narrativas"
+        }
+      },
+      "report": {
+        "title": "Reportes",
+        "subtitle": "Estado actual de los reportes visibles para cliente.",
+        "state": "Triggers & Barriers",
+        "revision": "Revisión actual"
+      },
+      "states": {
+        "active": "Activo",
+        "paused": "Pausado",
+        "archived": "Archivado",
+        "fresh": "Actualizado",
+        "stale": "Desactualizado",
+        "partial": "Parcial",
+        "failed": "Requiere atención",
+        "published": "Publicado",
+        "draft": "Borrador",
+        "not_available": "No disponible"
+      }
+    },
     "sentiment": {
       "positive": "Positivo",
       "negative": "Negativo",
@@ -1345,8 +1885,8 @@
     },
     "coverage": {
       "title": "Cobertura y trazabilidad",
-      "body": "{count} menciones incluidas entre {start} y {end}. Los charts conservan acceso al corpus gobernado.",
-      "open": "Abrir corpus"
+      "body": "{count} menciones incluidas entre {start} y {end}. Puedes abrir la evidencia que sustenta cada resultado.",
+      "open": "Abrir menciones"
     },
     "errors": {
       "load": "No se pudo actualizar el periodo.",
@@ -1356,7 +1896,9 @@
   "Team": {
     "eyebrow": "Operación",
     "title": "Equipo y accesos",
-    "subtitle": "Invita personas, asigna su rol y organización, y da de baja cuando haga falta. Kinde sólo autentica; los accesos los gobiernas aquí.",
+    "subtitle": "Invita personas, asigna roles y controla el acceso por organización.",
+    "directory": { "title": "Directorio y acceso", "subtitle": "Usuarios, invitaciones, roles y organizaciones en una sola superficie operativa.", "tabsLabel": "Vistas de equipo" },
+    "drawer": { "close": "Cerrar panel" },
     "invite": {
       "title": "Invitar persona",
       "email": "Correo",
@@ -1375,13 +1917,16 @@
       "subtitle": "Edita workspaces cliente, limpia duplicados y borra sólo cuando no tengan dependencias.",
       "empty": "Aún no hay organizaciones.",
       "new": "Nueva organización",
+      "eyebrow": "Organización",
+      "detailAria": "Editar organización {name}",
+      "editSubtitle": "Actualiza la identidad operativa y el estado sin cambiar sus dependencias.",
       "cancelCreate": "Cancelar",
       "legalName": "Razón social",
       "displayName": "Nombre visible",
       "slug": "Slug",
       "industry": "Industria",
       "country": "País",
-      "status": "Status",
+      "status": "Estado",
       "statusActive": "Activa",
       "statusPaused": "Pausada",
       "statusArchived": "Archivada",
@@ -1396,10 +1941,10 @@
       "deleteBlocked": "Para borrar, primero mueve o elimina sus usuarios, invitaciones, marcas y themes.",
       "edit": "Editar",
       "delete": "Borrar",
-      "users": "{count} usuarios",
-      "brands": "{count} marcas",
-      "corpora": "{count} corpora",
-      "pending": "{count} invitaciones pendientes",
+      "users": "{count, plural, one {# usuario} other {# usuarios}}",
+      "brands": "{count, plural, one {# marca} other {# marcas}}",
+      "corpora": "{count, plural, one {# estudio} other {# estudios}}",
+      "pending": "{count, plural, one {# invitación pendiente} other {# invitaciones pendientes}}",
       "blockers": {
         "users": "usuarios",
         "pendingInvitations": "invitaciones",
@@ -1411,6 +1956,13 @@
       "title": "Usuarios",
       "empty": "Aún no hay usuarios.",
       "you": "Tú",
+      "eyebrow": "Usuario",
+      "detailAria": "Acceso de {name}",
+      "open": "Ver acceso",
+      "accessTitle": "Rol y alcance",
+      "accessSubtitle": "El rol define las capacidades. La organización limita el alcance de los usuarios cliente.",
+      "roleLabel": "Rol de {name}",
+      "organizationLabel": "Organización de {name}",
       "neverLoggedIn": "Sin primer ingreso",
       "lastLogin": "Último ingreso: {date}",
       "noOrg": "—"
@@ -1435,13 +1987,812 @@
       "client_admin": "Cliente admin",
       "client_viewer": "Cliente lector"
     },
+    "roleCatalog": {
+      "title": "Roles",
+      "eyebrow": "Rol",
+      "detailAria": "Detalle del rol {role}",
+      "assigned": "{count, plural, one {# persona} other {# personas}}",
+      "internal": "Interno",
+      "client": "Cliente",
+      "open": "Ver acceso",
+      "allowed": "Permitido",
+      "notAllowed": "Sin acceso",
+      "descriptions": {
+        "noisia_admin": "Administra la operación completa, el equipo y la configuración interna.",
+        "analyst": "Opera marcas y estudios, revisa análisis y prepara entregables.",
+        "client_admin": "Administra el acceso de su organización y consulta los resultados de cliente.",
+        "client_viewer": "Consulta Signal y los entregables autorizados de su organización."
+      },
+      "accessTitle": "Acceso efectivo",
+      "accessSubtitle": "Permisos derivados de las reglas reales de autorización del producto.",
+      "peopleTitle": "Personas con este rol",
+      "peopleSubtitle": "Asignaciones activas en el directorio actual.",
+      "peopleEmpty": "Nadie tiene este rol por ahora.",
+      "brandAccess": { "admin": "Administrar", "comment": "Comentar", "read": "Lectura" },
+      "capabilities": {
+        "studio": { "title": "Admin interno", "description": "Puede entrar a las superficies operativas de Studio." },
+        "signal": { "title": "Signal cliente", "description": "Puede abrir el workspace y los módulos visibles para cliente." },
+        "brands": { "title": "Marcas y temas", "description": "Puede crear o modificar marcas y temas de análisis." },
+        "studies": { "title": "Datos y estudios", "description": "Puede administrar corpus y preparar nuevas corridas." },
+        "review": { "title": "Review", "description": "Puede aprobar resultados antes de publicarlos." },
+        "team": { "title": "Equipo", "description": "Puede invitar personas y cambiar roles o estados." },
+        "outputs": { "title": "Entregables", "description": "Puede consultar resultados publicados para cliente." },
+        "brandAccess": { "title": "Acceso de marca", "description": "Nivel predeterminado cuando recibe acceso a una marca." }
+      }
+    },
     "status": {
       "active": "Activo",
+      "draft": "Borrador",
+      "retired": "Retirado",
       "invited": "Invitado",
       "suspended": "Suspendido",
       "pending": "Pendiente",
       "paused": "Pausado",
       "archived": "Archivado"
+    }
+  },
+  "AdminWorkspace": {
+    "a11y": { "skip": "Saltar al contenido del workspace" },
+    "actions": { "notifications": "Notificaciones", "close": "Cerrar", "saving": "Guardando…" },
+    "loading": {
+      "index": { "eyebrow": "Operación", "title": "Dashboard", "subtitle": "Trabajo priorizado sobre datos y reportes propiedad del workspace." },
+      "brands": { "eyebrow": "Administración de workspaces", "title": "Marcas", "subtitle": "Estado operativo de los workspaces de marca." },
+      "brandWorkspace": { "eyebrow": "Marca", "title": "Workspace de marca", "subtitle": "Actualizando la vista con datos gobernados del workspace." },
+      "brandForm": { "eyebrow": "Workspace de marca", "title": "Brand OS", "subtitle": "Cargando identidad, relaciones y conocimiento de marca." },
+      "data": { "eyebrow": "Operación", "title": "Datos", "subtitle": "Cobertura, frescura y calidad de las fuentes por marca." },
+      "reports": { "eyebrow": "Operación", "title": "Reportes", "subtitle": "Releases estratégicos y revisiones pendientes por marca." },
+      "team": { "eyebrow": "Operación", "title": "Equipo y accesos", "subtitle": "Usuarios, roles y acceso por organización." },
+      "settings": { "eyebrow": "Administración", "title": "Configuración", "subtitle": "Preferencias, acceso y contrato operativo del Admin." },
+      "themes": { "eyebrow": "Investigación temática", "title": "Themes", "subtitle": "Estudios temáticos internos que no dependen de una marca." },
+      "study": { "eyebrow": "Estudio", "title": "Workspace de análisis", "subtitle": "Cargando la superficie operativa del estudio." },
+      "studyWizard": { "eyebrow": "Configuración del estudio", "title": "Nuevo estudio", "subtitle": "Define la pregunta, población y metodología del análisis." }
+    },
+    "topbar": {
+      "serving": "Serving",
+      "servingHelp": "Estado operativo real del serving de Signal. Abre Configuración para revisar el contrato completo.",
+      "readMode": { "legacy": "Legacy", "shadow": "Shadow", "governed": "Gobernado" }
+    },
+    "navigation": {
+      "open": "Abrir navegación", "close": "Cerrar navegación", "label": "Navegación de Admin",
+      "internal": "Workspace interno", "advanced": "Operaciones avanzadas", "role": "Rol actual",
+      "items": { "dashboard": "Dashboard", "brands": "Marcas", "data": "Datos", "reports": "Reportes", "team": "Equipo", "settings": "Configuración", "corpora": "Estudios", "themes": "Themes" }
+    },
+    "roles": { "admin": "Admin Noisia", "analyst": "Analista" },
+    "context": {
+      "label": "Navegación del workspace de marca", "eyebrow": "Marca", "title": "Workspace", "compactLabel": "Vista de marca",
+      "items": { "overview": "Overview", "data": "Datos y fuentes", "data-mentions": "Menciones", "data-review": "Revisión semántica", "brand-os": "Brand OS", "reports": "Reportes", "settings": "Acceso y configuración" }
+    },
+    "studyContext": {
+      "label": "Navegación del estudio", "eyebrow": "Estudio", "title": "Workspace de análisis", "compactLabel": "Vista del estudio",
+      "items": { "engine": "Engine", "mentions": "Menciones", "review": "Review" }
+    },
+    "studySurfaces": {
+      "mentions": {
+        "eyebrow": "Corpus del estudio", "fallbackTitle": "Corpus del estudio", "subtitle": "Revisa, filtra y cura las menciones fuente utilizadas por este análisis.",
+        "status": { "approved": "Corpus aprobado", "pending": "En preparación" },
+        "summary": { "mentions": "Menciones", "filtered": "Resultado filtrado", "page": "Página", "of": "de {count}", "pageSize": "Tamaño de página", "perPage": "por página", "filters": "Filtros", "active": "activos" },
+        "browser": {
+          "eyebrow": "Menciones del corpus", "title": "Revisión de menciones", "filters": "Filtrar y ordenar", "filteredResults": "menciones filtradas",
+          "total": "{count, number} en total", "excludedCount": "{count, plural, one {# excluida} other {# excluidas}}", "selectPage": "Seleccionar página", "selectMention": "Seleccionar mención",
+          "filtering": { "title": "Actualizando menciones", "body": "Aplicando búsqueda, fuentes y orden." },
+          "empty": { "filteredTitle": "No hay menciones con estos filtros", "filteredBody": "Ajusta la búsqueda o elimina filtros para volver al corpus.", "corpusTitle": "Este corpus aún no tiene menciones", "corpusBody": "Importa y aprueba menciones antes de hacer una revisión manual." },
+          "status": { "included": "Incluida", "excluded": "Excluida", "pending": "Pendiente", "includedPlural": "Incluidas", "excludedPlural": "Excluidas", "pendingPlural": "Pendientes" },
+          "sentiment": { "none": "Sin sentimiento", "score": "Score {score}" },
+          "cleanup": { "manual": "Manual", "ai": "IA" },
+          "controls": { "search": "Buscar texto", "searchPlaceholder": "Palabra o frase exacta", "sort": "Ordenar", "newest": "Más recientes", "oldest": "Más antiguas", "longest": "Texto más largo", "shortest": "Texto más corto", "pendingFirst": "Pendientes primero", "inclusion": "Inclusión", "sources": "Fuentes", "sentiment": "Sentimiento", "date": "Fecha", "cleanupType": "Tipo de limpieza", "exclusionReason": "Motivo de exclusión", "withReason": "Con motivo", "all": "Todos", "allFeminine": "Todas" },
+          "pagination": { "previous": "Anterior", "next": "Siguiente", "position": "Página {page} de {total}" },
+          "bulk": { "label": "Acciones sobre menciones seleccionadas", "selection": "Selección manual", "count": "{count, plural, one {# mención} other {# menciones}}", "reversible": "Puedes revertirlo desde Historial.", "reasonLabel": "Motivo de exclusión", "reasonPlaceholder": "Motivo breve, opcional", "clear": "Limpiar", "exclude": "Excluir {count, number}" },
+          "errors": { "exclude": "No se pudo aplicar la exclusión manual." }
+        }
+      }
+    },
+    "search": { "placeholder": "Buscar en Admin", "label": "Búsqueda de Admin", "input": "Ir a un área del workspace…", "close": "Cerrar búsqueda", "createBrand": "Crear marca" },
+    "feedback": {
+      "error": {
+        "eyebrow": "Workspace de Admin", "title": "No pudimos cargar esta vista", "subtitle": "El shell del workspace sigue disponible mientras recuperas la página.",
+        "stateTitle": "Algo interrumpió esta página", "body": "Intenta la solicitud de nuevo. Si el problema continúa, revisa el detalle técnico antes de cambiar datos o permisos.",
+        "detail": "Detalle técnico", "retry": "Intentar de nuevo"
+      },
+      "notFound": {
+        "eyebrow": "Workspace de Admin", "title": "Página no encontrada", "subtitle": "Esta ruta no está disponible en el workspace de Admin actual.",
+        "stateTitle": "No hay nada en esta dirección", "body": "El recurso pudo moverse o el enlace puede apuntar a una ruta anterior.", "back": "Volver al Dashboard"
+      }
+    },
+    "states": {
+      "active": "Activo", "allowed": "Permitido", "archived": "Archivado", "blocked": "Bloqueado", "paused": "Pausado", "ready": "Listo",
+      "fresh": "Actualizado", "stale": "Desactualizado", "partial": "Parcial", "failed": "Fallido", "pending": "Pendiente", "processing": "Procesando",
+      "completed": "Completado", "approved": "Aprobado", "rejected": "Rechazado", "not_available": "No disponible"
+    },
+    "quality": { "good": "Saludable", "warning": "Requiere revisión", "danger": "Requiere acción", "not_available": "No disponible" },
+    "coverage": { "good": "Con cobertura", "warning": "Parcial", "danger": "Requiere acción", "not_available": "No disponible", "notAvailable": "Sin cobertura", "noMentions": "Sin menciones gobernadas", "mentions": "{count} menciones gobernadas" },
+    "dashboard": {
+      "eyebrow": "Operación", "title": "Dashboard", "subtitle": "Trabajo priorizado sobre datos y reportes propiedad del workspace.",
+      "actions": { "data": "Abrir datos", "createBrand": "Crear marca", "review": "Revisar", "allBrands": "Todas las marcas" },
+      "summary": {
+        "brands": "Marcas", "brandsHint": "Workspaces internos en alcance", "mentions": "Menciones gobernadas", "mentionsHint": "Poblaciones primary-brand actuales",
+        "sources": "Problemas de fuentes", "sourcesHint": "Fuentes desactualizadas o fallidas", "review": "Reportes en Review", "reviewHint": "Corridas esperando decisión"
+      },
+      "priorities": { "title": "Prioridades", "subtitle": "Primero las acciones de mayor impacto.", "emptyTitle": "Sin acciones urgentes", "emptyBody": "Los checks actuales del workspace están saludables." },
+      "priority": {
+        "workspace_missing": "La inicialización del workspace está incompleta.", "source_failed": "{count} fuentes fallaron.", "source_stale": "{count} fuentes están desactualizadas.",
+        "imports_pending": "{count} imports están pendientes.", "coverage_partial": "La cobertura primary-brand requiere atención.", "reports_needing_review": "{count} corridas requieren Review."
+      },
+      "queue": { "title": "Cola operativa", "subtitle": "Trabajo actual que requiere seguimiento.", "pendingImports": "Imports pendientes", "reportReview": "Reportes en Review", "sourceIssues": "Problemas de fuentes", "workspaceCount": "Workspaces inicializados" },
+      "workspaces": { "title": "Estado de los workspaces", "subtitle": "Todas las marcas, ordenadas para mostrar primero las que requieren atención." },
+      "attention": { "title": "Marcas que requieren atención", "subtitle": "Estado operativo desde datos canónicos, fuentes y registro de reportes.", "emptyTitle": "Todo en orden", "emptyBody": "Ninguna marca cumple actualmente una regla de atención." }
+    },
+    "brands": {
+      "eyebrow": "Administración de workspaces", "title": "Marcas", "subtitle": "{count} marcas con estado operativo workspace-owned.",
+      "actions": { "create": "Crear marca", "open": "Abrir {brand}" },
+      "filters": { "search": "Marca", "searchPlaceholder": "Nombre, slug o industria", "organization": "Organización", "organizationPlaceholder": "Nombre o ID de organización", "status": "Estado", "all": "Todos", "allStatuses": "Todos los estados", "apply": "Aplicar" },
+      "table": { "title": "Workspaces de marca", "subtitle": "Cobertura, frescura, calidad y estado actual del reporte.", "count": "{count, plural, one {# resultado} other {# resultados}}" },
+      "columns": { "brand": "Marca", "mentions": "Menciones", "coverage": "Cobertura", "freshness": "Frescura", "quality": "Calidad de datos", "health": "Salud de datos", "report": "Reporte", "activity": "Última actividad", "actions": "Acciones" },
+      "empty": { "title": "No hay marcas coincidentes", "body": "Ajusta los filtros o crea una marca." },
+      "pagination": { "label": "Páginas de marcas", "previous": "Anterior", "next": "Siguiente", "position": "Página {page} de {total}" }
+    },
+    "createBrand": { "eyebrow": "Configuración del workspace" },
+    "brand": {
+      "eyebrow": "Overview operativo", "noIndustry": "Sin industria configurada",
+      "actions": { "openSignal": "Abrir Signal", "addData": "Agregar o importar datos", "runAnalysis": "Ejecutar análisis", "updateReport": "Actualizar reporte" },
+      "summary": { "mentions": "Menciones gobernadas", "mentionsHint": "Población primary-brand actual", "coverage": "Cobertura", "sources": "Fuentes activas", "sourcesHint": "{count, plural, one {# requiere atención} other {# requieren atención}}", "report": "T&B actual" },
+      "health": { "title": "Salud de datos", "subtitle": "Una vista de alcance, frescura y calidad.", "coverage": "Cobertura", "freshness": "Frescura", "quality": "Calidad", "population": "Población operacional", "populationVersion": "Versión {version}" },
+      "issues": {
+        "title": "Requiere atención", "subtitle": "Checks que bloquean serving o reporting confiable.", "emptyTitle": "Sin bloqueos", "emptyBody": "Fuentes, cobertura y reportes no tienen bloqueos actuales.",
+        "items": { "workspace": "Inicialización del workspace", "sources": "Sin fuentes activas", "freshness": "Frescura de fuentes", "imports": "Imports pendientes", "review": "Review del reporte" },
+        "hints": { "workspace": "Termina la configuración del workspace.", "sources": "Agrega una fuente primary-brand gobernada.", "freshness": "{count, plural, one {# fuente requiere atención.} other {# fuentes requieren atención.}}", "imports": "{count, plural, one {# import sigue pendiente.} other {# imports siguen pendientes.}}", "review": "{count, plural, one {# corrida requiere una decisión.} other {# corridas requieren una decisión.}}" }
+      },
+      "sources": { "title": "Fuentes", "subtitle": "Ingesta workspace-owned y últimos resultados.", "open": "Gestionar fuentes", "emptyTitle": "Aún no hay fuentes", "emptyBody": "Agrega una fuente para comenzar a alimentar Signal." },
+      "resources": { "title": "Recursos del workspace", "subtitle": "Contexto y análisis que reutilizan la misma población gobernada." },
+      "reports": { "title": "Reportes", "subtitle": "Una identidad de reporte con releases revisionadas.", "open": "Abrir reportes", "current": "Revisión actual", "review": "Corridas en Review", "latestRun": "Última corrida", "published": "Publicado", "summary": "{revision} · {review} en Review · publicado {published}" },
+      "brandOs": { "title": "Brand OS", "subtitle": "Contexto de marca y conocimiento reutilizable.", "open": "Abrir Brand OS", "aliases": "Aliases", "competitors": "Competidores", "knowledge": "Fuentes de conocimiento", "profiles": "Perfiles activos", "summary": "{aliases} aliases · {competitors} competidores · {knowledge} fuentes de conocimiento", "profilesCount": "{count} perfiles activos" }
+    },
+    "brandOs": {
+      "eyebrow": "Workspace de marca", "title": "Brand OS de {brand}", "subtitle": "Edita el contexto de marca sin perder el setup asistido, competidores ni Knowledge Base existentes.", "back": "Volver al overview",
+      "compatibility": { "title": "Compatibilidad con Studies y Engine", "subtitle": "Los corpora existentes siguen disponibles como superficies de ejecución y compatibilidad.", "newStudy": "Nuevo estudio", "emptyTitle": "Sin estudios", "emptyBody": "Esta marca puede operar Signal sin crear un estudio.", "study": "Estudio", "method": "Método", "status": "Estado", "open": "Abrir Engine", "unnamed": "Estudio sin título" }
+    },
+    "data": {
+      "eyebrow": "Datos y fuentes", "title": "Datos del workspace", "subtitle": "Registra fuentes e importa menciones directamente al workspace de marca.",
+      "actions": { "addSource": "Agregar fuente", "create": "Crear fuente", "history": "Historial", "import": "Importar CSV", "openMentions": "Abrir menciones", "openReview": "Abrir revisión semántica" },
+      "summary": { "sources": "Fuentes activas", "sourcesHint": "Fuentes propiedad del workspace", "mentions": "Menciones gobernadas", "mentionsHint": "Registros primary-brand aceptados", "coverage": "Cobertura", "freshness": "Frescura", "freshnessHint": "Últimos datos aceptados del workspace" },
+      "sources": { "title": "Fuentes", "subtitle": "Estado, scope gobernado, frescura y resultados de importación.", "emptyTitle": "Aún no hay fuentes", "emptyBody": "Agrega una fuente primary-brand para iniciar la ingesta." },
+      "columns": { "source": "Fuente", "scope": "Scope", "status": "Estado", "freshness": "Frescura", "lastImport": "Último import", "results": "Resultados", "actions": "Acciones" },
+      "resultSummary": "{included} incluidas · {duplicates} duplicadas",
+      "create": { "title": "Agregar fuente", "body": "La fuente se registra en el workspace antes de que cualquier estudio la consuma.", "name": "Nombre", "provider": "Proveedor", "sourceType": "Tipo de fuente", "connection": "Conexión", "listeningCsv": "CSV de listening", "manualUpload": "Carga manual", "scope": "Scope gobernado", "primaryBrand": "Marca primaria", "scopeHelp": "Los scopes adicionales siguen cerrados hasta que exista una política de exploración server-owned." },
+      "import": { "title": "Importar en {source}", "body": "El upload es durable y el procesamiento continúa en segundo plano. Sólo un import completado puede alimentar serving o Semantic Review.", "file": "Archivo CSV", "fileHelp": "Los exports grandes de SentiOne se suben directamente en partes durables de 48 MB con retry seguro por parte.", "records": "Registros", "included": "Incluidos", "excluded": "Excluidos", "duplicates": "Duplicados", "uploading": "Subiendo…", "retry": "Reintentar de forma segura", "retryFromStorage": "Reintentar sin volver a subir", "cancelUpload": "Cancelar y reintentar", "recordsProcessed": "{count} registros procesados", "progress": "{percent}% · {count} registros procesados", "finalValidationFailed": "Archivo leído; falló la validación final", "status": { "uploading": "Subiendo", "queued": "En cola", "processing": "Procesando", "completed": "Completado", "failed": "Falló" } },
+      "history": { "title": "Historial de {source}", "loading": "Cargando imports…", "empty": "No hay imports para esta fuente.", "file": "Archivo", "unnamed": "Import sin nombre", "counts": "{records} registros · {included} incluidos · {excluded} excluidos · {duplicates} duplicados" },
+      "errors": { "create": "No se pudo crear la fuente.", "fileRequired": "Elige un archivo CSV no vacío.", "import": "No se pudo procesar el import.", "history": "No se pudo cargar el historial de imports." },
+      "acquisition": {
+        "eyebrow": "Plan de adquisición",
+        "title": "Plan de adquisición",
+        "subtitle": "Organiza marca primaria, categoría y competidores. Cada archivo conserva evidencia graduada de query, periodo y lineage observado.",
+        "overview": { "current": "Plan actual", "draft": "Cambios en preparación", "slots": "Slots aplicables", "configured": "Queries configuradas", "state": "Estado", "version": "Versión {version}", "revision": "v{version} · revisión {revision}" },
+        "states": { "none": "Ninguno", "missing": "Sin preparar", "draft": "Draft", "ready": "Listo para activar", "current": "Activo", "stale": "Requiere actualización", "retired": "Retirado", "pending": "Pendiente", "currentPreserved": "v{version} sigue activa" },
+        "scopes": { "primary_brand": "Marca primaria", "category": "Categoría e industria", "competitor": "Competidor", "reference": "Referencia" },
+        "columns": { "slot": "Slot de adquisición", "query": "Query y conector", "state": "Estado", "actions": "Acciones" },
+        "connectors": { "title": "Conectores de datos", "count": "{count, plural, one {# conector disponible} other {# conectores disponibles}}", "empty": "Agrega un conector para configurar queries.", "unavailable": "Conector no disponible", "required": "Primero agrega un conector", "requiredHelp": "Las queries reutilizan un conector de listening; el scope vive en cada slot, no en la fuente." },
+        "brief": { "title": "Brief de adquisición", "states": { "missing": "Define el objetivo y el contexto antes de generar propuestas.", "sealed": "Contexto sellado y alineado con Brand OS.", "stale": "Brand OS o Knowledge cambió; actualiza el brief." }, "badges": { "missing": "Sin preparar", "sealed": "Sellado", "stale": "Desactualizado" }, "staleTitle": "El brief necesita actualización", "staleBody": "Revisa las decisiones visibles y vuelve a sellarlo con la autoridad vigente.", "fields": { "objective": "Objetivo", "objectiveHelp": "Qué datos debe adquirir este plan.", "purpose": "Propósito", "market": "Mercado principal", "marketHelp": "Sólo se muestran países gobernados por Brand OS.", "countries": "Países", "languages": "Idiomas", "languagesHelp": "Selecciona las variantes que debe conservar Query Composer.", "periodStart": "Periodo por defecto desde", "periodEnd": "Periodo por defecto hasta", "window": "Ventana objetivo (meses)", "windowHelp": "Guía la construcción; cada import conserva su periodo real.", "mode": "Modo de construcción", "knowledge": "Usar Knowledge autorizado ({count} fuentes)" }, "modes": { "exploratory": "Exploratorio", "detection": "Detección" } },
+        "query": { "summary": "Query v{version} · {cadence}", "missing": "Query pendiente", "missingHelp": "Genera las búsquedas desde Brand OS o crea una versión avanzada.", "generated": "Generada por Query Composer", "generatedFallback": "Generada con fallback determinístico" },
+        "queryPlaybook": { "incompleteTitle": "Playbook de queries incompleto", "incompleteBody": "Puedes activar el plan e importar archivos manuales. Registra queries versionadas para que las adquisiciones futuras sean reproducibles." },
+        "queryEvidence": { "title": "Evidencia de query", "attested": "Utilicé una query registrada", "attestedHelp": "Tu confirmación queda registrada; no se presenta como verificación de SentiOne.", "registeredQuery": "Query registrada", "queryVersion": "Query v{version}", "registerExecuted": "Registrar query ejecutada", "unavailable": "La query no está disponible", "unavailableHelp": "El archivo puede importarse. Noisia conservará que la query de origen no pudo verificarse.", "reason": "Motivo", "confirmAttested": "Confirmo que esta query corresponde a la búsqueda ejecutada.", "confirmUnavailable": "Confirmo que la query ejecutada no está disponible.", "reasons": { "historical_export": "Export histórico", "provider_did_not_embed_query": "El proveedor no incluyó la query", "source_context_unavailable": "El contexto de origen no está disponible", "other": "Otro motivo" }, "badges": { "provider_verified": "Verificada por proveedor", "operator_attested": "Declarada por operador", "unavailable": "Query no disponible" } },
+        "importReadiness": { "blockedTitle": "Governance pendiente", "blockedBody": "Completa quality, retention, licensing y provenance antes de subir el archivo. Puedes preparar la evidencia de query mientras tanto." },
+        "cadence": { "manual": "Manual", "ad-hoc": "Una vez", "daily": "Diaria", "weekly": "Semanal", "monthly": "Mensual" },
+        "blockers": {
+          "title": "{count, plural, one {# bloqueo antes de activar} other {# bloqueos antes de activar}}",
+          "items": {
+            "draft_required": "Prepara un draft del plan.", "authority_drift": "Brand OS cambió; actualiza el plan.", "primary_slot_required": "Falta el slot de marca primaria.", "query_required": "Uno o más slots todavía no tienen query.", "query_source_unavailable": "Una query usa un conector no disponible.", "query_review_required": "Revisa y aprueba la query propuesta de cada slot.", "query_rejected": "Una query fue rechazada; regenera o crea una nueva versión.", "category_identity_required": "Agrega una identidad gobernada de categoría en Preparación de datos.", "category_identity_ambiguous": "La identidad de categoría necesita una decisión en Brand OS.", "governance_unavailable": "Configura quality, retention, licensing y provenance para los conectores usados.", "unknown": "El plan requiere una decisión adicional antes de activarse."
+          }
+        },
+        "empty": { "title": "Prepara los slots de esta marca", "body": "Noisia tomará Brand OS como autoridad y creará marca primaria, categoría y un slot por competidor sin aprobar semántica." },
+        "references": { "title": "Referencias opcionales", "subtitle": "Una referencia nunca entra al plan sin decisión explícita.", "states": { "include": "Incluida", "exclude": "Excluida", "revert": "Revertida", "undecided": "Sin decidir" }, "actions": { "include": "Incluir", "exclude": "Excluir", "revert": "Revertir decisión" } },
+        "actions": { "refresh": "Actualizar", "retry": "Reintentar", "sync": "Actualizar desde Brand OS", "newDraft": "Editar plan", "prepare": "Preparar plan", "prepareBrief": "Preparar brief", "updateBrief": "Actualizar brief", "promote": "Activar plan", "generate": "Generar queries", "regenerate": "Regenerar queries", "review": "Revisar", "manualQuery": "Crear manualmente", "advancedEdit": "Editar versión", "addConnector": "Agregar conector", "createConnector": "Crear conector", "configure": "Configurar query", "newQueryVersion": "Nueva versión", "import": "Importar", "history": "Historial", "decide": "Decidir", "saveDecision": "Guardar decisión", "saveQuery": "Guardar query", "saving": "Guardando…", "confirmPromote": "Activar plan completo", "promoting": "Activando…", "importCsv": "Importar CSV", "uploading": "Procesando…", "retryStorage": "Reintentar sin subir" },
+        "fields": { "connectorName": "Nombre del conector", "connectorPlaceholder": "Ej. SentiOne · proyecto de marca", "provider": "Proveedor", "providerHelp": "Catálogo cerrado del conector.", "connection": "Conexión", "connectionHelp": "Carga manual durable.", "connector": "Conector", "connectorHelp": "El mismo conector puede alimentar varios slots sin duplicar fuentes.", "queryText": "Query del proveedor", "queryTextHelp": "Se guarda de forma privada y versionada; no se expone en Signal.", "includeTerms": "Términos incluidos", "excludeTerms": "Términos excluidos", "aliases": "Aliases", "termsHelp": "Separa términos por coma o por línea.", "cadence": "Cadencia", "periodStart": "Periodo por defecto desde", "periodEnd": "Periodo por defecto hasta", "captureStart": "Cobertura del archivo desde", "captureEnd": "Cobertura del archivo hasta", "timezone": "Zona horaria", "evidence": "Motivo o evidencia", "evidenceHelp": "La activación queda registrada con actor, fecha y evidencia.", "referenceDecision": "Decisión", "file": "Archivo CSV", "fileHelp": "Usa el export original del query seleccionado; el upload continúa en segundo plano." },
+        "drawers": { "brief": { "title": "Preparar brief de adquisición", "body": "Estas decisiones orientan las propuestas. El servidor sella Brand OS, identidades, Knowledge, zona horaria y el contrato del conector." }, "connector": { "title": "Agregar conector", "body": "El conector describe cómo llegan los datos. Marca, categoría o competencia se definen en los slots del plan." }, "query": { "title": "Configurar {slot}", "body": "Edición avanzada: crea una nueva versión privada y append-only. Quedará pendiente de revisión; esto no aprueba semántica." }, "generate": { "title": "Generar queries de adquisición", "body": "Query Composer usa Brand OS, Knowledge y los slots gobernados para proponer búsquedas SentiOne. No ejecuta queries, no importa datos y no activa el plan." }, "review": { "title": "Revisar {slot}" }, "promote": { "title": "Activar plan de adquisición", "body": "Activarás la versión {version} con {slots} slots como una sola transición auditable." }, "reference": { "title": "Decidir {reference}", "body": "Incluye o excluye esta referencia de forma explícita. El cambio prepara un nuevo draft; no modifica imports anteriores." }, "import": { "title": "Importar en {slot}", "body": "El archivo quedará sellado contra query v{version}, periodo, zona horaria y plan activo.", "bodyV2": "Declara honestamente qué evidencia de query existe. El slot y el archivo permanecen auditables aunque la query no esté disponible." }, "history": { "title": "Historial de {slot}" } },
+        "history": { "empty": "Todavía no hay imports en este slot.", "unnamed": "Import sin nombre", "counts": "{records} registros · {included} incluidos · {duplicates} duplicados", "progress": "{count} registros procesados" },
+        "generation": { "hardCap": "Límite máximo", "hardCapHelp": "Máximo autorizado para esta generación. El preflight es gratuito.", "calculate": "Calcular preflight", "calculating": "Calculando…", "emptyTitle": "Calcula antes de generar", "emptyBody": "Verás slots, modelo, precio y costo máximo antes de autorizar llamadas.", "ready": "Listo para generar", "blocked": "Bloqueado", "freePreflight": "Sin llamadas ni escrituras", "slots": "Queries propuestas", "calls": "Llamadas máximas", "estimate": "Costo máximo estimado", "model": "Modelo", "pricing": "Pricing", "provider": "Proveedor", "available": "Disponible", "notAvailable": "No disponible", "blockersTitle": "Resuelve antes de generar", "confirmation": "Autorizo generar {slots} queries con un límite máximo de {cap}. Las propuestas quedarán pendientes de revisión.", "confirm": "Generar propuestas", "generating": "Generando…", "slotStates": { "not_generated": "Sin generar", "generated": "Generada", "generated_with_fallback": "Con fallback" }, "blockers": { "hard_cap_insufficient": "El límite es menor al costo máximo estimado.", "connector_unavailable": "El conector seleccionado no está disponible.", "primary_slot_required": "Falta el slot de marca primaria.", "category_slot_required": "Falta una categoría gobernada.", "competitor_slot_drift": "Los competidores cambiaron; actualiza el plan.", "retired_competitor_slot_present": "El draft conserva un competidor retirado.", "acquisition_brief_required": "Falta preparar el brief de adquisición.", "acquisition_brief_drift": "Brand OS cambió después de preparar el brief.", "acquisition_provider_contract_unavailable": "El contrato SentiOne requerido no está disponible.", "knowledge_context_drift": "Knowledge cambió; actualiza el plan.", "provider_unavailable": "Claude no está configurado en el servidor.", "unknown": "La generación requiere otra decisión del operador." } },
+        "review": { "states": { "pending": "Pendiente de revisión", "approved": "Aprobada", "rejected": "Rechazada" }, "version": "Versión {version}", "manual": "Versión del operador", "fallbackTitle": "Requiere atención", "fallbackBody": "El proveedor no superó toda la validación y este slot usa el fallback determinístico seguro. Revísalo antes de aprobar.", "proposal": "Query propuesta", "generatedAt": "Generada {date}", "operatorVersion": "Creada por el operador", "comparePrevious": "Comparar con la versión activa", "none": "Sin términos declarados", "decision": "Decisión de adquisición", "decisionHelp": "Aprobar permite activar este slot; rechazar obliga a crear otra versión.", "evidenceHelp": "Registra por qué esta búsqueda representa correctamente el slot.", "actions": { "approve": "Aprobar query", "reject": "Rechazar query", "save": "Guardar decisión" } },
+        "importStates": { "uploading": "Subiendo", "queued": "En cola", "processing": "Procesando", "completed": "Completado", "failed": "Falló" },
+        "importProgress": { "records": "{count} registros procesados", "percent": "{percent}% · {count} registros procesados" },
+        "importCounts": { "records": "Registros", "included": "Incluidos", "duplicates": "Duplicados" },
+        "observed": { "summary": "Observado: {period} · idiomas {languages} · países {countries} · plataformas {platforms}", "notAvailable": "no disponible", "warnings": { "observed_period_outside_declared_period": "La cobertura observada rebasa el periodo declarado; revisa el archivo.", "observed_country_outside_declared_market": "El archivo contiene países fuera del mercado declarado; no se excluyeron automáticamente." } },
+        "errors": { "title": "No se pudo cargar el plan", "load": "El plan de adquisición no está disponible.", "sources": "No se pudieron cargar los conectores.", "briefLoad": "No se pudo cargar el brief de adquisición.", "briefSave": "No se pudo sellar el brief con la autoridad vigente.", "reconcile": "No se pudo preparar el plan desde Brand OS.", "connector": "No se pudo crear el conector.", "query": "No se pudo guardar la versión de query.", "generationPreflight": "No se pudo calcular el preflight de generación.", "generate": "No se pudieron generar las queries.", "queryDetail": "No se pudo cargar la query privada.", "review": "No se pudo guardar la revisión de la query.", "promote": "No se pudo activar el plan.", "reference": "No se pudo guardar la decisión de referencia.", "fileRequired": "Elige un archivo CSV no vacío.", "periodPair": "Completa ambas fechas o deja ambas vacías.", "period": "Elige un periodo de captura válido.", "evidenceConfirmation": "Confirma la evidencia de query antes de continuar.", "queryEvidence": "La query registrada debe pertenecer al mismo conector y slot.", "import": "No se pudo iniciar el import.", "history": "No se pudo cargar el historial.", "retry": "No se pudo recuperar el import desde storage." }
+      },
+      "governance": { "title": "Gobernanza", "subtitle": "El serving operacional permanece explícito y fail-closed.", "population": "Población actual", "populationVersion": "Versión {version}", "defaultScope": "Scope cliente por defecto", "pending": "Imports pendientes", "failed": "Checks fallidos" },
+      "preparation": {
+        "eyebrow": "Preparación de datos", "title": "Preparación de datos", "subtitle": "Resuelve las decisiones del operador antes de servir o analizar los datos del workspace.", "progress": "{ready} de {total} listos",
+        "states": { "ready": "Listo", "blocked": "Bloqueado", "draft": "Draft", "not_available": "No disponible", "active": "Activa" },
+        "items": {
+          "identity": { "title": "Identidad de marca", "ready": "Brand OS e identidades gobernadas están reconciliados." },
+          "timezone": { "title": "Zona horaria del workspace", "ready": "Los periodos usan una zona horaria explícita." },
+          "quality": { "title": "Decisión de calidad", "ready": "Una policy activa decide eligibility sin reescribir observaciones." },
+          "retention": { "title": "Decisión de retención", "ready": "Una policy vigente gobierna el uso de los datos retenidos." },
+          "licensing": { "title": "Decisiones de licencia", "ready": "Cada uso cerrado tiene una decisión explícita." },
+          "provenance": { "title": "Provenance de source e import", "ready": "La provenance vigente resuelve policies activas." },
+          "imports": { "title": "Imports", "ready": "El workspace aceptó un import." },
+          "semantic-review": { "title": "Semantic Review", "ready": "Existen assertions current, aprobadas y elegibles." },
+          "governed-views": { "title": "Governed views", "ready": "Al menos una view tiene bindings gobernados current." },
+          "strategic": { "title": "Authority T&B", "ready": "La authority estratégica está compilada y vinculada." }
+        },
+        "blockers": {
+          "brand_os_not_reconciled": "Reconcilia Brand OS después de cambios de identidad o Knowledge Base.", "timezone_not_available": "Configura una zona horaria IANA válida.",
+          "active_quality_policy_required": "Crea y activa explícitamente una versión de quality.", "active_retention_policy_required": "Crea y activa explícitamente una versión de retention.",
+          "active_licensing_policy_required": "Decide cada uso y activa licensing explícitamente.", "active_provenance_binding_required": "Vincula un set activo de policies a cada source o import.",
+          "completed_import_required": "Importa datos después de registrar la source.", "approved_eligible_assertion_required": "Revisa candidatos semánticos antes de compilar.",
+          "ready_compilation_required": "Reconcilia las governed views aplicables.", "strategic_authority_required": "Prepara authority estratégica tras aprobar explícitamente los usos estratégicos."
+        },
+        "authorities": { "title": "Autoridades de policy", "subtitle": "Los drafts preservan decisiones sin aprobarlas. La activación siempre es explícita.", "quality": "Quality", "retention": "Retention", "licensing": "Licensing", "missing": "Todavía no existe una versión.", "approval": "Aprobada por {actor} · {date}", "serverActor": "operador interno" },
+        "provenance": { "title": "Bindings de provenance", "subtitle": "Las reglas source-level aplican a imports actuales y futuros; las reglas import-level son excepciones exactas.", "empty": "Registra una source antes de vincular authority.", "source": "Source", "imports": "Imports", "authority": "Authority", "action": "Acción", "body": "Vincula el set activo de policies a {source}.", "scope": "Scope del binding", "sourceLevel": "Source y sus imports", "scopeHelp": "Elige un import específico sólo para una excepción auditable." },
+        "technical": { "title": "Diagnóstico técnico", "brandOs": "Perfil Brand OS", "identities": "Identidades gobernadas", "assertions": "Raíces aprobadas elegibles", "compilations": "Compilaciones ready", "bindings": "Bindings current", "stale": "Stale o invalidadas" },
+        "actions": { "resolve": "Resolver", "manageIdentity": "Agregar identidad", "reconcileIdentity": "Reconciliar Brand OS", "newVersion": "Nueva versión", "activate": "Activar v{version}", "configure": "Configurar", "createDraft": "Crear draft", "saving": "Guardando…", "close": "Cerrar" },
+        "drawers": { "quality": { "title": "Draft de quality policy" }, "retention": { "title": "Draft de retention policy" }, "licensing": { "title": "Draft de licensing policy" }, "provenance": { "title": "Draft de provenance binding" }, "identity": { "title": "Identidad gobernada" }, "timezone": { "title": "Zona horaria del workspace" } },
+        "fields": { "minScore": "Score observado mínimo", "minScoreHelp": "Déjalo vacío si no hay threshold numérico aprobado; esto no certifica calidad.", "requiredFlags": "Flags requeridos", "forbiddenFlags": "Flags prohibidos", "csvHelp": "Flags cerrados separados por coma.", "rootDisposition": "Disposición de raíz canónica", "retentionState": "Estado de retención", "retentionMode": "Modo de retención", "retainUntil": "Retener hasta", "expiryAction": "Acción al expirar", "licensingHelp": "Cada uso requiere una decisión explícita. Métricas nunca implica texto o LLM.", "approvalEvidence": "Evidencia de aprobación", "approvalEvidenceHelp": "Una referencia privada se hashea server-side; el texto crudo no se persiste.", "effectiveFrom": "Vigente desde", "effectiveTo": "Vigente hasta", "identityType": "Tipo de identidad", "canonicalName": "Nombre canónico", "externalId": "Referencia externa (opcional)", "timezone": "Zona horaria IANA", "timezoneHelp": "Ejemplo: America/Mexico_City. Controla periodos de serving y reportes." },
+        "values": { "evaluate": "Evaluar", "blocked": "Bloqueado", "notAvailable": "No disponible", "allowed": "Permitido", "prohibited": "Prohibido", "indefinite": "Indefinida (decisión aprobada)", "until": "Hasta una fecha", "blockUse": "Bloquear uso", "reviewRequired": "Requerir revisión", "category": "Categoría", "reference": "Referencia" },
+        "usages": { "internal-qa": "QA interno", "client-derived-metrics": "Métricas derivadas cliente", "client-mention-list": "Lista de menciones cliente", "client-text-or-excerpt": "Texto o excerpt cliente", "llm-processing": "Procesamiento LLM", "strategic-analysis": "Análisis estratégico" },
+        "errors": { "command": "No se pudo completar el comando de governance." }
+      },
+      "governedViews": {
+        "eyebrow": "Serving gobernado", "title": "Governed views", "pageSubtitle": "Compila y publica sólo views aplicables y autorizadas por módulo.",
+        "subtitle": "Cada módulo conserva un denominador aislado. La reconciliación es derivada; promoción y retiro siempre requieren una acción explícita.",
+        "currentCount": "{count} views current", "entities": "{count} identidades gobernadas", "blockers": "{count} bloqueos",
+        "columns": { "view": "View", "modules": "Módulos", "denominator": "Denominador", "coverage": "Cobertura", "status": "Estado", "actions": "Acciones" },
+        "views": { "brand": "Marca", "competition": "Competencia", "category": "Categoría", "all-governed": "Todo gobernado" },
+        "modules": { "brand-monitoring": "Brand Monitoring", "mentions": "Mentions", "topics-narratives": "Topics & Narratives" },
+        "states": { "not_applicable": "No aplica", "blocked": "Bloqueada", "draft": "Draft", "evaluating": "Evaluando", "ready": "Lista para promover", "stale": "Desactualizada", "current": "Current", "withdrawn": "Retirada" },
+        "coverage": { "partial": "Parcial · abstained no disponible", "notAvailable": "No disponible" },
+        "actions": { "reconcile": "Reconciliar", "promote": "Promover", "withdraw": "Retirar" },
+        "footnote": "Ninguna acción cambia el pointer operacional. Retirar brand vuelve a su bridge explícito; las otras views quedan no disponibles.",
+        "errors": { "operation": "No se pudo completar la operación de la governed view." }
+      },
+      "workspaceMissing": { "title": "Workspace no disponible", "body": "Esta marca legacy no terminó la inicialización del workspace." },
+      "destinations": {
+        "title": "Gestionar los datos del workspace",
+        "subtitle": "Abre cada recurso en su espacio de trabajo; esta vista conserva fuentes, imports y gobernanza.",
+        "mentionsDescription": "Consulta el registro canónico completo, filtra y abre el detalle enriquecido.",
+        "reviewDescription": "Revisa o corrige las clasificaciones que determinan la población operativa.",
+        "governedViewsDescription": "Reconcilia views aplicables, consulta bloqueos y promueve o retira bindings por módulo de forma explícita.",
+        "open": "Abrir"
+      },
+      "semanticReview": {
+        "title": "Revisión semántica",
+        "subtitle": "Decide cómo pertenece cada mención al workspace sin cambiar su provenance de origen.",
+        "queueTitle": "Cola de revisión",
+        "queueSubtitle": "Revisa candidatos, excepciones y decisiones anteriores sobre la misma población gobernada.",
+        "queueCount": "{count, plural, one {# mención} other {# menciones}}",
+        "queueLabel": "Cola de revisión semántica",
+        "pageProgress": "{shown} de {total}",
+        "refreshing": "Actualizando revisión semántica",
+      "resolver": {
+        "action": "Resolver",
+        "flightAria": "Flight card de resolución semántica",
+        "flightEyebrow": "Preflight gratuito",
+        "flightTitle": "Preparar resolución semántica",
+        "flightBody": "Elige el monto máximo que esta corrida puede gastar. El preflight lee la población gobernada y calcula el workload completo sin crear jobs ni contactar al proveedor.",
+        "flightEmptyTitle": "Calcula antes de autorizar",
+        "flightEmptyBody": "No se puede encolar trabajo hasta verificar en conjunto la población, los permisos, el runtime y el hard cap.",
+        "hardCap": "Hard cap",
+        "hardCapPlaceholder": "Por ejemplo, 75.00",
+        "hardCapInvalid": "Ingresa un monto USD no negativo con máximo seis decimales.",
+        "calculate": "Calcular preflight",
+        "calculating": "Calculando…",
+        "preflightError": "No se pudo calcular el preflight de resolución semántica.",
+        "ready": "Listo para confirmar",
+        "blocked": "Bloqueado",
+        "freePreflightProof": "Sólo lectura · cero jobs · cero llamadas al proveedor · USD 0 gastados",
+        "population": "Raíces aceptadas",
+        "eligible": "Elegibles para LLM",
+        "selected": "Seleccionadas",
+        "excluded": "Excluidas",
+        "batches": "Batches de proveedor",
+        "estimate": "Costo estimado",
+        "unresolved": "Sin resolver",
+        "model": "Modelo pinneado",
+        "pricing": "Versión de precios",
+        "worker": "Worker",
+        "recovery": "Recovery",
+        "available": "Disponible",
+        "notAvailable": "No disponible",
+        "blockersTitle": "Resuelve estos bloqueos primero",
+        "blockers": {
+          "semantic_resolution_population_empty": "No hay raíces gobernadas sin resolver para procesar.",
+          "semantic_resolution_hard_cap_insufficient": "El hard cap elegido es menor al costo estimado completo.",
+          "semantic_resolution_queue_unavailable": "La cola de Data OS no está configurada.",
+          "semantic_resolution_worker_not_alive": "El heartbeat del Worker de Data OS no está vigente.",
+          "semantic_resolution_recovery_not_ready": "El recovery durable de child batches no está disponible.",
+          "semantic_resolution_run_active": "Otra corrida de resolución semántica sigue activa.",
+          "semantic_resolution_dead_letter_present": "Un child batch en dead letter requiere atención del operador.",
+          "semantic_resolution_provider_authority_unavailable": "La autoridad server-side del proveedor no está configurada."
+        },
+        "confirmationExplicit": "Autorizo resolver las {count} raíces seleccionadas en {batches} batches, con un gasto máximo de {cap}.",
+        "confirmationRequired": "Se requiere confirmación explícita del operador.",
+        "launch": "Confirmar y encolar",
+        "starting": "Preparando corrida…",
+        "queued": "Preparando {count} menciones…",
+          "submitting": "Enviando {count} menciones de forma segura…",
+          "processing": "Claude procesó {completed} de {total} menciones…",
+          "applying": "Guardando {completed} de {total} decisiones en el workspace…",
+          "canceling": "Cancelando de forma segura con {completed} de {total} items terminales…",
+          "canceled": "La resolución fue cancelada. Las decisiones completadas conservan auditoría.",
+          "batchProgress": "Batches: {completed} de {total} completados · {failed} parciales o fallidos",
+          "batchStatus": "Batch {ordinal} · {status}",
+          "batchItems": "{completed} de {total} aplicados · {failed} fallidos",
+          "batchStates": {
+            "queued": "En cola",
+            "dispatching": "Despachando",
+            "provider": "Procesando con proveedor",
+            "applying": "Aplicando",
+            "completed": "Completado",
+            "partial": "Parcial",
+            "failed": "Fallido",
+            "canceling": "Cancelando",
+            "canceled": "Cancelado",
+            "superseded": "Sustituido por reintento"
+          },
+          "cancel": "Cancelar corrida",
+          "cancelError": "No se pudo cancelar de forma segura la corrida de resolución semántica.",
+          "resumeBatch": "Reanudar batch {ordinal} · {failed} items fallidos",
+          "resumeError": "No se pudo reanudar el batch fallido de resolución semántica.",
+          "completed": "{count} menciones resueltas",
+          "partial": "Se resolvieron {completed} de {total}; {failed} requieren revisión manual.",
+          "failed": "No se pudo completar la resolución. La cola manual sigue disponible.",
+          "nothing": "No hay menciones pendientes por resolver.",
+          "cost": "Costo acumulado: {cost}",
+          "estimatedCost": "Costo estimado máximo: {cost}",
+          "confirmationTitle": "El costo supera el límite de USD 40",
+          "confirmationBody": "Resolver {count} menciones costará aproximadamente {cost}. Confirma para continuar o revísalas a mano.",
+          "confirmationConfirm": "Resolver por {cost}",
+          "confirmationCancel": "Revisar a mano",
+          "dismiss": "Cerrar aviso",
+          "unavailable": "La resolución automática aún no está habilitada en este entorno.",
+          "error": "No se pudo iniciar la resolución."
+        },
+        "helper": {
+          "title": "Cómo clasifica cada mención",
+          "body": "Marca primaria: la mención trata sustancialmente de la marca o de una interacción directa. Competidor: el competidor es un sujeto relevante, no incidental. Categoría: habla del mercado o la necesidad sin una marca focal.",
+          "reading": "Referencia conserva contexto sin entrar a métricas. Sin atribución se usa cuando no hay evidencia responsable para decidir. Resolver procesa toda la cola; las decisiones siguen disponibles para corregirlas y consultar su historial."
+        },
+        "states": {
+          "label": "Estados de revisión",
+          "candidates": "Candidatos",
+          "unresolved": "Sin resolver",
+          "needsContext": "Requiere contexto",
+          "approved": "Aprobados",
+          "rejected": "Rechazados",
+          "candidate_pending": "Candidato",
+          "current_approved": "Aprobado",
+          "current_rejected": "Rechazado",
+          "needs_context": "Requiere contexto"
+        },
+        "filters": {
+          "label": "Filtros de revisión semántica",
+          "action": "Más filtros",
+          "controlsTitle": "Controles",
+          "tabLabel": "Filtros",
+          "attributesGroup": "Atributos",
+          "periodGroup": "Periodo",
+          "summary": "{count, plural, =0 {Sin filtros activos} one {# filtro activo} other {# filtros activos}}",
+          "drawerEyebrow": "Revisión semántica",
+          "drawerTitle": "Filtrar menciones",
+          "scope": "Scope",
+          "confidence": "Confianza",
+          "platform": "Plataforma",
+          "source": "Fuente",
+          "from": "Desde",
+          "to": "Hasta",
+          "allScopes": "Todos los scopes",
+          "allConfidence": "Toda confianza",
+          "allPlatforms": "Todas las plataformas",
+          "allSources": "Todas las fuentes",
+          "clear": "Limpiar",
+          "apply": "Aplicar filtros"
+        },
+        "actions": {
+          "approve": "Aprobar",
+          "reject": "Rechazar",
+          "correct": "Corregir",
+          "history": "Historial",
+          "createAssertion": "Clasificar mención",
+          "viewMention": "Ver mención enriquecida",
+          "openingMention": "Abriendo mención…",
+          "loadMore": "Cargar más",
+          "loadingMore": "Cargando…",
+          "retry": "Reintentar",
+          "cancel": "Cancelar",
+          "saving": "Guardando…",
+          "close": "Cerrar"
+        },
+        "errors": {
+          "loadTitle": "No se pudo cargar la cola de revisión",
+          "load": "La revisión semántica no está disponible temporalmente.",
+          "history": "No se pudo cargar el historial de la clasificación.",
+          "action": "No se pudo guardar la decisión.",
+          "mentionPreview": "No se pudo abrir el detalle de la mención."
+        },
+        "empty": {
+          "candidate_pending": { "title": "No hay candidatos en esta vista", "body": "Cambia los filtros o revisa las menciones sin resolver." },
+          "unresolved": { "title": "No hay menciones sin resolver", "body": "Cada mención visible tiene una identidad gobernada o una clasificación revisada." },
+          "needs_context": { "title": "Ninguna mención requiere más contexto", "body": "Los registros disponibles contienen suficiente información para revisión." },
+          "current_approved": { "title": "No hay clasificaciones aprobadas en esta vista", "body": "Las decisiones aprobadas permanecerán aquí con su historial." },
+          "current_rejected": { "title": "No hay clasificaciones rechazadas en esta vista", "body": "Las decisiones rechazadas permanecerán aquí con su historial." }
+        },
+        "detail": {
+          "emptyTitle": "Selecciona una mención",
+          "emptyBody": "Elige una fila para inspeccionar sus clasificaciones semánticas y el historial de origen.",
+          "mentionTitle": "Mención de origen"
+        },
+        "multiEntity": {
+          "short": "{count} entidades",
+          "title": "Mención multi-entidad · {count} identidades",
+          "body": "Revisa cada clasificación por separado. Aprobar una identidad no aprueba silenciosamente las demás."
+        },
+        "assertions": {
+          "title": "Clasificación semántica",
+          "subtitle": "Decisiones actuales y candidatos gobernados para esta mención.",
+          "confidence": "Confianza",
+          "evidence": "Evidencia",
+          "version": "Versión",
+          "proposed": "Propuesta",
+          "approved": "Aprobada",
+          "approvedExcluded": "Aprobada · fuera de métricas",
+          "rejected": "Rechazada",
+          "pending": "Pendiente de revisión",
+          "superseded": "Sustituida",
+          "empty": {
+            "candidate_pending": "Aún no existe una clasificación guardada. Crea una clasificación revisable desde la propuesta gobernada.",
+            "unresolved": "Ninguna identidad gobernada coincidió con esta mención. Clasifícala manualmente o mantenla sin resolver.",
+            "needs_context": "Esta mención necesita más contexto antes de crear una clasificación segura.",
+            "current_approved": "No se devolvió una clasificación aprobada actual para esta mención.",
+            "current_rejected": "No se devolvió una clasificación rechazada actual para esta mención."
+          }
+        },
+        "scopes": {
+          "primary_brand": "Marca primaria",
+          "competitor": "Competidor",
+          "category": "Categoría",
+          "reference": "Referencia",
+          "unattributed": "Sin atribuir"
+        },
+        "confidence": { "high": "Confianza alta", "medium": "Confianza media", "low": "Confianza baja" },
+        "evidence": {
+          "explicit_primary_brand": "Señal explícita de marca primaria",
+          "explicit_competitor_with_resolved_identity": "Identidad de competidor resuelta",
+          "explicit_category": "Señal explícita de categoría",
+          "multi_entity": "Múltiples identidades gobernadas",
+          "human_reviewed_context": "Contexto revisado por una persona",
+          "model_reviewed_context": "Contexto resuelto por Claude",
+          "governed_rule": "Regla gobernada"
+        },
+        "provenance": {
+          "title": "Provenance de origen",
+          "subtitle": "Dónde entró el registro al workspace. Source intent da contexto; no es aprobación semántica.",
+          "sourceIntent": "Intención de fuente",
+          "policy": "Política v{version}"
+        },
+        "form": {
+          "scope": "Clasificación correcta",
+          "entity": "Identidad gobernada",
+          "confidence": "Confianza de 0 a 1",
+          "rationale": "Razón de revisión",
+          "noEntity": "No hay identidad gobernada disponible",
+          "noEntityNeeded": "No requiere identidad",
+          "approve": { "title": "Aprobar clasificación", "body": "Confirma que la identidad está sustentada por la mención.", "placeholder": "¿Por qué es seguro aprobar esta clasificación?", "submit": "Aprobar clasificación" },
+          "reject": { "title": "Rechazar clasificación", "body": "Rechaza esta clasificación sin eliminar la mención ni su historial de origen.", "placeholder": "¿Por qué la mención no sustenta esta clasificación?", "submit": "Rechazar clasificación" },
+          "correct": { "title": "Corregir clasificación", "body": "Crea una nueva versión pendiente y conserva la decisión actual en el historial.", "placeholder": "¿Qué cambió y por qué?", "submit": "Crear corrección" },
+          "create": { "title": "Clasificar mención", "body": "Crea una clasificación semántica pendiente de revisión humana.", "placeholder": "¿Qué evidencia sustenta esta clasificación?", "submit": "Crear clasificación" }
+        },
+        "history": {
+          "ariaLabel": "Historial de la clasificación semántica",
+          "eyebrow": "Registro permanente de revisión",
+          "title": "Historial de la clasificación",
+          "version": "Versión actual {version}",
+          "empty": "Aún no hay eventos de revisión para esta clasificación.",
+          "transition": "El estado de revisión cambió de {from} a {to}.",
+          "policy": "Política de revisión v{version}",
+          "actions": { "approved": "Clasificación aprobada", "rejected": "Clasificación rechazada", "superseded": "Clasificación sustituida" }
+        }
+      },
+      "mentions": {
+        "title": "Menciones",
+        "subtitle": "Explora el registro canónico y abre su contexto enriquecido sin salir del Admin.",
+        "libraryTitle": "Todas las menciones",
+        "librarySubtitle": "Consulta, filtra y abre cada registro canónico del workspace.",
+        "count": "{count, plural, one {# mención} other {# menciones}}",
+        "empty": "No hay menciones canónicas que coincidan con estos filtros.",
+        "loadError": "No pudimos cargar las menciones.",
+        "retry": "Reintentar",
+        "loadMore": "Cargar más",
+        "loading": "Cargando menciones…",
+        "showing": "Mostrando {shown} de {total}",
+        "manageClassification": "Gestionar clasificación",
+        "multipleScopes": "{count} scopes",
+        "updating": "Actualizando menciones…",
+        "emptyHelp": "Cambia el periodo, la búsqueda o los filtros avanzados para ampliar el resultado.",
+        "operationalNoticeTitle": "Biblioteca canónica del workspace",
+        "operationalNotice": "Esta vista lee las menciones canónicas propiedad del workspace. La API actual no expone estado de Review, elegibilidad operativa, procedencia del import ni gobierno masivo; por eso Admin no los infiere ni los escribe.",
+        "views": { "all": "Todas las menciones" },
+        "period": { "label": "Periodo de menciones", "from": "Desde", "to": "Hasta" },
+        "search": {
+          "label": "Buscar menciones",
+          "placeholder": "Busca palabras o una frase exacta",
+          "clear": "Limpiar búsqueda de menciones"
+        },
+        "sort": {
+          "label": "Ordenar",
+          "ariaLabel": "Ordenar menciones",
+          "publishedDesc": "Más nuevas primero",
+          "publishedAsc": "Más antiguas primero",
+          "platformAsc": "Fuente A–Z",
+          "platformDesc": "Fuente Z–A",
+          "roleAsc": "Rol de conversación A–Z",
+          "roleDesc": "Rol de conversación Z–A",
+          "engagementDesc": "Más interacciones",
+          "engagementAsc": "Menos interacciones"
+        },
+        "columns": {
+          "action": "Columnas",
+          "title": "Columnas",
+          "order": "Orden de columnas",
+          "manual": "Personalizado",
+          "drag": "Arrastra para reordenar",
+          "required": "Mención es obligatoria y no se puede ocultar.",
+          "hide": "Ocultar {column}",
+          "show": "Mostrar {column}"
+        },
+        "table": {
+          "mention": "Mención",
+          "inclusion": "Métricas",
+          "operator": "Estado semántico",
+          "platform": "Fuente",
+          "scope": "Origen declarado",
+          "role": "Rol de conversación",
+          "published": "Publicada",
+          "sentiment": "Sentimiento",
+          "engagement": "Interacciones",
+          "topics": "Temas",
+          "context": "Contexto T&B",
+          "multiEntity": "Multientidad"
+        },
+        "roles": { "root_post": "Publicación raíz", "comment": "Comentario" },
+        "selection": {
+          "count": "{count, plural, one {# mención seleccionada} other {# menciones seleccionadas}}",
+          "selectPage": "Seleccionar menciones de esta página",
+          "clearPage": "Limpiar menciones de esta página",
+          "add": "Seleccionar mención",
+          "remove": "Quitar mención de la selección",
+          "clear": "Limpiar selección",
+          "include": "Incluir",
+          "exclude": "Excluir",
+          "reclassify": "Reclasificar",
+          "sendReview": "Enviar a Review",
+          "export": "Exportar",
+          "backendPending": "Estas acciones de gobierno permanecen bloqueadas hasta que la API interna exponga estado de Review, elegibilidad, procedencia y mutaciones masivas auditadas. Exportar ya está disponible."
+        },
+        "pagination": {
+          "range": "{start, number}–{end, number} de {total, number}",
+          "perPage": "Filas por página",
+          "previous": "Anterior",
+          "next": "Siguiente"
+        },
+        "filters": {
+          "label": "Filtros de menciones",
+          "action": "Más filtros",
+          "controlsTitle": "Controles",
+          "tabLabel": "Filtros",
+          "searchGroup": "Buscar",
+          "search": "Palabras o frase",
+          "attributesGroup": "Atributos",
+          "platform": "Plataforma",
+          "allPlatforms": "Todas las plataformas",
+          "role": "Rol en la conversación",
+          "allRoles": "Todos los roles",
+          "rootPost": "Publicación raíz",
+          "comment": "Comentario",
+          "sort": "Ordenar por",
+          "published": "Fecha de publicación",
+          "engagement": "Interacciones",
+          "platformSort": "Plataforma",
+          "roleSort": "Rol en la conversación",
+          "direction": "Dirección",
+          "newest": "Más nuevas primero",
+          "oldest": "Más antiguas primero",
+          "periodGroup": "Periodo",
+          "from": "Desde",
+          "to": "Hasta",
+          "summary": "{count, plural, =0 {Sin filtros activos} one {# filtro activo} other {# filtros activos}}",
+          "clear": "Limpiar",
+          "apply": "Aplicar filtros",
+          "active": "Filtros activos",
+          "dimensions": {
+            "platform": "Plataforma",
+            "corpus_scope": "Origen declarado",
+            "sentiment_polarity": "Sentimiento",
+            "content_format": "Tipo de contenido",
+            "conversation_role": "Rol en la conversación",
+            "tb_polarity": "Clasificación T&B",
+            "tb_layer": "Capa de decisión"
+          },
+          "operatorDimensions": {
+            "inclusion_status": "Inclusión en métricas",
+            "resolution_state": "Resolución semántica",
+            "review_status": "Estado de Review",
+            "eligibility_status": "Elegibilidad operacional",
+            "minimum_quality_score": "Calidad mínima",
+            "quality_flag": "Bandera de calidad",
+            "latest_governance_action": "Última decisión",
+            "provenance_source_id": "Fuente de procedencia"
+          },
+          "operatorValues": {
+            "pending": "Pendiente", "included": "Incluida", "excluded": "Excluida", "unresolved": "Sin resolver",
+            "approvedByModel": "Aprobada por modelo", "approvedByHuman": "Aprobada por persona", "approvedByPolicy": "Aprobada por política",
+            "approved": "Aprobada", "rejected": "Rechazada", "superseded": "Sustituida",
+            "notEligible": "No elegible", "candidate": "Candidata", "eligible": "Elegible",
+            "include": "Incluir", "exclude": "Excluir", "revert": "Revertir", "sendToReview": "Enviar a Review"
+          },
+          "values": {
+            "brand": "Marca", "competitor": "Competidor", "category": "Categoría", "unknown": "Desconocido",
+            "positive": "Positivo", "neutral": "Neutral", "negative": "Negativo",
+            "rootPost": "Publicación raíz", "comment": "Comentario", "post": "Publicación", "image": "Imagen", "video": "Video", "article": "Artículo",
+            "trigger": "Detonador", "barrier": "Barrera", "mixed": "Mixto", "irrelevant": "No relevante",
+            "personal": "Personal", "psychological": "Psicológica", "social": "Social", "cultural": "Cultural"
+          }
+        },
+        "governance": {
+          "title": "Gobernar menciones",
+          "message": "Esta decisión se registrará con historial para {count, plural, one {# mención} other {# menciones}}. No se borrará ningún registro ni su procedencia.",
+          "reason": "Motivo de la decisión",
+          "reasonPlaceholder": "Explica por qué debe aplicarse esta decisión.",
+          "reasonHelp": "Mínimo 3 caracteres. El motivo quedará en el historial auditable.",
+          "confirm": "Confirmar",
+          "cancel": "Cancelar",
+          "dismiss": "Cerrar mensaje",
+          "error": "No se pudo guardar la decisión de gobierno.",
+          "partial": "Fallaron {failed} de {total} menciones. {reason}",
+          "success": "La decisión quedó registrada para {count, plural, one {# mención} other {# menciones}}.",
+          "revert": "Revertir última decisión",
+          "openReview": "Enviar y abrir Review",
+          "actions": {
+            "include": { "title": "Incluir en métricas", "confirm": "Incluir" },
+            "exclude": { "title": "Excluir de métricas", "confirm": "Excluir" },
+            "revert": { "title": "Revertir decisión", "confirm": "Revertir" },
+            "send_to_review": { "title": "Enviar a revisión semántica", "confirm": "Enviar a Review" }
+          }
+        },
+        "operator": {
+          "loading": "Cargando estado de operador y procedencia…",
+          "unavailable": "El contexto de operador todavía no está disponible en este entorno. La mención y su contexto de Signal siguen visibles.",
+          "yes": "Sí",
+          "no": "No",
+          "systemActor": "Sistema",
+          "qualityScore": "Calidad {score, number}",
+          "quality": { "textTooShort": "Texto demasiado breve para métricas", "missingDate": "Fecha de publicación no disponible" },
+          "primary": { "title": "Estado del registro", "inclusion": "Participación", "resolution": "Resolución semántica", "quality": "Calidad" },
+          "inclusion": { "included": "Incluida en métricas", "excluded": "Fuera de métricas", "pending": "Inclusión pendiente" },
+          "resolution": {
+            "unresolved": "Sin resolver",
+            "approved_by_model": "Aprobada por modelo",
+            "approved_by_human": "Aprobada por persona",
+            "approved_by_policy": "Aprobada por política",
+            "pending": "Pendiente",
+            "rejected": "Rechazada",
+            "superseded": "Sustituida"
+          },
+          "review": { "unresolved": "Sin resolver", "pending": "Pendiente", "approved": "Aprobada", "rejected": "Rechazada" },
+          "eligibility": { "unresolved": "Sin resolver", "not_eligible": "No elegible", "candidate": "Candidata", "eligible": "Elegible" },
+          "summary": {
+            "reviewEligibility": "Review: {review} · Elegibilidad: {eligibility}",
+            "provenance": "{sources, plural, one {# fuente} other {# fuentes}} · {assertions, plural, one {# assertion} other {# assertions}}",
+            "quality": "calidad {score, number}"
+          },
+          "semantic": {
+            "title": "Clasificación semántica",
+            "empty": "No existe una assertion semántica actual.",
+            "review": "Estado de Review",
+            "eligibility": "Elegibilidad",
+            "confidence": "Confianza",
+            "approval": "Aprobación",
+            "policy": "Política y modelo",
+            "updated": "Aprobada o creada",
+            "history": "Historial: {assertions} assertions sustituidas y {events} eventos",
+            "version": "Assertion v{version}",
+            "historyTitle": "Historial semántico"
+          },
+          "author": { "title": "Autor", "name": "Nombre", "platform": "Plataforma", "followers": "Seguidores", "country": "País", "verified": "Verificado", "business": "Cuenta de negocio", "empty": "No hay un autor enlazado." },
+          "provenance": { "title": "Origen y contribuciones", "empty": "No hay contribuciones de import o estudio.", "legacy": "Importación histórica de menciones", "socialListening": "Escucha social", "completed": "Completada", "pending": "Pendiente", "failed": "Fallida", "contributed": "Contribuyó", "study": "Estudio: {name}" },
+          "canonical": { "title": "Identidad canónica", "aliases": "Registros canónicos y alias ({count})", "root": "Raíz canónica", "alias": "Alias de origen" },
+          "populations": { "title": "Participación operacional", "version": "Versión {version}", "current": "Pointer visible actual", "empty": "No pertenece a una población operacional.", "primaryBrand": "Métricas de marca principal", "operational": "Población operacional", "draft": "Borrador", "published": "Publicada", "included": "Incluida", "excluded": "Excluida", "visible": "Versión visible actual" },
+          "enrichment": { "title": "Enriquecimiento de operador", "tags": "Tags y taxonomías", "entities": "Entidades", "empty": "No hay tags, entidades ni features persistidos." },
+          "taxonomies": { "audience": "Audiencia", "barrier": "Barreras", "contentFormat": "Formato de contenido", "demographic": "Perfil demográfico", "emotion": "Emociones", "journeyStage": "Etapa de relación", "sentiment": "Sentimiento", "sourceType": "Tipo de fuente", "trigger": "Detonadores", "valuePerception": "Percepción de valor" },
+          "technical": { "title": "Detalles técnicos y trazabilidad", "summary": "Origen, persistencia e historial auditable", "identifiers": "Ver identificadores técnicos", "features": "Atributos persistidos", "tbTrace": "Trazabilidad de Triggers & Barriers", "value": "Valor", "values": "{count} valores", "fields": "{count} campos", "persisted": "Persistido", "operationalContext": "Contexto operacional", "taxonomyClassification": "Clasificación taxonómica", "tbCoding": "Codificación T&B", "dataOsBackfill": "Reconstrucción gobernada de Data OS", "sentioneImport": "Importación de SentiOne" },
+          "tb": { "title": "Triggers & Barriers", "currentRelease": "Release actual", "historicalRelease": "Release histórico", "finding": "Finding", "empty": "No hay codificación ni evidencia T&B." },
+          "governance": { "title": "Estado operacional", "history": "Historial de gobierno", "empty": "Aún no hay decisiones manuales registradas." }
+        }
+      }
+    },
+    "globalData": {
+      "eyebrow": "Operación", "title": "Datos", "subtitle": "Supervisa cobertura, frescura y calidad de las fuentes de cada marca.",
+      "summary": { "sources": "Fuentes activas", "sourcesHint": "En workspaces accesibles", "issues": "Problemas de fuentes", "issuesHint": "Desactualizadas o fallidas", "pending": "Imports pendientes", "pendingHint": "Esperando procesamiento", "workspaces": "Workspaces", "workspacesHint": "Marcas inicializadas" },
+      "table": { "title": "Salud de datos por workspace", "subtitle": "Abre una marca para consultar historial y controles de importación.", "count": "{count, plural, one {# resultado} other {# resultados}}" },
+      "filters": { "label": "Vistas de salud de datos", "all": "Todos", "attention": "Requiere atención", "healthy": "Saludable", "search": "Buscar workspace", "searchPlaceholder": "Marca u organización" },
+      "empty": { "title": "No hay workspaces coincidentes", "body": "Ajusta la búsqueda o cambia la vista." },
+      "columns": { "health": "Estado", "sources": "Fuentes", "mentions": "Menciones gobernadas" },
+      "health": { "good": "Saludable", "warning": "Requiere atención", "danger": "Requiere acción", "not_available": "Sin configurar" },
+      "actions": { "open": "Abrir" }
+    },
+    "reports": {
+      "eyebrow": "Consumo estratégico", "title": "Reportes", "subtitle": "Ejecuta y promueve revisiones del único reporte T&B del workspace.",
+      "actions": { "run": "Ejecutar análisis", "update": "Actualizar reporte", "openCurrent": "Abrir reporte actual" },
+      "states": { "not_available": "No disponible", "needs_review": "Requiere Review", "running": "En ejecución", "queued": "En cola", "pending": "Pendiente", "published": "Publicado", "draft": "Borrador", "approved_by_im": "Aprobado por IM", "approved_by_kam": "Aprobado por KAM", "done": "Completado", "completed": "Completado", "failed": "Fallido", "aborted_preflight": "Detenido en preflight", "dead_letter": "Dispatch fallido" },
+      "summary": { "current": "Revisión actual", "review": "Corridas en Review", "reviewHint": "Revisiones candidatas esperando decisiones", "population": "Población gobernada", "lastRun": "Última corrida" },
+      "authority": {
+        "title": "Authority estratégica", "subtitle": "Prepara una población dedicada de análisis desde derechos explícitos; publicar el binding es una acción separada del operador.",
+        "states": { "blocked": "Bloqueada", "ready": "Lista para promover", "current": "Current", "stale": "Desactualizada" },
+        "usages": "Usos requeridos", "usagesHelp": "LLM processing y strategic analysis deben estar permitidos explícitamente por provenance.",
+        "population": "Población de análisis", "executionCorpus": "Corpus de ejecución server-owned", "binding": "Binding estratégico", "blockers": "Bloqueos",
+        "actionsTitle": "Acciones de authority", "actionsHelp": "Primero reconcilia el estado derivado; promueve sólo después de revisar denominador y vigencia.",
+        "reconcile": "Preparar authority", "promote": "Promover binding", "ready": "Listo", "blocked": "Bloqueado", "current": "Current", "notCurrent": "Sin promover", "error": "No se pudo preparar la authority estratégica."
+      },
+      "releases": {
+        "title": "Releases estratégicos", "subtitle": "Review prepara un draft; publicar una revisión es siempre una acción explícita y auditable.",
+        "empty": "Todavía no hay releases preparados.", "revision": "Revisión", "period": "Periodo", "status": "Estado", "review": "Review", "actions": "Acciones",
+        "artifacts": "artefactos", "current": "Current", "promote": "Publicar revisión", "history": "Historial", "openCurrent": "Abrir release actual", "error": "No se pudo publicar el release."
+      },
+      "registry": { "title": "Registro del reporte", "subtitle": "Identidad estable y current release append-only.", "identity": "Report key", "status": "Estado del registro", "current": "Release actual", "published": "Publicado el" },
+      "preflight": { "title": "Preflight", "subtitle": "Condiciones requeridas antes de una corrida con costo.", "ready": "Listo", "blocked": "Resolver antes de ejecutar", "items": { "sources": "Fuentes activas", "coverage": "Cobertura primary-brand", "quality": "Calidad de datos", "population": "Población aprobada", "timezone": "Zona horaria del workspace" } },
+      "review": { "title": "Review requerido", "subtitle": "La revisión candidata permanece interna hasta aprobarse y promoverse.", "open": "Abrir Review" },
+      "launch": {
+        "runTitle": "Ejecutar Triggers & Barriers", "updateTitle": "Actualizar Triggers & Barriers", "subtitle": "Congela una población estratégica y crea una revisión candidata.",
+        "periodStart": "Inicio del periodo", "periodEnd": "Fin del periodo", "timezone": "Zona horaria", "timezoneHelp": "Se hereda del workspace.", "size": "Tamaño del estudio",
+        "sizes": { "small": "Pequeño", "medium": "Mediano", "large": "Grande", "full": "Full power" },
+        "businessQuestion": "Pregunta de negocio", "decision": "Decisión a informar", "budget": "Tope de presupuesto (USD)", "budgetHelp": "El worker no debe superar este tope explícito.",
+        "confirm": "Confirmo este tope y entiendo que iniciar una corrida real puede generar costos de proveedores.", "check": "Comprobar preflight", "checking": "Comprobando…", "start": "Iniciar corrida", "starting": "Iniciando…",
+        "queuedTitle": "Corrida candidata creada", "queuedBody": "Se congelaron {count} menciones. Estado actual: {status}.",
+        "progress": { "step": "Paso actual", "completed": "Pasos completados", "pending": "Pasos pendientes", "spent": "Costo observado", "cancel": "Solicitar cancelación", "reviewReady": "La corrida está lista para Review.", "releaseReady": "Review quedó aprobado y puede preparar el release.", "refreshHint": "El registro del reporte se actualizó con este estado." },
+        "preflight": { "ready": "Preflight listo", "blocked": "Preflight bloqueado", "denominator": "Denominador", "sample": "Muestra sellada", "model": "Modelo fijado", "estimate": "Costo máximo estimado", "worker": "Worker T&B", "coverage": "Cobertura", "authorizationPending": "El lanzamiento con costo sigue deshabilitado hasta el gate del operador." },
+        "errors": { "confirmBudget": "Confirma el tope antes de iniciar.", "budget": "Ingresa un tope mayor a cero.", "preflight": "No se pudo comprobar el preflight.", "blocked": "El preflight sigue bloqueado.", "notAuthorized": "El lanzamiento con costo aún no está autorizado.", "create": "No se pudo crear la corrida del reporte.", "status": "No se pudo actualizar el estado de la corrida.", "cancel": "No se pudo solicitar la cancelación." }
+      }
+    },
+    "globalReports": {
+      "eyebrow": "Operación", "title": "Reportes", "subtitle": "Releases estratégicos y revisiones pendientes por marca.",
+      "summary": { "workspaces": "Workspaces", "workspacesHint": "Marcas en alcance", "published": "Publicados", "publishedHint": "Con release actual", "review": "En Review", "reviewHint": "Esperando decisión", "unavailable": "Sin reporte", "unavailableHint": "Sin release publicado" },
+      "table": { "title": "Registro de reportes", "subtitle": "Identidad estable y revisión actual del reporte estratégico de cada workspace.", "count": "{count, plural, one {# resultado} other {# resultados}}" },
+      "filters": { "label": "Vistas de reportes", "all": "Todos", "published": "Publicados", "review": "En Review", "unavailable": "Sin reporte", "search": "Buscar workspace", "searchPlaceholder": "Marca u organización" },
+      "columns": { "report": "Reporte", "state": "Estado" },
+      "reportType": { "tb": "Triggers & Barriers" },
+      "empty": { "title": "No hay reportes en esta vista", "body": "Elige otra vista para consultar el registro completo." },
+      "actions": { "open": "Abrir" }
+    },
+    "themes": {
+      "eyebrow": "Investigación temática", "title": "Themes", "subtitle": "Estudios temáticos internos que no dependen de una marca.",
+      "internal": "Noisia Internal", "noFocus": "Sin foco configurado", "open": "Abrir theme", "create": "Crear theme",
+      "statuses": { "all": "Todos", "active": "Activo", "published": "Publicado", "draft": "Borrador", "archived": "Archivado" },
+      "filters": { "search": "Buscar", "organization": "Organización", "organizationPlaceholder": "Organización o slug", "industry": "Industria", "industryPlaceholder": "Industria o categoría", "status": "Estado", "apply": "Aplicar" },
+      "table": { "title": "Catálogo de themes", "subtitle": "Una lista operativa para abrir estudios, revisar alcance y continuar su análisis." },
+      "columns": { "theme": "Theme", "organization": "Organización", "focus": "Foco", "status": "Estado", "created": "Creado", "actions": "Acciones" },
+      "empty": { "filteredTitle": "No hay themes coincidentes", "filteredBody": "Ajusta los filtros para revisar el catálogo completo.", "defaultTitle": "Aún no hay themes", "defaultBody": "Crea un theme cuando exista una pregunta de investigación que no dependa de una sola marca." },
+      "pagination": { "label": "Páginas de themes", "previous": "Anterior", "next": "Siguiente", "position": "Página {page} de {total}" },
+      "detail": {
+        "eyebrow": "Theme", "back": "Volver a themes", "noDescription": "Sin descripción configurada.", "public": "Público", "private": "Privado", "notConfigured": "No configurado",
+        "summary": { "status": "Estado", "visibility": "Visibilidad", "focus": "Focos de industria", "studies": "Estudios" },
+        "metadata": { "title": "Configuración", "subtitle": "Identidad, propiedad y alcance del theme.", "slug": "Slug", "geo": "Foco geográfico", "organization": "Organización", "created": "Creado" },
+        "remove": { "title": "Retirar theme", "subtitle": "Archiva primero y elimina permanentemente sólo cuando corresponda." },
+        "studies": {
+          "title": "Estudios ({count})", "subtitle": "Corpora derivados de este theme.", "emptyTitle": "Aún no hay estudios", "emptyBody": "Crea un estudio cuando exista una pregunta de negocio concreta.", "unnamed": "Estudio sin título", "window": "Ventana objetivo: {months} meses", "open": "Abrir Engine",
+          "columns": { "study": "Estudio", "method": "Método", "status": "Estado", "updated": "Actualizado" }
+        }
+      }
+    },
+    "settings": {
+      "eyebrow": "Administración del workspace", "title": "Acceso y configuración", "subtitle": "Configuración operativa de este workspace de marca.", "actions": { "editBrand": "Editar Brand OS" },
+      "workspace": { "title": "Workspace", "subtitle": "Estado, zona horaria, población y accesos.", "status": "Estado", "timezone": "Zona horaria", "population": "Población operacional", "populationVersion": "Versión {version}", "access": "Accesos activos", "people": "{count, plural, one {# persona} other {# personas}}" },
+      "report": { "title": "Reporte", "subtitle": "Identidad estable y estado de compatibilidad.", "registry": "Registro", "current": "Revisión actual", "review": "Corridas en Review", "compatibility": "Corpora de compatibilidad" },
+      "cadence": { "title": "Cadencia de fuentes", "subtitle": "Política de actualización por fuente del workspace.", "manage": "Gestionar fuentes", "empty": "No hay cadencia de fuentes configurada.", "cadence": "Cadencia", "values": { "manual": "Manual", "hourly": "Cada hora", "daily": "Diaria", "weekly": "Semanal", "monthly": "Mensual" } },
+      "profiles": { "title": "Perfiles", "subtitle": "Perfiles versionados activos del workspace.", "empty": "No hay perfiles activos.", "kind": "Perfil", "version": "Versión" },
+      "access": { "title": "Acceso", "subtitle": "El acceso al workspace se valida server-side.", "manage": "Gestionar equipo", "workspaceAccess": "Personas con acceso a esta marca" },
+      "archive": { "title": "Retirar marca", "subtitle": "Si tiene dependencias, se archivará; si no, se eliminará después de confirmar.", "actionTitle": "Retirar este workspace" }
+    },
+    "globalSettings": {
+      "eyebrow": "Administración", "title": "Configuración", "subtitle": "Preferencias, acceso y contrato operativo del Admin.",
+      "general": { "title": "General", "subtitle": "Preferencias y acceso del operador.", "language": "Idioma", "languageHint": "Cambia el idioma de Studio y Signal para tu usuario." },
+      "serving": { "title": "Serving operacional", "subtitle": "Contrato técnico activo para las superficies cliente.", "readMode": "Modo de lectura", "readModeHint": "Fuente que atiende las consultas operacionales actuales.", "scope": "Scope cliente por defecto", "scopeHint": "Población que puede consumir el cliente sin filtros operator-only.", "rollback": "Rollback", "rollbackValue": "Se controla por configuración y nunca borra datos.", "exploration": "Exploración competitor/category", "deferred": "Aplazada hasta contar con una población server-owned." },
+      "permissions": { "title": "Permisos", "subtitle": "La navegación sigue el rol; cada ruta también autoriza server-side.", "role": "Rol actual", "team": "Administración de equipo", "manage": "Gestionar equipo" }
     }
   }
 }

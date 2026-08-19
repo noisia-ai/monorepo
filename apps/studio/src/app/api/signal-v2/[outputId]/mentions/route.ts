@@ -11,6 +11,7 @@ import {
   signalBackendErrorResponse
 } from "@/lib/data-os/signal-workspace-serving";
 import { resolveLegacyOutputSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
+import { resolveSignalOperationalReadScopeV1 } from "@/lib/data-os/signal-operational-read-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,8 +65,10 @@ export async function GET(request: Request, context: { params: Promise<{ outputI
         field: "direction"
       });
     }
+    const readScope = await resolveSignalOperationalReadScopeV1(workspace, { mode: "legacy" });
     const payload = await loadSignalMentionsV1({
       workspace,
+      readScope,
       filter,
       cursor: params.get("cursor"),
       limit,

@@ -6,6 +6,7 @@ import { getSignalOutputForUser } from "@/lib/data/signal";
 import {
   resolveLegacyOutputSignalWorkspaceForUser
 } from "@/lib/data-os/signal-workspace";
+import { resolveSignalOperationalReadScopeV1 } from "@/lib/data-os/signal-operational-read-scope";
 import { loadSignalBrandMonitoringV1 } from "@/lib/signal-v2/brand-monitoring";
 
 export const runtime = "nodejs";
@@ -33,8 +34,10 @@ export async function GET(request: Request, context: { params: Promise<{ outputI
     const params = new URL(request.url).searchParams;
     if (!params.has("timezone")) params.set("timezone", workspace.timezone);
     const { filter, comparison } = parseSignalAnalyticsQueryParamsV1(params);
+    const readScope = await resolveSignalOperationalReadScopeV1(workspace, { mode: "legacy" });
     const payload = await loadSignalBrandMonitoringV1({
       workspace,
+      readScope,
       filter,
       comparison,
       isInternalUser: session.appUser.userType === "noisia_internal"

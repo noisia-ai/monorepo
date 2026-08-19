@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { normalizeEngineMethodologyBlock } from "@noisia/query-engine";
@@ -69,6 +69,18 @@ export default async function SignalOutputPage({
 }) {
   const { outputId } = await params;
   if (!UUID_PATTERN.test(outputId)) {
+    const query = await searchParams;
+    if (firstSearchValue(query.study)) {
+      const canonical = new URLSearchParams();
+      for (const [key, rawValue] of Object.entries(query)) {
+        if (key === "study") continue;
+        for (const value of Array.isArray(rawValue) ? rawValue : [rawValue]) {
+          if (value != null) canonical.append(key, value);
+        }
+      }
+      const suffix = canonical.size > 0 ? `?${canonical.toString()}` : "";
+      redirect(`/signal/${outputId}/reports/triggers-barriers${suffix}`);
+    }
     return (
       <SignalV2WorkspacePage
         searchParams={searchParams}
@@ -805,6 +817,10 @@ export default async function SignalOutputPage({
         ) : null}
     </SignalReportShell>
   );
+}
+
+function firstSearchValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 /* ============================================================

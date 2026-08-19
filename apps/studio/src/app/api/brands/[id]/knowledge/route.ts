@@ -5,6 +5,7 @@ import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
+import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { db } from "@/lib/db";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -77,6 +78,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       createdByUserId: session.appUser.id
     })
     .returning();
+
+  if (row && session.appUser.userType === "noisia_internal") {
+    await reconcileSignalBrandOsForBrandMutationV1({
+      brandId: brand.id,
+      actor: session.appUser,
+      idempotencyKey: `knowledge-create:${brand.id}:${row.id}`
+    });
+  }
 
   return Response.json({ data: row }, { status: 201 });
 }

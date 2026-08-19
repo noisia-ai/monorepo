@@ -2,10 +2,12 @@ import type { Job } from "bullmq";
 
 import { pool } from "../db/client";
 import {
+  isGovernedStrategicRun,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  transitionTbGovernedRun
 } from "./tb-shared";
 import { materializeTbTemporalAnalysis } from "./tb-temporal-materialization";
 import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
@@ -153,11 +155,20 @@ export async function tbQualityGatesJob(job: Job<QualityGateJobData>) {
        WHERE id = $1`,
       [tbAnalysisId]
     );
+    await transitionTbGovernedRun({
+      tbAnalysisId,
+      expectedStatuses: ["running", "needs_review"],
+      nextStatus: "needs_review",
+      workerKey: `tb-quality-gates:${pipelineStepId}`
+    });
 
     await releaseCorpusLock(tbAnalysisId);
     let selectedEngineLenses: unknown = null;
+    const governedStrategic = await isGovernedStrategicRun(tbAnalysisId);
     try {
-      selectedEngineLenses = await enqueueSelectedEngineLensesAfterTb(tbAnalysisId);
+      selectedEngineLenses = governedStrategic
+        ? { status: "not_launched", reason: "governed_strategic_requires_explicit_engine_launch" }
+        : await enqueueSelectedEngineLensesAfterTb(tbAnalysisId);
     } catch (error) {
       selectedEngineLenses = {
         status: "failed",

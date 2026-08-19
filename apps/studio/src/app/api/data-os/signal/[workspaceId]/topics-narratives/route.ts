@@ -1,4 +1,9 @@
-import { loadSignalWorkspaceContext } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceModuleContext } from "@/app/api/data-os/_lib/load";
+import {
+  signalServingScopeIdentityHashV1,
+  signalTopicsNarrativesOverviewContentHashV1
+} from "@noisia/query-engine";
+import { after } from "next/server";
 import {
   parseSignalApiFilterV1,
   signalBackendErrorResponse,
@@ -8,6 +13,7 @@ import {
   loadSignalTopicsNarrativesOverviewV1,
   signalTaxonomyComparisonRangeV1
 } from "@/lib/data-os/signal-topics-narratives-serving";
+import { scheduleSignalTopicsNarrativesShadowV1 } from "@/lib/data-os/signal-operational-module-shadow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +22,9 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ workspaceId: string }> }
 ) {
+  const routeStarted = performance.now();
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContext(workspaceId);
+  const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);
   if ("response" in loaded) return loaded.response;
   try {
     const searchParams = new URL(request.url).searchParams;
@@ -25,22 +32,38 @@ export async function GET(
       searchParams,
       loaded.workspace.timezone
     );
+    const servingScope = loaded.servingScope.rollout_mode === "governed"
+      ? await loaded.finalizeServingScope(filter)
+      : null;
+    const comparisonRange = signalTaxonomyComparisonRangeV1(searchParams);
     const payload = await loadSignalTopicsNarrativesOverviewV1({
       workspace: loaded.workspace,
+      readScope: loaded.readScope,
       filter,
-      comparisonRange: signalTaxonomyComparisonRangeV1(searchParams),
+      comparisonRange,
       isInternalUser: loaded.isInternalUser
     });
-    return signalJsonResponse(request, payload, {
-      etagSeed: JSON.stringify([
-        payload.filters_hash,
-        payload.comparison_filters_hash,
-        payload.topics.data_watermark_hashes,
-        payload.narratives.data_watermark_hashes,
-        payload.profiles.map((profile) => [profile.kind, profile.version])
-      ]),
+    const shadow = await scheduleSignalTopicsNarrativesShadowV1({
+      workspace: loaded.workspace,
+      readScope: loaded.readScope,
+      servingScope: loaded.servingScope,
+      filter,
+      requester: loaded.session.appUser,
+      comparisonRange
+    }, after);
+    const response = signalJsonResponse(request, servingScope
+      ? { ...payload, serving_scope: servingScope }
+      : payload, {
+      etagSeed: `${servingScope ? signalServingScopeIdentityHashV1(servingScope) : "legacy"}:${signalTopicsNarrativesOverviewContentHashV1(payload)}`,
       state: payload.state
     });
+    response.headers.set(
+      "Server-Timing",
+      `signal-visible;dur=${Math.round(performance.now() - routeStarted)}, `
+        + `signal-shadow-outbox;dur=${shadow.outbox_duration_ms}`
+        + (shadow.persistence_state === "failed" ? ';desc="persistence_failed"' : "")
+    );
+    return response;
   } catch (error) {
     return signalBackendErrorResponse(error);
   }

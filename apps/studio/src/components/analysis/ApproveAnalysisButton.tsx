@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/ui/Icon";
@@ -15,11 +15,13 @@ type SelectedLensLaunchPayload = {
 export function ApproveAnalysisButton({
   corpusId,
   analysisId,
+  workspaceId,
   disabled,
   failedGates = []
 }: {
   corpusId: string;
   analysisId: string;
+  workspaceId?: string;
   disabled?: boolean;
   failedGates?: Array<{
     gateName: string;
@@ -32,6 +34,7 @@ export function ApproveAnalysisButton({
   const [isConfirmingOverride, setIsConfirmingOverride] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lensLaunchNote, setLensLaunchNote] = useState<string | null>(null);
+  const workspaceReviewKey = useRef(crypto.randomUUID());
 
   const hasWarnings = failedGates.length > 0;
 
@@ -47,10 +50,18 @@ export function ApproveAnalysisButton({
     setLensLaunchNote(null);
 
     try {
-      const response = await fetch(`/api/corpora/${corpusId}/tb-analysis/${analysisId}/approve`, {
+      const response = await fetch(workspaceId
+        ? `/api/data-os/signal/${workspaceId}/reports/triggers-barriers/runs/${analysisId}/review`
+        : `/api/corpora/${corpusId}/tb-analysis/${analysisId}/approve`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ approve_with_warnings: approveWithWarnings })
+        headers: {
+          "content-type": "application/json",
+          ...(workspaceId ? { "Idempotency-Key": workspaceReviewKey.current } : {})
+        },
+        body: JSON.stringify(workspaceId ? {
+          reusable_assertions: [],
+          limitations: approveWithWarnings ? { quality_gate_override: true } : undefined
+        } : { approve_with_warnings: approveWithWarnings })
       });
       const payload = await response.json().catch(() => ({})) as { message?: string };
 
@@ -59,9 +70,11 @@ export function ApproveAnalysisButton({
         return;
       }
 
-      setIsLaunchingLenses(true);
-      const lensLaunch = await launchSelectedLenses(corpusId);
-      if (lensLaunch) setLensLaunchNote(lensLaunch);
+      if (!workspaceId) {
+        setIsLaunchingLenses(true);
+        const lensLaunch = await launchSelectedLenses(corpusId);
+        if (lensLaunch) setLensLaunchNote(lensLaunch);
+      }
 
       setIsConfirmingOverride(false);
       router.refresh();
@@ -76,7 +89,7 @@ export function ApproveAnalysisButton({
 
   return (
     <div className="analysis-approve-action">
-      <button className="wizard-cta" disabled={disabled || isApproving || isLaunchingLenses} onClick={() => approve(false)} type="button">
+      <button className="admin-button admin-button--primary" disabled={disabled || isApproving || isLaunchingLenses} onClick={() => approve(false)} type="button">
         {isApproving || isLaunchingLenses ? <Icon name="spinner" size={16} /> : <Icon name="check" size={16} />}
         {isLaunchingLenses
           ? "Lanzando lentes"
@@ -101,10 +114,10 @@ export function ApproveAnalysisButton({
             ))}
           </ul>
           <div className="analysis-override-actions">
-            <button className="wizard-cta wizard-cta--ghost" disabled={isApproving} onClick={() => setIsConfirmingOverride(false)} type="button">
+            <button className="admin-button" disabled={isApproving} onClick={() => setIsConfirmingOverride(false)} type="button">
               Cancelar
             </button>
-            <button className="wizard-cta" disabled={isApproving || isLaunchingLenses} onClick={() => approve(true)} type="button">
+            <button className="admin-button admin-button--primary" disabled={isApproving || isLaunchingLenses} onClick={() => approve(true)} type="button">
               {isApproving || isLaunchingLenses ? <Icon name="spinner" size={16} /> : <Icon name="check" size={16} />}
               {isLaunchingLenses ? "Lanzando lentes" : "Aprobar y continuar"}
             </button>

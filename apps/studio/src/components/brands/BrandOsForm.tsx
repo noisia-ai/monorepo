@@ -15,6 +15,8 @@ export type ComboOption = {
   keywords?: readonly string[];
 };
 
+export type BrandFormSurface = "study" | "workspace";
+
 type BrandIntakeAiDraft = {
   strategic_description: string;
   aliases: string[];
@@ -42,6 +44,7 @@ export function BrandOsForm() {
   const [aliasValues, setAliasValues] = useState<string[]>([]);
   const [competitorValues, setCompetitorValues] = useState<string[]>([]);
   const [knowledgeNotesValue, setKnowledgeNotesValue] = useState("");
+  const [timezoneValue, setTimezoneValue] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [aiDraft, setAiDraft] = useState<BrandIntakeAiDraft | null>(null);
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [aiError, setAiError] = useState<string | null>(null);
@@ -144,6 +147,7 @@ export function BrandOsForm() {
       brand_seed_handles: extractSeeds(rawAliases, 32),
       competitors: extractSeeds(rawCompetitors, 24),
       knowledge_notes: withRawContext(rawKnowledgeNotes, "Competidores / research pegado", rawCompetitors),
+      timezone: timezoneValue,
       status: "active"
     };
 
@@ -164,8 +168,8 @@ export function BrandOsForm() {
   }
 
   return (
-    <form className="new-study-shell brand-os-shell" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
-      <section className="new-study-panel new-study-panel--raised">
+    <form className="new-study-shell brand-os-shell admin-brand-intake" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
+      <section className="admin-section admin-intake-section admin-intake-section--raised">
         <div className="new-study-section-head">
           <p className="vitals-eyebrow">{t("identityEyebrow")}</p>
           <h2>{t("identityTitle")}</h2>
@@ -214,6 +218,15 @@ export function BrandOsForm() {
         </div>
 
         <div className="new-study-grid">
+          <label className="new-study-field">
+            <span>{t("timezone")}</span>
+            <input className="filter-input new-study-input" name="timezone" required maxLength={120} value={timezoneValue} onChange={(event) => setTimezoneValue(event.target.value)} />
+            <small>{t("timezoneHelp")}</small>
+          </label>
+          <div aria-hidden="true" />
+        </div>
+
+        <div className="new-study-grid">
           <TokenCatalogField
             allowCustom
             disabled={!industryValue.trim()}
@@ -238,7 +251,7 @@ export function BrandOsForm() {
             )}
           </div>
           <button
-            className="wizard-cta wizard-cta--secondary"
+            className="admin-button"
             type="button"
             disabled={!aiContextReady || aiStatus === "loading"}
             onClick={() => {
@@ -250,7 +263,7 @@ export function BrandOsForm() {
         </div>
       </section>
 
-      <section className="new-study-panel">
+      <section className="admin-section admin-intake-section">
         <div className="new-study-section-head">
           <p className="vitals-eyebrow">{t("seedsEyebrow")}</p>
           <h2>{t("seedsTitle")}</h2>
@@ -340,7 +353,7 @@ export function BrandOsForm() {
             onChange={(event) => setAiRefineInstruction(event.target.value)}
           />
           <button
-            className="wizard-cta wizard-cta--secondary brand-ai-refine-button"
+            className="admin-button brand-ai-refine-button"
             type="button"
             disabled={!aiContextReady || aiStatus === "loading"}
             onClick={() => {
@@ -352,13 +365,13 @@ export function BrandOsForm() {
         </div>
       </section>
 
-      <footer className="new-study-actions">
+      <footer className="new-study-actions admin-intake-actions">
         {error && (
           <p className="new-study-error">
             <Icon name="alert" size={14} /> {error}
           </p>
         )}
-        <button className="wizard-cta" type="submit" disabled={isSubmitting}>
+        <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? (
             <>
               <Icon name="spinner" size={14} /> {t("creating")}
@@ -451,15 +464,32 @@ export function ExpandableTextareaField({
   label,
   maxLength,
   name,
-  placeholder
+  placeholder,
+  surface = "study"
 }: {
   defaultValue?: string;
   label: string;
   maxLength?: number;
   name: string;
   placeholder?: string;
+  surface?: BrandFormSurface;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  if (surface === "workspace") {
+    return (
+      <label className="workspace-field workspace-field--wide">
+        <span>{label}</span>
+        <textarea
+          className="workspace-control workspace-control--textarea"
+          defaultValue={defaultValue}
+          maxLength={maxLength}
+          name={name}
+          placeholder={placeholder}
+        />
+      </label>
+    );
+  }
 
   return (
     <label className="new-study-field new-study-field--wide">
@@ -520,6 +550,7 @@ export function CatalogCombobox({
   options,
   placeholder,
   required = false,
+  surface = "study",
   value,
   onChange
 }: {
@@ -530,6 +561,7 @@ export function CatalogCombobox({
   options: readonly ComboOption[];
   placeholder: string;
   required?: boolean;
+  surface?: BrandFormSurface;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -592,12 +624,12 @@ export function CatalogCombobox({
   }
 
   return (
-    <label className={`new-study-field catalog-combo${disabled ? " catalog-combo--disabled" : ""}`}>
+    <label className={`${surface === "workspace" ? "workspace-field" : "new-study-field"} catalog-combo${disabled ? " catalog-combo--disabled" : ""}`}>
       <span>{label}</span>
       <div className="catalog-combo-control">
         <input
           autoComplete="off"
-          className="filter-input new-study-input"
+          className={surface === "workspace" ? "workspace-control" : "filter-input new-study-input"}
           disabled={disabled}
           name={name}
           placeholder={disabled ? disabledHint ?? placeholder : placeholder}
@@ -636,21 +668,26 @@ export function CatalogCombobox({
       </div>
       {isOpen && (
         <div className="catalog-combo-menu" id={listboxId} role="listbox">
-          {visibleOptions.map((option, index) => (
-            <button
-              className="catalog-combo-option"
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={index === activeIndex || option.value.toLowerCase() === normalizedValue}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                selectOption(option);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
+          {visibleOptions.map((option, index) => {
+            const isSelected = option.value.toLowerCase() === normalizedValue;
+            return (
+              <button
+                aria-selected={isSelected}
+                className="catalog-combo-option"
+                data-highlighted={index === activeIndex ? "true" : undefined}
+                key={option.value}
+                type="button"
+                role="option"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  selectOption(option);
+                }}
+              >
+                <span>{option.label}</span>
+                {isSelected ? <Icon aria-hidden name="check" size={14} /> : null}
+              </button>
+            );
+          })}
           {showCustom && (
             <button
               className="catalog-combo-option catalog-combo-option--custom"
@@ -683,6 +720,7 @@ export function TokenCatalogField({
   name,
   options,
   placeholder,
+  surface = "study",
   values,
   onChange
 }: {
@@ -693,6 +731,7 @@ export function TokenCatalogField({
   name: string;
   options: readonly ComboOption[];
   placeholder: string;
+  surface?: BrandFormSurface;
   values: string[];
   onChange: (values: string[]) => void;
 }) {
@@ -760,17 +799,17 @@ export function TokenCatalogField({
   }
 
   return (
-    <label className={`new-study-field token-field${disabled ? " catalog-combo--disabled" : ""}`}>
+    <label className={`${surface === "workspace" ? "workspace-field" : "new-study-field"} token-field${disabled ? " catalog-combo--disabled" : ""}`}>
       <span>{label}</span>
       <input name={name} type="hidden" value={values.join(", ")} />
       <div
-        className="token-input-shell token-input-shell--with-trigger"
+        className={`token-input-shell token-input-shell--with-trigger${surface === "workspace" ? " workspace-token-input" : ""}`}
         onClick={() => {
           openCatalog();
         }}
       >
         {values.map((value) => (
-          <Token key={value} label={options.find((option) => option.value === value)?.label ?? value} onRemove={() => remove(value)} />
+          <Token key={value} label={options.find((option) => option.value === value)?.label ?? value} onRemove={() => remove(value)} surface={surface} />
         ))}
         <input
           autoComplete="off"
@@ -811,12 +850,20 @@ export function TokenCatalogField({
       {isOpen && !disabled && (matches.length > 0 || canUseCustom) && (
         <div className="token-field-menu" id={listboxId} role="listbox">
           {matches.map((option, index) => (
-            <button key={option.value} type="button" className="catalog-combo-option" onMouseDown={(event) => {
-              event.preventDefault();
-              add(option.value);
-              setIsOpen(false);
-            }} role="option" aria-selected={index === activeIndex}>
-              {option.label}
+            <button
+              aria-selected="false"
+              className="catalog-combo-option"
+              data-highlighted={index === activeIndex ? "true" : undefined}
+              key={option.value}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                add(option.value);
+                setIsOpen(false);
+              }}
+              role="option"
+              type="button"
+            >
+              <span>{option.label}</span>
             </button>
           ))}
           {canUseCustom && (
@@ -848,6 +895,7 @@ export function TokenInputField({
   suggestionLabels,
   suggestionTitle,
   suggestionValues,
+  surface = "study",
   values,
   onAcceptSuggestion,
   onDiscardSuggestion,
@@ -860,6 +908,7 @@ export function TokenInputField({
   suggestionLabels?: { accept: string; discard: string };
   suggestionTitle?: string;
   suggestionValues?: string[];
+  surface?: BrandFormSurface;
   values: string[];
   onAcceptSuggestion?: () => void;
   onDiscardSuggestion?: () => void;
@@ -901,12 +950,12 @@ export function TokenInputField({
   }
 
   return (
-    <label className="new-study-field token-field">
+    <label className={`${surface === "workspace" ? "workspace-field" : "new-study-field"} token-field`}>
       <span>{label}</span>
       <input name={name} type="hidden" value={values.join("\n")} />
-      <div className="token-input-shell token-input-shell--tall">
+      <div className={`token-input-shell token-input-shell--tall${surface === "workspace" ? " workspace-token-input" : ""}`}>
         {values.map((value) => (
-          <Token key={value} label={value} onRemove={() => remove(value)} />
+          <Token key={value} label={value} onRemove={() => remove(value)} surface={surface} />
         ))}
         {loading && (
           <div className="token-input-skeleton" aria-hidden="true">
@@ -941,9 +990,17 @@ export function TokenInputField({
   );
 }
 
-function Token({ label, onRemove }: { label: string; onRemove: () => void }) {
+function Token({
+  label,
+  onRemove,
+  surface = "study"
+}: {
+  label: string;
+  onRemove: () => void;
+  surface?: BrandFormSurface;
+}) {
   return (
-    <span className="token-chip">
+    <span className={surface === "workspace" ? "workspace-chip" : "token-chip"}>
       {label}
       <button
         aria-label={`Remove ${label}`}

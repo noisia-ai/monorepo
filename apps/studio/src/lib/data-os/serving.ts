@@ -1002,6 +1002,7 @@ export async function reviewDataOsTag(corpusId: string, input: DataOsTagReviewIn
           rt.confidence,
           rt.source,
           rt.review_status,
+          rt.signal_taxonomy_profile_id,
           rt.evidence,
           rt.created_at,
           tx.taxonomy_key,
@@ -1021,6 +1022,12 @@ export async function reviewDataOsTag(corpusId: string, input: DataOsTagReviewIn
     if (!current) {
       await client.query("ROLLBACK");
       return null;
+    }
+
+    if (current.signal_taxonomy_profile_id) {
+      throw new Error(
+        "signal_classification_ledger_required_10b: taxonomy decisions must be appended to the classification authority before projection"
+      );
     }
 
     const previousValue = {

@@ -1,4 +1,4 @@
-import { Worker } from "bullmq";
+import { Queue, Worker } from "bullmq";
 
 import {
   DATA_OS_QUEUE_NAME,
@@ -9,6 +9,7 @@ import {
   SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME,
+  SIGNAL_TAXONOMY_INSIGHT_JOB_NAME,
   SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME
 } from "@noisia/query-engine";
 import { dataOsShadowRunJob } from "../workers/data-os-shadow";
@@ -20,13 +21,23 @@ import {
 import { signalMaterializationJob } from "../workers/signal-materialization";
 import { signalInterpretationJob } from "../workers/signal-interpretation";
 import { signalMonthlyInsightJob } from "../workers/signal-monthly-insights";
-import { signalTaxonomyEnrichmentJob } from "../workers/signal-taxonomy-enrichment";
+import { signalTaxonomyInsightJob } from "../workers/signal-taxonomy-insights";
+import { assertSignalTaxonomyJobNotRetiredV1 } from "../workers/signal-taxonomy-enrichment-runtime";
 import { redisConnection } from "./query-engine";
+
+export const DATA_OS_HEARTBEAT_TTL_SECONDS = 45;
+const dataOsQueueName = resolveQueueName(DATA_OS_QUEUE_NAME);
+const dataOsProducer = new Queue(dataOsQueueName, { connection: redisConnection });
+
+export async function closeDataOsProducer() {
+  await dataOsProducer.close();
+}
 
 export function startDataOsWorker() {
   return new Worker(
-    resolveQueueName(DATA_OS_QUEUE_NAME),
+    dataOsQueueName,
     async (job) => {
+      assertSignalTaxonomyJobNotRetiredV1(job.name);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }
@@ -36,10 +47,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_MATERIALIZE_JOB_NAME) return signalMaterializationJob(job);
       if (job.name === SIGNAL_INTERPRETATION_JOB_NAME) return signalInterpretationJob(job);
       if (job.name === SIGNAL_MONTHLY_INSIGHT_JOB_NAME) return signalMonthlyInsightJob(job);
-      if (job.name === SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME) {
-        return signalTaxonomyEnrichmentJob(job);
-      }
-
+      if (job.name === SIGNAL_TAXONOMY_INSIGHT_JOB_NAME) return signalTaxonomyInsightJob(job);
       throw new Error(`Unsupported Data OS job: ${job.name}`);
     },
     {
@@ -47,6 +55,18 @@ export function startDataOsWorker() {
       concurrency: readDataOsWorkerConcurrency()
     }
   );
+}
+
+export function startDataOsHeartbeat() {
+  const key = `noisia:worker-alive:${resolveQueueName(DATA_OS_QUEUE_NAME)}`;
+  const write = () => {
+    redisConnection.set(key, String(Date.now()), "EX", DATA_OS_HEARTBEAT_TTL_SECONDS)
+      .catch((error) => console.warn(
+        `[data-os-heartbeat] write failed: ${error instanceof Error ? error.name : "unknown_error"}`
+      ));
+  };
+  write();
+  return setInterval(write, 15_000);
 }
 
 function readDataOsWorkerConcurrency() {

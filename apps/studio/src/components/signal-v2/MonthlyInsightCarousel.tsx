@@ -16,7 +16,6 @@ import type { EChartsCoreOption } from "echarts/core";
 
 import { SignalEChart } from "@/components/signal-v2/SignalEChart";
 import type {
-  BrandMonitoringMonthlyInsight,
   BrandMonitoringMonthlyInsightChart,
   BrandMonitoringMonthlyInsights
 } from "@/lib/signal-v2/brand-monitoring";
@@ -28,12 +27,61 @@ const PURPLE = "#7157d9";
 const MUTED = "#737373";
 const GRID = "#ebebeb";
 
+export type SignalInsightCarouselItem = {
+  id: string;
+  kind: string;
+  tone: "positive" | "negative" | "neutral" | "attention";
+  rank: number;
+  metric: {
+    current: number;
+    previous: number | null;
+    delta: number | null;
+    delta_ratio: number | null;
+    unit: "count" | "ratio";
+  };
+  chart: BrandMonitoringMonthlyInsightChart;
+  evidence: {
+    mention_ids: string[];
+    evidence_count: number;
+  };
+  editorial: {
+    state: "deterministic" | "claude" | "needs_review";
+    short_title: string | null;
+    headline: string | null;
+    explanation: string | null;
+    why_it_matters: string | null;
+    confidence: "high" | "medium" | "low" | null;
+    limitations: string[];
+    chart_aria?: string | null;
+  };
+};
+
+export type SignalInsightCarouselData = Pick<
+  BrandMonitoringMonthlyInsights,
+  "window" | "calculated_through"
+> & {
+  identity?: string | null;
+  items: SignalInsightCarouselItem[];
+};
+
 export function MonthlyInsightCarousel({
   insights,
-  onOpenEvidence
+  labels,
+  onOpenEvidence,
+  secondaryMeta
 }: {
-  insights: BrandMonitoringMonthlyInsights;
-  onOpenEvidence: () => void;
+  insights: SignalInsightCarouselData;
+  labels?: {
+    aria?: string;
+    useful?: string;
+    fixedWindow?: string;
+    why?: string;
+    whyItMatters?: string;
+    limitations?: string;
+    openEvidence?: string;
+  };
+  onOpenEvidence: (insight: SignalInsightCarouselItem) => void;
+  secondaryMeta?: string | null;
 }) {
   const t = useTranslations("SignalV2.monthlyInsights");
   const locale = useLocale();
@@ -50,7 +98,7 @@ export function MonthlyInsightCarousel({
     setActiveIndex(0);
     setAutoAdvance(true);
     setReasonOpen(false);
-  }, [insights.calculated_through]);
+  }, [insights.calculated_through, insights.identity]);
 
   useEffect(() => {
     if (!autoAdvance || items.length <= 1 || prefersReducedMotion()) return;
@@ -112,7 +160,7 @@ export function MonthlyInsightCarousel({
 
   return (
     <section
-      aria-label={t("aria")}
+      aria-label={labels?.aria ?? t("aria")}
       className="signal-v2-monthly-insights"
       onKeyDown={stopAutoAdvance}
       onPointerDown={stopAutoAdvance}
@@ -166,7 +214,7 @@ export function MonthlyInsightCarousel({
       >
         <div className="signal-v2-monthly-insights__copy">
           <small>
-            {t("useful")} · {formatLongDate(insights.calculated_through, locale)}
+            {labels?.useful ?? t("useful")} · {formatLongDate(insights.calculated_through, locale)}
           </small>
           <div className={`signal-v2-monthly-insights__headline signal-v2-monthly-insights__headline--${active.tone}`}>
             <InsightIcon insight={active} />
@@ -179,7 +227,13 @@ export function MonthlyInsightCarousel({
               end: formatShortDate(insights.window.end, locale)
             })}
             <span aria-hidden="true">·</span>
-            {t("fixedWindow")}
+            {labels?.fixedWindow ?? t("fixedWindow")}
+            {secondaryMeta ? (
+              <>
+                <span aria-hidden="true">·</span>
+                {secondaryMeta}
+              </>
+            ) : null}
           </div>
           <button
             aria-expanded={reasonOpen}
@@ -190,21 +244,21 @@ export function MonthlyInsightCarousel({
             ref={reasonButtonRef}
             type="button"
           >
-            {t("why")}
+            {labels?.why ?? t("why")}
             <ArrowRight size={13} />
           </button>
           {reasonOpen ? (
             <div
-              aria-label={t("whyItMatters")}
+              aria-label={labels?.whyItMatters ?? t("whyItMatters")}
               className="signal-v2-monthly-insights__reason"
               ref={reasonRef}
               role="dialog"
             >
-              <strong>{t("whyItMatters")}</strong>
+              <strong>{labels?.whyItMatters ?? t("whyItMatters")}</strong>
               <p>{active.editorial.why_it_matters ?? detail.explanation}</p>
               {active.editorial.limitations.length > 0 ? (
                 <>
-                  <strong>{t("limitations")}</strong>
+                  <strong>{labels?.limitations ?? t("limitations")}</strong>
                   <ul>
                     {active.editorial.limitations.map((limitation) => (
                       <li key={limitation}>{limitation}</li>
@@ -212,8 +266,8 @@ export function MonthlyInsightCarousel({
                   </ul>
                 </>
               ) : null}
-              <button onClick={onOpenEvidence} type="button">
-                {t("openEvidence")}
+              <button onClick={() => onOpenEvidence(active)} type="button">
+                {labels?.openEvidence ?? t("openEvidence")}
                 <ArrowRight size={13} />
               </button>
             </div>
@@ -223,7 +277,7 @@ export function MonthlyInsightCarousel({
         <div className="signal-v2-monthly-insights__visual">
           <SignalEChart
             ariaLabel={detail.chartAria}
-            onActivate={onOpenEvidence}
+            onActivate={() => onOpenEvidence(active)}
             option={chartOption}
           />
         </div>
@@ -232,7 +286,7 @@ export function MonthlyInsightCarousel({
   );
 }
 
-function InsightIcon({ insight }: { insight: BrandMonitoringMonthlyInsight }) {
+function InsightIcon({ insight }: { insight: SignalInsightCarouselItem }) {
   const icon: ReactNode = insight.kind === "conversation_concentration"
     ? <ChatCircleDots weight="bold" />
     : insight.kind === "conversation_depth"
@@ -250,7 +304,7 @@ function InsightIcon({ insight }: { insight: BrandMonitoringMonthlyInsight }) {
 }
 
 function insightCopy(
-  insight: BrandMonitoringMonthlyInsight,
+  insight: SignalInsightCarouselItem,
   t: ReturnType<typeof useTranslations>,
   locale: string
 ) {
@@ -683,7 +737,7 @@ function prefersReducedMotion() {
 }
 
 function applyEditorial(
-  insight: BrandMonitoringMonthlyInsight,
+  insight: SignalInsightCarouselItem,
   fallback: {
     shortTitle: string;
     headline: string;
@@ -702,7 +756,8 @@ function applyEditorial(
     ...fallback,
     shortTitle: insight.editorial.short_title,
     headline: insight.editorial.headline ?? fallback.headline,
-    explanation: insight.editorial.explanation
+    explanation: insight.editorial.explanation,
+    chartAria: insight.editorial.chart_aria ?? fallback.chartAria
   };
 }
 

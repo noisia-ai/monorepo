@@ -66,6 +66,13 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
 
   const parsed = releaseActionSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return validationError(parsed.error);
+  const idempotencyKey = request.headers.get("Idempotency-Key")?.trim();
+  if (!idempotencyKey) {
+    return Response.json(
+      { error: "idempotency_key_required", message: "Idempotency-Key is required." },
+      { status: 400, headers: { "Cache-Control": "private, no-store" } }
+    );
+  }
   try {
     const result = parsed.data.action === "create_draft"
       ? await createSignalStrategicReleaseDraft({
@@ -77,7 +84,8 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
       : await promoteSignalStrategicRelease({
           workspaceId: loaded.workspace.id,
           releaseId: parsed.data.release_id,
-          reviewerUserId: loaded.session.appUser.id
+          reviewerUserId: loaded.session.appUser.id,
+          idempotencyKey
         });
     if (!result) {
       return Response.json(

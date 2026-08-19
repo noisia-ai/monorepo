@@ -6,7 +6,8 @@ import {
   CaretLeft,
   CaretRight,
   Check,
-  ClockCounterClockwise
+  ClockCounterClockwise,
+  SpinnerGap
 } from "@phosphor-icons/react";
 import {
   CalendarCell,
@@ -30,6 +31,7 @@ import {
 } from "@internationalized/date";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import type {
   SignalComparisonModeV1,
@@ -46,21 +48,26 @@ export type SignalAnalyticsFilterSelection = {
   comparisonStart?: string;
   comparisonEnd?: string;
   dimensions?: SignalDimensionValuesV1;
+  customFilters?: Record<string, string[]>;
   searchQuery?: string;
 };
 
 export function SignalAnalyticsFilter({
+  boundedToCoverage = false,
   comparison,
   coverage,
   filter,
   loading,
-  onApply
+  onApply,
+  showComparison = true
 }: {
+  boundedToCoverage?: boolean;
   comparison: SignalComparisonV1;
   coverage: { date_from: string | null; date_through: string | null };
   filter: SignalFilterV1;
   loading: boolean;
   onApply: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
+  showComparison?: boolean;
 }) {
   const t = useTranslations("SignalV2");
   const locale = useLocale();
@@ -68,9 +75,13 @@ export function SignalAnalyticsFilter({
   const [compareOpen, setCompareOpen] = useState(false);
   const [customComparisonOpen, setCustomComparisonOpen] = useState(false);
   const [presetGroup, setPresetGroup] = useState<"last" | "toDate" | "quarters" | null>(null);
+  const [pendingControl, setPendingControl] = useState<"period" | "comparison" | null>(null);
+  const [pendingPeriodRange, setPendingPeriodRange] = useState<SignalDateRangeV1 | null>(null);
+  const [pendingComparisonLabel, setPendingComparisonLabel] = useState<string | null>(null);
   const periodAnchorRef = useRef<HTMLDivElement>(null);
   const comparisonAnchorRef = useRef<HTMLDivElement>(null);
   const [draftRange, setDraftRange] = useState<SignalDateRangeV1>(filter.date_range);
+  const draftRangeRef = useRef<SignalDateRangeV1>(filter.date_range);
   const [draftComparisonRange, setDraftComparisonRange] = useState<SignalDateRangeV1>(
     comparison.date_range ?? previousPeriod(filter.date_range)
   );
@@ -81,6 +92,7 @@ export function SignalAnalyticsFilter({
 
   useEffect(() => {
     const currentRange = { start: filterStart, end: filterEnd };
+    draftRangeRef.current = currentRange;
     setDraftRange(currentRange);
     setDraftComparisonRange(
       comparisonStart && comparisonEnd
@@ -125,48 +137,99 @@ export function SignalAnalyticsFilter({
   }, [compareOpen, customComparisonOpen, periodOpen]);
 
   const todayInWorkspace = useMemo(() => today(filter.timezone), [filter.timezone]);
+  const periodAnchor = useMemo(() => (
+    boundedToCoverage && coverage.date_through
+      ? parseDate(coverage.date_through)
+      : todayInWorkspace
+  ), [boundedToCoverage, coverage.date_through, todayInWorkspace]);
   const minimumDate = coverage.date_from ? parseDate(coverage.date_from) : undefined;
-  const maximumDate = todayInWorkspace;
-  const periodLabel = formatRange(filter.date_range, locale);
-  const comparisonLabel = comparison.date_range
+  const maximumDate = boundedToCoverage && coverage.date_through
+    ? parseDate(coverage.date_through)
+    : todayInWorkspace;
+  const periodLabel = formatRange(pendingPeriodRange ?? filter.date_range, locale);
+  const comparisonLabel = pendingComparisonLabel ?? (comparison.date_range
     ? formatRange(comparison.date_range, locale)
-    : t("filters.comparison.none");
+    : t("filters.comparison.none"));
+  const periodPending = pendingControl === "period";
+  const comparisonPending = pendingControl === "comparison";
 
   const applyPeriod = async () => {
-    const applied = await onApply({
-      start: draftRange.start,
-      end: draftRange.end,
-      comparisonMode: comparison.mode,
-      ...(comparison.mode === "custom" && comparison.date_range
-        ? {
-            comparisonStart: comparison.date_range.start,
-            comparisonEnd: comparison.date_range.end
-          }
-        : {})
-    });
-    if (applied) setPeriodOpen(false);
+    const range = readDateInputRange(periodAnchorRef.current, draftRangeRef.current, locale);
+    draftRangeRef.current = range;
+    const isAllCoverage = Boolean(
+      coverage.date_from
+      && coverage.date_through
+      && isSameRange(range, {
+        start: coverage.date_from,
+        end: coverage.date_through
+      })
+    );
+    const comparisonMode = isAllCoverage ? "none" : comparison.mode;
+
+    // Close the control immediately. The destination keeps its stable shell
+    // mounted and owns the loading feedback while the new query resolves.
+    setPeriodOpen(false);
+    setPresetGroup(null);
+    setPendingControl("period");
+    setPendingPeriodRange({ ...range });
+
+    try {
+      await onApply({
+        start: range.start,
+        end: range.end,
+        comparisonMode,
+        ...(comparisonMode === "custom" && comparison.date_range
+          ? {
+              comparisonStart: comparison.date_range.start,
+              comparisonEnd: comparison.date_range.end
+            }
+          : {})
+      });
+    } finally {
+      setPendingControl(null);
+      setPendingPeriodRange(null);
+    }
+  };
+
+  const updateDraftRange = (range: SignalDateRangeV1) => {
+    draftRangeRef.current = range;
+    setDraftRange(range);
   };
 
   const applyComparison = async (
     mode: SignalComparisonModeV1,
     customRange?: SignalDateRangeV1
   ) => {
-    const applied = await onApply({
-      start: filter.date_range.start,
-      end: filter.date_range.end,
-      comparisonMode: mode,
-      ...(mode === "custom" && customRange
-        ? { comparisonStart: customRange.start, comparisonEnd: customRange.end }
-        : {})
-    });
-    if (applied) {
-      setCompareOpen(false);
-      setCustomComparisonOpen(false);
+    setCompareOpen(false);
+    setCustomComparisonOpen(false);
+    setPendingControl("comparison");
+    setPendingComparisonLabel(comparisonSelectionLabel({
+      customRange,
+      locale,
+      mode,
+      primaryRange: filter.date_range,
+      t
+    }));
+
+    try {
+      await onApply({
+        start: filter.date_range.start,
+        end: filter.date_range.end,
+        comparisonMode: mode,
+        ...(mode === "custom" && customRange
+          ? { comparisonStart: customRange.start, comparisonEnd: customRange.end }
+          : {})
+      });
+    } finally {
+      setPendingControl(null);
+      setPendingComparisonLabel(null);
     }
   };
 
   const setPreset = (range: SignalDateRangeV1) => {
-    setDraftRange(range);
+    updateDraftRange(boundedToCoverage
+      ? boundRangeToCoverage(range, coverage)
+      : range);
     setPresetGroup(null);
   };
 
@@ -178,11 +241,13 @@ export function SignalAnalyticsFilter({
     <>
       <div className="signal-v2-filter-anchor" ref={periodAnchorRef}>
         <button
+          aria-busy={periodPending}
           aria-controls="signal-v2-period-dialog"
           aria-expanded={periodOpen}
-          className={`signal-v2-filter${periodOpen ? " signal-v2-filter--active" : ""}`}
+          className={`signal-v2-filter${periodOpen ? " signal-v2-filter--active" : ""}${periodPending ? " signal-v2-filter--pending" : ""}`}
+          disabled={loading}
           onClick={() => {
-            setDraftRange(filter.date_range);
+            updateDraftRange(filter.date_range);
             setPeriodOpen((open) => !open);
             setCompareOpen(false);
             setCustomComparisonOpen(false);
@@ -190,8 +255,10 @@ export function SignalAnalyticsFilter({
           type="button"
         >
           <CalendarBlank size={15} />
-          {periodLabel}
-          <CaretDown size={13} />
+          <span className="signal-v2-filter__label">{periodLabel}</span>
+          {periodPending
+            ? <SpinnerGap aria-hidden className="signal-v2-filter__spinner" size={13} />
+            : <CaretDown size={13} />}
         </button>
 
         {periodOpen ? (
@@ -202,17 +269,21 @@ export function SignalAnalyticsFilter({
             role="dialog"
           >
             <div className="signal-v2-period-popover__presets">
-              <PresetButton
-                active={isSameRange(draftRange, singleDay(todayInWorkspace))}
-                label={t("filters.today")}
-                onClick={() => setPreset(singleDay(todayInWorkspace))}
-              />
-              <PresetButton
-                active={isSameRange(draftRange, singleDay(todayInWorkspace.subtract({ days: 1 })))}
-                label={t("filters.yesterday")}
-                onClick={() => setPreset(singleDay(todayInWorkspace.subtract({ days: 1 })))}
-              />
-              <span className="signal-v2-preset-divider" />
+              {!boundedToCoverage ? (
+                <>
+                  <PresetButton
+                    active={isSameRange(draftRange, singleDay(todayInWorkspace))}
+                    label={t("filters.today")}
+                    onClick={() => setPreset(singleDay(todayInWorkspace))}
+                  />
+                  <PresetButton
+                    active={isSameRange(draftRange, singleDay(todayInWorkspace.subtract({ days: 1 })))}
+                    label={t("filters.yesterday")}
+                    onClick={() => setPreset(singleDay(todayInWorkspace.subtract({ days: 1 })))}
+                  />
+                  <span className="signal-v2-preset-divider" />
+                </>
+              ) : null}
               <PresetButton
                 active={presetGroup === "last"}
                 expanded={presetGroup === "last"}
@@ -225,8 +296,8 @@ export function SignalAnalyticsFilter({
                     <button
                       key={days}
                       onClick={() => setPreset({
-                        start: todayInWorkspace.subtract({ days: days - 1 }).toString(),
-                        end: todayInWorkspace.toString()
+                        start: periodAnchor.subtract({ days: days - 1 }).toString(),
+                        end: periodAnchor.toString()
                       })}
                       type="button"
                     >
@@ -245,8 +316,8 @@ export function SignalAnalyticsFilter({
                 <div className="signal-v2-preset-submenu">
                   <button
                     onClick={() => setPreset({
-                      start: startOfWeek(todayInWorkspace, locale).toString(),
-                      end: todayInWorkspace.toString()
+                      start: startOfWeek(periodAnchor, locale).toString(),
+                      end: periodAnchor.toString()
                     })}
                     type="button"
                   >
@@ -254,8 +325,8 @@ export function SignalAnalyticsFilter({
                   </button>
                   <button
                     onClick={() => setPreset({
-                      start: startOfMonth(todayInWorkspace).toString(),
-                      end: todayInWorkspace.toString()
+                      start: startOfMonth(periodAnchor).toString(),
+                      end: periodAnchor.toString()
                     })}
                     type="button"
                   >
@@ -263,8 +334,8 @@ export function SignalAnalyticsFilter({
                   </button>
                   <button
                     onClick={() => setPreset({
-                      start: quarterStart(todayInWorkspace).toString(),
-                      end: todayInWorkspace.toString()
+                      start: quarterStart(periodAnchor).toString(),
+                      end: periodAnchor.toString()
                     })}
                     type="button"
                   >
@@ -272,8 +343,8 @@ export function SignalAnalyticsFilter({
                   </button>
                   <button
                     onClick={() => setPreset({
-                      start: startOfYear(todayInWorkspace).toString(),
-                      end: todayInWorkspace.toString()
+                      start: startOfYear(periodAnchor).toString(),
+                      end: periodAnchor.toString()
                     })}
                     type="button"
                   >
@@ -299,14 +370,14 @@ export function SignalAnalyticsFilter({
                 }}
               />
               <PresetButton
-                active={isSameRange(draftRange, holidayRange(todayInWorkspace, "black_friday"))}
+                active={isSameRange(draftRange, holidayRange(periodAnchor, "black_friday"))}
                 label="Black Friday"
-                onClick={() => setPreset(holidayRange(todayInWorkspace, "black_friday"))}
+                onClick={() => setPreset(holidayRange(periodAnchor, "black_friday"))}
               />
               <PresetButton
-                active={isSameRange(draftRange, holidayRange(todayInWorkspace, "cyber_monday"))}
+                active={isSameRange(draftRange, holidayRange(periodAnchor, "cyber_monday"))}
                 label="Cyber Monday"
-                onClick={() => setPreset(holidayRange(todayInWorkspace, "cyber_monday"))}
+                onClick={() => setPreset(holidayRange(periodAnchor, "cyber_monday"))}
               />
               <PresetButton
                 active={presetGroup === "quarters"}
@@ -317,8 +388,8 @@ export function SignalAnalyticsFilter({
               {presetGroup === "quarters" ? (
                 <div className="signal-v2-preset-submenu">
                   {[0, 1, 2, 3].map((offset) => {
-                    const start = quarterStart(todayInWorkspace).subtract({ months: offset * 3 });
-                    const end = offset === 0 ? todayInWorkspace : quarterEnd(start);
+                    const start = quarterStart(periodAnchor).subtract({ months: offset * 3 });
+                    const end = offset === 0 ? periodAnchor : quarterEnd(start);
                     return (
                       <button
                         key={offset}
@@ -344,7 +415,7 @@ export function SignalAnalyticsFilter({
                 label={t("filters.dateRange")}
                 maxValue={maximumDate}
                 minValue={minimumDate}
-                onChange={setDraftRange}
+                onChange={updateDraftRange}
                 value={draftRange}
               />
               <div className="signal-v2-popover-actions">
@@ -364,11 +435,13 @@ export function SignalAnalyticsFilter({
         ) : null}
       </div>
 
-      <div className="signal-v2-filter-anchor" ref={comparisonAnchorRef}>
+      {showComparison ? <div className="signal-v2-filter-anchor" ref={comparisonAnchorRef}>
         <button
+          aria-busy={comparisonPending}
           aria-controls="signal-v2-comparison-menu"
           aria-expanded={compareOpen || customComparisonOpen}
-          className={`signal-v2-filter${compareOpen || customComparisonOpen ? " signal-v2-filter--active" : ""}`}
+          className={`signal-v2-filter${compareOpen || customComparisonOpen ? " signal-v2-filter--active" : ""}${comparisonPending ? " signal-v2-filter--pending" : ""}`}
+          disabled={loading}
           onClick={() => {
             setCompareOpen((open) => !open);
             setCustomComparisonOpen(false);
@@ -377,8 +450,10 @@ export function SignalAnalyticsFilter({
           type="button"
         >
           <ClockCounterClockwise size={15} />
-          {comparisonLabel}
-          <CaretDown size={13} />
+          <span className="signal-v2-filter__label">{comparisonLabel}</span>
+          {comparisonPending
+            ? <SpinnerGap aria-hidden className="signal-v2-filter__spinner" size={13} />
+            : <CaretDown size={13} />}
         </button>
 
         {compareOpen ? (
@@ -457,7 +532,7 @@ export function SignalAnalyticsFilter({
             </div>
           </div>
         ) : null}
-      </div>
+      </div> : null}
     </>
   );
 }
@@ -510,6 +585,7 @@ function AnalyticsRangeCalendar({
     >
       <div className="signal-v2-date-fields signal-v2-date-fields--aria">
         <HumanDateInput
+          edge="start"
           label={t("filters.from")}
           locale={locale}
           maxValue={maxValue}
@@ -519,6 +595,7 @@ function AnalyticsRangeCalendar({
         />
         <span aria-hidden className="signal-v2-range-arrow">→</span>
         <HumanDateInput
+          edge="end"
           label={t("filters.to")}
           locale={locale}
           maxValue={maxValue}
@@ -588,6 +665,7 @@ function VisualRangeCalendarCell({
 }
 
 function HumanDateInput({
+  edge,
   label,
   locale,
   maxValue,
@@ -595,6 +673,7 @@ function HumanDateInput({
   onChange,
   value
 }: {
+  edge: "start" | "end";
   label: string;
   locale: string;
   maxValue?: DateValue;
@@ -614,11 +693,23 @@ function HumanDateInput({
       const next = parseEditableDate(draft, locale);
       const beforeMinimum = minValue && next.compare(minValue) < 0;
       const afterMaximum = maxValue && next.compare(maxValue) > 0;
-      if (!beforeMinimum && !afterMaximum) onChange(next);
+      if (!beforeMinimum && !afterMaximum) flushSync(() => onChange(next));
     } catch {
       // Invalid partial input is discarded when focus leaves the field.
     }
     setEditing(false);
+  };
+
+  const updateDraft = (nextDraft: string) => {
+    setDraft(nextDraft);
+    try {
+      const next = parseEditableDate(nextDraft, locale);
+      const beforeMinimum = minValue && next.compare(minValue) < 0;
+      const afterMaximum = maxValue && next.compare(maxValue) > 0;
+      if (!beforeMinimum && !afterMaximum) flushSync(() => onChange(next));
+    } catch {
+      // Keep partial input local until it becomes a complete, valid date.
+    }
   };
 
   return (
@@ -629,9 +720,10 @@ function HumanDateInput({
           aria-label={label}
           autoComplete="off"
           className="signal-v2-date-input__field"
+          data-signal-date-edge={edge}
           inputMode="numeric"
           onBlur={commit}
-          onChange={(event) => setDraft(event.currentTarget.value)}
+          onChange={(event) => updateDraft(event.currentTarget.value)}
           onFocus={(event) => {
             const input = event.currentTarget;
             setDraft(formatEditableDate(value, locale));
@@ -704,6 +796,23 @@ function singleDay(date: CalendarDate): SignalDateRangeV1 {
   return { start: date.toString(), end: date.toString() };
 }
 
+function boundRangeToCoverage(
+  range: SignalDateRangeV1,
+  coverage: { date_from: string | null; date_through: string | null }
+): SignalDateRangeV1 {
+  const start = coverage.date_from && range.start < coverage.date_from
+    ? coverage.date_from
+    : range.start;
+  const end = coverage.date_through && range.end > coverage.date_through
+    ? coverage.date_through
+    : range.end;
+
+  return {
+    start: start > end ? end : start,
+    end
+  };
+}
+
 function quarterStart(date: CalendarDate) {
   const month = Math.floor((date.month - 1) / 3) * 3 + 1;
   return new CalendarDate(date.calendar, date.era, date.year, month, 1);
@@ -730,6 +839,31 @@ function blackFriday(year: number) {
   const novemberFirstDay = new Date(Date.UTC(year, 10, 1)).getUTCDay();
   const firstThursday = 1 + ((4 - novemberFirstDay + 7) % 7);
   return new CalendarDate(year, 11, firstThursday + 21).add({ days: 1 });
+}
+
+function comparisonSelectionLabel({
+  customRange,
+  locale,
+  mode,
+  primaryRange,
+  t
+}: {
+  customRange?: SignalDateRangeV1;
+  locale: string;
+  mode: SignalComparisonModeV1;
+  primaryRange: SignalDateRangeV1;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  if (mode === "none") return t("filters.comparison.none");
+  if (mode === "custom" && customRange) return formatRange(customRange, locale);
+  if (mode === "previous_period") return formatRange(previousPeriod(primaryRange), locale);
+  if (mode === "previous_year") {
+    return formatRange({
+      start: parseDate(primaryRange.start).subtract({ years: 1 }).toString(),
+      end: parseDate(primaryRange.end).subtract({ years: 1 }).toString()
+    }, locale);
+  }
+  return t("actions.loading");
 }
 
 function previousPeriod(range: SignalDateRangeV1): SignalDateRangeV1 {
@@ -804,4 +938,25 @@ function parseEditableDate(value: string, locale: string) {
   return parseDate(
     `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
   );
+}
+
+function readDateInputRange(
+  container: HTMLDivElement | null,
+  fallback: SignalDateRangeV1,
+  locale: string
+): SignalDateRangeV1 {
+  const readEdge = (edge: "start" | "end", fallbackValue: string) => {
+    const input = container?.querySelector<HTMLInputElement>(
+      `input[data-signal-date-edge="${edge}"]`
+    );
+    if (!input) return fallbackValue;
+    try {
+      return parseEditableDate(input.value, locale).toString();
+    } catch {
+      return fallbackValue;
+    }
+  };
+  const start = readEdge("start", fallback.start);
+  const end = readEdge("end", fallback.end);
+  return start <= end ? { start, end } : { start: end, end };
 }

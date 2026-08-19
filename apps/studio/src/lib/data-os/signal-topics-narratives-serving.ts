@@ -1,13 +1,20 @@
+import { createHash } from "node:crypto";
+
 import {
   SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
   SignalBackendContractError,
-  buildSignalMentionPredicateV1,
+  buildSignalMentionReadPredicateV1,
+  buildSignalPopulationMentionReadPredicateV1,
   decodeSignalDrillDownCursorV1,
   encodeSignalDrillDownCursorV1,
   normalizeSignalFilterV1,
   normalizeSignalMetricQueryV1,
   signalFiltersHashV1,
+  signalServingScopeCursorIsolationHashV1,
+  signalServingScopeEtagSeedV1,
   signalTaxonomyCoverageV1,
+  splitSignalMaterializationDateRangeV1,
+  type SignalEvidenceSentimentDominantV1,
   type SignalFilterV1,
   type SignalTaxonomyCooccurrenceV1,
   type SignalTaxonomyEvidencePageV1,
@@ -18,14 +25,24 @@ import {
   type SignalTaxonomyServingStateV1,
   type SignalTaxonomyTermDetailV1,
   type SignalTaxonomyTermMetricV1,
+  type SignalServingScopeDescriptorV1,
   type SignalTopicsNarrativesOverviewV1
 } from "@noisia/query-engine";
 
 import { pool } from "@/lib/db";
+import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
 import {
-  requireOperationalCorpus,
-  type ResolvedSignalWorkspace
-} from "@/lib/data-os/signal-workspace";
+  buildSignalOperationalMentionReadPredicateV1,
+  requireSignalOperationalReadScopeV1,
+  resolveSignalOperationalReadScopeV1,
+  type SignalOperationalReadScopeV1
+} from "@/lib/data-os/signal-operational-read-scope";
+import {
+  type SignalClientEvidenceAccessV1,
+  loadSignalServingMaterializationRowsV1,
+  type SignalServingMaterializationRowV1,
+  type SignalServingQueryable
+} from "@/lib/data-os/signal-workspace-serving";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -56,6 +73,14 @@ type Snapshot = SignalTaxonomyOverviewSectionV1 & {
   byTerm: Map<string, SignalTaxonomyTermMetricV1>;
   termSeries: Map<string, SignalTaxonomyOverviewSectionV1["series"]>;
 };
+
+type TermOverviewSignals = Record<
+  SignalTaxonomyKindV1,
+  Map<string, {
+    engagement_total: number;
+    dominant_sentiment: SignalEvidenceSentimentDominantV1;
+  }>
+>;
 
 const TERM_KEY_PATTERN = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 
@@ -128,56 +153,227 @@ export function aggregateSignalTaxonomyServingFixtureV1(args: {
 
 export async function loadSignalTopicsNarrativesOverviewV1(args: {
   workspace: ResolvedSignalWorkspace;
+  readScope?: SignalOperationalReadScopeV1;
   filter: SignalFilterV1;
   comparisonRange?: { start: string; end: string } | null;
   isInternalUser: boolean;
 }): Promise<SignalTopicsNarrativesOverviewV1> {
-  const corpus = requireCorpus(args.workspace);
-  assertClientSafeFilter(args.filter, args.isInternalUser);
-  const currentPredicate = buildSignalMentionPredicateV1(
-    args.filter,
-    [corpus.id],
-    args.workspace.id
+  return (await loadSignalTopicsNarrativesSnapshotV1(args)).overview;
+}
+
+export async function loadSignalTopicsNarrativesModuleShadowV1(args: {
+  workspace: ResolvedSignalWorkspace;
+  populationId: string;
+  filter: SignalFilterV1;
+  queryable?: SignalServingQueryable;
+}) {
+  const corpus = (await resolveSignalOperationalReadScopeV1(args.workspace, {
+    mode: "legacy",
+    queryable: args.queryable
+  })).legacyCorpus!;
+  const legacy = await loadTopicsNarrativesShadowScope(
+    args.workspace.id,
+    buildSignalMentionReadPredicateV1(
+      args.filter,
+      [corpus.id],
+      args.workspace.id
+    ),
+    args.queryable
   );
+  const governed = await loadSignalTopicsNarrativesGovernedModuleProofV1(args);
+  const reconciled = legacy.canonical_ids_hash === governed.canonical_ids_hash
+    && legacy.row_denominator === governed.row_denominator
+    && legacy.canonical_denominator === governed.canonical_denominator
+    && legacy.period_start === governed.period_start
+    && legacy.period_end === governed.period_end
+    && legacy.topic_result_count === governed.topic_result_count
+    && legacy.topic_results_hash === governed.topic_results_hash
+    && legacy.narrative_result_count === governed.narrative_result_count
+    && legacy.narrative_results_hash === governed.narrative_results_hash;
+  return {
+    reader: "loadSignalTopicsNarrativesOverviewV1:approved-assignment-adapter",
+    legacy,
+    governed,
+    reconciled,
+    state: reconciled ? "exact" as const : "diverged" as const
+  };
+}
+
+/**
+ * Executes only the population-owned Topics & Narratives reader proof. This is
+ * the governed-view rehearsal boundary and never resolves a legacy corpus.
+ */
+export async function loadSignalTopicsNarrativesGovernedModuleProofV1(args: {
+  workspace: ResolvedSignalWorkspace;
+  populationId: string;
+  filter: SignalFilterV1;
+  queryable?: SignalServingQueryable;
+}) {
+  return loadTopicsNarrativesShadowScope(
+    args.workspace.id,
+    buildSignalPopulationMentionReadPredicateV1(
+      args.filter,
+      args.populationId,
+      args.workspace.id
+    ),
+    args.queryable
+  );
+}
+
+async function loadTopicsNarrativesShadowScope(
+  workspaceId: string,
+  predicate: ReturnType<typeof buildSignalMentionReadPredicateV1>,
+  queryable?: SignalServingQueryable
+) {
+  const params = [
+    ...predicate.params,
+    workspaceId,
+    predicate.normalized_filter.timezone
+  ];
+  const workspaceParameter = `$${params.length - 1}`;
+  const timezoneParameter = `$${params.length}`;
+  const result = await (queryable ?? pool).query<{
+    row_denominator: number;
+    canonical_denominator: number;
+    period_start: string | null;
+    period_end: string | null;
+    canonical_ids_hash: string;
+    topic_result_count: number;
+    topic_results_hash: string;
+    narrative_result_count: number;
+    narrative_results_hash: string;
+    resolved_alias_assignment_count: number;
+  }>(`
+    WITH scoped AS (
+      SELECT
+        m.id,
+        COALESCE(m.canonical_mention_id, m.id) AS canonical_id,
+        (m.published_at AT TIME ZONE ${timezoneParameter})::date AS local_date
+      FROM mentions m
+      WHERE ${predicate.sql}
+    ), canonical AS (
+      SELECT DISTINCT canonical_id FROM scoped
+    ), approved_assignment_links AS (
+      SELECT
+        scoped.canonical_id,
+        profile.kind,
+        term.term_key,
+        tagged_mention.id <> scoped.canonical_id AS resolved_from_alias
+      FROM scoped
+      JOIN record_tags tag
+        ON tag.subject_type = 'mention'
+       AND tag.review_status = 'approved'
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND tagged_mention.canonical_mention_id = scoped.canonical_id
+      JOIN signal_taxonomy_profiles profile
+        ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.model_version_id = tag.model_version_id
+       AND profile.workspace_id = ${workspaceParameter}::uuid
+       AND profile.status = 'active'
+      JOIN taxonomy_terms term
+        ON term.id = tag.taxonomy_term_id
+       AND term.taxonomy_id = profile.taxonomy_id
+       AND term.status = 'active'
+    ), approved_results AS (
+      SELECT canonical_id, kind, term_key,
+        bool_or(resolved_from_alias) AS resolved_from_alias
+      FROM approved_assignment_links
+      GROUP BY canonical_id, kind, term_key
+    )
+    SELECT
+      (SELECT count(*)::int FROM scoped) AS row_denominator,
+      (SELECT count(*)::int FROM canonical) AS canonical_denominator,
+      (SELECT min(local_date)::text FROM scoped) AS period_start,
+      (SELECT max(local_date)::text FROM scoped) AS period_end,
+      'sha256:' || encode(sha256(convert_to(COALESCE((
+        SELECT string_agg(canonical_id::text, ',' ORDER BY canonical_id::text)
+        FROM canonical
+      ), ''), 'UTF8')), 'hex') AS canonical_ids_hash,
+      (SELECT count(*)::int FROM approved_results WHERE kind = 'topic')
+        AS topic_result_count,
+      'sha256:' || encode(sha256(convert_to(COALESCE((
+        SELECT string_agg(canonical_id::text || ':' || term_key, ','
+          ORDER BY canonical_id::text, term_key)
+        FROM approved_results WHERE kind = 'topic'
+      ), ''), 'UTF8')), 'hex') AS topic_results_hash,
+      (SELECT count(*)::int FROM approved_results WHERE kind = 'narrative')
+        AS narrative_result_count,
+      'sha256:' || encode(sha256(convert_to(COALESCE((
+        SELECT string_agg(canonical_id::text || ':' || term_key, ','
+          ORDER BY canonical_id::text, term_key)
+        FROM approved_results WHERE kind = 'narrative'
+      ), ''), 'UTF8')), 'hex') AS narrative_results_hash,
+      (SELECT count(*)::int FROM approved_results WHERE resolved_from_alias)
+        AS resolved_alias_assignment_count
+  `, params);
+  return result.rows[0] ?? {
+    row_denominator: 0,
+    canonical_denominator: 0,
+    period_start: null,
+    period_end: null,
+    canonical_ids_hash: "",
+    topic_result_count: 0,
+    topic_results_hash: "",
+    narrative_result_count: 0,
+    narrative_results_hash: "",
+    resolved_alias_assignment_count: 0
+  };
+}
+
+async function loadSignalTopicsNarrativesSnapshotV1(args: {
+  workspace: ResolvedSignalWorkspace;
+  readScope?: SignalOperationalReadScopeV1;
+  filter: SignalFilterV1;
+  comparisonRange?: { start: string; end: string } | null;
+  isInternalUser: boolean;
+}) {
+  const readScope = requireSignalOperationalReadScopeV1(args.workspace, args.readScope);
+  assertClientSafeFilter(args.filter, args.isInternalUser);
+  const currentPredicate = buildSignalOperationalMentionReadPredicateV1(readScope, args.filter);
   const comparisonFilter = args.comparisonRange
     ? comparisonFilterV1(args.workspace, args.filter, args.comparisonRange)
     : null;
   const comparisonPredicate = comparisonFilter
-    ? buildSignalMentionPredicateV1(
-        comparisonFilter,
-        [corpus.id],
-        args.workspace.id
-      )
+    ? buildSignalOperationalMentionReadPredicateV1(readScope, comparisonFilter)
     : null;
-  const [profiles, currentRows, comparisonRows] = await Promise.all([
-    loadActiveProfiles(args.workspace.id),
-    loadMaterializationRows(
-      args.workspace.id,
-      corpus.id,
-      currentPredicate.filters_hash,
-      args.filter.granularity
-    ),
-    comparisonFilter
-      ? loadMaterializationRows(
-          args.workspace.id,
-          corpus.id,
-          comparisonPredicate!.filters_hash,
-          comparisonFilter.granularity
-        )
-      : Promise.resolve([] as MaterializationRow[])
-  ]);
+  // Term detail reuses this snapshot. Keep the remote Postgres reads
+  // sequential so the Studio pool is not exhausted by one interaction.
+  const profiles = await loadActiveProfiles(args.workspace.id);
+  const currentRows = await loadTaxonomyMaterializationRows(
+    args.workspace,
+    args.filter,
+    readScope
+  );
+  const termSignals = await loadTermOverviewSignals(
+    args.workspace.id,
+    currentPredicate,
+    readScope
+  );
+  const comparisonRows = comparisonFilter
+    ? await loadTaxonomyMaterializationRows(args.workspace, comparisonFilter, readScope)
+    : [];
   const profileKinds = new Set(profiles.map((profile) => profile.kind));
-  const currentTopics = snapshotForKind(currentRows, "topic", profileKinds.has("topic"));
-  const currentNarratives = snapshotForKind(
-    currentRows,
-    "narrative",
-    profileKinds.has("narrative")
+  const currentCoverageRows = needsCoverageFallback(currentRows, profileKinds)
+    ? await loadOperationalCoverageRows(args.workspace, args.filter, readScope)
+    : [];
+  const comparisonCoverageRows = comparisonFilter
+    && needsCoverageFallback(comparisonRows, profileKinds)
+    ? await loadOperationalCoverageRows(args.workspace, comparisonFilter, readScope)
+    : [];
+  const currentTopics = withOverviewSignals(
+    snapshotForKind(currentRows, "topic", profileKinds.has("topic"), currentCoverageRows),
+    termSignals.topic
+  );
+  const currentNarratives = withOverviewSignals(
+    snapshotForKind(currentRows, "narrative", profileKinds.has("narrative"), currentCoverageRows),
+    termSignals.narrative
   );
   const comparisonTopics = comparisonFilter
-    ? snapshotForKind(comparisonRows, "topic", profileKinds.has("topic"))
+    ? snapshotForKind(comparisonRows, "topic", profileKinds.has("topic"), comparisonCoverageRows)
     : null;
   const comparisonNarratives = comparisonFilter
-    ? snapshotForKind(comparisonRows, "narrative", profileKinds.has("narrative"))
+    ? snapshotForKind(comparisonRows, "narrative", profileKinds.has("narrative"), comparisonCoverageRows)
     : null;
   const topics = withComparison(currentTopics, comparisonTopics);
   const narratives = withComparison(currentNarratives, comparisonNarratives);
@@ -196,27 +392,32 @@ export async function loadSignalTopicsNarrativesOverviewV1(args: {
   ])).sort();
 
   return {
-    contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
-    workspace_id: args.workspace.id,
-    corpus_id: corpus.id,
-    filters_hash: currentPredicate.filters_hash,
-    comparison_filters_hash: comparisonPredicate?.filters_hash ?? null,
-    profiles: profiles.map((profile) =>
-      publicProfile(profile, args.isInternalUser)
-    ),
-    topics: withoutIndex(topics),
-    narratives: withoutIndex(narratives),
-    state: worstState([topics.state, narratives.state]),
-    limitations,
-    visibility: {
-      internal: args.isInternalUser,
-      classification_details: args.isInternalUser
-    }
+    overview: {
+      contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
+      workspace_id: args.workspace.id,
+      read_scope: readScope.descriptor,
+      corpus_id: readScope.legacyCorpus?.id ?? null,
+      filters_hash: currentPredicate.filters_hash,
+      comparison_filters_hash: comparisonPredicate?.filters_hash ?? null,
+      profiles: profiles.map((profile) =>
+        publicProfile(profile, args.isInternalUser)
+      ),
+      topics: withoutIndex(topics),
+      narratives: withoutIndex(narratives),
+      state: worstState([topics.state, narratives.state]),
+      limitations,
+      visibility: {
+        internal: args.isInternalUser,
+        classification_details: args.isInternalUser
+      }
+    } satisfies SignalTopicsNarrativesOverviewV1,
+    currentRows
   };
 }
 
 export async function loadSignalTaxonomyTermDetailV1(args: {
   workspace: ResolvedSignalWorkspace;
+  readScope?: SignalOperationalReadScopeV1;
   filter: SignalFilterV1;
   comparisonRange?: { start: string; end: string } | null;
   kind: SignalTaxonomyKindV1;
@@ -224,17 +425,14 @@ export async function loadSignalTaxonomyTermDetailV1(args: {
   isInternalUser: boolean;
 }): Promise<SignalTaxonomyTermDetailV1> {
   const termKey = signalTaxonomyTermKeyV1(args.termKey);
-  const corpus = requireCorpus(args.workspace);
-  const [overview, termDefinition, currentRows] = await Promise.all([
-    loadSignalTopicsNarrativesOverviewV1(args),
-    loadActiveTerm(args.workspace.id, args.kind, termKey),
-    loadMaterializationRows(
-      args.workspace.id,
-      corpus.id,
-      signalFiltersHashV1(args.filter),
-      args.filter.granularity
-    )
-  ]);
+  const readScope = requireSignalOperationalReadScopeV1(args.workspace, args.readScope);
+  const snapshot = await loadSignalTopicsNarrativesSnapshotV1(args);
+  const overview = snapshot.overview;
+  // Keep remote Postgres reads sequential here. A single term interaction can
+  // already trigger detail, evidence, and lineage requests from the client;
+  // parallel reads inside detail unnecessarily contend for the small runtime
+  // pool and can turn an otherwise valid term into a transient 503.
+  const termDefinition = await loadActiveTerm(args.workspace.id, args.kind, termKey);
   if (!termDefinition) {
     throw new SignalBackendContractError(
       "not_available",
@@ -242,8 +440,15 @@ export async function loadSignalTaxonomyTermDetailV1(args: {
       { kind: args.kind, term_key: termKey }
     );
   }
+  const sentiment = await loadTermSentimentSummary(
+    args.workspace,
+    readScope,
+    args.filter,
+    args.kind,
+    termKey
+  );
   const section = args.kind === "topic" ? overview.topics : overview.narratives;
-  const snapshot = snapshotForKind(currentRows, args.kind, true);
+  const termSnapshot = snapshotForKind(snapshot.currentRows, args.kind, true);
   const term = section.terms.find((item) => item.term_key === termKey)
     ?? zeroTerm(termDefinition, section);
   const related = section.cooccurrences
@@ -265,8 +470,9 @@ export async function loadSignalTaxonomyTermDetailV1(args: {
 
   return {
     contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
-    workspace_id: args.workspace.id,
-    corpus_id: overview.corpus_id,
+      workspace_id: args.workspace.id,
+      read_scope: overview.read_scope,
+      corpus_id: overview.corpus_id,
     filters_hash: signalFiltersHashV1(args.filter),
     kind: args.kind,
     metric_key: metricKey(args.kind),
@@ -275,13 +481,14 @@ export async function loadSignalTaxonomyTermDetailV1(args: {
       definition: termDefinition.definition,
       statement: termDefinition.statement
     },
-    series: snapshot.termSeries.get(termKey)
+    series: termSnapshot.termSeries.get(termKey)
       ?? section.series.map((point) => ({
         ...point,
         mention_count: 0,
         share_of_included: point.denominator > 0 ? 0 : null
       })),
     related_terms: related,
+    sentiment,
     coverage: section.coverage,
     state: section.state,
     limitations: section.coverage.limitations,
@@ -292,20 +499,120 @@ export async function loadSignalTaxonomyTermDetailV1(args: {
   };
 }
 
+export function signalTaxonomyEvidenceServingTokensV1(args: {
+  servingScope: SignalServingScopeDescriptorV1;
+  evidenceServingScope: SignalServingScopeDescriptorV1 | null;
+  filter: SignalFilterV1;
+  kind: SignalTaxonomyKindV1;
+  termKey: string;
+}) {
+  const termKey = signalTaxonomyTermKeyV1(args.termKey);
+  const filter = filterForTerm(args.filter, args.kind, termKey);
+  const normalizedFiltersHash = signalFiltersHashV1(filter);
+  const normalizedSortHash = sha256Value(JSON.stringify([
+    "occurred_at",
+    "desc",
+    "subject_id",
+    "desc",
+    args.kind,
+    termKey
+  ]));
+  const moduleCursor = signalServingScopeCursorIsolationHashV1({
+    scope: args.servingScope,
+    normalized_filters_hash: normalizedFiltersHash,
+    normalized_sort_hash: normalizedSortHash
+  });
+  const evidenceCursor = args.evidenceServingScope
+    ? signalServingScopeCursorIsolationHashV1({
+        scope: args.evidenceServingScope,
+        normalized_filters_hash: normalizedFiltersHash,
+        normalized_sort_hash: normalizedSortHash
+      })
+    : sha256Value("mentions-capability-not-available:cursor");
+  const moduleEtag = signalServingScopeEtagSeedV1({
+    scope: args.servingScope,
+    normalized_filters_hash: normalizedFiltersHash,
+    normalized_sort_hash: normalizedSortHash
+  });
+  const evidenceEtag = args.evidenceServingScope
+    ? signalServingScopeEtagSeedV1({
+        scope: args.evidenceServingScope,
+        normalized_filters_hash: normalizedFiltersHash,
+        normalized_sort_hash: normalizedSortHash
+      })
+    : sha256Value("mentions-capability-not-available:etag");
+  return {
+    normalized_filters_hash: normalizedFiltersHash,
+    normalized_sort_hash: normalizedSortHash,
+    cursor_isolation_hash: sha256Value(`${moduleCursor}:${evidenceCursor}`),
+    etag_seed: sha256Value(`${moduleEtag}:${evidenceEtag}`)
+  };
+}
+
 export async function loadSignalTaxonomyEvidenceV1(args: {
   workspace: ResolvedSignalWorkspace;
+  readScope?: SignalOperationalReadScopeV1;
+  evidenceReadScope?: SignalOperationalReadScopeV1 | null;
+  servingScope?: SignalServingScopeDescriptorV1;
+  evidenceServingScope?: SignalServingScopeDescriptorV1 | null;
   filter: SignalFilterV1;
   kind: SignalTaxonomyKindV1;
   termKey: string;
   cursor?: string | null;
   limit?: number;
   isInternalUser: boolean;
+  queryable?: SignalServingQueryable;
 }): Promise<SignalTaxonomyEvidencePageV1> {
-  const corpus = requireCorpus(args.workspace);
+  const readScope = requireSignalOperationalReadScopeV1(args.workspace, args.readScope);
+  const evidenceAccessRequested = Object.prototype.hasOwnProperty.call(
+    args,
+    "evidenceReadScope"
+  );
+  const evidenceReadScope = args.evidenceReadScope == null
+    ? null
+    : requireSignalOperationalReadScopeV1(args.workspace, args.evidenceReadScope);
   assertClientSafeFilter(args.filter, args.isInternalUser);
   const termKey = signalTaxonomyTermKeyV1(args.termKey);
   const filter = filterForTerm(args.filter, args.kind, termKey);
-  const filtersHash = signalFiltersHashV1(filter);
+  if (args.servingScope) {
+    if (args.servingScope.workspace_id !== args.workspace.id
+      || args.servingScope.module_key !== "topics-narratives"
+      || readScope.visibleSource !== "governed_population"
+      || readScope.population?.id !== args.servingScope.population.population_id) {
+      throw new SignalBackendContractError(
+        "not_available",
+        "Topics & Narratives serving scope and governed population do not match.",
+        { reason: "taxonomy_serving_population_mismatch" }
+      );
+    }
+    const hasEvidenceScope = evidenceReadScope != null
+      || args.evidenceServingScope != null;
+    if (!evidenceAccessRequested
+      || (hasEvidenceScope && (!evidenceReadScope
+        || !args.evidenceServingScope
+        || args.evidenceServingScope.workspace_id !== args.workspace.id
+        || args.evidenceServingScope.module_key !== "mentions"
+        || evidenceReadScope.visibleSource !== "governed_population"
+        || evidenceReadScope.population?.id
+          !== args.evidenceServingScope.population.population_id))) {
+      throw new SignalBackendContractError(
+        "not_available",
+        "Governed taxonomy evidence requires the exact Mentions capability scope.",
+        { reason: "taxonomy_evidence_capability_scope_not_available" }
+      );
+    }
+  }
+  const servingTokens = args.servingScope
+    ? signalTaxonomyEvidenceServingTokensV1({
+        servingScope: args.servingScope,
+        evidenceServingScope: args.evidenceServingScope ?? null,
+        filter: args.filter,
+        kind: args.kind,
+        termKey
+      })
+    : null;
+  const filtersHash = servingTokens?.cursor_isolation_hash
+    ?? signalFiltersHashV1(filter);
   const metric = metricKey(args.kind);
   const decoded = args.cursor ? decodeSignalDrillDownCursorV1(args.cursor) : null;
   if (decoded && (
@@ -318,15 +625,40 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
       { field: "cursor" }
     );
   }
-  const predicate = buildSignalMentionPredicateV1(
-    filter,
-    [corpus.id],
-    args.workspace.id
-  );
-  const params = [...predicate.params, args.workspace.id, args.kind, termKey];
+  const predicate = buildSignalOperationalMentionReadPredicateV1(readScope, filter);
+  const metricPredicate = evidenceAccessRequested
+    ? buildSignalOperationalMentionReadPredicateV1(readScope, args.filter)
+    : null;
+  const metricPredicateSql = metricPredicate
+    ? rebasePredicateSql(metricPredicate.sql, predicate.params.length)
+    : null;
+  const params = [
+    ...predicate.params,
+    ...(metricPredicate?.params ?? []),
+    args.workspace.id,
+    args.kind,
+    termKey
+  ];
   const workspaceParameter = `$${params.length - 2}::uuid`;
   const kindParameter = `$${params.length - 1}`;
   const termParameter = `$${params.length}`;
+  const taggedMentionJoin = readScope.visibleSource === "legacy_corpus"
+    ? "tagged_mention.id = m.id"
+    : `tagged_mention.workspace_id = m.workspace_id
+       AND tagged_mention.canonical_mention_id = m.canonical_mention_id`;
+  const evidencePredicate = evidenceReadScope
+    ? buildSignalOperationalMentionReadPredicateV1(
+        evidenceReadScope,
+        args.filter
+      )
+    : null;
+  const evidencePredicateSql = evidencePredicate
+    ? rebasePredicateSql(
+        evidencePredicate.sql.replace(/\bm\./gu, "evidence_mention."),
+        params.length
+      )
+    : null;
+  if (evidencePredicate) params.push(...evidencePredicate.params);
   let cursorSql = "";
   if (decoded) {
     params.push(decoded.sort.occurred_at, decoded.sort.subject_id);
@@ -335,9 +667,9 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
   }
   const limit = boundedLimit(args.limit);
   params.push(limit + 1);
-  const result = await pool.query<{
-    mention_id: string;
-    occurred_at: Date;
+  const result = await (args.queryable ?? pool).query<{
+    mention_id: string | null;
+    occurred_at: Date | null;
     text_snippet: string | null;
     title: string | null;
     url: string | null;
@@ -348,12 +680,21 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
     confidence: string | null;
     evidence: JsonRecord;
     model_version_id: string | null;
-    profile_id: string;
+    profile_id: string | null;
     import_batch_id: string | null;
     total_count: number;
+    metric_denominator_count: number;
+    evidence_constituent_count: number;
   }>(`
-    WITH scoped AS (
-      SELECT m.id, m.published_at AS occurred_at,
+    WITH metric_roots AS (
+      ${metricPredicateSql
+        ? `SELECT DISTINCT COALESCE(m.canonical_mention_id, m.id) AS mention_id
+           FROM mentions m
+           WHERE ${metricPredicateSql}`
+        : "SELECT NULL::uuid AS mention_id WHERE false"}
+    ), constituents AS (
+      SELECT DISTINCT ON (m.id)
+        m.id, m.published_at AS occurred_at,
         m.text_snippet, m.title, m.url,
         COALESCE(m.resolved_platform, m.platform) AS platform,
         m.language, m.country,
@@ -363,10 +704,13 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
       FROM mentions m
       JOIN record_tags tag
         ON tag.subject_type = 'mention'
-       AND tag.subject_id = m.id
        AND tag.review_status = 'approved'
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${taggedMentionJoin}
       JOIN signal_taxonomy_profiles profile
         ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.model_version_id = tag.model_version_id
        AND profile.workspace_id = ${workspaceParameter}
        AND profile.kind = ${kindParameter}
        AND profile.status = 'active'
@@ -376,18 +720,46 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
        AND term.term_key = ${termParameter}
        AND term.status = 'active'
       WHERE ${predicate.sql}
+      ORDER BY m.id, tag.approved_at DESC NULLS LAST, tag.created_at DESC, tag.id DESC
+    ), visible AS (
+      SELECT constituent.*
+      FROM constituents constituent
+      ${evidenceAccessRequested && evidencePredicateSql
+        ? "JOIN mentions evidence_mention ON evidence_mention.id = constituent.id"
+        : ""}
+      WHERE ${evidenceAccessRequested
+        ? evidencePredicateSql
+          ? evidencePredicateSql
+          : "false"
+        : "true"}
+    ), counts AS (
+      SELECT
+        (SELECT count(*)::int FROM metric_roots) AS metric_denominator_count,
+        (SELECT count(*)::int FROM constituents) AS evidence_constituent_count,
+        (SELECT count(*)::int FROM visible) AS total_count
     )
-    SELECT id::text AS mention_id, occurred_at,
-      text_snippet, title, url, platform, language, country,
-      score, confidence, evidence, model_version_id, profile_id,
-      import_batch_id, (SELECT count(*)::int FROM scoped) AS total_count
-    FROM scoped
-    WHERE true ${cursorSql}
-    ORDER BY occurred_at DESC, id DESC
-    LIMIT $${params.length}::int
+    SELECT page.id::text AS mention_id, page.occurred_at,
+      page.text_snippet, page.title, page.url, page.platform,
+      page.language, page.country, page.score, page.confidence,
+      page.evidence, page.model_version_id, page.profile_id,
+      page.import_batch_id, counts.total_count,
+      counts.metric_denominator_count, counts.evidence_constituent_count
+    FROM counts
+    LEFT JOIN LATERAL (
+      SELECT * FROM visible
+      WHERE true ${cursorSql}
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT $${params.length}::int
+    ) page ON true
+    ORDER BY page.occurred_at DESC NULLS LAST, page.id DESC NULLS LAST
   `, params);
-  const hasNext = result.rows.length > limit;
-  const records = result.rows.slice(0, limit).map((row) => ({
+  const visibleRows = result.rows.filter((row): row is typeof row & {
+    mention_id: string;
+    occurred_at: Date;
+    profile_id: string;
+  } => Boolean(row.mention_id && row.occurred_at && row.profile_id));
+  const hasNext = visibleRows.length > limit;
+  const records = visibleRows.slice(0, limit).map((row) => ({
     mention_id: row.mention_id,
     occurred_at: row.occurred_at.toISOString(),
     text_snippet: row.text_snippet,
@@ -423,17 +795,48 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
         }
       })
     : null;
+  const metricDenominatorCount = Number(
+    result.rows[0]?.metric_denominator_count ?? 0
+  );
+  const evidenceConstituentCount = Number(
+    result.rows[0]?.evidence_constituent_count ?? 0
+  );
+  const evidenceVisibleCount = Number(result.rows[0]?.total_count ?? 0);
+  const evidenceAccess: SignalClientEvidenceAccessV1 | undefined = evidenceAccessRequested
+    ? evidenceReadScope
+      ? {
+          state: "available",
+          metric_denominator_count: metricDenominatorCount,
+          evidence_constituent_count: evidenceConstituentCount,
+          evidence_visible_count: evidenceVisibleCount,
+          evidence_withheld_count: Math.max(
+            0,
+            evidenceConstituentCount - evidenceVisibleCount
+          ),
+          reason: null
+        }
+      : {
+          state: "not_available",
+          metric_denominator_count: metricDenominatorCount,
+          evidence_constituent_count: evidenceConstituentCount,
+          evidence_visible_count: null,
+          evidence_withheld_count: null,
+          reason: "mentions_capability_not_available"
+        }
+    : undefined;
   return {
     contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
     workspace_id: args.workspace.id,
-    corpus_id: corpus.id,
+    read_scope: readScope.descriptor,
+    corpus_id: readScope.legacyCorpus?.id ?? null,
     filters_hash: filtersHash,
     kind: args.kind,
     term_key: termKey,
+    ...(evidenceAccess ? { evidence_access: evidenceAccess } : {}),
     records,
     page: {
       limit,
-      total_count: Number(result.rows[0]?.total_count ?? 0),
+      total_count: evidenceVisibleCount,
       next_cursor: nextCursor
     }
   };
@@ -441,12 +844,13 @@ export async function loadSignalTaxonomyEvidenceV1(args: {
 
 export async function loadSignalTaxonomyLineageV1(args: {
   workspace: ResolvedSignalWorkspace;
+  readScope?: SignalOperationalReadScopeV1;
   filter: SignalFilterV1;
   kind: SignalTaxonomyKindV1;
   termKey: string;
   isInternalUser: boolean;
 }): Promise<SignalTaxonomyLineageV1> {
-  const corpus = requireCorpus(args.workspace);
+  const readScope = requireSignalOperationalReadScopeV1(args.workspace, args.readScope);
   assertClientSafeFilter(args.filter, args.isInternalUser);
   const termKey = signalTaxonomyTermKeyV1(args.termKey);
   const filter = filterForTerm(args.filter, args.kind, termKey);
@@ -455,8 +859,8 @@ export async function loadSignalTaxonomyLineageV1(args: {
     loadActiveProfiles(args.workspace.id),
     loadActiveTerm(args.workspace.id, args.kind, termKey),
     loadMaterializationLineage(
-      args.workspace.id,
-      corpus.id,
+      args.workspace,
+      readScope,
       filtersHash,
       metricKey(args.kind)
     )
@@ -469,11 +873,7 @@ export async function loadSignalTaxonomyLineageV1(args: {
       { kind: args.kind, term_key: termKey }
     );
   }
-  const predicate = buildSignalMentionPredicateV1(
-    filter,
-    [corpus.id],
-    args.workspace.id
-  );
+  const predicate = buildSignalOperationalMentionReadPredicateV1(readScope, filter);
   const sources = await pool.query<{
     mention_count: number;
     import_batch_count: number;
@@ -506,7 +906,8 @@ export async function loadSignalTaxonomyLineageV1(args: {
   return {
     contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
     workspace_id: args.workspace.id,
-    corpus_id: corpus.id,
+    read_scope: readScope.descriptor,
+    corpus_id: readScope.legacyCorpus?.id ?? null,
     filters_hash: filtersHash,
     kind: args.kind,
     term_key: termKey,
@@ -587,40 +988,304 @@ async function loadActiveTerm(
   return result.rows[0] ?? null;
 }
 
-async function loadMaterializationRows(
+async function loadTaxonomyMaterializationRows(
+  workspace: ResolvedSignalWorkspace,
+  filter: SignalFilterV1,
+  readScope?: SignalOperationalReadScopeV1
+): Promise<MaterializationRow[]> {
+  const windows = splitSignalMaterializationDateRangeV1(filter.date_range);
+  const rows: SignalServingMaterializationRowV1[] = [];
+  for (const dateRange of windows) {
+    const windowFilter = {
+      ...filter,
+      date_range: dateRange
+    };
+    // Keep remote Postgres reads sequential. A full-coverage request may need
+    // more than one bounded materialization window, but should not exhaust the
+    // Studio pool or weaken the global 366-day contract.
+    rows.push(...await loadSignalServingMaterializationRowsV1({
+      workspace,
+      readScope,
+      filter: windowFilter,
+      metricKey: "topic.volume"
+    }));
+    rows.push(...await loadSignalServingMaterializationRowsV1({
+      workspace,
+      readScope,
+      filter: windowFilter,
+      metricKey: "narrative.volume"
+    }));
+  }
+  return rows
+    .map((row, index) => taxonomyMaterializationRow(row, index));
+}
+
+async function loadOperationalCoverageRows(
+  workspace: ResolvedSignalWorkspace,
+  filter: SignalFilterV1,
+  readScope: SignalOperationalReadScopeV1
+): Promise<MaterializationRow[]> {
+  const rows: MaterializationRow[] = [];
+  for (const dateRange of splitSignalMaterializationDateRangeV1(filter.date_range)) {
+    const coverageRows = await loadSignalServingMaterializationRowsV1({
+      workspace,
+      readScope,
+      filter: { ...filter, date_range: dateRange },
+      metricKey: "conversation.volume"
+    });
+    rows.push(...coverageRows.map((row, index) => ({
+      materialization_key: `operational-coverage:${row.period_start}:${index}`,
+      metric_key: "topic.volume" as const,
+      period_start: row.period_start,
+      period_end: row.period_end,
+      typed_payload: {
+        included_mentions: row.sample_size,
+        processed_mentions: 0,
+        classified_mentions: 0,
+        tag_assertions: 0,
+        pending_mentions: 0,
+        rejected_mentions: 0,
+        buckets: [],
+        cooccurrences: []
+      },
+      state: "not_available" as const,
+      data_watermark_hash: row.data_watermark_hash,
+      computed_at: row.computed_at
+    })));
+  }
+  return rows;
+}
+
+function needsCoverageFallback(rows: MaterializationRow[], profileKinds: Set<string>) {
+  return !profileKinds.has("topic")
+    || !profileKinds.has("narrative")
+    || !rows.some((row) => row.metric_key === "topic.volume")
+    || !rows.some((row) => row.metric_key === "narrative.volume");
+}
+
+function taxonomyMaterializationRow(
+  row: SignalServingMaterializationRowV1,
+  index: number
+): MaterializationRow {
+  return {
+    materialization_key: `${row.metric_key}:${row.period_start}:${index}`,
+    metric_key: row.metric_key as MaterializationRow["metric_key"],
+    period_start: row.period_start,
+    period_end: row.period_end,
+    typed_payload: row.typed_payload,
+    state: row.stale_after && row.stale_after <= new Date()
+      ? "stale"
+      : row.materialization_state,
+    data_watermark_hash: row.data_watermark_hash,
+    computed_at: row.computed_at
+  };
+}
+
+async function loadTermOverviewSignals(
   workspaceId: string,
-  corpusId: string,
-  filtersHash: string,
-  granularity: SignalFilterV1["granularity"]
+  predicate: ReturnType<typeof buildSignalMentionReadPredicateV1>,
+  readScope: SignalOperationalReadScopeV1
+): Promise<TermOverviewSignals> {
+  const params = [...predicate.params, workspaceId];
+  const workspaceParameter = `$${params.length}`;
+  const taggedMentionJoin = readScope.visibleSource === "legacy_corpus"
+    ? "tagged_mention.id = m.id"
+    : `tagged_mention.workspace_id = m.workspace_id
+       AND tagged_mention.canonical_mention_id = m.canonical_mention_id`;
+  const result = await pool.query<{
+    kind: SignalTaxonomyKindV1;
+    term_key: string;
+    engagement_total: string;
+    positive_mentions: number;
+    neutral_mentions: number;
+    negative_mentions: number;
+  }>(`
+    WITH approved_term_mentions AS (
+      SELECT DISTINCT
+        m.id AS mention_id,
+        profile.kind,
+        term.term_key,
+        m.sentiment_score,
+        GREATEST(
+          0,
+          CASE
+            WHEN COALESCE(
+              m.engagement->>'engagement',
+              m.engagement->>'interactions'
+            ) ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+              THEN COALESCE(
+                m.engagement->>'engagement',
+                m.engagement->>'interactions'
+              )::numeric
+            ELSE
+              COALESCE(
+                CASE
+                  WHEN m.engagement->>'likes' ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+                    THEN (m.engagement->>'likes')::numeric
+                END,
+                0
+              )
+              + COALESCE(
+                CASE
+                  WHEN m.engagement->>'comments' ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+                    THEN (m.engagement->>'comments')::numeric
+                END,
+                0
+              )
+              + COALESCE(
+                CASE
+                  WHEN m.engagement->>'shares' ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+                    THEN (m.engagement->>'shares')::numeric
+                END,
+                0
+              )
+              + COALESCE(
+                CASE
+                  WHEN m.engagement->>'reposts' ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+                    THEN (m.engagement->>'reposts')::numeric
+                END,
+                0
+              )
+              + COALESCE(
+                CASE
+                  WHEN m.engagement->>'saves' ~ '^-?[0-9]+(?:\\.[0-9]+)?$'
+                    THEN (m.engagement->>'saves')::numeric
+                END,
+                0
+              )
+          END
+        ) AS engagement_value
+      FROM mentions m
+      JOIN record_tags tag
+        ON tag.subject_type = 'mention'
+       AND tag.review_status = 'approved'
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${taggedMentionJoin}
+      JOIN signal_taxonomy_profiles profile
+        ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.model_version_id = tag.model_version_id
+       AND profile.workspace_id = ${workspaceParameter}::uuid
+       AND profile.status = 'active'
+      JOIN taxonomy_terms term
+        ON term.id = tag.taxonomy_term_id
+       AND term.taxonomy_id = profile.taxonomy_id
+       AND term.status = 'active'
+      WHERE ${predicate.sql}
+    )
+    SELECT
+      kind,
+      term_key,
+      COALESCE(sum(engagement_value), 0)::text AS engagement_total,
+      count(DISTINCT mention_id) FILTER (
+        WHERE sentiment_score > 0.2
+      )::int AS positive_mentions,
+      count(DISTINCT mention_id) FILTER (
+        WHERE sentiment_score IS NOT NULL
+          AND sentiment_score BETWEEN -0.2 AND 0.2
+      )::int AS neutral_mentions,
+      count(DISTINCT mention_id) FILTER (
+        WHERE sentiment_score < -0.2
+      )::int AS negative_mentions
+    FROM approved_term_mentions
+    GROUP BY kind, term_key
+  `, params);
+  const totals: TermOverviewSignals = {
+    topic: new Map(),
+    narrative: new Map()
+  };
+  for (const row of result.rows) {
+    totals[row.kind].set(row.term_key, {
+      engagement_total: Number(row.engagement_total) || 0,
+      dominant_sentiment: signalDominantSentimentV1({
+        positive: row.positive_mentions,
+        neutral: row.neutral_mentions,
+        negative: row.negative_mentions
+      })
+    });
+  }
+  return totals;
+}
+
+export function signalDominantSentimentV1(counts: {
+  positive: number;
+  neutral: number;
+  negative: number;
+}): SignalEvidenceSentimentDominantV1 {
+  const values = [
+    ["positive", counts.positive],
+    ["neutral", counts.neutral],
+    ["negative", counts.negative]
+  ] as const;
+  const maximum = Math.max(...values.map(([, value]) => value));
+  const leaders = values.filter(([, value]) => value === maximum && value > 0);
+  if (leaders.length === 0) return "not_available";
+  if (leaders.length > 1) return "mixed";
+  return leaders[0]![0];
+}
+
+async function loadTermSentimentSummary(
+  workspace: ResolvedSignalWorkspace,
+  readScope: SignalOperationalReadScopeV1,
+  filter: SignalFilterV1,
+  kind: SignalTaxonomyKindV1,
+  termKey: string
 ) {
-  const result = await pool.query<MaterializationRow>(`
-    SELECT materialization_key, metric_key,
-      period_start::text, period_end::text, typed_payload,
-      CASE
-        WHEN stale_after IS NOT NULL AND stale_after <= now() THEN 'stale'
-        ELSE materialization_state
-      END AS state,
-      data_watermark_hash, computed_at
-    FROM metric_materializations
-    WHERE workspace_id = $1::uuid
-      AND study_corpus_id = $2::uuid
-      AND filters_hash = $3
-      AND granularity = $4
-      AND metric_version = 1
-      AND metric_key IN ('topic.volume', 'narrative.volume')
-      AND (cache_scope <> 'ad_hoc' OR expires_at > now())
-    ORDER BY metric_key, period_start
-  `, [workspaceId, corpusId, filtersHash, granularity]);
-  return result.rows;
+  const scopedFilter = filterForTerm(filter, kind, termKey);
+  const predicate = buildSignalOperationalMentionReadPredicateV1(readScope, scopedFilter);
+  const result = await pool.query<{
+    total_mentions: number;
+    positive_mentions: number;
+    neutral_mentions: number;
+    negative_mentions: number;
+    unclassified_mentions: number;
+  }>(`
+    SELECT
+      count(DISTINCT m.id)::int AS total_mentions,
+      count(DISTINCT m.id) FILTER (WHERE m.sentiment_score > 0.2)::int AS positive_mentions,
+      count(DISTINCT m.id) FILTER (
+        WHERE m.sentiment_score IS NOT NULL
+          AND m.sentiment_score BETWEEN -0.2 AND 0.2
+      )::int AS neutral_mentions,
+      count(DISTINCT m.id) FILTER (WHERE m.sentiment_score < -0.2)::int AS negative_mentions,
+      count(DISTINCT m.id) FILTER (WHERE m.sentiment_score IS NULL)::int AS unclassified_mentions
+    FROM mentions m
+    WHERE ${predicate.sql}
+  `, predicate.params);
+  const row = result.rows[0] ?? {
+    total_mentions: 0,
+    positive_mentions: 0,
+    neutral_mentions: 0,
+    negative_mentions: 0,
+    unclassified_mentions: 0
+  };
+  const classified = row.positive_mentions + row.neutral_mentions + row.negative_mentions;
+  return {
+    ...row,
+    classified_mentions: classified,
+    dominant: signalDominantSentimentV1({
+      positive: row.positive_mentions,
+      neutral: row.neutral_mentions,
+      negative: row.negative_mentions
+    }),
+    meaning: "evidence_sentiment_not_term_polarity" as const
+  };
 }
 
 function snapshotForKind(
   rows: MaterializationRow[],
   kind: SignalTaxonomyKindV1,
-  hasProfile: boolean
+  hasProfile: boolean,
+  coverageFallback: MaterializationRow[] = []
 ): Snapshot {
   const metric = metricKey(kind);
-  const scoped = rows.filter((row) => row.metric_key === metric);
+  const materialized = rows.filter((row) => row.metric_key === metric);
+  const hasGovernedCoverage = hasProfile && materialized.some((row) =>
+    Object.prototype.hasOwnProperty.call(row.typed_payload, "included_mentions")
+  );
+  const scoped = hasGovernedCoverage
+    ? materialized
+    : coverageFallback.map((row) => ({ ...row, metric_key: metric }));
   const totals = {
     included: 0,
     processed: 0,
@@ -635,7 +1300,7 @@ function snapshotForKind(
     SignalTaxonomyOverviewSectionV1["series"]
   >();
   const cooccurrences = new Map<string, SignalTaxonomyCooccurrenceV1>();
-  const series = scoped.map((row) => {
+  const rawSeries = scoped.map((row) => {
     const payload = row.typed_payload;
     const included = numeric(payload.included_mentions);
     totals.included += included;
@@ -654,6 +1319,7 @@ function snapshotForKind(
         term_key: termKey,
         label: text(bucket.label) ?? termKey,
         mention_count: (current?.mention_count ?? 0) + mentionCount,
+        engagement_total: current?.engagement_total ?? 0,
         denominator: (current?.denominator ?? 0) + denominator,
         share_of_included: null,
         share_of_classified: null,
@@ -701,6 +1367,7 @@ function snapshotForKind(
       state: row.state
     };
   });
+  const series = combineTaxonomySeriesPoints(rawSeries);
   for (const term of byTerm.values()) {
     term.denominator = totals.included;
     term.share_of_included = totals.included > 0
@@ -710,7 +1377,7 @@ function snapshotForKind(
       ? term.mention_count / totals.classified
       : null;
     term.state = worstState(scoped.map((row) => row.state));
-    termSeries.set(term.term_key, scoped.map((row) => {
+    termSeries.set(term.term_key, combineTaxonomySeriesPoints(scoped.map((row) => {
       const included = numeric(row.typed_payload.included_mentions);
       const bucket = objectArray(row.typed_payload.buckets)
         .find((item) => text(item.key) === term.term_key);
@@ -723,7 +1390,7 @@ function snapshotForKind(
         share_of_included: included > 0 ? mentionCount / included : null,
         state: row.state
       };
-    }));
+    })));
   }
   const coverage = signalTaxonomyCoverageV1({
     included_mentions: totals.included,
@@ -733,7 +1400,7 @@ function snapshotForKind(
     pending_mentions: totals.pending,
     rejected_mentions: totals.rejected
   });
-  const state = !hasProfile || scoped.length === 0
+  const state = !hasGovernedCoverage
     ? "not_available"
     : worstState(scoped.map((row) => row.state));
   return {
@@ -763,6 +1430,36 @@ function snapshotForKind(
   };
 }
 
+function combineTaxonomySeriesPoints(
+  points: SignalTaxonomyOverviewSectionV1["series"]
+): SignalTaxonomyOverviewSectionV1["series"] {
+  const combined = new Map<
+    string,
+    SignalTaxonomyOverviewSectionV1["series"][number]
+  >();
+  for (const point of points) {
+    const key = `${point.period_start}\u0000${point.period_end}`;
+    const current = combined.get(key);
+    if (!current) {
+      combined.set(key, point);
+      continue;
+    }
+    const mentionCount = current.mention_count + point.mention_count;
+    const denominator = current.denominator + point.denominator;
+    combined.set(key, {
+      ...current,
+      mention_count: mentionCount,
+      denominator,
+      share_of_included: denominator > 0 ? mentionCount / denominator : null,
+      state: worstState([current.state, point.state])
+    });
+  }
+  return Array.from(combined.values()).sort((left, right) =>
+    left.period_start.localeCompare(right.period_start)
+    || left.period_end.localeCompare(right.period_end)
+  );
+}
+
 function withComparison(current: Snapshot, comparison: Snapshot | null): Snapshot {
   if (!comparison) return current;
   const keys = Array.from(new Set([
@@ -779,6 +1476,8 @@ function withComparison(current: Snapshot, comparison: Snapshot | null): Snapsho
       term_key: termKey,
       label: previous?.label ?? termKey,
       mention_count: 0,
+      engagement_total: 0,
+      dominant_sentiment: "not_available" as const,
       denominator: current.coverage.included_mentions,
       share_of_included: currentShare,
       share_of_classified: current.coverage.classified_mentions > 0 ? 0 : null,
@@ -808,6 +1507,25 @@ function withComparison(current: Snapshot, comparison: Snapshot | null): Snapsho
   };
 }
 
+function withOverviewSignals(
+  snapshot: Snapshot,
+  signalsByTerm: TermOverviewSignals[SignalTaxonomyKindV1]
+): Snapshot {
+  const terms = snapshot.terms.map((term) => {
+    const signals = signalsByTerm.get(term.term_key);
+    return {
+      ...term,
+      engagement_total: signals?.engagement_total ?? 0,
+      dominant_sentiment: signals?.dominant_sentiment ?? "not_available"
+    };
+  });
+  return {
+    ...snapshot,
+    terms,
+    byTerm: new Map(terms.map((term) => [term.term_key, term]))
+  };
+}
+
 function withoutIndex(snapshot: Snapshot): SignalTaxonomyOverviewSectionV1 {
   return {
     kind: snapshot.kind,
@@ -830,6 +1548,8 @@ function zeroTerm(
     term_key: term.term_key,
     label: term.label,
     mention_count: 0,
+    engagement_total: 0,
+    dominant_sentiment: "not_available",
     denominator: section.coverage.included_mentions,
     share_of_included: section.coverage.included_mentions > 0 ? 0 : null,
     share_of_classified: section.coverage.classified_mentions > 0 ? 0 : null,
@@ -876,11 +1596,21 @@ function publicProfile(
 }
 
 async function loadMaterializationLineage(
-  workspaceId: string,
-  corpusId: string,
+  workspace: ResolvedSignalWorkspace,
+  readScope: SignalOperationalReadScopeV1,
   filtersHash: string,
   metric: "topic.volume" | "narrative.volume"
 ) {
+  const population = readScope.visibleSource === "governed_population"
+    ? readScope.population
+    : null;
+  const scopeId = population?.id ?? readScope.legacyCorpus?.id;
+  if (!scopeId) return [];
+  const scopeSql = population
+    ? `population_id = $2::uuid
+      AND population_version = ${population.version}
+      AND population_definition_hash = '${population.definition_hash.replaceAll("'", "''")}'`
+    : "study_corpus_id = $2::uuid";
   const result = await pool.query<{
     materialization_key: string;
     data_watermark_hash: string;
@@ -895,13 +1625,13 @@ async function loadMaterializationLineage(
       computed_at
     FROM metric_materializations
     WHERE workspace_id = $1::uuid
-      AND study_corpus_id = $2::uuid
+      AND ${scopeSql}
       AND filters_hash = $3
       AND metric_key = $4
       AND metric_version = 1
       AND (cache_scope <> 'ad_hoc' OR expires_at > now())
     ORDER BY period_start
-  `, [workspaceId, corpusId, filtersHash, metric]);
+  `, [workspace.id, scopeId, filtersHash, metric]);
   return result.rows.map((row) => ({
     ...row,
     computed_at: row.computed_at.toISOString()
@@ -944,7 +1674,6 @@ function worstState(states: SignalTaxonomyServingStateV1[]) {
   return "fresh" as const;
 }
 
-const requireCorpus = requireOperationalCorpus;
 
 function assertClientSafeFilter(
   filter: SignalFilterV1,
@@ -989,6 +1718,17 @@ function evidenceQuotes(evidence: JsonRecord) {
       end: nullableInteger(item.end)
     }];
   });
+}
+
+function rebasePredicateSql(sql: string, offset: number) {
+  if (offset === 0) return sql;
+  return sql.replace(/\$(\d+)/gu, (_match, rawIndex: string) => (
+    `$${Number(rawIndex) + offset}`
+  ));
+}
+
+function sha256Value(value: string) {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
 
 function numeric(value: unknown) {

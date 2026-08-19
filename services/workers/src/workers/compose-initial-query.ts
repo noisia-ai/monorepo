@@ -3,13 +3,9 @@ import { generateText } from "ai";
 import type { Job } from "bullmq";
 
 import {
-  buildFallbackQuery,
-  buildGenerationContract,
-  buildQueryComposerPrompt,
-  parseComposedQueryJson,
-  queryValidationReports,
+  adaptStudyQueryComposerInputV1,
+  composeQueryDraftWithProviderV1,
   QUERY_ENGINE_PIPELINE_VERSION,
-  type ComposedQuery,
   type QueryCompetitorEntity,
   type QueryComposerInput
 } from "@noisia/query-engine";
@@ -80,7 +76,20 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
   };
   await job.updateProgress(50);
 
-  const composed = await composeWithClaude(input, model);
+  const composed = await composeQueryDraftWithProviderV1({
+    input: adaptStudyQueryComposerInputV1(input),
+    model,
+    provider: {
+      async generate(request) {
+        const result = await generateText({
+          model: anthropic(request.model),
+          prompt: request.prompt,
+          temperature: request.temperature
+        });
+        return { text: result.text };
+      }
+    }
+  });
   await job.updateProgress(75);
 
   const iterationNumber = await nextIterationNumber(input.corpus.id);
@@ -132,59 +141,6 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
     iteration_number: iterationNumber,
     planned_query_packs: queryPacks.planned_packs
   };
-}
-
-async function composeWithClaude(input: QueryComposerInput, model: string): Promise<ComposedQuery> {
-  const prompt = buildQueryComposerPrompt(input);
-
-  try {
-    const result = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2
-    });
-
-    let composed = parseComposedQueryJson(result.text, input, model);
-    const rejectedScopes = composed.query_components.generation_contract?.fallback_scopes ?? [];
-    if (rejectedScopes.length > 0) {
-      const repairResult = await generateText({
-        model: anthropic(model),
-        prompt: [
-          prompt,
-          "",
-          "REPARACION OBLIGATORIA DEL COMPILADOR:",
-          `Los scopes ${rejectedScopes.join(", ")} fueron rechazados por el compilador estructural y/o semantico.`,
-          "Corrige SOLO los errores reportados y conserva la intencion, la evidencia RAG y el modo de construccion.",
-          "En modo exploratory no agregues un AND tematico. En modo detection conserva THEME balanceado. No mezcles competidores.",
-          "Respuesta rechazada:",
-          result.text,
-          "Errores estructurales:",
-          JSON.stringify(composed.query_components.generation_contract?.rejected_queries ?? {}, null, 2),
-          "Errores semanticos:",
-          JSON.stringify(composed.query_components.generation_contract?.rejected_semantic_queries ?? {}, null, 2)
-        ].join("\n"),
-        temperature: 0
-      });
-      const repaired = parseComposedQueryJson(repairResult.text, input, model);
-      const repairedFallbackScopes = repaired.query_components.generation_contract?.fallback_scopes ?? [];
-      if (repairedFallbackScopes.length < rejectedScopes.length) composed = repaired;
-    }
-
-    return refreshGenerationContract(composed, input);
-  } catch (error) {
-    // TODO mejora-futura: registrar errores LLM en tabla pipeline_logs y
-    // alertar cuando fallback se use mas de N veces por dia.
-    const fallback = buildFallbackQuery(input);
-    return {
-      ...fallback,
-      query_components: {
-        ...fallback.query_components,
-        model,
-        fallback_used: true,
-        fallback_reason: error instanceof Error ? error.message : "unknown_llm_error"
-      }
-    };
-  }
 }
 
 async function loadComposerInput(corpusId: string): Promise<QueryComposerInput> {
@@ -362,34 +318,6 @@ async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInpu
     queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
     memoryIndustry: [],
     memoryBrand: []
-  };
-}
-
-function refreshGenerationContract(composed: ComposedQuery, input: QueryComposerInput): ComposedQuery {
-  const queries = queryValidationReports({
-    brand: composed.query_text,
-    ...Object.fromEntries(
-      (composed.competitor_queries ?? []).map((item) => [
-        `competitor:${item.entity}`,
-        item.query_text
-      ])
-    ),
-    ...(composed.industry_query_text ? { category: composed.industry_query_text } : {})
-  });
-  const previous = composed.query_components.generation_contract;
-  return {
-    ...composed,
-    query_components: {
-      ...composed.query_components,
-      generation_contract: {
-        ...buildGenerationContract(input, queries),
-        ...(previous?.rejected_queries ? { rejected_queries: previous.rejected_queries } : {}),
-        ...(previous?.rejected_semantic_queries
-          ? { rejected_semantic_queries: previous.rejected_semantic_queries }
-          : {}),
-        ...(previous?.fallback_scopes ? { fallback_scopes: previous.fallback_scopes } : {})
-      }
-    }
   };
 }
 

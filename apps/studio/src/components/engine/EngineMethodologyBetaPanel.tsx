@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 import {
   buildEngineOutputManifestForMethodology,
   buildEngineMethodologyOptions,
@@ -399,16 +400,19 @@ export function EngineMethodologyBetaPanel({
       ) : (
         <>
           <div className="engine-beta-controls">
-            <label>
-              <span>Methodology</span>
-              <select value={methodologySlug} onChange={(event) => setMethodologySlug(event.target.value)}>
-                {methodologyOptions.map((option) => (
-                  <option disabled={!option.runnable} key={option.slug} value={option.slug}>
-                    {option.label} · {option.runtimeKind === "output_only" ? "output only" : option.status}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <WorkspaceSelectField
+              ariaLabel="Methodology"
+              label="Methodology"
+              name="methodologySlug"
+              onChange={setMethodologySlug}
+              options={methodologyOptions.map((option) => ({
+                value: option.slug,
+                label: option.label,
+                description: option.runtimeKind === "output_only" ? "Output only" : option.status,
+                disabled: !option.runnable
+              }))}
+              value={methodologySlug}
+            />
             <button className="wizard-cta" disabled={isLoading || isStarting || schemaUnavailable || runtimeDisabled || methodologyNotRunnable} onClick={startAnalysis} type="button">
               {isStarting ? <Icon name="spinner" size={16} /> : <Icon name="play" size={16} />}
               {runtimeDisabled ? "Runtime off" : methodologyNotRunnable ? "Not runnable" : "Run beta lens"}
@@ -479,15 +483,15 @@ export function EngineMethodologyBetaPanel({
         <div className="engine-beta-publish">
           <label>
             <span>{latest.methodologySlug === "signal-pulse" ? "Nombre del reporte" : "Internal title"}</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input className="workspace-control" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label>
             <span>{latest.methodologySlug === "signal-pulse" ? "Lectura principal" : "Headline"}</span>
-            <input value={headline} onChange={(event) => setHeadline(event.target.value)} placeholder={latest.methodologySlug === "signal-pulse" ? "Qué cambió este mes y qué decisión habilita" : "Headline client-safe"} />
+            <input className="workspace-control" value={headline} onChange={(event) => setHeadline(event.target.value)} placeholder={latest.methodologySlug === "signal-pulse" ? "Qué cambió este mes y qué decisión habilita" : "Headline client-safe"} />
           </label>
           <label>
             <span>{latest.methodologySlug === "signal-pulse" ? "Resumen para lectura" : "Summary"}</span>
-            <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={latest.methodologySlug === "signal-pulse" ? "Una explicación breve para el equipo de marketing: señales, evidencia y movimiento recomendado." : "Qué contiene este output beta..."} />
+            <textarea className="workspace-control workspace-control--textarea" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={latest.methodologySlug === "signal-pulse" ? "Una explicación breve para el equipo de marketing: señales, evidencia y movimiento recomendado." : "Qué contiene este output beta..."} />
           </label>
           <div>
             <button className="wizard-cta wizard-cta--ghost" disabled={isSaving} onClick={() => saveOutput("save_draft")} type="button">

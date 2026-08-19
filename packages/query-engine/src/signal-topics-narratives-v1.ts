@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SignalOperationalReadScopeDescriptorV1 } from "./signal-workspace-data-plane-v1";
 
 export const SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION =
   "signal-topics-narratives-v1" as const;
@@ -7,8 +8,6 @@ export const SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME =
 export const SIGNAL_TAXONOMY_ENRICHMENT_MAX_BATCH_SIZE = 50;
 export const SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1 = {
   version: "signal-taxonomy-acceptance-v1",
-  autoapprove_min_score: 0.9,
-  autoapprove_confidence: "high",
   pending_min_score: 0.65,
   pending_confidence: ["medium", "high"]
 } as const;
@@ -61,9 +60,9 @@ export type SignalTaxonomyAssignmentV1 = {
 };
 
 export type SignalTaxonomyAssignmentDispositionV1 =
-  | "approved"
   | "pending"
-  | "rejected";
+  | "rejected"
+  | "abstained";
 
 export type SignalTaxonomyMentionClassificationV1 = {
   mention_id: string;
@@ -114,10 +113,19 @@ export type SignalTaxonomyServingProfileV1 = {
   context_hash?: string;
 };
 
+export type SignalEvidenceSentimentDominantV1 =
+  | "positive"
+  | "neutral"
+  | "negative"
+  | "mixed"
+  | "not_available";
+
 export type SignalTaxonomyTermMetricV1 = {
   term_key: string;
   label: string;
   mention_count: number;
+  engagement_total?: number;
+  dominant_sentiment?: SignalEvidenceSentimentDominantV1;
   denominator: number;
   share_of_included: number | null;
   share_of_classified: number | null;
@@ -161,7 +169,8 @@ export type SignalTaxonomyOverviewSectionV1 = {
 export type SignalTopicsNarrativesOverviewV1 = {
   contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
   workspace_id: string;
-  corpus_id: string;
+  read_scope?: SignalOperationalReadScopeDescriptorV1;
+  corpus_id: string | null;
   filters_hash: string;
   comparison_filters_hash: string | null;
   profiles: SignalTaxonomyServingProfileV1[];
@@ -175,10 +184,28 @@ export type SignalTopicsNarrativesOverviewV1 = {
   };
 };
 
+/**
+ * Stable identity for the semantic overview body served to Signal clients.
+ * Materialization timestamps are deliberately excluded so live read-through
+ * and its equivalent persisted materialization share one validator.
+ */
+export function signalTopicsNarrativesOverviewContentHashV1(
+  payload: SignalTopicsNarrativesOverviewV1
+) {
+  const { computed_at: _topicsComputedAt, ...topics } = payload.topics;
+  const { computed_at: _narrativesComputedAt, ...narratives } = payload.narratives;
+  return sha256(canonicalJson({
+    ...payload,
+    topics,
+    narratives
+  }));
+}
+
 export type SignalTaxonomyTermDetailV1 = {
   contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
   workspace_id: string;
-  corpus_id: string;
+  read_scope?: SignalOperationalReadScopeDescriptorV1;
+  corpus_id: string | null;
   filters_hash: string;
   kind: SignalTaxonomyKindV1;
   metric_key: "topic.volume" | "narrative.volume";
@@ -192,6 +219,16 @@ export type SignalTaxonomyTermDetailV1 = {
     mention_count: number;
     meaning: "cooccurrence_not_causality";
   }>;
+  sentiment: {
+    positive_mentions: number;
+    neutral_mentions: number;
+    negative_mentions: number;
+    unclassified_mentions: number;
+    classified_mentions: number;
+    total_mentions: number;
+    dominant: SignalEvidenceSentimentDominantV1;
+    meaning: "evidence_sentiment_not_term_polarity";
+  };
   coverage: SignalTaxonomyOverviewSectionV1["coverage"];
   state: SignalTaxonomyServingStateV1;
   limitations: string[];
@@ -204,10 +241,28 @@ export type SignalTaxonomyTermDetailV1 = {
 export type SignalTaxonomyEvidencePageV1 = {
   contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
   workspace_id: string;
-  corpus_id: string;
+  read_scope?: SignalOperationalReadScopeDescriptorV1;
+  corpus_id: string | null;
   filters_hash: string;
   kind: SignalTaxonomyKindV1;
   term_key: string;
+  evidence_access?:
+    | {
+        state: "available";
+        metric_denominator_count: number;
+        evidence_constituent_count: number;
+        evidence_visible_count: number;
+        evidence_withheld_count: number;
+        reason: null;
+      }
+    | {
+        state: "not_available";
+        metric_denominator_count: number;
+        evidence_constituent_count: number;
+        evidence_visible_count: null;
+        evidence_withheld_count: null;
+        reason: "mentions_capability_not_available";
+      };
   records: Array<{
     mention_id: string;
     occurred_at: string;
@@ -241,7 +296,8 @@ export type SignalTaxonomyEvidencePageV1 = {
 export type SignalTaxonomyLineageV1 = {
   contract_version: typeof SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION;
   workspace_id: string;
-  corpus_id: string;
+  read_scope?: SignalOperationalReadScopeDescriptorV1;
+  corpus_id: string | null;
   filters_hash: string;
   kind: SignalTaxonomyKindV1;
   term_key: string;
@@ -469,15 +525,7 @@ export function signalTaxonomyCoverageV1(input: {
 export function signalTaxonomyAssignmentDispositionV1(
   assignment: SignalTaxonomyAssignmentV1
 ): SignalTaxonomyAssignmentDispositionV1 {
-  if (assignment.evidence.length === 0) return "rejected";
-  if (
-    assignment.confidence ===
-      SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.autoapprove_confidence
-    && assignment.score >=
-      SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.autoapprove_min_score
-  ) {
-    return "approved";
-  }
+  if (assignment.evidence.length === 0) return "abstained";
   const confidenceEligible = assignment.confidence === "medium"
     || assignment.confidence === "high";
   return assignment.score >= SIGNAL_TAXONOMY_ACCEPTANCE_POLICY_V1.pending_min_score
@@ -637,4 +685,13 @@ function invalid(message: string): never {
 
 function sha256(value: string) {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
 }

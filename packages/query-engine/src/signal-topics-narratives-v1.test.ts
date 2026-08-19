@@ -8,7 +8,9 @@ import {
   signalTaxonomyContextHashV1,
   signalTaxonomyCoverageV1,
   signalTaxonomyEnrichmentIdempotencyKeyV1,
-  signalTaxonomyProfileKeyV1
+  signalTaxonomyProfileKeyV1,
+  signalTopicsNarrativesOverviewContentHashV1,
+  type SignalTopicsNarrativesOverviewV1
 } from "./signal-topics-narratives-v1";
 
 const contextRefs = [
@@ -135,13 +137,13 @@ test("coverage treats reviewed unclassified mentions as processed without invent
   assert.deepEqual(coverage.limitations, []);
 });
 
-test("acceptance autoapproves only high-confidence governed evidence", () => {
+test("score and confidence only prioritize review and never autoapprove", () => {
   assert.equal(signalTaxonomyAssignmentDispositionV1({
     term_key: "pet_health",
     score: 0.9,
     confidence: "high",
     evidence: [{ quote: "salud digestiva", start: 0, end: 16 }]
-  }), "approved");
+  }), "pending");
   assert.equal(signalTaxonomyAssignmentDispositionV1({
     term_key: "pet_health",
     score: 0.99,
@@ -166,6 +168,12 @@ test("acceptance autoapproves only high-confidence governed evidence", () => {
     confidence: "low",
     evidence: [{ quote: "salud", start: 0, end: 5 }]
   }), "rejected");
+  assert.equal(signalTaxonomyAssignmentDispositionV1({
+    term_key: "pet_health",
+    score: 1,
+    confidence: "high",
+    evidence: []
+  }), "abstained");
 });
 
 test("profile and enrichment identities are deterministic", () => {
@@ -188,3 +196,108 @@ test("profile and enrichment identities are deterministic", () => {
     signalTaxonomyEnrichmentIdempotencyKeyV1({ ...input })
   );
 });
+
+test("overview content identity changes with membership semantics but not rematerialization time", () => {
+  const before = taxonomyOverviewFixture();
+  const beforeHash = signalTopicsNarrativesOverviewContentHashV1(before);
+  const readThrough = {
+    ...before,
+    topics: {
+      ...before.topics,
+      coverage: { ...before.topics.coverage, included_mentions: 106 },
+      terms: []
+    },
+    narratives: {
+      ...before.narratives,
+      coverage: { ...before.narratives.coverage, included_mentions: 106 },
+      terms: []
+    }
+  } satisfies SignalTopicsNarrativesOverviewV1;
+  const readThroughHash = signalTopicsNarrativesOverviewContentHashV1(readThrough);
+  assert.notEqual(readThroughHash, beforeHash);
+  assert.equal(
+    signalTopicsNarrativesOverviewContentHashV1({
+      ...readThrough,
+      topics: { ...readThrough.topics, computed_at: "2026-08-03T12:05:00.000Z" },
+      narratives: { ...readThrough.narratives, computed_at: "2026-08-03T12:05:01.000Z" }
+    }),
+    readThroughHash
+  );
+});
+
+function taxonomyOverviewFixture(): SignalTopicsNarrativesOverviewV1 {
+  const coverage = {
+    included_mentions: 107,
+    processed_mentions: 1,
+    classified_mentions: 1,
+    unclassified_mentions: 106,
+    tag_assertions: 1,
+    pending_mentions: 0,
+    rejected_mentions: 0,
+    coverage: 1 / 107,
+    quality_state: "partial" as const,
+    limitations: ["classification_coverage_incomplete"]
+  };
+  const section = {
+    state: "partial" as const,
+    coverage,
+    series: [{
+      period_start: "2026-01-01",
+      period_end: "2026-01-01",
+      mention_count: 1,
+      denominator: 107,
+      share_of_included: 1 / 107,
+      state: "partial" as const
+    }],
+    cooccurrences: [],
+    data_watermark_hashes: [`sha256:${"a".repeat(64)}`],
+    computed_at: "2026-08-03T12:00:00.000Z"
+  };
+  return {
+    contract_version: "signal-topics-narratives-v1",
+    workspace_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    corpus_id: null,
+    filters_hash: `sha256:${"b".repeat(64)}`,
+    comparison_filters_hash: null,
+    profiles: [],
+    topics: {
+      ...section,
+      kind: "topic",
+      metric_key: "topic.volume",
+      terms: [{
+        term_key: "module_topic",
+        label: "Module topic",
+        mention_count: 1,
+        denominator: 107,
+        share_of_included: 1 / 107,
+        share_of_classified: 1,
+        comparison_mention_count: null,
+        delta: null,
+        comparison_share_of_included: null,
+        share_delta: null,
+        state: "partial"
+      }]
+    },
+    narratives: {
+      ...section,
+      kind: "narrative",
+      metric_key: "narrative.volume",
+      terms: [{
+        term_key: "module_narrative",
+        label: "Module narrative",
+        mention_count: 1,
+        denominator: 107,
+        share_of_included: 1 / 107,
+        share_of_classified: 1,
+        comparison_mention_count: null,
+        delta: null,
+        comparison_share_of_included: null,
+        share_delta: null,
+        state: "partial"
+      }]
+    },
+    state: "partial",
+    limitations: ["classification_coverage_incomplete"],
+    visibility: { internal: true, classification_details: true }
+  };
+}

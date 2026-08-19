@@ -74,8 +74,12 @@ export type SignalWorkspaceIdentityV1 = {
 export type DataWatermarkV1 = {
   contract_version: typeof SIGNAL_BACKEND_CONTRACT_VERSION;
   workspace_id: string;
-  corpus_id: string;
-  corpus_revision: number;
+  read_scope?: "legacy_corpus" | "governed_population";
+  corpus_id: string | null;
+  corpus_revision: number | null;
+  population_id?: string | null;
+  population_version?: number | null;
+  population_definition_hash?: string | null;
   source_sync_run_ids: string[];
   data_through_at: string | null;
   accepted_at: string;
@@ -462,20 +466,48 @@ export function validateDataWatermarkV1(input: unknown): DataWatermarkV1 {
     });
   }
 
-  return {
+  const governed = value.read_scope === "governed_population" || value.population_id != null;
+  const corpusId = governed ? null : uuidValue(value.corpus_id, "corpus_id");
+  const corpusRevision = governed
+    ? null
+    : nonNegativeInteger(value.corpus_revision, "corpus_revision");
+  const populationId = governed
+    ? uuidValue(value.population_id, "population_id")
+    : null;
+  const populationVersion = governed
+    ? positiveInteger(value.population_version, "population_version")
+    : null;
+  const populationDefinitionHash = governed
+    ? hashValue(value.population_definition_hash, "population_definition_hash")
+    : null;
+  const common = {
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     workspace_id: uuidValue(value.workspace_id, "workspace_id"),
-    corpus_id: uuidValue(value.corpus_id, "corpus_id"),
-    corpus_revision: nonNegativeInteger(value.corpus_revision, "corpus_revision"),
     source_sync_run_ids: sourceSyncRunIds,
     data_through_at: dataThroughAt,
     accepted_at: acceptedAt,
     materialized_at: materializedAt
   };
+  return governed
+    ? {
+        ...common,
+        read_scope: "governed_population",
+        corpus_id: null,
+        corpus_revision: null,
+        population_id: populationId,
+        population_version: populationVersion,
+        population_definition_hash: populationDefinitionHash
+      }
+    : {
+        ...common,
+        corpus_id: corpusId,
+        corpus_revision: corpusRevision
+      };
 }
 
 export function dataWatermarkHashV1(input: unknown): string {
-  return sha256(JSON.stringify(validateDataWatermarkV1(input)));
+  const { materialized_at: _materializedAt, ...dataIdentity } = validateDataWatermarkV1(input);
+  return sha256(JSON.stringify(dataIdentity));
 }
 
 export function validateDataFreshnessV1(input: unknown): DataFreshnessV1 {

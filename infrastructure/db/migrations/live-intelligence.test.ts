@@ -317,8 +317,15 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
 
   for (const routeFile of routeFiles) {
     const route = await readFile(routeFile, "utf8");
-    assert.match(route, /export async function GET/, `${routeFile} must expose an explicit GET handler.`);
-    assert.doesNotMatch(route, /getAuthenticatedAppUser|canManageCorpus|canViewClientOutputs|pool\.query|@\/lib\/db/);
+    assert.match(
+      route,
+      /export async function (?:GET|POST)/,
+      `${routeFile} must expose an explicit guarded HTTP handler.`
+    );
+    assert.doesNotMatch(
+      route,
+      /getAuthenticatedAppUser|canManageCorpus|canViewClientOutputs|pool\.query|@\/lib\/db["']/
+    );
 
     if (routeFile.includes("/corpora/")) {
       assert.match(route, /loadDataOsCorpusContext/, `${routeFile} must use the corpus Data OS loader.`);
@@ -329,7 +336,11 @@ test("Data OS API routes stay behind shared auth and feature flag loaders", asyn
       assert.doesNotMatch(route, /loadDataOsCorpusContext/);
     }
     if (routeFile.includes("/signal/")) {
-      assert.match(route, /loadSignalWorkspaceContext/, `${routeFile} must use the Signal workspace authZ loader.`);
+      assert.match(
+        route,
+        /loadSignalWorkspace(?:Module)?Context/,
+        `${routeFile} must use the Signal workspace authZ loader.`
+      );
       assert.doesNotMatch(route, /loadDataOsCorpusContext|loadDataOsPulseContext/);
       assert.doesNotMatch(route, /published_outputs|raw_metadata|chart_aggregates/);
     }

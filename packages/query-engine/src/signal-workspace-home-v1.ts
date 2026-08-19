@@ -22,12 +22,13 @@ export type SignalWorkspaceHomeV1 = {
     timezone: string;
     status: string;
   };
+  read_scope?: Record<string, unknown>;
   corpus: {
     id: string;
     role: "operational" | "legacy";
     status: string;
     name: string | null;
-  };
+  } | null;
   coverage: {
     date_from: string | null;
     date_through: string | null;

@@ -1,6 +1,6 @@
 import { SignalBackendContractError } from "@noisia/query-engine";
 
-import { loadSignalWorkspaceContext } from "../../../_lib/load";
+import { loadSignalWorkspaceModuleContext } from "../../../_lib/load";
 import {
   loadSignalComparisonV1,
   parseSignalApiFilterV1,
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContext(workspaceId);
+  const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "brand-monitoring", request);
   if ("response" in loaded) return loaded.response;
   try {
     const searchParams = new URL(request.url).searchParams;
@@ -31,15 +31,25 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     const filter = parseSignalApiFilterV1(searchParams, loaded.workspace.timezone);
     const result = await loadSignalComparisonV1({
       workspace: loaded.workspace,
+      readScope: loaded.readScope,
       filter,
       comparisonRange: { start: comparisonStart, end: comparisonEnd },
       metricKey,
       metricVersion,
       isInternalUser: loaded.isInternalUser
     });
+    const responseResult = requireFreshSignalResult(
+      result,
+      searchParams.get("require_fresh") === "true"
+    );
+    const servingScope = loaded.servingScope.rollout_mode === "governed"
+      && responseResult.status !== "missing"
+      ? await loaded.finalizeServingScope(filter)
+      : null;
     return signalMaterializationResultResponse(
       request,
-      requireFreshSignalResult(result, searchParams.get("require_fresh") === "true")
+      responseResult,
+      { servingScope }
     );
   } catch (error) {
     return signalBackendErrorResponse(error);

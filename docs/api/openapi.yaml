@@ -23,6 +23,10 @@ tags:
     description: Protected workspace-centric live Social Listening APIs. Disabled by default.
   - name: Data OS Review
     description: Protected internal artifact review APIs. Disabled by default.
+  - name: Signal Semantic Review
+    description: Protected internal semantic mention Review APIs. Never exposed to Signal clients.
+  - name: Signal Acquisition Plan
+    description: Protected internal workspace-owned acquisition control-plane APIs.
 paths:
   /api/public/v1/reports:
     get:
@@ -232,9 +236,11 @@ paths:
       tags: [Signal Workspace V1]
       operationId: getSignalWorkspaceHome
       summary: Get the front-ready Signal workspace facade.
-      description: Consolidates workspace/subject, canonical coverage and filter, capabilities, facets, freshness, metric groups, reviewed interpretations, strategic release history, visibility, lineage, partial states and explicit legacy fallback. It never reads published_outputs.payload as source of truth.
+      description: Consolidates workspace/subject, server-resolved operational read scope, canonical coverage and filter, capabilities, facets, freshness, metric groups, reviewed interpretations, strategic release history, visibility, lineage, partial states and explicit legacy fallback. In governed mode it does not require a study corpus. It never reads published_outputs.payload as source of truth.
       security: [{ kindeSession: [] }]
-      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
       responses:
         "200":
           description: Frozen Signal V2 backend facade.
@@ -250,12 +256,38 @@ paths:
     get:
       tags: [Signal Workspace V1]
       operationId: getSignalWorkspaceBootstrap
-      summary: Get workspace identity, corpus context, coverage and freshness.
+      summary: Get workspace identity, operational read scope, optional corpus context, coverage and freshness.
       security: [{ kindeSession: [] }]
-      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
       responses:
         "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
         "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/brand-monitoring:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceBrandMonitoring
+      summary: Get the complete Brand Monitoring view under one operational read scope.
+      description: The server resolves legacy, shadow or governed mode. Shadow returns the legacy payload and durably schedules governed module checks after the response. Governed resolves the closed server-owned view binding and exact derived population; a non-brand view without a current compatible binding fails closed and never falls back to the brand bridge.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - { $ref: "#/components/parameters/SignalTimezone" }
+        - { $ref: "#/components/parameters/SignalGranularity" }
+        - { $ref: "#/components/parameters/SignalComparisonStart" }
+        - { $ref: "#/components/parameters/SignalComparisonEnd" }
+      responses:
+        "200": { description: Compact Brand Monitoring payload with read scope, coverage, comparison, series, breakdowns and freshness. }
+        "304": { description: ETag still current. }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
@@ -268,6 +300,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
         - { $ref: "#/components/parameters/SignalTimezone" }
@@ -288,6 +321,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
         - { $ref: "#/components/parameters/SignalTimezone" }
@@ -309,6 +343,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
         - { $ref: "#/components/parameters/SignalTimezone" }
@@ -344,9 +379,14 @@ paths:
       tags: [Signal Workspace V1]
       operationId: reviewSignalWorkspaceStrategicRelease
       summary: Create a review draft or human-promote a strategic release.
-      description: Internal corpus managers only. Promotion is fail-closed on analysis approval, quality gates, exact artifact revisions and workspace scope.
+      description: Internal corpus managers only. Governed V2 promotion is idempotent and fail-closed on analysis approval, quality gates, exact artifact revisions, workspace scope and current evidence authority.
       security: [{ kindeSession: [] }]
-      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
       requestBody:
         required: true
         content:
@@ -367,12 +407,246 @@ paths:
                     action: { const: promote }
                     release_id: { type: string, format: uuid }
       responses:
-        "200": { description: Idempotent draft or promoted release result. }
+        "200": { description: Release draft result, or an idempotently promoted release result for action=promote. }
         "400": { $ref: "#/components/responses/SignalBackendError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "409": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/reports/triggers-barriers/runs:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: preflightSignalWorkspaceTriggersBarriersRun
+      summary: Evaluate the governed T&B launch contract without writes or paid calls.
+      description: Resolves the strategic binding, policy, exact derived population, governance provenance, coverage, deterministic sample, provider identity, closed execution plan, runtime readiness and worst-case budget inside one REPEATABLE READ READ ONLY transaction. It performs no writes, enqueues zero jobs and makes zero provider calls. The browser never supplies authority IDs.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: period_start
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: period_end
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: timezone
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: study_size
+          in: query
+          required: false
+          schema: { type: string, enum: [small, medium, large, full_power] }
+        - name: hard_cap_usd
+          in: query
+          required: true
+          schema: { type: number, exclusiveMinimum: 0 }
+      responses:
+        "200":
+          description: Read-only preflight. A blocked result remains a successful inspection with ready=false and typed blocking reasons.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTbStrategicPreflightV1" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+    post:
+      tags: [Signal Workspace V1]
+      operationId: startSignalWorkspaceTriggersBarriersRun
+      summary: Atomically freeze the server-owned strategic population and request an idempotent T&B run.
+      description: Recomputes the exact free preflight, rejects stale digests or hard caps, and resolves every binding, policy, compilation, evaluation, population and execution-corpus identity server-side. One transaction freezes the relational snapshot and deterministic sample, creates the governed run control and durable outboxes, and reserves no provider spend until a Worker validates runtime authority. A server-side paid-run flag remains mandatory.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 500 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTbStrategicRunRequestV2" }
+      responses:
+        "200":
+          description: Existing compatible governed run returned by the idempotency key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTbStrategicLaunchV2" }
+        "202":
+          description: New governed run, immutable snapshot/sample and durable outboxes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTbStrategicLaunchV2" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/reports/triggers-barriers/runs/{analysisId}:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceTriggersBarriersRunStatus
+      summary: Poll one governed T&B run without side effects.
+      description: Returns sanitized lifecycle, step, provider-version, budget and Review/release readiness state. Polling never enqueues, resumes or invokes a provider.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: analysisId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current governed run status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTbStrategicRunStatusV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+    delete:
+      tags: [Signal Workspace V1]
+      operationId: cancelSignalWorkspaceTriggersBarriersRun
+      summary: Request cancellation of one governed T&B run.
+      description: Records a server-authorized cancellation request. Workers observe the durable state between steps; the operation neither deletes the run nor rewrites its frozen authority.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: analysisId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Cancellation accepted or already requested. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/reports/triggers-barriers/runs/{analysisId}/review:
+    post:
+      tags: [Signal Workspace V1]
+      operationId: reviewSignalWorkspaceTriggersBarriersRun
+      summary: Review one workspace T&B run and create its candidate release revision.
+      description: Requires a governed V2 run with green quality and snapshot-containment gates. One idempotent database operation records selected reusable assertion decisions and creates the release draft atomically. Accepting findings or artifacts never approves all generated tags.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: analysisId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 500 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTbStrategicReviewRequestV2" }
+      responses:
+        "200":
+          description: Atomic Review result and idempotent release draft.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTbStrategicReviewResultV2" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "409": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/triggers-barriers:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceTriggersBarriersOverview
+      summary: Read the current T&B report revision by workspace and report key.
+      description: Reads relational findings, artifacts and snapshot identity. It never serves published_outputs.payload and does not require a study query parameter.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+        "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/triggers-barriers/series:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceTriggersBarriersSeries
+      summary: Read current-release T&B series under its frozen snapshot.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - name: finding
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/triggers-barriers/findings/{findingId}:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceTriggersBarriersFinding
+      summary: Read one finding from the current report revision.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: findingId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/triggers-barriers/findings/{findingId}/evidence:
+    get:
+      tags: [Signal Workspace V1]
+      operationId: getSignalWorkspaceTriggersBarriersEvidence
+      summary: Read cursor-paginated canonical evidence from the frozen snapshot.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: findingId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: "#/components/parameters/SignalStart" }
+        - { $ref: "#/components/parameters/SignalEnd" }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
+        "304": { description: ETag still current. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/SignalBackendError" }
   /api/data-os/corpora/{corpusId}/artifacts/{artifactId}/review:
     get:
       tags: [Data OS Review]
@@ -429,6 +703,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalMetricKey" }
         - { $ref: "#/components/parameters/SignalMetricVersion" }
         - { $ref: "#/components/parameters/SignalStart" }
@@ -455,6 +730,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalMetricKey" }
         - { $ref: "#/components/parameters/SignalMetricVersion" }
         - name: dimension
@@ -485,6 +761,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalMetricKey" }
         - { $ref: "#/components/parameters/SignalMetricVersion" }
         - { $ref: "#/components/parameters/SignalStart" }
@@ -515,10 +792,12 @@ paths:
     get:
       tags: [Signal Workspace V1]
       operationId: getSignalWorkspaceMentions
-      summary: Page through sanitized metric constituents using an opaque cursor.
+      summary: Page canonical sanitized mentions using stable ordering and an opaque cursor.
+      description: Returns the server-resolved read scope. The client cannot choose a population id. Governed mode emits one canonical root per mention; historical alias ids resolve to that root in detail/evidence navigation.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalMetricKey" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
@@ -530,6 +809,15 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 100000, default: 0 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [published, platform, conversation_role, engagement], default: published }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
       responses:
         "200": { $ref: "#/components/responses/SignalWorkspaceSuccess" }
         "304": { description: ETag still current. }
@@ -546,6 +834,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
         - { $ref: "#/components/parameters/SignalTimezone" }
@@ -566,10 +855,11 @@ paths:
       tags: [Signal Workspace V1]
       operationId: getSignalTopicsNarrativesOverview
       summary: Get canonical topic and narrative metrics for one workspace filter.
-      description: Reads approved active-profile classifications and deterministic topic.volume@1/narrative.volume@1 materializations. SQL owns every count, share, denominator and comparison.
+      description: Reads approved active-profile classifications and deterministic topic.volume@1/narrative.volume@1 materializations. SQL owns every count, share, denominator and comparison. Its private ETag identifies semantic coverage, terms, series and cooccurrences rather than only the source watermark.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalStart" }
         - { $ref: "#/components/parameters/SignalEnd" }
         - { $ref: "#/components/parameters/SignalTimezone" }
@@ -583,7 +873,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SignalTopicsNarrativesOverviewV1" }
-        "304": { description: ETag still current. }
+        "304": { description: Semantic overview content is still current; membership changes that affect coverage or terms always produce 200 with a new ETag. }
         "400": { $ref: "#/components/responses/SignalBackendError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -597,6 +887,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalTaxonomyKind" }
         - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
         - { $ref: "#/components/parameters/SignalStart" }
@@ -627,6 +918,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalTaxonomyKind" }
         - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
         - { $ref: "#/components/parameters/SignalStart" }
@@ -660,6 +952,7 @@ paths:
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SignalView" }
         - { $ref: "#/components/parameters/SignalTaxonomyKind" }
         - { $ref: "#/components/parameters/SignalTaxonomyTermKey" }
         - { $ref: "#/components/parameters/SignalStart" }
@@ -679,6 +972,741 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/SignalBackendError" }
         "503": { $ref: "#/components/responses/SignalBackendError" }
+  /api/data-os/signal/{workspaceId}/sources:
+    get:
+      tags: [Signal Workspace Data Plane V1]
+      operationId: listSignalWorkspaceSources
+      summary: List compact workspace-owned source contracts.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Compact source catalog; no records or payload blobs. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Signal Workspace Data Plane V1]
+      operationId: createSignalWorkspaceSource
+      summary: Register a workspace-owned connector or a compatibility source without requiring a study.
+      description: Connector-only input is the acquisition target and does not carry scope/entity approval. The legacy scope input remains compatibility-only.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: "#/components/schemas/SignalConnectorSourceInputV1" }
+                - { $ref: "#/components/schemas/SignalLegacyWorkspaceSourceInputV1" }
+      responses:
+        "201": { description: Source and disabled manual refresh policy created. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Invalid or cross-workspace source contract. }
+  /api/data-os/signal/{workspaceId}/sources/{sourceId}/imports:
+    get:
+      tags: [Signal Workspace Data Plane V1]
+      operationId: listSignalWorkspaceImports
+      summary: List the latest compact import lineage for one workspace source.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: sourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Up to 100 import summaries; never contains mention records. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Signal Workspace Data Plane V1]
+      operationId: importSignalWorkspaceMentions
+      summary: Stream a CSV into canonical workspace mentions.
+      description: Scope and entity attribution are inherited from the governed source and cannot be overridden by the import. Optional study_corpus_id is contributor provenance only. Response is compact and never returns the imported population.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: sourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: study_corpus_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string, format: binary }
+      responses:
+        "201": { description: Import accepted, deduplicated and watermarked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Invalid workspace, governed source or study provenance. }
+  /api/data-os/signal/{workspaceId}/populations/operational/shadow:
+    get:
+      tags: [Signal Workspace Data Plane V1]
+      operationId: compareSignalOperationalPopulationShadow
+      summary: Compare workspace population against legacy corpus serving.
+      description: Internal-only correctness gate for the governed primary-brand population. It requires zero contract violations and unexplained differences, explains legacy-only records by scope, executes Brand Monitoring, Mentions and Topics & Narratives adapters outside client responses, hashes the full Mentions canonical set in SQL, samples actual reader pages/cursors and resolves historical alias enrichment. Exact parity with a legacy reader that mixes scopes is not required. This endpoint never activates client serving.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Compact governed correctness result, full-set hashes, module checks and explained legacy differences by scope. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/semantic-review:
+    get:
+      tags: [Signal Semantic Review]
+      operationId: listSignalSemanticReviewQueue
+      summary: List one canonical root per included mention for operator Review.
+      description: Internal-only, private/no-store queue backed by the versioned Semantic Review projection. Filtering, keyset pagination, totals and facets execute server-side; the request never rebuilds or classifies the full corpus. Source intent remains provenance and is never semantic eligibility. The cursor is bound to the projection snapshot and normalized filters.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: mention, in: query, description: Canonical mention ID to focus after send_to_review., schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { $ref: "#/components/schemas/SignalSemanticQueueStateV1" } }
+        - { name: proposed_scope, in: query, schema: { $ref: "#/components/schemas/SignalSemanticScopeV1" } }
+        - { name: confidence_band, in: query, schema: { type: string, enum: [high, medium, low] } }
+        - { name: data_source_id, in: query, schema: { type: string, format: uuid } }
+        - { name: platform, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: start, in: query, schema: { type: string, format: date } }
+        - { name: end, in: query, schema: { type: string, format: date } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Cursor-paginated canonical Review queue and complete-set reconciliation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticReviewQueueV1" }
+        "400": { description: Invalid filter or stale cursor. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/semantic-review/resolve:
+    get:
+      tags: [Signal Semantic Review]
+      operationId: getSignalSemanticResolutionStatus
+      summary: Poll resolver status without side effects.
+      description: Strictly read-only. GET never prepares, resumes or enqueues a resolver run.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Latest resolver status, or run null. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Signal Semantic Review]
+      operationId: prepareSignalSemanticResolution
+      summary: Prepare a confirmed, budget-capped semantic resolution parent and durable child batches.
+      description: The only resolver method permitted to create durable work. It requires the exact free-preflight digest and an operator-selected hard cap; it never truncates the eligible selection and does not treat the USD 40 confirmation threshold as a budget ceiling.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [hard_cap_usd, preflight_digest, confirmation_accepted]
+              properties:
+                hard_cap_usd: { type: string, pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
+                preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                confirmation_accepted: { const: true }
+                supersedes_run_id: { type: [string, "null"], format: uuid }
+      responses:
+        "200": { description: Existing run or budget confirmation response. }
+        "202": { description: Resolver run accepted for queueing. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [Signal Semantic Review]
+      operationId: cancelSignalSemanticResolution
+      summary: Request cancellation of one semantic resolution parent.
+      description: Idempotently stops new child dispatches and preserves completed work and append-only history. In-flight provider work is canceled through the provider boundary before terminal reconciliation.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [run_id]
+              properties:
+                run_id: { type: string, format: uuid }
+      responses:
+        "200": { description: Cancellation state and append-only audit result. }
+        "400": { description: Invalid cancellation or missing idempotency key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/data-os/signal/{workspaceId}/semantic-review/resolve/preflight:
+    get:
+      tags: [Signal Semantic Review]
+      operationId: preflightSignalSemanticResolution
+      summary: Calculate a free, strictly read-only semantic resolution flight card.
+      description: Returns the accepted and excluded population, provenance and llm-processing rights, resolved/unresolved strata, snapshot and governance digests, pinned provider/model/pricing, full child-batch count, exact estimate, explicit hard cap and Worker/recovery readiness. It performs no writes, jobs, provider calls or spend.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: hard_cap_usd
+          in: query
+          required: true
+          schema: { type: string, pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
+      responses:
+        "200": { description: Complete operator-safe flight card, whether ready or blocked. }
+        "400": { description: An explicit hard cap is required. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { description: Projection or authority is unavailable; no work is created. }
+  /api/data-os/signal/{workspaceId}/semantic-review/resolve/resume:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: resumeSignalSemanticResolutionChild
+      summary: Create an auditable superseding attempt for one failed child batch.
+      description: Reuses the sealed parent selection and only unresolved child items. The failed child remains immutable and visible in history.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [run_id, child_ordinal]
+              properties:
+                run_id: { type: string, format: uuid }
+                child_ordinal: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Idempotent replay of the same resume request. }
+        "202": { description: Superseding child attempt prepared durably. }
+        "400": { description: Invalid resume or missing idempotency key. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Child is not resumable or request conflicts. }
+  /api/data-os/signal/{workspaceId}/admin-mentions:
+    get:
+      tags: [Signal Semantic Review]
+      operationId: listOrInspectSignalAdminMentions
+      summary: List canonical mentions or inspect one operator-safe detail.
+      description: The list remains compact and adds operator_summary plus relational facets counted across every canonical root in the workspace, never only the Operational population. With mention, returns canonical and dedup lineage, sanitized quality, provenance, semantic assertions and Review, Operational memberships, enrichment and T&B references. raw_metadata is never returned.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: mention, in: query, schema: { type: string, format: uuid } }
+        - { name: inclusion_status, in: query, schema: { type: string, enum: [pending, included, excluded] } }
+        - { name: resolution_state, in: query, schema: { type: string, enum: [unresolved, pending, approved_by_model, approved_by_human, approved_by_policy, rejected, superseded] } }
+        - { name: review_status, in: query, schema: { type: string, enum: [unresolved, pending, approved, rejected] } }
+        - { name: eligibility_status, in: query, schema: { type: string, enum: [unresolved, not_eligible, candidate, eligible] } }
+        - { name: minimum_quality_score, in: query, schema: { type: number, minimum: 0, maximum: 100 } }
+        - { name: quality_flag, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: latest_governance_action, in: query, schema: { type: string, enum: [include, exclude, revert, send_to_review] } }
+        - { name: provenance_source_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Compact list or focused operator-safe detail. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/admin-mentions/{mentionId}/governance:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: mutateSignalCanonicalMentionGovernance
+      summary: Apply a reversible workspace-native action to a canonical mention.
+      description: Resolves aliases to the canonical root, writes append-only actor/reason history, and relies on governed population reconciliation and invalidation. It never promotes a pointer.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: mentionId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [include, exclude, revert, send_to_review] }
+                reason: { type: string, minLength: 3, maxLength: 1000 }
+      responses:
+        "200": { description: Idempotent replay. }
+        "201": { description: Append-only governance event recorded. }
+        "400": { description: Invalid action, state or idempotency input. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/semantic-review/candidates:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: generateSignalSemanticCandidates
+      summary: Dry-run or create deterministic pending semantic candidates.
+      description: Candidate apply creates only mention_semantic pending/candidate assertions. It cannot create Review events, approvals, V2 memberships or a population pointer.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [dry-run, apply] }
+      responses:
+        "200": { description: Dry-run or idempotent no-op result. }
+        "201": { description: Pending/candidate assertions created. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Current assertion conflicts with deterministic evidence. }
+  /api/data-os/signal/{workspaceId}/semantic-review/assertions:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: createSignalSemanticAssertion
+      summary: Create a manual pending semantic assertion.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticAssertionInputV1" }
+      responses:
+        "201": { description: Pending/candidate assertion created on the canonical root. }
+        "400": { description: Scope/entity is not governed or mention is excluded. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Conflicting current assertion. }
+  /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/review:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: reviewSignalSemanticAssertion
+      summary: Approve or reject a current assertion as the authenticated reviewer.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SemanticAssertionId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, rationale]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                rationale: { type: string, minLength: 3, maxLength: 2000 }
+      responses:
+        "200": { description: Append-only Review decision recorded and V2 draft reconciled. }
+        "400": { description: Assertion is ineligible for this decision. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/supersede:
+    post:
+      tags: [Signal Semantic Review]
+      operationId: supersedeSignalSemanticAssertion
+      summary: Preserve a current assertion and create its next pending version.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SemanticAssertionId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticSupersessionInputV1" }
+      responses:
+        "201": { description: Prior version preserved and new pending/candidate version created. }
+        "400": { description: Scope/entity is not governed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/history:
+    get:
+      tags: [Signal Semantic Review]
+      operationId: getSignalSemanticAssertionHistory
+      summary: Read append-only Review history for one workspace assertion.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/SemanticAssertionId" }
+      responses:
+        "200": { description: Assertion lineage and immutable Review events. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/data-os/signal/{workspaceId}/acquisition-plan:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: getSignalAcquisitionPlan
+      summary: Read the operator-safe current/draft acquisition plan and readiness.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Workspace-owned plan state; no internal IDs, private query text or raw metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalAcquisitionPlanResponseV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Acquisition plan state is unavailable or internally inconsistent. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: reconcileSignalAcquisitionPlan
+      summary: Reconcile an append-only draft from current Brand OS and reference decisions.
+      description: Creates or reuses only a draft. It never promotes a plan, import, semantic assertion, pointer or binding.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionReconcileInputV1" }
+      responses:
+        "200": { description: Draft reconciled or exact idempotent replay returned. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Current-plan or Brand OS CAS rejected. }
+        "422": { description: Closed request contract rejected. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/brief:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: getSignalAcquisitionBrief
+      summary: Read operator-safe Acquisition Brief status, defaults and governed choices.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Missing, sealed or stale brief state; authority IDs and digests remain server-owned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalAcquisitionBriefContextV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: A draft or canonical Brand OS authority is unavailable. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: sealSignalAcquisitionBrief
+      summary: Seal operator decisions against server-resolved Brand OS, catalog, Knowledge and provider contracts.
+      description: This mutation performs no query generation, import, job enqueue or provider call.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionBriefInputV1" }
+      responses:
+        "200":
+          description: Brief sealed or exact idempotent replay returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalAcquisitionBriefContextV1" }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Draft CAS, authority drift or incompatible idempotency replay rejected. }
+        "422": { description: Closed operator input rejected. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/readiness:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: getSignalAcquisitionReadiness
+      summary: Read plan readiness and Brand OS/catalog drift without side effects.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Operator-safe readiness and blockers. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Readiness cannot be proven from current authority. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/promote:
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: promoteSignalAcquisitionPlan
+      summary: Explicitly seal and promote the current draft using revision/digest CAS.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionPromotionInputV1" }
+      responses:
+        "200": { description: Draft sealed current, or exact replay returned. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Revision, digest, Brand OS, source, query or governance CAS rejected. }
+        "422": { description: Closed promotion contract rejected. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/reference-decisions:
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: decideSignalAcquisitionReference
+      summary: Record an explicit append-only reference include/exclude/revert decision.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionReferenceDecisionInputV1" }
+      responses:
+        "201": { description: Append-only reference decision recorded. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Reference authority or replay is incompatible. }
+        "422": { description: Closed decision contract rejected. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/slots/{slotKey}/query-versions:
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: createSignalAcquisitionQueryVersion
+      summary: Add an append-only private query version to a draft slot.
+      description: The path slot key and source key are operator-safe references. The server resolves all owner/entity/plan/slot/query IDs.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionSlotKey" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionQueryVersionInputV1" }
+      responses:
+        "201": { description: Query version created or exact replay returned. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Draft, slot, connector or replay is incompatible. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/query-generation:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: preflightSignalAcquisitionQueryGeneration
+      summary: Price and validate workspace-owned query generation without writes or provider calls.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: source_key, in: query, required: true, schema: { $ref: "#/components/schemas/SignalSourceKeyV1" } }
+        - { name: hard_cap_usd, in: query, required: true, schema: { type: string, pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' } }
+      responses:
+        "200":
+          description: Read-only slot, model, pricing, call-count and hard-cap flight card.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalAcquisitionQueryGenerationPreflightV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Closed preflight input rejected. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: generateSignalAcquisitionQueries
+      summary: Generate append-only private query drafts for all required non-reference slots.
+      description: Provider calls are server-owned and capped at two. Generation never approves a query, promotes a plan, imports data or creates semantic mention approval.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionQueryGenerationInputV1" }
+      responses:
+        "201": { description: One pending private query draft per primary/category/active-competitor slot. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Draft/context CAS drifted or the hard-cap preflight is blocked. }
+        "422": { description: Explicit confirmation or closed input is invalid. }
+        "503": { description: Server-side provider authority is unavailable. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/slots/{slotKey}/query-versions/{queryVersion}:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: getSignalAcquisitionQueryVersion
+      summary: Read one authorized private query version for operator review.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionSlotKey" }
+        - { name: queryVersion, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Private query, structured terms, validation/fallback and latest review state. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Query version not found inside this workspace and slot. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: reviewSignalAcquisitionQueryVersion
+      summary: Append an explicit operator approval or rejection for one draft query version.
+      description: Acquisition query approval is independent from mention-level Semantic Review. A pending or rejected version blocks plan promotion.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionSlotKey" }
+        - { name: queryVersion, in: path, required: true, schema: { type: integer, minimum: 1 } }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionQueryReviewInputV1" }
+      responses:
+        "201": { description: Append-only review decision recorded or exact replay returned. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Query is not a reviewable draft in this workspace and slot. }
+        "422": { description: Decision or evidence rejected. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/slots/{slotKey}/retire:
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: retireSignalAcquisitionSlot
+      summary: Retire a slot prospectively in the open draft without deleting history.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionSlotKey" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [evidence]
+              properties:
+                evidence: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200": { description: Draft slot retirement recorded or exact replay returned. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Slot retirement conflicts with current draft state. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/imports:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: listSignalAcquisitionImports
+      summary: List operator-safe acquisition import lineage for one connector.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: source_key
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignalSourceKeyV1" }
+        - name: slot_key
+          in: query
+          required: false
+          description: Optional operator-safe acquisition slot filter.
+          schema: { $ref: "#/components/schemas/SignalAcquisitionSlotKeyV1" }
+      responses:
+        "200": { description: Import summaries without owner IDs, storage keys, raw metadata or mention text. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Connector not found in the authorized workspace. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: createSignalAcquisitionImportUpload
+      summary: Seal an acquisition import before issuing durable signed multipart parts.
+      description: Returns 202. The server resolves and seals the current plan, slot, graduated query evidence, Brand OS, rights and provider schema before upload. Browser requests may attest a registered query or declare it unavailable; provider verification is server-only.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalAcquisitionImportInputV2" }
+      responses:
+        "202": { description: Sealed batch, signed multipart descriptor and polling URL. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Current acquisition authority drifted or replay is incompatible. }
+        "422": { description: Closed import contract rejected. }
+        "503": { description: Durable private storage or queue is unavailable. }
+  /api/data-os/signal/{workspaceId}/acquisition-plan/imports/{importBatchId}:
+    get:
+      tags: [Signal Acquisition Plan]
+      operationId: getSignalAcquisitionImport
+      summary: Poll one sealed acquisition import without side effects.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionImportBatchId" }
+      responses:
+        "200": { description: Operator-safe upload/queue/processing/completion/failure state. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Import not found in the authorized workspace. }
+    post:
+      tags: [Signal Acquisition Plan]
+      operationId: transitionSignalAcquisitionImport
+      summary: Finalize upload, record upload failure, or retry a failed batch from sealed storage.
+      description: Recovery copies the original seal and preserves the failed attempt. It never re-resolves against a newer plan.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/AcquisitionImportBatchId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: { type: string, enum: [complete-upload, fail-upload, retry-from-storage] }
+                failure_code: { type: string, enum: [upload_aborted, upload_transport_failed] }
+      responses:
+        "200": { description: Upload failure recorded without erasing the sealed batch. }
+        "202": { description: Upload finalized/queued or storage recovery created/replayed. }
+        "400": { description: Idempotency-Key is missing or malformed. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Import not found in the authorized workspace. }
+        "409": { description: Seal, storage ownership or replay is incompatible. }
 components:
   securitySchemes:
     bearerAuth:
@@ -710,6 +1738,35 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Stable Signal workspace id, never an output id.
+    AcquisitionSlotKey:
+      name: slotKey
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/SignalAcquisitionSlotKeyV1" }
+    AcquisitionImportBatchId:
+      name: importBatchId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SignalView:
+      name: view
+      in: query
+      required: false
+      description: Closed client-safe governed view. Defaults to brand. The server resolves all policy, entity, population, compilation and binding identities; clients cannot supply those authorities.
+      schema:
+        type: string
+        enum: [brand, competition, category, all-governed]
+        default: brand
+    SemanticAssertionId:
+      name: assertionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 500 }
     SignalStart:
       name: start
       in: query
@@ -829,6 +1886,325 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SignalDigestV1:
+      type: string
+      pattern: '^sha256:[0-9a-f]{64}$'
+    SignalSourceKeyV1:
+      type: string
+      pattern: '^source-sha256-[0-9a-f]{64}$'
+    SignalConnectorSourceInputV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, name, provider, source_type, connection_method]
+      properties:
+        contract_version: { const: signal-data-source-connector-v1 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        provider: { const: sentione }
+        source_type: { type: string, minLength: 1 }
+        connection_method: { type: string, minLength: 1 }
+    SignalLegacyWorkspaceSourceInputV1:
+      type: object
+      description: Compatibility-only source contract. New acquisition clients must use SignalConnectorSourceInputV1.
+      additionalProperties: false
+      required: [name, provider, source_type, connection_method, scope]
+      properties:
+        name: { type: string, maxLength: 160 }
+        provider: { type: string }
+        source_type: { type: string }
+        connection_method: { type: string }
+        scope: { type: string, enum: [primary_brand, competitor, category, reference, unattributed] }
+        entity_id: { type: [string, "null"], format: uuid }
+    SignalAcquisitionSlotKeyV1:
+      type: string
+      pattern: '^(primary-brand|(?:competitor|category|reference)-sha256-[0-9a-f]{64})$'
+    SignalAcquisitionPeriodV1:
+      type: object
+      additionalProperties: false
+      required: [start, end, timezone]
+      properties:
+        start: { type: string, format: date }
+        end: { type: string, format: date }
+        timezone: { type: string, minLength: 1, maxLength: 100 }
+    SignalAcquisitionReconcileInputV1:
+      type: object
+      additionalProperties: false
+      required: [expected_current_version, expected_brand_os_revision]
+      properties:
+        expected_current_version: { type: [integer, "null"], minimum: 1 }
+        expected_brand_os_revision: { type: [integer, "null"], minimum: 1 }
+    SignalAcquisitionBriefPeriodInputV1:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      properties:
+        start: { type: string, format: date }
+        end: { type: string, format: date }
+    SignalAcquisitionBriefInputV1:
+      type: object
+      additionalProperties: false
+      required: [revision_token, objective, purpose, market_country, countries, languages, default_capture_period, target_window_months, construction_mode, include_knowledge_context]
+      properties:
+        revision_token:
+          type: string
+          minLength: 32
+          maxLength: 2000
+          description: Opaque draft CAS token. It contains no browser-selected authority.
+        objective: { type: string, minLength: 1, maxLength: 1000 }
+        purpose: { type: string, minLength: 1, maxLength: 500 }
+        market_country: { type: [string, "null"], pattern: '^[A-Z]{2}$' }
+        countries:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, pattern: '^[A-Z]{2}$' }
+        languages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 2, maxLength: 20 }
+        default_capture_period:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalAcquisitionBriefPeriodInputV1" }
+            - { type: "null" }
+        target_window_months: { type: [integer, "null"], minimum: 1, maximum: 120 }
+        construction_mode: { type: string, enum: [exploratory, detection] }
+        include_knowledge_context: { type: boolean }
+    SignalAcquisitionBriefContextV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, status, revision_token, values, options, knowledge_context, timezone, blockers]
+      properties:
+        contract_version: { const: signal-acquisition-brief-management-v1 }
+        status: { type: string, enum: [missing, sealed, stale] }
+        revision_token: { type: string, minLength: 32, maxLength: 2000 }
+        values:
+          type: object
+          additionalProperties: false
+          required: [objective, purpose, market_country, countries, languages, default_capture_period, target_window_months, construction_mode, include_knowledge_context]
+          properties:
+            objective: { type: string }
+            purpose: { type: string }
+            market_country: { type: [string, "null"] }
+            countries: { type: array, items: { type: string } }
+            languages: { type: array, items: { type: string } }
+            default_capture_period:
+              oneOf:
+                - { $ref: "#/components/schemas/SignalAcquisitionBriefPeriodInputV1" }
+                - { type: "null" }
+            target_window_months: { type: [integer, "null"] }
+            construction_mode: { type: string, enum: [exploratory, detection] }
+            include_knowledge_context: { type: boolean }
+        options:
+          type: object
+          additionalProperties: false
+          required: [countries, languages, construction_modes]
+          properties:
+            countries: { type: array, items: { type: object, additionalProperties: false, required: [code], properties: { code: { type: string } } } }
+            languages: { type: array, items: { type: object, additionalProperties: false, required: [key, label], properties: { key: { type: string }, label: { type: string } } } }
+            construction_modes: { type: array, items: { type: string, enum: [exploratory, detection] } }
+        knowledge_context:
+          type: object
+          additionalProperties: false
+          required: [available, source_count, included]
+          properties:
+            available: { type: boolean }
+            source_count: { type: integer, minimum: 0 }
+            included: { type: boolean }
+        timezone: { type: string }
+        blockers: { type: array, items: { type: string } }
+    SignalAcquisitionPromotionInputV1:
+      type: object
+      additionalProperties: false
+      required: [expected_draft_version, expected_draft_revision, expected_draft_digest, effective_from, evidence]
+      properties:
+        expected_draft_version: { type: integer, minimum: 1 }
+        expected_draft_revision: { type: integer, minimum: 0 }
+        expected_draft_digest: { $ref: "#/components/schemas/SignalDigestV1" }
+        effective_from: { type: string, format: date-time }
+        evidence: { type: string, minLength: 1, maxLength: 500 }
+    SignalAcquisitionReferenceDecisionInputV1:
+      type: object
+      additionalProperties: false
+      required: [identity_key, action, evidence, effective_from]
+      properties:
+        identity_key:
+          type: string
+          pattern: '^reference-sha256-[0-9a-f]{64}$'
+        action: { type: string, enum: [include, exclude, revert] }
+        evidence: { type: string, minLength: 1, maxLength: 500 }
+        effective_from: { type: string, format: date-time }
+    SignalAcquisitionStructuredTermsV1:
+      type: object
+      additionalProperties: false
+      required: [include, exclude, aliases]
+      properties:
+        include: { type: array, items: { type: string } }
+        exclude: { type: array, items: { type: string } }
+        aliases: { type: array, items: { type: string } }
+    SignalAcquisitionQueryVersionInputV1:
+      type: object
+      additionalProperties: false
+      required: [source_key, provider, provider_syntax_version, provider_schema_version, query_text, structured_terms, cadence, default_period]
+      properties:
+        source_key: { $ref: "#/components/schemas/SignalSourceKeyV1" }
+        provider: { const: sentione }
+        provider_syntax_version: { type: string, minLength: 1, maxLength: 100 }
+        provider_schema_version: { const: sentione-csv-47-v1 }
+        query_text: { type: string, minLength: 1, maxLength: 50000, writeOnly: true }
+        structured_terms: { $ref: "#/components/schemas/SignalAcquisitionStructuredTermsV1" }
+        cadence: { type: string, enum: [manual, ad-hoc, daily, weekly, monthly] }
+        default_period:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalAcquisitionPeriodV1" }
+            - { type: "null" }
+    SignalAcquisitionQueryGenerationInputV1:
+      type: object
+      additionalProperties: false
+      required: [source_key, hard_cap_usd, confirmation]
+      properties:
+        source_key: { $ref: "#/components/schemas/SignalSourceKeyV1" }
+        hard_cap_usd: { type: string, pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
+        confirmation: { const: true }
+    SignalAcquisitionQueryReviewInputV1:
+      type: object
+      additionalProperties: false
+      required: [decision, evidence]
+      properties:
+        decision: { type: string, enum: [approved, rejected] }
+        evidence: { type: string, minLength: 1, maxLength: 500 }
+    SignalAcquisitionQueryGenerationPreflightV1:
+      type: object
+      additionalProperties: true
+      required: [contract_version, readiness, blockers, required_slots, slot_count, maximum_provider_calls, provider, budget, writes_performed, provider_calls]
+      properties:
+        contract_version: { const: signal-acquisition-query-generation-preflight-v1 }
+        readiness: { type: string, enum: [ready, blocked] }
+        blockers: { type: array, items: { type: string } }
+        required_slots: { type: array, items: { type: object, additionalProperties: true } }
+        slot_count: { type: integer, minimum: 0 }
+        maximum_provider_calls: { type: integer, minimum: 0, maximum: 2 }
+        provider: { type: object, additionalProperties: true }
+        budget: { type: object, additionalProperties: true }
+        writes_performed: { const: false }
+        provider_calls: { const: 0 }
+    SignalAcquisitionImportInputV2:
+      type: object
+      additionalProperties: false
+      required: [source_key, slot_key, query_evidence, period, file_name, file_size_bytes, content_type, supersedes_import_key]
+      properties:
+        source_key: { $ref: "#/components/schemas/SignalSourceKeyV1" }
+        slot_key: { $ref: "#/components/schemas/SignalAcquisitionSlotKeyV1" }
+        query_evidence:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [class, query_version, reason, operator_confirmed]
+              properties:
+                class: { const: operator_attested }
+                query_version: { type: integer, minimum: 1 }
+                reason: { type: "null" }
+                operator_confirmed: { const: true }
+            - type: object
+              additionalProperties: false
+              required: [class, query_version, reason, operator_confirmed]
+              properties:
+                class: { const: unavailable }
+                query_version: { type: "null" }
+                reason:
+                  type: string
+                  enum: [historical_export, provider_did_not_embed_query, source_context_unavailable, other]
+                operator_confirmed: { const: true }
+        period: { $ref: "#/components/schemas/SignalAcquisitionPeriodV1" }
+        file_name: { type: string, minLength: 1, maxLength: 255 }
+        file_size_bytes: { type: integer, minimum: 1, maximum: 2000000000 }
+        content_type:
+          type: string
+          enum: [text/csv, application/csv, application/vnd.ms-excel, application/octet-stream]
+        supersedes_import_key: { type: [string, "null"], maxLength: 200 }
+    SignalAcquisitionPlanResponseV1:
+      type: object
+      required: [contract_version, state, current_plan, draft_plan, slots, reference_candidates, readiness]
+      properties:
+        contract_version: { const: signal-acquisition-plan-v1 }
+        state: { type: string, enum: [missing, draft, ready, current, stale] }
+        current_plan: { type: [object, "null"], additionalProperties: true }
+        draft_plan: { type: [object, "null"], additionalProperties: true }
+        slots: { type: array, items: { type: object, additionalProperties: true } }
+        reference_candidates:
+          type: array
+          description: Operator-safe governed reference identities and their latest explicit decision.
+          items: { type: object, additionalProperties: true }
+        readiness:
+          type: object
+          required: [ready_to_promote, ready_for_import, query_playbook_complete, blockers, warnings]
+          properties:
+            ready_to_promote: { type: boolean }
+            ready_for_import: { type: boolean }
+            query_playbook_complete: { type: boolean }
+            blockers: { type: array, items: { type: string } }
+            warnings: { type: array, items: { type: string } }
+      additionalProperties: true
+    SignalSemanticScopeV1:
+      type: string
+      enum: [primary_brand, competitor, category, reference, unattributed]
+    SignalSemanticQueueStateV1:
+      type: string
+      enum: [candidate_pending, current_approved, current_rejected, unresolved, needs_context]
+    SignalSemanticAssertionInputV1:
+      type: object
+      additionalProperties: false
+      required: [mention_id, scope, confidence, rationale]
+      properties:
+        mention_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/SignalSemanticScopeV1" }
+        entity_id: { type: [string, "null"], format: uuid }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        rationale: { type: string, minLength: 3, maxLength: 2000 }
+    SignalSemanticSupersessionInputV1:
+      type: object
+      additionalProperties: false
+      required: [scope, confidence, rationale]
+      properties:
+        scope: { $ref: "#/components/schemas/SignalSemanticScopeV1" }
+        entity_id: { type: [string, "null"], format: uuid }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        rationale: { type: string, minLength: 3, maxLength: 2000 }
+    SignalSemanticReviewQueueV1:
+      type: object
+      required: [contract_version, workspace_id, policy, governed_entities, reconciliation, page, records]
+      properties:
+        contract_version: { const: signal-semantic-review-v1 }
+        workspace_id: { type: string, format: uuid }
+        policy:
+          type: object
+          required: [key, version, model_version]
+          properties:
+            key: { const: signal-semantic-governed-identity }
+            version: { const: "1" }
+            model_version: { const: deterministic-governed-identity-v1 }
+        governed_entities:
+          type: array
+          items:
+            type: object
+            required: [scope, entity_type, entity_id, entity_label]
+            properties:
+              scope: { $ref: "#/components/schemas/SignalSemanticScopeV1" }
+              entity_type: { type: string, enum: [brand, competitor, category, reference] }
+              entity_id: { type: string, format: uuid }
+              entity_label: { type: string }
+        reconciliation: { type: object, additionalProperties: true }
+        page:
+          type: object
+          required: [limit, returned, total_filtered, next_cursor, queue_digest]
+          properties:
+            limit: { type: integer }
+            returned: { type: integer }
+            total_filtered: { type: integer }
+            next_cursor: { type: [string, "null"] }
+            queue_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        records:
+          type: array
+          items: { type: object, additionalProperties: true }
     SignalBackendErrorV1:
       type: object
       required: [contract_version, error, message, details]
@@ -980,6 +2356,245 @@ components:
             api_route_template: { const: "/api/data-os/pulse/{outputId}/*" }
             source_of_truth: { const: false }
         state: { type: string, enum: [fresh, stale, pending, partial, not_available] }
+    SignalTbStrategicRunRequestV2:
+      type: object
+      additionalProperties: false
+      required: [period_start, period_end, timezone, hard_cap_usd, preflight_digest]
+      properties:
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        timezone: { type: string, minLength: 1, maxLength: 100 }
+        study_size: { type: string, enum: [small, medium, large, full_power] }
+        business_question: { type: [string, "null"], maxLength: 2000 }
+        decision_to_inform: { type: [string, "null"], maxLength: 2000 }
+        hard_cap_usd: { type: number, exclusiveMinimum: 0 }
+        preflight_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    SignalTbStrategicPreflightV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - read_only
+        - writes_performed
+        - jobs_enqueued
+        - provider_calls
+        - ready
+        - launch_authorized
+        - blocking_reasons
+        - module_key
+        - view_key
+        - population
+        - authority
+        - sample
+        - denominator
+        - coverage
+        - provider
+        - budget
+        - execution_plan
+        - readiness
+        - destinations
+        - preflight_digest
+      properties:
+        contract_version: { const: signal-tb-strategic-preflight-v1 }
+        read_only: { const: true }
+        writes_performed: { const: false }
+        jobs_enqueued: { const: 0 }
+        provider_calls: { const: 0 }
+        ready: { type: boolean }
+        launch_authorized: { type: boolean }
+        blocking_reasons: { type: array, items: { type: string } }
+        module_key: { const: triggers-barriers }
+        view_key: { const: strategic }
+        population:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            version: { type: integer, minimum: 1 }
+            total_root_count: { type: integer, minimum: 0 }
+            membership_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            definition_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        authority:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            policy_definition_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            compiled_plan_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            governance_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            provenance_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            watermark_hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            governance_unknown_count: { type: integer, minimum: 0 }
+            next_policy_transition_at: { type: [string, "null"], format: date-time }
+            usage_purposes:
+              type: array
+              prefixItems:
+                - { const: llm-processing }
+                - { const: strategic-analysis }
+              minItems: 2
+              maxItems: 2
+        sample:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            algorithm: { const: canonical-root-sha256-rank-v1 }
+            count: { type: integer, minimum: 0 }
+            digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            seed: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        denominator:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            key: { const: snapshot-canonical-roots }
+            count: { type: integer, minimum: 0 }
+            canonical_ids_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            alias_membership_count: { const: 0 }
+        coverage: { type: [object, "null"], additionalProperties: true }
+        provider:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            provider: { const: anthropic }
+            model: { type: string }
+            prompt_version: { type: string }
+            pricing_version: { type: string }
+            input_usd_per_million_tokens: { type: number, minimum: 0 }
+            output_usd_per_million_tokens: { type: number, minimum: 0 }
+            max_input_tokens_per_call: { type: integer, minimum: 1 }
+            config_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        budget:
+          type: [object, "null"]
+          additionalProperties: false
+          properties:
+            currency: { const: USD }
+            estimated_cost_usd: { type: number, minimum: 0 }
+            hard_cap_usd: { type: number, exclusiveMinimum: 0 }
+            server_max_cap_usd: { type: number, exclusiveMinimum: 0 }
+            planned_provider_calls: { type: integer, minimum: 0 }
+            reserved_input_tokens: { type: integer, minimum: 0 }
+            reserved_output_tokens: { type: integer, minimum: 0 }
+        execution_plan: { type: [object, "null"], additionalProperties: true }
+        readiness:
+          type: object
+          additionalProperties: false
+          required: [queue_configured, worker_alive, provider_key_configured, recovery_ready]
+          properties:
+            queue_configured: { type: boolean }
+            worker_alive: { type: boolean }
+            provider_key_configured: { type: boolean }
+            recovery_ready: { type: boolean }
+        destinations: { type: [object, "null"], additionalProperties: true }
+        preflight_digest:
+          type: [string, "null"]
+          pattern: '^sha256:[0-9a-f]{64}$'
+    SignalTbStrategicRunStatusV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - status
+        - current_step
+        - cancel_requested_at
+        - cancelled_at
+        - last_heartbeat_at
+        - authority_valid_until
+        - provider
+        - budget
+        - steps
+        - latest_step
+        - review_ready
+        - release_ready
+        - destinations
+      properties:
+        contract_version: { const: signal-strategic-run-status-v1 }
+        status: { type: string }
+        current_step: { type: string }
+        cancel_requested_at: { type: [string, "null"], format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        last_heartbeat_at: { type: [string, "null"], format: date-time }
+        authority_valid_until: { type: [string, "null"], format: date-time }
+        provider:
+          type: object
+          additionalProperties: false
+          properties:
+            provider: { const: anthropic }
+            model_version: { type: string }
+            prompt_version: { type: string }
+            pricing_version: { type: string }
+        budget:
+          type: object
+          additionalProperties: false
+          properties:
+            currency: { const: USD }
+            reserved_cost_usd: { type: number, minimum: 0 }
+            actual_cost_usd: { type: number, minimum: 0 }
+            hard_cap_usd: { type: number, exclusiveMinimum: 0 }
+        steps:
+          type: object
+          additionalProperties: false
+          properties:
+            completed: { type: integer, minimum: 0 }
+            pending: { type: integer, minimum: 0 }
+            failed: { type: integer, minimum: 0 }
+        latest_step: { type: [object, "null"], additionalProperties: true }
+        review_ready: { type: boolean }
+        release_ready: { type: boolean }
+        destinations: { type: object, additionalProperties: true }
+    SignalTbStrategicLaunchV2:
+      type: object
+      additionalProperties: false
+      required: [contract_version, analysis_id, created, status, destinations]
+      properties:
+        contract_version: { const: signal-tb-strategic-launch-v2 }
+        analysis_id: { type: string, format: uuid }
+        created: { type: boolean }
+        status: { const: queued }
+        destinations: { type: object, additionalProperties: true }
+    SignalTbStrategicReviewResultV2:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - workspace_id
+        - report_key
+        - operation_id
+        - release_id
+        - release_status
+        - created
+        - selected_reusable_assertions
+      properties:
+        contract_version: { const: signal-tb-strategic-review-v2 }
+        workspace_id: { type: string, format: uuid }
+        report_key: { const: triggers-barriers }
+        operation_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        release_status: { const: draft }
+        created: { type: boolean }
+        selected_reusable_assertions: { type: integer, minimum: 0, maximum: 500 }
+    SignalTbStrategicReviewRequestV2:
+      type: object
+      additionalProperties: false
+      properties:
+        reusable_assertions:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            additionalProperties: false
+            required: [record_tag_id, decision]
+            properties:
+              record_tag_id: { type: string, format: uuid }
+              decision: { type: string, enum: [approve, correct, reject] }
+              notes: { type: string, maxLength: 1000 }
+              correction:
+                type: object
+                additionalProperties: false
+                properties:
+                  value: { type: string, maxLength: 500 }
+                  score: { type: number }
+                  confidence: { type: string, maxLength: 80 }
+        limitations: {}
+        release_title: { type: string, minLength: 1, maxLength: 300 }
     SignalStrategicReleasesV1:
       type: object
       required: [contract_version, strategic_release_contract_version, workspace_id, current, history]

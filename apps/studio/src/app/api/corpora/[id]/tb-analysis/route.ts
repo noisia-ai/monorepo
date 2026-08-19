@@ -1,24 +1,18 @@
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { corpusSnapshots, studyCorpora, tbAnalyses } from "@noisia/db";
 import {
-  TB_METHODOLOGY_SLUG,
-  TB_METHODOLOGY_VERSION,
-  TB_PROMPT_VERSION,
-  TB_PIPELINE_VERSION,
   type DataOsCorpusAudit,
   type ListeningDataOsReconciliation
 } from "@noisia/query-engine";
 import { forbidden, unauthorized } from "@/lib/api/responses";
-import { type AnalysisStudySize, resolveAnalysisStudyPlan } from "@/lib/analysis/study-size";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { auditCorpusDataOs } from "@/lib/data-os/corpus-audit";
 import { reconcileCorpusListeningDataOs } from "@/lib/data-os/listening";
 import { db, pool } from "@/lib/db";
-import { getTbAnalysisQueue } from "@/lib/queue/tb-analysis";
 
 const startBodySchema = z.object({
   studySize: z.enum(["small", "medium", "large", "full_power"]).optional()
@@ -53,15 +47,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 /**
- * POST — launch a Triggers & Barriers analysis on the current corpus state.
+ * POST — compatibility adapter for launching the workspace-native T&B report.
  * Flow:
- *  1. Reject if corpus is already locked by another running analysis.
- *  2. Reuse the approval snapshot for the current corpus revision so the
- *     pipeline reads exactly the mention set the analyst certified.
- *  3. Insert tb_analyses row in 'running' status.
- *  4. Lock the corpus pointing at this analysis.
- *  5. Enqueue tb_run_analysis on the tb-analysis BullMQ queue.
- *  6. Return analysis id + bullmq job id so the UI can poll progress.
+ *  1. Preserve the legacy corpus approval and Data OS readiness gates.
+ *  2. Derive only the requested period from the approval snapshot.
+ *  3. Delegate population, relational snapshot, run lock and durable dispatch
+ *     to the same workspace/report contract used by the canonical API.
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
@@ -74,34 +65,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: "not_found", message: "Corpus not found." }, { status: 404 });
   }
 
-  // Reject if another analysis is already locking this corpus
-  const [lockRow] = await db
-    .select({ lockedBy: studyCorpora.lockedByAnalysisId })
-    .from(studyCorpora)
-    .where(and(eq(studyCorpora.id, corpus.id), isNotNull(studyCorpora.lockedByAnalysisId)))
-    .limit(1);
-
-  if (lockRow?.lockedBy) {
-    return Response.json(
-      {
-        error: "corpus_locked",
-        message: "Ya hay un análisis T&B en curso sobre este corpus. Espera a que termine o usa force-unlock.",
-        locked_by_analysis_id: lockRow.lockedBy
-      },
-      { status: 409 }
-    );
-  }
-
-  let requestedStudySize: AnalysisStudySize | undefined;
   try {
     const body = await request.json();
     const parsed = startBodySchema.safeParse(body);
     if (!parsed.success) {
       return Response.json({ error: "invalid_body", message: "Tamaño de estudio inválido." }, { status: 400 });
     }
-    requestedStudySize = parsed.data.studySize;
   } catch {
-    requestedStudySize = undefined;
+    // The compatibility endpoint remains fail-closed below for malformed legacy bodies.
   }
 
   const [readinessRow] = await db
@@ -215,28 +186,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   }
 
-  const studyPlan = resolveAnalysisStudyPlan({
-    corpusMentions: snapshot.mentionCount,
-    requestedSize: requestedStudySize
-  });
   const scopeResult = await pool.query<{
     period_start: string | null;
     period_end: string | null;
     mention_count: number;
-    snapshot_digest: string;
   }>(
     `SELECT
        MIN(mention.published_at)::date::text AS period_start,
        MAX(mention.published_at)::date::text AS period_end,
-       COUNT(snapshot_mention.mention_id)::integer AS mention_count,
-       'md5:' || md5(
-         COALESCE(string_agg(snapshot_mention.mention_id::text, ',' ORDER BY snapshot_mention.mention_id), '')
-       ) AS snapshot_digest
+       COUNT(snapshot_mention.mention_id)::integer AS mention_count
      FROM corpus_snapshot_mentions snapshot_mention
      JOIN mentions mention ON mention.id = snapshot_mention.mention_id
-     WHERE snapshot_mention.snapshot_id = $1::uuid
-       AND mention.study_corpus_id = $2::uuid`,
-    [snapshot.id, corpus.id]
+     WHERE snapshot_mention.snapshot_id = $1::uuid`,
+    [snapshot.id]
   );
   const frozenScope = scopeResult.rows[0];
   if (
@@ -252,106 +214,33 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       { status: 409 }
     );
   }
-
-  // 2. Insert tb_analyses row
-  const [analysis] = await db
-    .insert(tbAnalyses)
-    .values({
-      studyCorpusId: corpus.id,
-      snapshotId: snapshot.id,
-      pipelineVersion: TB_PIPELINE_VERSION,
-      methodologyVersion: TB_METHODOLOGY_VERSION,
-      methodologySlug: TB_METHODOLOGY_SLUG,
-      promptVersion: TB_PROMPT_VERSION,
-      modelVersion: process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6",
-      corpusRevision: readinessRow.corpusRevision,
-      periodStart: frozenScope.period_start,
-      periodEnd: frozenScope.period_end,
-      snapshotMentionCount: frozenScope.mention_count,
-      snapshotDigest: frozenScope.snapshot_digest,
-      scopeFrozenAt: new Date(),
-      comparisonCompatibilityState: "not_evaluated",
-      status: "running",
-      currentStep: "preflight",
-      businessQuestion: corpus.businessQuestion,
-      decisionToInform: corpus.decisionToInform,
-      metaJson: {
-        analysis_sample: {
-          requested_study_size: requestedStudySize ?? "medium",
-          resolved_study_size: studyPlan.size,
-          label: studyPlan.label,
-          strategy: studyPlan.isAutoFull ? "full_snapshot_auto" : "stratified_random",
-          snapshot_mentions: snapshot.mentionCount,
-          target_mentions: studyPlan.estimatedMentions,
-          coverage_pct: studyPlan.coveragePct,
-          mention_limit: studyPlan.mentionLimit,
-          estimated_cost_usd: studyPlan.estimatedCostUsd,
-          cost_per_mention_usd: 0.00125,
-          auto_full_threshold: 5000,
-          is_auto_full: studyPlan.isAutoFull,
-          corpus_revision: readinessRow.corpusRevision,
-          approval_snapshot_id: snapshot.id,
-          approval_override: readApprovalOverride(snapshot.scores)
-        },
-        data_os_preflight: dataOsAudit
-      },
-      executedByUserId: session.appUser.id
-    })
-    .returning({ id: tbAnalyses.id });
-
-  if (!analysis) {
+  const workspaceScope = await pool.query<{ workspace_id: string; timezone: string }>(
+    `SELECT workspace.id::text AS workspace_id, workspace.timezone
+     FROM signal_workspace_corpora membership
+     JOIN signal_workspaces workspace ON workspace.id = membership.workspace_id
+     WHERE membership.study_corpus_id = $1::uuid
+       AND membership.valid_to IS NULL
+       AND workspace.status = 'active'
+     ORDER BY CASE membership.role WHEN 'strategic' THEN 0 WHEN 'operational' THEN 1 ELSE 2 END
+     LIMIT 1`,
+    [corpus.id]
+  );
+  const workspace = workspaceScope.rows[0];
+  if (!workspace) {
     return Response.json(
-      { error: "db_error", message: "No se pudo crear el análisis." },
-      { status: 500 }
+      {
+        error: "workspace_report_not_available",
+        message: "El corpus no está vinculado a un workspace Signal activo."
+      },
+      { status: 409 }
     );
   }
-
-  // 3. Lock the corpus
-  await db
-    .update(studyCorpora)
-    .set({ lockedByAnalysisId: analysis.id })
-    .where(eq(studyCorpora.id, corpus.id));
-
-  // 4. Enqueue orchestrator
-  const queue = getTbAnalysisQueue();
-  const job = await queue.add(
-    "tb_run_analysis",
-    { tbAnalysisId: analysis.id },
-    { attempts: 1, removeOnComplete: { age: 60 * 60 * 24 } }
-  );
-
-  return Response.json(
-    {
-      ok: true,
-      tb_analysis_id: analysis.id,
-      snapshot_id: snapshot.id,
-      run_scope: {
-        corpus_revision: readinessRow.corpusRevision,
-        period_start: frozenScope.period_start,
-        period_end: frozenScope.period_end,
-        snapshot_digest: frozenScope.snapshot_digest,
-        snapshot_mention_count: frozenScope.mention_count,
-        methodology_slug: TB_METHODOLOGY_SLUG,
-        methodology_version: TB_METHODOLOGY_VERSION,
-        pipeline_version: TB_PIPELINE_VERSION,
-        prompt_version: TB_PROMPT_VERSION,
-        model_version: process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6"
-      },
-      study_plan: studyPlan,
-      data_os: {
-        listening: publicListeningDataOs(dataOs),
-        audit: dataOsAudit
-      },
-      bullmq_job_id: job.id,
-      status: "running"
-    },
-    { status: 202 }
-  );
-}
-
-function readApprovalOverride(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return (value as Record<string, unknown>).override === true;
+  // Keep this compatibility endpoint available for rollback/read history, but
+  // do not let it bypass the workspace-native governed preflight and hard cap.
+  return Response.json({
+    error: "strategic_gate_d_preflight_required",
+    message: "Inicia T&B desde el workspace Signal después del preflight gobernado."
+  }, { status: 409, headers: { "Cache-Control": "private, no-store" } });
 }
 
 function publicListeningDataOs(value: ListeningDataOsReconciliation) {
@@ -362,6 +251,7 @@ function publicListeningDataOs(value: ListeningDataOsReconciliation) {
     capabilities: value.capabilities
   };
 }
+
 
 /**
  * DELETE — force-unlock the corpus. Used when a previous analysis hangs and

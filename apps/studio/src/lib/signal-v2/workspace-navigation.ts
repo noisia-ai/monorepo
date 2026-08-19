@@ -6,6 +6,7 @@ import type { SignalStrategicReleaseSummary } from "@/lib/data-os/signal-strateg
 
 export type SignalStrategicStudyNavigationItem = {
   id: string;
+  reportKey: string;
   title: string;
   href: string;
   status: string;
@@ -18,30 +19,31 @@ export function buildSignalStrategicStudyNavigation(args: {
   workspace: ResolvedSignalWorkspace;
   releases: SignalStrategicReleaseSummary[];
 }): SignalStrategicStudyNavigationItem[] {
-  return args.workspace.corpora
-    .filter(isStrategicStudy)
-    .map((corpus) => {
-      const releases = args.releases
-        .filter((release) => release.study_corpus_id === corpus.id)
-        .sort(compareReleases);
-      return {
-        id: corpus.id,
-        title: corpus.name?.trim() || "Triggers & Barriers",
-        href: `/signal/${args.workspace.slug}?study=${corpus.id}`,
-        status: corpus.status,
-        legacyOutputId: corpus.outputId,
-        currentRelease: releases.find((release) => release.is_current)
-          ?? releases.find((release) => release.status === "published")
-          ?? releases[0]
-          ?? null,
-        releases
-      };
-    })
-    .sort((left, right) => {
-      const leftDate = left.currentRelease?.period_end ?? "";
-      const rightDate = right.currentRelease?.period_end ?? "";
-      return rightDate.localeCompare(leftDate) || left.title.localeCompare(right.title);
-    });
+  const strategicCorpora = args.workspace.corpora.filter(isStrategicStudy);
+  const releases = [...args.releases]
+    .filter((release) => (release.report_key ?? "triggers-barriers") === "triggers-barriers")
+    .sort(compareReleases);
+  const currentRelease = releases.find((release) => release.is_current)
+    ?? releases.find((release) => release.status === "published")
+    ?? releases[0]
+    ?? null;
+  const executionCorpus = strategicCorpora.find((corpus) => (
+    corpus.id === currentRelease?.study_corpus_id
+  )) ?? strategicCorpora.sort((left, right) => (
+    right.validFrom.localeCompare(left.validFrom)
+  ))[0];
+  return [{
+    // The client identity is the workspace report. An execution corpus is
+    // compatibility/provenance only and never creates another navigation item.
+    id: "triggers-barriers",
+    reportKey: "triggers-barriers",
+    title: "Triggers & Barriers",
+    href: `/signal/${args.workspace.slug}/reports/triggers-barriers`,
+    status: currentRelease?.status ?? executionCorpus?.status ?? "not_available",
+    legacyOutputId: executionCorpus?.outputId ?? null,
+    currentRelease,
+    releases
+  }];
 }
 
 export function findSignalStrategicStudy(
@@ -49,7 +51,12 @@ export function findSignalStrategicStudy(
   requestedId: string | null | undefined
 ) {
   if (!requestedId) return null;
-  return studies.find((study) => study.id === requestedId) ?? null;
+  return studies.find((study) => (
+    study.id === requestedId
+    || study.reportKey === requestedId
+    || study.currentRelease?.study_corpus_id === requestedId
+    || study.releases.some((release) => release.study_corpus_id === requestedId)
+  )) ?? null;
 }
 
 function isStrategicStudy(corpus: SignalWorkspaceCorpus) {

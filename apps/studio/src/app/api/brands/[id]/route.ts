@@ -1,11 +1,13 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { brandKnowledgeSources, brands, organizations, studyCorpora } from "@noisia/db";
+import { brandKnowledgeSources, brands, organizations, signalRefreshPolicies, signalWorkspaces, studyCorpora } from "@noisia/db";
 
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { syncClientBrandAccessForMovedBrand } from "@/lib/auth/org-sync";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
+import { resolveBrandDeleteDisposition } from "@/lib/data-os/brand-lifecycle";
+import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { db } from "@/lib/db";
 import { updateBrandSchema } from "@/lib/validation/brand";
 
@@ -73,6 +75,21 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           .where(eq(brandKnowledgeSources.brandId, current.id));
       }
 
+      await tx
+        .update(signalWorkspaces)
+        .set({
+          organizationId: parsed.data.organization_id,
+          slug: parsed.data.slug,
+          timezone: parsed.data.timezone,
+          status: parsed.data.status,
+          updatedAt: new Date()
+        })
+        .where(eq(signalWorkspaces.brandId, current.id));
+      await tx
+        .update(signalRefreshPolicies)
+        .set({ timezone: parsed.data.timezone, updatedAt: new Date() })
+        .where(eq(signalRefreshPolicies.workspaceId, sql`(SELECT id FROM signal_workspaces WHERE brand_id=${current.id})`));
+
       return row;
     });
 
@@ -80,6 +97,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await syncClientBrandAccessForMovedBrand({
         brandId: current.id,
         organizationId: parsed.data.organization_id
+      });
+    }
+
+    if (updated && session.appUser.userType === "noisia_internal") {
+      await reconcileSignalBrandOsForBrandMutationV1({
+        brandId: current.id,
+        actor: session.appUser,
+        idempotencyKey: `brand-update:${current.id}:${updated.updatedAt.toISOString()}`
       });
     }
 
@@ -116,28 +141,40 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
 
   const url = new URL(_request.url);
   const permanent = url.searchParams.get("permanent") === "true";
+  const [[corporaCount], [workspaceCount]] = await Promise.all([
+    db.select({ total: sql<number>`count(*)::int` })
+      .from(studyCorpora)
+      .where(eq(studyCorpora.brandId, current.id)),
+    db.select({ total: sql<number>`count(*)::int` })
+      .from(signalWorkspaces)
+      .where(eq(signalWorkspaces.brandId, current.id))
+  ]);
+  const disposition = resolveBrandDeleteDisposition({
+    permanent,
+    status: current.status,
+    corporaCount: corporaCount?.total ?? 0,
+    workspaceCount: workspaceCount?.total ?? 0
+  });
 
-  if (permanent) {
-    if (current.status !== "archived") {
-      return Response.json(
-        {
-          error: "archive_required",
-          message: "Archiva la marca antes de borrarla permanentemente."
-        },
-        { status: 422 }
-      );
-    }
-
-    await permanentlyDeleteBrand(current.id);
-    return Response.json({ data: { id: current.id, deleted: true }, mode: "permanent" });
+  if (disposition === "workspace_owned_blocked") {
+    return Response.json(
+      {
+        error: "workspace_owned_delete_not_supported",
+        message: "Esta marca conserva data, snapshots y releases del workspace. Sólo puede archivarse hasta contar con un proceso explícito de retención."
+      },
+      { status: 409 }
+    );
   }
-
-  const [corporaCount] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(studyCorpora)
-    .where(eq(studyCorpora.brandId, current.id));
-
-  if ((corporaCount?.total ?? 0) > 0) {
+  if (disposition === "archive_required") {
+    return Response.json(
+      {
+        error: "archive_required",
+        message: "Archiva la marca antes de borrarla permanentemente."
+      },
+      { status: 422 }
+    );
+  }
+  if (disposition === "archive") {
     const [updated] = await db
       .update(brands)
       .set({ status: "archived", updatedAt: new Date() })
@@ -147,13 +184,15 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return Response.json({
       data: updated ?? { id: current.id, status: "archived" },
       mode: "archived",
-      message: "La marca tiene corpora asociados; se archivó para conservar el historial."
+      message: "La marca conserva data o historial asociado; se archivó sin borrar el workspace."
     });
   }
 
   await permanentlyDeleteBrand(current.id);
-
-  return Response.json({ data: { id: current.id, deleted: true }, mode: "deleted" });
+  return Response.json({
+    data: { id: current.id, deleted: true },
+    mode: permanent ? "permanent" : "deleted"
+  });
 }
 
 async function permanentlyDeleteBrand(brandId: string) {

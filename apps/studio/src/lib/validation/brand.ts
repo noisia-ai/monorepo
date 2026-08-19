@@ -16,6 +16,14 @@ const shortListItem = (max: number, min = 1) =>
     (value) => (typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, max) : value),
     z.string().min(min).max(max)
   );
+const timezoneSchema = z.string().min(1).max(120).refine((value) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}, "Selecciona una zona horaria IANA válida.");
 
 export const createBrandSchema = z.object({
   organization_id: z.string().uuid().optional(),
@@ -30,6 +38,7 @@ export const createBrandSchema = z.object({
   brand_seed_handles: z.array(shortListItem(240)).default([]),
   competitors: z.array(shortListItem(240, 2)).default([]),
   knowledge_notes: optionalText(50000),
+  timezone: timezoneSchema.default("America/Mexico_City"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
   primary_brand_manager_user_id: z.string().uuid().optional()
 }).refine((data) => data.organization_id || data.organization_name, {
@@ -47,6 +56,7 @@ export const updateBrandSchema = z.object({
   countries: z.array(countryCodeSchema).min(1).default(["MX"]),
   description: optionalText(12000),
   brand_seed_handles: z.array(shortListItem(240)).default([]),
+  timezone: timezoneSchema,
   status: z.enum(["active", "paused", "archived"]).default("active")
 });
 

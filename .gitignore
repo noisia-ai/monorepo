@@ -9,6 +9,8 @@ dist
 out
 coverage
 .data
+.codex/
+.codex-artifacts/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -20,8 +22,21 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 *.swp
 
+# Local Python benchmark/runtime caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
 # Local screenshots, audit captures, and scratch artifacts
 /tmp/
 
 # Pitch kit: local working decks (may contain client data — never commit)
 packages/pitch-kit/examples/_local/
+
+# KB Comercial (precios + discusión interna) — vive en Drive, NUNCA en este repo público.
+# Red de seguridad: aunque se copie una carpeta/documento comercial al árbol, git lo ignora.
+*.docx
+**/noisia-kb-comercial*/
+**/*KB Comercial*/

@@ -7,27 +7,19 @@ import {
   SIGNAL_MATERIALIZE_JOB_NAME,
   SIGNAL_REFRESH_CONTRACT_VERSION,
   SIGNAL_REFRESH_RUN_JOB_NAME,
-  SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME,
-  SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
   buildSignalRefreshRunIdempotencyKeyV1,
   expandSignalVelocityInvalidationThroughV1,
-  signalTaxonomyEnrichmentIdempotencyKeyV1,
   type SignalInvalidationJobDataV1,
   type SignalMaterializeJobDataV1,
   type SignalRefreshRunJobDataV1,
   type SignalRefreshTickJobDataV1,
-  type SignalTaxonomyEnrichmentJobDataV1
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
-import { getSignalRefreshQueue } from "../queues/signal-refresh";
 import {
   buildSignalRefreshRunOptions,
   enqueueRecoverableSignalRefreshRun
 } from "./signal-refresh-runtime";
-import {
-  buildSignalTaxonomyEnrichmentOptions,
-  isSignalTaxonomyEnrichmentEnabled
-} from "./signal-taxonomy-enrichment-runtime";
+import { SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON } from "./signal-taxonomy-enrichment-runtime";
 
 type DuePolicy = {
   id: string;
@@ -46,18 +38,6 @@ type RecoverableRun = {
   source_key: string;
   scheduled_for: Date;
   idempotency_key: string;
-};
-
-type RecoverableTaxonomyRun = {
-  id: string;
-  workspace_id: string;
-  study_corpus_id: string;
-  taxonomy_profile_id: string;
-  kind: "topic" | "narrative";
-  input_corpus_revision: number;
-  budget_cap_usd: string;
-  attempt: number;
-  continuation: number;
 };
 
 export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>) {
@@ -147,7 +127,7 @@ export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>
     LIMIT 100
   `);
 
-  const queue = getSignalRefreshQueue();
+  const queue = await signalRefreshQueue();
   let policiesEnqueued = 0;
   let policiesRecoverable = 0;
   for (const run of recoverable.rows) {
@@ -391,15 +371,20 @@ export async function signalRefreshRunJob(job: Job<SignalRefreshRunJobDataV1>) {
   }
 }
 
-export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1>) {
+export async function signalInvalidationJob(
+  job: Job<SignalInvalidationJobDataV1>,
+  dependencies: {
+    enqueueMaterialization?: (data: SignalMaterializeJobDataV1) => Promise<void>;
+  } = {}
+) {
   const client = await pool.connect();
-  const taxonomyJobs: SignalTaxonomyEnrichmentJobDataV1[] = [];
   try {
     await client.query("BEGIN");
     const claimed = await client.query<{
       id: string;
       workspace_id: string;
-      study_corpus_id: string;
+      study_corpus_id: string | null;
+      population_id: string | null;
       source_key: string;
       affected_from: string | null;
       affected_through: string | null;
@@ -409,7 +394,8 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       WHERE id = $1::uuid
         AND status IN ('pending', 'failed')
         AND attempt < 3
-      RETURNING id::text, workspace_id::text, study_corpus_id::text, source_key,
+      RETURNING id::text, workspace_id::text, study_corpus_id::text,
+        population_id::text, source_key,
         affected_from::text, affected_through::text
     `, [job.data.invalidation_id]);
     const invalidation = claimed.rows[0];
@@ -417,6 +403,36 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       await client.query("COMMIT");
       return { reconciliation_only: true };
     }
+    const governedPopulation = invalidation.population_id
+      ? await client.query<{
+          population_id: string;
+          population_version: number;
+          population_definition_hash: string;
+        }>(`
+          SELECT definition.id::text AS population_id,
+            definition.version AS population_version,
+            definition.definition_hash AS population_definition_hash
+          FROM signal_population_definitions definition
+          JOIN signal_workspace_population_pointers pointer
+            ON pointer.population_id = definition.id
+           AND pointer.workspace_id = definition.workspace_id
+           AND pointer.purpose = 'operational'
+          WHERE definition.id = $1::uuid
+            AND definition.workspace_id = $2::uuid
+            AND definition.status = 'active'
+        `, [invalidation.population_id, invalidation.workspace_id])
+      : null;
+    const populationScope = governedPopulation?.rows[0] ?? null;
+    if (invalidation.population_id && !populationScope) {
+      throw new Error("signal_operational_population_invalidation_scope_not_available");
+    }
+    if (!invalidation.population_id && !invalidation.study_corpus_id) {
+      throw new Error("signal_invalidation_scope_not_available");
+    }
+    const operationalScopeId = invalidation.population_id ?? invalidation.study_corpus_id!;
+    const materializationScopeSql = invalidation.population_id
+      ? "materialization.population_id = $1::uuid"
+      : "materialization.study_corpus_id = $1::uuid";
 
     const expandedVelocityThrough = expandSignalVelocityInvalidationThroughV1(invalidation.affected_through);
     const materializations = await client.query(`
@@ -426,7 +442,7 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
             WHEN materialization.workspace_id IS NOT NULL THEN 'stale'
             ELSE materialization.materialization_state
           END
-      WHERE materialization.study_corpus_id = $1::uuid
+      WHERE ${materializationScopeSql}
         AND (
           (
             materialization.workspace_id IS NOT NULL
@@ -456,7 +472,7 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
           )
         )
     `, [
-      invalidation.study_corpus_id,
+      operationalScopeId,
       invalidation.affected_from,
       invalidation.affected_through,
       expandedVelocityThrough
@@ -468,9 +484,18 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
             WHERE freshness.workspace_id = $1::uuid
               AND freshness.state <> 'not_available'
               AND (
-                freshness.data_scope->'study_corpus_ids' ? $2
+                (
+                  $4::boolean = true
+                  AND freshness.data_scope->>'population_id' = $2
+                )
+                OR (
+                  $4::boolean = false
+                  AND (
+                    freshness.data_scope->'study_corpus_ids' ? $2
+                    OR freshness.data_scope->>'study_corpus_id' = $2
+                  )
+                )
                 OR freshness.data_scope->'source_keys' ? $3
-                OR freshness.data_scope->>'study_corpus_id' = $2
               )
             RETURNING latest_interpretation_id
           )
@@ -480,105 +505,35 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
             SELECT latest_interpretation_id FROM stale_freshness
             WHERE latest_interpretation_id IS NOT NULL
           )
-        `, [invalidation.workspace_id, invalidation.study_corpus_id, invalidation.source_key]);
+        `, [
+          invalidation.workspace_id,
+          operationalScopeId,
+          invalidation.source_key,
+          Boolean(invalidation.population_id)
+        ]);
     const materializationJob: SignalMaterializeJobDataV1 = {
       contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
       trigger: "invalidation",
       workspace_id: invalidation.workspace_id,
-      study_corpus_id: invalidation.study_corpus_id,
+      ...(populationScope
+        ? {
+            population_id: populationScope.population_id,
+            population_version: populationScope.population_version,
+            population_definition_hash: populationScope.population_definition_hash
+          }
+        : { study_corpus_id: invalidation.study_corpus_id! }),
       invalidation_id: invalidation.id,
       affected_from: invalidation.affected_from,
       affected_through: expandedVelocityThrough
     };
-    await getSignalRefreshQueue().add(
-      SIGNAL_MATERIALIZE_JOB_NAME,
-      materializationJob,
-      buildSignalRefreshRunOptions(`signal-materialize-${invalidation.id}`)
-    );
-    if (isSignalTaxonomyEnrichmentEnabled()) {
-      const budgetCapUsd = finitePositive(
-        process.env.NOISIA_SIGNAL_TAXONOMY_BUDGET_CAP_USD
+    if (dependencies.enqueueMaterialization) {
+      await dependencies.enqueueMaterialization(materializationJob);
+    } else {
+      await (await signalRefreshQueue()).add(
+        SIGNAL_MATERIALIZE_JOB_NAME,
+        materializationJob,
+        buildSignalRefreshRunOptions(`signal-materialize-${invalidation.id}`)
       );
-      if (budgetCapUsd > 0) {
-        const activeProfiles = await client.query<{
-          profile_id: string;
-          model_version_id: string;
-          kind: "topic" | "narrative";
-          corpus_revision: number;
-        }>(`
-          SELECT profile.id::text AS profile_id,
-            profile.model_version_id::text, profile.kind,
-            corpus.corpus_revision
-          FROM signal_taxonomy_profiles profile
-          JOIN signal_workspace_corpora membership
-            ON membership.workspace_id = profile.workspace_id
-           AND membership.study_corpus_id = $2::uuid
-           AND membership.valid_to IS NULL
-          JOIN study_corpora corpus ON corpus.id = membership.study_corpus_id
-          WHERE profile.workspace_id = $1::uuid
-            AND profile.status = 'active'
-          ORDER BY profile.kind, profile.id
-        `, [invalidation.workspace_id, invalidation.study_corpus_id]);
-        for (const profile of activeProfiles.rows) {
-          const idempotencyKey = signalTaxonomyEnrichmentIdempotencyKeyV1({
-            workspace_id: invalidation.workspace_id,
-            study_corpus_id: invalidation.study_corpus_id,
-            profile_id: profile.profile_id,
-            corpus_revision: profile.corpus_revision
-          });
-          const inserted = await client.query<{ id: string }>(`
-            INSERT INTO signal_refresh_runs (
-              workspace_id, study_corpus_id, source_key,
-              idempotency_key, trigger, status, attempt,
-              run_type, taxonomy_profile_id, model_version_id,
-              input_corpus_revision, budget_cap_usd, result_summary
-            ) VALUES (
-              $1::uuid, $2::uuid, $3,
-              $4, 'import', 'queued', 1,
-              'taxonomy_enrichment', $5::uuid, $6::uuid,
-              $7, $8, jsonb_build_object('invalidation_id', $9::uuid)
-            )
-            ON CONFLICT (idempotency_key) DO UPDATE
-              SET budget_cap_usd = GREATEST(
-                    COALESCE(signal_refresh_runs.budget_cap_usd, 0),
-                    EXCLUDED.budget_cap_usd
-                  ),
-                  status = CASE
-                    WHEN signal_refresh_runs.status IN ('blocked', 'failed')
-                      THEN 'queued'
-                    ELSE signal_refresh_runs.status
-                  END,
-                  completed_at = CASE
-                    WHEN signal_refresh_runs.status IN ('blocked', 'failed')
-                      THEN NULL
-                    ELSE signal_refresh_runs.completed_at
-                  END,
-                  result_summary = signal_refresh_runs.result_summary
-                    || EXCLUDED.result_summary
-            RETURNING id::text
-          `, [
-            invalidation.workspace_id,
-            invalidation.study_corpus_id,
-            `signal-taxonomy:${profile.kind}`,
-            idempotencyKey,
-            profile.profile_id,
-            profile.model_version_id,
-            profile.corpus_revision,
-            budgetCapUsd,
-            invalidation.id
-          ]);
-          taxonomyJobs.push({
-            contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
-            run_id: inserted.rows[0]!.id,
-            workspace_id: invalidation.workspace_id,
-            study_corpus_id: invalidation.study_corpus_id,
-            profile_id: profile.profile_id,
-            kind: profile.kind,
-            corpus_revision: profile.corpus_revision,
-            budget_cap_usd: budgetCapUsd
-          });
-        }
-      }
     }
     await client.query(`
       UPDATE signal_data_invalidations
@@ -596,20 +551,11 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
       expandedVelocityThrough
     ]);
     await client.query("COMMIT");
-    const queue = getSignalRefreshQueue();
-    await Promise.allSettled(taxonomyJobs.map((data) =>
-      queue.add(
-        SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME,
-        data,
-        buildSignalTaxonomyEnrichmentOptions(
-          `signal-taxonomy-${data.run_id}-a1`
-        )
-      )
-    ));
     return {
       materializations_invalidated: materializations.rowCount ?? 0,
       interpretations_invalidated: interpretations.rowCount ?? 0,
-      taxonomy_enrichment_runs: taxonomyJobs.length
+      taxonomy_enrichment_runs: 0,
+      taxonomy_enrichment_state: "retired_10b"
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -626,71 +572,26 @@ export async function signalInvalidationJob(job: Job<SignalInvalidationJobDataV1
 }
 
 async function reconcileTaxonomyEnrichmentRuns(
-  queue: ReturnType<typeof getSignalRefreshQueue>
+  _queue: Awaited<ReturnType<typeof signalRefreshQueue>>
 ) {
-  if (!isSignalTaxonomyEnrichmentEnabled()) return 0;
   await pool.query(`
     UPDATE signal_refresh_runs
-    SET status = 'failed',
-      error_code = 'heartbeat_stale',
-      error_summary = '{"message":"Taxonomy enrichment heartbeat expired; run is recoverable."}'::jsonb,
-      completed_at = NULL,
+    SET status = 'blocked',
+      error_code = $1,
+      error_summary = jsonb_build_object('code',$1,'retryable',false),
+      result_summary = COALESCE(result_summary,'{}'::jsonb)
+        || jsonb_build_object('kill_switch','gate-10b','provider_calls',0),
+      completed_at = COALESCE(completed_at,now()),
       updated_at = now()
     WHERE run_type = 'taxonomy_enrichment'
-      AND status = 'running'
-      AND COALESCE(heartbeat_at, started_at, created_at) < now() - interval '5 minutes'
-      AND attempt < 3
-  `);
-  const recoverable = await pool.query<RecoverableTaxonomyRun>(`
-    SELECT run.id::text, run.workspace_id::text,
-      run.study_corpus_id::text, run.taxonomy_profile_id::text,
-      profile.kind, run.input_corpus_revision,
-      run.budget_cap_usd::text, run.attempt,
-      COALESCE((run.result_summary->>'continuation')::int, 0)
-        AS continuation
-    FROM signal_refresh_runs run
-    JOIN signal_taxonomy_profiles profile
-      ON profile.id = run.taxonomy_profile_id
-    WHERE run.run_type = 'taxonomy_enrichment'
-      AND (
-        run.status = 'queued'
-        OR (run.status = 'failed' AND run.attempt < 3)
-      )
-      AND profile.status IN ('active', 'activating')
-    ORDER BY run.created_at, run.id
-    LIMIT 100
-  `);
-  let enqueued = 0;
-  for (const run of recoverable.rows) {
-    const data: SignalTaxonomyEnrichmentJobDataV1 = {
-      contract_version: SIGNAL_TOPICS_NARRATIVES_CONTRACT_VERSION,
-      run_id: run.id,
-      workspace_id: run.workspace_id,
-      study_corpus_id: run.study_corpus_id,
-      profile_id: run.taxonomy_profile_id,
-      kind: run.kind,
-      corpus_revision: run.input_corpus_revision,
-      budget_cap_usd: Number(run.budget_cap_usd)
-    };
-    const jobId =
-      `signal-taxonomy-${run.id}-c${run.continuation}-a${run.attempt}`;
-    try {
-      const queued = await queue.add(
-        SIGNAL_TAXONOMY_ENRICHMENT_JOB_NAME,
-        data,
-        buildSignalTaxonomyEnrichmentOptions(jobId)
-      );
-      await pool.query(`
-        UPDATE signal_refresh_runs
-        SET bullmq_job_id = $2, updated_at = now()
-        WHERE id = $1::uuid AND status IN ('queued', 'failed')
-      `, [run.id, queued.id ?? jobId]);
-      enqueued += 1;
-    } catch {
-      // PostgreSQL remains the durable outbox; the next tick retries enqueue.
-    }
-  }
-  return enqueued;
+      AND status IN ('queued','running','partial','failed')
+  `, [SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON]);
+  return 0;
+}
+
+async function signalRefreshQueue() {
+  const { getSignalRefreshQueue } = await import("../queues/signal-refresh");
+  return getSignalRefreshQueue();
 }
 
 async function resolveLatestAcceptedEvent(
@@ -754,9 +655,4 @@ function safeErrorCode(error: unknown) {
 function safeErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/postgres(?:ql)?:\/\/\S+/giu, "[redacted-database-url]").slice(0, 500);
-}
-
-function finitePositive(value: string | undefined) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }

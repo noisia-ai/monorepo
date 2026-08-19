@@ -7,6 +7,7 @@ import {
 } from "@noisia/query-engine";
 
 import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
+import type { SignalOperationalReadScopeV1 } from "@/lib/data-os/signal-operational-read-scope";
 import {
   loadSignalBootstrapV1,
   loadSignalFacetsV1,
@@ -20,9 +21,13 @@ import { loadSignalTopicsNarrativesOverviewV1 } from "@/lib/data-os/signal-topic
 
 export async function loadSignalWorkspaceHomeV1(
   workspace: ResolvedSignalWorkspace,
-  isInternalUser: boolean
+  isInternalUser: boolean,
+  readScope?: SignalOperationalReadScopeV1,
+  moduleScopes: {
+    topicsNarrativesReadScope?: SignalOperationalReadScopeV1;
+  } = {}
 ): Promise<SignalWorkspaceHomeV1> {
-  const bootstrap = await loadSignalBootstrapV1(workspace, isInternalUser);
+  const bootstrap = await loadSignalBootstrapV1(workspace, isInternalUser, readScope);
   const defaultFilter = defaultSignalHomeFilter(
     bootstrap.coverage.date_from,
     bootstrap.coverage.date_through,
@@ -35,6 +40,7 @@ export async function loadSignalWorkspaceHomeV1(
       contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
       facade_version: "signal-workspace-home-v1",
       workspace: bootstrap.workspace,
+      read_scope: bootstrap.read_scope,
       corpus: homeCorpus(bootstrap.corpus),
       coverage: bootstrap.coverage,
       default_filter: null,
@@ -72,16 +78,17 @@ export async function loadSignalWorkspaceHomeV1(
     releases,
     lineage
   ] = await Promise.all([
-    loadSignalFacetsV1({ workspace, filter: defaultFilter, isInternalUser }),
-    loadSignalMetricGroupsV1({ workspace, filter: defaultFilter, isInternalUser }),
-    loadSignalInterpretationsV1({ workspace, filter: defaultFilter, isInternalUser }),
+    loadSignalFacetsV1({ workspace, readScope, filter: defaultFilter, isInternalUser }),
+    loadSignalMetricGroupsV1({ workspace, readScope, filter: defaultFilter, isInternalUser }),
+    loadSignalInterpretationsV1({ workspace, readScope, filter: defaultFilter, isInternalUser }),
     loadSignalTopicsNarrativesOverviewV1({
       workspace,
+      readScope: moduleScopes.topicsNarrativesReadScope ?? readScope,
       filter: defaultFilter,
       isInternalUser
     }),
     loadSignalStrategicReleasesV1(workspace, isInternalUser),
-    loadSignalLineageV1({ workspace, filter: defaultFilter, isInternalUser })
+    loadSignalLineageV1({ workspace, readScope, filter: defaultFilter, isInternalUser })
   ]);
   const strategicState = releases.current
     ? "fresh"
@@ -136,6 +143,7 @@ export async function loadSignalWorkspaceHomeV1(
     contract_version: SIGNAL_BACKEND_CONTRACT_VERSION,
     facade_version: "signal-workspace-home-v1",
     workspace: bootstrap.workspace,
+    read_scope: bootstrap.read_scope,
     corpus: homeCorpus(bootstrap.corpus),
     coverage: bootstrap.coverage,
     default_filter: defaultFilter,
@@ -221,7 +229,8 @@ function homeCorpus(corpus: {
   role: string;
   status: string;
   name: string | null;
-}): SignalWorkspaceHomeV1["corpus"] {
+} | null): SignalWorkspaceHomeV1["corpus"] {
+  if (!corpus) return null;
   return {
     ...corpus,
     role: corpus.role === "operational" ? "operational" : "legacy"

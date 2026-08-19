@@ -14,6 +14,14 @@ import {
   type QueryConstructionScope,
   type QuerySemanticValidation
 } from "./query-construction";
+import {
+  adaptStudyQueryComposerInputV1,
+  type MemoryRecord,
+  type MethodologyManifest,
+  type QueryComposerCoreInput,
+  type QueryComposerInput,
+  type QueryStrategyBrief
+} from "./query-composer-core";
 
 export * from "./tb";
 export * from "./semantic-rag";
@@ -38,8 +46,16 @@ export * from "./data-os-metric-catalog";
 export * from "./signal-backend-v1";
 export * from "./signal-filter-window-v1";
 export * from "./signal-workspace-home-v1";
+export * from "./signal-workspace-data-plane-v1";
+export * from "./signal-governed-views-v1";
+export * from "./signal-strategic-gate-d-v1";
+export * from "./signal-semantic-review-v1";
+export * from "./signal-semantic-resolution-v1";
 export * from "./signal-topics-narratives-v1";
+export * from "./signal-classification-authority-v1";
+export * from "./signal-taxonomy-insights-v1";
 export * from "./signal-refresh-v1";
+export * from "./signal-acquisition-plan-v1";
 export * from "./signal-metric-catalog-v1";
 export * from "./signal-materialization-v1";
 export * from "./signal-interpretation-v1";
@@ -48,6 +64,7 @@ export * from "./tb-temporal-v1";
 export * from "./query-pack-evaluation";
 export * from "./listen-query-language";
 export * from "./query-construction";
+export * from "./query-composer-core";
 export * from "./corpus-assessment";
 export * from "./methodologies/registry";
 export * from "./methodologies/narrative-ownership";
@@ -355,78 +372,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
 }
 
-export type QueryComposerInput = {
-  corpus: {
-    id: string;
-    name: string | null;
-    businessQuestion: string | null;
-    decisionToInform: string | null;
-    audienceSegment: string | null;
-    geoFocus: string[];
-    targetWindowMonths: number | null;
-    contextForm: unknown;
-  };
-  subject: {
-    type: "brand" | "theme";
-    name: string;
-    slug: string;
-    industry: string | null;
-    industrySub: string | null;
-    countries: string[];
-    brandSeedHandles: string[];
-    description: string | null;
-  };
-  methodology: {
-    slug: string;
-    name: string;
-    version: string;
-    manifest: MethodologyManifest;
-  };
-  competitors: string[];
-  competitorEntities?: QueryCompetitorEntity[];
-  brandSeeds: string[];
-  knowledgeSources: MemoryRecord[];
-  memoryIndustry: MemoryRecord[];
-  memoryBrand: MemoryRecord[];
-  queryStrategyBrief?: QueryStrategyBrief;
-};
-
-export type QueryStrategyBrief = {
-  summary: string;
-  priority_topics: string[];
-  audience_clues: string[];
-  competitor_hypotheses: string[];
-  query_language: string[];
-  exclusions_or_noise: string[];
-  brand_query_role: string;
-  competitor_query_role: string;
-  industry_query_role: string;
-  must_answer: string[];
-  limitations: string[];
-};
-
-export type MethodologyManifest = {
-  query_mode?: QueryConstructionMode;
-  signal_phrases?: {
-    triggers_generic?: string[];
-    barriers_generic?: string[];
-  };
-  global_exclusions?: string[];
-  engine_validation_prompt?: string;
-  inputs?: {
-    corpus?: {
-      minimum_viable?: number;
-      ideal?: number;
-      maximum_useful?: number;
-    };
-  };
-};
-
-export type MemoryRecord = {
-  type: string;
-  content: unknown;
-};
-
 export type ComposedQuery = {
   query_text: string;
   /** First-class competitive queries. Every item represents exactly one governed entity. */
@@ -489,11 +434,16 @@ export type ComposedQuery = {
   };
 };
 
-export function buildQueryComposerPrompt(input: QueryComposerInput) {
+type QueryComposerCompatibleInput = QueryComposerCoreInput | QueryComposerInput;
+
+export function buildQueryComposerPrompt(rawInput: QueryComposerCompatibleInput) {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const constructionInput = buildQueryConstructionInput(input);
   const plan = buildQueryConstructionPlan(constructionInput);
   const subjectOs = input.subject.type === "brand" ? "Brand OS" : "Theme OS";
-  const governedRagLabel = `${subjectOs} + Study OS`;
+  const governedRagLabel = input.brief.optional_study_context
+    ? `${subjectOs} + Study OS`
+    : subjectOs;
   const hasCompetitorScope = plan.anchors.competitor_entities.length > 0;
   const hasCategoryScope = plan.anchors.category.length > 0;
   const governedScopeCount = 1 + (hasCompetitorScope ? 1 : 0) + (hasCategoryScope ? 1 : 0);
@@ -566,7 +516,7 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
     "Input:",
     JSON.stringify(
       {
-        corpus: input.corpus,
+        acquisition_brief: input.brief,
         query_strategy_brief: input.queryStrategyBrief ?? null,
         knowledge_base: input.knowledgeSources,
         subject: input.subject,
@@ -584,7 +534,8 @@ export function buildQueryComposerPrompt(input: QueryComposerInput) {
   ].join("\n");
 }
 
-export function buildQueryStrategyBriefPrompt(input: QueryComposerInput): string {
+export function buildQueryStrategyBriefPrompt(rawInput: QueryComposerCompatibleInput): string {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const subjectOs = input.subject.type === "brand" ? "Brand OS" : "Theme OS";
   const constructionPlan = buildQueryConstructionPlan(buildQueryConstructionInput(input));
   const hasCompetitorScope = constructionPlan.anchors.competitor_entities.length > 0;
@@ -635,7 +586,7 @@ export function buildQueryStrategyBriefPrompt(input: QueryComposerInput): string
     "Input:",
     JSON.stringify(
       {
-        corpus: input.corpus,
+        acquisition_brief: input.brief,
         subject: input.subject,
         methodology: {
           slug: input.methodology.slug,
@@ -849,7 +800,8 @@ export const BOOLEAN_LISTENING_QUERY_RULES = [
   "- La expresión es una hipótesis portable: su calidad se evalúa después de importar una extracción ligada al query pack."
 ].join("\n");
 
-export function buildFallbackQuery(input: QueryComposerInput): ComposedQuery {
+export function buildFallbackQuery(rawInput: QueryComposerCompatibleInput): ComposedQuery {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const components = buildQueryComponents(input);
   const constructionPlan = buildQueryConstructionPlan(buildQueryConstructionInput(input));
   const canonical = queriesFromConstructionPlan(constructionPlan);
@@ -869,7 +821,12 @@ export function buildFallbackQuery(input: QueryComposerInput): ComposedQuery {
   };
 }
 
-export function parseComposedQueryJson(raw: string, input: QueryComposerInput, model: string): ComposedQuery {
+export function parseComposedQueryJson(
+  raw: string,
+  rawInput: QueryComposerCompatibleInput,
+  model: string
+): ComposedQuery {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const cleaned = raw
     .trim()
     .replace(/^```json\s*/i, "")
@@ -938,14 +895,81 @@ export function parseComposedQueryJson(raw: string, input: QueryComposerInput, m
   };
 }
 
+export type QueryComposerProviderV1 = {
+  generate(input: {
+    phase: "compose" | "repair";
+    model: string;
+    prompt: string;
+    temperature: number;
+  }): Promise<{ text: string }>;
+};
+
+/**
+ * The single provider-neutral compose/repair/fallback pipeline. Study OS and
+ * Acquisition Plan inject transport-specific providers but never copy this logic.
+ */
+export async function composeQueryDraftWithProviderV1(args: {
+  input: QueryComposerCompatibleInput;
+  model: string;
+  provider: QueryComposerProviderV1;
+}): Promise<ComposedQuery> {
+  const input = normalizeQueryComposerCoreInput(args.input);
+  const prompt = buildQueryComposerPrompt(input);
+  try {
+    const generated = await args.provider.generate({
+      phase: "compose",
+      model: args.model,
+      prompt,
+      temperature: 0.2
+    });
+    let composed = parseComposedQueryJson(generated.text, input, args.model);
+    const rejectedScopes = composed.query_components.generation_contract?.fallback_scopes ?? [];
+    if (rejectedScopes.length > 0) {
+      const repaired = await args.provider.generate({
+        phase: "repair",
+        model: args.model,
+        prompt: [
+          prompt,
+          "",
+          "REPARACION OBLIGATORIA DEL COMPILADOR:",
+          `Los scopes ${rejectedScopes.join(", ")} fueron rechazados por el compilador estructural y/o semantico.`,
+          "Corrige SOLO los errores reportados y conserva la intencion, la evidencia RAG y el modo de construccion.",
+          "En modo exploratory no agregues un AND tematico. En modo detection conserva THEME balanceado. No mezcles competidores.",
+          "Errores estructurales:",
+          JSON.stringify(composed.query_components.generation_contract?.rejected_queries ?? {}, null, 2),
+          "Errores semanticos:",
+          JSON.stringify(composed.query_components.generation_contract?.rejected_semantic_queries ?? {}, null, 2)
+        ].join("\n"),
+        temperature: 0
+      });
+      const repairedResult = parseComposedQueryJson(repaired.text, input, args.model);
+      const repairedFallbackScopes = repairedResult.query_components.generation_contract?.fallback_scopes ?? [];
+      if (repairedFallbackScopes.length < rejectedScopes.length) composed = repairedResult;
+    }
+    return composed;
+  } catch {
+    const fallback = buildFallbackQuery(input);
+    return {
+      ...fallback,
+      query_components: {
+        ...fallback.query_components,
+        model: args.model,
+        fallback_used: true,
+        fallback_reason: "provider_or_response_invalid"
+      }
+    };
+  }
+}
+
 export function buildGenerationContract(
-  input: QueryComposerInput,
+  rawInput: QueryComposerCompatibleInput,
   queries: Record<string, string | PortableListenQueryValidation>,
   options: {
     validationMode?: NonNullable<ComposedQuery["query_components"]["generation_contract"]>["validation_mode"];
     evidenceStatus?: NonNullable<ComposedQuery["query_components"]["generation_contract"]>["evidence_status"];
   } = {}
 ): NonNullable<ComposedQuery["query_components"]["generation_contract"]> {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const subjectOs = input.subject.type === "brand" ? "brand_os" : "theme_os";
   const constructionInput = buildQueryConstructionInput(input);
   const constructionPlan = buildQueryConstructionPlan(constructionInput);
@@ -979,7 +1003,10 @@ export function buildGenerationContract(
     validation_mode: options.validationMode ?? "structural_pre_import",
     evidence_status: options.evidenceStatus ?? "awaiting_imported_mentions",
     subject_os: subjectOs,
-    rag_scopes: [subjectOs, "study_os"],
+    rag_scopes: [
+      subjectOs,
+      ...(input.brief.optional_study_context ? (["study_os"] as const) : [])
+    ],
     knowledge_source_types: unique(input.knowledgeSources.map((source) => source.type)),
     knowledge_source_count: input.knowledgeSources.length,
     strategy_brief_used: Boolean(input.queryStrategyBrief),
@@ -1082,11 +1109,13 @@ function normalizeQueryEntityName(value: string) {
     .trim();
 }
 
-function buildQueryComponents(input: QueryComposerInput) {
+function buildQueryComponents(rawInput: QueryComposerCompatibleInput) {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const signalPhrases = input.methodology.manifest.signal_phrases ?? {};
   const categorySeeds = compact([
     input.subject.industry,
-    input.subject.industrySub
+    input.subject.industrySub,
+    ...(input.subject.categoryAliases ?? [])
   ]);
   const memoryExclusions = extractMemoryStrings(input.memoryIndustry, "exclusion");
   const memoryBrandSeeds = extractMemoryStrings(input.memoryIndustry, "brand_seed");
@@ -1114,7 +1143,8 @@ function buildQueryComponents(input: QueryComposerInput) {
   };
 }
 
-export function buildQueryConstructionInput(input: QueryComposerInput): QueryConstructionInput {
+export function buildQueryConstructionInput(rawInput: QueryComposerCompatibleInput): QueryConstructionInput {
+  const input = normalizeQueryComposerCoreInput(rawInput);
   const components = buildQueryComponents(input);
   return {
     methodologySlug: input.methodology.slug,
@@ -1143,8 +1173,12 @@ export function buildQueryConstructionInput(input: QueryComposerInput): QueryCon
     ]),
     queryLanguage: components.knowledge_query_language,
     exclusions: components.global_exclusions,
-    targetWindowMonths: input.corpus.targetWindowMonths
+    targetWindowMonths: input.brief.target_window_months
   };
+}
+
+function normalizeQueryComposerCoreInput(input: QueryComposerCompatibleInput): QueryComposerCoreInput {
+  return "brief" in input ? input : adaptStudyQueryComposerInputV1(input);
 }
 
 function extractKnowledgeStrings(records: MemoryRecord[], key: string) {

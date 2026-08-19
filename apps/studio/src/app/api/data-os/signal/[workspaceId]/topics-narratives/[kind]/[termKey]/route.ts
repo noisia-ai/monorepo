@@ -1,4 +1,5 @@
-import { loadSignalWorkspaceContext } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceModuleContext } from "@/app/api/data-os/_lib/load";
+import { signalModuleServingEtagSeedV1 } from "@/lib/data-os/signal-module-serving-scope";
 import {
   parseSignalApiFilterV1,
   signalBackendErrorResponse,
@@ -23,31 +24,45 @@ export async function GET(
     }>;
   }
 ) {
+  const routeStarted = performance.now();
   const { workspaceId, kind, termKey } = await context.params;
-  const loaded = await loadSignalWorkspaceContext(workspaceId);
+  const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);
   if ("response" in loaded) return loaded.response;
   try {
     const searchParams = new URL(request.url).searchParams;
+    const filter = parseSignalApiFilterV1(
+      searchParams,
+      loaded.workspace.timezone
+    );
     const payload = await loadSignalTaxonomyTermDetailV1({
       workspace: loaded.workspace,
-      filter: parseSignalApiFilterV1(
-        searchParams,
-        loaded.workspace.timezone
-      ),
+      readScope: loaded.readScope,
+      filter,
       comparisonRange: signalTaxonomyComparisonRangeV1(searchParams),
       kind: signalTaxonomyKindV1(kind),
       termKey,
       isInternalUser: loaded.isInternalUser
     });
-    return signalJsonResponse(request, payload, {
-      etagSeed: JSON.stringify([
+    const servingScope = loaded.servingScope.rollout_mode === "governed"
+      ? await loaded.finalizeServingScope(filter)
+      : null;
+    const etagSeed = JSON.stringify([
         payload.filters_hash,
         payload.term.mention_count,
         payload.term.comparison_mention_count,
         payload.series
-      ]),
+      ]);
+    const response = signalJsonResponse(request, servingScope
+      ? { ...payload, serving_scope: servingScope }
+      : payload, {
+      etagSeed: signalModuleServingEtagSeedV1(etagSeed, servingScope),
       state: payload.state
     });
+    response.headers.set(
+      "Server-Timing",
+      `signal-visible;dur=${Math.round(performance.now() - routeStarted)}`
+    );
+    return response;
   } catch (error) {
     return signalBackendErrorResponse(error);
   }

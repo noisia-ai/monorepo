@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
+  AdminStatus,
+  AdminSummaryStrip,
+  AdminWorkspaceHeader,
+} from "@/components/admin/AdminWorkspacePrimitives";
+import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
+import {
   CorpusMaintenancePanel,
   type CleanupAction,
   type Snapshot,
@@ -551,58 +557,63 @@ function CorpusVitals({
   corpusRevision: number;
   assessmentCurrent: boolean;
 }) {
-  const banner: { text: string; icon: "check" | "star" | "wave" | "info"; tone: "neutral" | "warn" | "good" } = isApproved
-    ? { text: "Corpus aprobado", icon: "check", tone: "good" }
+  const banner: { text: string; tone: "neutral" | "warn" | "good" } = isApproved
+    ? { text: "Corpus aprobado", tone: "good" }
     : queryReady
-      ? { text: "Queries listas para extracción", icon: "star", tone: "good" }
+      ? { text: "Queries listas para extracción", tone: "good" }
       : iterationCount === 0
-        ? { text: "Empieza generando la primera query", icon: "info", tone: "neutral" }
-        : { text: "Evalúa las queries con evidencia importada", icon: "wave", tone: "warn" };
+        ? { text: "Empieza generando la primera query", tone: "neutral" }
+        : { text: "Evalúa las queries con evidencia importada", tone: "warn" };
+
+  const queryState = queryReady
+    ? "Cerradas"
+    : queryValidation?.status === "ready"
+      ? "Validadas"
+      : queryValidation
+        ? "Ajustar"
+        : "Pendientes";
+  const corpusState = isApproved ? "Aprobado" : assessmentCurrent ? "Evaluado" : "Sin certificar";
 
   return (
-    <header className="vitals">
-      <div className="vitals-main">
-        <p className="vitals-eyebrow">{methodology ?? "Corpus"}</p>
-        <h1 className="vitals-name">{name}</h1>
-      </div>
-      <div className="vitals-stats">
-        <Stat label="Menciones" value={fmtNumber(counts.included)} sub={`${fmtNumber(counts.total)} totales`} highlight />
-        <Stat label="Excluidas" value={fmtNumber(counts.excluded)} sub="filtradas" />
-        <Stat
-          label="Queries"
-          value={queryReady ? "Cerradas" : queryValidation?.status === "ready" ? "Validadas" : queryValidation ? "Ajustar" : "Pendientes"}
-          sub={queryValidation ? "evidencia por pack" : `${iterationCount} ${iterationCount === 1 ? "iteración" : "iteraciones"}`}
-        />
-        <Stat
-          label={`Corpus r${corpusRevision}`}
-          value={isApproved ? "Aprobado" : assessmentCurrent ? "Evaluado" : "Sin certificar"}
-          sub={assessmentCurrent ? "revisión vigente" : "requiere evaluación"}
-        />
-      </div>
-      <div className={`vitals-banner vitals-banner--${banner.tone}`}>
-        <Icon name={banner.icon} size={14} /> {banner.text}
-      </div>
-    </header>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  sub,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`vital-stat${highlight ? " vital-stat--hi" : ""}`}>
-      <span className="vital-stat-label">{label}</span>
-      <span className="vital-stat-value">{value}</span>
-      {sub && <span className="vital-stat-sub">{sub}</span>}
-    </div>
+    <>
+      <AdminWorkspaceHeader
+        eyebrow={methodology ?? "Corpus"}
+        status={(
+          <AdminStatus state={banner.tone === "good" ? "good" : banner.tone === "warn" ? "warning" : "not_available"}>
+            {banner.text}
+          </AdminStatus>
+        )}
+        subtitle="Prepara la evidencia, certifica el corpus y ejecuta el análisis desde un flujo gobernado."
+        title={name}
+      />
+      <AdminSummaryStrip
+        items={[
+          {
+            label: "Menciones incluidas",
+            value: fmtNumber(counts.included),
+            hint: `${fmtNumber(counts.total)} totales`,
+          },
+          {
+            label: "Excluidas",
+            value: fmtNumber(counts.excluded),
+            hint: "Filtradas del corpus",
+          },
+          {
+            label: "Queries",
+            value: queryState,
+            hint: queryValidation
+              ? "Evidencia por pack"
+              : `${iterationCount} ${iterationCount === 1 ? "iteración" : "iteraciones"}`,
+          },
+          {
+            label: `Corpus r${corpusRevision}`,
+            value: corpusState,
+            hint: assessmentCurrent ? "Revisión vigente" : "Requiere evaluación",
+            tone: isApproved ? "neutral" : "warning",
+          },
+        ]}
+      />
+    </>
   );
 }
 
@@ -649,16 +660,6 @@ function StepCompose({
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [autoStarted, setAutoStarted] = useState(false);
-
-  // Auto-start when there is no history at all (very first iteration of a fresh corpus)
-  useEffect(() => {
-    if (!hasHistory && !autoStarted && !running) {
-      setAutoStarted(true);
-      start();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasHistory]);
 
   async function start() {
     setRunning(true);
@@ -723,7 +724,7 @@ function StepCompose({
         La calidad se mide después, sobre la primera extracción que importes para cada pack.
       </p>
 
-      {!running && !autoStarted && (
+      {!running && (
         <button className="wizard-cta" onClick={start} type="button">
           <Icon name="sparkle" size={16} />
           {hasHistory ? "Generar nueva query desde cero" : "Generar primera query"}
@@ -1231,40 +1232,41 @@ function PeerSetPanel({
       </header>
 
       <div className="peer-entity-form">
-        <label>
-          <span>Tipo</span>
-          <select
-            value={entityKind}
-            onChange={(event) => {
-              const next = normalizeEntityKind(event.target.value);
+        <WorkspaceSelectField
+          ariaLabel="Tipo de entidad"
+          label="Tipo"
+          name="entityKind"
+          options={[
+            { value: "competitor", label: "Peer / competidor" },
+            { value: "category", label: "Category baseline" },
+            { value: "primary_brand", label: "Marca principal" }
+          ]}
+          value={entityKind}
+          onChange={(value) => {
+              const next = normalizeEntityKind(value);
               setEntityKind(next);
               if (next !== "category") setIsCategoryBaseline(false);
-            }}
-          >
-            <option value="competitor">Peer / competidor</option>
-            <option value="category">Category baseline</option>
-            <option value="primary_brand">Marca principal</option>
-          </select>
-        </label>
+          }}
+        />
         <label>
           <span>Nombre</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Telcel, AT&T, Telefonía MX..." />
+          <input className="workspace-control" value={name} onChange={(event) => setName(event.target.value)} placeholder="Telcel, AT&T, Telefonía MX..." />
         </label>
         <label>
           <span>Aliases</span>
-          <textarea value={aliases} onChange={(event) => setAliases(event.target.value)} placeholder="Uno por línea o separado por coma" />
+          <textarea className="workspace-control workspace-control--textarea" value={aliases} onChange={(event) => setAliases(event.target.value)} placeholder="Uno por línea o separado por coma" />
         </label>
         <label>
           <span>Handles</span>
-          <textarea value={handles} onChange={(event) => setHandles(event.target.value)} placeholder="@telcel\n@attmx" />
+          <textarea className="workspace-control workspace-control--textarea" value={handles} onChange={(event) => setHandles(event.target.value)} placeholder="@telcel\n@attmx" />
         </label>
         <label>
           <span>Query seeds</span>
-          <textarea value={querySeeds} onChange={(event) => setQuerySeeds(event.target.value)} placeholder="términos que deben entrar a la query" />
+          <textarea className="workspace-control workspace-control--textarea" value={querySeeds} onChange={(event) => setQuerySeeds(event.target.value)} placeholder="términos que deben entrar a la query" />
         </label>
         <label>
           <span>Notas</span>
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Scope, límites, marcas del grupo, etc." />
+          <textarea className="workspace-control workspace-control--textarea" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Scope, límites, marcas del grupo, etc." />
         </label>
         {entityKind === "category" && (
           <label className="peer-baseline-toggle">
@@ -1546,28 +1548,28 @@ function UploadSlot({
           {!entity && mentionType !== "brand" && (
             <div className="upload-entity-stack">
               {mentionType === "competitor" && competitors.length > 0 ? (
-                <label className="upload-entity-field">
-                  <span>Entidad competitiva</span>
-                  <select
-                    onChange={(event) => {
-                      const value = event.target.value;
+                <WorkspaceSelectField
+                  ariaLabel="Entidad competitiva"
+                  className="upload-entity-field"
+                  label="Entidad competitiva"
+                  name="competitorId"
+                  onChange={(value) => {
                       setCompetitorId(value === "__pool" || value === "__custom" ? "" : value);
                       if (value === "__pool") setEntityLabel("Pool competitivo");
                       if (value === "__custom") setEntityLabel("");
                       const selected = competitors.find((competitor) => competitor.id === value);
                       if (selected) setEntityLabel(selected.canonicalName);
-                    }}
-                    value={competitorId || (entityLabel === "Pool competitivo" ? "__pool" : "__custom")}
-                  >
-                    <option value="__pool">Pool competitivo</option>
-                    {competitors.map((competitor) => (
-                      <option key={competitor.id} value={competitor.id}>
-                        {competitor.canonicalName}
-                      </option>
-                    ))}
-                    <option value="__custom">Otro / etiqueta libre</option>
-                  </select>
-                </label>
+                  }}
+                  options={[
+                    { value: "__pool", label: "Pool competitivo" },
+                    ...competitors.map((competitor) => ({
+                      value: competitor.id,
+                      label: competitor.canonicalName
+                    })),
+                    { value: "__custom", label: "Otro / etiqueta libre" }
+                  ]}
+                  value={competitorId || (entityLabel === "Pool competitivo" ? "__pool" : "__custom")}
+                />
               ) : null}
               <label className="upload-entity-field">
                 <span>{mentionType === "competitor" ? "Etiqueta de entidad" : "Baseline"}</span>

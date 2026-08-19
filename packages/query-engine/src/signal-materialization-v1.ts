@@ -29,8 +29,24 @@ export type SignalMaterializationCacheScopeV1 = "default" | "precomputed" | "ad_
 type SignalMaterializeJobScopeV1 = {
   contract_version: typeof SIGNAL_MATERIALIZATION_CONTRACT_VERSION;
   workspace_id: string;
-  study_corpus_id: string;
-};
+} & (
+  | {
+      study_corpus_id: string;
+      population_id?: never;
+      population_version?: never;
+      population_definition_hash?: never;
+    }
+  | {
+      study_corpus_id?: never;
+      population_id: string;
+      population_version: number;
+      population_definition_hash: string;
+    }
+);
+
+export type SignalMaterializationOperationalScopeV1 =
+  | { study_corpus_id: string; population_id?: never; population_version?: never; population_definition_hash?: never }
+  | { study_corpus_id?: never; population_id: string; population_version: number; population_definition_hash: string };
 
 export type SignalMaterializeJobDataV1 = SignalMaterializeJobScopeV1 & (
   | {
@@ -119,35 +135,95 @@ export function buildSignalMentionPredicateV1(
   workspaceId?: string
 ): SignalSqlPredicateV1 {
   const filter = validateMaterializationFilter(filterInput);
+  return buildSignalMentionPredicateWithCorpusV1(filter, studyCorpusIds, workspaceId);
+}
+
+/**
+ * Builds the canonical mention predicate for a read path.
+ *
+ * Materialization jobs remain capped at 366 days so every write is bounded.
+ * Read paths may cover a longer historical window when their materialized
+ * inputs are fetched in bounded slices and consolidated by the serving layer.
+ */
+export function buildSignalMentionReadPredicateV1(
+  filterInput: unknown,
+  studyCorpusIds: string[],
+  workspaceId?: string
+): SignalSqlPredicateV1 {
+  const filter = validateSignalFilterShape(filterInput);
+  return buildSignalMentionPredicateWithCorpusV1(filter, studyCorpusIds, workspaceId);
+}
+
+export function buildSignalPopulationMentionReadPredicateV1(
+  filterInput: unknown,
+  populationId: string,
+  workspaceId: string
+): SignalSqlPredicateV1 {
+  const filter = validateSignalFilterShape(filterInput);
+  return buildSignalMentionPredicateFromValidatedFilterV1(filter, {
+    kind: "population",
+    populationId: requiredUuid(populationId, "population_id"),
+    workspaceId: requiredUuid(workspaceId, "workspace_id")
+  });
+}
+
+function buildSignalMentionPredicateWithCorpusV1(
+  filter: SignalFilterV1,
+  studyCorpusIds: string[],
+  workspaceId?: string
+) {
   const corpusIds = sortedUniqueUuids(studyCorpusIds, "study_corpus_ids");
   if (corpusIds.length === 0) {
     throw new SignalBackendContractError("invalid_filter", "At least one study corpus is required.", {
       field: "study_corpus_ids"
     });
   }
-  return buildSignalMentionPredicateFromValidatedFilterV1(
-    filter,
+  return buildSignalMentionPredicateFromValidatedFilterV1(filter, {
+    kind: "corpus",
     corpusIds,
-    optionalWorkspaceId(workspaceId)
-  );
+    workspaceId: optionalWorkspaceId(workspaceId)
+  });
 }
 
 function buildSignalMentionPredicateFromValidatedFilterV1(
   filter: SignalFilterV1,
-  corpusIds: string[],
-  workspaceId: string | null
+  ownership:
+    | { kind: "corpus"; corpusIds: string[]; workspaceId: string | null }
+    | { kind: "population"; populationId: string; workspaceId: string }
+    | { kind: "workspace"; workspaceId: string }
 ): SignalSqlPredicateV1 {
   const params: unknown[] = [];
   const parameter = (value: unknown, cast = "") => {
     params.push(value);
     return `$${params.length}${cast}`;
   };
-  const conditions = [
-    `m.study_corpus_id = ANY(${parameter(corpusIds, "::uuid[]")})`,
-    "m.inclusion_status = 'included'",
+  const conditions = ownership.kind === "population"
+    ? [
+        `m.workspace_id = ${parameter(ownership.workspaceId, "::uuid")}`,
+        "m.canonical_mention_id = m.id",
+        `EXISTS (
+          SELECT 1
+          FROM signal_population_memberships population_membership
+          WHERE population_membership.population_id = ${parameter(ownership.populationId, "::uuid")}
+            AND population_membership.workspace_id = m.workspace_id
+            AND population_membership.mention_id = m.id
+            AND population_membership.membership_status = 'included'
+            AND population_membership.removed_at IS NULL
+        )`
+      ]
+    : ownership.kind === "workspace"
+      ? [
+          `m.workspace_id = ${parameter(ownership.workspaceId, "::uuid")}`,
+          "m.canonical_mention_id = m.id"
+        ]
+      : [
+        `m.study_corpus_id = ANY(${parameter(ownership.corpusIds, "::uuid[]")})`,
+        "m.inclusion_status = 'included'"
+      ];
+  conditions.push(
     `(m.published_at AT TIME ZONE ${parameter(filter.timezone)})::date >= ${parameter(filter.date_range.start, "::date")}`,
     `(m.published_at AT TIME ZONE ${parameter(filter.timezone)})::date <= ${parameter(filter.date_range.end, "::date")}`
-  ];
+  );
   const textSearch = filter.search_query ?? filter.text_search;
   if (textSearch) {
     const fullTextParameter = parameter(textSearch);
@@ -170,9 +246,14 @@ function buildSignalMentionPredicateFromValidatedFilterV1(
     if (!values.length) continue;
     const valuesParameter = parameter(values, "::text[]");
     const workspaceParameter = dimension === "topic" || dimension === "narrative"
-      ? parameter(requiredWorkspaceId(workspaceId), "::uuid")
+      ? parameter(requiredWorkspaceId(ownership.workspaceId), "::uuid")
       : null;
-    conditions.push(dimensionPredicate(dimension, valuesParameter, workspaceParameter));
+    conditions.push(dimensionPredicate(
+      dimension,
+      valuesParameter,
+      workspaceParameter,
+      ownership.kind
+    ));
   }
 
   const sql = conditions.map((condition) => `(${condition})`).join("\n        AND ");
@@ -185,11 +266,25 @@ function buildSignalMentionPredicateFromValidatedFilterV1(
   };
 }
 
+export function buildSignalWorkspaceCanonicalMentionReadPredicateV1(
+  input: unknown,
+  workspaceId: string
+): SignalSqlPredicateV1 {
+  const filter = validateSignalFilterShape(input);
+  return buildSignalMentionPredicateFromValidatedFilterV1(filter, {
+    kind: "workspace",
+    workspaceId: requiredUuid(workspaceId, "workspace_id")
+  });
+}
+
 export function buildSignalMentionDrillDownPlanV1(args: {
   filter: unknown;
-  study_corpus_ids: string[];
+  study_corpus_ids?: string[];
+  population_id?: string;
+  workspace_canonical?: boolean;
   workspace_id?: string;
   metric_key?: string;
+  subject_ids?: string[];
   limit?: number;
   cursor?: { occurred_at: string; subject_id: string };
   offset?: number;
@@ -198,11 +293,32 @@ export function buildSignalMentionDrillDownPlanV1(args: {
     direction: "asc" | "desc";
   };
 }) {
-  const predicate = buildSignalMentionPredicateV1(
-    args.filter,
-    args.study_corpus_ids,
-    args.workspace_id
-  );
+  const ownershipSourceCount = Number(Boolean(args.population_id))
+    + Number(Boolean(args.study_corpus_ids?.length))
+    + Number(Boolean(args.workspace_canonical));
+  if (ownershipSourceCount > 1) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      "Mention drill-down accepts exactly one ownership source.",
+      { field: "workspace_canonical" }
+    );
+  }
+  const predicate = args.workspace_canonical
+    ? buildSignalWorkspaceCanonicalMentionReadPredicateV1(
+        args.filter,
+        requiredWorkspaceId(optionalWorkspaceId(args.workspace_id))
+      )
+    : args.population_id
+    ? buildSignalPopulationMentionReadPredicateV1(
+        args.filter,
+        args.population_id,
+        requiredWorkspaceId(optionalWorkspaceId(args.workspace_id))
+      )
+    : buildSignalMentionPredicateV1(
+        args.filter,
+        args.study_corpus_ids ?? [],
+        args.workspace_id
+      );
   const params = [...predicate.params];
   const exactTaxonomyDimension = args.metric_key === "topic.volume"
     ? "topic"
@@ -224,9 +340,25 @@ export function buildSignalMentionDrillDownPlanV1(args: {
         return `$${params.length}::uuid`;
       })()
     : null;
+  const ownershipKind = args.workspace_canonical
+    ? "workspace" as const
+    : args.population_id
+      ? "population" as const
+      : "corpus" as const;
   const metricPredicate = args.metric_key && needsMetricPredicate
-    ? metricConstituentPredicateSql(args.metric_key, metricWorkspaceParameter)
+    ? metricConstituentPredicateSql(args.metric_key, metricWorkspaceParameter, ownershipKind)
     : null;
+  const linkedMentionIdentity = (alias: string) => ownershipKind === "corpus"
+    ? `${alias}.id = m.id`
+    : `${alias}.workspace_id = m.workspace_id
+         AND ${alias}.canonical_mention_id = COALESCE(m.canonical_mention_id, m.id)`;
+  const subjectIds = Array.from(new Set(args.subject_ids ?? []));
+  const subjectPredicate = subjectIds.length > 0
+    ? (() => {
+        params.push(subjectIds);
+        return `\n        AND m.id = ANY($${params.length}::uuid[])`;
+      })()
+    : "";
   const limit = Math.max(1, Math.min(100, Math.floor(args.limit ?? 50)));
   let cursor = "";
   if (args.cursor) {
@@ -250,9 +382,32 @@ export function buildSignalMentionDrillDownPlanV1(args: {
   params.push(limit + 1, offset);
   const limitParameter = `$${params.length - 1}::int`;
   const offsetParameter = `$${params.length}::int`;
+  const scopedPredicate = `${predicate.sql}${metricPredicate ? `\n          AND (${metricPredicate})` : ""}${subjectPredicate}${cursor}`;
+  const workspaceCanonicalPage = args.workspace_canonical ? `
+      WITH scoped_mentions AS MATERIALIZED (
+        SELECT m.*
+        FROM mentions m
+        WHERE ${scopedPredicate}
+      ), page_mentions AS (
+        SELECT m.*
+        FROM scoped_mentions m
+        ORDER BY ${orderBy}
+        LIMIT ${limitParameter}
+        OFFSET ${offsetParameter}
+      )` : "";
+  const mentionRelation = args.workspace_canonical ? "page_mentions" : "mentions";
+  const totalCountSql = args.workspace_canonical
+    ? "(SELECT count(*)::int FROM scoped_mentions)"
+    : "count(*) OVER()::int";
+  const trailingScope = args.workspace_canonical
+    ? `ORDER BY ${orderBy}`
+    : `WHERE ${scopedPredicate}
+      ORDER BY ${orderBy}
+      LIMIT ${limitParameter}
+      OFFSET ${offsetParameter}`;
   return {
     predicate,
-    sql: `
+    sql: `${workspaceCanonicalPage}
       SELECT m.id::text AS subject_id, m.published_at AS occurred_at,
         COALESCE(NULLIF(m.text_snippet, ''), left(m.text_clean, 420), '') AS text_snippet,
         m.title, m.url,
@@ -278,8 +433,8 @@ export function buildSignalMentionDrillDownPlanV1(args: {
         COALESCE(attribution.items, '[]'::jsonb) AS attribution,
         COALESCE(tb_classification.value, '{}'::jsonb) AS tb_classification,
         tb_classification.analysis_status AS tb_analysis_status,
-        count(*) OVER()::int AS total_count
-      FROM mentions m
+        ${totalCountSql} AS total_count
+      FROM ${mentionRelation} m
       LEFT JOIN import_batches import_batch
         ON import_batch.id = m.source_file_id
       LEFT JOIN LATERAL (
@@ -299,8 +454,12 @@ export function buildSignalMentionDrillDownPlanV1(args: {
           ON taxonomy.id = term.taxonomy_id
           AND taxonomy.status = 'active'
         WHERE tag.subject_type = 'mention'
-          AND tag.subject_id = m.id
           AND tag.review_status = 'approved'
+          AND tag.subject_id = ANY(ARRAY(
+            SELECT tagged_mention.id
+            FROM mentions tagged_mention
+            WHERE ${linkedMentionIdentity("tagged_mention")}
+          ))
       ) tags ON true
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object(
@@ -310,11 +469,13 @@ export function buildSignalMentionDrillDownPlanV1(args: {
           'confidence', relation.confidence
         ) ORDER BY entity.entity_type, entity.canonical_name) AS items
         FROM record_entity_links relation
+        JOIN mentions entity_mention
+          ON entity_mention.id = relation.subject_id
+         AND ${linkedMentionIdentity("entity_mention")}
         JOIN intelligence_entities entity
           ON entity.id = relation.entity_id
           AND entity.status = 'active'
         WHERE relation.subject_type = 'mention'
-          AND relation.subject_id = m.id
       ) entities ON true
       LEFT JOIN LATERAL (
         SELECT jsonb_agg(jsonb_build_object(
@@ -326,8 +487,10 @@ export function buildSignalMentionDrillDownPlanV1(args: {
         FROM (
           SELECT feature.feature_key, feature.feature_value, feature.value_type, feature.confidence
           FROM record_feature_values feature
+          JOIN mentions feature_mention
+            ON feature_mention.id = feature.subject_id
+           AND ${linkedMentionIdentity("feature_mention")}
           WHERE feature.subject_type = 'mention'
-            AND feature.subject_id = m.id
           ORDER BY feature.feature_key
           LIMIT 12
         ) scoped
@@ -384,20 +547,19 @@ export function buildSignalMentionDrillDownPlanV1(args: {
           feature.feature_value AS value,
           analysis.status AS analysis_status
         FROM record_feature_values feature
+        JOIN mentions coding_mention
+          ON coding_mention.id = feature.subject_id
+         AND ${linkedMentionIdentity("coding_mention")}
         JOIN tb_analyses analysis
           ON analysis.id = feature.tb_analysis_id
-          AND analysis.study_corpus_id = m.study_corpus_id
+          AND analysis.study_corpus_id = coding_mention.study_corpus_id
           AND analysis.status IN ('approved_by_im', 'approved_by_kam')
         WHERE feature.subject_type = 'mention'
-          AND feature.subject_id = m.id
           AND feature.feature_key = 'tb_coding'
         ORDER BY analysis.created_at DESC, feature.created_at DESC, feature.id DESC
         LIMIT 1
       ) tb_classification ON true
-      WHERE ${predicate.sql}${metricPredicate ? `\n        AND (${metricPredicate})` : ""}${cursor}
-      ORDER BY ${orderBy}
-      LIMIT ${limitParameter}
-      OFFSET ${offsetParameter}
+      ${trailingScope}
     `,
     params
   };
@@ -405,8 +567,13 @@ export function buildSignalMentionDrillDownPlanV1(args: {
 
 function metricConstituentPredicateSql(
   metricKey: string,
-  workspaceParameter: string | null
+  workspaceParameter: string | null,
+  ownershipKind: "corpus" | "population" | "workspace"
 ) {
+  const linkedMentionIdentity = (alias: string) => ownershipKind === "corpus"
+    ? `${alias}.id = m.id`
+    : `${alias}.workspace_id = m.workspace_id
+       AND ${alias}.canonical_mention_id = COALESCE(m.canonical_mention_id, m.id)`;
   if (!signalMetricDefinitionV1(metricKey, 1)) {
     throw new SignalBackendContractError("not_available", "Signal metric definition is not available.", { metric_key: metricKey });
   }
@@ -421,8 +588,11 @@ function metricConstituentPredicateSql(
   if (metricKey === "governed_entity.volume") {
     return `EXISTS (
       SELECT 1 FROM record_entity_links rel
+      JOIN mentions entity_mention
+        ON entity_mention.id = rel.subject_id
+       AND ${linkedMentionIdentity("entity_mention")}
       JOIN intelligence_entities entity ON entity.id = rel.entity_id AND entity.status = 'active'
-      WHERE rel.subject_type = 'mention' AND rel.subject_id = m.id
+      WHERE rel.subject_type = 'mention'
     )`;
   }
   if (metricKey === "topic.volume" || metricKey === "narrative.volume") {
@@ -436,8 +606,12 @@ function metricConstituentPredicateSql(
     }
     return `EXISTS (
       SELECT 1 FROM record_tags tag
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${linkedMentionIdentity("tagged_mention")}
       JOIN signal_taxonomy_profiles profile
         ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.model_version_id = tag.model_version_id
        AND profile.status = 'active'
        AND profile.workspace_id = ${workspaceParameter}
        AND profile.kind = '${kind}'
@@ -445,7 +619,7 @@ function metricConstituentPredicateSql(
         ON term.id = tag.taxonomy_term_id
        AND term.taxonomy_id = profile.taxonomy_id
        AND term.status = 'active'
-      WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
+      WHERE tag.subject_type = 'mention'
         AND tag.review_status = 'approved'
     )`;
   }
@@ -453,9 +627,12 @@ function metricConstituentPredicateSql(
   if (taxonomyPattern) {
     return `EXISTS (
       SELECT 1 FROM record_tags tag
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${linkedMentionIdentity("tagged_mention")}
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
-      WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
+      WHERE tag.subject_type = 'mention'
         AND tag.review_status = 'approved'
         AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'
     )`;
@@ -467,7 +644,8 @@ export function buildSignalMetricMaterializationPlanV1(args: {
   metric_key: string;
   metric_version?: number;
   filter: unknown;
-  study_corpus_ids: string[];
+  study_corpus_ids?: string[];
+  population_id?: string;
   workspace_id?: string;
 }): SignalMetricMaterializationPlanV1 {
   const metric = signalMetricDefinitionV1(args.metric_key, args.metric_version ?? 1);
@@ -478,11 +656,26 @@ export function buildSignalMetricMaterializationPlanV1(args: {
     });
   }
   const workspaceId = optionalWorkspaceId(args.workspace_id);
-  const visiblePredicate = buildSignalMentionPredicateV1(
-    args.filter,
-    args.study_corpus_ids,
-    workspaceId ?? undefined
-  );
+  const populationId = args.population_id
+    ? requiredUuid(args.population_id, "population_id")
+    : null;
+  const corpusIds = args.study_corpus_ids?.length
+    ? sortedUniqueUuids(args.study_corpus_ids, "study_corpus_ids")
+    : [];
+  if ((populationId && corpusIds.length > 0) || (!populationId && corpusIds.length === 0)) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      "Materialization requires exactly one operational ownership scope.",
+      { fields: ["population_id", "study_corpus_ids"] }
+    );
+  }
+  const visiblePredicate = populationId
+    ? buildSignalPopulationMentionReadPredicateV1(
+        args.filter,
+        populationId,
+        requiredWorkspaceId(workspaceId)
+      )
+    : buildSignalMentionPredicateV1(args.filter, corpusIds, workspaceId ?? undefined);
   validateMetricDimensions(metric, visiblePredicate.normalized_filter);
   const granularity = visiblePredicate.normalized_filter.granularity;
   const executionFilter = metric.key === "conversation.velocity"
@@ -500,8 +693,9 @@ export function buildSignalMetricMaterializationPlanV1(args: {
   const executionPredicate = metric.key === "conversation.velocity"
       ? buildSignalMentionPredicateFromValidatedFilterV1(
         normalizeSignalFilterV1(executionFilter),
-        sortedUniqueUuids(args.study_corpus_ids, "study_corpus_ids"),
-        workspaceId
+        populationId
+          ? { kind: "population", populationId, workspaceId: requiredWorkspaceId(workspaceId) }
+          : { kind: "corpus", corpusIds, workspaceId }
       )
     : visiblePredicate;
   const predicate = metric.key === "conversation.velocity"
@@ -543,7 +737,8 @@ export function buildSignalMetricMaterializationPlanV1(args: {
     periodBucketStartV1(executionFilter.date_range.start, granularity),
     periodBucketStartV1(visiblePredicate.normalized_filter.date_range.end, granularity),
     granularity,
-    taxonomyWorkspaceParameter
+    taxonomyWorkspaceParameter,
+    populationId ? "population" : "corpus"
   );
   return {
     contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
@@ -608,7 +803,10 @@ export function splitSignalMaterializationDateRangeV1(dateRange: { start: string
 
 export function signalMetricMaterializationKeyV1(args: {
   workspace_id: string;
-  study_corpus_id: string;
+  study_corpus_id?: string;
+  population_id?: string;
+  population_version?: number;
+  population_definition_hash?: string;
   metric_key: string;
   metric_version: number;
   granularity: SignalGranularityV1;
@@ -616,12 +814,21 @@ export function signalMetricMaterializationKeyV1(args: {
   period_end: string;
   filters_hash: string;
 }) {
+  if (Boolean(args.study_corpus_id) === Boolean(args.population_id)) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      "Materialization key requires exactly one operational ownership scope."
+    );
+  }
   return sha256(JSON.stringify(args));
 }
 
 export function buildSignalAdHocMaterializationJobV1(args: {
   workspace_id: string;
-  study_corpus_id: string;
+  study_corpus_id?: string;
+  population_id?: string;
+  population_version?: number;
+  population_definition_hash?: string;
   filter: unknown;
   metric_keys: string[];
 }) {
@@ -639,12 +846,34 @@ export function buildSignalAdHocMaterializationJobV1(args: {
       });
     }
   }
-  const predicate = buildSignalMentionPredicateV1(filter, [args.study_corpus_id]);
+  if (Boolean(args.study_corpus_id) === Boolean(args.population_id)) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      "Ad hoc materialization requires exactly one operational ownership scope."
+    );
+  }
+  const predicate = args.population_id
+    ? buildSignalPopulationMentionReadPredicateV1(
+        filter,
+        args.population_id,
+        args.workspace_id
+      )
+    : buildSignalMentionPredicateV1(filter, [args.study_corpus_id!], args.workspace_id);
+  const operationalScope = args.population_id
+    ? {
+        population_id: requiredUuid(args.population_id, "population_id"),
+        population_version: requiredPositiveInteger(args.population_version, "population_version"),
+        population_definition_hash: requiredSha256(
+          args.population_definition_hash,
+          "population_definition_hash"
+        )
+      }
+    : { study_corpus_id: requiredUuid(args.study_corpus_id, "study_corpus_id") };
   const data: SignalMaterializeJobDataV1 = {
     contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
     trigger: "ad_hoc",
     workspace_id: args.workspace_id,
-    study_corpus_id: args.study_corpus_id,
+    ...operationalScope,
     filter,
     metric_keys: metricKeys
   };
@@ -652,7 +881,7 @@ export function buildSignalAdHocMaterializationJobV1(args: {
     data,
     job_id: `signal-ad-hoc-${sha256(JSON.stringify({
       workspace_id: args.workspace_id,
-      study_corpus_id: args.study_corpus_id,
+      ...operationalScope,
       filters_hash: predicate.filters_hash,
       metric_keys: metricKeys
     })).slice(7, 39)}`
@@ -812,7 +1041,7 @@ export function materializeSignalTaxonomyFixtureV1(args: {
 }
 
 function validateMaterializationFilter(filterInput: unknown) {
-  const filter = normalizeSignalFilterV1(filterInput);
+  const filter = validateSignalFilterShape(filterInput);
   const start = Date.parse(`${filter.date_range.start}T00:00:00Z`);
   const end = Date.parse(`${filter.date_range.end}T00:00:00Z`);
   const days = Math.floor((end - start) / 86_400_000) + 1;
@@ -822,6 +1051,11 @@ function validateMaterializationFilter(filterInput: unknown) {
       requested_days: days
     });
   }
+  return filter;
+}
+
+function validateSignalFilterShape(filterInput: unknown) {
+  const filter = normalizeSignalFilterV1(filterInput);
   const entries = Object.entries(filter.dimensions);
   if (entries.length > SIGNAL_MATERIALIZATION_MAX_DIMENSIONS) {
     throw new SignalBackendContractError("invalid_filter", "Signal filter has too many dimensions.", {
@@ -855,8 +1089,13 @@ function validateMetricDimensions(metric: SignalMetricDefinitionV1, filter: Sign
 function dimensionPredicate(
   dimension: SignalDimensionV1,
   valuesParameter: string,
-  workspaceParameter: string | null
+  workspaceParameter: string | null,
+  ownershipKind: "corpus" | "population" | "workspace"
 ) {
+  const linkedMentionJoin = (alias: string) => ownershipKind === "corpus"
+    ? `${alias}.id = m.id`
+    : `${alias}.workspace_id = m.workspace_id
+       AND ${alias}.canonical_mention_id = m.canonical_mention_id`;
   const simple: Partial<Record<SignalDimensionV1, string>> = {
     platform: "lower(COALESCE(m.resolved_platform, m.platform))",
     source_type: "lower(m.source_system)",
@@ -878,8 +1117,11 @@ function dimensionPredicate(
   if (dimension === "entity") {
     return `EXISTS (
       SELECT 1 FROM record_entity_links rel
+      JOIN mentions entity_mention
+        ON entity_mention.id = rel.subject_id
+       AND ${linkedMentionJoin("entity_mention")}
       JOIN intelligence_entities entity ON entity.id = rel.entity_id AND entity.status = 'active'
-      WHERE rel.subject_type = 'mention' AND rel.subject_id = m.id
+      WHERE rel.subject_type = 'mention'
         AND lower(entity.canonical_name) = ANY(${valuesParameter})
     )`;
   }
@@ -920,24 +1162,28 @@ function dimensionPredicate(
     return `EXISTS (
       SELECT 1
       FROM record_feature_values feature
+      JOIN mentions coding_mention
+        ON coding_mention.id = feature.subject_id
+       AND ${linkedMentionJoin("coding_mention")}
       JOIN tb_analyses analysis
         ON analysis.id = feature.tb_analysis_id
-        AND analysis.study_corpus_id = m.study_corpus_id
+        AND analysis.study_corpus_id = coding_mention.study_corpus_id
         AND analysis.status IN ('approved_by_im', 'approved_by_kam')
       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(feature.feature_value->'codings', '[]'::jsonb)) coding(item)
       ${observedSignalJoin}
       WHERE feature.subject_type = 'mention'
-        AND feature.subject_id = m.id
         AND feature.feature_key = 'tb_coding'
         AND feature.id = (
           SELECT latest_feature.id
           FROM record_feature_values latest_feature
+          JOIN mentions latest_coding_mention
+            ON latest_coding_mention.id = latest_feature.subject_id
+           AND ${linkedMentionJoin("latest_coding_mention")}
           JOIN tb_analyses latest_analysis
             ON latest_analysis.id = latest_feature.tb_analysis_id
-            AND latest_analysis.study_corpus_id = m.study_corpus_id
+            AND latest_analysis.study_corpus_id = latest_coding_mention.study_corpus_id
             AND latest_analysis.status IN ('approved_by_im', 'approved_by_kam')
           WHERE latest_feature.subject_type = 'mention'
-            AND latest_feature.subject_id = m.id
             AND latest_feature.feature_key = 'tb_coding'
           ORDER BY latest_analysis.created_at DESC, latest_feature.created_at DESC, latest_feature.id DESC
           LIMIT 1
@@ -955,8 +1201,12 @@ function dimensionPredicate(
     }
     return `EXISTS (
       SELECT 1 FROM record_tags tag
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${linkedMentionJoin("tagged_mention")}
       JOIN signal_taxonomy_profiles profile
         ON profile.id = tag.signal_taxonomy_profile_id
+       AND profile.model_version_id = tag.model_version_id
        AND profile.workspace_id = ${workspaceParameter}
        AND profile.kind = '${dimension}'
        AND profile.status = 'active'
@@ -964,7 +1214,7 @@ function dimensionPredicate(
         ON term.id = tag.taxonomy_term_id
        AND term.taxonomy_id = profile.taxonomy_id
        AND term.status = 'active'
-      WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
+      WHERE tag.subject_type = 'mention'
         AND tag.review_status = 'approved'
         AND (
           lower(term.term_key) = ANY(${valuesParameter})
@@ -976,9 +1226,12 @@ function dimensionPredicate(
   if (taxonomyDimensions.has(dimension)) {
     return `EXISTS (
       SELECT 1 FROM record_tags tag
+      JOIN mentions tagged_mention
+        ON tagged_mention.id = tag.subject_id
+       AND ${linkedMentionJoin("tagged_mention")}
       JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
       JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
-      WHERE tag.subject_type = 'mention' AND tag.subject_id = m.id
+      WHERE tag.subject_type = 'mention'
         AND tag.review_status = 'approved'
         AND (lower(term.term_key) = ANY(${valuesParameter}) OR lower(COALESCE(tag.value, term.label)) = ANY(${valuesParameter}))
         ${dimension === "taxonomy" ? "" : `AND lower(taxonomy.taxonomy_key) LIKE '%${dimension}%'`}
@@ -986,7 +1239,10 @@ function dimensionPredicate(
   }
   return `EXISTS (
     SELECT 1 FROM record_feature_values feature
-    WHERE feature.subject_type = 'mention' AND feature.subject_id = m.id
+    JOIN mentions feature_mention
+      ON feature_mention.id = feature.subject_id
+     AND ${linkedMentionJoin("feature_mention")}
+    WHERE feature.subject_type = 'mention'
       AND feature.feature_key = '${dimension}'
       AND lower(trim(both '"' from feature.feature_value::text)) = ANY(${valuesParameter})
   )`;
@@ -1035,7 +1291,8 @@ function materializationSql(
   executionPeriodStart: string,
   visiblePeriodEnd: string,
   granularity: SignalGranularityV1,
-  taxonomyWorkspaceParameter: string | null
+  taxonomyWorkspaceParameter: string | null,
+  ownershipKind: "corpus" | "population"
 ) {
   if (metricKey === "conversation.volume" || metricKey === "conversation.velocity") {
     const velocity = metricKey === "conversation.velocity";
@@ -1103,7 +1360,8 @@ function materializationSql(
       base,
       periodEnd,
       kind: metricKey === "topic.volume" ? "topic" : "narrative",
-      workspaceParameter: taxonomyWorkspaceParameter
+      workspaceParameter: taxonomyWorkspaceParameter,
+      ownershipKind
     });
   }
 
@@ -1179,7 +1437,14 @@ function signalTaxonomyVolumeSql(args: {
   periodEnd: string;
   kind: "topic" | "narrative";
   workspaceParameter: string;
+  ownershipKind: "corpus" | "population";
 }) {
+  const taggedMentionJoin = args.ownershipKind === "corpus"
+    ? "tagged_mention.id = b.id"
+    : "tagged_mention.canonical_mention_id = b.id";
+  const processedMentionJoin = args.ownershipKind === "corpus"
+    ? "processed_mention.id = b.id"
+    : "processed_mention.canonical_mention_id = b.id";
   return `${args.base}, active_profile AS (
     SELECT profile.id, profile.taxonomy_id, profile.version,
       profile.model_version_id, profile.context_hash
@@ -1193,8 +1458,10 @@ function signalTaxonomyVolumeSql(args: {
     FROM base_mentions b
     JOIN record_tags tag
       ON tag.subject_type = 'mention'
-     AND tag.subject_id = b.id
      AND tag.review_status = 'approved'
+    JOIN mentions tagged_mention
+      ON tagged_mention.id = tag.subject_id
+     AND ${taggedMentionJoin}
     JOIN active_profile profile
       ON profile.id = tag.signal_taxonomy_profile_id
      AND profile.model_version_id = tag.model_version_id
@@ -1204,26 +1471,30 @@ function signalTaxonomyVolumeSql(args: {
      AND term.status = 'active'
   ), review_stats AS (
     SELECT b.period_start,
-      count(DISTINCT tag.subject_id) FILTER (
+      count(DISTINCT b.id) FILTER (
         WHERE tag.review_status IN ('pending', 'unreviewed', 'needs_review')
       )::int AS pending_mentions,
-      count(DISTINCT tag.subject_id) FILTER (
+      count(DISTINCT b.id) FILTER (
         WHERE tag.review_status = 'rejected'
       )::int AS rejected_mentions
     FROM base_mentions b
     JOIN active_profile profile ON true
+    LEFT JOIN mentions tagged_mention
+      ON ${taggedMentionJoin}
     LEFT JOIN record_tags tag
       ON tag.subject_type = 'mention'
-     AND tag.subject_id = b.id
+     AND tag.subject_id = tagged_mention.id
      AND tag.signal_taxonomy_profile_id = profile.id
     GROUP BY b.period_start
   ), processed AS (
-    SELECT b.period_start, count(DISTINCT feature.subject_id)::int AS processed_mentions
+    SELECT b.period_start, count(DISTINCT b.id)::int AS processed_mentions
     FROM base_mentions b
     JOIN active_profile profile ON true
+    LEFT JOIN mentions processed_mention
+      ON ${processedMentionJoin}
     LEFT JOIN record_feature_values feature
       ON feature.subject_type = 'mention'
-     AND feature.subject_id = b.id
+     AND feature.subject_id = processed_mention.id
      AND feature.feature_key =
        'signal_taxonomy_classification:' || profile.id::text
      AND feature.source = 'signal_taxonomy_profile:' || profile.id::text
@@ -1366,7 +1637,8 @@ function pendingReviewSql(metricKey: string) {
   }
   return `SELECT b.period_start, COUNT(DISTINCT b.id)::bigint AS pending_count
     FROM base_mentions b
-    JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = b.id
+    JOIN mentions tagged_mention ON tagged_mention.canonical_mention_id = b.id
+    JOIN record_tags tag ON tag.subject_type = 'mention' AND tag.subject_id = tagged_mention.id
     JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
     JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
     WHERE tag.review_status NOT IN ('approved', 'rejected')
@@ -1385,8 +1657,11 @@ function categorySql(metricKey: string) {
   if (metricKey === "governed_entity.volume") {
     return `SELECT lower(entity.canonical_name) AS key
       FROM record_entity_links rel
+      JOIN mentions entity_mention
+        ON entity_mention.id = rel.subject_id
+       AND entity_mention.canonical_mention_id = b.id
       JOIN intelligence_entities entity ON entity.id = rel.entity_id AND entity.status = 'active'
-      WHERE rel.subject_type = 'mention' AND rel.subject_id = b.id`;
+      WHERE rel.subject_type = 'mention'`;
   }
   if (metricKey !== "emotion.share") {
     throw new SignalBackendContractError(
@@ -1398,9 +1673,12 @@ function categorySql(metricKey: string) {
   const taxonomyPattern = "emotion";
   return `SELECT lower(COALESCE(tag.value, term.label)) AS key
     FROM record_tags tag
+    JOIN mentions tagged_mention
+      ON tagged_mention.id = tag.subject_id
+     AND tagged_mention.canonical_mention_id = b.id
     JOIN taxonomy_terms term ON term.id = tag.taxonomy_term_id AND term.status = 'active'
     JOIN taxonomies taxonomy ON taxonomy.id = term.taxonomy_id AND taxonomy.status = 'active'
-    WHERE tag.subject_type = 'mention' AND tag.subject_id = b.id
+    WHERE tag.subject_type = 'mention'
       AND tag.review_status = 'approved'
       AND lower(taxonomy.taxonomy_key) LIKE '%${taxonomyPattern}%'`;
 }
@@ -1516,6 +1794,42 @@ function optionalWorkspaceId(value: string | undefined) {
       "invalid_filter",
       "workspace_id must be a UUID.",
       { field: "workspace_id" }
+    );
+  }
+  return normalized;
+}
+
+function requiredUuid(value: unknown, field: string) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!UUID_PATTERN.test(normalized)) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      `${field} must be a UUID.`,
+      { field }
+    );
+  }
+  return normalized;
+}
+
+function requiredPositiveInteger(value: unknown, field: string) {
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 1) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      `${field} must be a positive integer.`,
+      { field }
+    );
+  }
+  return normalized;
+}
+
+function requiredSha256(value: unknown, field: string) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!/^sha256:[0-9a-f]{64}$/u.test(normalized)) {
+    throw new SignalBackendContractError(
+      "invalid_filter",
+      `${field} must be a sha256 hash.`,
+      { field }
     );
   }
   return normalized;

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceSelect, WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 import { COUNTRY_OPTIONS } from "@/lib/country-catalog";
 import { INDUSTRY_OPTIONS, INDUSTRY_SEARCH_ALIASES, subindustriesForIndustry } from "@/lib/industry-catalog";
 import { slugify } from "@/lib/slug";
@@ -22,6 +23,7 @@ type EditableBrand = {
   description: string | null;
   brandSeedHandles: string[] | null;
   status: string;
+  timezone: string;
 };
 
 type OrganizationOption = {
@@ -54,6 +56,7 @@ export function BrandEditForm({
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [orgCreateError, setOrgCreateError] = useState<string | null>(null);
   const [industryValue, setIndustryValue] = useState(brand.industry ?? "");
+  const [statusValue, setStatusValue] = useState(brand.status);
   const [subindustryValues, setSubindustryValues] = useState(splitList(brand.industrySub ?? ""));
   const [countryValues, setCountryValues] = useState(brand.countries ?? ["MX"]);
   const [aliasValues, setAliasValues] = useState(brand.brandSeedHandles ?? []);
@@ -130,6 +133,7 @@ export function BrandEditForm({
       countries: countryValues.map((item) => item.toUpperCase()),
       description: String(form.get("description") ?? "").trim(),
       brand_seed_handles: aliasValues,
+      timezone: String(form.get("timezone") ?? brand.timezone),
       status: String(form.get("status") ?? "active")
     };
 
@@ -150,58 +154,68 @@ export function BrandEditForm({
   }
 
   return (
-    <form className="new-study-shell brand-os-shell" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
-      <section className="new-study-panel new-study-panel--raised">
-        <div className="new-study-section-head">
-          <p className="vitals-eyebrow">{brandT("identityEyebrow")}</p>
-          <h2>{t("formTitle")}</h2>
-        </div>
-
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("organization")}</span>
-            <select
-              className="filter-input new-study-input"
-              name="organization_id"
-              required
-              value={selectedOrgId}
-              onChange={(event) => setSelectedOrgId(event.target.value)}
-            >
-              {organizationOptions.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="new-study-field">
-            <span>{t("organizationTools")}</span>
-            <button
-              className="wizard-cta wizard-cta--secondary"
-              type="button"
-              onClick={() => setShowOrgCreate((value) => !value)}
-            >
-              <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
-              {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
-            </button>
+    <form className="workspace-form" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
+      <section className="admin-section workspace-form__section">
+        <header className="admin-section__head">
+          <div>
+            <p className="workspace-form__eyebrow">{brandT("identityEyebrow")}</p>
+            <h2>{t("formTitle")}</h2>
           </div>
-          <label className="new-study-field">
+        </header>
+        <div className="workspace-form__body">
+
+        <div className="workspace-form__grid">
+          <div className="workspace-field workspace-field--wide">
+            <span>{brandT("organization")}</span>
+            <div className="workspace-connected-control">
+              <WorkspaceSelect
+                ariaLabel={brandT("organization")}
+                className="workspace-connected-control__select"
+                name="organization_id"
+                options={organizationOptions.map((organization) => ({
+                  label: organization.name,
+                  value: organization.id
+                }))}
+                value={selectedOrgId}
+                onChange={setSelectedOrgId}
+              />
+              <button
+                className="admin-button workspace-connected-control__action"
+                type="button"
+                onClick={() => setShowOrgCreate((value) => !value)}
+              >
+                <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
+                {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
+              </button>
+            </div>
+          </div>
+          <label className="workspace-field">
             <span>{brandT("brand")}</span>
-            <input className="filter-input new-study-input" name="name" required minLength={2} maxLength={160} defaultValue={brand.name} />
+            <input className="workspace-control" name="name" required minLength={2} maxLength={160} defaultValue={brand.name} />
+          </label>
+
+          <label className="workspace-field">
+            <span>{brandT("displayName")}</span>
+            <input className="workspace-control" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
+          </label>
+          <label className="workspace-field">
+            <span>{brandT("timezone")}</span>
+            <input className="workspace-control" name="timezone" required maxLength={120} defaultValue={brand.timezone} />
+            <small>{brandT("timezoneHelp")}</small>
           </label>
         </div>
 
         {showOrgCreate ? (
-          <div className="org-form">
-            <div className="new-study-section-head">
-              <p className="vitals-eyebrow">{t("createOrganizationEyebrow")}</p>
-              <h2>{t("createOrganizationTitle")}</h2>
+          <div className="workspace-form__nested">
+            <div className="workspace-form__nested-head">
+              <p className="workspace-form__eyebrow">{t("createOrganizationEyebrow")}</p>
+              <strong>{t("createOrganizationTitle")}</strong>
             </div>
-            <div className="new-study-grid">
-              <label className="new-study-field">
+            <div className="workspace-form__grid">
+              <label className="workspace-field">
                 <span>{t("orgLegalName")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   minLength={2}
                   maxLength={180}
                   value={newOrgLegalName}
@@ -211,67 +225,65 @@ export function BrandEditForm({
                   }}
                 />
               </label>
-              <label className="new-study-field">
+              <label className="workspace-field">
                 <span>{t("orgDisplayName")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   maxLength={180}
                   value={newOrgDisplayName}
                   onChange={(event) => setNewOrgDisplayName(event.target.value)}
                 />
               </label>
-              <label className="new-study-field">
+              <label className="workspace-field">
                 <span>{t("orgSlug")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   pattern="[a-z0-9]+(-[a-z0-9]+)*"
                   value={newOrgSlug}
                   onChange={(event) => setNewOrgSlug(slugify(event.target.value))}
                 />
               </label>
             </div>
-            <div className="team-form-actions">
+            <div className="workspace-form__actions">
               <button
-                className="wizard-cta"
+                className="admin-button admin-button--primary"
                 type="button"
                 disabled={isCreatingOrg || newOrgLegalName.trim().length < 2}
                 onClick={createOrganization}
               >
                 {isCreatingOrg ? <><Icon name="spinner" size={14} /> {t("creatingOrganization")}</> : <><Icon name="check" size={14} /> {t("createOrganization")}</>}
               </button>
-              {orgCreateError ? <span className="team-msg team-msg--error">{orgCreateError}</span> : null}
+              {orgCreateError ? <span className="workspace-form__error" role="alert">{orgCreateError}</span> : null}
             </div>
           </div>
         ) : null}
 
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("displayName")}</span>
-            <input className="filter-input new-study-input" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
-          </label>
-        </div>
-
-        <div className="new-study-grid">
-          <label className="new-study-field">
+        <div className="workspace-form__grid">
+          <label className="workspace-field">
             <span>{brandT("slug")}</span>
-            <input className="filter-input new-study-input" name="slug" required defaultValue={brand.slug} />
+            <input className="workspace-control" name="slug" required defaultValue={brand.slug} />
           </label>
-          <label className="new-study-field">
-            <span>{t("status")}</span>
-            <select className="filter-input new-study-input" name="status" defaultValue={brand.status}>
-              <option value="active">{t("active")}</option>
-              <option value="paused">{t("paused")}</option>
-              <option value="archived">{t("archived")}</option>
-            </select>
-          </label>
+          <WorkspaceSelectField
+            ariaLabel={t("status")}
+            label={t("status")}
+            name="status"
+            onChange={setStatusValue}
+            options={[
+              { label: t("active"), value: "active" },
+              { label: t("paused"), value: "paused" },
+              { label: t("archived"), value: "archived" }
+            ]}
+            value={statusValue}
+          />
         </div>
 
-        <div className="new-study-grid">
+        <div className="workspace-form__grid">
           <CatalogCombobox
             label={brandT("industry")}
             name="industry"
             options={industryOptions}
             placeholder={brandT("industryPlaceholder")}
+            surface="workspace"
             value={industryValue}
             onChange={setIndustryValue}
           />
@@ -283,23 +295,29 @@ export function BrandEditForm({
             name="industry_sub"
             options={subindustryOptions}
             placeholder={brandT("subindustryPlaceholder")}
+            surface="workspace"
             values={subindustryValues}
             onChange={setSubindustryValues}
           />
         </div>
+        </div>
       </section>
 
-      <section className="new-study-panel">
-        <div className="new-study-section-head">
-          <p className="vitals-eyebrow">{t("relationsEyebrow")}</p>
-          <h2>{t("relationsTitle")}</h2>
-        </div>
-        <div className="new-study-grid">
+      <section className="admin-section workspace-form__section">
+        <header className="admin-section__head">
+          <div>
+            <p className="workspace-form__eyebrow">{t("relationsEyebrow")}</p>
+            <h2>{t("relationsTitle")}</h2>
+          </div>
+        </header>
+        <div className="workspace-form__body">
+        <div className="workspace-form__grid">
           <TokenCatalogField
             label={brandT("countries")}
             name="countries"
             options={COUNTRY_OPTIONS}
             placeholder={brandT("countryPlaceholder")}
+            surface="workspace"
             values={countryValues}
             onChange={setCountryValues}
           />
@@ -307,6 +325,7 @@ export function BrandEditForm({
             label={brandT("aliases")}
             name="brand_seed_handles"
             placeholder={brandT("aliasesPlaceholder")}
+            surface="workspace"
             values={aliasValues}
             onChange={setAliasValues}
           />
@@ -317,22 +336,24 @@ export function BrandEditForm({
           label={brandT("description")}
           maxLength={12000}
           name="description"
+          surface="workspace"
         />
-      </section>
+        </div>
 
-      <footer className="new-study-actions">
-        {error && (
-          <p className="new-study-error">
-            <Icon name="alert" size={14} /> {error}
-          </p>
-        )}
-        <button className="wizard-cta wizard-cta--ghost" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
-          {t("cancel")}
-        </button>
-        <button className="wizard-cta" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
-        </button>
-      </footer>
+        <footer className="workspace-form__section-footer">
+          {error && (
+            <p className="workspace-form__error" role="alert">
+              <Icon name="alert" size={14} /> {error}
+            </p>
+          )}
+          <button className="admin-button" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
+            {t("cancel")}
+          </button>
+          <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
+          </button>
+        </footer>
+      </section>
     </form>
   );
 }

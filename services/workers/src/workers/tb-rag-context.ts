@@ -21,13 +21,25 @@ import { selectTbRagMonthlySeries, type TbRagSeriesRow } from "./tb-rag-series";
 type AnalysisScopeRow = {
   study_corpus_id: string;
   brand_id: string | null;
+  snapshot_id: string;
+  scope_frozen_at: string;
+  strategic_contract_version: string | null;
 };
 
 export async function loadTbRagPromptContext(tbAnalysisId: string): Promise<TbRagPromptContext> {
   const scope = await loadAnalysisScope(tbAnalysisId);
+  const strategic = scope.strategic_contract_version?.startsWith("signal-tb-strategic-") === true;
   const rag = await loadAnalysisRagContext(scope.study_corpus_id, scope.brand_id);
-  const structuredObservations = await loadStructuredObservationSnapshot(scope.study_corpus_id);
-  structuredObservations.evidence_tokens = await loadGovernedEvidenceTokens(scope.study_corpus_id);
+  const structuredObservations = await loadStructuredObservationSnapshot(
+    scope.study_corpus_id,
+    scope.snapshot_id,
+    strategic
+  );
+  structuredObservations.evidence_tokens = await loadGovernedEvidenceTokens(
+    scope.study_corpus_id,
+    strategic
+  );
+  await recordAnalysisContextRefs(tbAnalysisId, scope, structuredObservations);
   await recordStructuredObservationConsumption(tbAnalysisId, structuredObservations);
 
   return {
@@ -161,8 +173,37 @@ type GovernedEvidenceToken = {
   entity_key: string | null;
 };
 
-async function loadStructuredObservationSnapshot(corpusId: string): Promise<StructuredObservationSnapshot> {
+async function loadStructuredObservationSnapshot(
+  corpusId: string,
+  snapshotId: string,
+  strategic: boolean
+): Promise<StructuredObservationSnapshot> {
   try {
+    const governedListeningSeriesSql = strategic
+      ? `SELECT
+           to_char(date_trunc('month', mention.published_at), 'YYYY-MM') AS month,
+           'mentions'::text AS metric_family,
+           'mentions_monthly'::text AS metric_key,
+           'count'::text AS metric_unit,
+           COUNT(*)::numeric AS metric_value,
+           COUNT(*) AS observations
+         FROM signal_strategic_run_controls control
+         JOIN signal_strategic_sealed_sample_items membership
+           ON membership.run_control_id=control.id
+         JOIN mentions mention ON mention.id=membership.mention_id
+         WHERE control.snapshot_id=$1::uuid AND mention.published_at IS NOT NULL
+         GROUP BY 1 ORDER BY 1 ASC LIMIT 60`
+      : `SELECT
+           to_char(date_trunc('month', mention.published_at), 'YYYY-MM') AS month,
+           'mentions'::text AS metric_family,
+           'mentions_monthly'::text AS metric_key,
+           'count'::text AS metric_unit,
+           COUNT(*)::numeric AS metric_value,
+           COUNT(*) AS observations
+         FROM corpus_snapshot_mentions membership
+         JOIN mentions mention ON mention.id = membership.mention_id
+         WHERE membership.snapshot_id = $1::uuid AND mention.published_at IS NOT NULL
+         GROUP BY 1 ORDER BY 1 ASC LIMIT 60`;
     const [
       summaryResult,
       familyResult,
@@ -179,18 +220,24 @@ async function loadStructuredObservationSnapshot(corpusId: string): Promise<Stru
             COUNT(*) FILTER (WHERE quality_status = 'accepted') AS accepted_observations,
             COUNT(*) FILTER (WHERE quality_status NOT IN ('accepted', 'rejected')) AS review_observations,
             COUNT(*) FILTER (WHERE quality_status = 'rejected') AS rejected_observations,
-            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid) AS records,
-            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'accepted') AS accepted_records,
-            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status NOT IN ('accepted', 'rejected')) AS review_records,
-            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'rejected') AS rejected_records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'accepted'
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS accepted_records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status NOT IN ('accepted', 'rejected')
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS review_records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'rejected'
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS rejected_records,
             (SELECT COUNT(*) FROM data_asset_records record
               WHERE record.study_corpus_id = $1::uuid
                 AND record.quality_status = 'accepted'
+                AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
                 AND record.period_semantics IN ('measurement', 'event')
                 AND record.period_start IS NOT NULL) AS temporal_records,
             (SELECT COUNT(*) FROM data_asset_records record
               WHERE record.study_corpus_id = $1::uuid
                 AND record.quality_status = 'accepted'
+                AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
                 AND record.period_semantics = 'snapshot'
                 AND record.period_start IS NOT NULL) AS snapshot_records,
             COUNT(DISTINCT data_asset_id) AS assets,
@@ -239,8 +286,9 @@ async function loadStructuredObservationSnapshot(corpusId: string): Promise<Stru
             ) AS commercial_observations
           FROM data_observations
           WHERE study_corpus_id = $1::uuid
+            AND (NOT $2::boolean OR COALESCE(dataset_role, '') NOT LIKE 'social_listening%')
         `,
-        [corpusId]
+        [corpusId, strategic]
       ),
       pool.query<StructuredMetricFamilyRow>(
         `
@@ -307,6 +355,7 @@ async function loadStructuredObservationSnapshot(corpusId: string): Promise<Stru
           FROM data_observations
           WHERE study_corpus_id = $1::uuid
             AND dataset_role = 'social_listening'
+            AND NOT $2::boolean
             AND quality_status = 'accepted'
             AND period_semantics IN ('measurement', 'event')
             AND period_start IS NOT NULL
@@ -314,35 +363,22 @@ async function loadStructuredObservationSnapshot(corpusId: string): Promise<Stru
           ORDER BY period_start ASC, metric_key
           LIMIT 180
         `,
-        [corpusId]
+        [corpusId, strategic]
       ),
       pool.query<TbRagSeriesRow>(
-        `
-          SELECT
-            to_char(date_trunc('month', published_at), 'YYYY-MM') AS month,
-            'mentions'::text AS metric_family,
-            'mentions_monthly'::text AS metric_key,
-            'count'::text AS metric_unit,
-            COUNT(*)::numeric AS metric_value,
-            COUNT(*) AS observations
-          FROM mentions
-          WHERE study_corpus_id = $1::uuid
-            AND inclusion_status = 'included'
-            AND published_at IS NOT NULL
-          GROUP BY 1
-          ORDER BY 1 ASC
-          LIMIT 60
-        `,
-        [corpusId]
+        governedListeningSeriesSql,
+        [snapshotId]
       ),
       pool.query<DataOsCapabilityRow>(
         DATA_OS_CAPABILITY_ROLLUP_SQL,
         [corpusId]
       ),
-      pool.query<DataOsSourceInventoryRow>(
-        DATA_OS_SOURCE_INVENTORY_SQL,
-        [corpusId]
-      )
+      strategic
+        ? Promise.resolve({ rows: [] as DataOsSourceInventoryRow[] })
+        : pool.query<DataOsSourceInventoryRow>(
+            DATA_OS_SOURCE_INVENTORY_SQL,
+            [corpusId, snapshotId]
+          )
     ]);
 
     const summaryRow = summaryResult.rows[0];
@@ -593,7 +629,10 @@ function emptyStructuredObservationSnapshot(): StructuredObservationSnapshot {
   };
 }
 
-async function loadGovernedEvidenceTokens(corpusId: string): Promise<GovernedEvidenceToken[]> {
+async function loadGovernedEvidenceTokens(
+  corpusId: string,
+  strategic: boolean
+): Promise<GovernedEvidenceToken[]> {
   const result = await pool.query<GovernedEvidenceToken>(`
     SELECT * FROM (
       SELECT
@@ -615,6 +654,7 @@ async function loadGovernedEvidenceTokens(corpusId: string): Promise<GovernedEvi
       FROM data_observations observation
       WHERE observation.study_corpus_id = $1::uuid
         AND observation.quality_status = 'accepted'
+        AND (NOT $2::boolean OR COALESCE(observation.dataset_role, '') NOT LIKE 'social_listening%')
 
       UNION ALL
 
@@ -637,10 +677,11 @@ async function loadGovernedEvidenceTokens(corpusId: string): Promise<GovernedEvi
       FROM data_asset_records record
       WHERE record.study_corpus_id = $1::uuid
         AND record.quality_status = 'accepted'
+        AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
     ) evidence
     ORDER BY source_rank, period_start DESC NULLS LAST, dataset_key, row_index, source_id
     LIMIT 120
-  `, [corpusId]);
+  `, [corpusId, strategic]);
   return result.rows;
 }
 
@@ -651,7 +692,9 @@ function numeric(value: number | string | null | undefined) {
 
 async function loadAnalysisScope(tbAnalysisId: string): Promise<AnalysisScopeRow> {
   const result = await pool.query<AnalysisScopeRow>(
-    `SELECT ta.study_corpus_id, sc.brand_id
+    `SELECT ta.study_corpus_id, sc.brand_id,
+       ta.snapshot_id, ta.scope_frozen_at::text,
+       ta.strategic_contract_version
      FROM tb_analyses ta
      JOIN study_corpora sc ON sc.id = ta.study_corpus_id
      WHERE ta.id = $1`,
@@ -660,6 +703,109 @@ async function loadAnalysisScope(tbAnalysisId: string): Promise<AnalysisScopeRow
   const row = result.rows[0];
   if (!row) throw new Error(`tb_analyses ${tbAnalysisId} not found`);
   return row;
+}
+
+async function recordAnalysisContextRefs(
+  tbAnalysisId: string,
+  scope: AnalysisScopeRow,
+  snapshot: StructuredObservationSnapshot
+) {
+  await pool.query(
+    `INSERT INTO tb_analysis_context_refs (
+       tb_analysis_id, source_type, source_id, source_version,
+       source_digest, context_role, captured_at, metadata
+     )
+     SELECT
+       $1::uuid,
+       CASE WHEN source.study_corpus_id = $2::uuid
+         THEN 'study_knowledge_source' ELSE 'brand_knowledge_source' END,
+       source.id,
+       COALESCE(source.updated_at, source.created_at)::text,
+       'sha256:' || encode(sha256(convert_to(concat_ws('|',
+         source.id::text, source.source_kind, source.status,
+         source.file_hash, source.updated_at::text,
+         source.extracted_payload::text, source.raw_text
+       ), 'UTF8')), 'hex'),
+       'contextual',
+       $3::timestamptz,
+       jsonb_build_object('source_kind', source.source_kind, 'status', source.status)
+     FROM brand_knowledge_sources source
+     JOIN study_corpora corpus ON corpus.id = $2::uuid
+     WHERE source.status IN ('processed', 'processed_truncated')
+       AND (source.study_corpus_id = $2::uuid
+         OR (source.brand_id = corpus.brand_id AND source.study_corpus_id IS NULL))
+     ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+    [tbAnalysisId, scope.study_corpus_id, scope.scope_frozen_at]
+  );
+  await pool.query(
+    `INSERT INTO tb_analysis_context_refs (
+       tb_analysis_id, source_type, source_id, source_version,
+       source_digest, context_role, captured_at, metadata
+     ) VALUES (
+       $1::uuid, 'knowledge_base',
+       '00000000-0000-4000-8000-000000000005'::uuid,
+       'triggers-barriers-methodology-v1',
+       'sha256:' || encode(sha256(convert_to(
+         'packages/kb/01-methodologies/triggers-barriers.md|packages/kb/05-ai-playbooks/run-triggers-barriers.md|v1',
+         'UTF8'
+       )), 'hex'),
+       'contextual', $2::timestamptz,
+       jsonb_build_object('contract_version', 'tb-context-ref-v1')
+     ) ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+    [tbAnalysisId, scope.scope_frozen_at]
+  );
+  const observationIds = snapshot.evidence_tokens
+    .filter((token) => token.source_type === "data_observation")
+    .map((token) => token.source_id);
+  const recordIds = snapshot.evidence_tokens
+    .filter((token) => token.source_type === "data_asset_record")
+    .map((token) => token.source_id);
+  if (observationIds.length > 0) {
+    await pool.query(
+      `INSERT INTO tb_analysis_context_refs (
+         tb_analysis_id, source_type, source_id, source_version,
+         source_digest, context_role, captured_at, metadata
+       )
+       SELECT $1::uuid, 'data_observation', observation.id,
+         observation.materialized_at::text,
+         'sha256:' || encode(sha256(convert_to(concat_ws('|',
+           observation.record_hash, observation.metric_key,
+           observation.metric_value::text, observation.metric_unit,
+           observation.quality_status, observation.materialized_at::text
+         ), 'UTF8')), 'hex'),
+         'structured_evidence', $3::timestamptz,
+         jsonb_build_object('data_asset_id', observation.data_asset_id,
+           'dataset_key', observation.dataset_key, 'row_index', observation.row_index)
+       FROM data_observations observation
+       WHERE observation.id = ANY($2::uuid[])
+         AND observation.study_corpus_id = $4::uuid
+         AND observation.quality_status = 'accepted'
+       ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+      [tbAnalysisId, observationIds, scope.scope_frozen_at, scope.study_corpus_id]
+    );
+  }
+  if (recordIds.length > 0) {
+    await pool.query(
+      `INSERT INTO tb_analysis_context_refs (
+         tb_analysis_id, source_type, source_id, source_version,
+         source_digest, context_role, captured_at, metadata
+       )
+       SELECT $1::uuid, 'data_asset_record', record.id,
+         record.materialized_at::text,
+         'sha256:' || encode(sha256(convert_to(concat_ws('|',
+           record.record_hash, record.quality_status, record.materialized_at::text
+         ), 'UTF8')), 'hex'),
+         'structured_evidence', $3::timestamptz,
+         jsonb_build_object('data_asset_id', record.data_asset_id,
+           'dataset_key', record.dataset_key, 'row_index', record.row_index)
+       FROM data_asset_records record
+       WHERE record.id = ANY($2::uuid[])
+         AND record.study_corpus_id = $4::uuid
+         AND record.quality_status = 'accepted'
+       ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+      [tbAnalysisId, recordIds, scope.scope_frozen_at, scope.study_corpus_id]
+    );
+  }
 }
 
 function compactForPrompt(value: unknown) {

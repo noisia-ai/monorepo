@@ -12,7 +12,12 @@ import {
   competitors,
   dataAssets,
   lineageEdges,
-  organizations
+  organizations,
+  signalPopulationDefinitions,
+  signalRefreshPolicies,
+  signalWorkspacePopulationPointers,
+  signalWorkspaceReports,
+  signalWorkspaces
 } from "@noisia/db";
 import { db } from "@/lib/db";
 import { canAccessStudio, canCreateBrandOrTheme } from "@/lib/auth/roles";
@@ -20,6 +25,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { listBrandsForUser } from "@/lib/data/brands";
 import { buildBrandDataOsFieldSpecs, type BrandDataOsFieldSpecs } from "@/lib/data-os/field-specs";
+import { signalBrandOsCanonicalSnapshotHashV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { createBrandSchema } from "@/lib/validation/brand";
 
 type BrandIntakeTx = Pick<typeof db, "insert" | "select">;
@@ -65,7 +71,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const brand = await db.transaction(async (tx) => {
+    const created = await db.transaction(async (tx) => {
       let organizationId = parsed.data.organization_id;
 
       if (!organizationId && parsed.data.organization_name) {
@@ -124,6 +130,14 @@ export async function POST(request: Request) {
       if (!createdBrand) {
         throw new Error("Brand could not be created.");
       }
+
+      const signalWorkspace = await initializeBrandSignalWorkspace(tx, {
+        organizationId,
+        brandId: createdBrand.id,
+        brandSlug: createdBrand.slug,
+        timezone: parsed.data.timezone,
+        createdByUserId: session.appUser.id
+      });
 
       const brandAliases = uniqueStrings(parsed.data.brand_seed_handles);
       const brandDetectionPatterns = uniqueStrings([
@@ -190,7 +204,10 @@ export async function POST(request: Request) {
             brandId: createdBrand.id,
             competitorBrandSeedId: seed.id,
             priority: index + 1,
-            notes: "Created from Brand OS setup."
+            notes: "Created from Brand OS setup.",
+            status: "current",
+            effectiveFrom: new Date(),
+            updatedAt: new Date()
           })
           .onConflictDoNothing();
       }
@@ -228,28 +245,45 @@ export async function POST(request: Request) {
         knowledgeSourceId = source?.id ?? null;
       }
 
-      if (process.env.NOISIA_DATA_OS_ENABLED === "true") {
-        await initializeBrandDataOsIntake(tx, {
-          organizationId,
-          brandId: createdBrand.id,
-          brandName: createdBrand.displayName || createdBrand.name,
-          brandSlug: createdBrand.slug,
-          ownedBrandSeedId: ownedBrandSeed?.id ?? null,
-          knowledgeSourceId,
+      await initializeBrandDataOsIntake(tx, {
+        organizationId,
+        brandId: createdBrand.id,
+        brandName: createdBrand.displayName || createdBrand.name,
+        brandSlug: createdBrand.slug,
+        ownedBrandSeedId: ownedBrandSeed?.id ?? null,
+        knowledgeSourceId,
+        industry: parsed.data.industry ?? null,
+        industrySub: parsed.data.industry_sub ?? null,
+        countries: parsed.data.countries,
+        aliases: brandAliases,
+        competitors: competitorSeedRefs,
+        description: parsed.data.description ?? null,
+        createdByUserId: session.appUser.id,
+        snapshotHash: signalBrandOsCanonicalSnapshotHashV1({
+          name: createdBrand.displayName || createdBrand.name,
+          organization_id: organizationId,
           industry: parsed.data.industry ?? null,
-          industrySub: parsed.data.industry_sub ?? null,
+          industry_sub: parsed.data.industry_sub ?? null,
           countries: parsed.data.countries,
           aliases: brandAliases,
-          competitors: competitorSeedRefs,
-          description: parsed.data.description ?? null,
-          createdByUserId: session.appUser.id
-        });
-      }
+          competitors: competitorSeedRefs.map((competitor) => ({
+            name: competitor.name,
+            seed_id: competitor.seedId
+          })),
+          knowledge_count: 0
+        })
+      });
 
-      return createdBrand;
+      return { brand: createdBrand, signalWorkspace };
     });
 
-    return Response.json({ data: brand }, { status: 201 });
+    return Response.json({
+      data: created.brand,
+      signal_workspace: {
+        id: created.signalWorkspace.id,
+        slug: created.signalWorkspace.slug
+      }
+    }, { status: 201 });
   } catch (err) {
     if (isUniqueViolation(err)) {
       return Response.json(
@@ -262,6 +296,112 @@ export async function POST(request: Request) {
     }
     throw err;
   }
+}
+
+async function initializeBrandSignalWorkspace(
+  tx: BrandIntakeTx,
+  args: {
+    organizationId: string;
+    brandId: string;
+    brandSlug: string;
+    createdByUserId: string;
+    timezone: string;
+  }
+) {
+  const [slugCollision] = await tx
+    .select({ id: signalWorkspaces.id })
+    .from(signalWorkspaces)
+    .where(and(
+      eq(signalWorkspaces.organizationId, args.organizationId),
+      eq(signalWorkspaces.slug, args.brandSlug)
+    ))
+    .limit(1);
+  const workspaceSlug = slugCollision
+    ? `${args.brandSlug}-brand-${args.brandId.replaceAll("-", "").slice(0, 8)}`
+    : args.brandSlug;
+  const [inserted] = await tx
+    .insert(signalWorkspaces)
+    .values({
+      organizationId: args.organizationId,
+      brandId: args.brandId,
+      slug: workspaceSlug,
+      timezone: args.timezone,
+      status: "active",
+      metadata: {
+        created_by: "brand-creation-v1",
+        created_by_user_id: args.createdByUserId,
+        ownership: "workspace"
+      }
+    })
+    .onConflictDoNothing()
+    .returning({ id: signalWorkspaces.id, slug: signalWorkspaces.slug });
+  const [workspace] = inserted
+    ? [inserted]
+    : await tx
+        .select({ id: signalWorkspaces.id, slug: signalWorkspaces.slug })
+        .from(signalWorkspaces)
+        .where(and(
+          eq(signalWorkspaces.organizationId, args.organizationId),
+          eq(signalWorkspaces.brandId, args.brandId)
+        ))
+        .limit(1);
+  if (!workspace) throw new Error("Signal workspace could not be created for the brand.");
+
+  const [population] = await tx
+    .insert(signalPopulationDefinitions)
+    .values({
+      workspaceId: workspace.id,
+      populationKey: "primary-brand-operational",
+      version: 1,
+      purpose: "operational",
+      status: "active",
+      acceptanceStatus: "included",
+      allowedScopes: ["primary_brand"],
+      definitionHash: "sha256:1de7744849ac9904272a695372976f1ef6c5d3ddd3abb5f5855e81d571c01854",
+      createdByUserId: args.createdByUserId,
+      activatedByUserId: args.createdByUserId,
+      activatedAt: new Date()
+    })
+    .onConflictDoNothing()
+    .returning({ id: signalPopulationDefinitions.id });
+  const [resolvedPopulation] = population
+    ? [population]
+    : await tx
+        .select({ id: signalPopulationDefinitions.id })
+        .from(signalPopulationDefinitions)
+        .where(and(
+          eq(signalPopulationDefinitions.workspaceId, workspace.id),
+          eq(signalPopulationDefinitions.populationKey, "primary-brand-operational"),
+          eq(signalPopulationDefinitions.version, 1)
+        ))
+        .limit(1);
+  if (!resolvedPopulation) throw new Error("Signal operational population could not be created.");
+
+  await tx.insert(signalWorkspacePopulationPointers).values({
+    workspaceId: workspace.id,
+    purpose: "operational",
+    populationId: resolvedPopulation.id,
+    promotedByUserId: args.createdByUserId
+  }).onConflictDoNothing();
+  await tx.insert(signalWorkspaceReports).values({
+    workspaceId: workspace.id,
+    reportKey: "triggers-barriers",
+    title: "Triggers & Barriers",
+    reportType: "strategic",
+    status: "active"
+  }).onConflictDoNothing();
+  await tx.insert(signalRefreshPolicies).values({
+    workspaceId: workspace.id,
+    sourceKey: "workspace-manual-ingestion",
+    adapterKey: "manual_import",
+    cadence: "manual",
+    timezone: args.timezone,
+    enabled: false,
+    ownerUserId: args.createdByUserId,
+    metadata: { created_by: "brand-creation-v1" }
+  }).onConflictDoNothing();
+
+  return workspace;
 }
 
 function slugify(value: string) {
@@ -294,6 +434,7 @@ async function initializeBrandDataOsIntake(
     competitors: Array<{ name: string; seedId: string; priority: number }>;
     description: string | null;
     createdByUserId: string;
+    snapshotHash: string;
   }
 ) {
   const brandFieldSpecs = buildBrandDataOsFieldSpecs(args);
@@ -305,18 +446,16 @@ async function initializeBrandDataOsIntake(
   await insertSeedTerms(tx, seedSetId, args, brandFieldSpecs);
   await insertBrandOsCompetitors(tx, profileId, args, brandFieldSpecs);
 
-  await Promise.all([
-    upsertBrandOsLink(tx, profileId, "brand_os_profile", profileId, "brand", args.brandId, "represents", args),
-    upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand", args.brandId, "documents", args),
-    upsertBrandOsLink(tx, profileId, "brand_os_seed_set", seedSetId, "brand", args.brandId, "seeds", args),
-    upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand_os_seed_set", seedSetId, "defines", args),
-    args.ownedBrandSeedId
-      ? upsertBrandOsLink(tx, profileId, "brand_os_seed_set", seedSetId, "brand_seed", args.ownedBrandSeedId, "defines_owned_seed", args)
-      : Promise.resolve(),
-    args.knowledgeSourceId
-      ? upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand_knowledge_source", args.knowledgeSourceId, "sourced_from", args)
-      : Promise.resolve()
-  ]);
+  await upsertBrandOsLink(tx, profileId, "brand_os_profile", profileId, "brand", args.brandId, "represents", args);
+  await upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand", args.brandId, "documents", args);
+  await upsertBrandOsLink(tx, profileId, "brand_os_seed_set", seedSetId, "brand", args.brandId, "seeds", args);
+  await upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand_os_seed_set", seedSetId, "defines", args);
+  if (args.ownedBrandSeedId) {
+    await upsertBrandOsLink(tx, profileId, "brand_os_seed_set", seedSetId, "brand_seed", args.ownedBrandSeedId, "defines_owned_seed", args);
+  }
+  if (args.knowledgeSourceId) {
+    await upsertBrandOsLink(tx, profileId, "brand_os_brief", briefId, "brand_knowledge_source", args.knowledgeSourceId, "sourced_from", args);
+  }
 
   for (const competitor of args.competitors) {
     await upsertBrandOsLink(
@@ -331,21 +470,19 @@ async function initializeBrandDataOsIntake(
     );
   }
 
-  await Promise.all([
-    upsertLineage(tx, "data_asset", intakeAssetId, "brand", args.brandId, "creates", args),
-    upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_profile", profileId, "initializes", args),
-    upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_brief", briefId, "materializes", args),
-    upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_seed_set", seedSetId, "materializes", args),
-    args.ownedBrandSeedId
-      ? upsertLineage(tx, "data_asset", intakeAssetId, "brand_seed", args.ownedBrandSeedId, "defines", args)
-      : Promise.resolve(),
-    args.knowledgeSourceId
-      ? upsertLineage(tx, "brand_knowledge_source", args.knowledgeSourceId, "brand_os_brief", briefId, "feeds", args)
-      : Promise.resolve()
-  ]);
+  await upsertLineage(tx, "data_asset", intakeAssetId, "brand", args.brandId, "creates", args);
+  await upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_profile", profileId, "initializes", args);
+  await upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_brief", briefId, "materializes", args);
+  await upsertLineage(tx, "data_asset", intakeAssetId, "brand_os_seed_set", seedSetId, "materializes", args);
+  if (args.ownedBrandSeedId) {
+    await upsertLineage(tx, "data_asset", intakeAssetId, "brand_seed", args.ownedBrandSeedId, "defines", args);
+  }
+  if (args.knowledgeSourceId) {
+    await upsertLineage(tx, "brand_knowledge_source", args.knowledgeSourceId, "brand_os_brief", briefId, "feeds", args);
+  }
 }
 
-async function upsertBrandOsProfile(tx: BrandIntakeTx, args: { organizationId: string; brandId: string; brandName: string; industry: string | null; industrySub: string | null; countries: string[]; aliases: string[]; createdByUserId: string }, brandFieldSpecs: BrandDataOsFieldSpecs) {
+async function upsertBrandOsProfile(tx: BrandIntakeTx, args: { organizationId: string; brandId: string; brandName: string; industry: string | null; industrySub: string | null; countries: string[]; aliases: string[]; createdByUserId: string; snapshotHash: string }, brandFieldSpecs: BrandDataOsFieldSpecs) {
   const [created] = await tx
     .insert(brandOsProfiles)
     .values({
@@ -355,7 +492,8 @@ async function upsertBrandOsProfile(tx: BrandIntakeTx, args: { organizationId: s
       status: "active",
       version: 1,
       metadata: {
-        source: "new_brand_form",
+        source: "brand-creation-v1",
+        snapshot_hash: args.snapshotHash,
         intake_version: "data_os_cut_1",
         industry: args.industry,
         industry_sub: splitList(args.industrySub),

@@ -11,6 +11,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -166,7 +167,12 @@ export const competitors = pgTable(
       .references(() => brandSeeds.id),
     priority: integer("priority"),
     notes: text("notes"),
-    createdAt: now()
+    status: text("status").notNull().default("current"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    retiredByUserId: uuid("retired_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now(),
+    updatedAt: updatedAt()
   },
   (table) => [unique("uq_competitors_brand_seed").on(table.brandId, table.competitorBrandSeedId)]
 );
@@ -442,6 +448,8 @@ export const signalWorkspaceReleases = pgTable(
     tbAnalysisId: uuid("tb_analysis_id")
       .notNull()
       .references((): AnyPgColumn => tbAnalyses.id, { onDelete: "restrict" }),
+    reportKey: text("report_key").notNull().default("triggers-barriers"),
+    reportRevision: integer("report_revision").notNull().default(1),
     releaseKey: text("release_key").notNull(),
     releaseType: text("release_type").notNull().default("strategic"),
     title: text("title").notNull(),
@@ -467,7 +475,14 @@ export const signalWorkspaceReleases = pgTable(
   },
   (table) => [
     unique("uq_signal_workspace_releases_key").on(table.workspaceId, table.releaseKey),
+    unique("uq_signal_workspace_releases_report_revision").on(
+      table.workspaceId,
+      table.reportKey,
+      table.reportRevision
+    ),
     unique("uq_signal_workspace_releases_analysis").on(table.workspaceId, table.tbAnalysisId),
+    check("signal_workspace_releases_report_key", sql`${table.reportKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_workspace_releases_report_revision_positive", sql`${table.reportRevision} >= 1`),
     check("signal_workspace_releases_type", sql`${table.releaseType} = 'strategic'`),
     check(
       "signal_workspace_releases_status",
@@ -543,13 +558,137 @@ export const signalWorkspaceCurrentReleases = pgTable(
   }
 );
 
+export const signalWorkspaceReports = pgTable(
+  "signal_workspace_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    reportKey: text("report_key").notNull(),
+    title: text("title").notNull(),
+    reportType: text("report_type").notNull().default("strategic"),
+    status: text("status").notNull().default("active"),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_workspace_reports_identity").on(table.workspaceId, table.reportKey),
+    check("signal_workspace_reports_key", sql`${table.reportKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_workspace_reports_type", sql`${table.reportType} IN ('strategic', 'operational')`),
+    check("signal_workspace_reports_status", sql`${table.status} IN ('active', 'paused', 'archived')`),
+    index("idx_signal_workspace_reports_workspace").on(table.workspaceId, table.status)
+  ]
+);
+
+export const signalWorkspaceReportCurrentReleases = pgTable(
+  "signal_workspace_report_current_releases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    reportKey: text("report_key").notNull(),
+    releaseId: uuid("release_id")
+      .notNull()
+      .references(() => signalWorkspaceReleases.id, { onDelete: "restrict" }),
+    promotedByUserId: uuid("promoted_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("uq_signal_workspace_report_current_identity").on(table.workspaceId, table.reportKey),
+    unique("uq_signal_workspace_report_current_release").on(table.releaseId),
+    index("idx_signal_workspace_report_current_workspace").on(table.workspaceId, table.reportKey)
+  ]
+);
+
+export const signalPopulationDefinitions = pgTable(
+  "signal_population_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    populationKey: text("population_key").notNull(),
+    version: integer("version").notNull(),
+    purpose: text("purpose").notNull(),
+    status: text("status").notNull().default("draft"),
+    acceptanceStatus: text("acceptance_status").notNull().default("included"),
+    allowedScopes: text("allowed_scopes").array().notNull(),
+    minQualityScore: integer("min_quality_score"),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    definitionHash: text("definition_hash").notNull(),
+    policyKey: text("policy_key"),
+    policyVersion: text("policy_version"),
+    timezone: text("timezone"),
+    membershipDigest: text("membership_digest"),
+    idempotencyKey: text("idempotency_key"),
+    definition: jsonb("definition").notNull().default(sql`'{}'::jsonb`),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    activatedByUserId: uuid("activated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_population_definitions_version").on(
+      table.workspaceId,
+      table.populationKey,
+      table.version
+    ),
+    uniqueIndex("uq_signal_population_definitions_active")
+      .on(table.workspaceId, table.populationKey)
+      .where(sql`${table.status} = 'active'`),
+    check("signal_population_definitions_key", sql`${table.populationKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_population_definitions_version_positive", sql`${table.version} >= 1`),
+    check("signal_population_definitions_purpose", sql`${table.purpose} IN ('operational', 'analysis')`),
+    check("signal_population_definitions_status", sql`${table.status} IN ('draft', 'active', 'retired')`),
+    check("signal_population_definitions_acceptance", sql`${table.acceptanceStatus} = 'included'`),
+    check("signal_population_definitions_window", sql`${table.periodStart} IS NULL OR ${table.periodEnd} IS NULL OR ${table.periodStart} <= ${table.periodEnd}`),
+    check("signal_population_definitions_hash", sql`${table.definitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_population_definitions_policy_key", sql`${table.policyKey} IS NULL OR ${table.policyKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_population_definitions_policy_version", sql`${table.policyVersion} IS NULL OR btrim(${table.policyVersion}) <> ''`),
+    check("signal_population_definitions_timezone", sql`${table.timezone} IS NULL OR btrim(${table.timezone}) <> ''`),
+    check("signal_population_definitions_membership_digest", sql`${table.membershipDigest} IS NULL OR ${table.membershipDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_population_definitions_idempotency_key", sql`${table.idempotencyKey} IS NULL OR ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    uniqueIndex("uq_signal_analysis_population_idempotency")
+      .on(table.workspaceId, table.idempotencyKey)
+      .where(sql`${table.purpose} = 'analysis' AND ${table.idempotencyKey} IS NOT NULL`),
+    index("idx_signal_population_definitions_workspace").on(table.workspaceId, table.purpose, table.status)
+  ]
+);
+
+export const signalWorkspacePopulationPointers = pgTable(
+  "signal_workspace_population_pointers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    populationId: uuid("population_id")
+      .notNull()
+      .references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    promotedByUserId: uuid("promoted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("uq_signal_workspace_population_pointer").on(table.workspaceId, table.purpose),
+    unique("uq_signal_workspace_population_pointer_population").on(table.populationId),
+    check("signal_workspace_population_pointer_purpose", sql`${table.purpose} IN ('operational', 'analysis')`)
+  ]
+);
+
 export const signalRefreshPolicies = pgTable(
   "signal_refresh_policies",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
     dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "cascade" }),
-    sourceKey: text("source_key").notNull(),
+    sourceKey: text("source_key").notNull().default(""),
     adapterKey: text("adapter_key").notNull().default("manual_import"),
     cadence: text("cadence").notNull().default("manual"),
     timezone: text("timezone").notNull().default("UTC"),
@@ -584,9 +723,10 @@ export const signalDataWatermarks = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
-    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "set null" }),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "set null" }),
     dataSourceId: uuid("data_source_id").references(() => dataSources.id, { onDelete: "set null" }),
-    sourceKey: text("source_key").notNull(),
+    sourceKey: text("source_key").notNull().default(""),
     corpusRevision: integer("corpus_revision").notNull(),
     lastSourceSyncRunId: uuid("last_source_sync_run_id").references(() => sourceSyncRuns.id, { onDelete: "set null" }),
     lastImportBatchId: uuid("last_import_batch_id").references(() => importBatches.id, { onDelete: "set null" }),
@@ -687,7 +827,8 @@ export const signalDataInvalidations = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
-    studyCorpusId: uuid("study_corpus_id").notNull().references(() => studyCorpora.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "cascade" }),
     dataWatermarkId: uuid("data_watermark_id").notNull().references(() => signalDataWatermarks.id, { onDelete: "cascade" }),
     sourceKey: text("source_key").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
@@ -705,11 +846,19 @@ export const signalDataInvalidations = pgTable(
     check("signal_data_invalidations_status", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed', 'dead_letter')`),
     check("signal_data_invalidations_attempt_nonnegative", sql`${table.attempt} >= 0`),
     check("signal_data_invalidations_window", sql`${table.affectedFrom} IS NULL OR ${table.affectedThrough} IS NULL OR ${table.affectedFrom} <= ${table.affectedThrough}`),
+    check("signal_data_invalidations_operational_scope", sql`(
+      ${table.studyCorpusId} IS NOT NULL AND ${table.populationId} IS NULL
+    ) OR (
+      ${table.studyCorpusId} IS NULL AND ${table.populationId} IS NOT NULL
+    )`),
     unique("uq_signal_data_invalidations_idempotency").on(table.idempotencyKey),
     index("idx_signal_data_invalidations_pending")
       .on(table.status, table.createdAt)
       .where(sql`${table.status} IN ('pending', 'failed')`),
-    index("idx_signal_data_invalidations_scope").on(table.workspaceId, table.studyCorpusId, table.affectedFrom, table.affectedThrough)
+    index("idx_signal_data_invalidations_scope").on(table.workspaceId, table.studyCorpusId, table.affectedFrom, table.affectedThrough),
+    index("idx_signal_data_invalidations_population_scope")
+      .on(table.workspaceId, table.populationId, table.affectedFrom, table.affectedThrough, table.createdAt)
+      .where(sql`${table.populationId} IS NOT NULL`)
   ]
 );
 
@@ -1096,9 +1245,16 @@ export const importBatches = pgTable(
   "import_batches",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    studyCorpusId: uuid("study_corpus_id")
+    workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => studyCorpora.id),
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .references(() => studyCorpora.id, { onDelete: "restrict" }),
+    contributedByStudyCorpusId: uuid("contributed_by_study_corpus_id")
+      .references(() => studyCorpora.id, { onDelete: "restrict" }),
+    dataSourceId: uuid("data_source_id")
+      .notNull()
+      .references((): AnyPgColumn => dataSources.id, { onDelete: "restrict" }),
     queryIterationId: uuid("query_iteration_id").references(() => queryIterations.id),
     queryPackId: uuid("query_pack_id").references(() => queryPacks.id, { onDelete: "set null" }),
     queryValidationRunId: uuid("query_validation_run_id")
@@ -1113,22 +1269,145 @@ export const importBatches = pgTable(
     sourceSystem: text("source_system").notNull(),
     sourceFileName: text("source_file_name"),
     sourceFileHash: text("source_file_hash"),
+    ingestionPhase: text("ingestion_phase").notNull().default("legacy"),
+    storageBucket: text("storage_bucket"),
+    storageObjectKey: text("storage_object_key"),
+    uploadProtocol: text("upload_protocol"),
+    expectedFileSizeBytes: bigint("expected_file_size_bytes", { mode: "number" }),
+    storagePartCount: integer("storage_part_count"),
+    storagePartSizeBytes: bigint("storage_part_size_bytes", { mode: "number" }),
+    processedBytes: bigint("processed_bytes", { mode: "number" }).notNull().default(0),
+    progressRecordCount: integer("progress_record_count").notNull().default(0),
+    processingStartedAt: timestamp("processing_started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureDetail: jsonb("failure_detail"),
+    workerJobId: text("worker_job_id"),
+    supersedesImportBatchId: uuid("supersedes_import_batch_id")
+      .references((): AnyPgColumn => importBatches.id, { onDelete: "restrict" }),
+    storageSourceImportBatchId: uuid("storage_source_import_batch_id")
+      .references((): AnyPgColumn => importBatches.id, { onDelete: "restrict" }),
+    storageContentHash: text("storage_content_hash"),
+    processingMetrics: jsonb("processing_metrics").notNull().default({}),
+    productIdempotencyKey: text("product_idempotency_key"),
+    productRequestDigest: text("product_request_digest"),
+    acquisitionContractVersion: text("acquisition_contract_version"),
+    acquisitionPlanId: uuid("acquisition_plan_id")
+      .references((): AnyPgColumn => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    acquisitionSlotId: uuid("acquisition_slot_id")
+      .references((): AnyPgColumn => signalAcquisitionSlots.id, { onDelete: "restrict" }),
+    acquisitionQueryVersionId: uuid("acquisition_query_version_id")
+      .references((): AnyPgColumn => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    capturePeriodStart: date("capture_period_start"),
+    capturePeriodEnd: date("capture_period_end"),
+    captureTimezone: text("capture_timezone"),
+    acquisitionPlanDigest: text("acquisition_plan_digest"),
+    acquisitionSlotDigest: text("acquisition_slot_digest"),
+    acquisitionQueryDigest: text("acquisition_query_digest"),
+    acquisitionBrandOsDigest: text("acquisition_brand_os_digest"),
+    acquisitionIdentityCatalogDigest: text("acquisition_identity_catalog_digest"),
+    providerSchemaVersion: text("provider_schema_version"),
+    providerObservationProjectionState: text("provider_observation_projection_state"),
+    providerObservationHeaderHash: text("provider_observation_header_hash"),
+    providerObservationCount: integer("provider_observation_count"),
+    acquisitionSealedAt: timestamp("acquisition_sealed_at", { withTimezone: true }),
+    acquisitionQueryEvidenceClass: text("acquisition_query_evidence_class"),
+    acquisitionQueryEvidenceReason: text("acquisition_query_evidence_reason"),
+    acquisitionQueryEvidenceActorUserId: uuid("acquisition_query_evidence_actor_user_id")
+      .references(() => users.id, { onDelete: "restrict" }),
+    acquisitionQueryEvidenceAttestedAt: timestamp("acquisition_query_evidence_attested_at", { withTimezone: true }),
+    providerExecutionReferenceHash: text("provider_execution_reference_hash"),
+    providerExecutionAdapterKey: text("provider_execution_adapter_key"),
+    providerExecutionVerifiedAt: timestamp("provider_execution_verified_at", { withTimezone: true }),
+    acquisitionImportSealDigest: text("acquisition_import_seal_digest"),
     importedByUserId: uuid("imported_by_user_id").references(() => users.id),
     recordCount: integer("record_count").default(0),
     includedCount: integer("included_count").default(0),
     excludedCount: integer("excluded_count").default(0),
     duplicateCount: integer("duplicate_count").default(0),
     status: text("status").notNull(),
-    createdAt: now()
+    createdAt: now(),
+    updatedAt: updatedAt()
   },
   (table) => [
+    index("idx_import_batches_workspace").on(table.workspaceId, table.status, table.createdAt),
+    index("idx_import_batches_source").on(table.dataSourceId, table.createdAt),
+    index("idx_import_batches_contributing_study").on(table.contributedByStudyCorpusId, table.createdAt),
     index("idx_import_batches_corpus").on(table.studyCorpusId),
     index("idx_import_batches_entity").on(table.studyCorpusId, table.mentionType, table.entityKind),
     index("idx_import_batches_corpus_entity").on(table.studyCorpusId, table.corpusEntityId),
     index("idx_import_batches_competitor").on(table.studyCorpusId, table.competitorId),
     index("idx_import_batches_query_pack").on(table.studyCorpusId, table.queryPackId),
     index("idx_import_batches_validation_run").on(table.queryValidationRunId),
-    index("idx_import_batches_status").on(table.status)
+    index("idx_import_batches_status").on(table.status),
+    index("idx_import_batches_async_poll").on(table.workspaceId, table.dataSourceId, table.updatedAt),
+    index("idx_import_batches_query_evidence").on(
+      table.workspaceId,table.acquisitionQueryEvidenceClass,table.createdAt,table.id
+    ),
+    index("idx_import_batches_supersedes").on(table.supersedesImportBatchId),
+    uniqueIndex("uq_import_batches_active_storage_recovery")
+      .on(table.supersedesImportBatchId)
+      .where(sql`${table.supersedesImportBatchId} IS NOT NULL AND ${table.status} IN ('queued','processing','completed')`),
+    check("import_batches_product_operation_shape",sql`(
+      ${table.productIdempotencyKey} IS NULL AND ${table.productRequestDigest} IS NULL
+    ) OR (
+      ${table.productIdempotencyKey} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.productRequestDigest} ~ '^sha256:[0-9a-f]{64}$'
+    )`),
+    uniqueIndex("uq_import_batches_product_idempotency")
+      .on(table.workspaceId,table.productIdempotencyKey)
+      .where(sql`${table.productIdempotencyKey} IS NOT NULL`)
+  ]
+);
+
+export const signalWorkspaceImportOutbox = pgTable(
+  "signal_workspace_import_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id").notNull()
+      .references(() => importBatches.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    workerJobId: text("worker_job_id").notNull(),
+    errorSummary: jsonb("error_summary"),
+    createdAt: now(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_workspace_import_outbox_batch").on(table.importBatchId),
+    unique("uq_signal_workspace_import_outbox_job").on(table.workerJobId),
+    index("idx_signal_workspace_import_outbox_claim").on(
+      table.status,table.availableAt,table.createdAt
+    )
+  ]
+);
+
+export const signalWorkspaceImportEvents = pgTable(
+  "signal_workspace_import_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id").notNull()
+      .references(() => importBatches.id, { onDelete: "restrict" }),
+    outboxId: uuid("outbox_id")
+      .references(() => signalWorkspaceImportOutbox.id, { onDelete: "restrict" }),
+    eventType: text("event_type").notNull(),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "restrict" }),
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_signal_workspace_import_events_batch").on(
+      table.importBatchId,table.createdAt,table.id
+    )
   ]
 );
 
@@ -1137,6 +1416,36 @@ export const corpusSnapshots = pgTable(
   "corpus_snapshots",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    populationVersion: integer("population_version"),
+    populationDefinitionHash: text("population_definition_hash"),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    timezone: text("timezone"),
+    snapshotDigest: text("snapshot_digest"),
+    sourceWatermarkDigest: text("source_watermark_digest"),
+    scopeFrozenAt: timestamp("scope_frozen_at", { withTimezone: true }),
+    idempotencyKey: text("idempotency_key"),
+    strategicAuthorityVersion: text("strategic_authority_version"),
+    policyBundleId: uuid("policy_bundle_id").references(
+      (): AnyPgColumn => signalPopulationPolicyBundles.id,
+      { onDelete: "restrict" }
+    ),
+    policyCompilationId: uuid("policy_compilation_id").references(
+      (): AnyPgColumn => signalPopulationPolicyCompilations.id,
+      { onDelete: "restrict" }
+    ),
+    governanceEvaluationId: uuid("governance_evaluation_id").references(
+      (): AnyPgColumn => signalDataGovernanceEvaluations.id,
+      { onDelete: "restrict" }
+    ),
+    policyDefinitionHash: text("policy_definition_hash"),
+    compiledPlanHash: text("compiled_plan_hash"),
+    governanceDigest: text("governance_digest"),
+    provenanceDigest: text("provenance_digest"),
+    usagePurposes: text("usage_purposes").array().notNull().default(emptyTextArray),
+    watermarkCapturedAt: timestamp("watermark_captured_at", { withTimezone: true }),
     studyCorpusId: uuid("study_corpus_id")
       .notNull()
       .references(() => studyCorpora.id),
@@ -1148,7 +1457,46 @@ export const corpusSnapshots = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id),
     createdAt: now()
   },
-  (table) => [index("idx_snap_corpus").on(table.studyCorpusId)]
+  (table) => [
+    index("idx_snap_corpus").on(table.studyCorpusId),
+    index("idx_snap_workspace_population").on(table.workspaceId, table.populationId, table.createdAt),
+    uniqueIndex("uq_signal_strategic_snapshot_idempotency")
+      .on(table.workspaceId, table.idempotencyKey)
+      .where(sql`${table.kind} = 'analysis' AND ${table.idempotencyKey} IS NOT NULL`),
+    index("idx_signal_strategic_snapshot_identity")
+      .on(table.workspaceId, table.populationId, table.scopeFrozenAt)
+      .where(sql`${table.kind} = 'analysis'`),
+    check("corpus_snapshots_kind", sql`${table.kind} IN ('manual', 'approval', 'analysis')`),
+    check("corpus_snapshots_population_version_positive", sql`${table.populationVersion} IS NULL OR ${table.populationVersion} >= 1`),
+    check("corpus_snapshots_population_window", sql`${table.periodStart} IS NULL OR ${table.periodEnd} IS NULL OR ${table.periodStart} <= ${table.periodEnd}`),
+    check("corpus_snapshots_population_hash", sql`${table.populationDefinitionHash} IS NULL OR ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("corpus_snapshots_timezone", sql`${table.timezone} IS NULL OR btrim(${table.timezone}) <> ''`),
+    check("corpus_snapshots_snapshot_digest", sql`${table.snapshotDigest} IS NULL OR ${table.snapshotDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("corpus_snapshots_source_watermark_digest", sql`${table.sourceWatermarkDigest} IS NULL OR ${table.sourceWatermarkDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("corpus_snapshots_idempotency_key", sql`${table.idempotencyKey} IS NULL OR ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`)
+  ]
+);
+
+export const signalSnapshotWatermarks = pgTable(
+  "signal_snapshot_watermarks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    snapshotId: uuid("snapshot_id")
+      .notNull()
+      .references(() => corpusSnapshots.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").references((): AnyPgColumn => dataSources.id, { onDelete: "set null" }),
+    sourceSyncRunId: uuid("source_sync_run_id").references((): AnyPgColumn => sourceSyncRuns.id, { onDelete: "set null" }),
+    importBatchId: uuid("import_batch_id").references(() => importBatches.id, { onDelete: "set null" }),
+    dataThroughAt: timestamp("data_through_at", { withTimezone: true }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    watermarkHash: text("watermark_hash").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_snapshot_watermark_source").on(table.snapshotId, table.dataSourceId),
+    check("signal_snapshot_watermark_hash", sql`${table.watermarkHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_snapshot_watermarks_snapshot").on(table.snapshotId, table.acceptedAt)
+  ]
 );
 
 export const corpusSnapshotAggregates = pgTable(
@@ -1193,15 +1541,24 @@ export const cleanupActions = pgTable(
   (table) => [index("idx_cleanup_corpus").on(table.studyCorpusId)]
 );
 
-// TODO mejora-futura: implementar particionado LIST real de mentions por
-// `study_corpus_id` cuando F1.5/Fase 5 introduzcan importador CSV y volumen.
+// Canonical rows belong to a Signal workspace. If volume later requires
+// partitioning, partition by workspace/time; study_corpus_id is provenance only.
 export const mentions = pgTable(
   "mentions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    studyCorpusId: uuid("study_corpus_id")
+    workspaceId: uuid("workspace_id")
       .notNull()
-      .references(() => studyCorpora.id),
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .references(() => studyCorpora.id, { onDelete: "restrict" }),
+    dataSourceId: uuid("data_source_id")
+      .notNull()
+      .references((): AnyPgColumn => dataSources.id, { onDelete: "restrict" }),
+    canonicalMentionId: uuid("canonical_mention_id")
+      .notNull()
+      .references((): AnyPgColumn => mentions.id, { onDelete: "restrict" }),
+    providerRecordId: text("provider_record_id").notNull(),
     externalId: text("external_id").notNull(),
     sourceSystem: text("source_system").notNull(),
     sourceFileId: uuid("source_file_id").references(() => importBatches.id),
@@ -1214,7 +1571,7 @@ export const mentions = pgTable(
     language: char("language", { length: 2 }),
     publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
     platform: text("platform").notNull(),
-    /** Materialized at ingest (see lib/csv/sentione.ts) so Signal dashboard
+    /** Materialized at ingest (see infrastructure/db/sentione-csv-ingest.ts) so Signal dashboard
      * aggregates don't extract platform/channel from raw_metadata jsonb per row. */
     resolvedPlatform: text("resolved_platform"),
     contentType: text("content_type"),
@@ -1238,6 +1595,17 @@ export const mentions = pgTable(
   (table) => [
     unique("uq_mentions_corpus_text_hash").on(table.studyCorpusId, table.textHash),
     unique("uq_mentions_source_external").on(table.sourceSystem, table.externalId),
+    uniqueIndex("uq_mentions_workspace_text_canonical")
+      .on(table.workspaceId, table.textHash)
+      .where(sql`${table.canonicalMentionId} = ${table.id}`),
+    uniqueIndex("uq_mentions_workspace_provider_canonical")
+      .on(table.workspaceId, table.sourceSystem, table.providerRecordId)
+      .where(sql`${table.canonicalMentionId} = ${table.id}`),
+    index("idx_mentions_workspace_acceptance").on(table.workspaceId, table.inclusionStatus, table.publishedAt, table.id),
+    index("idx_mentions_semantic_review_accepted_roots")
+      .on(table.workspaceId, table.publishedAt.desc(), table.id.desc())
+      .where(sql`${table.inclusionStatus} = 'included' AND ${table.canonicalMentionId} = ${table.id}`),
+    index("idx_mentions_canonical_root").on(table.canonicalMentionId, table.workspaceId),
     index("idx_mentions_corpus_platform").on(table.studyCorpusId, table.platform),
     index("idx_mentions_corpus_inclusion").on(table.studyCorpusId, table.inclusionStatus),
     index("idx_mentions_signal_materialization")
@@ -1248,6 +1616,578 @@ export const mentions = pgTable(
       .where(sql`${table.inclusionStatus} = 'included'`),
     index("idx_mentions_published").on(table.publishedAt),
     index("idx_mentions_text_hash").on(table.textHash)
+  ]
+);
+
+export const signalMentionStudyMemberships = pgTable(
+  "signal_mention_study_memberships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "cascade" }),
+    studyCorpusId: uuid("study_corpus_id")
+      .notNull()
+      .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    importBatchId: uuid("import_batch_id").references(() => importBatches.id, { onDelete: "set null" }),
+    membershipRole: text("membership_role").notNull().default("contributed"),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_mention_study_membership").on(
+      table.mentionId,
+      table.studyCorpusId,
+      table.membershipRole
+    ),
+    check("signal_mention_study_membership_role", sql`${table.membershipRole} IN ('contributed', 'selected', 'analyzed')`),
+    index("idx_signal_mention_study_memberships_study").on(table.studyCorpusId, table.membershipRole, table.mentionId),
+    index("idx_signal_mention_study_memberships_workspace").on(table.workspaceId, table.mentionId)
+  ]
+);
+
+export const signalMentionImportMemberships = pgTable(
+  "signal_mention_import_memberships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "cascade" }),
+    importBatchId: uuid("import_batch_id")
+      .notNull()
+      .references(() => importBatches.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id")
+      .notNull()
+      .references((): AnyPgColumn => dataSources.id, { onDelete: "restrict" }),
+    ingestionDisposition: text("ingestion_disposition"),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_mention_import_membership").on(table.mentionId, table.importBatchId),
+    index("idx_signal_mention_import_memberships_batch").on(table.importBatchId, table.mentionId),
+    index("idx_signal_mention_import_memberships_workspace").on(table.workspaceId, table.mentionId)
+  ]
+);
+
+export const signalMentionAttributions = pgTable(
+  "signal_mention_attributions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id")
+      .notNull()
+      .references((): AnyPgColumn => dataSources.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id")
+      .references(() => importBatches.id, { onDelete: "set null" }),
+    scope: text("scope").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id"),
+    entityLabel: text("entity_label"),
+    confidence: numeric("confidence", { precision: 5, scale: 4 }),
+    reviewStatus: text("review_status").notNull().default("pending"),
+    attributionSource: text("attribution_source").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    modelVersion: text("model_version"),
+    attributionBasis: text("attribution_basis").notNull().default("source_intent"),
+    eligibilityStatus: text("eligibility_status").notNull().default("not_eligible"),
+    evidenceKind: text("evidence_kind"),
+    evidenceHash: text("evidence_hash"),
+    semanticPolicyKey: text("semantic_policy_key"),
+    assertionVersion: integer("assertion_version").notNull().default(1),
+    supersedesAttributionId: uuid("supersedes_attribution_id")
+      .references((): AnyPgColumn => signalMentionAttributions.id, { onDelete: "restrict" }),
+    isCurrent: boolean("is_current").notNull().default(true),
+    idempotencyKey: text("idempotency_key"),
+    acquisitionQueryEvidenceClass: text("acquisition_query_evidence_class"),
+    acquisitionQueryVersionId: uuid("acquisition_query_version_id"),
+    acquisitionQueryEvidenceActorUserId: uuid("acquisition_query_evidence_actor_user_id")
+      .references(() => users.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvalSource: text("approval_source"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    uniqueIndex("uq_signal_mention_source_intent_provenance")
+      .on(
+        table.mentionId,
+        table.dataSourceId,
+        sql`COALESCE(${table.importBatchId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        table.scope,
+        table.entityType,
+        sql`COALESCE(${table.entityId}, '00000000-0000-0000-0000-000000000000'::uuid)`
+      )
+      .where(sql`${table.attributionBasis} = 'source_intent'`),
+    uniqueIndex("uq_signal_mention_semantic_idempotency")
+      .on(table.workspaceId, table.idempotencyKey)
+      .where(sql`${table.attributionBasis} = 'mention_semantic'`),
+    uniqueIndex("uq_signal_mention_semantic_version")
+      .on(
+        table.mentionId,
+        table.semanticPolicyKey,
+        table.assertionVersion
+      )
+      .where(sql`${table.attributionBasis} = 'mention_semantic'`),
+    uniqueIndex("uq_signal_mention_semantic_current")
+      .on(
+        table.mentionId,
+        table.scope,
+        table.entityType,
+        sql`COALESCE(${table.entityId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        table.semanticPolicyKey
+      )
+      .where(sql`${table.attributionBasis} = 'mention_semantic' AND ${table.isCurrent} = true`),
+    check("signal_mention_attribution_scope", sql`${table.scope} IN ('primary_brand', 'competitor', 'category', 'reference', 'unattributed')`),
+    check("signal_mention_attribution_entity_type", sql`${table.entityType} IN ('brand', 'competitor', 'category', 'reference', 'unattributed')`),
+    check("signal_mention_attribution_confidence", sql`${table.confidence} IS NULL OR (${table.confidence} >= 0 AND ${table.confidence} <= 1)`),
+    check("signal_mention_attribution_review", sql`${table.reviewStatus} IN ('pending', 'approved', 'rejected')`),
+    check("signal_mention_attribution_basis", sql`${table.attributionBasis} IN ('source_intent', 'mention_semantic')`),
+    check("signal_mention_attribution_eligibility", sql`${table.eligibilityStatus} IN ('not_eligible', 'candidate', 'eligible')`),
+    check("signal_mention_attribution_policy", sql`btrim(${table.policyVersion}) <> ''`),
+    check("signal_mention_attribution_approval", sql`${table.reviewStatus} <> 'approved' OR (${table.approvalSource} IS NOT NULL AND ${table.approvedAt} IS NOT NULL)`),
+    index("idx_signal_mention_attributions_scope").on(table.workspaceId, table.scope, table.reviewStatus, table.mentionId),
+    index("idx_signal_mention_semantic_eligible")
+      .on(table.workspaceId, table.scope, table.entityType, table.entityId, table.mentionId)
+      .where(sql`${table.attributionBasis} = 'mention_semantic' AND ${table.isCurrent} = true AND ${table.reviewStatus} = 'approved' AND ${table.eligibilityStatus} = 'eligible'`),
+    index("idx_signal_mention_attributions_provenance").on(table.importBatchId, table.dataSourceId, table.mentionId),
+    index("idx_signal_mention_source_intent_workspace_root")
+      .on(table.workspaceId, table.mentionId, table.importBatchId)
+      .where(sql`${table.attributionBasis} = 'source_intent'`),
+    index("idx_signal_mention_attributions_entity").on(table.entityType, table.entityId)
+  ]
+);
+
+export const signalMentionAttributionReviewEvents = pgTable(
+  "signal_mention_attribution_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    attributionId: uuid("attribution_id")
+      .notNull()
+      .references(() => signalMentionAttributions.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    previousReviewStatus: text("previous_review_status").notNull(),
+    nextReviewStatus: text("next_review_status").notNull(),
+    previousEligibilityStatus: text("previous_eligibility_status").notNull(),
+    nextEligibilityStatus: text("next_eligibility_status").notNull(),
+    reviewerUserId: uuid("reviewer_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reviewPolicyKey: text("review_policy_key").notNull(),
+    reviewPolicyVersion: text("review_policy_version").notNull(),
+    rationaleHash: text("rationale_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_mention_attribution_review_idempotency").on(
+      table.workspaceId,
+      table.idempotencyKey
+    ),
+    check("signal_mention_attribution_review_action", sql`${table.action} IN ('approved', 'rejected', 'superseded')`),
+    check("signal_mention_attribution_review_rationale_hash", sql`${table.rationaleHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_mention_attribution_review_idempotency_key", sql`${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_mention_attribution_review_events_assertion").on(
+      table.attributionId,
+      table.createdAt,
+      table.id
+    )
+  ]
+);
+
+export const signalMentionGovernanceEvents = pgTable(
+  "signal_mention_governance_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    previousInclusionStatus: text("previous_inclusion_status").notNull(),
+    nextInclusionStatus: text("next_inclusion_status").notNull(),
+    previousExclusionReason: text("previous_exclusion_reason"),
+    nextExclusionReason: text("next_exclusion_reason"),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    revertsEventId: uuid("reverts_event_id")
+      .references((): AnyPgColumn => signalMentionGovernanceEvents.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_mention_governance_idempotency").on(table.workspaceId, table.idempotencyKey),
+    uniqueIndex("uq_signal_mention_governance_reverted_event")
+      .on(table.revertsEventId)
+      .where(sql`${table.revertsEventId} IS NOT NULL`),
+    check("signal_mention_governance_action", sql`${table.action} IN ('include', 'exclude', 'revert', 'send_to_review')`),
+    check("signal_mention_governance_previous_status", sql`${table.previousInclusionStatus} IN ('pending', 'included', 'excluded')`),
+    check("signal_mention_governance_next_status", sql`${table.nextInclusionStatus} IN ('pending', 'included', 'excluded')`),
+    check("signal_mention_governance_reason", sql`btrim(${table.reason}) <> ''`),
+    check("signal_mention_governance_idempotency_key", sql`${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_mention_governance_exclusion_reason", sql`${table.nextInclusionStatus} <> 'excluded' OR NULLIF(btrim(${table.nextExclusionReason}), '') IS NOT NULL`),
+    check("signal_mention_governance_revert_shape", sql`(${table.action} = 'revert' AND ${table.revertsEventId} IS NOT NULL) OR (${table.action} <> 'revert' AND ${table.revertsEventId} IS NULL)`),
+    index("idx_signal_mention_governance_history").on(table.workspaceId, table.mentionId, table.createdAt, table.id)
+  ]
+);
+
+export const signalSemanticReviewProjectionState = pgTable(
+  "signal_semantic_review_projection_state",
+  {
+    workspaceId: uuid("workspace_id").primaryKey().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    currentGeneration: bigint("current_generation", { mode: "number" }).notNull().default(0),
+    status: text("status").notNull().default("stale"),
+    snapshotDigest: text("snapshot_digest"),
+    populationDigest: text("population_digest"),
+    identityDigest: text("identity_digest"),
+    governanceDigest: text("governance_digest"),
+    resolutionSelectionDigest: text("resolution_selection_digest"),
+    resolutionSelectedCharacterCount: bigint("resolution_selected_character_count", { mode: "number" }).notNull().default(0),
+    resolutionNextPolicyTransitionAt: timestamp("resolution_next_policy_transition_at", { withTimezone: true }),
+    incompleteProvenanceCount: integer("incomplete_provenance_count").notNull().default(0),
+    projectedRootCount: integer("projected_root_count").notNull().default(0),
+    dirtyRootCount: integer("dirty_root_count").notNull().default(0),
+    fullRebuildRequired: boolean("full_rebuild_required").notNull().default(true),
+    lastReason: text("last_reason").notNull().default("initial_projection_required"),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+    updatedAt: updatedAt()
+  }
+);
+
+export const signalSemanticReviewProjectionItems = pgTable(
+  "signal_semantic_review_projection_items",
+  {
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "cascade" }),
+    queueState: text("queue_state").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    platform: text("platform").notNull(),
+    excerpt: text("excerpt").notNull(),
+    title: text("title"),
+    account: jsonb("account"),
+    urlHost: text("url_host"),
+    sourceIntents: jsonb("source_intents").notNull().default(sql`'[]'::jsonb`),
+    sourceIds: uuid("source_ids").array().notNull().default(sql`ARRAY[]::uuid[]`),
+    proposedAssertions: jsonb("proposed_assertions").notNull().default(sql`'[]'::jsonb`),
+    proposedScopes: text("proposed_scopes").array().notNull().default(emptyTextArray),
+    currentScopes: text("current_scopes").array().notNull().default(emptyTextArray),
+    confidenceBands: text("confidence_bands").array().notNull().default(emptyTextArray),
+    currentAssertions: jsonb("current_assertions").notNull().default(sql`'[]'::jsonb`),
+    candidateResolution: text("candidate_resolution").notNull(),
+    resolutionEligibility: text("resolution_eligibility").notNull().default("licensing_unknown"),
+    resolutionAuthorityDigest: text("resolution_authority_digest"),
+    resolutionNextPolicyTransitionAt: timestamp("resolution_next_policy_transition_at", { withTimezone: true }),
+    characterCount: integer("character_count").notNull().default(0),
+    contextHash: text("context_hash").notNull(),
+    projectionHash: text("projection_hash").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.generation, table.mentionId] }),
+    index("idx_signal_semantic_review_projection_page").on(table.workspaceId, table.generation, table.queueState, table.publishedAt, table.mentionId),
+    index("idx_signal_semantic_review_projection_resolution").on(table.workspaceId, table.generation, table.resolutionEligibility, table.queueState, table.mentionId)
+  ]
+);
+
+export const signalSemanticReviewProjectionAggregates = pgTable(
+  "signal_semantic_review_projection_aggregates",
+  {
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    generation: bigint("generation", { mode: "number" }).notNull(),
+    dimension: text("dimension").notNull(),
+    dimensionValue: text("dimension_value").notNull(),
+    rootCount: integer("root_count").notNull()
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.generation, table.dimension, table.dimensionValue] })]
+);
+
+export const signalSemanticReviewProjectionDirtyRoots = pgTable(
+  "signal_semantic_review_projection_dirty_roots",
+  {
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    dirtyAt: timestamp("dirty_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.mentionId] })]
+);
+
+export const signalSemanticReviewProjectionOutbox = pgTable(
+  "signal_semantic_review_projection_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    reason: text("reason").notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    createdAt: now(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  }
+);
+
+export const signalSemanticResolutionRuns = pgTable(
+  "signal_semantic_resolution_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    requestedByUserId: uuid("requested_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("queued"),
+    modelVersion: text("model_version").notNull(),
+    policyKey: text("policy_key").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    queueDigest: text("queue_digest").notNull(),
+    totalItems: integer("total_items").notNull(),
+    completedItems: integer("completed_items").notNull().default(0),
+    failedItems: integer("failed_items").notNull().default(0),
+    budgetThresholdUsd: numeric("budget_threshold_usd", { precision: 12, scale: 6 }).notNull(),
+    budgetCapUsd: numeric("budget_cap_usd", { precision: 12, scale: 6 }).notNull(),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }).notNull(),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    overBudgetConfirmed: boolean("over_budget_confirmed").notNull().default(false),
+    providerBatchId: text("provider_batch_id"),
+    providerBatchStatus: text("provider_batch_status").notNull().default("not_submitted"),
+    providerProcessingItems: integer("provider_processing_items").notNull().default(0),
+    providerSucceededItems: integer("provider_succeeded_items").notNull().default(0),
+    providerErroredItems: integer("provider_errored_items").notNull().default(0),
+    providerCanceledItems: integer("provider_canceled_items").notNull().default(0),
+    providerExpiredItems: integer("provider_expired_items").notNull().default(0),
+    providerSubmittedAt: timestamp("provider_submitted_at", { withTimezone: true }),
+    providerEndedAt: timestamp("provider_ended_at", { withTimezone: true }),
+    providerResultsImportedAt: timestamp("provider_results_imported_at", { withTimezone: true }),
+    projectionSnapshotDigest: text("projection_snapshot_digest"),
+    populationDigest: text("population_digest"),
+    governanceDigest: text("governance_digest"),
+    pricingVersion: text("pricing_version"),
+    inputUsdPerMillionTokens: numeric("input_usd_per_million_tokens", { precision: 18, scale: 6 }),
+    outputUsdPerMillionTokens: numeric("output_usd_per_million_tokens", { precision: 18, scale: 6 }),
+    preflightDigest: text("preflight_digest"),
+    requestDigest: text("request_digest"),
+    idempotencyKey: text("idempotency_key"),
+    estimatedCostMicroUsd: bigint("estimated_cost_micro_usd", { mode: "number" }),
+    hardCapMicroUsd: bigint("hard_cap_micro_usd", { mode: "number" }),
+    supersedesRunId: uuid("supersedes_run_id").references((): AnyPgColumn => signalSemanticResolutionRuns.id, { onDelete: "restrict" }),
+    nextPolicyTransitionAt: timestamp("next_policy_transition_at", { withTimezone: true }),
+    providerBatchItemLimit: integer("provider_batch_item_limit"),
+    childBatchCount: integer("child_batch_count").notNull().default(0),
+    completedChildBatchCount: integer("completed_child_batch_count").notNull().default(0),
+    failedChildBatchCount: integer("failed_child_batch_count").notNull().default(0),
+    canceledChildBatchCount: integer("canceled_child_batch_count").notNull().default(0),
+    cancellationRequestedAt: timestamp("cancellation_requested_at", { withTimezone: true }),
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    uniqueIndex("uq_signal_semantic_resolution_active_workspace")
+      .on(table.workspaceId)
+      .where(sql`${table.status} IN ('queued', 'running')`),
+    index("idx_signal_semantic_resolution_runs_workspace")
+      .on(table.workspaceId, table.createdAt, table.id),
+    uniqueIndex("uq_signal_semantic_resolution_provider_batch")
+      .on(table.providerBatchId)
+      .where(sql`${table.providerBatchId} IS NOT NULL`)
+  ]
+);
+
+export const signalSemanticResolutionChildBatches = pgTable(
+  "signal_semantic_resolution_child_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id").notNull().references(() => signalSemanticResolutionRuns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    status: text("status").notNull().default("queued"),
+    itemCount: integer("item_count").notNull(),
+    completedItems: integer("completed_items").notNull().default(0),
+    failedItems: integer("failed_items").notNull().default(0),
+    providerBatchId: text("provider_batch_id"),
+    providerBatchStatus: text("provider_batch_status").notNull().default("not_submitted"),
+    estimatedInputTokens: bigint("estimated_input_tokens", { mode: "number" }).notNull(),
+    estimatedOutputTokens: bigint("estimated_output_tokens", { mode: "number" }).notNull(),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 12, scale: 6 }).notNull(),
+    estimatedCostMicroUsd: bigint("estimated_cost_micro_usd", { mode: "number" }).notNull(),
+    reservedCostUsd: numeric("reserved_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    reservedCostMicroUsd: bigint("reserved_cost_micro_usd", { mode: "number" }).notNull().default(0),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    actualCostMicroUsd: bigint("actual_cost_micro_usd", { mode: "number" }).notNull().default(0),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    supersedesChildBatchId: uuid("supersedes_child_batch_id").references((): AnyPgColumn => signalSemanticResolutionChildBatches.id, { onDelete: "restrict" }),
+    resumeIdempotencyKey: text("resume_idempotency_key"),
+    createdAt: now(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_semantic_resolution_child_ordinal").on(table.runId, table.ordinal),
+    unique("uq_signal_semantic_resolution_child_provider").on(table.providerBatchId),
+    uniqueIndex("uq_signal_semantic_resolution_child_resume").on(table.runId, table.resumeIdempotencyKey).where(sql`${table.resumeIdempotencyKey} IS NOT NULL`)
+  ]
+);
+
+export const signalSemanticResolutionRunItems = pgTable(
+  "signal_semantic_resolution_run_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => signalSemanticResolutionRuns.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    contextHash: text("context_hash").notNull(),
+    decision: jsonb("decision"),
+    providerCustomId: text("provider_custom_id"),
+    providerResultStatus: text("provider_result_status"),
+    providerInputTokens: integer("provider_input_tokens").notNull().default(0),
+    providerOutputTokens: integer("provider_output_tokens").notNull().default(0),
+    providerCacheCreationInputTokens: integer("provider_cache_creation_input_tokens").notNull().default(0),
+    providerCacheReadInputTokens: integer("provider_cache_read_input_tokens").notNull().default(0),
+    providerCostUsd: numeric("provider_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    childBatchId: uuid("child_batch_id").references(() => signalSemanticResolutionChildBatches.id, { onDelete: "restrict" }),
+    providerErrorCode: text("provider_error_code"),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_semantic_resolution_run_item").on(table.runId, table.mentionId),
+    index("idx_signal_semantic_resolution_items_pending")
+      .on(table.runId, table.status, table.createdAt, table.id),
+    index("idx_signal_semantic_resolution_items_mention")
+      .on(table.workspaceId, table.mentionId, table.createdAt),
+    uniqueIndex("uq_signal_semantic_resolution_provider_custom_id")
+      .on(table.runId, table.providerCustomId)
+      .where(sql`${table.providerCustomId} IS NOT NULL`),
+    index("idx_signal_semantic_resolution_provider_results")
+      .on(table.runId, table.providerResultStatus, table.providerCustomId)
+  ]
+);
+
+export const signalSemanticResolutionChildOutbox = pgTable(
+  "signal_semantic_resolution_child_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").notNull().references(() => signalSemanticResolutionRuns.id, { onDelete: "cascade" }),
+    childBatchId: uuid("child_batch_id").notNull().references(() => signalSemanticResolutionChildBatches.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    createdAt: now(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [unique("uq_signal_semantic_resolution_child_outbox").on(table.childBatchId)]
+);
+
+export const signalSemanticResolutionItemAttempts = pgTable(
+  "signal_semantic_resolution_item_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runItemId: uuid("run_item_id").notNull().references(() => signalSemanticResolutionRunItems.id, { onDelete: "restrict" }),
+    childBatchId: uuid("child_batch_id").notNull().references(() => signalSemanticResolutionChildBatches.id, { onDelete: "restrict" }),
+    attempt: integer("attempt").notNull(),
+    providerResultStatus: text("provider_result_status"),
+    decisionDigest: text("decision_digest"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    costMicroUsd: bigint("cost_micro_usd", { mode: "number" }).notNull().default(0),
+    errorCode: text("error_code"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [unique("uq_signal_semantic_resolution_item_attempt").on(table.runItemId, table.childBatchId, table.attempt)]
+);
+
+export const signalSemanticResolutionRunEvents = pgTable(
+  "signal_semantic_resolution_run_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").notNull().references(() => signalSemanticResolutionRuns.id, { onDelete: "restrict" }),
+    childBatchId: uuid("child_batch_id").references(() => signalSemanticResolutionChildBatches.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    details: jsonb("details").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [unique("uq_signal_semantic_resolution_run_event").on(table.workspaceId, table.idempotencyKey)]
+);
+
+export const signalPopulationMemberships = pgTable(
+  "signal_population_memberships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    populationId: uuid("population_id")
+      .notNull()
+      .references(() => signalPopulationDefinitions.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id")
+      .notNull()
+      .references(() => mentions.id, { onDelete: "cascade" }),
+    membershipStatus: text("membership_status").notNull().default("included"),
+    membershipReason: text("membership_reason").notNull(),
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_population_membership").on(table.populationId, table.mentionId),
+    check("signal_population_membership_status", sql`${table.membershipStatus} IN ('included', 'excluded')`),
+    index("idx_signal_population_memberships_serving")
+      .on(table.populationId, table.membershipStatus, table.mentionId)
+      .where(sql`${table.removedAt} IS NULL`),
+    index("idx_signal_population_memberships_workspace").on(table.workspaceId, table.mentionId)
   ]
 );
 
@@ -1362,6 +2302,14 @@ export const tbAnalyses = pgTable(
     snapshotMentionCount: integer("snapshot_mention_count"),
     snapshotDigest: text("snapshot_digest"),
     scopeFrozenAt: timestamp("scope_frozen_at", { withTimezone: true }),
+    workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reportKey: text("report_key"),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    populationVersion: integer("population_version"),
+    populationDefinitionHash: text("population_definition_hash"),
+    timezone: text("timezone"),
+    runIdempotencyKey: text("run_idempotency_key"),
+    strategicContractVersion: text("strategic_contract_version"),
     comparisonBaseAnalysisId: uuid("comparison_base_analysis_id").references(
       (): AnyPgColumn => tbAnalyses.id,
       { onDelete: "restrict" }
@@ -1412,6 +2360,22 @@ export const tbAnalyses = pgTable(
       "tb_analyses_snapshot_mention_count_nonnegative",
       sql`${table.snapshotMentionCount} IS NULL OR ${table.snapshotMentionCount} >= 0`
     ),
+    check("tb_analyses_report_key", sql`${table.reportKey} IS NULL OR ${table.reportKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("tb_analyses_population_version_positive", sql`${table.populationVersion} IS NULL OR ${table.populationVersion} >= 1`),
+    check("tb_analyses_population_hash", sql`${table.populationDefinitionHash} IS NULL OR ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("tb_analyses_run_idempotency_key", sql`${table.runIdempotencyKey} IS NULL OR ${table.runIdempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("tb_analyses_strategic_identity", sql`${table.strategicContractVersion} IS NULL OR (
+      ${table.strategicContractVersion} IN ('signal-tb-strategic-v1', 'signal-tb-strategic-v2')
+      AND ${table.workspaceId} IS NOT NULL
+      AND ${table.reportKey} IS NOT NULL
+      AND ${table.populationId} IS NOT NULL
+      AND ${table.populationVersion} >= 1
+      AND ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$'
+      AND NULLIF(btrim(${table.timezone}), '') IS NOT NULL
+      AND ${table.runIdempotencyKey} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.snapshotDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.scopeFrozenAt} IS NOT NULL
+    )`),
     check(
       "tb_analyses_comparison_compatibility_state",
       sql`${table.comparisonCompatibilityState} IS NULL OR ${table.comparisonCompatibilityState} IN ('not_evaluated', 'compatible', 'incompatible')`
@@ -1424,6 +2388,72 @@ export const tbAnalyses = pgTable(
       table.scopeFrozenAt
     ),
     index("idx_tb_analyses_comparison_base").on(table.comparisonBaseAnalysisId)
+  ]
+);
+
+export const signalStrategicRunOutbox = pgTable(
+  "signal_strategic_run_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    reportKey: text("report_key").notNull(),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => corpusSnapshots.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    bullmqJobId: text("bullmq_job_id"),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseToken: uuid("lease_token"),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+    lastError: jsonb("last_error").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_strategic_run_outbox_analysis").on(table.tbAnalysisId),
+    unique("uq_signal_strategic_run_outbox_idempotency").on(table.workspaceId, table.reportKey, table.idempotencyKey),
+    check("signal_strategic_run_outbox_report_key", sql`${table.reportKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_strategic_run_outbox_status", sql`${table.status} IN ('pending', 'dispatching', 'dispatched', 'completed', 'failed', 'dead_letter')`),
+    check("signal_strategic_run_outbox_attempt", sql`${table.attempt} >= 0`),
+    check("signal_strategic_run_outbox_key", sql`${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_strategic_run_outbox_dispatch")
+      .on(table.availableAt, table.createdAt, table.id)
+      .where(sql`${table.status} IN ('pending', 'failed')`),
+    index("idx_signal_strategic_run_outbox_recovery")
+      .on(table.status, table.availableAt, table.leaseExpiresAt, table.createdAt, table.id)
+      .where(sql`${table.status} IN ('pending', 'failed', 'dispatching')`),
+    index("idx_signal_strategic_run_outbox_bullmq_job")
+      .on(table.bullmqJobId)
+      .where(sql`${table.bullmqJobId} IS NOT NULL`)
+  ]
+);
+
+export const tbAnalysisContextRefs = pgTable(
+  "tb_analysis_context_refs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    sourceVersion: text("source_version").notNull(),
+    sourceDigest: text("source_digest").notNull(),
+    contextRole: text("context_role").notNull().default("contextual"),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_analysis_context_ref").on(table.tbAnalysisId, table.sourceType, table.sourceId),
+    check("tb_analysis_context_ref_source", sql`${table.sourceType} IN ('brand_knowledge_source', 'study_knowledge_source', 'knowledge_base', 'data_asset', 'data_contract', 'data_observation', 'data_asset_record')`),
+    check("tb_analysis_context_ref_role", sql`${table.contextRole} IN ('contextual', 'structured_evidence', 'limitation')`),
+    check("tb_analysis_context_ref_version", sql`btrim(${table.sourceVersion}) <> ''`),
+    check("tb_analysis_context_ref_digest", sql`${table.sourceDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_tb_analysis_context_refs_analysis").on(table.tbAnalysisId, table.sourceType, table.sourceId)
   ]
 );
 
@@ -2107,6 +3137,9 @@ export const dataSources = pgTable(
   "data_sources",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
     studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
     organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
     brandId: uuid("brand_id").references(() => brands.id, { onDelete: "cascade" }),
@@ -2114,17 +3147,41 @@ export const dataSources = pgTable(
     provider: text("provider").notNull(),
     connectionMethod: text("connection_method").notNull(),
     name: text("name").notNull(),
+    sourceContractVersion: text("source_contract_version").notNull()
+      .default("signal-data-source-scope-compat-v1"),
+    sourceKey: text("source_key").notNull().default(""),
     mapping: jsonb("mapping").notNull().default(sql`'{}'::jsonb`),
     mappingVersion: integer("mapping_version").notNull().default(1),
     role: jsonb("role").notNull().default(sql`'{}'::jsonb`),
+    governedScope: text("governed_scope"),
+    governedEntityType: text("governed_entity_type"),
+    governedEntityId: uuid("governed_entity_id"),
+    scopePolicyVersion: text("scope_policy_version"),
+    scopeReviewStatus: text("scope_review_status").notNull().default("pending"),
+    scopeApprovedByUserId: uuid("scope_approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    scopeApprovalSource: text("scope_approval_source"),
+    scopeApprovedAt: timestamp("scope_approved_at", { withTimezone: true }),
     status: text("status").notNull().default("draft"),
     visibility: text("visibility").notNull().default("internal"),
     createdAt: now(),
     updatedAt: updatedAt()
   },
   (table) => [
+    index("idx_data_sources_workspace").on(table.workspaceId, table.sourceType, table.status),
     index("idx_data_sources_corpus").on(table.studyCorpusId, table.sourceType, table.status),
-    index("idx_data_sources_brand").on(table.brandId, table.sourceType, table.status)
+    index("idx_data_sources_brand").on(table.brandId, table.sourceType, table.status),
+    index("idx_data_sources_governed_scope").on(table.workspaceId, table.governedScope, table.scopeReviewStatus),
+    unique("uq_data_sources_workspace_source_key").on(table.workspaceId, table.sourceKey),
+    check("data_sources_governed_scope", sql`${table.governedScope} IS NULL OR ${table.governedScope} IN ('primary_brand', 'competitor', 'category', 'reference', 'unattributed')`),
+    check("data_sources_governed_entity_type", sql`${table.governedEntityType} IS NULL OR ${table.governedEntityType} IN ('brand', 'competitor', 'category', 'reference', 'unattributed')`),
+    check("data_sources_scope_review", sql`${table.scopeReviewStatus} IN ('pending', 'approved', 'rejected')`),
+    check("data_sources_scope_policy", sql`${table.scopePolicyVersion} IS NULL OR btrim(${table.scopePolicyVersion}) <> ''`),
+    check("data_sources_scope_approval", sql`${table.scopeReviewStatus} <> 'approved' OR (
+      ${table.governedScope} IS NOT NULL
+      AND ${table.governedEntityType} IS NOT NULL
+      AND ${table.scopeApprovalSource} IS NOT NULL
+      AND ${table.scopeApprovedAt} IS NOT NULL
+    )`)
   ]
 );
 
@@ -2132,9 +3189,14 @@ export const sourceSyncRuns = pgTable(
   "source_sync_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => signalWorkspaces.id, { onDelete: "restrict" }),
     dataSourceId: uuid("data_source_id")
       .notNull()
       .references(() => dataSources.id, { onDelete: "cascade" }),
+    importBatchId: uuid("import_batch_id")
+      .references(() => importBatches.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     status: text("status").notNull().default("running"),
@@ -2148,7 +3210,11 @@ export const sourceSyncRuns = pgTable(
     createdAt: now()
   },
   (table) => [
+    index("idx_source_sync_runs_workspace").on(table.workspaceId, table.createdAt),
     index("idx_source_sync_runs_source").on(table.dataSourceId, table.createdAt)
+    ,uniqueIndex("uq_source_sync_runs_import_batch")
+      .on(table.importBatchId)
+      .where(sql`${table.importBatchId} IS NOT NULL`)
   ]
 );
 
@@ -3322,10 +4388,38 @@ export const taggingModelVersions = pgTable(
     methodologySlug: text("methodology_slug"),
     taggingRuleSetId: uuid("tagging_rule_set_id").references(() => taggingRuleSets.id, { onDelete: "set null" }),
     promptHash: text("prompt_hash"),
+    registryContractVersion: text("registry_contract_version"),
+    artifactDigest: text("artifact_digest"),
+    runtimeKind: text("runtime_kind"),
+    artifactFormat: text("artifact_format"),
+    configuration: jsonb("configuration"),
+    configurationDigest: text("configuration_digest"),
+    datasetDigest: text("dataset_digest"),
+    goldSetDigest: text("gold_set_digest"),
+    licenseKey: text("license_key"),
+    provenanceDigest: text("provenance_digest"),
+    taxonomyProfileId: uuid("taxonomy_profile_id").references(
+      (): AnyPgColumn => signalTaxonomyProfiles.id,
+      { onDelete: "restrict" }
+    ),
+    supersedesModelVersionId: uuid("supersedes_model_version_id").references(
+      (): AnyPgColumn => taggingModelVersions.id,
+      { onDelete: "restrict" }
+    ),
+    registryOperationId: uuid("registry_operation_id").references(
+      (): AnyPgColumn => signalClassificationOperations.id,
+      { onDelete: "restrict" }
+    ),
+    registeredByUserId: uuid("registered_by_user_id").references(() => users.id, { onDelete: "restrict" }),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
     createdAt: now()
   },
-  (table) => [unique("uq_tagging_model_versions_key_version").on(table.modelKey, table.version)]
+  (table) => [
+    unique("uq_tagging_model_versions_key_version").on(table.modelKey, table.version),
+    uniqueIndex("uq_tagging_model_registry_supersedes")
+      .on(table.supersedesModelVersionId)
+      .where(sql`${table.supersedesModelVersionId} IS NOT NULL`)
+  ]
 );
 
 export const intelligenceEntities = pgTable(
@@ -3348,6 +4442,1048 @@ export const intelligenceEntities = pgTable(
     uniqueIndex("uq_intelligence_entities_type_external")
       .on(table.entityType, table.externalId)
       .where(sql`${table.externalId} IS NOT NULL`)
+  ]
+);
+
+export const signalQualityPolicies = pgTable(
+  "signal_quality_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyKey: text("policy_key").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    minQualityScore: integer("min_quality_score"),
+    requiredQualityFlags: text("required_quality_flags").array().notNull().default(emptyTextArray),
+    forbiddenQualityFlags: text("forbidden_quality_flags").array().notNull().default(emptyTextArray),
+    canonicalRootDisposition: text("canonical_root_disposition").notNull().default("evaluate"),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    activatedByUserId: uuid("activated_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_quality_policy_version").on(table.workspaceId, table.policyKey, table.policyVersion),
+    unique("uq_signal_quality_policy_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    uniqueIndex("uq_signal_quality_policy_active").on(table.workspaceId, table.policyKey).where(sql`${table.status} = 'active'`),
+    index("idx_signal_quality_policies_workspace").on(table.workspaceId, table.status, table.policyKey, table.policyVersion)
+  ]
+);
+
+export const signalRetentionPolicies = pgTable(
+  "signal_retention_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyKey: text("policy_key").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    retentionState: text("retention_state").notNull(),
+    retentionMode: text("retention_mode").notNull(),
+    retainUntil: timestamp("retain_until", { withTimezone: true }),
+    expiryAction: text("expiry_action").notNull(),
+    approvalEvidenceHash: text("approval_evidence_hash"),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_retention_policy_version").on(table.workspaceId, table.policyKey, table.policyVersion),
+    unique("uq_signal_retention_policy_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    uniqueIndex("uq_signal_retention_policy_active").on(table.workspaceId, table.policyKey).where(sql`${table.status} = 'active'`),
+    index("idx_signal_retention_policies_workspace").on(table.workspaceId, table.status, table.policyKey, table.policyVersion)
+  ]
+);
+
+export const signalLicensingPolicies = pgTable(
+  "signal_licensing_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyKey: text("policy_key").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    approvalEvidenceHash: text("approval_evidence_hash"),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_licensing_policy_version").on(table.workspaceId, table.policyKey, table.policyVersion),
+    unique("uq_signal_licensing_policy_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    uniqueIndex("uq_signal_licensing_policy_active").on(table.workspaceId, table.policyKey).where(sql`${table.status} = 'active'`),
+    index("idx_signal_licensing_policies_workspace").on(table.workspaceId, table.status, table.policyKey, table.policyVersion)
+  ]
+);
+
+export const signalLicensingPolicyUsages = pgTable(
+  "signal_licensing_policy_usages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    licensingPolicyId: uuid("licensing_policy_id").notNull().references(() => signalLicensingPolicies.id, { onDelete: "cascade" }),
+    usagePurpose: text("usage_purpose").notNull(),
+    decision: text("decision").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_licensing_policy_usage").on(table.licensingPolicyId, table.usagePurpose),
+    index("idx_signal_licensing_policy_usages_workspace").on(table.workspaceId, table.usagePurpose, table.decision, table.licensingPolicyId)
+  ]
+);
+
+export const signalProvenancePolicyBindings = pgTable(
+  "signal_provenance_policy_bindings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    dataSourceId: uuid("data_source_id").notNull().references(() => dataSources.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id").references(() => importBatches.id, { onDelete: "restrict" }),
+    bindingVersion: integer("binding_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    qualityPolicyId: uuid("quality_policy_id").notNull().references(() => signalQualityPolicies.id, { onDelete: "restrict" }),
+    retentionPolicyId: uuid("retention_policy_id").notNull().references(() => signalRetentionPolicies.id, { onDelete: "restrict" }),
+    licensingPolicyId: uuid("licensing_policy_id").notNull().references(() => signalLicensingPolicies.id, { onDelete: "restrict" }),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    activatedByUserId: uuid("activated_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_provenance_policy_binding_version").on(
+      table.workspaceId, table.dataSourceId, table.importBatchId, table.bindingVersion
+    ),
+    unique("uq_signal_provenance_policy_binding_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    index("idx_signal_provenance_policy_bindings_source").on(table.workspaceId, table.dataSourceId, table.importBatchId, table.status)
+  ]
+);
+
+export const signalDataGovernancePolicyEvents = pgTable(
+  "signal_data_governance_policy_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    objectKind: text("object_kind").notNull(),
+    objectId: uuid("object_id").notNull(),
+    action: text("action").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    inputHash: text("input_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_data_governance_policy_event").on(table.workspaceId, table.idempotencyKey),
+    index("idx_signal_data_governance_policy_events_object").on(table.workspaceId, table.objectKind, table.objectId, table.createdAt, table.id)
+  ]
+);
+
+export const signalPopulationPolicyBundles = pgTable(
+  "signal_population_policy_bundles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyKey: text("policy_key").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    authorizedModules: text("authorized_modules").array().notNull(),
+    allowedScopes: text("allowed_scopes").array().notNull(),
+    acceptanceStatus: text("acceptance_status").notNull().default("included"),
+    qualityContractStatus: text("quality_contract_status").notNull().default("not_available"),
+    qualityPolicyKey: text("quality_policy_key"),
+    qualityPolicyVersion: integer("quality_policy_version"),
+    minQualityScore: integer("min_quality_score"),
+    requiredQualityFlags: text("required_quality_flags").array().notNull().default(emptyTextArray),
+    forbiddenQualityFlags: text("forbidden_quality_flags").array().notNull().default(emptyTextArray),
+    eligibilityPolicy: text("eligibility_policy").notNull(),
+    deduplicationPolicy: text("deduplication_policy").notNull().default("canonical-root"),
+    visibilityClass: text("visibility_class").notNull(),
+    denominatorKey: text("denominator_key").notNull(),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    timezone: text("timezone"),
+    retentionPolicyRef: text("retention_policy_ref"),
+    licensingPolicyRef: text("licensing_policy_ref"),
+    dataGovernanceContractStatus: text("data_governance_contract_status").notNull().default("not_available"),
+    qualityPolicyId: uuid("quality_policy_id").references(() => signalQualityPolicies.id, { onDelete: "restrict" }),
+    requiredUsagePurposes: text("required_usage_purposes").array().notNull().default(emptyTextArray),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    activatedByUserId: uuid("activated_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_population_policy_bundle_version").on(table.workspaceId, table.policyKey, table.policyVersion),
+    check("signal_population_policy_bundle_key", sql`${table.policyKey} ~ '^[a-z][a-z0-9-]*$'`),
+    check("signal_population_policy_bundle_version_positive", sql`${table.policyVersion} >= 1 AND (${table.qualityPolicyVersion} IS NULL OR ${table.qualityPolicyVersion} >= 1)`),
+    check("signal_population_policy_bundle_status", sql`${table.status} IN ('draft', 'active', 'retired')`),
+    check("signal_population_policy_bundle_modules", sql`cardinality(${table.authorizedModules}) > 0 AND ${table.authorizedModules} <@ ARRAY['brand-monitoring', 'mentions', 'topics-narratives', 'triggers-barriers', 'admin-mentions']::text[]`),
+    check("signal_population_policy_bundle_scopes", sql`${table.allowedScopes} <@ ARRAY['primary_brand', 'competitor', 'category', 'reference', 'unattributed']::text[]`),
+    check("signal_population_policy_bundle_acceptance", sql`${table.acceptanceStatus} IN ('included', 'any')`),
+    check("signal_population_policy_bundle_quality_contract", sql`(${table.qualityContractStatus} = 'resolved' AND ${table.qualityPolicyKey} ~ '^[a-z][a-z0-9-]*$' AND ${table.qualityPolicyVersion} IS NOT NULL) OR (${table.qualityContractStatus} = 'not_available' AND ${table.qualityPolicyKey} IS NULL AND ${table.qualityPolicyVersion} IS NULL AND ${table.minQualityScore} IS NULL AND cardinality(${table.requiredQualityFlags}) = 0 AND cardinality(${table.forbiddenQualityFlags}) = 0)`),
+    check("signal_population_policy_bundle_quality_score", sql`${table.minQualityScore} IS NULL OR ${table.minQualityScore} BETWEEN 0 AND 10`),
+    check("signal_population_policy_bundle_quality_flags", sql`NOT (${table.requiredQualityFlags} && ${table.forbiddenQualityFlags})`),
+    check("signal_population_policy_bundle_eligibility", sql`${table.eligibilityPolicy} IN ('semantic-approved-eligible', 'workspace-reservoir', 'snapshot-membership')`),
+    check("signal_population_policy_bundle_deduplication", sql`${table.deduplicationPolicy} = 'canonical-root'`),
+    check("signal_population_policy_bundle_visibility", sql`${table.visibilityClass} IN ('client-safe', 'operator-only', 'strategic-internal')`),
+    check("signal_population_policy_bundle_denominator", sql`${table.denominatorKey} IN ('eligible-canonical-roots', 'workspace-canonical-roots', 'snapshot-canonical-roots')`),
+    check("signal_population_policy_bundle_period", sql`(${table.periodStart} IS NULL AND ${table.periodEnd} IS NULL AND ${table.timezone} IS NULL) OR (${table.periodStart} IS NOT NULL AND ${table.periodEnd} IS NOT NULL AND ${table.periodStart} <= ${table.periodEnd} AND NULLIF(btrim(${table.timezone}), '') IS NOT NULL)`),
+    check("signal_population_policy_bundle_refs", sql`(${table.retentionPolicyRef} IS NULL OR ${table.retentionPolicyRef} ~ '^[a-z][a-z0-9-]*$') AND (${table.licensingPolicyRef} IS NULL OR ${table.licensingPolicyRef} ~ '^[a-z][a-z0-9-]*$')`),
+    check("signal_population_policy_bundle_hash", sql`${table.definitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_population_policy_bundle_activation", sql`(${table.status} = 'draft' AND ${table.activatedByUserId} IS NULL AND ${table.activatedAt} IS NULL) OR (${table.status} IN ('active', 'retired') AND ${table.activatedByUserId} IS NOT NULL AND ${table.activatedAt} IS NOT NULL)`),
+    check("signal_population_policy_bundle_effective_window", sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} >= ${table.effectiveFrom}`),
+    index("idx_signal_population_policy_bundles_workspace").on(table.workspaceId, table.status, table.policyKey, table.policyVersion),
+    index("idx_signal_population_policy_bundles_effective").on(table.workspaceId, table.effectiveFrom, table.effectiveTo).where(sql`${table.status} = 'active'`)
+  ]
+);
+
+export const signalPopulationPolicyEntities = pgTable(
+  "signal_population_policy_entities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    check("signal_population_policy_entity_scope", sql`${table.scope} IN ('primary_brand', 'competitor', 'category', 'reference')`),
+    check("signal_population_policy_entity_type", sql`${table.entityType} IN ('brand', 'competitor', 'category', 'reference')`),
+    check("signal_population_policy_entity_shape", sql`(${table.scope} = 'primary_brand' AND ${table.entityType} = 'brand') OR (${table.scope} = 'competitor' AND ${table.entityType} = 'competitor') OR (${table.scope} = 'category' AND ${table.entityType} = 'category') OR (${table.scope} = 'reference' AND ${table.entityType} = 'reference')`),
+    unique("uq_signal_population_policy_entity").on(table.policyBundleId, table.scope, table.entityType, table.entityId),
+    index("idx_signal_population_policy_entities_bundle").on(table.policyBundleId, table.scope, table.entityType, table.entityId),
+    index("idx_signal_population_policy_entities_workspace").on(table.workspaceId, table.entityType, table.entityId)
+  ]
+);
+
+export const signalGovernedViewPopulationDerivations = pgTable(
+  "signal_governed_view_population_derivations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    moduleKey: text("module_key").notNull(),
+    viewKey: text("view_key").notNull(),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    basePopulationId: uuid("base_population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    resolvedPopulationId: uuid("resolved_population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    policyDefinitionHash: text("policy_definition_hash").notNull(),
+    compiledPlanHash: text("compiled_plan_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_governed_view_population_derivation").on(
+      table.workspaceId,
+      table.moduleKey,
+      table.viewKey,
+      table.policyBundleId
+    ),
+    unique("uq_signal_governed_view_resolved_population").on(table.resolvedPopulationId),
+    check("signal_governed_view_population_derivation_identity", sql`${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives') AND ${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed')`),
+    check("signal_governed_view_population_derivation_distinct", sql`${table.basePopulationId} <> ${table.resolvedPopulationId}`),
+    check("signal_governed_view_population_derivation_hashes", sql`${table.policyDefinitionHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.compiledPlanHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_governed_view_population_derivations_base").on(
+      table.workspaceId,
+      table.basePopulationId,
+      table.moduleKey,
+      table.viewKey
+    )
+  ]
+);
+
+export const signalDataGovernanceEvaluations = pgTable(
+  "signal_data_governance_evaluations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    populationId: uuid("population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    qualityPolicyId: uuid("quality_policy_id").notNull().references(() => signalQualityPolicies.id, { onDelete: "restrict" }),
+    moduleKey: text("module_key").notNull().default("brand-monitoring"),
+    viewKey: text("view_key").notNull().default("brand"),
+    usagePurposes: text("usage_purposes").array().notNull(),
+    evaluationStatus: text("evaluation_status").notNull().default("draft"),
+    candidateRootCount: integer("candidate_root_count").notNull().default(0),
+    authorizedRootCount: integer("authorized_root_count").notNull().default(0),
+    qualityBlockedCount: integer("quality_blocked_count").notNull().default(0),
+    retentionBlockedCount: integer("retention_blocked_count").notNull().default(0),
+    licensingBlockedCount: integer("licensing_blocked_count").notNull().default(0),
+    governanceUnknownCount: integer("governance_unknown_count"),
+    retentionPolicyDigest: text("retention_policy_digest").notNull(),
+    licensingPolicyDigest: text("licensing_policy_digest").notNull(),
+    policyEvaluationWatermark: timestamp("policy_evaluation_watermark", { withTimezone: true }).notNull(),
+    nextPolicyTransitionAt: timestamp("next_policy_transition_at", { withTimezone: true }),
+    governanceDigest: text("governance_digest").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    evaluatedByUserId: uuid("evaluated_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_data_governance_evaluation").on(table.workspaceId, table.idempotencyKey),
+    check("signal_data_governance_evaluation_module", sql`${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives') AND ${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed')`),
+    check("signal_data_governance_evaluation_transition", sql`${table.nextPolicyTransitionAt} IS NULL OR ${table.nextPolicyTransitionAt} > ${table.policyEvaluationWatermark}`),
+    index("idx_signal_data_governance_evaluations_population").on(table.workspaceId, table.populationId, table.evaluationStatus, table.createdAt)
+  ]
+);
+
+export const signalDataGovernanceEvaluationItems = pgTable(
+  "signal_data_governance_evaluation_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    evaluationId: uuid("evaluation_id").notNull().references(() => signalDataGovernanceEvaluations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    decision: text("decision").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    importMembershipId: uuid("import_membership_id").references(() => signalMentionImportMemberships.id, { onDelete: "restrict" }),
+    provenanceBindingId: uuid("provenance_binding_id").references(() => signalProvenancePolicyBindings.id, { onDelete: "restrict" }),
+    qualityPolicyId: uuid("quality_policy_id").notNull().references(() => signalQualityPolicies.id, { onDelete: "restrict" }),
+    retentionPolicyId: uuid("retention_policy_id").references(() => signalRetentionPolicies.id, { onDelete: "restrict" }),
+    licensingPolicyId: uuid("licensing_policy_id").references(() => signalLicensingPolicies.id, { onDelete: "restrict" }),
+    governancePathHash: text("governance_path_hash").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_data_governance_evaluation_item").on(table.evaluationId, table.mentionId),
+    index("idx_signal_data_governance_evaluation_items_reason").on(table.evaluationId, table.decision, table.reasonCode, table.mentionId),
+    index("idx_signal_data_governance_evaluation_items_source").on(table.workspaceId, table.provenanceBindingId, table.mentionId)
+  ]
+);
+
+export const signalPopulationPolicyCompilations = pgTable(
+  "signal_population_policy_compilations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    populationId: uuid("population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    moduleKey: text("module_key").notNull().default("brand-monitoring"),
+    viewKey: text("view_key").notNull().default("brand"),
+    compilationVersion: integer("compilation_version").notNull(),
+    compiledPlanHash: text("compiled_plan_hash").notNull(),
+    policyDefinitionHash: text("policy_definition_hash").notNull(),
+    populationVersion: integer("population_version").notNull(),
+    populationDefinitionHash: text("population_definition_hash").notNull(),
+    membershipDigest: text("membership_digest").notNull(),
+    sourceWatermarkHash: text("source_watermark_hash").notNull(),
+    sourceWatermarkAt: timestamp("source_watermark_at", { withTimezone: true }),
+    compilationStatus: text("compilation_status").notNull(),
+    blockingReasons: text("blocking_reasons").array().notNull().default(emptyTextArray),
+    governanceEvaluationId: uuid("governance_evaluation_id").references(() => signalDataGovernanceEvaluations.id, { onDelete: "restrict" }),
+    qualityPolicyId: uuid("quality_policy_id").references(() => signalQualityPolicies.id, { onDelete: "restrict" }),
+    qualityPolicyVersion: integer("quality_policy_version"),
+    qualityPolicyHash: text("quality_policy_hash"),
+    retentionPolicyDigest: text("retention_policy_digest"),
+    licensingPolicyDigest: text("licensing_policy_digest"),
+    usagePurposes: text("usage_purposes").array().notNull().default(emptyTextArray),
+    authorizedRootCount: integer("authorized_root_count").notNull().default(0),
+    qualityBlockedCount: integer("quality_blocked_count").notNull().default(0),
+    retentionBlockedCount: integer("retention_blocked_count").notNull().default(0),
+    licensingBlockedCount: integer("licensing_blocked_count").notNull().default(0),
+    governanceUnknownCount: integer("governance_unknown_count"),
+    policyEvaluationWatermark: timestamp("policy_evaluation_watermark", { withTimezone: true }),
+    nextPolicyTransitionAt: timestamp("next_policy_transition_at", { withTimezone: true }),
+    governanceDataWatermarkId: uuid("governance_data_watermark_id").references(() => signalDataWatermarks.id, { onDelete: "restrict" }),
+    governanceDigest: text("governance_digest"),
+    isCurrent: boolean("is_current").notNull().default(true),
+    compiledByUserId: uuid("compiled_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    compiledAt: timestamp("compiled_at", { withTimezone: true }).notNull().defaultNow(),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_population_policy_compilation_version").on(table.policyBundleId, table.populationId, table.compilationVersion),
+    uniqueIndex("uq_signal_population_policy_compilation_current").on(table.policyBundleId, table.populationId, table.moduleKey, table.viewKey).where(sql`${table.isCurrent}`),
+    check("signal_population_policy_compilation_version_positive", sql`${table.compilationVersion} >= 1 AND ${table.populationVersion} >= 1`),
+    check("signal_population_policy_compilation_hashes", sql`${table.compiledPlanHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.policyDefinitionHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.membershipDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.sourceWatermarkHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_population_policy_compilation_status", sql`${table.compilationStatus} IN ('ready', 'stale', 'blocked')`),
+    check("signal_population_policy_compilation_blockers", sql`(cardinality(${table.blockingReasons}) = 0 OR array_to_string(${table.blockingReasons}, ',') ~ '^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$') AND ((${table.compilationStatus} = 'ready' AND cardinality(${table.blockingReasons}) = 0) OR ${table.compilationStatus} = 'stale' OR (${table.compilationStatus} = 'blocked' AND cardinality(${table.blockingReasons}) > 0))`),
+    check("signal_population_policy_compilation_current_window", sql`(${table.isCurrent} AND ${table.retiredAt} IS NULL) OR (NOT ${table.isCurrent} AND ${table.retiredAt} IS NOT NULL AND ${table.retiredAt} >= ${table.compiledAt})`),
+    check("signal_population_policy_compilation_module", sql`(${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives') AND ${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed')) OR (${table.moduleKey} = 'triggers-barriers' AND ${table.viewKey} = 'strategic')`),
+    check("signal_population_policy_compilation_transition", sql`${table.nextPolicyTransitionAt} IS NULL OR ${table.policyEvaluationWatermark} IS NULL OR ${table.nextPolicyTransitionAt} > ${table.policyEvaluationWatermark}`),
+    index("idx_signal_population_policy_compilations_workspace").on(table.workspaceId, table.compilationStatus, table.policyBundleId, table.populationId).where(sql`${table.isCurrent}`),
+    index("idx_signal_population_policy_compilations_population").on(table.populationId, table.compilationStatus, table.isCurrent),
+    index("idx_signal_population_policy_compilation_transition").on(table.workspaceId, table.nextPolicyTransitionAt, table.moduleKey, table.viewKey).where(sql`${table.isCurrent} AND ${table.nextPolicyTransitionAt} IS NOT NULL`)
+  ]
+);
+
+export const signalStrategicRunControls = pgTable(
+  "signal_strategic_run_controls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reportKey: text("report_key").notNull().default("triggers-barriers"),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "cascade" }).unique(),
+    snapshotId: uuid("snapshot_id").notNull().references(() => corpusSnapshots.id, { onDelete: "restrict" }).unique(),
+    bindingId: uuid("binding_id").notNull().references(() => signalGovernedViewBindings.id, { onDelete: "restrict" }),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    policyCompilationId: uuid("policy_compilation_id").notNull().references(() => signalPopulationPolicyCompilations.id, { onDelete: "restrict" }),
+    governanceEvaluationId: uuid("governance_evaluation_id").notNull().references(() => signalDataGovernanceEvaluations.id, { onDelete: "restrict" }),
+    populationId: uuid("population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    preflightDigest: text("preflight_digest").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    snapshotAuthorityDigest: text("snapshot_authority_digest").notNull(),
+    policyDefinitionHash: text("policy_definition_hash").notNull(),
+    compiledPlanHash: text("compiled_plan_hash").notNull(),
+    membershipDigest: text("membership_digest").notNull(),
+    governanceDigest: text("governance_digest").notNull(),
+    provenanceDigest: text("provenance_digest").notNull(),
+    watermarkHash: text("watermark_hash").notNull(),
+    authorityValidUntil: timestamp("authority_valid_until", { withTimezone: true }),
+    usagePurposes: text("usage_purposes").array().notNull(),
+    sampleAlgorithm: text("sample_algorithm").notNull(),
+    sampleSeed: text("sample_seed").notNull(),
+    sampleCount: integer("sample_count").notNull(),
+    sampleDigest: text("sample_digest").notNull(),
+    executionPlanVersion: text("execution_plan_version").notNull(),
+    executionPlanDigest: text("execution_plan_digest").notNull(),
+    executionPlan: jsonb("execution_plan").notNull(),
+    plannedProviderCalls: integer("planned_provider_calls").notNull(),
+    plannedInputTokens: bigint("planned_input_tokens", { mode: "number" }).notNull(),
+    plannedOutputTokens: bigint("planned_output_tokens", { mode: "number" }).notNull(),
+    provider: text("provider").notNull(),
+    providerConfigDigest: text("provider_config_digest").notNull(),
+    modelVersion: text("model_version").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    pricingVersion: text("pricing_version").notNull(),
+    inputUsdPerMillionTokens: numeric("input_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    outputUsdPerMillionTokens: numeric("output_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 14, scale: 6 }).notNull(),
+    hardCapUsd: numeric("hard_cap_usd", { precision: 14, scale: 6 }).notNull(),
+    reservedCostUsd: numeric("reserved_cost_usd", { precision: 14, scale: 6 }).notNull().default("0"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 14, scale: 6 }).notNull().default("0"),
+    status: text("status").notNull().default("queued"),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_strategic_run_control_key").on(table.workspaceId, table.reportKey, table.idempotencyKey),
+    index("idx_signal_strategic_run_controls_workspace").on(table.workspaceId, table.createdAt)
+  ]
+);
+
+export const signalStrategicSealedSampleItems = pgTable(
+  "signal_strategic_sealed_sample_items",
+  {
+    runControlId: uuid("run_control_id").notNull().references(() => signalStrategicRunControls.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => corpusSnapshots.id, { onDelete: "restrict" }),
+    ordinal: integer("ordinal").notNull(),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    rankHash: text("rank_hash").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    primaryKey({ columns: [table.runControlId, table.ordinal] }),
+    unique("uq_signal_strategic_sealed_sample_root").on(table.runControlId, table.mentionId)
+  ]
+);
+
+export const signalStrategicBudgetReservations = pgTable(
+  "signal_strategic_budget_reservations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runControlId: uuid("run_control_id").notNull().references(() => signalStrategicRunControls.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    operationKey: text("operation_key").notNull(),
+    reservationUsd: numeric("reservation_usd", { precision: 14, scale: 6 }).notNull(),
+    reservedInputTokens: bigint("reserved_input_tokens", { mode: "number" }),
+    reservedOutputTokens: bigint("reserved_output_tokens", { mode: "number" }),
+    inputTokens: bigint("input_tokens", { mode: "number" }),
+    outputTokens: bigint("output_tokens", { mode: "number" }),
+    actualUsd: numeric("actual_usd", { precision: 14, scale: 6 }),
+    status: text("status").notNull().default("reserved"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now(),
+    settledAt: timestamp("settled_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_strategic_budget_reservation_key").on(table.runControlId, table.idempotencyKey)
+    ,unique("uq_signal_strategic_budget_reservation_operation").on(table.runControlId, table.operationKey)
+  ]
+);
+
+export const signalStrategicStepOutbox = pgTable(
+  "signal_strategic_step_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runControlId: uuid("run_control_id").notNull().references(() => signalStrategicRunControls.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "cascade" }),
+    pipelineStepId: uuid("pipeline_step_id").notNull().references(() => tbPipelineSteps.id, { onDelete: "cascade" }).unique(),
+    pipelineStep: text("pipeline_step").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    dispatchAttempt: integer("dispatch_attempt").notNull().default(0),
+    status: text("status").notNull().default("pending"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    bullmqJobId: text("bullmq_job_id"),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    leaseToken: uuid("lease_token"),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+    lastError: jsonb("last_error").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_strategic_step_outbox_key").on(table.runControlId, table.idempotencyKey),
+    unique("uq_signal_strategic_step_outbox_attempt").on(table.runControlId, table.pipelineStep, table.attempt),
+    index("idx_signal_strategic_step_outbox_recovery").on(table.availableAt, table.createdAt, table.id)
+  ]
+);
+
+export const signalStrategicStepOutboxEvents = pgTable(
+  "signal_strategic_step_outbox_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    outboxId: uuid("outbox_id").notNull().references(() => signalStrategicStepOutbox.id, { onDelete: "restrict" }),
+    runControlId: uuid("run_control_id").notNull().references(() => signalStrategicRunControls.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    previousStatus: text("previous_status"),
+    nextStatus: text("next_status").notNull(),
+    transitionKey: text("transition_key").notNull(),
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_strategic_step_outbox_event").on(table.outboxId, table.transitionKey),
+    index("idx_signal_strategic_step_outbox_events_run").on(table.runControlId, table.createdAt, table.id)
+  ]
+);
+
+export const signalStrategicReviewReleaseOperations = pgTable(
+  "signal_strategic_review_release_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    requestDigest: text("request_digest").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    releaseId: uuid("release_id").notNull().references(() => signalWorkspaceReleases.id, { onDelete: "restrict" }),
+    reviewedAssertionCount: integer("reviewed_assertion_count").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_strategic_review_release_operation").on(table.workspaceId, table.idempotencyKey)
+  ]
+);
+
+export const signalStrategicReleasePromotionOperations = pgTable(
+  "signal_strategic_release_promotion_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reportKey: text("report_key").notNull(),
+    releaseId: uuid("release_id").notNull().references(() => signalWorkspaceReleases.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_strategic_release_promotion_operation").on(table.workspaceId, table.idempotencyKey),
+    check("signal_strategic_release_promotion_identity", sql`${table.reportKey} = 'triggers-barriers' AND ${table.action} = 'publish'`),
+    check("signal_strategic_release_promotion_hashes", sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`)
+  ]
+);
+
+export const signalDataGovernanceInvalidations = pgTable(
+  "signal_data_governance_invalidations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    policyCompilationId: uuid("policy_compilation_id").notNull().references(() => signalPopulationPolicyCompilations.id, { onDelete: "cascade" }),
+    reasonCode: text("reason_code").notNull(),
+    objectKind: text("object_kind").notNull(),
+    objectIdentityHash: text("object_identity_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_data_governance_invalidation").on(table.idempotencyKey),
+    index("idx_signal_data_governance_invalidations_compilation").on(table.policyCompilationId, table.createdAt)
+  ]
+);
+
+export const signalGovernedViewBindings = pgTable(
+  "signal_governed_view_bindings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    moduleKey: text("module_key").notNull(),
+    viewKey: text("view_key").notNull(),
+    bindingVersion: integer("binding_version").notNull(),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    policyDefinitionHash: text("policy_definition_hash").notNull(),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "restrict" }),
+    policyCompilationId: uuid("policy_compilation_id").references(() => signalPopulationPolicyCompilations.id, { onDelete: "restrict" }),
+    bindingStatus: text("binding_status").notNull().default("current"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    promotedByUserId: uuid("promoted_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_governed_view_binding_version").on(table.workspaceId, table.moduleKey, table.viewKey, table.bindingVersion),
+    uniqueIndex("uq_signal_governed_view_binding_current").on(table.workspaceId, table.moduleKey, table.viewKey).where(sql`${table.bindingStatus} = 'current'`),
+    check("signal_governed_view_binding_module", sql`${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives', 'triggers-barriers', 'admin-mentions')`),
+    check("signal_governed_view_binding_view", sql`${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed', 'strategic', 'admin-reservoir')`),
+    check("signal_governed_view_binding_version_positive", sql`${table.bindingVersion} >= 1`),
+    check("signal_governed_view_binding_hash", sql`${table.policyDefinitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_governed_view_binding_compilation_shape", sql`(${table.populationId} IS NULL AND ${table.policyCompilationId} IS NULL) OR (${table.populationId} IS NOT NULL AND ${table.policyCompilationId} IS NOT NULL)`),
+    check("signal_governed_view_binding_status", sql`${table.bindingStatus} IN ('current', 'retired')`),
+    check("signal_governed_view_binding_window", sql`(${table.bindingStatus} = 'current' AND ${table.effectiveTo} IS NULL) OR (${table.bindingStatus} = 'retired' AND ${table.effectiveTo} IS NOT NULL AND ${table.effectiveTo} >= ${table.effectiveFrom})`),
+    index("idx_signal_governed_view_bindings_policy").on(table.policyBundleId, table.bindingStatus),
+    index("idx_signal_governed_view_bindings_population").on(table.populationId, table.bindingStatus).where(sql`${table.populationId} IS NOT NULL`),
+    index("idx_signal_governed_view_bindings_compilation").on(table.policyCompilationId, table.bindingStatus).where(sql`${table.policyCompilationId} IS NOT NULL`)
+  ]
+);
+
+export const signalGovernedViewBindingEvents = pgTable(
+  "signal_governed_view_binding_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    moduleKey: text("module_key").notNull(),
+    viewKey: text("view_key").notNull(),
+    action: text("action").notNull(),
+    previousBindingId: uuid("previous_binding_id").references(() => signalGovernedViewBindings.id, { onDelete: "restrict" }),
+    nextBindingId: uuid("next_binding_id").references(() => signalGovernedViewBindings.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest"),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_governed_view_binding_event_idempotency").on(table.workspaceId, table.idempotencyKey),
+    check("signal_governed_view_binding_event_module", sql`${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives', 'triggers-barriers', 'admin-mentions')`),
+    check("signal_governed_view_binding_event_view", sql`${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed', 'strategic', 'admin-reservoir')`),
+    check("signal_governed_view_binding_event_action", sql`${table.action} IN ('promote', 'rollback', 'withdraw-to-bridge', 'withdraw-to-absence')`),
+    check("signal_governed_view_binding_event_key", sql`${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_governed_view_binding_event_request_digest", sql`${table.requestDigest} IS NULL OR ${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_governed_view_binding_event_transition_shape", sql`(${table.action} IN ('promote', 'rollback') AND ${table.nextBindingId} IS NOT NULL) OR (${table.action} = 'withdraw-to-bridge' AND ${table.viewKey} = 'brand' AND ${table.previousBindingId} IS NOT NULL AND ${table.nextBindingId} IS NULL AND ${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$') OR (${table.action} = 'withdraw-to-absence' AND ${table.viewKey} IN ('competition', 'category', 'all-governed') AND ${table.previousBindingId} IS NOT NULL AND ${table.nextBindingId} IS NULL AND ${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$')`),
+    index("idx_signal_governed_view_binding_events_history").on(table.workspaceId, table.moduleKey, table.viewKey, table.createdAt, table.id)
+  ]
+);
+
+export const signalGovernedBrandBindingSetOperations = pgTable(
+  "signal_governed_brand_binding_set_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    viewKey: text("view_key").notNull().default("brand"),
+    action: text("action").notNull(),
+    policyBundleId: uuid("policy_bundle_id").notNull().references(() => signalPopulationPolicyBundles.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    requestDigest: text("request_digest").notNull(),
+    resultDigest: text("result_digest").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_governed_brand_binding_set_idempotency").on(table.workspaceId, table.idempotencyKey),
+    check("signal_governed_brand_binding_set_action", sql`(${table.viewKey} = 'brand' AND ${table.action} IN ('promote', 'withdraw-to-bridge')) OR (${table.viewKey} IN ('competition', 'category', 'all-governed') AND ${table.action} IN ('promote', 'withdraw-to-absence'))`),
+    check("signal_governed_view_binding_set_view", sql`${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed')`),
+    check("signal_governed_brand_binding_set_hashes", sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.resultDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_governed_brand_binding_set_history").on(table.workspaceId, table.createdAt, table.id)
+  ]
+);
+
+export const signalGovernedBrandBindingSetOperationItems = pgTable(
+  "signal_governed_brand_binding_set_operation_items",
+  {
+    operationId: uuid("operation_id").notNull().references(() => signalGovernedBrandBindingSetOperations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    moduleKey: text("module_key").notNull(),
+    viewKey: text("view_key").notNull().default("brand"),
+    previousBindingId: uuid("previous_binding_id").references(() => signalGovernedViewBindings.id, { onDelete: "restrict" }),
+    nextBindingId: uuid("next_binding_id").references(() => signalGovernedViewBindings.id, { onDelete: "restrict" }),
+    bindingEventId: uuid("binding_event_id").notNull().references(() => signalGovernedViewBindingEvents.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    primaryKey({ columns: [table.operationId, table.moduleKey, table.viewKey] }),
+    unique("uq_signal_governed_brand_binding_set_event").on(table.bindingEventId),
+    check("signal_governed_brand_binding_set_item_identity", sql`${table.moduleKey} IN ('brand-monitoring', 'mentions', 'topics-narratives') AND ${table.viewKey} IN ('brand', 'competition', 'category', 'all-governed')`)
+  ]
+);
+
+export const signalGovernanceControlOperations = pgTable(
+  "signal_governance_control_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("in_progress"),
+    result: jsonb("result"),
+    createdAt: now(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_governance_control_operation").on(table.workspaceId,table.idempotencyKey),
+    check("signal_governance_control_action",sql`${table.action} IN (
+      'create-quality-draft','create-retention-draft','create-licensing-draft',
+      'activate-policy','create-provenance-binding-draft','activate-provenance-binding',
+      'upsert-identity','update-timezone','reconcile-brand-os',
+      'create-source','import-source','reconcile-governed-view',
+      'reconcile-strategic-authority','promote-strategic-authority'
+    )`),
+    check("signal_governance_control_hashes",sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_governance_control_status",sql`${table.status} IN ('in_progress','completed')`),
+    index("idx_signal_governance_control_operations_workspace").on(table.workspaceId,table.createdAt)
+  ]
+);
+
+export const signalCompetitorLifecycleEvents = pgTable(
+  "signal_competitor_lifecycle_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    competitorId: uuid("competitor_id").notNull().references(() => competitors.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    eventKind: text("event_kind").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    previousStatus: text("previous_status"),
+    nextStatus: text("next_status").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    eventDigest: text("event_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_competitor_lifecycle_operation_event").on(table.operationId, table.eventIndex),
+    index("idx_signal_competitor_lifecycle_history").on(table.workspaceId, table.competitorId, table.createdAt, table.id)
+  ]
+);
+
+export const signalAcquisitionPlans = pgTable(
+  "signal_acquisition_plans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    planVersion: integer("plan_version").notNull(),
+    status: text("status").notNull(),
+    brandOsProfileId: uuid("brand_os_profile_id").notNull().references(() => brandOsProfiles.id, { onDelete: "restrict" }),
+    brandOsProfileVersion: integer("brand_os_profile_version").notNull(),
+    brandOsDigest: text("brand_os_digest").notNull(),
+    identityCatalogDigest: text("identity_catalog_digest").notNull(),
+    acquisitionBriefContractVersion: text("acquisition_brief_contract_version"),
+    acquisitionBrief: jsonb("acquisition_brief"),
+    acquisitionBriefDigest: text("acquisition_brief_digest"),
+    draftRevision: integer("draft_revision").notNull().default(0),
+    draftDigest: text("draft_digest").notNull(),
+    definitionHash: text("definition_hash"),
+    supersedesPlanId: uuid("supersedes_plan_id").references((): AnyPgColumn => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    promotedByUserId: uuid("promoted_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    retiredByUserId: uuid("retired_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now(),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull()
+  },
+  (table) => [
+    unique("uq_signal_acquisition_plan_version").on(table.workspaceId, table.planVersion),
+    unique("uq_signal_acquisition_plan_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    uniqueIndex("uq_signal_acquisition_plan_current").on(table.workspaceId).where(sql`${table.status} = 'current'`),
+    uniqueIndex("uq_signal_acquisition_plan_open_draft").on(table.workspaceId).where(sql`${table.status} = 'draft'`),
+    index("idx_signal_acquisition_plans_workspace").on(table.workspaceId, table.status, table.planVersion)
+  ]
+);
+
+export const signalAcquisitionReferenceDecisions = pgTable(
+  "signal_acquisition_reference_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    intelligenceEntityId: uuid("intelligence_entity_id").notNull().references(() => intelligenceEntities.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    evidenceReference: text("evidence_reference").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    decisionHash: text("decision_hash").notNull(),
+    supersedesDecisionId: uuid("supersedes_decision_id")
+      .references((): AnyPgColumn => signalAcquisitionReferenceDecisions.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_signal_acquisition_reference_history").on(table.workspaceId, table.intelligenceEntityId, table.createdAt)
+  ]
+);
+
+export const signalAcquisitionSlots = pgTable(
+  "signal_acquisition_slots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    planId: uuid("plan_id").notNull().references(() => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    slotKey: text("slot_key").notNull(),
+    slotVersion: integer("slot_version").notNull(),
+    scope: text("scope").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    entityRevisionDigest: text("entity_revision_digest").notNull(),
+    label: text("label").notNull(),
+    desiredState: text("desired_state").notNull(),
+    position: integer("position").notNull(),
+    supersedesSlotId: uuid("supersedes_slot_id").references((): AnyPgColumn => signalAcquisitionSlots.id, { onDelete: "restrict" }),
+    referenceDecisionId: uuid("reference_decision_id").references(() => signalAcquisitionReferenceDecisions.id, { onDelete: "restrict" }),
+    definitionHash: text("definition_hash").notNull(),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_acquisition_slot_plan_version").on(table.planId, table.slotKey, table.slotVersion),
+    unique("uq_signal_acquisition_slot_workspace_version").on(table.workspaceId, table.slotKey, table.slotVersion),
+    index("idx_signal_acquisition_slots_identity").on(table.workspaceId, table.scope, table.entityId, table.planId)
+  ]
+);
+
+export const signalAcquisitionQueryVersions = pgTable(
+  "signal_acquisition_query_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    planId: uuid("plan_id").notNull().references(() => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    slotId: uuid("slot_id").notNull().references(() => signalAcquisitionSlots.id, { onDelete: "restrict" }),
+    queryKey: text("query_key").notNull(),
+    queryVersion: integer("query_version").notNull(),
+    dataSourceId: uuid("data_source_id").notNull().references(() => dataSources.id, { onDelete: "restrict" }),
+    providerKey: text("provider_key").notNull(),
+    providerSyntaxVersion: text("provider_syntax_version").notNull(),
+    providerSchemaVersion: text("provider_schema_version").notNull(),
+    queryTextPrivate: text("query_text_private").notNull(),
+    structuredTerms: jsonb("structured_terms").notNull(),
+    queryHash: text("query_hash").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    cadence: text("cadence").notNull(),
+    defaultPeriodStart: date("default_period_start"),
+    defaultPeriodEnd: date("default_period_end"),
+    timezone: text("timezone").notNull(),
+    status: text("status").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    supersedesQueryVersionId: uuid("supersedes_query_version_id")
+      .references((): AnyPgColumn => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    carriedFromQueryVersionId: uuid("carried_from_query_version_id")
+      .references((): AnyPgColumn => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    originKind: text("origin_kind").notNull(),
+    originReferenceId: uuid("origin_reference_id"),
+    generationContractVersion: text("generation_contract_version"),
+    generationModel: text("generation_model"),
+    generationPipelineVersion: text("generation_pipeline_version"),
+    generationPromptTemplateDigest: text("generation_prompt_template_digest"),
+    generationContextDigest: text("generation_context_digest"),
+    generationConstructionPlanDigest: text("generation_construction_plan_digest"),
+    generationValidationReportDigest: text("generation_validation_report_digest"),
+    generationFallbackUsed: boolean("generation_fallback_used"),
+    generationFallbackReason: text("generation_fallback_reason"),
+    generationStudyReferenceHash: text("generation_study_reference_hash"),
+    generationStudyContextDigest: text("generation_study_context_digest"),
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now(),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull()
+  },
+  (table) => [
+    unique("uq_signal_acquisition_query_creation").on(table.workspaceId, table.creationIdempotencyKey),
+    unique("uq_signal_acquisition_query_version").on(table.workspaceId, table.planId, table.queryKey, table.queryVersion),
+    index("idx_signal_acquisition_queries_slot").on(table.workspaceId, table.planId, table.slotId, table.providerKey, table.dataSourceId, table.queryVersion)
+  ]
+);
+
+export const signalAcquisitionQueryReviewEvents = pgTable(
+  "signal_acquisition_query_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventSequence: bigint("event_sequence", { mode: "number" }).generatedAlwaysAsIdentity().notNull(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    queryVersionId: uuid("query_version_id").notNull().references(() => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    decision: text("decision").notNull(),
+    evidence: text("evidence").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    decidedByUserId: uuid("decided_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    eventHash: text("event_hash").notNull()
+  },
+  (table) => [
+    unique("uq_signal_acquisition_query_review_sequence").on(table.eventSequence),
+    unique("uq_signal_acquisition_query_review_operation").on(table.workspaceId, table.operationId),
+    unique("uq_signal_acquisition_query_review_hash").on(table.workspaceId, table.eventHash),
+    index("idx_signal_acquisition_query_reviews_latest").on(
+      table.workspaceId,table.queryVersionId,table.eventSequence
+    )
+  ]
+);
+
+export const signalAcquisitionPlanEvents = pgTable(
+  "signal_acquisition_plan_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    eventKind: text("event_kind").notNull(),
+    planId: uuid("plan_id").references(() => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    slotId: uuid("slot_id").references(() => signalAcquisitionSlots.id, { onDelete: "restrict" }),
+    queryVersionId: uuid("query_version_id").references(() => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    referenceDecisionId: uuid("reference_decision_id").references(() => signalAcquisitionReferenceDecisions.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id").references(() => importBatches.id, { onDelete: "restrict" }),
+    previousStateDigest: text("previous_state_digest"),
+    nextStateDigest: text("next_state_digest").notNull(),
+    eventDigest: text("event_digest").notNull(),
+    detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_acquisition_plan_event_operation_index").on(table.operationId, table.eventIndex),
+    index("idx_signal_acquisition_plan_events_workspace").on(table.workspaceId, table.createdAt, table.id)
+  ]
+);
+
+export const signalProviderMentionObservations = pgTable(
+  "signal_provider_mention_observations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    dataSourceId: uuid("data_source_id").notNull().references(() => dataSources.id, { onDelete: "restrict" }),
+    importBatchId: uuid("import_batch_id").notNull().references(() => importBatches.id, { onDelete: "restrict" }),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    providerKey: text("provider_key").notNull(),
+    providerRecordKeyHash: text("provider_record_key_hash").notNull(),
+    acquisitionPlanId: uuid("acquisition_plan_id").references(() => signalAcquisitionPlans.id, { onDelete: "restrict" }),
+    acquisitionSlotId: uuid("acquisition_slot_id").references(() => signalAcquisitionSlots.id, { onDelete: "restrict" }),
+    acquisitionQueryVersionId: uuid("acquisition_query_version_id").references(() => signalAcquisitionQueryVersions.id, { onDelete: "restrict" }),
+    acquisitionPlanDigest: text("acquisition_plan_digest"),
+    acquisitionSlotDigest: text("acquisition_slot_digest"),
+    acquisitionQueryDigest: text("acquisition_query_digest"),
+    providerSchemaVersion: text("provider_schema_version").notNull(),
+    providerHeaderHash: text("provider_header_hash").notNull(),
+    observationVersion: integer("observation_version").notNull(),
+    observationHash: text("observation_hash").notNull(),
+    supersedesObservationId: uuid("supersedes_observation_id")
+      .references((): AnyPgColumn => signalProviderMentionObservations.id, { onDelete: "restrict" }),
+    providerProjectRefHash: text("provider_project_ref_hash"),
+    platform: text("platform"),
+    publicDomain: text("public_domain"),
+    providerDomainCategory: text("provider_domain_category"),
+    providerSourceType: text("provider_source_type"),
+    providerContentType: text("provider_content_type"),
+    providerThreadKeyHash: text("provider_thread_key_hash"),
+    threadRole: text("thread_role").notNull().default("unknown"),
+    languageCode: text("language_code"),
+    countryCode: text("country_code"),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    providerCollectedAt: timestamp("provider_collected_at", { withTimezone: true }),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+    providerSentimentLabel: text("provider_sentiment_label"),
+    providerSentimentScore: numeric("provider_sentiment_score"),
+    ratingValue: numeric("rating_value"),
+    influenceScore: numeric("influence_score"),
+    engagementTotal: bigint("engagement_total", { mode: "number" }),
+    commentsCount: bigint("comments_count", { mode: "number" }),
+    viewsCount: bigint("views_count", { mode: "number" }),
+    sharesCount: bigint("shares_count", { mode: "number" }),
+    reactionWowCount: bigint("reaction_wow_count", { mode: "number" }),
+    reactionLoveCount: bigint("reaction_love_count", { mode: "number" }),
+    reactionLikeCount: bigint("reaction_like_count", { mode: "number" }),
+    reactionHahaCount: bigint("reaction_haha_count", { mode: "number" }),
+    reactionSadCount: bigint("reaction_sad_count", { mode: "number" }),
+    reactionAngryCount: bigint("reaction_angry_count", { mode: "number" }),
+    reactionThankfulCount: bigint("reaction_thankful_count", { mode: "number" }),
+    uniqueViewsCount: bigint("unique_views_count", { mode: "number" }),
+    fansCount: bigint("fans_count", { mode: "number" }),
+    repostCount: bigint("repost_count", { mode: "number" }),
+    favoritesCount: bigint("favorites_count", { mode: "number" }),
+    heartsCount: bigint("hearts_count", { mode: "number" }),
+    likesCount: bigint("likes_count", { mode: "number" }),
+    dislikesCount: bigint("dislikes_count", { mode: "number" }),
+    followersCount: bigint("followers_count", { mode: "number" }),
+    authorRefHash: text("author_ref_hash"),
+    provenanceBindingId: uuid("provenance_binding_id").references(() => signalProvenancePolicyBindings.id, { onDelete: "restrict" }),
+    rightsDefinitionHash: text("rights_definition_hash"),
+    retentionUntil: timestamp("retention_until", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_provider_observation_version").on(table.importBatchId, table.providerRecordKeyHash, table.observationVersion),
+    index("idx_signal_provider_observation_root").on(table.workspaceId, table.mentionId, table.importBatchId),
+    index("idx_signal_provider_observation_import").on(table.importBatchId, table.mentionId),
+    index("idx_signal_provider_observation_platform_time").on(table.workspaceId, table.platform, table.publishedAt, table.id),
+    index("idx_signal_provider_observation_thread").on(table.workspaceId, table.providerThreadKeyHash, table.publishedAt, table.id)
+  ]
+);
+
+export const signalProviderMentionObservationTerms = pgTable(
+  "signal_provider_mention_observation_terms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    observationId: uuid("observation_id").notNull().references(() => signalProviderMentionObservations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    termKind: text("term_kind").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    termPrivate: text("term_private").notNull(),
+    termHash: text("term_hash").notNull(),
+    normalizedTerm: text("normalized_term").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_provider_observation_term").on(table.observationId, table.termKind, table.termHash),
+    index("idx_signal_provider_observation_terms_lookup").on(table.workspaceId, table.termKind, table.termHash, table.observationId)
   ]
 );
 
@@ -3435,6 +5571,15 @@ export const recordTags = pgTable(
     approvalSource: text("approval_source"),
     approvalPolicyVersion: text("approval_policy_version"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    classificationAssignmentId: uuid("classification_assignment_id").references(
+      (): AnyPgColumn => signalClassificationAssignments.id,
+      { onDelete: "restrict" }
+    ),
+    classificationGenerationId: uuid("classification_generation_id").references(
+      (): AnyPgColumn => signalClassificationGenerations.id,
+      { onDelete: "restrict" }
+    ),
+    classificationProjectionContract: text("classification_projection_contract"),
     createdAt: now()
   },
   (table) => [
@@ -3454,11 +5599,334 @@ export const recordTags = pgTable(
       AND ${table.approvedAt} IS NOT NULL
       AND (${table.approvalSource} <> 'policy' OR NULLIF(btrim(${table.approvalPolicyVersion}), '') IS NOT NULL)
     )`),
+    check("record_tags_classification_projection_shape", sql`(
+      ${table.classificationProjectionContract} IS NULL
+      AND ${table.classificationAssignmentId} IS NULL
+      AND ${table.classificationGenerationId} IS NULL
+    ) OR (
+      ${table.classificationProjectionContract} = 'signal-record-tags-projector-v1'
+      AND ${table.classificationAssignmentId} IS NOT NULL
+      AND ${table.classificationGenerationId} IS NOT NULL
+      AND ${table.source} = 'signal-classification-projector-v1'
+      AND ${table.reviewStatus} = 'approved'
+    )`),
     unique("uq_record_tags_subject_term_source").on(table.subjectType, table.subjectId, table.taxonomyTermId, table.source),
     uniqueIndex("uq_record_tags_signal_profile_assignment")
       .on(table.subjectId, table.signalTaxonomyProfileId, table.taxonomyTermId, table.modelVersionId)
-      .where(sql`${table.subjectType} = 'mention' AND ${table.signalTaxonomyProfileId} IS NOT NULL`)
+      .where(sql`${table.subjectType} = 'mention' AND ${table.signalTaxonomyProfileId} IS NOT NULL`),
+    uniqueIndex("uq_record_tags_classification_assignment")
+      .on(table.classificationAssignmentId)
+      .where(sql`${table.classificationAssignmentId} IS NOT NULL`)
   ]
+);
+
+export const signalClassificationOperations = pgTable(
+  "signal_classification_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    operationKind: text("operation_kind").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    status: text("status").notNull().default("in_progress"),
+    result: jsonb("result"),
+    createdAt: now(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_classification_operation").on(table.workspaceId, table.idempotencyKey),
+    index("idx_signal_classification_operations_workspace").on(table.workspaceId, table.createdAt)
+  ]
+);
+
+export const signalClassificationEvents = pgTable(
+  "signal_classification_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    eventKind: text("event_kind").notNull(),
+    objectType: text("object_type").notNull(),
+    objectId: uuid("object_id").notNull(),
+    previousStateDigest: text("previous_state_digest"),
+    nextStateDigest: text("next_state_digest").notNull(),
+    eventDigest: text("event_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [unique("uq_signal_classification_event_operation").on(table.operationId, table.eventIndex)]
+);
+
+export const signalLabelingFunctionVersions = pgTable(
+  "signal_labeling_function_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    ownerKind: text("owner_kind").notNull(),
+    functionKey: text("function_key").notNull(),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull().default("signal-labeling-function-v1"),
+    taxonomyProfileId: uuid("taxonomy_profile_id").references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    taxonomyTermId: uuid("taxonomy_term_id").notNull().references(() => taxonomyTerms.id, { onDelete: "restrict" }),
+    inputContract: jsonb("input_contract").notNull(),
+    outputContract: jsonb("output_contract").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    status: text("status").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    supersedesId: uuid("supersedes_id").references((): AnyPgColumn => signalLabelingFunctionVersions.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_labeling_function_version").on(table.ownerKind, table.workspaceId, table.functionKey, table.version),
+    uniqueIndex("uq_signal_labeling_function_platform_version")
+      .on(table.functionKey, table.version).where(sql`${table.ownerKind} = 'platform'`),
+    uniqueIndex("uq_signal_labeling_function_supersedes")
+      .on(table.supersedesId).where(sql`${table.supersedesId} IS NOT NULL`)
+  ]
+);
+
+export const signalClassificationApprovalPolicies = pgTable(
+  "signal_classification_approval_policies",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    taxonomyProfileId: uuid("taxonomy_profile_id").notNull().references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    policyKey: text("policy_key").notNull(),
+    version: integer("version").notNull(),
+    authorityKind: text("authority_kind").notNull(),
+    labelingFunctionVersionId: uuid("labeling_function_version_id").references(() => signalLabelingFunctionVersions.id, { onDelete: "restrict" }),
+    modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "restrict" }),
+    exactContractHash: text("exact_contract_hash"),
+    definitionHash: text("definition_hash").notNull(),
+    status: text("status").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    supersedesId: uuid("supersedes_id").references((): AnyPgColumn => signalClassificationApprovalPolicies.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_classification_policy_version").on(table.workspaceId, table.policyKey, table.version),
+    uniqueIndex("uq_signal_classification_policy_supersedes")
+      .on(table.supersedesId).where(sql`${table.supersedesId} IS NOT NULL`)
+  ]
+);
+
+export const signalClassificationGenerations = pgTable(
+  "signal_classification_generations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    taxonomyProfileId: uuid("taxonomy_profile_id").notNull().references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    generationKey: text("generation_key").notNull(),
+    generationVersion: integer("generation_version").notNull(),
+    status: text("status").notNull().default("open"),
+    studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "restrict" }),
+    inputPopulationDigest: text("input_population_digest").notNull(),
+    inputWatermarkDigest: text("input_watermark_digest").notNull(),
+    identityCatalogDigest: text("identity_catalog_digest").notNull(),
+    denominator: integer("denominator").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    supersedesGenerationId: uuid("supersedes_generation_id").references((): AnyPgColumn => signalClassificationGenerations.id, { onDelete: "restrict" }),
+    definitionDigest: text("definition_digest").notNull(),
+    finalizedDigest: text("finalized_digest"),
+    createdAt: now(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_classification_generation_version").on(table.workspaceId, table.generationKey, table.generationVersion),
+    uniqueIndex("uq_signal_classification_generation_supersedes")
+      .on(table.supersedesGenerationId)
+      .where(sql`${table.supersedesGenerationId} IS NOT NULL`),
+    index("idx_signal_classification_generation_profile").on(table.workspaceId, table.taxonomyProfileId, table.status)
+  ]
+);
+
+export const signalClassificationGenerationItems = pgTable(
+  "signal_classification_generation_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalClassificationGenerations.id, { onDelete: "restrict" }),
+    canonicalRootId: uuid("canonical_root_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    resolutionState: text("resolution_state").notNull(),
+    technicalErrorCode: text("technical_error_code"),
+    itemDigest: text("item_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_classification_generation_item").on(table.generationId, table.canonicalRootId),
+    index("idx_signal_classification_items_coverage").on(table.generationId, table.resolutionState, table.canonicalRootId)
+  ]
+);
+
+export const signalClassificationAssignments = pgTable(
+  "signal_classification_assignments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalClassificationGenerations.id, { onDelete: "restrict" }),
+    generationItemId: uuid("generation_item_id").notNull().references(() => signalClassificationGenerationItems.id, { onDelete: "restrict" }),
+    canonicalRootId: uuid("canonical_root_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    taxonomyProfileId: uuid("taxonomy_profile_id").notNull().references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    taxonomyTermId: uuid("taxonomy_term_id").references(() => taxonomyTerms.id, { onDelete: "restrict" }),
+    resolutionMethod: text("resolution_method").notNull(),
+    disposition: text("disposition").notNull(),
+    labelingFunctionVersionId: uuid("labeling_function_version_id").references(() => signalLabelingFunctionVersions.id, { onDelete: "restrict" }),
+    modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "restrict" }),
+    approvalPolicyId: uuid("approval_policy_id").references(() => signalClassificationApprovalPolicies.id, { onDelete: "restrict" }),
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    score: numeric("score"),
+    confidence: text("confidence"),
+    evidenceDigest: text("evidence_digest").notNull(),
+    lineageDigest: text("lineage_digest").notNull(),
+    supersedesAssignmentId: uuid("supersedes_assignment_id").references((): AnyPgColumn => signalClassificationAssignments.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    index("idx_signal_classification_assignments_current").on(table.generationId, table.disposition, table.taxonomyTermId, table.canonicalRootId),
+    index("idx_signal_classification_assignments_supersession").on(table.supersedesAssignmentId),
+    uniqueIndex("uq_signal_classification_assignment_supersedes")
+      .on(table.supersedesAssignmentId)
+      .where(sql`${table.supersedesAssignmentId} IS NOT NULL`)
+  ]
+);
+
+export const signalClassificationGoldSetVersions = pgTable(
+  "signal_classification_gold_set_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    taxonomyProfileId: uuid("taxonomy_profile_id").notNull().references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    goldSetKey: text("gold_set_key").notNull(),
+    version: integer("version").notNull(),
+    definitionDigest: text("definition_digest").notNull(),
+    status: text("status").notNull().default("draft"),
+    expectedItemCount: integer("expected_item_count").notNull(),
+    finalizedDigest: text("finalized_digest"),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    supersedesId: uuid("supersedes_id").references((): AnyPgColumn => signalClassificationGoldSetVersions.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_classification_gold_set_version").on(table.workspaceId, table.goldSetKey, table.version),
+    uniqueIndex("uq_signal_classification_gold_set_supersedes")
+      .on(table.supersedesId).where(sql`${table.supersedesId} IS NOT NULL`)
+  ]
+);
+
+export const signalClassificationGoldItems = pgTable(
+  "signal_classification_gold_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    goldSetVersionId: uuid("gold_set_version_id").notNull().references(() => signalClassificationGoldSetVersions.id, { onDelete: "restrict" }),
+    canonicalRootId: uuid("canonical_root_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    split: text("split").notNull(),
+    expectedDisposition: text("expected_disposition").notNull(),
+    expectedTaxonomyTermId: uuid("expected_taxonomy_term_id").references(() => taxonomyTerms.id, { onDelete: "restrict" }),
+    sliceKeys: text("slice_keys").array().notNull().default(emptyTextArray),
+    evidenceDigest: text("evidence_digest").notNull(),
+    labeledByUserId: uuid("labeled_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    itemDigest: text("item_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [unique("uq_signal_classification_gold_root_split").on(table.goldSetVersionId, table.canonicalRootId)]
+);
+
+export const signalClassificationEvaluations = pgTable(
+  "signal_classification_evaluations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    taxonomyProfileId: uuid("taxonomy_profile_id").notNull().references(() => signalTaxonomyProfiles.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalClassificationGenerations.id, { onDelete: "restrict" }),
+    goldSetVersionId: uuid("gold_set_version_id").references(() => signalClassificationGoldSetVersions.id, { onDelete: "restrict" }),
+    evaluatedModelVersionId: uuid("evaluated_model_version_id").references(() => taggingModelVersions.id, { onDelete: "restrict" }),
+    evaluatedLabelingFunctionVersionId: uuid("evaluated_labeling_function_version_id").references(() => signalLabelingFunctionVersions.id, { onDelete: "restrict" }),
+    split: text("split"),
+    denominator: integer("denominator").notNull(),
+    resolved: integer("resolved").notNull(),
+    approved: integer("approved").notNull(),
+    pending: integer("pending").notNull(),
+    rejected: integer("rejected").notNull(),
+    abstained: integer("abstained").notNull(),
+    error: integer("error").notNull(),
+    coverage: numeric("coverage"),
+    precisionScore: numeric("precision_score"),
+    recallScore: numeric("recall_score"),
+    f1Score: numeric("f1_score"),
+    inputDigest: text("input_digest").notNull(),
+    artifactDigest: text("artifact_digest").notNull(),
+    policyDigest: text("policy_digest").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  }
+);
+
+export const signalClassificationEvaluationSlices = pgTable(
+  "signal_classification_evaluation_slices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    evaluationId: uuid("evaluation_id").notNull().references(() => signalClassificationEvaluations.id, { onDelete: "restrict" }),
+    sliceKey: text("slice_key").notNull(),
+    split: text("split").notNull(),
+    denominator: integer("denominator").notNull(),
+    resolved: integer("resolved").notNull(),
+    precisionScore: numeric("precision_score"),
+    recallScore: numeric("recall_score"),
+    f1Score: numeric("f1_score"),
+    sliceDigest: text("slice_digest").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" })
+  },
+  (table) => [unique("uq_signal_classification_evaluation_slice").on(table.evaluationId, table.sliceKey, table.split)]
+);
+
+export const signalTaggingModelVersionEvents = pgTable(
+  "signal_tagging_model_version_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    modelVersionId: uuid("model_version_id").notNull().references(() => taggingModelVersions.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    status: text("status").notNull(),
+    evaluationId: uuid("evaluation_id").references(() => signalClassificationEvaluations.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+    evidenceDigest: text("evidence_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [unique("uq_signal_tagging_model_event_operation").on(table.operationId, table.eventIndex)]
+);
+
+export const signalClassificationProjectionRuns = pgTable(
+  "signal_classification_projection_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalClassificationGenerations.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalClassificationOperations.id, { onDelete: "restrict" }),
+    projectedCount: integer("projected_count").notNull(),
+    projectionDigest: text("projection_digest").notNull(),
+    invalidationDigest: text("invalidation_digest").notNull(),
+    createdAt: now()
+  },
+  (table) => [unique("uq_signal_classification_projection_digest").on(table.workspaceId, table.generationId, table.projectionDigest)]
 );
 
 export const recordFeatureValues = pgTable(
@@ -3499,6 +5967,31 @@ export const tagReviewEvents = pgTable(
     createdAt: now()
   },
   (table) => [index("idx_tag_review_events_tag").on(table.recordTagId, table.createdAt)]
+);
+
+export const tbReusableAssertionReviewEvents = pgTable(
+  "tb_reusable_assertion_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tbAnalysisId: uuid("tb_analysis_id").notNull().references(() => tbAnalyses.id, { onDelete: "restrict" }),
+    sourceRecordTagId: uuid("source_record_tag_id").notNull().references(() => recordTags.id, { onDelete: "restrict" }),
+    resolvedRecordTagId: uuid("resolved_record_tag_id").notNull().references(() => recordTags.id, { onDelete: "restrict" }),
+    sourceMentionId: uuid("source_mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    canonicalMentionId: uuid("canonical_mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    reviewerUserId: uuid("reviewer_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    decision: text("decision").notNull(),
+    previousState: jsonb("previous_state").notNull().default(sql`'{}'::jsonb`),
+    nextState: jsonb("next_state").notNull().default(sql`'{}'::jsonb`),
+    notes: text("notes"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_tb_reusable_assertion_review_idempotency").on(table.tbAnalysisId, table.idempotencyKey),
+    check("tb_reusable_assertion_review_decision", sql`${table.decision} IN ('approve', 'correct', 'reject')`),
+    check("tb_reusable_assertion_review_key", sql`${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_tb_reusable_assertion_reviews_canonical").on(table.canonicalMentionId, table.createdAt)
+  ]
 );
 
 export const lineageEdges = pgTable(
@@ -3583,6 +6076,9 @@ export const metricMaterializations = pgTable(
     metricGroupKey: text("metric_group_key"),
     semanticModelId: uuid("semantic_model_id").references(() => semanticModels.id, { onDelete: "set null" }),
     studyCorpusId: uuid("study_corpus_id").references(() => studyCorpora.id, { onDelete: "cascade" }),
+    populationId: uuid("population_id").references(() => signalPopulationDefinitions.id, { onDelete: "cascade" }),
+    populationVersion: integer("population_version"),
+    populationDefinitionHash: text("population_definition_hash"),
     periodId: uuid("period_id").references(() => reportPeriods.id, { onDelete: "set null" }),
     granularity: text("granularity"),
     periodStart: date("period_start"),
@@ -3640,6 +6136,28 @@ export const metricMaterializations = pgTable(
         table.computedAt
       )
       .where(sql`${table.workspaceId} IS NOT NULL`),
+    index("idx_metric_materializations_signal_population_facade")
+      .on(
+        table.workspaceId,
+        table.populationId,
+        table.populationVersion,
+        table.filtersHash,
+        table.metricKey,
+        table.metricVersion,
+        table.computedAt
+      )
+      .where(sql`${table.workspaceId} IS NOT NULL AND ${table.populationId} IS NOT NULL`),
+    index("idx_metric_materializations_signal_population_period")
+      .on(table.populationId, table.populationVersion, table.periodStart, table.periodEnd)
+      .where(sql`${table.populationId} IS NOT NULL`),
+    check("metric_materializations_operational_scope", sql`${table.workspaceId} IS NULL OR (
+      (${table.studyCorpusId} IS NOT NULL AND ${table.populationId} IS NULL
+        AND ${table.populationVersion} IS NULL AND ${table.populationDefinitionHash} IS NULL)
+      OR
+      (${table.studyCorpusId} IS NULL AND ${table.populationId} IS NOT NULL
+        AND ${table.populationVersion} >= 1
+        AND ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$')
+    )`),
     check(
       "metric_materializations_signal_v1_shape",
       sql`${table.workspaceId} IS NULL OR (
@@ -3665,6 +6183,74 @@ export const metricMaterializations = pgTable(
       "metric_materializations_null_semantics",
       sql`${table.workspaceId} IS NULL OR ${table.materializationState} NOT IN ('pending', 'not_available') OR ${table.value} IS NULL`
     )
+  ]
+);
+
+export const signalOperationalServingShadowResults = pgTable(
+  "signal_operational_serving_shadow_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    populationId: uuid("population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "cascade" }),
+    legacyStudyCorpusId: uuid("legacy_study_corpus_id").references(() => studyCorpora.id, { onDelete: "set null" }),
+    module: text("module").notNull(),
+    filtersHash: text("filters_hash").notNull(),
+    populationVersion: integer("population_version").notNull(),
+    populationDefinitionHash: text("population_definition_hash").notNull(),
+    state: text("state").notNull(),
+    contractViolationCount: integer("contract_violation_count").notNull().default(0),
+    unexplainedCount: integer("unexplained_count").notNull().default(0),
+    legacyDifferencesByScope: jsonb("legacy_differences_by_scope").notNull().default(sql`'{}'::jsonb`),
+    governedSummary: jsonb("governed_summary").notNull().default(sql`'{}'::jsonb`),
+    baselineSummary: jsonb("baseline_summary").notNull().default(sql`'{}'::jsonb`),
+    legacySummary: jsonb("legacy_summary").notNull().default(sql`'{}'::jsonb`),
+    durationMs: integer("duration_ms").notNull().default(0),
+    createdAt: now()
+  },
+  (table) => [
+    check("signal_operational_serving_shadow_module", sql`${table.module} IN ('brand_monitoring', 'mentions', 'topics_narratives')`),
+    check("signal_operational_serving_shadow_state", sql`${table.state} IN ('exact', 'correct_with_explained_legacy_differences', 'failed')`),
+    check("signal_operational_serving_shadow_nonnegative", sql`${table.contractViolationCount} >= 0 AND ${table.unexplainedCount} >= 0 AND ${table.durationMs} >= 0`),
+    check("signal_operational_serving_shadow_hash", sql`${table.filtersHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_operational_serving_shadow_latest").on(table.workspaceId, table.module, table.createdAt)
+  ]
+);
+
+export const signalOperationalShadowRequests = pgTable(
+  "signal_operational_shadow_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "cascade" }),
+    populationId: uuid("population_id").notNull().references(() => signalPopulationDefinitions.id, { onDelete: "cascade" }),
+    legacyStudyCorpusId: uuid("legacy_study_corpus_id").references(() => studyCorpora.id, { onDelete: "set null" }),
+    module: text("module").notNull(),
+    filters: jsonb("filters").notNull(),
+    filtersHash: text("filters_hash").notNull(),
+    request: jsonb("request").notNull().default(sql`'{}'::jsonb`),
+    dedupeKey: text("dedupe_key").notNull(),
+    populationVersion: integer("population_version").notNull(),
+    populationDefinitionHash: text("population_definition_hash").notNull(),
+    isInternalUser: boolean("is_internal_user").notNull().default(false),
+    status: text("status").notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    errorSummary: jsonb("error_summary").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now(),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_operational_shadow_request_dedupe").on(table.dedupeKey),
+    check("signal_operational_shadow_request_module", sql`${table.module} IN ('brand_monitoring', 'mentions', 'topics_narratives')`),
+    check("signal_operational_shadow_request_status", sql`${table.status} IN ('pending', 'processing', 'completed', 'failed', 'dead_letter', 'superseded')`),
+    check("signal_operational_shadow_request_nonnegative", sql`${table.attempt} >= 0`),
+    check("signal_operational_shadow_request_hashes", sql`${table.filtersHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.populationDefinitionHash} ~ '^sha256:[0-9a-f]{64}$' AND ${table.dedupeKey} ~ '^sha256:[0-9a-f]{64}$'`),
+    index("idx_signal_operational_shadow_requests_recovery")
+      .on(table.availableAt, table.createdAt, table.id)
+      .where(sql`${table.status} IN ('pending', 'failed')`),
+    index("idx_signal_operational_shadow_requests_workspace_module")
+      .on(table.workspaceId, table.module, table.createdAt)
   ]
 );
 

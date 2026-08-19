@@ -1,4 +1,6 @@
 import { and, eq, like } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { z } from "zod";
 
 import { tbAnalyses, tbQualityGates } from "@noisia/db";
 import { forbidden, unauthorized } from "@/lib/api/responses";
@@ -27,8 +29,18 @@ export async function POST(
     return Response.json({ error: "not_found", message: "Corpus not found." }, { status: 404 });
   }
 
-  const body = await request.json().catch(() => ({})) as { approve_with_warnings?: unknown };
+  const body = await request.json().catch(() => ({})) as {
+    approve_with_warnings?: unknown;
+    reusable_assertions?: unknown;
+  };
   const approveWithWarnings = body.approve_with_warnings === true;
+  const reusableAssertions = reusableAssertionSchema.array().max(500).safeParse(body.reusable_assertions ?? []);
+  if (!reusableAssertions.success) {
+    return Response.json(
+      { error: "invalid_reusable_assertions", message: "La selección de enrichment reusable es inválida." },
+      { status: 400 }
+    );
+  }
 
   const [currentAnalysis] = await db
     .select({
@@ -121,7 +133,21 @@ export async function POST(
       corpusId: corpus.id,
       analysisId,
       reviewerUserId: session.appUser.id,
-      limitations: approvalLimitations
+      limitations: approvalLimitations,
+      reusableAssertions: reusableAssertions.data.map((assertion) => ({
+        recordTagId: assertion.record_tag_id,
+        decision: assertion.decision,
+        notes: assertion.notes,
+        correction: assertion.correction,
+        idempotencyKey: `sha256:${createHash("sha256")
+          .update([
+            "signal-tb-reusable-assertion-review-v1",
+            analysisId,
+            assertion.record_tag_id,
+            assertion.decision
+          ].join("|"), "utf8")
+          .digest("hex")}`
+      }))
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "analysis_artifact_approval_failed";
@@ -148,6 +174,17 @@ export async function POST(
     dataOsAssessment
   });
 }
+
+const reusableAssertionSchema = z.object({
+  record_tag_id: z.string().uuid(),
+  decision: z.enum(["approve", "correct", "reject"]),
+  notes: z.string().trim().max(1000).optional(),
+  correction: z.object({
+    value: z.string().trim().max(500).optional(),
+    score: z.number().finite().optional(),
+    confidence: z.string().trim().max(80).optional()
+  }).optional()
+});
 
 function normalizeLimitations(value: unknown) {
   if (!value) return [];

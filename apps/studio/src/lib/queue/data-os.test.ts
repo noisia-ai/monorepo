@@ -1,12 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { DATA_OS_QUEUE_NAME, DATA_OS_SHADOW_RUN_JOB_NAME } from "@noisia/query-engine";
+import {
+  DATA_OS_QUEUE_NAME,
+  DATA_OS_SHADOW_RUN_JOB_NAME,
+  SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME
+} from "@noisia/query-engine";
 import {
   buildDataOsShadowRunJobOptions,
   buildSignalAdHocMaterializationJobOptions,
-  resolveDataOsQueueName
+  isDataOsQueueConfigured,
+  resolveDataOsQueueName,
+  resolveSemanticResolutionQueueName
 } from "./data-os";
+
+test("Semantic Review projection and Resolution use an isolated queue name", () => {
+  assert.equal(
+    resolveSemanticResolutionQueueName({ NODE_ENV: "development" }),
+    `${SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME}-local`
+  );
+  assert.equal(
+    resolveSemanticResolutionQueueName({ RAILWAY_ENVIRONMENT: "production" }),
+    SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME
+  );
+  assert.equal(
+    resolveSemanticResolutionQueueName({
+      NOISIA_SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME: "semantic-staging-isolated"
+    }),
+    "semantic-staging-isolated"
+  );
+});
 
 test("Data OS queue resolves to a local queue outside hosted runtimes", () => {
   assert.equal(resolveDataOsQueueName({ NODE_ENV: "development" }), `${DATA_OS_QUEUE_NAME}-local`);
@@ -37,4 +60,13 @@ test("Signal ad hoc jobs are deduplicated, bounded and retry transient failures"
     removeOnComplete: { age: 3_600, count: 500 },
     removeOnFail: { age: 604_800, count: 500 }
   });
+});
+
+test("Data OS queue configuration requires a non-empty Redis URL", () => {
+  assert.equal(isDataOsQueueConfigured({}), false);
+  assert.equal(isDataOsQueueConfigured({ REDIS_URL: "   " }), false);
+  assert.equal(
+    isDataOsQueueConfigured({ REDIS_URL: "rediss://example.invalid" }),
+    true
+  );
 });

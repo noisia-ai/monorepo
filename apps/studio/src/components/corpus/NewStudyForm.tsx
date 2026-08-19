@@ -15,6 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 import { TokenCatalogField, type ComboOption } from "@/components/brands/BrandOsForm";
 import { Icon } from "@/components/ui/Icon";
 import {
@@ -178,6 +179,7 @@ type NewStudyFormProps = {
   baselineCorpora: BaselineCorpusOption[];
   methodologies: MethodologyOption[];
   defaultBrandId?: string;
+  defaultSubjectType?: "brand" | "theme";
 };
 
 const steps = [
@@ -316,7 +318,7 @@ type PerformancePreview = {
   source_sync_run_id?: string;
 };
 
-export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, defaultBrandId }: NewStudyFormProps) {
+export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, defaultBrandId, defaultSubjectType }: NewStudyFormProps) {
   const t = useTranslations("NewStudy");
   const router = useRouter();
   const defaultMethodology = methodologies.find((item) => item.slug === "triggers-barriers") ?? methodologies[0];
@@ -325,12 +327,15 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
     [brands, defaultBrandId]
   );
   const [step, setStep] = useState(0);
-  const [subjectType, setSubjectType] = useState<"brand" | "theme">(defaultBrandId || brands.length > 0 ? "brand" : "theme");
+  const initialSubjectType = defaultBrandId ? "brand" : defaultSubjectType ?? (brands.length > 0 ? "brand" : "theme");
+  const [subjectType, setSubjectType] = useState<"brand" | "theme">(initialSubjectType);
   const [brandMode, setBrandMode] = useState<"existing" | "new">(brands.length > 0 ? "existing" : "new");
   const [themeMode, setThemeMode] = useState<"existing" | "new">(themes.length > 0 ? "existing" : "new");
   const defaultTheme = themes[0];
   const [draft, setDraft] = useState<Draft>({
-    studyName: defaultBrand ? `${defaultBrand.displayName ?? defaultBrand.name} · Triggers & Barriers` : "",
+    studyName: initialSubjectType === "theme"
+      ? defaultTheme ? `${defaultTheme.name} · Triggers & Barriers` : ""
+      : defaultBrand ? `${defaultBrand.displayName ?? defaultBrand.name} · Triggers & Barriers` : "",
     brandId: defaultBrand?.id ?? "",
     themeId: defaultTheme?.id ?? "",
     baseCorpusId: "",
@@ -402,6 +407,22 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   const [objectiveAiError, setObjectiveAiError] = useState<string | null>(null);
   const [objectiveAiRefineInstruction, setObjectiveAiRefineInstruction] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
+  const previousStepRef = useRef(step);
+
+  useEffect(() => {
+    if (previousStepRef.current === step) return;
+    previousStepRef.current = step;
+
+    const frame = window.requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      const scrollHost = stage?.closest<HTMLElement>(".admin-shell__main");
+      scrollHost?.scrollTo({ top: 0, behavior: "auto" });
+      stage?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [step]);
 
   const selectedBrand = brands.find((brand) => brand.id === draft.brandId) ?? null;
   const selectedTheme = themes.find((theme) => theme.id === draft.themeId) ?? null;
@@ -981,7 +1002,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
   }
 
   return (
-    <form className="study-wizard-shell" onSubmit={onSubmit}>
+    <form className="study-wizard-shell admin-study-wizard" onSubmit={onSubmit}>
       <aside className="study-wizard-rail" aria-label={t("rail.aria")}>
         <div>
           <p className="vitals-eyebrow">{t("rail.eyebrow")}</p>
@@ -1005,7 +1026,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
         </ol>
       </aside>
 
-      <section className="study-wizard-stage">
+      <section className="study-wizard-stage" ref={stageRef}>
         {step === 0 && (
           <WizardPanel eyebrow={t("subject.eyebrow")} title={t("subject.title")}>
             <div className="study-mode-switch">
@@ -1425,7 +1446,7 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
         )}
 
         {step === 3 && (
-          <WizardPanel eyebrow="Analysis plan" title={isSignalPulseStudy ? "Brief Signal Pulse" : "Lentes del reporte"}>
+          <WizardPanel eyebrow={t("plan.eyebrow")} title={isSignalPulseStudy ? t("plan.pulseTitle") : t("plan.title")}>
             {isSignalPulseStudy ? (
               <SignalPulseBriefPanel
                 draft={draft}
@@ -1451,7 +1472,6 @@ export function NewStudyForm({ brands, themes, baselineCorpora, methodologies, d
                 <strong>{t("sources.engineTitle")}</strong>
                 <p>{t("sources.engineCopy")}</p>
               </div>
-              <code>{t("sources.engineCode")}</code>
             </div>
             <div className="source-console">
               <div className="source-console-main">
@@ -1686,7 +1706,7 @@ function WizardPanel({ eyebrow, title, children }: { eyebrow: string; title: str
     <section className="new-study-panel study-wizard-panel">
       <div className="new-study-section-head">
         <p className="vitals-eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
+        <h2 tabIndex={-1}>{title}</h2>
       </div>
       {children}
     </section>
@@ -1804,103 +1824,23 @@ function SelectField({
   placeholder?: string;
   value: string;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const buttonId = useId();
-  const labelId = useId();
-  const listboxId = useId();
-  const selected = options.find((option) => option.value === value);
-  const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));
-
-  function openMenu() {
-    if (disabled) return;
-    setActiveIndex(selectedIndex);
-    setIsOpen(true);
-  }
-
-  function choose(option: ComboOption) {
-    onChange(option.value);
-    setIsOpen(false);
-  }
-
-  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (disabled) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      if (!isOpen) {
-        openMenu();
-        return;
-      }
-      setActiveIndex((index) => Math.min(index + 1, Math.max(options.length - 1, 0)));
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (!isOpen) {
-        openMenu();
-        return;
-      }
-      setActiveIndex((index) => Math.max(index - 1, 0));
-    }
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      if (!isOpen) {
-        openMenu();
-        return;
-      }
-      const option = options[activeIndex];
-      if (option) choose(option);
-    }
-    if (event.key === "Escape") {
-      setIsOpen(false);
-    }
-  }
+  const fieldId = useId();
+  const normalizedOptions = placeholder && !options.some((option) => option.value === "")
+    ? [{ label: placeholder, value: "" }, ...options]
+    : options;
 
   return (
-    <div className={`study-select${disabled ? " study-select--disabled" : ""}`}>
-      <span id={labelId}>{label}</span>
-      <button
-        id={buttonId}
-        className={`study-select-button${error ? " new-study-control--error" : ""}`}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-controls={isOpen ? listboxId : undefined}
-        aria-labelledby={`${labelId} ${buttonId}`}
-        disabled={disabled}
-        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
-        onClick={() => {
-          if (isOpen) {
-            setIsOpen(false);
-          } else {
-            openMenu();
-          }
-        }}
-        onKeyDown={onKeyDown}
-      >
-        <span>{selected?.label ?? placeholder ?? ""}</span>
-        <Icon name="chevron-down" size={14} />
-      </button>
-      {isOpen && !disabled && (
-        <div className="study-select-menu" id={listboxId} role="listbox" aria-labelledby={labelId}>
-          {options.map((option, index) => (
-            <button
-              key={option.value}
-              type="button"
-              className="study-select-option"
-              role="option"
-              aria-selected={option.value === value || index === activeIndex}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                choose(option);
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {error && <small className="new-study-field-error">{error}</small>}
-    </div>
+    <WorkspaceSelectField
+      ariaLabel={label}
+      className="study-select"
+      disabled={disabled}
+      error={error}
+      label={label}
+      name={`study-select-${fieldId.replace(/:/g, "")}`}
+      onChange={onChange}
+      options={normalizedOptions}
+      value={value}
+    />
   );
 }
 
@@ -2178,25 +2118,28 @@ function DataOsTraceCard({
   ];
 
   return (
-    <section className="study-trace-card">
-      <header>
+    <details className="study-trace-card">
+      <summary>
         <div>
           <p className="vitals-eyebrow">{t("eyebrow")}</p>
           <h3>{t("title")}</h3>
+          <span>{t("summary")}</span>
         </div>
         <code>{methodologySlug}</code>
-      </header>
-      <p>{t("copy")}</p>
-      <div className="study-trace-grid">
-        {traceRows.map((row) => (
-          <div className="study-trace-row" key={row.label}>
-            <span>{row.label}</span>
-            <strong>{row.value}</strong>
-            <small>{t("items", { count: row.count })}</small>
-          </div>
-        ))}
+      </summary>
+      <div className="study-trace-card__body">
+        <p>{t("copy")}</p>
+        <div className="study-trace-grid">
+          {traceRows.map((row) => (
+            <div className="study-trace-row" key={row.label}>
+              <span>{row.label}</span>
+              <strong>{row.value}</strong>
+              <small>{t("items", { count: row.count })}</small>
+            </div>
+          ))}
+        </div>
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -2378,6 +2321,7 @@ function LensPlanPanel({
   selectedMethodology: MethodologyOption | undefined;
   onToggle: (slug: string) => void;
 }) {
+  const t = useTranslations("NewStudy.plan");
   const selectedSet = new Set(selectedLensSlugs);
   const analysisPlan = buildStudyAnalysisPlan(selectedLensSlugs, selectedMethodology?.slug);
   const productionLenses = STUDY_LENS_OPTIONS.filter((lens) => lens.status === "required");
@@ -2386,16 +2330,13 @@ function LensPlanPanel({
     <section className="study-lens-plan">
       <div className="study-lens-plan-intro">
         <div>
-          <p className="vitals-eyebrow">Production contract</p>
-          <h3>One governed analysis path</h3>
-          <p>
-            Triggers &amp; Barriers is the production methodology. Brand OS, study sources, normalized observations,
-            and listening evidence travel together with lineage into the Engine and Signal.
-          </p>
+          <p className="vitals-eyebrow">{t("contractEyebrow")}</p>
+          <h3>{t("contractTitle")}</h3>
+          <p>{t("contractCopy")}</p>
         </div>
         <div className="study-lens-summary">
           <span>1</span>
-          <small>production methodology</small>
+          <small>{t("methodologyCount")}</small>
         </div>
       </div>
 
@@ -2414,13 +2355,13 @@ function LensPlanPanel({
               onClick={() => onToggle(lens.slug)}
               type="button"
             >
-              <span className="study-lens-card-status">{lens.status}</span>
+              <span className="study-lens-card-status">{t("governed")}</span>
               <strong>{lens.label}</strong>
               <p>{lens.description}</p>
-              <small>{lens.locked ? "Production path" : isSelected ? "Selected" : "Add to plan"}</small>
+              <small>{lens.locked ? t("productionPath") : isSelected ? t("selected") : t("add")}</small>
               <em>
-                {requiresCompetitors ? "Requiere peer set" : "Puede correr sin peer set"}
-                {minMentions > 0 ? ` · ${minMentions}+ menciones/entidad` : ""}
+                {requiresCompetitors ? t("requiresCompetitors") : t("noCompetitors")}
+                {minMentions > 0 ? ` · ${t("minimumMentions", { count: minMentions })}` : ""}
               </em>
               <Icon name={isSelected ? "check" : "sparkle"} size={15} />
             </button>
@@ -2673,9 +2614,9 @@ function BriefPreview({
           <p>{methodology}{lensLabels.length > 0 ? ` · ${lensLabels.join(", ")}` : ""}</p>
         </div>
         <div className="brief-hero-metrics">
-          <span><strong>{readySources.length}</strong> sources</span>
-          <span><strong>{decisionTokens.length}</strong> decisions</span>
-          <span><strong>{audienceTokens.length}</strong> audiences</span>
+          <span><strong>{readySources.length}</strong>{t("sourceCount")}</span>
+          <span><strong>{decisionTokens.length}</strong>{t("decisionCount")}</span>
+          <span><strong>{audienceTokens.length}</strong>{t("audienceCount")}</span>
         </div>
       </section>
 
@@ -2683,13 +2624,13 @@ function BriefPreview({
       {draft.studyContext.trim() && <BriefTextCard label={t("studyContext")} value={draft.studyContext} collapsed />}
 
       <section className="brief-data-grid">
-        <BriefChipCard label={t("decision")} values={decisionTokens} empty="Pending" />
-        <BriefChipCard label={t("audience")} values={audienceTokens} empty="Pending" />
-        <BriefChipCard label={t("hypotheses")} values={hypothesisTokens} empty="Pending" />
-        <BriefChipCard label={t("knownBarriers")} values={barrierTokens} empty="Pending" />
-        <BriefChipCard label={t("knownTriggers")} values={triggerTokens} empty="Pending" />
-        <BriefChipCard label={t("success")} values={successTokens} empty="Pending" />
-        {constraintTokens.length > 0 && <BriefChipCard label="Constraints" values={constraintTokens} />}
+        <BriefChipCard label={t("decision")} values={decisionTokens} empty={t("pending")} />
+        <BriefChipCard label={t("audience")} values={audienceTokens} empty={t("pending")} />
+        <BriefChipCard label={t("hypotheses")} values={hypothesisTokens} empty={t("pending")} />
+        <BriefChipCard label={t("knownBarriers")} values={barrierTokens} empty={t("pending")} />
+        <BriefChipCard label={t("knownTriggers")} values={triggerTokens} empty={t("pending")} />
+        <BriefChipCard label={t("success")} values={successTokens} empty={t("pending")} />
+        {constraintTokens.length > 0 && <BriefChipCard label={t("constraints")} values={constraintTokens} />}
       </section>
 
       {(draft.categoryContext.trim() || draft.competitiveContext.trim()) && (
@@ -2701,18 +2642,18 @@ function BriefPreview({
 
       {isSignalPulseStudy && (
         <section className="brief-data-grid brief-data-grid--pulse">
-          <BriefChipCard label="Budget cap" values={draft.runBudgetUsd ? [`$${draft.runBudgetUsd}`] : []} empty="Pending" />
-          <BriefChipCard label="Campanas activas" values={tokenValues(draft.activeCampaigns)} empty="Pending" />
-          <BriefChipCard label="Claims permitidos" values={tokenValues(draft.allowedClaims)} empty="Pending" />
-          <BriefChipCard label="Claims prohibidos" values={tokenValues(draft.prohibitedClaims)} empty="Pending" />
-          <BriefChipCard label="Performance estructurado" values={performanceFiles.map((file) => file.name)} empty="No files" />
+          <BriefChipCard label={t("budget")} values={draft.runBudgetUsd ? [`$${draft.runBudgetUsd}`] : []} empty={t("pending")} />
+          <BriefChipCard label={t("campaigns")} values={tokenValues(draft.activeCampaigns)} empty={t("pending")} />
+          <BriefChipCard label={t("allowedClaims")} values={tokenValues(draft.allowedClaims)} empty={t("pending")} />
+          <BriefChipCard label={t("prohibitedClaims")} values={tokenValues(draft.prohibitedClaims)} empty={t("pending")} />
+          <BriefChipCard label={t("performance")} values={performanceFiles.map((file) => file.name)} empty={t("noFiles")} />
         </section>
       )}
 
       <section className="brief-source-inventory">
         <div>
           <p className="vitals-eyebrow">{t("sources")}</p>
-          <h3>Source inventory</h3>
+          <h3>{t("sourceInventory")}</h3>
         </div>
         <div className="brief-source-grid">
           {sourceRows.map((source) => (

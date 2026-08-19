@@ -190,12 +190,13 @@ export const DATA_OS_SOURCE_INVENTORY_SQL = `
   corpus_mentions AS (
     SELECT
       COUNT(*)::int AS listening_mentions,
-      COUNT(*) FILTER (WHERE inclusion_status = 'included')::int AS listening_included_mentions,
-      COUNT(*) FILTER (WHERE inclusion_status = 'excluded')::int AS listening_excluded_mentions,
-      MIN(published_at)::text AS listening_period_start,
-      MAX(published_at)::text AS listening_period_end
-    FROM mentions
-    WHERE study_corpus_id = $1::uuid
+      COUNT(*)::int AS listening_included_mentions,
+      0::int AS listening_excluded_mentions,
+      MIN(mention.published_at)::text AS listening_period_start,
+      MAX(mention.published_at)::text AS listening_period_end
+    FROM corpus_snapshot_mentions membership
+    JOIN mentions mention ON mention.id = membership.mention_id
+    WHERE membership.snapshot_id = $2::uuid
   )
   SELECT
     scoped.asset_id::text AS asset_id,

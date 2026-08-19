@@ -9,6 +9,8 @@ export type QueryConstructionMode = "exploratory" | "detection";
 export type QueryConstructionScope = "brand" | "competitors" | "category";
 
 export type QueryCompetitorEntity = {
+  /** Stable adapter-owned identity used in model output. Defaults to `name` for Study OS. */
+  key?: string;
   name: string;
   aliases?: string[];
   handles?: string[];
@@ -498,7 +500,7 @@ export function buildQueryConstructionPlan(input: QueryConstructionInput): Query
     unsafeBareTermSet
   );
   const competitorAnchors = competitorProfileEntries.map((entry) => ({
-    entity: entry.entity.name,
+    entity: entry.entity.key ?? entry.entity.name,
     terms: safeAnchorTerms(
       [
         entry.entity.name,
@@ -837,6 +839,7 @@ function normalizeCompetitorEntities(input: QueryConstructionInput): QueryCompet
   if (explicit.length > 0) {
     return explicit
       .map((entity) => ({
+        ...(entity.key?.trim() ? { key: entity.key.trim() } : {}),
         name: entity.name.trim(),
         aliases: unique(entity.aliases ?? []),
         handles: unique(entity.handles ?? [])

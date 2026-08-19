@@ -1,11 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import {
+  AdminStatus,
+  AdminSummaryStrip,
+  AdminWorkspaceHeader
+} from "@/components/admin/AdminWorkspacePrimitives";
 import { ApproveAnalysisButton } from "@/components/analysis/ApproveAnalysisButton";
 import { SignalPulseReviewComposer } from "@/components/analysis/SignalPulseReviewComposer";
 import { SignalComposer } from "@/components/analysis/SignalComposer";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { getDraftSignalOutput } from "@/lib/data/signal";
@@ -39,35 +44,41 @@ export default async function TbAnalysisReviewPage({
 
   const state = await getTbAnalysisForCorpus(corpus.id, analysisId, { includeAggregates: true });
   if (!state) notFound();
+  const workspaceReview = await resolveWorkspaceReviewContext(analysisId,corpus.id);
 
   const { analysis, recommendations, gates, findingSummary } = state;
   const draftOutput = await getDraftSignalOutput(analysis.id);
-  let relationalOverview = null;
-  let relationalOverviewError: string | null = null;
-
-  if (analysis.snapshotId) {
-    try {
-      relationalOverview = await loadPublishedSignalOverview({
-        snapshotId: analysis.snapshotId,
-        analysisId: analysis.id,
-        corpusId: corpus.id,
-        outputId: draftOutput?.id ?? undefined,
-        requireGovernedRef: draftOutput?.status === "published"
-      });
-    } catch (error) {
-      console.error("[analysis-review] Failed to load the relational Signal contract", error);
-      relationalOverviewError = "Review no pudo resolver el contrato relacional del snapshot.";
-    }
-  }
-
-  const signalServingReadiness = analysis.snapshotId
-    ? await getSignalServingReadiness({
+  const [relationalResult, signalServingReadiness] = await Promise.all([
+    (async () => {
+      if (!analysis.snapshotId) return { overview: null, error: null };
+      try {
+        const overview = await loadPublishedSignalOverview({
+          snapshotId: analysis.snapshotId,
+          analysisId: analysis.id,
+          corpusId: corpus.id,
+          outputId: draftOutput?.id ?? undefined,
+          requireGovernedRef: draftOutput?.status === "published"
+        });
+        return { overview, error: null };
+      } catch (error) {
+        console.error("[analysis-review] Failed to load the relational Signal contract", error);
+        return {
+          overview: null,
+          error: "Review no pudo resolver el contrato relacional del snapshot."
+        };
+      }
+    })(),
+    analysis.snapshotId
+      ? getSignalServingReadiness({
         analysisId: analysis.id,
         snapshotId: analysis.snapshotId,
         outputId: draftOutput?.id ?? null,
         requireDataRefs: draftOutput?.status === "published"
       })
-    : null;
+      : Promise.resolve(null)
+  ]);
+  const relationalOverview = relationalResult.overview;
+  const relationalOverviewError = relationalResult.error;
   const signalServingAssessment = signalServingReadiness
     ? assessSignalServingReadiness(signalServingReadiness)
     : {
@@ -146,48 +157,50 @@ export default async function TbAnalysisReviewPage({
     triggers_total: findingSummary.triggers,
     movable_total: findingSummary.movable
   };
+  const isApproved = analysis.status === "approved_by_im" || analysis.status === "approved_by_kam";
+  const reviewStatus = isApproved
+    ? <AdminStatus state="good"><Icon name="check" size={12} /> Aprobado</AdminStatus>
+    : analysis.status === "needs_review"
+      ? <AdminStatus state="warning"><Icon name="info" size={12} /> Requiere revisión</AdminStatus>
+      : analysis.status === "failed"
+        ? <AdminStatus state="danger"><Icon name="alert" size={12} /> Falló</AdminStatus>
+        : <AdminStatus><Icon name="spinner" size={12} /> {analysis.status}</AdminStatus>;
 
   return (
-    <div className="studio-page analysis-review-page">
-      <section className="analysis-review-hero">
-        <div>
-          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
-            <Icon name="arrow-right" size={14} />
-            Volver al engine
-          </Link>
-          <p className="vitals-eyebrow">Revisión del análisis</p>
-          <h1>Síntesis estratégica</h1>
-          <p>
-            Lee lo que encontró el motor, valida si las acciones hacen sentido
-            y aprueba sólo cuando el entregable ya esté listo para convertirse en reporte.
-          </p>
-        </div>
-        <div className="analysis-review-actions">
-          {analysis.status === "approved_by_im" || analysis.status === "approved_by_kam" ? (
-            <SuccessPill>Aprobado</SuccessPill>
-          ) : analysis.status === "needs_review" ? (
-            <StatusPill tone="warn"><Icon name="info" size={12} /> Requiere revisión</StatusPill>
-          ) : (
-            <StatusPill tone={analysis.status === "failed" ? "error" : "running"}>
-              <Icon name={analysis.status === "failed" ? "alert" : "spinner"} size={12} />
-              {analysis.status}
-            </StatusPill>
-          )}
-          <ApproveAnalysisButton
-            corpusId={corpus.id}
-            analysisId={analysis.id}
-            disabled={!canApprove}
-            failedGates={failedPostGates}
-          />
-        </div>
-      </section>
+    <div className="admin-workspace-page admin-study-surface analysis-review-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            <Link prefetch={false} className="admin-button" href={workspaceReview
+              ? `/studio/brands/${workspaceReview.brandId}/reports`
+              : `/studio/corpora/${corpus.id}/engine`}>
+              Volver al engine
+            </Link>
+            {analysis.status === "needs_review" ? (
+              <ApproveAnalysisButton
+                corpusId={corpus.id}
+                analysisId={analysis.id}
+                disabled={!canApprove}
+                failedGates={failedPostGates}
+                workspaceId={workspaceReview?.workspaceId}
+              />
+            ) : null}
+          </>
+        )}
+        eyebrow="Revisión del análisis"
+        status={reviewStatus}
+        subtitle="Lee lo que encontró el motor, valida si las acciones hacen sentido y aprueba sólo cuando el entregable ya esté listo para convertirse en reporte."
+        title="Síntesis estratégica"
+      />
 
-      <section className="analysis-review-vitals">
-        <MetricCard label="Hallazgos" value={reviewMetrics.findings_total} />
-        <MetricCard label="Barreras" value={reviewMetrics.barriers_total} />
-        <MetricCard label="Señales positivas" value={reviewMetrics.triggers_total} />
-        <MetricCard label="Accionables" value={reviewMetrics.movable_total} />
-      </section>
+      <AdminSummaryStrip
+        items={[
+          { label: "Hallazgos", value: reviewMetrics.findings_total, hint: "Síntesis estratégica" },
+          { label: "Barreras", value: reviewMetrics.barriers_total, hint: "Barreras que la marca sí puede mover" },
+          { label: "Señales positivas", value: reviewMetrics.triggers_total, hint: "Señales positivas para aprovechar" },
+          { label: "Accionables", value: reviewMetrics.movable_total, hint: "Plan de acción" }
+        ]}
+      />
 
       <section className="analysis-review-card analysis-review-brief">
         <div className="analysis-section-head">
@@ -223,14 +236,18 @@ export default async function TbAnalysisReviewPage({
         </div>
       </section>
 
-      <section className="analysis-review-card">
-        <div className="analysis-section-head">
+      <details className="analysis-review-card analysis-operator-disclosure">
+        <summary className="analysis-section-head">
           <SectionTitle icon="layers" eyebrow="Data OS · fuente de verdad" title="Readiness relacional del Signal" />
-          <span>{signalServingReadiness?.contractVersion ?? "sin snapshot"}</span>
-        </div>
-        <EmptyCard text="Estos conteos salen del snapshot y de las tablas relacionales del análisis. Snapshot, evidencia y dimensiones gobernadas son un gate de Review. Las refs del dashboard pertenecen al output y se vuelven obligatorias al publicar." />
-        {signalServingReadiness ? (
-          <>
+          <span className="analysis-operator-disclosure__meta">
+            <span>{signalServingReadiness?.contractVersion ?? "sin snapshot"}</span>
+            <Icon name="chevron-down" size={15} />
+          </span>
+        </summary>
+        <div className="analysis-operator-disclosure__body">
+          <EmptyCard text="Estos conteos salen del snapshot y de las tablas relacionales del análisis. Snapshot, evidencia y dimensiones gobernadas son un gate de Review. Las refs del dashboard pertenecen al output y se vuelven obligatorias al publicar." />
+          {signalServingReadiness ? (
+            <>
             <div className="analysis-readiness-grid">
               <ReadinessTile label="Menciones del snapshot" value={signalServingReadiness.counts.mentions} detail="Población inmutable en corpus_snapshot_mentions" />
               <ReadinessTile label="Hallazgos" value={signalServingReadiness.counts.findings} detail={`${signalServingReadiness.counts.findingsWithEvidence}/${signalServingReadiness.counts.findings} con evidencia del snapshot`} />
@@ -282,27 +299,33 @@ export default async function TbAnalysisReviewPage({
                 );
               })}
             </div>
-          </>
-        ) : (
-          <EmptyCard text="El análisis todavía no tiene snapshot inmutable. Review queda bloqueado porque Signal no tendría una población reproducible ni evidencia verificable que publicar." />
-        )}
-      </section>
+            </>
+          ) : (
+            <EmptyCard text="El análisis todavía no tiene snapshot inmutable. Review queda bloqueado porque Signal no tendría una población reproducible ni evidencia verificable que publicar." />
+          )}
+        </div>
+      </details>
 
-      <section className="analysis-review-card">
-        <div className="analysis-section-head">
+      <details className="analysis-review-card analysis-operator-disclosure">
+        <summary className="analysis-section-head">
           <SectionTitle icon="check" eyebrow="Proyección narrativa / JSON" title="Bloques derivados para presentación" />
-          <span>{signalPreview.schema_version}</span>
+          <span className="analysis-operator-disclosure__meta">
+            <span>{signalPreview.schema_version}</span>
+            <Icon name="chevron-down" size={15} />
+          </span>
+        </summary>
+        <div className="analysis-operator-disclosure__body">
+          <EmptyCard text="Esta narrativa y su payload JSON son una proyección de compatibilidad y presentación, no la fuente de verdad. El dashboard debe resolver métricas y evidencia desde el contrato relacional mostrado arriba." />
+          <div className="analysis-readiness-grid">
+            <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
+            <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
+            <ReadinessTile label="Action Studio" value={actionCards.length} detail={`${countClientReadyActions(actionCards)} con texto útil`} />
+            <ReadinessTile label="Competitive" value={competitiveEntities.length} detail={competitiveEntities.length > 0 ? "Benchmark conectado" : "Sin entidades competitivas"} />
+            <ReadinessTile label="Emerging Patterns" value={emergingPatterns.length} detail="Fuera del método T&B" />
+            <ReadinessTile label="Boundaries" value={arrayValue(boundaries.limitations).length} detail="Límites client-safe" />
+          </div>
         </div>
-        <EmptyCard text="Esta narrativa y su payload JSON son una proyección de compatibilidad y presentación, no la fuente de verdad. El dashboard debe resolver métricas y evidencia desde el contrato relacional mostrado arriba." />
-        <div className="analysis-readiness-grid">
-          <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
-          <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
-          <ReadinessTile label="Action Studio" value={actionCards.length} detail={`${countClientReadyActions(actionCards)} con texto útil`} />
-          <ReadinessTile label="Competitive" value={competitiveEntities.length} detail={competitiveEntities.length > 0 ? "Benchmark conectado" : "Sin entidades competitivas"} />
-          <ReadinessTile label="Emerging Patterns" value={emergingPatterns.length} detail="Fuera del método T&B" />
-          <ReadinessTile label="Boundaries" value={arrayValue(boundaries.limitations).length} detail="Límites client-safe" />
-        </div>
-      </section>
+      </details>
 
       {arrayValue(activation.top_triggers_movibles).length === 0 ? (
         <section className="analysis-empty-signal">
@@ -445,6 +468,24 @@ export default async function TbAnalysisReviewPage({
   );
 }
 
+async function resolveWorkspaceReviewContext(analysisId: string,corpusId: string) {
+  return (await pool.query<{ workspaceId: string; brandId: string }>(
+    `SELECT analysis.workspace_id::text AS "workspaceId",
+       workspace.brand_id::text AS "brandId"
+     FROM tb_analyses analysis
+     JOIN signal_strategic_run_controls control
+       ON control.workspace_id=analysis.workspace_id
+      AND control.tb_analysis_id=analysis.id
+      AND control.snapshot_id=analysis.snapshot_id
+     JOIN signal_workspaces workspace ON workspace.id=analysis.workspace_id
+     WHERE analysis.id=$1::uuid
+       AND analysis.study_corpus_id=$2::uuid
+       AND analysis.report_key='triggers-barriers'
+       AND analysis.strategic_contract_version='signal-tb-strategic-v2'`,
+    [analysisId,corpusId]
+  )).rows[0];
+}
+
 type SignalPulseReviewState = Awaited<ReturnType<typeof getSignalPulseReviewState>> extends infer T ? NonNullable<T> : never;
 
 function SignalPulseAnalysisReview({
@@ -487,38 +528,38 @@ function SignalPulseAnalysisReview({
   const defaultSummary = stringValue(interpretation.body) || "Revisa señales, evidencia, moves y gates antes de abrir el Pulse al cliente.";
 
   return (
-    <div className="studio-page analysis-review-page">
-      <section className="analysis-review-hero">
-        <div>
-          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
-            <Icon name="arrow-right" size={14} />
-            Volver al engine
-          </Link>
-          <p className="vitals-eyebrow">Review Signal Pulse</p>
-          <h1>Revisión táctica antes de publicar</h1>
-          <p>
-            Valida que las señales sean accionables, que los moves no sean genéricos y que el reporte sea honesto
-            sobre qué midió SQL/embeddings y qué interpretó Claude.
-          </p>
-        </div>
-        <div className="analysis-review-actions">
-          <StatusPill tone={publishBlocked ? "warn" : "success"}>
+    <div className="admin-workspace-page admin-study-surface analysis-review-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            <Link prefetch={false} className="admin-button" href={`/studio/corpora/${corpus.id}/engine`}>
+              Volver al engine
+            </Link>
+            <Link prefetch={false} className="admin-button" href={`/studio/corpora/${corpus.id}/mentions`}>
+              <Icon name="search" size={15} />
+              Revisar menciones
+            </Link>
+          </>
+        )}
+        eyebrow="Review Signal Pulse"
+        status={(
+          <AdminStatus state={publishBlocked ? "warning" : "good"}>
             <Icon name={publishBlocked ? "alert" : "check"} size={12} />
             {publishBlocked ? "Requiere curaduría" : "Listo para publicar"}
-          </StatusPill>
-          <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/studio/corpora/${corpus.id}/mentions`}>
-            <Icon name="search" size={15} />
-            Revisar menciones
-          </Link>
-        </div>
-      </section>
+          </AdminStatus>
+        )}
+        subtitle="Valida que las señales sean accionables, que los moves no sean genéricos y que el reporte sea honesto sobre qué midió SQL/embeddings y qué interpretó Claude."
+        title="Revisión táctica antes de publicar"
+      />
 
-      <section className="analysis-review-vitals">
-        <MetricCard label="Corte" value={cutLabel} />
-        <MetricCard label="Data through" value={formatDateLabel(dataThrough)} />
-        <MetricCard label="Menciones medidas" value={measuredMentions} />
-        <MetricCard label="Menciones SP" value={signalPulseMentions} />
-      </section>
+      <AdminSummaryStrip
+        items={[
+          { label: "Corte", value: cutLabel, hint: "Corte pendiente" },
+          { label: "Data through", value: formatDateLabel(dataThrough), hint: "Ventana" },
+          { label: "Menciones medidas", value: measuredMentions, hint: "SQL/embeddings midieron" },
+          { label: "Menciones SP", value: signalPulseMentions, hint: "Query pack SP" }
+        ]}
+      />
 
       <section className="analysis-review-card">
         <div className="analysis-section-head">
@@ -832,15 +873,6 @@ function SectionTitle({ icon, eyebrow, title }: { icon: IconName; eyebrow: strin
         <p className="vitals-eyebrow">{eyebrow}</p>
         <h2>{title}</h2>
       </div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: number | string | null }) {
-  return (
-    <div className="analysis-metric-card">
-      <span>{label}</span>
-      <strong>{typeof value === "number" ? new Intl.NumberFormat("es-MX").format(value) : value ?? "-"}</strong>
     </div>
   );
 }

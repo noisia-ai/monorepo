@@ -35,6 +35,15 @@ const workspace: ResolvedSignalWorkspace = {
       validFrom: "2026-07-02T00:00:00.000Z",
       methodologySlug: "triggers-barriers",
       outputId: "50000000-0000-4000-8000-000000000001"
+    },
+    {
+      id: "40000000-0000-4000-8000-000000000003",
+      name: "Otra corrida T&B",
+      role: "strategic",
+      status: "corpus_approved",
+      validFrom: "2026-07-20T00:00:00.000Z",
+      methodologySlug: "triggers-barriers",
+      outputId: null
     }
   ]
 };
@@ -42,6 +51,8 @@ const workspace: ResolvedSignalWorkspace = {
 const release: SignalStrategicReleaseSummary = {
   release_id: "60000000-0000-4000-8000-000000000001",
   study_corpus_id: "40000000-0000-4000-8000-000000000002",
+  report_key: "triggers-barriers",
+  report_revision: 1,
   release_key: "strategic:2026-07-25",
   title: "Decisión de compra · Jul 2026",
   status: "published",
@@ -60,11 +71,17 @@ const release: SignalStrategicReleaseSummary = {
   artifacts: []
 };
 
-test("builds one named Signal page per Triggers & Barriers corpus", () => {
+test("builds one stable T&B report navigation item across analysis corpora", () => {
   const studies = buildSignalStrategicStudyNavigation({ workspace, releases: [release] });
   assert.equal(studies.length, 1);
-  assert.equal(studies[0]?.title, "Decisión de compra · Jul 2026");
-  assert.equal(studies[0]?.href, `/signal/laika?study=${studies[0]?.id}`);
+  assert.equal(studies[0]?.title, "Triggers & Barriers");
+  assert.equal(studies[0]?.reportKey, "triggers-barriers");
+  assert.equal(studies[0]?.id, "triggers-barriers");
+  assert.equal(studies[0]?.href, "/signal/laika/reports/triggers-barriers");
   assert.equal(studies[0]?.currentRelease?.release_id, release.release_id);
   assert.equal(findSignalStrategicStudy(studies, studies[0]?.id)?.id, studies[0]?.id);
+  assert.equal(
+    findSignalStrategicStudy(studies, release.study_corpus_id)?.id,
+    "triggers-barriers"
+  );
 });

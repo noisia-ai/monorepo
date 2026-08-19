@@ -19,7 +19,8 @@ export type SignalWorkspaceContextDependencies = {
 
 export async function loadSignalWorkspaceContextWithDependencies(
   workspaceId: string,
-  dependencies: SignalWorkspaceContextDependencies
+  dependencies: SignalWorkspaceContextDependencies,
+  _legacyOptions: { requireOperationalCorpus?: boolean } = {}
 ) {
   const session = await dependencies.getSession();
   if (!session) return { response: unauthorized() } as const;
@@ -63,37 +64,8 @@ export async function loadSignalWorkspaceContextWithDependencies(
       ).toJSON(), { status: 404 })
     } as const;
   }
-  const operationalCorpora = workspace.corpora.filter((corpus) => corpus.role === "operational");
-  if (operationalCorpora.length > 1) {
-    return {
-      response: Response.json(new SignalBackendContractError(
-        "not_available",
-        "Signal workspace has an ambiguous operational corpus.",
-        { reason: "multiple_active_operational_corpora" }
-      ).toJSON(), { status: 409, headers: { "Cache-Control": "private, no-store" } })
-    } as const;
-  }
-  const legacyCorpora = workspace.corpora.filter((corpus) => corpus.role === "legacy");
-  if (operationalCorpora.length === 0 && legacyCorpora.length > 1) {
-    return {
-      response: Response.json(new SignalBackendContractError(
-        "not_available",
-        "Signal workspace has an ambiguous legacy fallback corpus.",
-        { reason: "multiple_active_legacy_corpora" }
-      ).toJSON(), { status: 409, headers: { "Cache-Control": "private, no-store" } })
-    } as const;
-  }
-  const corpora = operationalCorpora.length === 1 ? operationalCorpora : legacyCorpora;
-  if (corpora.length === 0) {
-    return {
-      response: Response.json(new SignalBackendContractError(
-        "not_available",
-        "Signal workspace has no active operational corpus."
-      ).toJSON(), { status: 404 })
-    } as const;
-  }
   return {
-    workspace: { ...workspace, corpora },
+    workspace,
     session,
     isInternalUser: session.appUser.userType === "noisia_internal"
   } as const;

@@ -7,7 +7,7 @@
 --
 -- Materialize them as real, indexable columns so the aggregates are simple
 -- GROUP BYs that finish in milliseconds. Populated at ingest going forward
--- (see apps/studio/src/lib/csv/sentione.ts) and backfilled for existing rows.
+-- (see infrastructure/db/sentione-csv-ingest.ts) and backfilled for existing rows.
 ALTER TABLE "mentions"
   ADD COLUMN IF NOT EXISTS "resolved_platform" text,
   ADD COLUMN IF NOT EXISTS "content_type" text,

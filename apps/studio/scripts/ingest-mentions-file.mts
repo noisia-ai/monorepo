@@ -26,6 +26,7 @@ if (!csvPath || !corpusId) {
 }
 
 const { ingestSentioneCsvStream } = await import("@/lib/csv/sentione");
+const { resolveWorkspaceIngestionForCorpus } = await import("@/lib/data-os/workspace-ingestion");
 const { db } = await import("@/lib/db");
 const { importBatches } = await import("@noisia/db");
 const { eq } = await import("drizzle-orm");
@@ -33,11 +34,15 @@ const { eq } = await import("drizzle-orm");
 const sizeMb = (statSync(csvPath).size / 1024 / 1024).toFixed(1);
 const sourceFileName = csvPath.split("/").pop() || "industria.csv";
 console.log(`[ingest] file=${sourceFileName} size=${sizeMb}MB corpus=${corpusId} type=${mentionType}/${entityKind}`);
+const workspaceIngestion = await resolveWorkspaceIngestionForCorpus(corpusId, "listening_csv");
 
 const [batch] = await db
   .insert(importBatches)
   .values({
+    workspaceId: workspaceIngestion.workspaceId,
     studyCorpusId: corpusId,
+    contributedByStudyCorpusId: corpusId,
+    dataSourceId: workspaceIngestion.dataSourceId,
     mentionType: mentionType as "brand" | "competitor" | "industry",
     entityKind,
     entityLabel,
@@ -62,6 +67,8 @@ const progress = setInterval(() => {
 try {
   const webStream = Readable.toWeb(createReadStream(csvPath)) as unknown as ReadableStream<Uint8Array>;
   const { stats, fileHash } = await ingestSentioneCsvStream({
+    workspaceId: workspaceIngestion.workspaceId,
+    dataSourceId: workspaceIngestion.dataSourceId,
     corpusId,
     importBatchId: batch.id,
     sourceFileName,

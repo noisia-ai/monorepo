@@ -833,8 +833,7 @@ staging/preview/throwaway; producción se rechaza.
 
 Base protegida: `/api/data-os/signal/:workspaceId/*`. `workspaceId` es siempre la
 identidad estable de SB-02; nunca se interpreta como `outputId`. Las rutas requieren
-sesión Studio, authZ de organización/brand, un corpus `operational` activo (o `legacy`
-como fallback transitorio) y tres switches explícitos:
+sesión Studio, authZ de organización/brand y tres switches explícitos:
 
 ```text
 NOISIA_DATA_OS_ENABLED=true
@@ -845,9 +844,38 @@ NOISIA_SIGNAL_WORKSPACE_API_ENABLED=true
 Los defaults del repositorio son `false`. El cache ad hoc tiene un cuarto switch
 independiente, también `false`: `NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED`.
 
+El scope operacional se resuelve una vez en el boundary autenticado del workspace con
+una sola configuración cerrada por default:
+
+```text
+NOISIA_SIGNAL_OPERATIONAL_READ_MODE=legacy | shadow | governed
+```
+
+- `legacy` (default) exige un único corpus operational/legacy y conserva el reader
+  anterior.
+- `shadow` sirve exactamente el payload legacy. La ruta sólo persiste una solicitud
+  compacta en el outbox deduplicado; Brand Monitoring, Mentions y Topics & Narratives
+  se comparan después de enviar la respuesta. Un lease fallido queda recuperable y
+  nunca se guarda texto de menciones.
+- `governed` sirve el current pointer operacional `primary_brand`. Una definición
+  ausente, retirada o que mezcle scopes responde `not_available`; nunca cae
+  silenciosamente a legacy.
+
+El cliente no envía `population_id`. Tampoco puede usar `dimension.corpus_scope` para
+ampliar la población gobernada. Competitor, category, reference y unattributed se
+conservan en el workspace, pero una futura exploración de esos scopes deberá resolver
+otra población gobernada server-side; no son filtros que contaminen el denominador
+primario.
+
+Este corte es **Fase 4A: operational serving primary-brand**. Los filtros cliente para
+competitor/category están aplazados hasta que exista una población de exploración
+server-owned; no forman parte del contrato 4A y no se aceptan como valores arbitrarios
+del navegador.
+
 | Route | Semántica |
 |---|---|
-| `GET /api/data-os/signal/:workspaceId/bootstrap` | identity, subject, corpus, coverage, data/interpretation freshness y estado por group |
+| `GET /api/data-os/signal/:workspaceId/bootstrap` | identity, subject, read scope, corpus opcional, coverage, data/interpretation freshness y estado por group |
+| `GET /api/data-os/signal/:workspaceId/brand-monitoring` | home, periodo/comparison, volumen, sentimiento, plataformas, emociones, topics, narratives, drivers, series, breakdowns y freshness bajo un único scope |
 | `GET /api/data-os/signal/:workspaceId/facets` | facets y counts bajo el filtro actual; `source_type` sólo para usuarios internos |
 | `GET /api/data-os/signal/:workspaceId/metric-groups` | catálogo visible, versiones, grains, dimensiones y freshness |
 | `GET /api/data-os/signal/:workspaceId/interpretations` | interpretación versionada por metric group, ligada al filtro, packet y watermark exactos |
@@ -855,7 +883,7 @@ independiente, también `false`: `NOISIA_SIGNAL_AD_HOC_MATERIALIZATION_ENABLED`.
 | `GET /api/data-os/signal/:workspaceId/series` | `SignalTimeSeriesV1` para `metric_key@metric_version` |
 | `GET /api/data-os/signal/:workspaceId/breakdowns` | `SignalBreakdownV1` para la dimensión gobernada de la métrica |
 | `GET /api/data-os/signal/:workspaceId/comparison` | periodos no traslapados de igual número de días |
-| `GET /api/data-os/signal/:workspaceId/mentions` | registros constituyentes sanitizados y cursor opaco estable |
+| `GET /api/data-os/signal/:workspaceId/mentions` | registros canónicos sanitizados, read scope, búsqueda/orden y cursor opaco estable; aliases resuelven a la raíz |
 | `GET /api/data-os/signal/:workspaceId/lineage` | definition/version/formula hash, materialization y watermark hash básicos |
 
 Excepto `bootstrap`, toda ruta recibe el mismo filtro canónico en query params:
@@ -897,6 +925,13 @@ nunca leen `published_outputs.payload` ni `chart_aggregates`. Los adaptadores
 fallback legacy. Fixtures TypeScript para el futuro frontend viven en
 `signal-workspace-fixtures.ts`; el OpenAPI protegido está documentado en
 `docs/api/openapi.yaml`.
+
+En modo governed, home, bootstrap, facets, metric groups, series, breakdowns,
+comparison, Mentions y todo el serving TN aceptan un workspace con fuentes, imports y
+población activa aunque tenga cero studies/corpora. Las interpretaciones deterministas
+se leen sólo cuando su packet pertenece al scope actual. La generación pagada de una
+interpretación TN sigue legacy-only y responde fail-closed en governed; no se encola
+trabajo corpus-scoped desde una lectura gobernada.
 
 Hardening post-SB-06:
 
@@ -946,6 +981,13 @@ cero observado y coverage cero; un perfil sin procesamiento devuelve
 Los clientes nunca reciben model IDs, context refs, import batch IDs ni edges internos.
 Fixtures TypeScript congeladas para el futuro frontend viven en
 `signal-workspace-fixtures.ts`.
+
+El ETag del overview se deriva del contenido semántico servido: read scope, perfiles,
+coverage, términos, denominadores, shares, series, coocurrencias, estado y
+limitaciones. `computed_at` no participa: un read-through y su rematerialización
+equivalente conservan el mismo ETag, pero cualquier cambio de membership que altere
+la población o los términos produce un ETag nuevo. Un `If-None-Match` anterior recibe
+200 con el contenido actualizado, nunca 304.
 
 El facade raíz `GET /api/data-os/signal/:workspaceId` incluye
 `topics_narratives: SignalTopicsNarrativesOverviewV1 | null`, su capability y su
@@ -1027,6 +1069,58 @@ aceptadas/corregidas/limitadas. Promover requiere reviewer humano y actualiza un
 puntero separado `signal_workspace_current_releases`; el histórico, artefactos,
 findings y materializaciones de una release publicada son inmutables. No hay promoción
 automática y ninguna ruta lee `published_outputs.payload`.
+
+#### Strategic consumption workspace-native (bridge 0062–0063)
+
+La identidad cliente de T&B es fija:
+`/signal/{workspaceSlug}/reports/triggers-barriers`. `study_corpus_id` continúa sólo
+como execution scope interno del Engine; nunca forma parte de la URL ni de la identidad
+del reporte.
+
+| Ruta | Semántica |
+|---|---|
+| `GET|POST /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs` | preflight gratuito y launch gobernado V2; el contrato autoritativo se especifica en “Gate D · Strategic T&B governed launch V2” |
+| `GET|DELETE /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs/:analysisId` | polling read-only y solicitud de cancelación durable |
+| `POST /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs/:analysisId/review` | Review seleccionada + siguiente release draft en una operación idempotente V2 |
+| `GET /api/data-os/signal/:workspaceId/triggers-barriers` | overview relacional de la release current resuelta por `(workspace_id, report_key)` |
+| `GET /api/data-os/signal/:workspaceId/triggers-barriers/series` | serie compacta de la release/snapshot current |
+| `GET /api/data-os/signal/:workspaceId/triggers-barriers/findings/:findingId` | detail relacional de un finding perteneciente a la release current |
+| `GET /api/data-os/signal/:workspaceId/triggers-barriers/findings/:findingId/evidence` | evidence cursor-paginada; cada mention ID se reconcilia contra la membership congelada y devuelve la raíz canónica |
+
+El launch actual exige `Idempotency-Key` y un body sin IDs de authority:
+
+```json
+{
+  "period_start": "2026-01-01",
+  "period_end": "2026-06-30",
+  "timezone": "America/Mexico_City",
+  "study_size": "medium",
+  "business_question": "opcional",
+  "decision_to_inform": "opcional",
+  "hard_cap_usd": 5,
+  "preflight_digest": "sha256:…"
+}
+```
+
+El request histórico que aceptaba `population.policy` o `population_id` queda
+superseded y no es un contrato cliente válido. El servidor reconcilia organización,
+marca, workspace, binding, bundle, compilación, evaluación, población y corpus de
+ejecución. Timezone debe coincidir con el workspace. Snapshot, muestra, control y
+outboxes quedan congelados en una transacción; reintentos compatibles devuelven el
+mismo run y un request distinto con la misma key responde conflicto.
+
+Review también exige `Idempotency-Key`. `reusable_assertions` es una selección explícita
+de `{record_tag_id, decision, notes?, correction?}`. Aprobar artifacts/findings no
+aprueba todos los tags. Cada selección se resuelve a la mención canónica, registra un
+evento inmutable y conserva el tag histórico/alias como provenance. En V2, Review y
+release draft son una sola operación atómica; la respuesta incluye `workspace_id`,
+`report_key`, operation y release. La promoción continúa por `POST /releases`, también
+con `Idempotency-Key`, y mueve atómicamente el current pointer composite.
+
+La ruta corpus-scoped legacy no puede lanzar una corrida governed V2 ni seleccionar su
+authority. Las rutas GET aceptan temporalmente `?study=` sólo como adapter de una URL
+heredada y verifican server-side que pertenezca al workspace; el cliente canónico no lo
+envía.
 
 #### Signal workspace home facade V1 (SB-10)
 
@@ -1825,6 +1919,493 @@ Asumir sesión de usuario (debug).
 
 ---
 
+## 19.1 Signal workspace data plane (shadow)
+
+Todos estos endpoints requieren sesión y autorización server-side sobre el workspace.
+Escritura requiere rol interno con permiso de gestión. Una marca puede usarlos sin
+tener un `study_corpus`.
+
+### `GET /api/data-os/signal/{workspaceId}/sources`
+
+Lista fuentes compactas del workspace. No devuelve registros ni payloads crudos.
+
+### `POST /api/data-os/signal/{workspaceId}/sources`
+
+```json
+{
+  "name": "SentiOne manual export",
+  "provider": "sentione",
+  "source_type": "social-listening",
+  "connection_method": "manual-csv",
+  "scope": "primary_brand",
+  "entity_id": "brand-uuid"
+}
+```
+
+`scope` debe ser `primary_brand`, `competitor`, `category`, `reference` o
+`unattributed`. La API rechaza brand/competitor cross-workspace y crea una refresh
+policy manual deshabilitada; no agenda gasto ni una corrida externa.
+
+### `POST /api/data-os/signal/{workspaceId}/sources/{sourceId}/imports`
+
+El body es CSV en streaming. Metadata viaja como query params:
+`file_name` y el opcional `study_corpus_id`. El import no acepta `scope`: scope,
+entity y policy version se heredan obligatoriamente de la fuente gobernada. El estudio
+sólo queda como contributor provenance; la mención sigue siendo propiedad del
+workspace. Un duplicado no crea otra mención, pero sí conserva una atribución por
+source/import/scope, su membership de import y, si aplica, la membership del estudio
+contribuidor.
+
+La respuesta contiene IDs compactos, stats, revisión de corpus sólo en compatibilidad
+y watermarks. No retorna menciones ni snapshot/población completos.
+
+### `GET /api/data-os/signal/{workspaceId}/populations/operational/shadow`
+
+Sólo para gestión interna. Compara población workspace-owned contra el corpus
+operacional heredado por `scope`, calidad, periodo y dedup. Reporta por separado filas
+legacy, menciones distintas e identidades canónicas; la igualdad se decide por set de
+IDs canónicos, no por igualdad entre filas crudas y registros deduplicados.
+
+La respuesta separa dos gates que no son intercambiables:
+
+- `comparison` es el **population membership shadow**: compara el set legacy
+  primario deduplicado con las memberships gobernadas.
+- `module_serving_shadow` ejecuta los adapters de consulta específicos de Brand
+  Monitoring, Mentions y Topics & Narratives. Cada adapter compara IDs canónicos,
+  denominador y periodo fuera del camino crítico HTTP. Mentions calcula en SQL el hash
+  del conjunto canónico completo —sin límite de 100— y muestrea la primera página y la
+  página/cursor solicitados del reader real, en lugar de recorrer hasta 20,000 IDs en
+  cada request. TN compara los resultados aprobados por perfil y resuelve assignments
+  históricos desde alias hacia la raíz canónica.
+
+Las tres rutas de módulo emiten `Server-Timing` con `signal-visible` y
+`signal-shadow-outbox`. Este header mide el trabajo síncrono visible y el INSERT del
+outbox; la comparación gobernada completa se registra por separado con `duration_ms`.
+
+El gate no exige igualdad ciega con legacy. `module_serving_shadow.gate_passed=true`
+requiere simultáneamente:
+
+- definición y memberships conformes al contrato `primary_brand`;
+- cero diferencias inexplicadas;
+- diferencias legacy-only explicadas y desglosadas por scope;
+- IDs, denominadores, periodos, series, cursores y enrichment correctos sobre el set
+  gobernado.
+
+`parity_with_legacy=false` es aceptable cuando legacy contiene category, reference o
+unattributed y `legacy_differences.unexplained_count=0`. No se amplía la población
+gobernada para imitar un reader legacy semánticamente incorrecto.
+
+### Semantic Review de menciones V1 (Fase 7B)
+
+Estas rutas son **operator-only**. Todas resuelven organización, marca, workspace y
+reviewer desde la sesión server-side; un ID enviado por el navegador nunca sustituye
+esa resolución. Las respuestas usan `private, no-store` porque pueden contener el
+excerpt y contexto autorizado de una mención.
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/data-os/signal/{workspaceId}/semantic-review` | Página keyset sobre la proyección versionada de raíces canónicas incluidas; `mention={canonicalMentionId}` enfoca una raíz después de `send_to_review`; admite `state`, `proposed_scope`, `confidence_band`, `data_source_id`, `platform`, `start`, `end`; el cursor queda sellado al snapshot y filtros. La request no vuelve a clasificar el corpus completo |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/candidates` | `dry-run` o creación idempotente de assertions pending/candidate; nunca crea Review events, memberships o pointer V2 |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/assertions` | Assertion manual pending/candidate; exige `Idempotency-Key` y usa al reviewer autenticado |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/review` | decisión humana `approve`/`reject`, append-only |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/supersede` | crea una nueva versión pending y conserva la anterior |
+| `GET /api/data-os/signal/{workspaceId}/semantic-review/assertions/{assertionId}/history` | historial append-only de la assertion dentro del mismo workspace |
+| `GET /api/data-os/signal/{workspaceId}/semantic-review/resolve` | polling estrictamente read-only del parent y sus child batches; nunca prepara, reanuda ni encola |
+| `GET /api/data-os/signal/{workspaceId}/semantic-review/resolve/preflight?hard_cap_usd=...` | flight card gratuito y read-only: población/exclusiones, provenance y `llm-processing`, estratos, snapshot, modelo/precio pinneados, todos los child batches, estimate, hard cap y readiness; declara cero writes/jobs/provider calls/spend |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/resolve` | único contrato que prepara el parent y todos sus child batches durables; exige `Idempotency-Key`, digest del preflight, hard cap elegido por el operador y confirmación humana; USD 40 es threshold de confirmación, no techo ni causa de truncamiento |
+| `DELETE /api/data-os/signal/{workspaceId}/semantic-review/resolve` | solicita cancelación idempotente, bloquea nuevos dispatches y conserva historia append-only |
+| `POST /api/data-os/signal/{workspaceId}/semantic-review/resolve/resume` | crea un intento child superseding para el trabajo no terminal de un child fallido; conserva el child anterior y evita volver a aplicar resultados completos |
+| `GET /api/data-os/signal/{workspaceId}/admin-mentions` | lista ligera de raíces canónicas con `operator_summary` y facets relacionales sobre **todas** las raíces del workspace; filtros server-side de inclusión, resolución, Review, eligibility, calidad, última acción y source provenance; no usa la población Operational como denominador |
+| `GET /api/data-os/signal/{workspaceId}/admin-mentions?mention={mentionId}` | detalle operator-only compuesto sobre la raíz canónica: aliases, provenance, inclusión/calidad saneada, assertions/Review, populations, enrichment y referencias T&B; no expone `raw_metadata` |
+| `POST /api/data-os/signal/{workspaceId}/admin-mentions/{mentionId}/governance` | `include`, `exclude`, `revert` o `send_to_review` workspace-native; exige `Idempotency-Key`, resuelve alias→raíz y registra actor/razón append-only |
+
+Cada assertion devuelta a Admin conserva `approval_source`, `approved_at`,
+`approved_by_user_id`/identidad operator-safe, `model_version`,
+`semantic_policy_key`, `policy_version`, `evidence_kind`, `is_current` y un
+`resolution_state` explícito. Por eso una resolución aprobada por Claude no se
+presenta como aprobación humana. `send_to_review` no inventa una reclasificación:
+registra una solicitud workspace-native y la cola queda `needs_context` hasta una
+decisión/supersession gobernada posterior.
+
+Los facets de Admin Mentions declaran `scope=all_workspace_canonical_roots`; sus counts
+no se calculan desde el pointer Operational V1/V2. Los filtros operator-only se incorporan
+al hash del cursor, por lo que un cursor no puede reutilizarse silenciosamente con otro
+estado de inclusión, Review, eligibility, calidad, governance o provenance.
+
+La política `signal-semantic-governed-identity@1` sólo propone coincidencias de alta
+precisión contra marca, aliases/handles de Brand OS, competidores con `competitor_id`
+estable e intelligence entities activas de category/reference. `source_intent` se
+muestra como provenance auxiliar, pero no participa como verdad semántica. Cada
+propuesta persiste con `review_status=pending`, `eligibility_status=candidate`, evidence
+hash e idempotency key SHA-256 estables. Una coincidencia multi-entidad genera
+assertions separadas y no duplica la raíz en ninguna población.
+
+La cola reconcilia cada raíz incluida exactamente una vez entre `candidate_pending`,
+`current_approved`, `current_rejected`, `unresolved` y `needs_context`. Las menciones
+excluidas no forman parte del primer corte operacional. Candidate generation no es una
+decisión humana y no autoriza Operational V2: V1 sigue sirviendo hasta que Review,
+reconciliación y promoción tengan un gate separado.
+
+### Governed View resolver V1 (foundation local)
+
+No se agrega todavía un endpoint cliente ni un query param `view`. El contrato
+compartido `signal-governed-views-v1` cierra los valores permitidos y el servicio
+server-side resuelve, después de AuthZ del workspace:
+
+```text
+(workspace_id autorizado, module_key cerrado, view_key cerrada)
+→ current binding
+→ policy_bundle_key@version + definition_hash
+→ population_ref opcional
+```
+
+Módulos iniciales: `brand-monitoring`, `mentions`, `topics-narratives`,
+`triggers-barriers` y `admin-mentions`. Views iniciales: `brand`, `competition`,
+`category`, `all-governed`, `strategic` y `admin-reservoir`. Cada par tiene una matriz
+cerrada; `market_context` continúa como facet y no es una view ni un scope.
+
+El resolver no acepta `population_id`, policy expressions ni IDs de bundle del
+navegador. Rechaza binding inexistente, retirado, incompatible o cross-workspace. Para
+`brand` puede describir explícitamente el pointer operational actual como
+`operational-brand-bridge`. La foundation no cambió por sí sola los readers visibles;
+Backend 05B conecta después el boundary server-side descrito abajo, todavía sin cambiar
+`NOISIA_SIGNAL_OPERATIONAL_READ_MODE` ni activar un canary.
+
+El compilador normaliza la policy y exige una raíz canónica, acceptance/quality,
+assertion `mention_semantic` current+approved+eligible, allowlist de scopes/entidades y
+deduplicación `canonical-root`. Produce un plan/hash compacto, nunca SQL o memberships
+enviadas por la UI. Una compilación relacional liga el bundle y plan exactos a la
+población/version/digest/watermark derivados; un binding con `population_id` falla
+cerrado si esa prueba no es current y `ready`.
+
+`coverage` y `denominator` tienen descriptores compartidos para la integración futura.
+Cada dimensión de coverage usa `{availability:"available",count:n}` o
+`{availability:"not_available",count:null}`. Un cero significa una medición observada,
+nunca desconocimiento. `captured`, `quality_eligible`, `unreviewed`, `reviewed`,
+`resolved_attributed`, `abstained`, `unattributed` y `used_by_view` son dimensiones
+separadas; mientras no exista abstention durable, `abstained` es `not_available`.
+Esta fase no modifica payloads HTTP, por lo que OpenAPI permanece sin cambios.
+
+### Governed multi-view foundation V1 (Backend 06)
+
+Backend 06 publica únicamente el selector cerrado `view` en los GET workspace-owned de
+Monitoring, Mentions y Topics & Narratives. Su default es `brand`; el boundary
+autenticado resuelve server-side:
+
+```text
+workspace autorizado
++ module_key ∈ {brand-monitoring, mentions, topics-narratives}
++ view_key ∈ {brand, competition, category, all-governed}
+→ bundle y entidades server-owned
+→ base semántica compatible
+→ derivación exacta module/view
+→ population + evaluation + compilation verificables
+```
+
+El enum público operacional es exactamente `brand | competition | category |
+all-governed`. `strategic` y `admin-reservoir` siguen siendo identidades internas de
+otros contratos; no son valores aceptables para este resolver client-safe. El browser
+puede enviar sólo `view`; nunca envía
+`population_id`, `policy_bundle_id`, `binding_id`, read mode, entity IDs ni una policy.
+En legacy/shadow sólo `brand` puede usar el bridge. Una view no-brand sin binding current
+compatible falla `not_available`, sin ejecutar queries que revelen counts.
+
+Selección de base:
+
+- `brand` exige el contrato 0064
+  `signal-operational-primary-brand-semantic-v2`;
+- `competition`, `category` y `all-governed` exigen
+  `signal-operational-attributable-semantic-v1`, una base neutral workspace-scoped de
+  raíces con assertion `mention_semantic` current, approved, eligible y entidad
+  gobernada;
+- la base neutral no lleva quality, retention, licensing, period, module/view ni
+  compiled-plan state. No se crea por migración: un writer interno autorizado debe
+  asegurarla y reconciliarla;
+- `all-governed` usa el subconjunto explícito no vacío de scopes gobernados del bundle
+  y deduplica por canonical root. `unattributed` nunca es elegible.
+
+Cada identidad materializable conserva una derivación distinta por
+`(workspace_id,module_key,view_key,policy_bundle_id)`. Por ello dos módulos pueden tener
+denominadores diferentes debido a sus usage purposes sin sobrescribir memberships,
+digests, watermarks o compilaciones entre sí. El bundle es authority; la population
+resuelta continúa siendo estado derivado.
+
+El binding set interno siempre contiene exactamente los tres módulos. Para `brand`, el
+retiro atómico es `withdraw-to-bridge` y conserva el pointer operational como fallback.
+Para `competition`, `category` y `all-governed`, el retiro es
+`withdraw-to-absence`: no existe un bridge legacy autorizado para esas views. Ambos
+flujos conservan historial append-only, CAS, actor server-resolved, idempotencia y
+rechazo cross-workspace.
+
+La foundation 0073 pasó integración PostgreSQL, runner guarded y smoke `0000–0073`
+locales, y fue verificada en `noisia-staging` con 39/39 sentinels. Su migración no creó
+bindings current ni cambió readers. El rehearsal posterior creó mediante writers
+autorizados nueve bindings/population refs no-brand, reconcilió la unión deduplicada y
+obtuvo `unexplained_count=0`; Advisor cerró Backend 06 sin P0/P1. OpenAPI declara el enum
+cerrado y su default, pero no publica ninguna identidad de autoridad.
+
+### Governed serving contract V1 (Backend 05B, no visible activation)
+
+Backend 05B conecta el boundary **server-side** de los readers workspace-owned con una
+identidad cerrada por módulo y view, pero no activa todavía el serving gobernado visible.
+El navegador nunca envía `population_id`, `policy_bundle_id`, `binding_id`, read mode ni
+una policy expression. Cada request autenticada resuelve una de estas identidades:
+
+```text
+brand-monitoring / brand
+mentions / brand
+topics-narratives / brand
+```
+
+En `legacy`, la fuente visible continúa siendo legacy. En `shadow`, la respuesta visible
+continúa siendo byte-compatible con legacy mientras la comparación gobernada durable se
+ejecuta fuera del camino crítico HTTP. Sólo `governed` puede agregar el descriptor
+`serving_scope` al payload. Por eso este subgate no cambia todavía OpenAPI ni el contrato
+cliente activo.
+
+`serving_scope` es un descriptor compacto, no una población ni un snapshot JSON. Declara:
+
+- workspace, `module_key`, `view_key`, rollout y fuente visible/resuelta;
+- binding gobernado o bridge operacional, nunca ambos;
+- bundle/version/hash de policy;
+- population/version/definition hash/membership digest;
+- compilation/compiled-plan hash y su vigencia;
+- data/source watermarks, governance digest, freshness e invalidation;
+- coverage con disponibilidad explícita por dimensión;
+- denominator de raíces canónicas para el filtro/periodo solicitado;
+- usage purposes cerrados del módulo y visibility class.
+
+La ausencia real de un binding current permite resolver
+`operational-brand-bridge`. Un binding current inválido, futuro, expirado, retirado,
+stale, sin compilation `ready`, sin derivation exacta o sin watermark durable falla como
+`not_available`: nunca cae silenciosamente al bridge.
+
+Monitoring, Mentions y Topics & Narratives resuelven populations derivadas distintas.
+Facets, series, breakdowns, comparison, interpretations, detail, lineage y evidence usan
+la population exacta del módulo; no reutilizan el denominator de otro módulo. Cuando
+Monitoring o Topics & Narratives exponen mentions o excerpts, la evidencia se restringe
+además a la intersección con las capabilities/población de Mentions. El denominator
+métrico no se reduce por esa intersección y la respuesta distingue
+`metric_denominator_count`, `evidence_visible_count` y
+`evidence_withheld_count`/`not_available`.
+
+ETags y cursores gobernados quedan ligados a workspace, módulo/view, binding/bridge,
+policy hash, population version/digest, compilation/plan, watermarks, capabilities,
+filtros y orden normalizados. Un token no puede reutilizarse tras promoción, rollback,
+invalidación o cambio de rights. Legacy y shadow conservan sus semillas y payloads
+anteriores mientras el canary visible permanezca pendiente.
+
+El servicio interno de Backend 02 asegura el draft `operational-brand-governed@1`
+exclusivamente desde workspace/brand/actor resueltos server-side. Sin catálogo canónico
+versionado de quality, retention y licensing, el draft se conserva `blocked`: no copia
+thresholds de Laika ni crea bindings. La reconciliación compila sobre la candidata V2
+existente y deriva memberships por raíz canónica + inclusión + assertion semántica
+current, approved, eligible y entidad exacta. El runner draft-aware selecciona esa
+candidata por policy/module/view, no por un `population_id` suministrado, y ejecuta los
+tres adapters más un baseline SQL dentro de `REPEATABLE READ READ ONLY`.
+
+Backend 03 agrega únicamente contratos internos server-side; no agrega rutas HTTP. Los
+writers de quality, retention, licensing y bindings de provenance reciben workspace y
+actor ya autorizados, usan `Idempotency-Key`, escriben drafts append-only y requieren
+una activación explícita. Ningún string de policy enviado por el navegador puede volver
+una compilación `ready`.
+
+El compilador de `brand` resuelve:
+
+```text
+canonical root + included + quality policy activa
++ mention_semantic current/approved/eligible + brand exacta
++ al menos una provenance source/import con retention vigente
++ licensing allowed para todos los usage purposes del módulo
+```
+
+La excepción exacta del import precede al binding de source; entre provenances
+independientes gana cualquier ruta autorizada y el denominador continúa deduplicado por
+raíz. La compilación persiste policy IDs/versiones/hashes, digests de retention y
+licensing, usages, watermark de evaluación, governance digest y conteos blocked/unknown.
+El preflight operator-safe es read-only, agregado y redactado; no devuelve textos,
+URLs, UUIDs ni metadata cruda. Esta foundation sigue sin alterar payloads HTTP u
+OpenAPI.
+
+### Gate D · Strategic T&B governed launch V2
+
+La identidad pública de la corrida continúa siendo workspace + reporte
+`triggers-barriers`. El navegador no envía `population_id`, `policy_bundle_id`,
+`binding_id`, `compilation_id`, `evaluation_id`, corpus de ejecución ni policy JSON. El
+boundary autenticado resuelve y vuelve a verificar esas identidades server-side para
+`triggers-barriers / strategic`.
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs` | preflight puro con periodo, timezone, study size y hard cap; corre en `REPEATABLE READ READ ONLY`, devuelve `writes_performed=false`, `jobs_enqueued=0` y `provider_calls=0` |
+| `POST /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs` | recomputa el preflight exacto y, sólo con flag pagado server-side, congela snapshot/muestra y crea control + outboxes atómicamente; exige `Idempotency-Key`, hard cap y `preflight_digest` |
+| `GET /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs/:analysisId` | polling read-only de lifecycle, step, versiones provider/prompt/pricing, presupuesto, Review y release; nunca encola ni reanuda |
+| `DELETE /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs/:analysisId` | solicita cancelación durable sin borrar la corrida o reescribir su autoridad congelada |
+| `POST /api/data-os/signal/:workspaceId/reports/triggers-barriers/runs/:analysisId/review` | una operación idempotente registra Review seleccionada y crea la release draft en la misma transacción |
+| `POST /api/data-os/signal/:workspaceId/releases` | `promote` exige `Idempotency-Key` y mueve el current release mediante el writer V2; un retry compatible devuelve el resultado original |
+
+El preflight devuelve únicamente hashes y descriptores operator-safe: population
+version/count/digest, authority y provenance digests, watermark, policy transition,
+muestra determinista, denominator, coverage, provider/prompt/pricing, plan cerrado de
+llamadas, presupuesto y readiness. `ready` describe la validez técnica y de governance;
+`launch_authorized` es un permiso server-side distinto. Un GET bloqueado es inspección
+válida y enumera `blocking_reasons`, pero nunca se convierte en POST por sí solo.
+
+La policy estratégica exige exactamente `llm-processing` y `strategic-analysis` sobre
+provenance vigente. Unknown, policy vencida, binding/compilation incompatibles, digest
+de memberships distinto, aliases, derechos incompletos, Worker/queue sin readiness o
+hard cap insuficiente fallan cerrado. La muestra es determinista y deduplicada por raíz;
+el snapshot y su evidence se contienen en la population exacta.
+
+El plan de provider es cerrado y versionado. Antes de cada llamada el Worker relee la
+autoridad runtime, adquiere lease, reserva tokens/costo con una operation key única y
+después liquida el uso real. El upper bound usa el mismo redondeo conservador hacia
+arriba a micro-USD en Query Engine y PostgreSQL. Un fallo previo al dispatch libera la
+reserva; un resultado
+incierto del provider no se reintenta como si no hubiera costo. Outbox de steps,
+transiciones append-only, heartbeat, recovery y dead-letter hacen auditable la
+ejecución sin guardar prompts, respuestas ni secretos en errores públicos.
+
+La release V2 sigue siendo una revisión del mismo `(workspace_id, report_key)`. Review
+no aprueba en masa tags reutilizables y la publicación vuelve a comprobar snapshot,
+quality gates y autoridad client-safe de evidence. Falta de permiso para listado o
+excerpt retiene evidence aunque el análisis interno exista.
+
+La migración 0074 implementa este contrato de forma forward-only y data-neutral: no
+crea bindings estratégicos, runs, snapshots, jobs, Review events o releases por sí
+sola. Está `staging_verified` con SHA-256
+`1eb15739c17a17fb4c4f9924971447fbcb6a26bcfa6cfc68cf7847f5b5e13d69`, 108/108
+sentinels, ledger único y verify read-only sin cambios en V1, base semántica, bindings,
+compilaciones, pointers o readers. El preflight gratuito permanece como operación
+explícita posterior; aplicar 0074 no lo ejecuta ni autoriza una corrida. El rehearsal
+remoto del GET devolvió `ready=false`, `launch_authorized=false`, cero writes/jobs/calls
+y los blockers `provider_authority_unavailable`,
+`strategic_governed_binding_unavailable`, `strategic_recovery_not_ready` y
+`strategic_worker_not_alive`. Inventar una authority o esconder esos blockers violaría
+el contrato. No se ejecutó una corrida T&B pagada.
+
+### Imports CSV workspace-owned asíncronos
+
+Estas rutas son management APIs autenticadas; workspace, source, actor, storage bucket,
+job y batch se resuelven server-side. Las mutaciones exigen `Idempotency-Key`.
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/data-os/signal/:workspaceId/sources/:sourceId/imports` | historial operator-safe con estado, fase, progreso, conteos finales sólo si completó y errores recuperables |
+| `POST /api/data-os/signal/:workspaceId/sources/:sourceId/imports` | con `action=create-upload`, crea o reusa un batch y devuelve `202`, `import_batch_id`, partes firmadas y `polling_url`; el request no transporta el CSV completo |
+| `POST /api/data-os/signal/:workspaceId/sources/:sourceId/imports/:importBatchId` | `complete-upload` verifica todos los objetos y encola; `fail-upload` conserva upload abortado/fallido como historia recuperable |
+| `GET /api/data-os/signal/:workspaceId/sources/:sourceId/imports/:importBatchId` | polling sin side effects de `uploading/queued/processing/completed/failed`, records/bytes/percent y error tipado |
+
+La creación responde:
+
+```json
+{
+  "contract_version": "signal-workspace-async-import-v1",
+  "import": { "id": "server-owned", "status": "queued", "phase": "uploading" },
+  "upload": {
+    "protocol": "supabase-multipart-signed",
+    "part_size_bytes": 50331648,
+    "parts": [
+      { "part_number": 1, "expected_size_bytes": 50331648, "upload_url": "ephemeral" }
+    ]
+  },
+  "polling_url": "/api/data-os/signal/.../imports/server-owned"
+}
+```
+
+Los URLs de upload son efímeros y sólo se entregan al actor autorizado; no aparecen en
+evidence ni logs. El browser sube cada parte directamente al storage privado y puede
+reintentarla sin mantener viva una request de Studio. El Worker lee las partes en orden y
+usa la implementación única de SentiOne de `@noisia/db`: parser, normalización,
+deduplicación, persistencia y provenance. El adaptador de compatibilidad de Studio llama al
+mismo core; el endpoint workspace-owned y Admin usan siempre el transporte directo.
+
+Un estado incompleto nunca devuelve conteos como finales ni habilita serving. Completion
+es transaccional e idempotente: content hash, records reconciliados, provenance,
+watermark, sync e invalidaciones se publican una sola vez. Un retry operator-safe envía
+`supersedes_import_batch_id` y una nueva key; el failed anterior permanece visible.
+
+### Acquisition Plan workspace-owned (`signal-acquisition-plan-v1`)
+
+Estas rutas son management-only, resuelven workspace/actor server-side y responden con
+`Cache-Control: private, no-store`. Toda mutación exige `Idempotency-Key`; el browser
+nunca envía owner/entity/plan/slot/query UUIDs, policy IDs, SQL o expressions.
+
+| Ruta | Contrato |
+|---|---|
+| `GET /api/data-os/signal/:workspaceId/acquisition-plan` | current/draft, `plan_status/version`, slots, summaries de query, referencias candidatas, readiness y blockers operator-safe; sin query privada, raw metadata o IDs internos |
+| `POST /api/data-os/signal/:workspaceId/acquisition-plan` | reconcile append-only del draft desde Brand OS/catalog; no promueve ni crea semantic approval |
+| `GET/POST /api/data-os/signal/:workspaceId/acquisition-plan/brief` | lee defaults/estado `missing\|sealed\|stale` y sella sólo objetivo, propósito, mercado/países, idiomas, periodo, ventana, modo y uso opcional de Knowledge; Brand OS, catálogo, Knowledge, timezone y contrato provider se resuelven server-side; no genera queries ni llama providers |
+| `GET /api/data-os/signal/:workspaceId/acquisition-plan/readiness` | drift/readiness read-only contra Brand OS, identities, connectors, queries y governance |
+| `POST /api/data-os/signal/:workspaceId/acquisition-plan/promote` | promoción explícita con `expected_draft_version`, revision, digest, effective date y evidence |
+| `POST /api/data-os/signal/:workspaceId/acquisition-plan/reference-decisions` | include/exclude/revert explícito para una reference operator-safe; ledger append-only |
+| `POST /api/data-os/signal/:workspaceId/acquisition-plan/slots/:slotKey/query-versions` | crea una query privada versionada contra `source_key`; no cambia semantic truth |
+| `GET/POST /api/data-os/signal/:workspaceId/acquisition-plan/query-generation` | preflight gratuito y generación server-owned confirmada/hard-capped; máximo dos llamadas, drafts pending, nunca reference ni promotion |
+| `GET/POST /api/data-os/signal/:workspaceId/acquisition-plan/slots/:slotKey/query-versions/:queryVersion` | focused read privado y decisión append-only `approved/rejected`; pending/rejected bloquean promotion |
+| `POST /api/data-os/signal/:workspaceId/acquisition-plan/slots/:slotKey/retire` | retiro prospectivo en draft; no borra slot/query/import history |
+| `GET/POST /api/data-os/signal/:workspaceId/acquisition-plan/imports` | lista por `source_key` y `slot_key` opcional, o sella un upload target y devuelve `202` multipart/polling |
+| `GET/POST /api/data-os/signal/:workspaceId/acquisition-plan/imports/:importBatchId` | polling y complete/fail/retry-from-storage; recovery copia el sello original |
+
+La creación target de connector reutiliza `POST .../sources` con
+`contract_version=signal-data-source-connector-v1`, sin scope/entity. La forma legacy
+con scope permanece separada como compatibilidad y no se acepta para imports target.
+
+El contrato de import exige `source_key`, `slot_key`, query version, periodo/timezone,
+filename/tamaño/MIME y `supersedes_import_key=null` al crear. Server-side se sellan
+plan/slot/query digests, Brand OS/catalog, provider schema y rights. Plan/query drift
+posterior no altera el batch. Retry desde storage no acepta un sello nuevo.
+
+Typed observations son privadas y nunca se exponen en estas APIs. `raw_metadata`, query
+text, storage keys y signed URLs sólo existen en boundaries internos; las signed parts
+son la única excepción efímera y se entregan exclusivamente al actor autorizado en la
+respuesta inicial.
+
+#### Query Composer workspace-owned (`10A.5A`, application contract)
+
+10A.5A no publica una ruta HTTP nueva. Entrega tres boundaries server-owned para el
+futuro transporte de 10A.5B:
+
+- un preflight read-only que devuelve slots requeridos, plan/context digest, modelo,
+  pricing, máximo de dos llamadas, costo máximo, hard cap y blockers, siempre con
+  `writes_performed=false` y `provider_calls=0`;
+- `generateSignalAcquisitionQueryDraftsV1`, función de aplicación con provider inyectado,
+  AuthZ previa, CAS antes/después de componer e Idempotency-Key. Genera exactamente
+  primary, category y un draft por competitor activo; reference se excluye;
+- un focused read autorizado que puede devolver el query text privado y su resumen de
+  validation/fallback. Los listados generales sólo muestran origin y estado.
+
+El navegador no puede declarar `engine-generated`, model, digests, lineage ni IDs. 10A.5B
+añade el transporte server-owned con confirmación/cap y recheck del mismo CAS. El focused
+read es management-only y la aprobación/rechazo vive en un ledger append-only separado:
+ningún draft generado o editado participa en promoción hasta tener aprobación explícita.
+La revisión de query expresa intención de adquisición y nunca reemplaza Semantic Review
+de menciones.
+
+#### Classification Authority 10B (internal application/DB contract)
+
+10B no publica una ruta HTTP nueva. El browser no puede suministrar workspace,
+generation, profile, term, policy, model, population o binding IDs. Los writers internos
+server-owned crean/finalizan generations, anexan resultados idempotentes y ejecutan el
+projector temporal. Un replay con el mismo request digest devuelve el resultado previo;
+la misma Idempotency-Key con input distinto falla cerrado.
+
+El descriptor operator-safe `signal-classification-authority-v1` expone únicamente
+availability, generation key/version y digests, denominator, resolved, approved,
+pending, rejected, abstained, error, coverage y limitations. En `not_available`, counts
+y coverage son `null`; una abstención medida sí puede ser `0`. Score/confidence sólo
+priorizan Review y no conceden aprobación.
+
+Los writers de evaluación tampoco aceptan métricas declaradas por el caller como
+authority. Denominator, disposiciones y precision/recall/F1 se recomputan desde el gold
+set y los assignments sellados; los slices se resuelven por `slice_keys` inmutables y
+su propia operación idempotente. Una propuesta producida por provider queda `pending`,
+nunca `approved`, hasta una decisión humana o policy aprobada/versionada.
+
+Los endpoints T&N legacy de review conservan lectura histórica, pero toda mutación de un
+tag asociado a `signal_taxonomy_profile_id` falla con
+`signal_classification_ledger_required_10b` hasta que 10C/10D publiquen su control plane.
+No se cambió OpenAPI porque no existe transporte nuevo.
+
 ## 20. Auto-generación de OpenAPI
 
 Codex debe generar el OpenAPI spec automáticamente desde los Zod schemas usando `zod-to-openapi`. Output en `docs/api/openapi.yaml`. Regenerar en CI.
@@ -1855,3 +2436,22 @@ Codex debe generar el OpenAPI spec automáticamente desde los Zod schemas usando
 - Deprecar.
 
 Sufijo en URL: `/api/v1/...` cuando lleguemos a primer cliente productivo.
+
+## 23. Acquisition import Query Evidence V2
+
+`POST /api/data-os/signal/:workspaceId/acquisition-plan/imports` acepta únicamente dos
+formas browser-owned y rechaza campos desconocidos:
+
+- `operator_attested`: `query_version` requerida, `reason=null` y confirmación explícita;
+- `unavailable`: `query_version=null`, razón cerrada y confirmación explícita.
+
+`provider_verified` no forma parte del request público. Sólo un adapter server-owned puede
+crearlo aportando una referencia de ejecución verificable. El servidor resuelve workspace,
+source, plan, slot, query y actor; el browser nunca envía IDs internos ni digests.
+
+La respuesta `202` conserva upload multipart y polling e incluye
+`acquisition.query_evidence`. Tras `completed`, `observed` devuelve periodo, idiomas,
+países, plataformas y warnings contra el envelope declarado. Recovery por storage preserva
+el sello V2 exacto. La readiness del plan distingue `ready_for_import` de
+`query_playbook_complete`: un connector manual autorizado puede importar con query
+`unavailable`, aunque el playbook incompleto permanece visible como warning.

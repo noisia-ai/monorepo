@@ -29,7 +29,11 @@ import { prioritizeSignalMaterializationFiltersV1 } from "./signal-materializati
 
 type WorkspaceScope = {
   workspace_id: string;
-  study_corpus_id: string;
+  scope_kind: "legacy_corpus" | "governed_population";
+  study_corpus_id: string | null;
+  population_id: string | null;
+  population_version: number | null;
+  population_definition_hash: string | null;
   timezone: string;
 };
 
@@ -48,7 +52,8 @@ const MATERIALIZATION_WRITE_BATCH_SIZE = 100;
 
 export async function signalMaterializationJob(job: Job<SignalMaterializeJobDataV1>) {
   const client = await pool.connect();
-  const lockKey = `signal-materialize:${job.data.workspace_id}:${job.data.study_corpus_id}`;
+  const requestedScopeId = job.data.population_id ?? job.data.study_corpus_id;
+  const lockKey = `signal-materialize:${job.data.workspace_id}:${requestedScopeId}`;
   let locked = false;
   try {
     const lock = await client.query<{ locked: boolean }>(
@@ -58,22 +63,56 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     locked = lock.rows[0]?.locked === true;
     if (!locked) throw new Error("signal_materialization_lock_unavailable");
 
-    const scopeResult = await client.query<WorkspaceScope>(`
-      SELECT workspace.id::text AS workspace_id,
-        membership.study_corpus_id::text,
-        workspace.timezone
-      FROM signal_workspaces workspace
-      JOIN signal_workspace_corpora membership
-        ON membership.workspace_id = workspace.id
-       AND membership.valid_to IS NULL
-      WHERE workspace.id = $1::uuid
-        AND membership.study_corpus_id = $2::uuid
-        AND membership.role IN ('operational', 'legacy')
-        AND workspace.status = 'active'
-      LIMIT 1
-    `, [job.data.workspace_id, job.data.study_corpus_id]);
+    const scopeResult = job.data.population_id
+      ? await client.query<WorkspaceScope>(`
+          SELECT workspace.id::text AS workspace_id,
+            'governed_population'::text AS scope_kind,
+            NULL::text AS study_corpus_id,
+            definition.id::text AS population_id,
+            definition.version AS population_version,
+            definition.definition_hash AS population_definition_hash,
+            workspace.timezone
+          FROM signal_workspaces workspace
+          JOIN signal_workspace_population_pointers pointer
+            ON pointer.workspace_id = workspace.id
+           AND pointer.purpose = 'operational'
+          JOIN signal_population_definitions definition
+            ON definition.id = pointer.population_id
+           AND definition.workspace_id = workspace.id
+           AND definition.status = 'active'
+          WHERE workspace.id = $1::uuid
+            AND definition.id = $2::uuid
+            AND definition.version = $3::int
+            AND definition.definition_hash = $4
+            AND workspace.status = 'active'
+          LIMIT 1
+        `, [
+          job.data.workspace_id,
+          job.data.population_id,
+          job.data.population_version,
+          job.data.population_definition_hash
+        ])
+      : await client.query<WorkspaceScope>(`
+          SELECT workspace.id::text AS workspace_id,
+            'legacy_corpus'::text AS scope_kind,
+            membership.study_corpus_id::text,
+            NULL::text AS population_id,
+            NULL::int AS population_version,
+            NULL::text AS population_definition_hash,
+            workspace.timezone
+          FROM signal_workspaces workspace
+          JOIN signal_workspace_corpora membership
+            ON membership.workspace_id = workspace.id
+           AND membership.valid_to IS NULL
+          WHERE workspace.id = $1::uuid
+            AND membership.study_corpus_id = $2::uuid
+            AND membership.role IN ('operational', 'legacy')
+            AND workspace.status = 'active'
+          LIMIT 1
+        `, [job.data.workspace_id, job.data.study_corpus_id]);
     const scope = scopeResult.rows[0];
-    if (!scope) return { state: "not_available", reason: "workspace_corpus_scope_not_available" };
+    if (!scope) return { state: "not_available", reason: "workspace_operational_scope_not_available" };
+    const ownership = workerOperationalScope(scope);
 
     const requestedFilter = job.data.trigger === "ad_hoc" ? normalizeSignalFilterV1(job.data.filter) : null;
     const affectedFrom = requestedFilter?.date_range.start ?? (job.data.trigger === "invalidation" ? job.data.affected_from : null);
@@ -82,12 +121,11 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       SELECT
         COALESCE($3::date, MIN((published_at AT TIME ZONE $2)::date))::text AS date_from,
         COALESCE($4::date, MAX((published_at AT TIME ZONE $2)::date))::text AS date_through
-      FROM mentions
-      WHERE study_corpus_id = $1::uuid
-        AND inclusion_status = 'included'
-        AND ($3::date IS NULL OR (published_at AT TIME ZONE $2)::date >= $3::date)
-        AND ($4::date IS NULL OR (published_at AT TIME ZONE $2)::date <= $4::date)
-    `, [scope.study_corpus_id, scope.timezone, affectedFrom, affectedThrough]);
+      FROM mentions mention
+      WHERE ${ownership.mentionSql("mention", 1)}
+        AND ($3::date IS NULL OR (mention.published_at AT TIME ZONE $2)::date >= $3::date)
+        AND ($4::date IS NULL OR (mention.published_at AT TIME ZONE $2)::date <= $4::date)
+    `, [ownership.id, scope.timezone, affectedFrom, affectedThrough]);
     const window = windowResult.rows[0];
     if (!window?.date_from || !window.date_through || window.date_from > window.date_through) {
       return { state: "not_available", reason: "no_included_mentions_in_window" };
@@ -98,9 +136,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         last_import_batch_id::text, max_observed_at, accepted_at,
         data_freshness_state, stale_after
       FROM signal_data_watermarks
-      WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
+      WHERE workspace_id = $1::uuid AND ${ownership.watermarkSql(2)}
       ORDER BY accepted_at DESC, id
-    `, [scope.workspace_id, scope.study_corpus_id]);
+    `, [scope.workspace_id, ownership.id]);
     if (watermarkRows.rows.length === 0) {
       return { state: "not_available", reason: "data_watermark_not_available" };
     }
@@ -115,10 +153,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       SELECT
         MIN((published_at AT TIME ZONE $2)::date)::text AS date_from,
         MAX((published_at AT TIME ZONE $2)::date)::text AS date_through
-      FROM mentions
-      WHERE study_corpus_id = $1::uuid
-        AND inclusion_status = 'included'
-    `, [scope.study_corpus_id, scope.timezone]);
+      FROM mentions mention
+      WHERE ${ownership.mentionSql("mention", 1)}
+    `, [ownership.id, scope.timezone]);
     const coverage = coverageResult.rows[0];
 
     const facetsResult = await client.query<{
@@ -129,30 +166,30 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     }>(`
       SELECT
         (SELECT array_agg(value ORDER BY value) FROM (
-          SELECT DISTINCT lower(COALESCE(resolved_platform, platform)) AS value
-          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included'
-            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          SELECT DISTINCT lower(COALESCE(m.resolved_platform, m.platform)) AS value
+          FROM mentions m WHERE ${ownership.mentionSql("m", 1)}
+            AND (m.published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
           ORDER BY value LIMIT 20
         ) values) AS platforms,
         (SELECT array_agg(value ORDER BY value) FROM (
-          SELECT DISTINCT lower(source_system) AS value
-          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included'
-            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          SELECT DISTINCT lower(m.source_system) AS value
+          FROM mentions m WHERE ${ownership.mentionSql("m", 1)}
+            AND (m.published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
           ORDER BY value LIMIT 20
         ) values) AS source_types,
         (SELECT array_agg(value ORDER BY value) FROM (
-          SELECT DISTINCT lower(country) AS value
-          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included' AND country IS NOT NULL
-            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          SELECT DISTINCT lower(m.country) AS value
+          FROM mentions m WHERE ${ownership.mentionSql("m", 1)} AND m.country IS NOT NULL
+            AND (m.published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
           ORDER BY value LIMIT 20
         ) values) AS countries,
         (SELECT array_agg(value ORDER BY value) FROM (
-          SELECT DISTINCT lower(language) AS value
-          FROM mentions WHERE study_corpus_id = $1::uuid AND inclusion_status = 'included' AND language IS NOT NULL
-            AND (published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
+          SELECT DISTINCT lower(m.language) AS value
+          FROM mentions m WHERE ${ownership.mentionSql("m", 1)} AND m.language IS NOT NULL
+            AND (m.published_at AT TIME ZONE $2)::date BETWEEN $3::date AND $4::date
           ORDER BY value LIMIT 20
         ) values) AS languages
-    `, [scope.study_corpus_id, scope.timezone, window.date_from, window.date_through]);
+    `, [ownership.id, scope.timezone, window.date_from, window.date_through]);
     const facets = facetsResult.rows[0];
     const homeFilter = signalDefaultWorkspaceHomeFilterV1(
       coverage?.date_from ?? null,
@@ -192,7 +229,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         SELECT DISTINCT normalized_filter
         FROM metric_materializations
         WHERE workspace_id = $1::uuid
-          AND study_corpus_id = $2::uuid
+          AND ${ownership.materializationSql("metric_materializations", 2)}
           AND materialization_state <> 'pending'
           AND normalized_filter IS NOT NULL
           AND ($3::date IS NULL OR period_end >= $3::date)
@@ -203,7 +240,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       LIMIT $5::int
     `, [
       scope.workspace_id,
-      scope.study_corpus_id,
+      ownership.id,
       affectedFrom,
       affectedThrough,
       SIGNAL_MATERIALIZATION_MAX_CACHED_FILTERS_PER_RUN
@@ -253,7 +290,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
             metric_key: metric.key,
             metric_version: metric.version,
             filter: normalizedFilter,
-            study_corpus_ids: [scope.study_corpus_id],
+            ...(scope.population_id
+              ? { population_id: scope.population_id }
+              : { study_corpus_ids: [scope.study_corpus_id!] }),
             workspace_id: scope.workspace_id
           });
           interpretationScopes.set(`${metric.group}:${plan.predicate.filters_hash}`, {
@@ -285,7 +324,13 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
             };
             const materializationKey = signalMetricMaterializationKeyV1({
               workspace_id: scope.workspace_id,
-              study_corpus_id: scope.study_corpus_id,
+              ...(scope.population_id
+                ? {
+                    population_id: scope.population_id,
+                    population_version: scope.population_version!,
+                    population_definition_hash: scope.population_definition_hash!
+                  }
+                : { study_corpus_id: scope.study_corpus_id! }),
               metric_key: metric.key,
               metric_version: metric.version,
               granularity,
@@ -302,6 +347,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               metric_group_key: metric.group,
               semantic_model_id: semanticModelId,
               study_corpus_id: scope.study_corpus_id,
+              population_id: scope.population_id,
+              population_version: scope.population_version,
+              population_definition_hash: scope.population_definition_hash,
               granularity,
               period_start: row.period_start,
               period_end: row.period_end,
@@ -326,7 +374,8 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               INSERT INTO metric_materializations (
                 workspace_id, materialization_key, metric_definition_id,
                 metric_key, metric_version, metric_group_key, semantic_model_id,
-                study_corpus_id, granularity, period_start, period_end,
+                study_corpus_id, population_id, population_version,
+                population_definition_hash, granularity, period_start, period_end,
                 normalized_filter, filters_hash, payload, typed_payload,
                 value, denominator, sample_size, quality_state,
                 data_watermark_id, data_watermark, data_watermark_hash,
@@ -335,7 +384,8 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               SELECT
                 item.workspace_id, item.materialization_key, item.metric_definition_id,
                 item.metric_key, item.metric_version, item.metric_group_key, item.semantic_model_id,
-                item.study_corpus_id, item.granularity, item.period_start, item.period_end,
+                item.study_corpus_id, item.population_id, item.population_version,
+                item.population_definition_hash, item.granularity, item.period_start, item.period_end,
                 item.normalized_filter, item.filters_hash, item.typed_payload, item.typed_payload,
                 item.value, item.denominator, item.sample_size, item.quality_state,
                 item.data_watermark_id, item.data_watermark, item.data_watermark_hash,
@@ -350,6 +400,9 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
                 metric_group_key text,
                 semantic_model_id uuid,
                 study_corpus_id uuid,
+                population_id uuid,
+                population_version integer,
+                population_definition_hash text,
                 granularity text,
                 period_start date,
                 period_end date,
@@ -370,6 +423,10 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
               ON CONFLICT (materialization_key) WHERE materialization_key IS NOT NULL DO UPDATE SET
                 metric_definition_id = EXCLUDED.metric_definition_id,
                 semantic_model_id = EXCLUDED.semantic_model_id,
+                study_corpus_id = EXCLUDED.study_corpus_id,
+                population_id = EXCLUDED.population_id,
+                population_version = EXCLUDED.population_version,
+                population_definition_hash = EXCLUDED.population_definition_hash,
                 normalized_filter = EXCLUDED.normalized_filter,
                 filters_hash = EXCLUDED.filters_hash,
                 payload = EXCLUDED.payload,
@@ -393,8 +450,8 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     await client.query(`
       UPDATE signal_data_watermarks
       SET materialized_at = $3::timestamptz, updated_at = now()
-      WHERE workspace_id = $1::uuid AND study_corpus_id = $2::uuid
-    `, [scope.workspace_id, scope.study_corpus_id, now.toISOString()]);
+      WHERE workspace_id = $1::uuid AND ${ownership.watermarkSql(2)}
+    `, [scope.workspace_id, ownership.id, now.toISOString()]);
     if (job.data.trigger === "invalidation") {
       await client.query(`
         UPDATE signal_data_invalidations
@@ -407,7 +464,10 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
       `, [job.data.invalidation_id, plansExecuted, rowsWritten, watermarkHash]);
     }
     await client.query("COMMIT");
-    if (process.env.NOISIA_SIGNAL_INTERPRETATIONS_ENABLED === "true") {
+    if (
+      scope.scope_kind === "legacy_corpus"
+      && process.env.NOISIA_SIGNAL_INTERPRETATIONS_ENABLED === "true"
+    ) {
       const { getSignalRefreshQueue } = await import("../queues/signal-refresh");
       const modelVersion = process.env.NOISIA_SIGNAL_INTERPRETATION_MODEL ?? "claude-sonnet-4-5";
       const budgetCap = finiteBudget(process.env.NOISIA_SIGNAL_INTERPRETATION_BUDGET_CAP_USD);
@@ -424,7 +484,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         await getSignalRefreshQueue().add(SIGNAL_INTERPRETATION_JOB_NAME, {
           contract_version: SIGNAL_INTERPRETATION_CONTRACT_VERSION,
           workspace_id: scope.workspace_id,
-          study_corpus_id: scope.study_corpus_id,
+          study_corpus_id: scope.study_corpus_id!,
           metric_group_key: interpretationScope.metricGroupKey,
           metric_group_version: 1,
           filter: interpretationScope.filter,
@@ -465,13 +525,54 @@ function combinedWatermark(scope: WorkspaceScope, rows: WatermarkRow[], material
   return validateDataWatermarkV1({
     contract_version: "signal-backend-v1",
     workspace_id: scope.workspace_id,
+    read_scope: scope.scope_kind,
     corpus_id: scope.study_corpus_id,
-    corpus_revision: Math.max(...rows.map((row) => row.corpus_revision)),
+    corpus_revision: scope.study_corpus_id
+      ? Math.max(...rows.map((row) => row.corpus_revision))
+      : null,
+    population_id: scope.population_id,
+    population_version: scope.population_version,
+    population_definition_hash: scope.population_definition_hash,
     source_sync_run_ids: Array.from(new Set(rows.flatMap((row) => [row.last_source_sync_run_id, row.last_import_batch_id]).filter((id): id is string => Boolean(id)))),
     data_through_at: maxObserved?.toISOString() ?? null,
     accepted_at: acceptedAt.toISOString(),
     materialized_at: materializedAt.toISOString()
   });
+}
+
+function workerOperationalScope(scope: WorkspaceScope) {
+  const id = scope.population_id ?? scope.study_corpus_id;
+  if (!id) throw new Error("signal_materialization_scope_identity_missing");
+  return {
+    id,
+    mentionSql(alias: string, parameter: number) {
+      return scope.population_id
+        ? `${alias}.workspace_id = '${scope.workspace_id.replaceAll("'", "''")}'::uuid
+          AND ${alias}.canonical_mention_id = ${alias}.id
+          AND EXISTS (
+            SELECT 1 FROM signal_population_memberships operational_membership
+            WHERE operational_membership.population_id = $${parameter}::uuid
+              AND operational_membership.workspace_id = ${alias}.workspace_id
+              AND operational_membership.mention_id = ${alias}.id
+              AND operational_membership.membership_status = 'included'
+              AND operational_membership.removed_at IS NULL
+          )`
+        : `${alias}.study_corpus_id = $${parameter}::uuid
+          AND ${alias}.inclusion_status = 'included'`;
+    },
+    materializationSql(alias: string, parameter: number) {
+      return scope.population_id
+        ? `${alias}.population_id = $${parameter}::uuid
+          AND ${alias}.population_version = ${scope.population_version}
+          AND ${alias}.population_definition_hash = '${scope.population_definition_hash?.replaceAll("'", "''")}'`
+        : `${alias}.study_corpus_id = $${parameter}::uuid`;
+    },
+    watermarkSql(parameter: number) {
+      return scope.population_id
+        ? `population_id = $${parameter}::uuid AND study_corpus_id IS NULL`
+        : `study_corpus_id = $${parameter}::uuid`;
+    }
+  };
 }
 
 function combinedFreshness(rows: WatermarkRow[], now: Date): "fresh" | "stale" | "partial" {

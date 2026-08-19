@@ -33,10 +33,13 @@ import {
 import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
 import {
   enqueueStep,
+  isGovernedStrategicRun,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -116,7 +119,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     }
 
     const promptFindings = selectFindingsForSynthesis(findings);
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildSynthesisPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -135,6 +138,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     await job.updateProgress(32);
 
     let synthesis = await generateAndParseSynthesis({
+      tbAnalysisId,
       model,
       prompt,
       parser: parseSynthesisResponse,
@@ -148,6 +152,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     const beforeHumanizer = JSON.stringify(synthesis, null, 2);
     const humanizerPrompt = buildHumanizerPrompt({ jsonText: beforeHumanizer, outputLanguage });
     const humanizer = await generateAndParseHumanizer({
+      tbAnalysisId,
       model,
       prompt: humanizerPrompt,
       parser: parseHumanizerResponse,
@@ -159,9 +164,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     synthesis = humanizer.synthesis;
     console.log(
       `[tb-step6] humanizer applied=${humanizer.applied} finish=${humanizer.finishReason ?? "unknown"} ` +
-      `chars=${humanizer.outputChars} error="${humanizer.errorMessage ?? ""}" ` +
-      `before="${beforeHumanizer.slice(0, 180).replace(/\s+/g, " ")}" ` +
-      `after="${JSON.stringify(synthesis).slice(0, 180).replace(/\s+/g, " ")}"`
+      `chars=${humanizer.outputChars} error="${humanizer.errorMessage ?? ""}"`
     );
     await job.updateProgress(76);
 
@@ -245,7 +248,9 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[tb-step6] failed: ${msg}`);
-    await enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId, msg);
+    if (!await isGovernedStrategicRun(tbAnalysisId)) {
+      await enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId, msg);
+    }
     if (process.env.TB_ALLOW_DUPLICATE_STEP6_SKIP === "true" && await hasCompletedSynthesis(tbAnalysisId)) {
       await markStepSkipped({
         pipelineStepId,
@@ -298,6 +303,7 @@ async function enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId: string
 }
 
 async function generateAndParseSynthesis(args: {
+  tbAnalysisId: string;
   model: string;
   prompt: string;
   parser: (raw: string) => SynthesisResponse;
@@ -306,16 +312,24 @@ async function generateAndParseSynthesis(args: {
   maxOutputTokens: number;
   timeout: number;
 }): Promise<SynthesisResponse> {
-  const run = async (prompt: string) => generateText({
-    model: anthropic(args.model),
-    prompt,
-    temperature: args.temperature,
-    maxOutputTokens: args.maxOutputTokens,
-    timeout: args.timeout,
-    maxRetries: 1
+  const run = async (prompt: string, operationKey: string) => {
+    return runTbGovernedProviderCall({
+      tbAnalysisId: args.tbAnalysisId,
+      operationKey,
+      prompt,
+      maxOutputTokens: args.maxOutputTokens,
+      invoke: (maxOutputTokens) => generateText({
+        model: anthropic(args.model),
+        prompt,
+        temperature: args.temperature,
+        maxOutputTokens,
+        timeout: args.timeout,
+        maxRetries: 0
+      })
   });
+  };
 
-  const first = await run(args.prompt);
+  const first = await run(args.prompt, `step6-${args.phase}-first`);
   try {
     return args.parser(first.text);
   } catch (error) {
@@ -335,11 +349,12 @@ async function generateAndParseSynthesis(args: {
     "Your first character must be { and your last character must be }.",
     "Do not include markdown fences or prose outside JSON."
   ].join("\n");
-  const second = await run(retryPrompt);
+  const second = await run(retryPrompt, `step6-${args.phase}-retry`);
   return args.parser(second.text);
 }
 
 async function generateAndParseHumanizer(args: {
+  tbAnalysisId: string;
   model: string;
   prompt: string;
   parser: (raw: string) => SynthesisResponse;
@@ -348,13 +363,19 @@ async function generateAndParseHumanizer(args: {
   timeout: number;
   fallbackSynthesis: SynthesisResponse;
 }): Promise<HumanizerResult> {
-  const result = await generateText({
-    model: anthropic(args.model),
+  const result = await runTbGovernedProviderCall({
+    tbAnalysisId: args.tbAnalysisId,
+    operationKey: "step6-humanizer",
     prompt: args.prompt,
-    temperature: args.temperature,
     maxOutputTokens: args.maxOutputTokens,
-    timeout: args.timeout,
-    maxRetries: 1
+    invoke: (maxOutputTokens) => generateText({
+      model: anthropic(args.model),
+      prompt: args.prompt,
+      temperature: args.temperature,
+      maxOutputTokens,
+      timeout: args.timeout,
+      maxRetries: 0
+    })
   });
 
   try {

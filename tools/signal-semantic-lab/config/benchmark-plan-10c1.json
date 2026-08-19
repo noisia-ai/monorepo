@@ -1,0 +1,228 @@
+{
+  "contract_version": "signal-local-modeling-benchmark-plan-v2",
+  "preregistered_at": "2026-08-16T19:49:57-06:00",
+  "supersedes_plan_digest": "sha256:45e218895ef6ff15ee889eb03e1cd4fe4b9464331b78b7343582227ce016ec83",
+  "revision_reason": "The v2 calibration was invalidated before full discovery because accent-bearing Spanish stopwords were not normalized for stopword comparison and its preregistered content digest did not equal the validated export digest. A later resource-contended diagnostic run was discarded before selection. The final run seals the harness source, rejects declared/effective parameter drift, uses version-specific dependency evidence URLs, makes future provider transmission fail closed without a sealed privacy evaluation, and preregisters stable length-bucketed BGE batching with exact output-order restoration. Candidate grid, thresholds, seeds, population and model revisions remain unchanged; earlier results are diagnostic only.",
+  "question": "Can a pinned local multilingual stack discover technically coherent and stable document clusters on the complete governed benchmark population when clustering and lexical representation are evaluated separately?",
+  "decision_rule": "A technical finalist must pass every frozen calibration and full-population gate. Adoption still requires blinded human review and a separate adoption ADR; this benchmark cannot authorize 10D.",
+  "evaluation_layers": [
+    "embedding_and_document_clustering",
+    "locale_aware_cluster_representation",
+    "human_name_and_definition_quality"
+  ],
+  "parameter_policy": "declared-equals-effective-or-fail-v1",
+  "missing_probability_policy": "not_available-never-one-v1",
+  "hardware_budget": {
+    "architecture": "arm64",
+    "device": "cpu",
+    "physical_ram_bytes": 19327352832,
+    "max_peak_ram_bytes": 14495514624,
+    "max_download_bytes": 20000000000,
+    "smoke_timeout_seconds": 1800,
+    "calibration_timeout_seconds": 10800,
+    "full_candidate_timeout_seconds": 28800
+  },
+  "corpus": {
+    "export_contract": "signal-semantic-benchmark-export-v1",
+    "required_usage": "llm-processing",
+    "text_normalization": "signal-locale-aware-preprocessing-v3",
+    "canonical_dedup": true,
+    "minimum_full_population": 109056,
+    "sealed_content_digest": "sha256:32af0a791d684275d711e1647689832d5f277688b982d70e370b9efb8184c3d1",
+    "scope_evidence": "single_scope_primary_brand_only",
+    "general_adoption_limitation": "This corpus proves scale and primary-brand noise handling only. It cannot prove category, competitor, reference, en-GB, or general multi-scope quality."
+  },
+  "locale_policy": {
+    "resolver_contract": "signal-governed-analysis-context-snapshot-v1",
+    "stopword_policy": "signal-locale-stopwords-es-en-v3",
+    "language_families": ["es", "en"],
+    "locale_precedence": ["study_os_when_applicable", "brand_os", "acquisition_plan", "explicit_workspace_fallback"],
+    "unknown_policy": "requires_operator_decision",
+    "es_mx_priority_is_benchmark_priority_not_runtime_default": true
+  },
+  "splits": {
+    "seed": 104729,
+    "train_fraction": 0.6,
+    "calibration_fraction": 0.2,
+    "holdout_fraction": 0.2,
+    "stratify_by": ["month", "scope", "language", "platform"],
+    "group_by": ["canonical_family_key", "content_hash"],
+    "holdout_open_policy": "full_population_only_after_calibration_finalist_selection"
+  },
+  "stages": {
+    "smoke_max_records": 1200,
+    "calibration_max_records": 12000,
+    "full_population": true,
+    "finalist_count": 2,
+    "final_seeds": [17, 43, 71]
+  },
+  "embeddings": [
+    {
+      "key": "multilingual-e5-small",
+      "repository": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/intfloat/multilingual-e5-small/blob/614241f622f53c4eeff9890bdc4f31cfecc418b3/README.md",
+      "artifact_bytes": 470642255,
+      "max_sequence_length": 128,
+      "artifact_files": [
+        {"path": "model.safetensors", "sha256": "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477", "bytes": 470641600},
+        {"path": "config.json", "sha256": "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959", "bytes": 655}
+      ],
+      "dimension": 384,
+      "query_prefix": "query: ",
+      "trust_remote_code": false
+    },
+    {
+      "key": "bge-m3",
+      "repository": "BAAI/bge-m3",
+      "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/BAAI/bge-m3/blob/5617a9f61b028005a4858fdac845db406aefb181/README.md",
+      "artifact_bytes": 2267546218,
+      "max_sequence_length": 128,
+      "onnx_execution_provider": "CPUExecutionProvider",
+      "artifact_files": [
+        {"path": "onnx/model.onnx", "sha256": "f84251230831afb359ab26d9fd37d5936d4d9bb5d1d5410e66442f630f24435b", "bytes": 724923},
+        {"path": "onnx/model.onnx_data", "sha256": "1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4", "bytes": 2266820608},
+        {"path": "config.json", "sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa", "bytes": 687}
+      ],
+      "dimension": 1024,
+      "query_prefix": "",
+      "runtime_batch_size": 32,
+      "runtime_batch_order": "normalized-character-length-ascending-stable-v1",
+      "trust_remote_code": false
+    }
+  ],
+  "discovery": [
+    {
+      "key": "lexical-locale-nmf",
+      "framework": "scikit-learn",
+      "version": "1.9.0",
+      "license": "BSD-3-Clause",
+      "role": "lexical_reference_only",
+      "language_families": ["es", "en"],
+      "ngram_min": 1,
+      "ngram_max": 3,
+      "n_topics": 40,
+      "max_features": 50000,
+      "min_df": 2,
+      "max_df": 0.98,
+      "max_iter": 400,
+      "top_n_words": 15
+    },
+    {
+      "key": "bertopic-balanced",
+      "framework": "BERTopic",
+      "version": "0.17.4",
+      "revision": "75f2910562f0e372beee29acbbd2a2835ba72cf2",
+      "license": "MIT",
+      "license_url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE",
+      "language_families": ["es", "en"],
+      "ngram_min": 1,
+      "ngram_max": 3,
+      "vectorizer_min_df": 2,
+      "vectorizer_max_df": 0.98,
+      "vectorizer_max_features": 50000,
+      "umap_n_neighbors": 30,
+      "umap_n_components": 8,
+      "umap_min_dist": 0.0,
+      "hdbscan_min_cluster_size": 80,
+      "hdbscan_min_samples": 8,
+      "cluster_selection_method": "eom",
+      "top_n_words": 15
+    },
+    {
+      "key": "bertopic-detail",
+      "framework": "BERTopic",
+      "version": "0.17.4",
+      "revision": "75f2910562f0e372beee29acbbd2a2835ba72cf2",
+      "license": "MIT",
+      "license_url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE",
+      "language_families": ["es", "en"],
+      "ngram_min": 1,
+      "ngram_max": 3,
+      "vectorizer_min_df": 2,
+      "vectorizer_max_df": 0.98,
+      "vectorizer_max_features": 50000,
+      "umap_n_neighbors": 15,
+      "umap_n_components": 8,
+      "umap_min_dist": 0.0,
+      "hdbscan_min_cluster_size": 40,
+      "hdbscan_min_samples": 5,
+      "cluster_selection_method": "leaf",
+      "top_n_words": 15
+    }
+  ],
+  "candidates": [
+    {"key": "lexical-locale-nmf", "discovery": "lexical-locale-nmf", "embedding": null, "role": "reference"},
+    {"key": "bertopic-e5-balanced", "discovery": "bertopic-balanced", "embedding": "multilingual-e5-small", "role": "candidate"},
+    {"key": "bertopic-e5-detail", "discovery": "bertopic-detail", "embedding": "multilingual-e5-small", "role": "candidate"},
+    {"key": "bertopic-bge-balanced", "discovery": "bertopic-balanced", "embedding": "bge-m3", "role": "candidate"},
+    {"key": "bertopic-bge-detail", "discovery": "bertopic-detail", "embedding": "bge-m3", "role": "candidate"}
+  ],
+  "excluded_candidates": [
+    {
+      "framework": "FASTopic",
+      "version": "1.0.1",
+      "reason": "Preregistered exclusion: prior measured lower bounds exceeded the eight-hour full-population hardware gate before quality was available.",
+      "evidence_contract": "backend-10c-resource-rejections-v1"
+    }
+  ],
+  "material_dependencies": [
+    {"key": "bertopic", "version": "0.17.4", "license": "MIT", "url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE"},
+    {"key": "umap-learn", "version": "0.5.12", "license": "BSD-3-Clause", "url": "https://pypi.org/project/umap-learn/0.5.12/"},
+    {"key": "hdbscan", "version": "0.8.44", "license": "BSD-3-Clause", "url": "https://pypi.org/project/hdbscan/0.8.44/"}
+  ],
+  "metrics": {
+    "top_terms": 15,
+    "coherence": "c_npmi@gensim-4.4.0",
+    "coherence_max_records": 20000,
+    "coherence_selection": "lowest-sha256-record-key-plus-text-v1",
+    "cluster_matching": "maximum-overlap-hungarian-v1",
+    "matched_assignment_consistency_denominator": "assigned-union-excluding-both-outlier-v2",
+    "topic_term_jaccard_unmatched_policy": "unmatched-clusters-score-zero-v2",
+    "stability": ["adjusted_rand", "matched_assignment_consistency", "topic_jaccard"],
+    "coverage_slices": ["scope", "entity", "language", "platform", "month"],
+    "representation": ["majority_stopword_topic_rate", "stopword_term_rate", "phrase_term_rate"],
+    "clustering": ["nearest_cluster_separation_mean", "nearest_cluster_separation_p10", "silhouette_cosine", "largest_cluster_share"],
+    "gold_metrics": ["precision", "recall", "f1", "pr_auc", "ece", "brier", "risk_coverage"]
+  },
+  "hard_gates": {
+    "license_compatible": true,
+    "immutable_revision": true,
+    "denominator_reconciles": true,
+    "no_leakage": true,
+    "max_peak_ram_bytes": 14495514624,
+    "max_download_bytes": 20000000000,
+    "maximum_estimated_full_runtime_seconds": 28800,
+    "full_population_required_for_finalist": true,
+    "operator_review_required_for_recommendation": true,
+    "minimum_coverage": 0.55,
+    "minimum_topic_diversity": 0.55,
+    "minimum_full_adjusted_rand": 0.25,
+    "minimum_full_matched_assignment_consistency": 0.50,
+    "minimum_effective_topics": 8,
+    "maximum_effective_topics": 120,
+    "maximum_majority_stopword_topic_rate": 0,
+    "maximum_largest_cluster_share": 0.40,
+    "minimum_nearest_cluster_separation_mean": 0.005,
+    "finalist_selection": "all-gates-then-coverage-diversity-redundancy-duration-up-to-two-v2"
+  },
+  "representative_packet": {
+    "policy_version": "signal-adaptive-representative-packet-v1",
+    "maximum_representatives_per_cluster": 8,
+    "maximum_tokens_per_cluster": 1200,
+    "maximum_tokens_per_run": 120000,
+    "provider_execution": "forbidden_in_10c1"
+  },
+  "stop_conditions": [
+    "parameter_change_after_result_observation",
+    "fabricated_probability_or_confidence",
+    "unexplained_root",
+    "holdout_leakage",
+    "peak_ram_exceeds_budget",
+    "projected_or_observed_full_runtime_exceeds_28800_seconds",
+    "provider_call_or_remote_write"
+  ]
+}

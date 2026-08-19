@@ -293,7 +293,7 @@ async function insertFeatureValues(
        $3::uuid,
        $4::uuid,
        'mention',
-       c.mention_id,
+       m.canonical_mention_id,
        'tb_coding',
        jsonb_build_object(
          'contract', $5::text,
@@ -318,8 +318,9 @@ async function insertFeatureValues(
        $6::uuid,
        $1::uuid
      FROM tb_mention_codings c
+     JOIN mentions m ON m.id = c.mention_id
      WHERE c.tb_analysis_id = $1::uuid
-     GROUP BY c.mention_id, c.tb_analysis_id
+     GROUP BY m.canonical_mention_id, c.tb_analysis_id
      ON CONFLICT (subject_type, subject_id, feature_key, source) DO NOTHING`,
     [
       args.tbAnalysisId,
@@ -348,12 +349,12 @@ async function insertLayerTags(
          taxonomy_term_id, value, score, confidence, evidence, source,
          model_version_id, tb_analysis_id, review_status
        )
-       SELECT DISTINCT ON (c.mention_id)
+       SELECT DISTINCT ON (m.canonical_mention_id)
          $2::uuid,
          $3::uuid,
          $4::uuid,
          'mention',
-         c.mention_id,
+         m.canonical_mention_id,
          $5::uuid,
          c.layer,
          c.intensity_score,
@@ -377,7 +378,7 @@ async function insertLayerTags(
        WHERE c.tb_analysis_id = $1::uuid
          AND c.polarity <> 'irrelevant'
          AND c.layer = $8::text
-       ORDER BY c.mention_id, c.created_at DESC, c.id DESC
+       ORDER BY m.canonical_mention_id, c.created_at DESC, c.id DESC
        ON CONFLICT (subject_type, subject_id, taxonomy_term_id, source) DO NOTHING`,
       [
         args.tbAnalysisId,
@@ -405,9 +406,9 @@ async function insertEmergentTags(
 ) {
   await client.query(
     `WITH candidates AS (
-       SELECT DISTINCT ON (c.mention_id, candidate.taxonomy_key, lower(trim(tag.value)))
+       SELECT DISTINCT ON (m.canonical_mention_id, candidate.taxonomy_key, lower(trim(tag.value)))
          c.id AS coding_id,
-         c.mention_id,
+         m.canonical_mention_id AS mention_id,
          c.finding_id,
          c.polarity,
          c.layer,
@@ -430,7 +431,7 @@ async function insertEmergentTags(
          AND c.polarity <> 'irrelevant'
          AND trim(tag.value) <> ''
          AND lower(trim(tag.value)) <> 'irrelevant'
-       ORDER BY c.mention_id, candidate.taxonomy_key, lower(trim(tag.value)), c.created_at DESC, c.id DESC
+       ORDER BY m.canonical_mention_id, candidate.taxonomy_key, lower(trim(tag.value)), c.created_at DESC, c.id DESC
      )
      INSERT INTO record_tags (
        organization_id, brand_id, study_corpus_id, subject_type, subject_id,

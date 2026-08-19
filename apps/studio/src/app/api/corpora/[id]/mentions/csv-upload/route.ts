@@ -12,7 +12,8 @@ import {
   queryIterations,
   queryPacks,
   queryValidationRuns,
-  recordSignalDataAcceptance
+  recordSignalDataAcceptance,
+  recordSignalWorkspaceDataAcceptance
 } from "@noisia/db";
 import { forbidden, unauthorized } from "@/lib/api/responses";
 
@@ -23,6 +24,7 @@ import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { ingestSentioneCsvStream } from "@/lib/csv/sentione";
 import { getCorpusForUser } from "@/lib/data/corpora";
+import { resolveWorkspaceIngestionForCorpus } from "@/lib/data-os/workspace-ingestion";
 import { db, pool } from "@/lib/db";
 import { getQueryEngineQueue } from "@/lib/queue/query-engine";
 
@@ -180,6 +182,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       : linkedEntity?.name ?? defaultEntityLabel(mentionType);
   const entityKind = linkedEntity?.entityKind ?? normalizeEntityKind(entityKindRaw, mentionType, competitorId, entityLabel);
   const resolvedCompetitorId = linkedEntity?.competitorId ?? competitorId;
+  const workspaceIngestion = await resolveWorkspaceIngestionForCorpus(
+    corpus.id,
+    "listening_csv"
+  );
   const shouldQueueIngest = shouldUseWorkerIngest(request, query, {
     hasSharedCsvUploadDir: hasConfiguredCsvUploadDir()
   });
@@ -198,7 +204,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   const [batch] = await db
     .insert(importBatches)
     .values({
+      workspaceId: workspaceIngestion.workspaceId,
       studyCorpusId: corpus.id,
+      contributedByStudyCorpusId: corpus.id,
+      dataSourceId: workspaceIngestion.dataSourceId,
       queryIterationId: resolvedQueryIterationId,
       queryPackId: linkedQueryPack?.id ?? null,
       queryValidationRunId: approvedValidationRun?.id ?? null,
@@ -234,6 +243,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         "ingest_mentions_csv",
         {
           corpusId: corpus.id,
+          workspaceId: workspaceIngestion.workspaceId,
+          dataSourceId: workspaceIngestion.dataSourceId,
           importBatchId: batch.id,
           sourceFileName: fileName,
           storagePath,
@@ -271,6 +282,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
   try {
     const { stats, fileHash: hash } = await ingestSentioneCsvStream({
+      workspaceId: workspaceIngestion.workspaceId,
+      dataSourceId: workspaceIngestion.dataSourceId,
       corpusId: corpus.id,
       importBatchId: batch.id,
       sourceFileName: fileName,
@@ -301,6 +314,13 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       corpusRevision,
       materializedAt: new Date()
     });
+    const workspaceAcceptance = await recordSignalWorkspaceDataAcceptance(pool, {
+      workspaceId: workspaceIngestion.workspaceId,
+      sourceKey: `source-${workspaceIngestion.dataSourceId}`,
+      dataSourceId: workspaceIngestion.dataSourceId,
+      importBatchId: batch.id,
+      materializedAt: new Date()
+    });
 
     return Response.json({
       import_batch_id: batch.id,
@@ -309,7 +329,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       corpus_revision: corpusRevision,
       signal_data: {
         watermarks_changed: acceptances.filter((item) => item.changed).length,
-        invalidations_created: acceptances.filter((item) => item.invalidationId).length
+        invalidations_created: acceptances.filter((item) => item.invalidationId).length,
+        workspace_watermark_changed: workspaceAcceptance.changed
       }
     });
   } catch (error) {

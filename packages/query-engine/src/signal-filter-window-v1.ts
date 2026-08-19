@@ -71,7 +71,8 @@ export function parseSignalAnalyticsQueryParamsV1(
     "compareStart",
     "compareEnd",
     "comparison_start",
-    "comparison_end"
+    "comparison_end",
+    "view"
   ]) {
     filterParams.delete(key);
   }

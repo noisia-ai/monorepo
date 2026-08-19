@@ -47,6 +47,22 @@ test("SB-03 persists disabled refresh policy, independent freshness and idempote
   assert.match(migration, /'targets', jsonb_build_array\('metric_materializations', 'interpretation_freshness'\)/);
 });
 
+test("operational membership transitions invalidate caches and persist shadow work durably", async () => {
+  const migration = await readFile(
+    resolve(
+      process.cwd(),
+      "migrations/0061_signal_operational_membership_invalidation_shadow_outbox.sql"
+    ),
+    "utf8"
+  );
+  assert.match(migration, /invalidate_signal_population_membership_change/);
+  assert.match(migration, /operational_population_membership_changed/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_operational_shadow_requests/);
+  assert.match(migration, /idx_signal_operational_shadow_requests_recovery/);
+  assert.match(migration, /enforce_signal_operational_shadow_request_scope/);
+  assert.doesNotMatch(migration, /DROP COLUMN|DELETE FROM/u);
+});
+
 test("SB-03 wires existing imports and source syncs to the shared acceptance function", async () => {
   const [workerImport, knowledgeSync, studioImport, performanceSync, refreshWorker, envExample] = await Promise.all([
     readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
@@ -230,7 +246,7 @@ test("SB-09 freezes T&B scope and human-promotes immutable strategic releases", 
   assert.match(temporalWorker, /evaluateTbComparisonCompatibilityV1/);
   assert.match(comparativeWorker, /ta_scope\.snapshot_id = snapshot_mention\.snapshot_id/);
   assert.doesNotMatch(comparativeWorker, /SUM\(COALESCE\(ib\.included_count/);
-  assert.match(releaseServing, /promote_signal_workspace_release/);
+  assert.match(releaseServing, /promote_signal_workspace_report_release/);
   assert.doesNotMatch(releaseServing, /published_outputs|payload/);
   assert.match(invarianceFixture, /not a member of snapshot 1/);
   assert.match(invarianceFixture, /recomputed_value <> published_value/);
@@ -275,7 +291,7 @@ test("SB-10 freezes one protected facade, targeted backfill and runtime front-re
   assert.match(home, /loadSignalInterpretationsV1/);
   assert.match(home, /loadSignalStrategicReleasesV1/);
   assert.doesNotMatch(home, /published_outputs|chart_aggregates/);
-  assert.match(rootRoute, /loadSignalWorkspaceContext/);
+  assert.match(rootRoute, /loadSignalWorkspace(?:Module)?Context/);
   assert.match(rootRoute, /loadSignalWorkspaceHomeV1/);
   assert.match(fixture, /satisfies SignalWorkspaceHomeV1/);
   assert.match(backfill, /NOISIA_SIGNAL_V2_BACKFILL_APPROVED/);
@@ -366,6 +382,108 @@ test("TN-08 applies migration 0057 through a guarded, targeted and verified remo
   assert.match(source, /signal_taxonomy_profiles/);
   assert.match(source, /uq_record_tags_signal_profile_assignment/);
   assert.doesNotMatch(source, /drizzle-kit generate/);
+});
+
+test("Signal workspace data plane separates ownership, provenance, population and report identity", async () => {
+  const [migration, applyScript, brandRoute, csvRoute, csvWorker, csvIngest, populationResolver] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0059_signal_workspace_owned_data_plane.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/apply-signal-workspace-data-plane-migration.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/brands/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/mentions/csv-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "sentione-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-population.ts"), "utf8")
+  ]);
+  for (const field of [
+    "data_sources[\\s\\S]*workspace_id",
+    "import_batches[\\s\\S]*workspace_id",
+    "mentions[\\s\\S]*workspace_id",
+    "mentions[\\s\\S]*canonical_mention_id",
+    "mentions[\\s\\S]*provider_record_id"
+  ]) {
+    assert.match(migration, new RegExp(`ALTER TABLE ${field}`));
+  }
+  for (const table of [
+    "signal_population_definitions",
+    "signal_workspace_population_pointers",
+    "signal_population_memberships",
+    "signal_mention_import_memberships",
+    "signal_mention_study_memberships",
+    "signal_mention_attributions",
+    "signal_snapshot_watermarks",
+    "signal_workspace_reports",
+    "signal_workspace_report_current_releases"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /ALTER COLUMN study_corpus_id DROP NOT NULL/);
+  assert.match(migration, /uq_mentions_workspace_text_canonical/);
+  assert.match(migration, /canonical_mention_id = id/);
+  assert.match(migration, /contributed_by_study_corpus_id/);
+  assert.match(migration, /'primary_brand', 'competitor', 'category', 'reference', 'unattributed'/);
+  assert.match(migration, /record_signal_workspace_data_acceptance/);
+  assert.match(migration, /population_definition_hash/);
+  assert.match(migration, /workspace_id, report_key, report_revision/);
+  assert.doesNotMatch(migration, /DELETE FROM mentions|DELETE FROM published_outputs|UPDATE published_outputs/iu);
+  assert.match(applyScript, /requireSafeDatabaseWriteTarget/);
+  assert.match(applyScript, /NOISIA_SIGNAL_WORKSPACE_DATA_PLANE_SCHEMA_APPLY_APPROVED/);
+  assert.match(applyScript, /pg_advisory_xact_lock/);
+  assert.match(applyScript, /Refusing to continue a partially applied/);
+  assert.match(applyScript, /BEGIN/);
+  assert.match(applyScript, /ROLLBACK/);
+  assert.match(brandRoute, /initializeBrandSignalWorkspace/);
+  assert.match(brandRoute, /primary-brand-operational/);
+  assert.match(brandRoute, /reportKey: "triggers-barriers"/);
+  for (const ingest of [csvRoute, csvWorker]) {
+    assert.match(ingest, /recordSignalWorkspaceDataAcceptance/);
+    assert.match(ingest, /workspaceId/);
+    assert.match(ingest, /dataSourceId/);
+  }
+  assert.match(csvWorker, /createSignalSentioneCsvIngester/);
+  assert.doesNotMatch(csvWorker, /function ingestSentioneCsvStream/);
+  assert.match(csvIngest, /record_signal_workspace_import_provenance_set_v1/);
+  assert.doesNotMatch(csvIngest, /record_signal_workspace_import_provenance_v1/);
+  assert.equal((csvIngest.match(/function ingestSentioneCsvStream/g) ?? []).length, 1);
+  const workspacePrestate = csvIngest.indexOf("const before=await findCanonicalMentionRows(");
+  const workspaceInsert = csvIngest.indexOf("const inserted=await insertMentionValues(candidates)", workspacePrestate);
+  const workspacePoststate = csvIngest.indexOf("const after=await findCanonicalMentionRows(", workspaceInsert);
+  const workspaceProvenance = csvIngest.indexOf(
+    "const provenanceQueryCount=await attachMentionQueryProvenance({",
+    workspacePoststate
+  );
+  assert.ok(workspacePrestate >= 0);
+  assert.ok(workspaceInsert > workspacePrestate);
+  assert.ok(workspacePoststate > workspaceInsert);
+  assert.ok(workspaceProvenance > workspacePoststate,
+    "workspace ingestion must classify pre-existing and newly inserted rows before attaching set-based provenance");
+  assert.match(migration, /INSERT INTO signal_mention_import_memberships/);
+  assert.match(migration, /INSERT INTO signal_mention_study_memberships/);
+  assert.match(migration, /governed_scope/);
+  assert.match(migration, /reconcile_signal_operational_population_mention/);
+  assert.match(csvIngest, /ON CONFLICT DO NOTHING/);
+  assert.doesNotMatch(csvIngest, /ON CONFLICT \(study_corpus_id, text_hash\)/);
+  assert.match(populationResolver, /mode: "shadow"/);
+  assert.match(populationResolver, /"scope", "quality", "period", "dedup"/);
+});
+
+test("strategic run outbox recovery adds leases without rewriting the Phase 5 contract", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0063_signal_strategic_run_outbox_recovery.sql"),
+    "utf8"
+  );
+  for (const field of [
+    "bullmq_job_id",
+    "locked_at",
+    "lease_expires_at",
+    "lease_token",
+    "dead_lettered_at"
+  ]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${field}`));
+  }
+  assert.match(migration, /status IN \('pending', 'failed', 'dispatching'\)/u);
+  assert.match(migration, /idx_signal_strategic_run_outbox_recovery/u);
+  assert.match(migration, /WHERE status = 'dispatching'/u);
+  assert.doesNotMatch(migration, /DROP TABLE|DROP COLUMN|DELETE FROM/iu);
 });
 
 test("TN operational hardening persists recoverable runs, policy provenance and safe activation", async () => {

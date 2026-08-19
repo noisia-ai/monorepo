@@ -4,6 +4,22 @@
  */
 
 export const TB_ANALYSIS_QUEUE_NAME = "noisia-tb-analysis";
+
+/**
+ * Runtime-owned queue identity. Deployments must override this when sharing
+ * code across isolated Redis environments; the browser never chooses it.
+ */
+export function resolveTbAnalysisQueueName(
+  env: Record<string, string | undefined> = process.env
+) {
+  const configured = env.NOISIA_TB_ANALYSIS_QUEUE_NAME?.trim();
+  if (env.NOISIA_RUNTIME_PROFILE?.trim() === "uat") {
+    if (!configured || !configured.endsWith("-uat")) {
+      throw new Error("uat_tb_queue_name_must_end_in_uat");
+    }
+  }
+  return configured || TB_ANALYSIS_QUEUE_NAME;
+}
 export const TB_PIPELINE_VERSION = "tb-engine-2026.05.25";
 export const TB_METHODOLOGY_VERSION = "1.0";
 

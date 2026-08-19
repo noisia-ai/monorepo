@@ -5,6 +5,7 @@ import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
+import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { db } from "@/lib/db";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string; sourceId: string }> }) {
@@ -60,6 +61,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     );
   }
 
+
+  if (session.appUser.userType === "noisia_internal") {
+    await reconcileSignalBrandOsForBrandMutationV1({
+      brandId: brand.id,
+      actor: session.appUser,
+      idempotencyKey: `knowledge-update:${brand.id}:${row.id}:${row.updatedAt.toISOString()}`
+    });
+  }
+
   return Response.json({ data: row });
 }
 
@@ -89,6 +99,15 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
       { error: "not_found", message: "Knowledge source not found for this brand." },
       { status: 404 }
     );
+  }
+
+
+  if (session.appUser.userType === "noisia_internal") {
+    await reconcileSignalBrandOsForBrandMutationV1({
+      brandId: brand.id,
+      actor: session.appUser,
+      idempotencyKey: `knowledge-delete:${brand.id}:${row.id}`
+    });
   }
 
   return Response.json({ data: row });

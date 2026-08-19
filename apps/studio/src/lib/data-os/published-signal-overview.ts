@@ -44,7 +44,7 @@ export type PublishedSignalOpportunity = {
   position: number;
 };
 
-type PublishedSignalActionRow = {
+export type PublishedSignalActionRow = {
   action_id: string;
   target_team: string;
   kind: string;

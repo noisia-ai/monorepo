@@ -35,7 +35,7 @@ export default async function CorpusEnginePage({
   const dataOsReadiness = await getDataOsCorpusReadiness(corpus.id);
 
   return (
-    <div className="studio-page">
+    <div className="admin-workspace-page admin-study-surface admin-study-engine">
       <EngineWizard
         corpusId={corpus.id}
         corpusName={corpus.name ?? corpus.brandName ?? corpus.themeName ?? "Corpus"}

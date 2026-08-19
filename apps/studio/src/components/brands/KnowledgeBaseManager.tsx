@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 
 type KnowledgeSource = {
   id: string;
@@ -20,6 +21,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState("brand_brief");
 
   async function addSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -37,6 +39,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackAddError"));
       targetForm.reset();
+      setSourceKind("brand_brief");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackAddError"));
@@ -85,56 +88,63 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
   }
 
   return (
-    <section className="new-study-panel knowledge-editor">
-      <div className="new-study-section-head">
-        <p className="vitals-eyebrow">{t("eyebrow")}</p>
-        <h2>{t("title")}</h2>
-      </div>
+    <section className="admin-section workspace-resource-section">
+      <header className="admin-section__head">
+        <div>
+          <p className="workspace-form__eyebrow">{t("eyebrow")}</p>
+          <h2>{t("title")}</h2>
+        </div>
+      </header>
+      <div className="workspace-resource-section__body">
       {error && (
-        <p className="new-study-error">
+        <p className="workspace-form__error">
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
-      <details className="knowledge-add-shell">
+      <details className="workspace-disclosure workspace-disclosure--create">
         <summary>
           <span>{t("addNew")}</span>
           <Icon name="chevron-down" size={14} />
         </summary>
-        <form className="knowledge-editor-card knowledge-editor-card--new" onSubmit={addSource}>
-          <div className="new-study-grid">
-            <label className="new-study-field">
+        <form className="workspace-disclosure__form" onSubmit={addSource}>
+          <div className="workspace-form__grid">
+            <label className="workspace-field">
               <span>{t("fieldTitle")}</span>
-              <input className="filter-input new-study-input" name="title" placeholder={t("fieldTitlePlaceholder")} required />
+              <input className="workspace-control" name="title" placeholder={t("fieldTitlePlaceholder")} required />
             </label>
-            <label className="new-study-field">
-              <span>{t("type")}</span>
-              <select className="filter-input new-study-input" name="source_kind" defaultValue="brand_brief">
-                <option value="brand_brief">Brand brief</option>
-                <option value="campaign_brief">Campaign brief</option>
-                <option value="market_notes">Market notes</option>
-                <option value="competitive_notes">Competitive notes</option>
-                <option value="always_on_context">Always-on context</option>
-              </select>
-            </label>
+            <WorkspaceSelectField
+              ariaLabel={t("type")}
+              label={t("type")}
+              name="source_kind"
+              onChange={setSourceKind}
+              options={[
+                { label: "Brand brief", value: "brand_brief" },
+                { label: "Campaign brief", value: "campaign_brief" },
+                { label: "Market notes", value: "market_notes" },
+                { label: "Competitive notes", value: "competitive_notes" },
+                { label: "Always-on context", value: "always_on_context" }
+              ]}
+              value={sourceKind}
+            />
           </div>
-          <label className="new-study-field new-study-field--wide">
+          <label className="workspace-field workspace-field--wide">
             <span>{t("content")}</span>
-            <textarea className="filter-input new-study-textarea" name="raw_text" required placeholder={t("contentPlaceholder")} rows={4} />
+            <textarea className="workspace-control workspace-control--textarea" name="raw_text" required placeholder={t("contentPlaceholder")} rows={4} />
           </label>
-          <div className="knowledge-editor-actions">
-            <button className="brand-os-action brand-os-action--secondary" type="submit" disabled={isAdding}>
+          <div className="workspace-form__actions">
+            <button className="admin-button admin-button--primary" type="submit" disabled={isAdding}>
               <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
             </button>
           </div>
         </form>
       </details>
 
-      <div className="knowledge-editor-list">
+      <div className="workspace-disclosure-list">
         {sources.length === 0 ? (
-          <p className="new-study-helper">{t("empty")}</p>
+          <div className="admin-empty"><p>{t("empty")}</p></div>
         ) : (
           sources.map((source) => (
-            <details className="knowledge-source-card" key={source.id}>
+            <details className="workspace-disclosure" key={source.id}>
               <summary>
                 <span>
                   <strong>{source.title}</strong>
@@ -142,27 +152,27 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
                 </span>
                 <Icon name="chevron-down" size={14} />
               </summary>
-              <p className="knowledge-source-preview">{source.rawText ? compactText(source.rawText) : t("emptySource")}</p>
-              <form className="knowledge-source-edit" onSubmit={(event) => saveSource(event, source.id)}>
-                <div className="new-study-grid">
-                  <label className="new-study-field">
+              <p className="workspace-disclosure__preview">{source.rawText ? compactText(source.rawText) : t("emptySource")}</p>
+              <form className="workspace-disclosure__form" onSubmit={(event) => saveSource(event, source.id)}>
+                <div className="workspace-form__grid">
+                  <label className="workspace-field">
                     <span>{t("fieldTitle")}</span>
-                    <input className="filter-input new-study-input" name="title" defaultValue={source.title} required />
+                    <input className="workspace-control" name="title" defaultValue={source.title} required />
                   </label>
-                  <label className="new-study-field">
+                  <label className="workspace-field">
                     <span>{t("type")}</span>
-                    <input className="filter-input new-study-input" name="source_kind" defaultValue={source.sourceKind} required />
+                    <input className="workspace-control" name="source_kind" defaultValue={source.sourceKind} required />
                   </label>
                 </div>
-                <label className="new-study-field new-study-field--wide">
+                <label className="workspace-field workspace-field--wide">
                   <span>{t("content")}</span>
-                  <textarea className="filter-input new-study-textarea" name="raw_text" defaultValue={source.rawText ?? ""} required rows={5} />
+                  <textarea className="workspace-control workspace-control--textarea" name="raw_text" defaultValue={source.rawText ?? ""} required rows={5} />
                 </label>
-                <div className="knowledge-editor-actions">
-                  <button className="brand-os-action brand-os-action--tertiary brand-os-action--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
+                <div className="workspace-form__actions workspace-form__actions--between">
+                  <button className="admin-button admin-button--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
                     <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}
                   </button>
-                  <button className="brand-os-action brand-os-action--primary" type="submit" disabled={pendingId === source.id}>
+                  <button className="admin-button admin-button--primary" type="submit" disabled={pendingId === source.id}>
                     <Icon name={pendingId === source.id ? "spinner" : "check"} size={13} /> {t("save")}
                   </button>
                 </div>
@@ -170,6 +180,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
             </details>
           ))
         )}
+      </div>
       </div>
     </section>
   );

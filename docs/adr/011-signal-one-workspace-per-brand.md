@@ -5,6 +5,10 @@
 Accepted. Implemented additively on the Signal V2 branch. Client-visible activation
 still requires the existing Data OS staging gates.
 
+The workspace identity and stable URL remain accepted. The client-visible
+`study_corpus` page model below is superseded by ADR 014: the workspace has one report
+surface per `report_key`, while study runs/releases remain internal history.
+
 ## Context
 
 Historically, each published study produced an output UUID and therefore appeared to
@@ -25,28 +29,27 @@ was applying that identity to routing, navigation and new-study creation.
 - The top-left workspace chevron switches between Signal workspaces the signed-in user
   can access. It does not switch between studies.
 - Brand Monitoring is the workspace home.
-- Each Triggers & Barriers `study_corpus` becomes a named page inside the workspace.
-  `study_corpora.name` is its navigation title.
-- A new approved T&B analysis for that study becomes a new immutable release/version
-  of the same page. It does not create another workspace or client URL.
+- Triggers & Barriers has one client-visible report surface inside the workspace.
+- A `study_corpus` may remain as a compatibility execution identity, but does not become
+  navigation.
+- A new approved T&B analysis becomes a new immutable release/version of the T&B
+  report. It does not create another workspace, page or client URL.
 - `/signal/{outputId}` remains a backward-compatible report route while links and
   navigation migrate to the canonical workspace URL.
-- Migration `0056_signal_workspace_auto_membership` attaches every newly created study
-  corpus to its subject workspace. T&B is `strategic`; the first Signal Pulse corpus is
-  `operational`; other corpora remain `legacy`.
+- Migration `0056_signal_workspace_auto_membership` remains a transition bridge that
+  attaches study corpora to a workspace. ADR 014 requires future canonical ingestion to
+  be workspace-owned rather than making that membership the data ownership boundary.
 
 ## Consequences
 
 - A client bookmarks one URL and sees live monitoring, named strategic studies and
   their history in one place.
-- Creating a study requires a client-facing page name. Studio exposes this explicitly
-  in Corpus Engine.
-- Study identity and release identity are separate: renaming/navigation concerns
-  belong to the study; period, review and publication belong to the release.
+- Study identity, report identity and release identity are separate: client navigation
+  belongs to the report key; population/period belong to the run; review/publication
+  belong to the release.
 - Operational data may continue updating without rewriting a frozen strategic
   release.
-- The T&B visual redesign can proceed page by page without changing the workspace
-  identity again.
+- The T&B visual redesign and new data-plane migration do not change workspace identity.
 
 ## Rejected Alternatives
 

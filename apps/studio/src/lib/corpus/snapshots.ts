@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import { corpusSnapshots } from "@noisia/db";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 
 /**
  * Create a snapshot row + bulk-insert mention ids in a single SQL statement.
@@ -16,6 +16,19 @@ export async function createCorpusSnapshot(args: {
   userId: string | null;
   scores?: unknown;
 }): Promise<{ id: string; mention_count: number } | null> {
+  const governed = await createGovernedPopulationSnapshot(args);
+  if (governed) {
+    try {
+      await refreshCorpusSnapshotAggregates({ snapshotId: governed.id, corpusId: args.corpusId });
+    } catch (error) {
+      console.warn("[snapshots] governed aggregate refresh failed", {
+        snapshotId: governed.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return governed;
+  }
+
   const [snap] = await db
     .insert(corpusSnapshots)
     .values({
@@ -70,7 +83,6 @@ export async function refreshCorpusSnapshotAggregates(args: {
       FROM mentions m
       JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
       WHERE csm.snapshot_id = ${args.snapshotId}::uuid
-        AND m.study_corpus_id = ${args.corpusId}::uuid
     ),
     platform_rows AS (
       SELECT resolved_platform AS platform, COUNT(*)::int AS mention_count
@@ -140,4 +152,59 @@ export async function refreshCorpusSnapshotAggregates(args: {
       volume_timeline = EXCLUDED.volume_timeline,
       refreshed_at = now()
   `);
+}
+
+async function createGovernedPopulationSnapshot(args: {
+  corpusId: string;
+  label: string;
+  kind: "manual" | "approval";
+  userId: string | null;
+  scores?: unknown;
+}) {
+  const capability = await pool.query<{ available: boolean }>(`
+    SELECT to_regprocedure(
+      'create_signal_workspace_population_snapshot(uuid,uuid,uuid,text,text,uuid,jsonb)'
+    ) IS NOT NULL AS available
+  `);
+  if (!capability.rows[0]?.available) return null;
+
+  const scope = await pool.query<{ workspace_id: string; population_id: string }>(`
+    SELECT membership.workspace_id::text, pointer.population_id::text
+    FROM signal_workspace_corpora membership
+    JOIN signal_workspace_population_pointers pointer
+      ON pointer.workspace_id = membership.workspace_id
+     AND pointer.purpose = 'operational'
+    JOIN signal_population_definitions definition
+      ON definition.id = pointer.population_id
+     AND definition.workspace_id = pointer.workspace_id
+     AND definition.status = 'active'
+    WHERE membership.study_corpus_id = $1::uuid
+      AND membership.valid_to IS NULL
+    LIMIT 1
+  `, [args.corpusId]);
+  const resolved = scope.rows[0];
+  if (!resolved) return null;
+
+  const created = await pool.query<{ snapshot_id: string; mention_count: number }>(`
+    SELECT snapshot_id::text, mention_count
+    FROM create_signal_workspace_population_snapshot(
+      $1::uuid,
+      $2::uuid,
+      $3::uuid,
+      $4::text,
+      $5::text,
+      $6::uuid,
+      $7::jsonb
+    )
+  `, [
+    resolved.workspace_id,
+    resolved.population_id,
+    args.corpusId,
+    args.label,
+    args.kind,
+    args.userId,
+    JSON.stringify(args.scores ?? null)
+  ]);
+  const snapshot = created.rows[0];
+  return snapshot ? { id: snapshot.snapshot_id, mention_count: snapshot.mention_count } : null;
 }

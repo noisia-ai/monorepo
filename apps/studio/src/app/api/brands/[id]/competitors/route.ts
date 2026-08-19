@@ -1,17 +1,16 @@
-import { eq } from "drizzle-orm";
-import { brandSeeds, competitors } from "@noisia/db";
-
 import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
-import { db } from "@/lib/db";
+import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
+import { createOrReactivateSignalCompetitorsV1,retireSignalCompetitorsV1 } from "@/lib/data-os/signal-competitor-lifecycle";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
   if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
+  if (session.appUser.userType!=="noisia_internal") return forbidden();
 
   const { id } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -33,55 +32,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     );
   }
 
-  const created = await db.transaction(async (tx) => {
-    const rows = [];
-    for (const [index, name] of names.entries()) {
-      const [seed] = await tx
-        .insert(brandSeeds)
-        .values({
-          canonicalName: name,
-          aliases: [],
-          detectionPatterns: [name],
-          vertical: brand.industry,
-          subVertical: brand.industrySub,
-          country: brand.countries?.[0] ?? "MX",
-          active: true
-        })
-        .onConflictDoUpdate({
-          target: brandSeeds.canonicalName,
-          set: {
-            vertical: brand.industry,
-            subVertical: brand.industrySub,
-            active: true
-          }
-        })
-        .returning({ id: brandSeeds.id });
+  const idempotencyKey=request.headers.get("Idempotency-Key")?.trim()??"";
+  if(idempotencyKey.length<8||idempotencyKey.length>500)return Response.json({error:"idempotency_key_required"},{status:400});
+  const result=await createOrReactivateSignalCompetitorsV1({brandId:brand.id,actor:session.appUser,
+    idempotencyKey,names,vertical:brand.industry,subVertical:brand.industrySub,
+    country:brand.countries?.[0]??"MX"});
 
-      if (!seed) continue;
-      const [competitor] = await tx
-        .insert(competitors)
-        .values({
-          brandId: brand.id,
-          competitorBrandSeedId: seed.id,
-          priority: brand.competitors.length + index + 1,
-          notes: "Created from Brand OS editor."
-        })
-        .onConflictDoNothing()
-        .returning({ id: competitors.id });
+  if (session.appUser.userType === "noisia_internal") {
+    await reconcileSignalBrandOsForBrandMutationV1({
+      brandId: brand.id,
+      actor: session.appUser,
+      idempotencyKey: `${idempotencyKey}:brand-os`
+    });
+  }
 
-      if (competitor) rows.push(competitor);
-    }
-    return rows;
-  });
-
-  return Response.json({ data: { created_count: created.length } }, { status: 201 });
+  return Response.json({ data: result }, { status: 201 });
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
   if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
+  if (session.appUser.userType!=="noisia_internal") return forbidden();
 
   const { id } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -93,12 +66,20 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     );
   }
 
-  const deleted = await db
-    .delete(competitors)
-    .where(eq(competitors.brandId, brand.id))
-    .returning({ id: competitors.id });
+  const idempotencyKey=request.headers.get("Idempotency-Key")?.trim()??"";
+  if(idempotencyKey.length<8||idempotencyKey.length>500)return Response.json({error:"idempotency_key_required"},{status:400});
+  const retired=await retireSignalCompetitorsV1({brandId:brand.id,actor:session.appUser,
+    idempotencyKey,competitorIds:null,evidence:"Brand OS bulk retirement"});
 
-  return Response.json({ data: { deleted_count: deleted.length } });
+  if (session.appUser.userType === "noisia_internal") {
+    await reconcileSignalBrandOsForBrandMutationV1({
+      brandId: brand.id,
+      actor: session.appUser,
+      idempotencyKey: `${idempotencyKey}:brand-os`
+    });
+  }
+
+  return Response.json({ data: retired });
 }
 
 function uniqueStrings(values: unknown[]) {

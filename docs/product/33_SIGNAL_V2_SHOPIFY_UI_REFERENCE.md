@@ -1,5 +1,10 @@
 # 33 · Signal V2 — Shopify UI Reference
 
+> **Implementation handoff:** the shared components, validated module state and
+> non-regression rules produced from this reference are documented in
+> `43_SIGNAL_V2_FRONTEND_SYSTEM.md`. Loading/navigation behavior is governed by
+> `38_SIGNAL_LOADING_AND_NAVIGATION_STANDARD.md`.
+
 > **Estado:** referencia inspeccionada y primer slice implementado, 2026-07-24.
 > **Alcance de esta fase:** shell, navegación, búsqueda, filtros, densidad, arquitectura
 > de render y primera vista funcional de Monitoreo de marca.
@@ -217,6 +222,10 @@ La nueva UI deberá cumplir estas reglas antes de migrar contenido:
 9. Las interpretaciones Claude y las métricas llegan como recursos separados; cambiar
    un filtro no bloquea toda la ruta.
 10. Empty, loading, partial, stale y error son estados explícitos del mismo componente.
+
+El contrato operativo y medible para navegación, stale content, skeletons y carga de
+charts vive en `38_SIGNAL_LOADING_AND_NAVIGATION_STANDARD.md` y gobierna los módulos que
+se añadan después de este slice.
 
 Gates mínimos del primer slice:
 

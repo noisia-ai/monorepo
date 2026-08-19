@@ -25,10 +25,12 @@ import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -91,7 +93,7 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
     await job.updateProgress(40);
 
     // Single Claude call to code the whole vocabulary
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildCodingPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -100,11 +102,19 @@ export async function tbStep2CodingJob(job: Job<StepJobData>) {
       ragContext,
       tags: tagInputs
     });
-
     let coding;
     try {
-      const r = await generateText({ model: anthropic(model), prompt, temperature: 0.1 });
-      console.log(`[tb-step2] response first 200: ${r.text.slice(0, 200)}`);
+      const r = await runTbGovernedProviderCall({
+        tbAnalysisId,
+        operationKey: "step2-coding",
+        prompt,
+        maxOutputTokens: 8000,
+        invoke: (maxOutputTokens) => generateText({
+          model: anthropic(model), prompt, temperature: 0.1,
+          maxOutputTokens, maxRetries: 0
+        })
+      });
+      console.log("[tb-step2] provider response received", { chars: r.text.length });
       coding = parseCodingResponse(r.text);
     } catch (err) {
       throw new Error(`Coding parse failed: ${err instanceof Error ? err.message : err}`);

@@ -1,4 +1,3 @@
-import { getKindeServerSession } from "@kinde-oss/kinde-auth-nextjs/server";
 import { and, eq, sql } from "drizzle-orm";
 
 import { invitations, users } from "@noisia/db";
@@ -16,6 +15,7 @@ export async function getAuthenticatedAppUser() {
   const localSession = await getLocalAuthenticatedAppUser();
   if (localSession) return localSession;
 
+  const { getKindeServerSession } = await import("@kinde-oss/kinde-auth-nextjs/server");
   const session = getKindeServerSession();
   const isAuthenticated = await session.isAuthenticated();
 

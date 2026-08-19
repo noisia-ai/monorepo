@@ -1,26 +1,17 @@
 "use client";
 
 import {
-  ArrowLeft,
   ArrowRight,
   ArrowSquareOut,
-  ArrowsDownUp,
-  CaretDown,
   Check,
-  CheckSquare,
   ChatTeardropText,
-  Columns,
   Copy,
   DownloadSimple,
-  DotsSixVertical,
-  Eye,
-  EyeSlash,
   Funnel,
   GridFour,
   ListBullets,
-  LockSimple,
   MagnifyingGlass,
-  X
+  SpinnerGap
 } from "@phosphor-icons/react";
 import type {
   SignalComparisonV1,
@@ -39,6 +30,23 @@ import type {
   SignalMentionRecordV1,
   SignalMentionsPayloadV1
 } from "@/lib/data-os/signal-workspace-serving";
+import {
+  AttributionBadge,
+  formatCount,
+  MentionContext,
+  MentionResourceColumns,
+  MentionResourcePagination,
+  MentionResourceSearch,
+  MentionResourceSort,
+  MentionResourceTable,
+  MentionSelectionBar,
+  MentionSentiment,
+  MentionsTableSkeleton,
+  pretty,
+  primaryAttribution,
+  type MentionColumn,
+  type MentionColumnState
+} from "@/components/mentions/MentionResourcePrimitives";
 
 import {
   SignalAnalyticsFilter,
@@ -46,26 +54,12 @@ import {
 } from "./SignalAnalyticsFilter";
 import { SignalMetricHelp } from "./SignalMetricHelp";
 import { SignalSourceIcon } from "./SignalSourceIcon";
+import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
+import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 
 export type SignalMentionsViewData = SignalMentionsPayloadV1 & {
   filter: SignalFilterV1;
   comparison: SignalComparisonV1;
-};
-
-type MentionColumn =
-  | "mention"
-  | "platform"
-  | "scope"
-  | "role"
-  | "published"
-  | "sentiment"
-  | "engagement"
-  | "context";
-
-type MentionColumnState = {
-  key: MentionColumn;
-  visible: boolean;
-  locked?: boolean;
 };
 
 const DEFAULT_COLUMNS: MentionColumnState[] = [
@@ -107,88 +101,69 @@ export function SignalV2Mentions({
   brandName,
   coverage,
   data,
+  initialMention,
   loading,
   onApplyFilter,
   onDataChange,
   onOpenControls,
-  outputId
+  workspaceId
 }: {
   brandName: string;
   coverage: { date_from: string | null; date_through: string | null };
   data: SignalMentionsViewData;
+  initialMention: SignalMentionRecordV1 | null;
   loading: boolean;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onDataChange: (data: SignalMentionsViewData) => void;
   onOpenControls: () => void;
-  outputId: string | null;
+  workspaceId: string;
 }) {
   const t = useTranslations("SignalV2");
   const [search, setSearch] = useState(data.filter.search_query ?? "");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [activeRecord, setActiveRecord] = useState<SignalMentionRecordV1 | null>(null);
-  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [activeRecord, setActiveRecord] = useState<SignalMentionRecordV1 | null>(initialMention);
   const [columns, setColumns] = useState<MentionColumnState[]>(DEFAULT_COLUMNS);
   const [layout, setLayout] = useState<MentionsLayout>("table");
-  const [draggedColumn, setDraggedColumn] = useState<MentionColumn | null>(null);
   const [sortKey, setSortKey] = useState<MentionSortKey>("publishedDesc");
-  const [sortOpen, setSortOpen] = useState(false);
-  const [pageSizeOpen, setPageSizeOpen] = useState(false);
   const [pageLoading, setPageLoading] = useState(false);
+  const [showEmptyLoadingState, setShowEmptyLoadingState] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
-  const columnsRef = useRef<HTMLDivElement>(null);
-  const sortRef = useRef<HTMLDivElement>(null);
-  const pageSizeRef = useRef<HTMLDivElement>(null);
   const searchTimeoutRef = useRef<number | null>(null);
   const pageRequestRef = useRef<AbortController | null>(null);
+  const previousFiltersHashRef = useRef(data.filters_hash);
 
   useEffect(() => {
+    const filterChanged = previousFiltersHashRef.current !== data.filters_hash;
+    previousFiltersHashRef.current = data.filters_hash;
     setSearch(data.filter.search_query ?? "");
     setSelectedIds([]);
-    setActiveRecord(null);
+    if (filterChanged) setActiveRecord(null);
     setSortKey("publishedDesc");
     setPageError(null);
   }, [data.filters_hash, data.filter.search_query]);
 
   useEffect(() => {
-    if (!columnsOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!columnsRef.current?.contains(event.target as Node)) setColumnsOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [columnsOpen]);
-
-  useEffect(() => {
-    if (!sortOpen && !pageSizeOpen) return;
-    const close = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (sortRef.current?.contains(target) || pageSizeRef.current?.contains(target)) return;
-      setSortOpen(false);
-      setPageSizeOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setSortOpen(false);
-      setPageSizeOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [pageSizeOpen, sortOpen]);
+    if (initialMention) setActiveRecord(initialMention);
+  }, [initialMention]);
 
   useEffect(() => () => {
     if (searchTimeoutRef.current != null) window.clearTimeout(searchTimeoutRef.current);
     pageRequestRef.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if ((!loading && !pageLoading) || data.records.length > 0) {
+      setShowEmptyLoadingState(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowEmptyLoadingState(true), 220);
+    return () => window.clearTimeout(timer);
+  }, [data.records.length, loading, pageLoading]);
+
   const selectedRecords = useMemo(
     () => data.records.filter((record) => selectedIds.includes(record.subject_id)),
     [data.records, selectedIds]
   );
-  const allSelected = data.records.length > 0 && selectedIds.length === data.records.length;
   const visibleColumns = columns.filter((column) => column.visible).map((column) => column.key);
   const activeFilterCount = Object.values(data.filter.dimensions)
     .reduce((total, values) => total + (values?.length ?? 0), 0)
@@ -197,6 +172,20 @@ export function SignalV2Mentions({
   const pageEnd = data.total_count === 0
     ? 0
     : Math.min(pageStart + data.records.length - 1, data.total_count);
+
+  const activateRecord = (record: SignalMentionRecordV1) => {
+    setActiveRecord(record);
+    const next = new URL(window.location.href);
+    next.searchParams.set("mention", record.subject_id);
+    window.history.replaceState(null, "", next);
+  };
+
+  const closeActiveRecord = () => {
+    setActiveRecord(null);
+    const next = new URL(window.location.href);
+    next.searchParams.delete("mention");
+    window.history.replaceState(null, "", next);
+  };
 
   const applySearch = async () => {
     await onApplyFilter(selectionFromData(data, search));
@@ -211,7 +200,6 @@ export function SignalV2Mentions({
     offset: number;
     sort?: MentionSortKey;
   }) => {
-    if (!outputId) return;
     pageRequestRef.current?.abort();
     const controller = new AbortController();
     pageRequestRef.current = controller;
@@ -224,7 +212,7 @@ export function SignalV2Mentions({
       params.set("limit", String(limit));
       params.set("sort", parsedSort.field);
       params.set("direction", parsedSort.direction);
-      const response = await fetch(`/api/signal-v2/${outputId}/mentions?${params}`, {
+      const response = await fetch(`/api/data-os/signal/${workspaceId}/mentions?${params}`, {
         cache: "no-store",
         signal: controller.signal
       });
@@ -287,64 +275,28 @@ export function SignalV2Mentions({
     if (links.length > 0) await navigator.clipboard.writeText(links.join("\n"));
   };
 
-  const updateColumns = (next: MentionColumnState[]) => {
-    const documentWithTransitions = document as Document & {
-      startViewTransition?: (callback: () => void) => unknown;
-    };
-    if (documentWithTransitions.startViewTransition) {
-      documentWithTransitions.startViewTransition(() => setColumns(next));
-      return;
-    }
-    setColumns(next);
-  };
-
-  const toggleColumn = (key: MentionColumn) => {
-    const column = columns.find((item) => item.key === key);
-    if (!column || column.locked) return;
-    updateColumns(columns.map((item) => (
-      item.key === key ? { ...item, visible: !item.visible } : item
-    )));
-  };
-
-  const moveColumn = (from: MentionColumn, to: MentionColumn) => {
-    if (from === to) return;
-    const next = [...columns];
-    const fromIndex = next.findIndex((item) => item.key === from);
-    const toIndex = next.findIndex((item) => item.key === to);
-    if (fromIndex < 0 || toIndex < 0) return;
-    const [moved] = next.splice(fromIndex, 1);
-    if (!moved) return;
-    next.splice(toIndex, 0, moved);
-    updateColumns(next);
-  };
-
   return (
     <section className="signal-v2-mentions-page">
-      <div className="signal-v2-page-head">
-        <div>
-          <div className="signal-v2-title-line">
-            <ChatTeardropText size={20} weight="fill" />
-            <h1>{t("mentions.title")}</h1>
-            <span>{t("mentions.status")}</span>
-          </div>
-          <p>{t("mentions.subtitle", { brand: brandName })}</p>
-        </div>
-      </div>
-
-      <div className="signal-v2-filterbar">
-        <SignalAnalyticsFilter
-          comparison={data.comparison}
-          coverage={coverage}
-          filter={data.filter}
-          loading={loading}
-          onApply={onApplyFilter}
-        />
-        <button className="signal-v2-filter-button" onClick={onOpenControls} type="button">
-          <Funnel size={15} />
-          {t("filters.more")}
-          {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : null}
-        </button>
-      </div>
+      <SignalV2ModuleHeader
+        controls={<>
+          <SignalAnalyticsFilter
+            comparison={data.comparison}
+            coverage={coverage}
+            filter={data.filter}
+            loading={loading}
+            onApply={onApplyFilter}
+          />
+          <button className="signal-v2-filter-button" onClick={onOpenControls} type="button">
+            <Funnel size={15} />
+            {t("filters.more")}
+            {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : null}
+          </button>
+        </>}
+        icon={<ChatTeardropText size={20} weight="fill" />}
+        status={t("mentions.status")}
+        subtitle={t("mentions.subtitle", { brand: brandName })}
+        title={t("mentions.title")}
+      />
 
       <article
         aria-busy={loading || pageLoading}
@@ -364,65 +316,51 @@ export function SignalV2Mentions({
 
         <div className="signal-v2-mentions-toolbar">
           {selectedIds.length > 0 ? (
-            <div className="signal-v2-mentions-selection">
-              <strong>{t("mentions.selection", { count: selectedIds.length })}</strong>
+            <MentionSelectionBar
+              clearLabel={t("mentions.actions.clearSelection")}
+              label={t("mentions.selection", { count: selectedIds.length })}
+              onClear={() => setSelectedIds([])}
+            >
               <button onClick={() => void copySelectedLinks()} type="button">
                 <Copy size={14} />{t("mentions.actions.copyLinks")}
               </button>
               <button onClick={exportSelection} type="button">
                 <DownloadSimple size={14} />{t("mentions.actions.export")}
               </button>
-              <button aria-label={t("mentions.actions.clearSelection")} onClick={() => setSelectedIds([])} type="button">
-                <X size={14} />
-              </button>
-            </div>
+            </MentionSelectionBar>
           ) : (
             <>
-              <form
-                className="signal-v2-mentions-search"
-                onSubmit={(event) => {
-                  event.preventDefault();
+              <MentionResourceSearch
+                ariaLabel={t("mentions.search.label")}
+                clearLabel={t("mentions.search.clear")}
+                onChange={(nextSearch) => {
+                  setSearch(nextSearch);
+                  if (searchTimeoutRef.current != null) {
+                    window.clearTimeout(searchTimeoutRef.current);
+                  }
+                  searchTimeoutRef.current = window.setTimeout(() => {
+                    searchTimeoutRef.current = null;
+                    void onApplyFilter(selectionFromData(data, nextSearch));
+                  }, 500);
+                }}
+                onClear={() => {
+                  if (searchTimeoutRef.current != null) {
+                    window.clearTimeout(searchTimeoutRef.current);
+                    searchTimeoutRef.current = null;
+                  }
+                  setSearch("");
+                  void onApplyFilter(selectionFromData(data, ""));
+                }}
+                onSubmit={() => {
                   if (searchTimeoutRef.current != null) {
                     window.clearTimeout(searchTimeoutRef.current);
                     searchTimeoutRef.current = null;
                   }
                   void applySearch();
                 }}
-              >
-                <MagnifyingGlass size={15} />
-                <input
-                  aria-label={t("mentions.search.label")}
-                  onChange={(event) => {
-                    const nextSearch = event.target.value;
-                    setSearch(nextSearch);
-                    if (searchTimeoutRef.current != null) {
-                      window.clearTimeout(searchTimeoutRef.current);
-                    }
-                    searchTimeoutRef.current = window.setTimeout(() => {
-                      searchTimeoutRef.current = null;
-                      void onApplyFilter(selectionFromData(data, nextSearch));
-                    }, 500);
-                  }}
-                  placeholder={t("mentions.search.placeholder")}
-                  value={search}
-                />
-                {search ? (
-                  <button
-                    aria-label={t("mentions.search.clear")}
-                    onClick={() => {
-                      if (searchTimeoutRef.current != null) {
-                        window.clearTimeout(searchTimeoutRef.current);
-                        searchTimeoutRef.current = null;
-                      }
-                      setSearch("");
-                      void onApplyFilter(selectionFromData(data, ""));
-                    }}
-                    type="button"
-                  >
-                    <X size={13} />
-                  </button>
-                ) : null}
-              </form>
+                placeholder={t("mentions.search.placeholder")}
+                value={search}
+              />
               <div
                 aria-label={t("mentions.layout.label")}
                 className="signal-v2-mentions-layout"
@@ -445,204 +383,85 @@ export function SignalV2Mentions({
                   <GridFour size={15} />
                 </button>
               </div>
-              <div className="signal-v2-mentions-sort" ref={sortRef}>
-                <button
-                  aria-expanded={sortOpen}
-                  aria-haspopup="menu"
-                  disabled={pageLoading}
-                  onClick={() => {
-                    setSortOpen((open) => !open);
-                    setPageSizeOpen(false);
-                  }}
-                  type="button"
-                >
-                  <ArrowsDownUp size={15} />
-                  <span>{t("mentions.sort.label")}</span>
-                  <strong>{t(`mentions.sort.${sortKey}`)}</strong>
-                  <CaretDown size={12} />
-                </button>
-                {sortOpen ? (
-                  <div className="signal-v2-mentions-sort__menu" role="menu">
-                    {MENTION_SORT_KEYS.map((key, index) => (
-                      <button
-                        aria-checked={sortKey === key}
-                        className={index > 1 && index % 2 === 0 ? "is-group-start" : undefined}
-                        key={key}
-                        onClick={() => {
-                          setSortKey(key);
-                          setSortOpen(false);
-                          void loadPage({ offset: 0, sort: key });
-                        }}
-                        role="menuitemradio"
-                        type="button"
-                      >
-                        <span>{sortKey === key ? <Check size={14} weight="bold" /> : null}</span>
-                        {t(`mentions.sort.${key}`)}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <div className="signal-v2-mentions-columns" ref={columnsRef}>
-                <button
-                  aria-expanded={columnsOpen}
-                  aria-haspopup="menu"
-                  onClick={() => setColumnsOpen((open) => !open)}
-                  type="button"
-                >
-                  <Columns size={15} />{t("mentions.actions.columns")}<CaretDown size={12} />
-                </button>
-                {columnsOpen ? (
-                  <div className="signal-v2-mentions-columns__menu" role="menu">
-                    <div className="signal-v2-mentions-columns__sort">
-                      <ArrowsDownUp size={15} />
-                      <span>{t("mentions.columns.order")}</span>
-                      <strong>{t("mentions.columns.manual")}</strong>
-                    </div>
-                    <div className="signal-v2-mentions-columns__heading">
-                      <strong>{t("mentions.columns.title")}</strong>
-                      <small>{t("mentions.columns.drag")}</small>
-                    </div>
-                    <div className="signal-v2-mentions-columns__list">
-                      {columns.map((column) => (
-                        <div
-                          className={draggedColumn === column.key ? "is-dragging" : undefined}
-                          draggable={!column.locked}
-                          key={column.key}
-                          onDragEnd={() => setDraggedColumn(null)}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDragStart={() => setDraggedColumn(column.key)}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            if (draggedColumn) moveColumn(draggedColumn, column.key);
-                            setDraggedColumn(null);
-                          }}
-                          role="menuitem"
-                        >
-                          <span
-                            aria-hidden="true"
-                            className="signal-v2-mentions-columns__handle"
-                          >
-                            {column.locked
-                              ? <LockSimple size={13} />
-                              : <DotsSixVertical size={15} weight="bold" />}
-                          </span>
-                          <span>{t(`mentions.table.${column.key}`)}</span>
-                          <button
-                            aria-label={column.locked
-                              ? t("mentions.columns.required")
-                              : column.visible
-                                ? t("mentions.columns.hide", { column: t(`mentions.table.${column.key}`) })
-                                : t("mentions.columns.show", { column: t(`mentions.table.${column.key}`) })}
-                            disabled={column.locked}
-                            onClick={() => toggleColumn(column.key)}
-                            title={column.locked ? t("mentions.columns.required") : undefined}
-                            type="button"
-                          >
-                            {column.locked
-                              ? <LockSimple size={14} />
-                              : column.visible
-                                ? <Eye size={15} />
-                                : <EyeSlash size={15} />}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              <MentionResourceSort
+                ariaLabel={t("mentions.sort.ariaLabel")}
+                disabled={pageLoading}
+                label={t("mentions.sort.label")}
+                onChange={(key) => {
+                  setSortKey(key);
+                  void loadPage({ offset: 0, sort: key });
+                }}
+                options={MENTION_SORT_KEYS.map((key, index) => ({
+                  groupStart: index > 1 && index % 2 === 0,
+                  key,
+                  label: t(`mentions.sort.${key}`)
+                }))}
+                value={sortKey}
+              />
+              <MentionResourceColumns
+                columns={columns}
+                getLabel={(key) => t(`mentions.table.${key}`)}
+                labels={{
+                  action: t("mentions.actions.columns"),
+                  drag: t("mentions.columns.drag"),
+                  hide: (column) => t("mentions.columns.hide", { column }),
+                  manual: t("mentions.columns.manual"),
+                  order: t("mentions.columns.order"),
+                  required: t("mentions.columns.required"),
+                  show: (column) => t("mentions.columns.show", { column }),
+                  title: t("mentions.columns.title")
+                }}
+                onChange={setColumns}
+              />
               <button className="signal-v2-mentions-export" onClick={exportSelection} type="button">
                 <DownloadSimple size={15} />{t("mentions.actions.export")}
               </button>
             </>
           )}
+          {loading || pageLoading ? (
+            <span aria-live="polite" className="signal-v2-local-update" role="status">
+              <SpinnerGap aria-hidden size={13} />
+              {t("actions.loading")}
+            </span>
+          ) : null}
         </div>
 
         {pageError ? <p className="signal-v2-mentions-error">{pageError}</p> : null}
 
         <div className={`signal-v2-mentions-table-wrap signal-v2-mentions-table-wrap--${layout}`}>
           {layout === "table" ? (
-          <table
-            className={`signal-v2-mentions-table${visibleColumns.length <= 2 ? " is-compact" : ""}`}
-            key={visibleColumns.join(":")}
-          >
-            <thead>
-              <tr>
-                <th className="signal-v2-mentions-table__check">
-                  <button
-                    aria-label={allSelected ? t("mentions.selectionClearAll") : t("mentions.selectionAll")}
-                    onClick={() => setSelectedIds(allSelected ? [] : data.records.map((record) => record.subject_id))}
-                    type="button"
-                  >
-                    {allSelected ? <CheckSquare size={16} weight="fill" /> : <span />}
-                  </button>
-                </th>
-                {visibleColumns.map((column) => (
-                  <th
-                    className={`signal-v2-mentions-table__${column}`}
-                    key={column}
-                  >
-                    {column === "scope" ? (
-                      <SignalMetricHelp
-                        content={{
-                          body: t("mentions.helpers.scope.body"),
-                          formula: t("mentions.helpers.scope.process"),
-                          title: t("mentions.helpers.scope.title")
-                        }}
-                        label={t(`mentions.table.${column}`)}
-                      />
-                    ) : column === "context" ? (
-                      <SignalMetricHelp
-                        content={{
-                          body: t("mentions.helpers.tb.body"),
-                          formula: t("mentions.helpers.tb.process"),
-                          title: t("mentions.helpers.tb.title")
-                        }}
-                        label={t(`mentions.table.${column}`)}
-                      />
-                    ) : <span>{t(`mentions.table.${column}`)}</span>}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.records.map((record) => {
+            <MentionResourceTable
+              columnLabel={(column) => t(`mentions.table.${column}`)}
+              columns={visibleColumns}
+              onActivate={activateRecord}
+              onTogglePage={() => {
+                const pageIds = data.records.map((record) => record.subject_id);
+                const pageSelected = pageIds.length > 0
+                  && pageIds.every((id) => selectedIds.includes(id));
+                setSelectedIds(pageSelected
+                  ? selectedIds.filter((id) => !pageIds.includes(id))
+                  : Array.from(new Set([...selectedIds, ...pageIds])));
+              }}
+              onToggleSelected={(record) => {
                 const selected = selectedIds.includes(record.subject_id);
-                return (
-                  <tr
-                    aria-selected={selected}
-                    key={record.subject_id}
-                    onClick={() => setActiveRecord(record)}
-                  >
-                    <td className="signal-v2-mentions-table__check">
-                      <button
-                        aria-label={selected
-                          ? t("mentions.selectionRemove")
-                          : t("mentions.selectionAdd")}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedIds((current) => selected
-                            ? current.filter((id) => id !== record.subject_id)
-                            : [...current, record.subject_id]);
-                        }}
-                        type="button"
-                      >
-                        {selected ? <Check size={12} weight="bold" /> : <span />}
-                      </button>
-                    </td>
-                    {visibleColumns.map((column) => (
-                      <MentionTableCell column={column} key={column} record={record} />
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                setSelectedIds((current) => selected
+                  ? current.filter((id) => id !== record.subject_id)
+                  : [...current, record.subject_id]);
+              }}
+              records={data.records}
+              selectedIds={selectedIds}
+              selectionLabels={{
+                add: t("mentions.selectionAdd"),
+                clearPage: t("mentions.selectionClearAll"),
+                remove: t("mentions.selectionRemove"),
+                selectPage: t("mentions.selectionAll")
+              }}
+            />
           ) : (
             <MentionCards
               activeRecord={activeRecord}
               columns={visibleColumns}
-              onActivate={setActiveRecord}
+              onActivate={activateRecord}
               onSelect={(record) => {
                 const selected = selectedIds.includes(record.subject_id);
                 setSelectedIds((current) => selected
@@ -660,74 +479,39 @@ export function SignalV2Mentions({
               <p>{t("mentions.empty.body")}</p>
             </div>
           ) : null}
-          {loading || pageLoading
+          {showEmptyLoadingState
             ? layout === "table"
               ? <MentionsTableSkeleton columns={visibleColumns.length + 1} />
               : <MentionsCardSkeleton />
             : null}
         </div>
 
-        <footer className="signal-v2-mentions-pagination">
-          <span>{t("mentions.pagination.range", {
+        <MentionResourcePagination
+          disabled={pageLoading}
+          labels={{
+            next: t("mentions.pagination.next"),
+            perPage: t("mentions.pagination.perPage"),
+            previous: t("mentions.pagination.previous")
+          }}
+          nextDisabled={data.page.next_offset == null}
+          onNext={() => data.page.next_offset != null && void loadPage({
+            offset: data.page.next_offset
+          })}
+          onPageSize={(size) => void loadPage({ limit: size, offset: 0 })}
+          onPrevious={goBack}
+          pageSize={data.page.limit}
+          previousDisabled={data.page.offset === 0}
+          rangeLabel={t("mentions.pagination.range", {
             start: pageStart,
             end: pageEnd,
             total: data.total_count
-          })}</span>
-          <div className="signal-v2-mentions-page-size" ref={pageSizeRef}>
-            <span>{t("mentions.pagination.perPage")}</span>
-            <button
-              aria-expanded={pageSizeOpen}
-              aria-haspopup="menu"
-              disabled={pageLoading}
-              onClick={() => {
-                setPageSizeOpen((open) => !open);
-                setSortOpen(false);
-              }}
-              type="button"
-            >
-              <strong>{data.page.limit}</strong>
-              <CaretDown size={12} />
-            </button>
-            {pageSizeOpen ? (
-              <div className="signal-v2-mentions-page-size__menu" role="menu">
-                {[25, 50, 100].map((size) => (
-                  <button
-                    aria-checked={data.page.limit === size}
-                    key={size}
-                    onClick={() => {
-                      setPageSizeOpen(false);
-                      void loadPage({ limit: size, offset: 0 });
-                    }}
-                    role="menuitemradio"
-                    type="button"
-                  >
-                    <span>{data.page.limit === size ? <Check size={14} weight="bold" /> : null}</span>
-                    {size}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <div>
-            <button disabled={data.page.offset === 0 || pageLoading} onClick={goBack} type="button">
-              <ArrowLeft size={14} />{t("mentions.pagination.previous")}
-            </button>
-            <button
-              disabled={data.page.next_offset == null || pageLoading}
-              onClick={() => data.page.next_offset != null && void loadPage({
-                offset: data.page.next_offset
-              })}
-              type="button"
-            >
-              {t("mentions.pagination.next")}<ArrowRight size={14} />
-            </button>
-          </div>
-        </footer>
+          })}
+        />
       </article>
 
       {activeRecord ? (
-        <MentionDetailDrawer
-          onClose={() => setActiveRecord(null)}
+        <SignalMentionDetailDrawer
+          onClose={closeActiveRecord}
           record={activeRecord}
         />
       ) : null}
@@ -788,7 +572,7 @@ function MentionCards({
               {columns.includes("role")
                 ? <span className="signal-v2-neutral-chip">{t(`mentions.roles.${record.conversation_role}`)}</span>
                 : null}
-              {columns.includes("sentiment") ? <Sentiment value={record.sentiment} /> : null}
+              {columns.includes("sentiment") ? <MentionSentiment value={record.sentiment} /> : null}
               {columns.includes("published") ? <time>{formatDate(record.occurred_at)}</time> : null}
             </div>
             {columns.includes("context") ? <MentionContext record={record} /> : null}
@@ -805,111 +589,25 @@ function MentionCards({
   );
 }
 
-function MentionTableCell({
-  column,
-  record
-}: {
-  column: MentionColumn;
-  record: SignalMentionRecordV1;
-}) {
-  const t = useTranslations("SignalV2");
-  switch (column) {
-    case "mention":
-      return (
-        <td className="signal-v2-mentions-table__mention">
-          <div>
-            <SignalSourceIcon platform={record.platform} size={14} />
-            <span>
-              <strong>{record.title || truncate(record.text_snippet, 92)}</strong>
-              {record.title ? <small>{truncate(record.text_snippet, 116)}</small> : null}
-            </span>
-          </div>
-        </td>
-      );
-    case "platform":
-      return (
-        <td className="signal-v2-mentions-table__platform">
-          <span className="signal-v2-source-label">
-            <SignalSourceIcon platform={record.platform} size={13} />
-            {pretty(record.platform)}
-          </span>
-        </td>
-      );
-    case "scope":
-      return <td className="signal-v2-mentions-table__scope"><AttributionBadge record={record} /></td>;
-    case "role":
-      return (
-        <td className="signal-v2-mentions-table__role">
-          <span className="signal-v2-neutral-chip">
-            {t(`mentions.roles.${record.conversation_role}`)}
-          </span>
-        </td>
-      );
-    case "published":
-      return <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at)}</td>;
-    case "sentiment":
-      return <td className="signal-v2-mentions-table__sentiment"><Sentiment value={record.sentiment} /></td>;
-    case "engagement":
-      return <td className="signal-v2-mentions-table__engagement">{formatCount(record.interaction_count)}</td>;
-    case "context":
-      return <td className="signal-v2-mentions-table__context"><MentionContext record={record} /></td>;
-  }
-}
-
-function AttributionBadge({ record }: { record: SignalMentionRecordV1 }) {
-  const t = useTranslations("SignalV2");
-  const primary = primaryAttribution(record);
-  return (
-    <span className={`signal-v2-mention-scope signal-v2-mention-scope--${primary.scope}`}>
-      <i />
-      {t(`mentions.scope.${primary.scope}`)}
-    </span>
-  );
-}
-
-function MentionContext({ record }: { record: SignalMentionRecordV1 }) {
-  const t = useTranslations("SignalV2");
-  const coding = primaryTbCoding(record);
-  const reservedTbTags = new Set(["trigger", "barrier", "mixed", "irrelevant"]);
-  const classification = [
-    ...(coding?.polarity ? [t(`mentions.tb.polarity.${coding.polarity}`)] : []),
-    ...(coding?.layer ? [t(`mentions.tb.layer.${coding.layer}`)] : [])
-  ].join(" · ");
-  const observedSignal = coding?.emergent_tags.find((tag) => (
-    !reservedTbTags.has(tag.toLocaleLowerCase())
-  )) ?? null;
-  const contextTitle = [
-    classification ? `${t("mentions.tb.compactClassification")}: ${classification}.` : null,
-    observedSignal ? `${t("mentions.tb.compactSignal")}: ${observedSignal}.` : null
-  ].filter(Boolean).join(" ");
-
-  return (
-    <div className="signal-v2-mention-context" title={contextTitle || undefined}>
-      {classification ? (
-        <span
-          className={`signal-v2-mention-context__classification signal-v2-mention-context__classification--${coding?.polarity ?? "mixed"}${observedSignal ? "" : " signal-v2-mention-context__classification--only"}`}
-        >
-          <small>{t("mentions.tb.compactClassification")}</small>
-          <strong>{classification}</strong>
-        </span>
-      ) : null}
-      {observedSignal ? (
-        <span className="signal-v2-mention-context__signal">
-          <small>{t("mentions.tb.compactSignal")}</small>
-          <strong>{observedSignal}</strong>
-        </span>
-      ) : null}
-      {!classification && !observedSignal ? <small>—</small> : null}
-    </div>
-  );
-}
-
-function MentionDetailDrawer({
+export function SignalMentionDetailDrawer({
+  footer,
   onClose,
-  record
+  operatorAction,
+  operatorContent,
+  record,
+  technicalContent,
+  variant = "signal"
 }: {
+  footer?: ReactNode;
   onClose: () => void;
+  operatorAction?: {
+    label: string;
+    onClick: () => void;
+  };
+  operatorContent?: ReactNode;
   record: SignalMentionRecordV1;
+  technicalContent?: ReactNode;
+  variant?: "operator" | "signal";
 }) {
   const t = useTranslations("SignalV2");
   const engagement = Object.entries(record.engagement)
@@ -919,171 +617,191 @@ function MentionDetailDrawer({
     })
     .sort((left, right) => right.value - left.value);
   const groupedTags = groupTags(record.tags);
+  const visibleFeatures = record.features.filter(isPublicMentionFeature);
+  const performanceSection = (
+    <DetailSection key="performance" title={t("mentions.detail.performance")}>
+      <dl className="signal-v2-mention-drawer__metrics">
+        <div><dt>{t("mentions.table.engagement")}</dt><dd>{formatCount(record.interaction_count)}</dd></div>
+        {engagement.map((item) => (
+          <div key={item.key}><dt>{pretty(item.key)}</dt><dd>{formatCount(item.value)}</dd></div>
+        ))}
+      </dl>
+    </DetailSection>
+  );
+  const scopeSection = (
+    <DetailSection
+      help={{
+        body: t("mentions.helpers.scope.body"),
+        process: t("mentions.helpers.scope.process"),
+        title: t("mentions.helpers.scope.title")
+      }}
+      key="scope"
+      title={t("mentions.detail.scope")}
+    >
+      <div className="signal-v2-mention-drawer__scope">
+        <AttributionBadge record={record} />
+        {record.attribution.length > 1 ? (
+          <small>{t("mentions.scope.multiple", {
+            scopes: record.attribution
+              .map((item) => t(`mentions.scope.${item.scope}`))
+              .filter((item, index, values) => values.indexOf(item) === index)
+              .join(", ")
+          })}</small>
+        ) : null}
+      </div>
+    </DetailSection>
+  );
+  const tbSection = record.tb_classification ? (
+    <DetailSection
+      help={{
+        body: t("mentions.helpers.tb.body"),
+        process: t("mentions.helpers.tb.process"),
+        title: t("mentions.helpers.tb.title")
+      }}
+      key="tb"
+      title={t("mentions.detail.tbEnrichment")}
+    >
+      <div className="signal-v2-mention-drawer__tb">
+        <div className="signal-v2-mention-drawer__tb-head">
+          <strong>{t("mentions.tb.title")}</strong>
+          <span>{t("mentions.tb.analysisApproved")}</span>
+        </div>
+        {record.tb_classification.codings.map((coding, index) => (
+          <div className="signal-v2-mention-drawer__tb-coding" key={`${coding.finding_id ?? "coding"}:${index}`}>
+            <div>
+              <TbBadge coding={coding} />
+              {coding.layer ? <span>{t(`mentions.tb.layer.${coding.layer}`)}</span> : null}
+              {coding.ambiguous ? <span>{t("mentions.tb.ambiguous")}</span> : null}
+            </div>
+            {coding.emergent_tags.length > 0 ? (
+              <div className="signal-v2-mention-drawer__tb-signals">
+                <small>
+                  <SignalMetricHelp
+                    content={{
+                      body: t("mentions.helpers.observedSignals.body"),
+                      formula: t("mentions.helpers.observedSignals.process"),
+                      title: t("mentions.helpers.observedSignals.title")
+                    }}
+                    label={t("mentions.tb.observedSignals")}
+                  />
+                </small>
+                <ul>{coding.emergent_tags.map((tag) => <li key={tag}>{tag}</li>)}</ul>
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </DetailSection>
+  ) : null;
+  const enrichmentSection = (
+    <DetailSection
+      help={{
+        body: t("mentions.helpers.enrichment.body"),
+        process: t("mentions.helpers.enrichment.process"),
+        title: t("mentions.helpers.enrichment.title")
+      }}
+      key="enrichment"
+      title={t("mentions.detail.enrichment")}
+    >
+      {groupedTags.length > 0 ? groupedTags.map(([taxonomy, tags]) => (
+        <div className="signal-v2-mention-drawer__tag-group" key={taxonomy}>
+          <strong>{pretty(taxonomy)}</strong>
+          <div>{tags.map((tag) => <span key={tag.term_key}>{tag.label}</span>)}</div>
+        </div>
+      )) : <p className="signal-v2-mention-drawer__empty">{t("mentions.detail.noEnrichment")}</p>}
+    </DetailSection>
+  );
+  const attributesSection = visibleFeatures.length > 0 ? (
+    <DetailSection
+      help={{
+        body: t("mentions.helpers.attributes.body"),
+        process: t("mentions.helpers.attributes.process"),
+        title: t("mentions.helpers.attributes.title")
+      }}
+      key="attributes"
+      title={t("mentions.detail.attributes")}
+    >
+      <div className="signal-v2-mention-drawer__features">
+        {visibleFeatures.map((feature, index) => (
+          <span key={`${feature.key}:${index}`}>
+            <strong>{pretty(feature.key)}</strong>
+            <small>{formatFeatureValue(feature.value, t("mentions.detail.present"))}</small>
+          </span>
+        ))}
+      </div>
+    </DetailSection>
+  ) : null;
+  const entitiesSection = record.entities.length > 0 ? (
+    <DetailSection key="entities" title={t("mentions.detail.entities")}>
+      <div className="signal-v2-mention-drawer__entities">
+        {record.entities.map((entity) => (
+          <span key={`${entity.type}:${entity.name}`}>
+            <strong>{entity.name}</strong>
+            <small>{pretty(entity.type)}</small>
+          </span>
+        ))}
+      </div>
+    </DetailSection>
+  ) : null;
+  const metadataSection = (
+    <DetailSection key="metadata" title={t("mentions.detail.metadata")}>
+      <dl className="signal-v2-mention-drawer__metadata">
+        <div><dt>{t("mentions.table.platform")}</dt><dd>{pretty(record.platform)}</dd></div>
+        <div><dt>{t("mentions.table.role")}</dt><dd>{t(`mentions.roles.${record.conversation_role}`)}</dd></div>
+        <div><dt>{t("mentions.detail.language")}</dt><dd>{record.language?.toUpperCase() || "—"}</dd></div>
+        <div><dt>{t("mentions.detail.country")}</dt><dd>{record.country || "—"}</dd></div>
+      </dl>
+    </DetailSection>
+  );
+  const signalSections = [performanceSection, scopeSection, tbSection, enrichmentSection, attributesSection, entitiesSection, metadataSection];
+  const operatorSections = [tbSection, scopeSection, enrichmentSection, attributesSection, metadataSection, performanceSection, entitiesSection];
 
   return (
-    <>
-      <button aria-label={t("mentions.detail.close")} className="signal-v2-mention-drawer-scrim" onClick={onClose} type="button" />
-      <aside aria-label={t("mentions.detail.title")} className="signal-v2-mention-drawer">
-        <header>
-          <div>
-            <span className="signal-v2-source-label">
-              <SignalSourceIcon platform={record.platform} size={15} />
-              {pretty(record.platform)}
-            </span>
-            <strong>{t("mentions.detail.title")}</strong>
-          </div>
-          <button aria-label={t("mentions.detail.close")} onClick={onClose} type="button"><X size={16} /></button>
-        </header>
-        <div className="signal-v2-mention-drawer__content">
+    <WorkspaceDrawer
+      ariaLabel={t("mentions.detail.title")}
+      bodyClassName="signal-v2-mention-drawer__content"
+      closeLabel={t("mentions.detail.close")}
+      eyebrow={(
+        <span className="signal-v2-source-label">
+          <SignalSourceIcon platform={record.platform} size={15} />
+          {pretty(record.platform)}
+        </span>
+      )}
+      layerClassName="signal-v2-mention-drawer-layer"
+      onClose={onClose}
+      panelClassName="signal-v2-mention-drawer"
+      scrimClassName="signal-v2-mention-drawer-scrim"
+      title={t("mentions.detail.title")}
+      footer={footer}
+    >
           <section className="signal-v2-mention-drawer__verbatim">
             <div>
               <span className="signal-v2-neutral-chip">{t(`mentions.roles.${record.conversation_role}`)}</span>
-              <Sentiment value={record.sentiment} />
+              <MentionSentiment value={record.sentiment} />
             </div>
             {record.title ? <h2>{record.title}</h2> : null}
             <p>{record.text_snippet || t("mentions.detail.noText")}</p>
             <small>{formatDateTime(record.occurred_at)}</small>
-            {record.url ? (
-              <a href={record.url} rel="noreferrer" target="_blank">
-                {t("mentions.detail.openOriginal")}<ArrowSquareOut size={14} />
-              </a>
+            {record.url || operatorAction ? (
+              <div className="signal-v2-mention-drawer__verbatim-actions">
+                {record.url ? (
+                  <a href={record.url} rel="noreferrer" target="_blank">
+                    {t("mentions.detail.openOriginal")}<ArrowSquareOut size={14} />
+                  </a>
+                ) : null}
+                {operatorAction ? (
+                  <button onClick={operatorAction.onClick} type="button">
+                    {operatorAction.label}<ArrowRight size={14} />
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </section>
 
-          <DetailSection title={t("mentions.detail.performance")}>
-            <dl className="signal-v2-mention-drawer__metrics">
-              <div><dt>{t("mentions.table.engagement")}</dt><dd>{formatCount(record.interaction_count)}</dd></div>
-              {engagement.map((item) => (
-                <div key={item.key}><dt>{pretty(item.key)}</dt><dd>{formatCount(item.value)}</dd></div>
-              ))}
-            </dl>
-          </DetailSection>
-
-          <DetailSection
-            help={{
-              body: t("mentions.helpers.scope.body"),
-              process: t("mentions.helpers.scope.process"),
-              title: t("mentions.helpers.scope.title")
-            }}
-            title={t("mentions.detail.scope")}
-          >
-            <div className="signal-v2-mention-drawer__scope">
-              <AttributionBadge record={record} />
-              {record.attribution.length > 1 ? (
-                <small>{t("mentions.scope.multiple", {
-                  scopes: record.attribution
-                    .map((item) => t(`mentions.scope.${item.scope}`))
-                    .filter((item, index, values) => values.indexOf(item) === index)
-                    .join(", ")
-                })}</small>
-              ) : null}
-            </div>
-          </DetailSection>
-
-          {record.tb_classification ? (
-            <DetailSection
-              help={{
-                body: t("mentions.helpers.tb.body"),
-                process: t("mentions.helpers.tb.process"),
-                title: t("mentions.helpers.tb.title")
-              }}
-              title={t("mentions.detail.tbEnrichment")}
-            >
-              <div className="signal-v2-mention-drawer__tb">
-                <div className="signal-v2-mention-drawer__tb-head">
-                  <strong>{t("mentions.tb.title")}</strong>
-                  <span>{t("mentions.tb.analysisApproved")}</span>
-                </div>
-                {record.tb_classification.codings.map((coding, index) => (
-                  <div className="signal-v2-mention-drawer__tb-coding" key={`${coding.finding_id ?? "coding"}:${index}`}>
-                    <div>
-                      <TbBadge coding={coding} />
-                      {coding.layer ? <span>{t(`mentions.tb.layer.${coding.layer}`)}</span> : null}
-                      {coding.ambiguous ? <span>{t("mentions.tb.ambiguous")}</span> : null}
-                    </div>
-                    {coding.emergent_tags.length > 0 ? (
-                      <div className="signal-v2-mention-drawer__tb-signals">
-                        <small>
-                          <SignalMetricHelp
-                            content={{
-                              body: t("mentions.helpers.observedSignals.body"),
-                              formula: t("mentions.helpers.observedSignals.process"),
-                              title: t("mentions.helpers.observedSignals.title")
-                            }}
-                            label={t("mentions.tb.observedSignals")}
-                          />
-                        </small>
-                        <ul>
-                          {coding.emergent_tags.map((tag) => <li key={tag}>{tag}</li>)}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </DetailSection>
-          ) : null}
-
-          <DetailSection
-            help={{
-              body: t("mentions.helpers.enrichment.body"),
-              process: t("mentions.helpers.enrichment.process"),
-              title: t("mentions.helpers.enrichment.title")
-            }}
-            title={t("mentions.detail.enrichment")}
-          >
-            {groupedTags.length > 0 ? groupedTags.map(([taxonomy, tags]) => (
-              <div className="signal-v2-mention-drawer__tag-group" key={taxonomy}>
-                <strong>{pretty(taxonomy)}</strong>
-                <div>{tags.map((tag) => <span key={tag.term_key}>{tag.label}</span>)}</div>
-              </div>
-            )) : <p className="signal-v2-mention-drawer__empty">{t("mentions.detail.noEnrichment")}</p>}
-          </DetailSection>
-
-          {record.features.some((feature) => feature.key !== "tb_coding") ? (
-            <DetailSection
-              help={{
-                body: t("mentions.helpers.attributes.body"),
-                process: t("mentions.helpers.attributes.process"),
-                title: t("mentions.helpers.attributes.title")
-              }}
-              title={t("mentions.detail.attributes")}
-            >
-              <div className="signal-v2-mention-drawer__features">
-                {record.features.filter((feature) => feature.key !== "tb_coding").map((feature, index) => (
-                  <span key={`${feature.key}:${index}`}>
-                    <strong>{pretty(feature.key)}</strong>
-                    <small>{formatFeatureValue(feature.value, t("mentions.detail.present"))}</small>
-                  </span>
-                ))}
-              </div>
-            </DetailSection>
-          ) : null}
-
-          {record.entities.length > 0 ? (
-            <DetailSection title={t("mentions.detail.entities")}>
-              <div className="signal-v2-mention-drawer__entities">
-                {record.entities.map((entity) => (
-                  <span key={`${entity.type}:${entity.name}`}>
-                    <strong>{entity.name}</strong>
-                    <small>{pretty(entity.type)}</small>
-                  </span>
-                ))}
-              </div>
-            </DetailSection>
-          ) : null}
-
-          <DetailSection title={t("mentions.detail.metadata")}>
-            <dl className="signal-v2-mention-drawer__metadata">
-              <div><dt>{t("mentions.table.platform")}</dt><dd>{pretty(record.platform)}</dd></div>
-              <div><dt>{t("mentions.table.role")}</dt><dd>{t(`mentions.roles.${record.conversation_role}`)}</dd></div>
-              <div><dt>{t("mentions.detail.language")}</dt><dd>{record.language?.toUpperCase() || "—"}</dd></div>
-              <div><dt>{t("mentions.detail.country")}</dt><dd>{record.country || "—"}</dd></div>
-            </dl>
-          </DetailSection>
-        </div>
-      </aside>
-    </>
+          {operatorContent}
+          {(variant === "operator" ? operatorSections : signalSections).filter(Boolean)}
+          {technicalContent}
+    </WorkspaceDrawer>
   );
 }
 
@@ -1117,17 +835,6 @@ function DetailSection({
   );
 }
 
-function Sentiment({ value }: { value: SignalMentionRecordV1["sentiment"] }) {
-  const t = useTranslations("SignalV2");
-  const key = value ?? "unclassified";
-  return (
-    <span className={`signal-v2-mention-sentiment signal-v2-mention-sentiment--${key}`}>
-      <i />
-      {t(`mentions.sentiment.${key}`)}
-    </span>
-  );
-}
-
 function TbBadge({ coding }: { coding: MentionTbCoding }) {
   const t = useTranslations("SignalV2");
   const polarity = coding.polarity ?? "mixed";
@@ -1135,23 +842,6 @@ function TbBadge({ coding }: { coding: MentionTbCoding }) {
     <span className={`signal-v2-tb-badge signal-v2-tb-badge--${polarity}`}>
       {t(`mentions.tb.polarity.${polarity}`)}
     </span>
-  );
-}
-
-function MentionsTableSkeleton({ columns }: { columns: number }) {
-  return (
-    <div className="signal-v2-mentions-table-skeleton" role="status">
-      {Array.from({ length: 8 }, (_, row) => (
-        <div key={row} style={{ gridTemplateColumns: `34px minmax(280px, 2fr) repeat(${Math.max(1, columns - 2)}, minmax(86px, 1fr))` }}>
-          <span />
-          <div>
-            <strong />
-            <small />
-          </div>
-          {Array.from({ length: Math.max(1, columns - 2) }, (__, cell) => <i key={cell} />)}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -1230,29 +920,6 @@ function groupTags(tags: SignalMentionRecordV1["tags"]) {
   return [...groups.entries()];
 }
 
-function primaryAttribution(record: SignalMentionRecordV1) {
-  return record.attribution.find((item) => item.scope === "brand")
-    ?? record.attribution.find((item) => item.scope === "competitor")
-    ?? record.attribution.find((item) => item.scope === "category")
-    ?? record.attribution[0]
-    ?? { scope: "unknown" as const, label: "Unattributed" };
-}
-
-function primaryTbCoding(record: SignalMentionRecordV1) {
-  return record.tb_classification?.codings.find((coding) => coding.polarity !== "irrelevant")
-    ?? record.tb_classification?.codings[0]
-    ?? null;
-}
-
-function pretty(value: string | null) {
-  if (!value) return "Web";
-  return value.replaceAll("_", " ").replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase());
-}
-
-function formatCount(value: number) {
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 }
@@ -1262,10 +929,6 @@ function formatDateTime(value: string) {
     dateStyle: "long",
     timeStyle: "short"
   }).format(new Date(value));
-}
-
-function truncate(value: string, length: number) {
-  return value.length > length ? `${value.slice(0, length - 1).trimEnd()}…` : value;
 }
 
 function csvCell(value: string) {
@@ -1280,4 +943,11 @@ function formatFeatureValue(value: unknown, fallback: string) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map((item) => String(item)).join(", ");
   return fallback;
+}
+
+function isPublicMentionFeature(feature: SignalMentionRecordV1["features"][number]) {
+  const key = feature.key.toLowerCase();
+  return key !== "mention_operational_context"
+    && key !== "tb_coding"
+    && !key.startsWith("signal_taxonomy_classification");
 }

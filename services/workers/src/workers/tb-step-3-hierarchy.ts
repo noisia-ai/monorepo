@@ -28,10 +28,12 @@ import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -127,7 +129,7 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
     await job.updateProgress(55);
 
     // Single Claude call to score all clusters
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildHierarchyPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -136,11 +138,19 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
       ragContext,
       clusters: clustersWithSamples
     });
-
     let evalResult;
     try {
-      const r = await generateText({ model: anthropic(model), prompt, temperature: 0.15 });
-      console.log(`[tb-step3] response first 200: ${r.text.slice(0, 200)}`);
+      const r = await runTbGovernedProviderCall({
+        tbAnalysisId,
+        operationKey: "step3-hierarchy",
+        prompt,
+        maxOutputTokens: 8000,
+        invoke: (maxOutputTokens) => generateText({
+          model: anthropic(model), prompt, temperature: 0.15,
+          maxOutputTokens, maxRetries: 0
+        })
+      });
+      console.log("[tb-step3] provider response received", { chars: r.text.length });
       evalResult = parseHierarchyResponse(r.text);
     } catch (err) {
       throw new Error(`Hierarchy parse failed: ${err instanceof Error ? err.message : err}`);
@@ -370,9 +380,8 @@ async function populateClusterMentions(args: {
 async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClusterWithMentions[]> {
   const result: HierarchyClusterWithMentions[] = [];
   for (const c of eligible) {
-    // Take up to N random mention_ids from this cluster's pool
-    const pool_ = c.mention_ids.slice();
-    pool_.sort(() => Math.random() - 0.5);
+    // Stable samples keep retries/evidence reproducible.
+    const pool_ = [...new Set(c.mention_ids)].sort((left, right) => left.localeCompare(right));
     const sampleIds = pool_.slice(0, TB_HIERARCHY_SAMPLES_PER_CLUSTER);
     let samples: { mention_id: string; text: string }[] = [];
     if (sampleIds.length > 0) {

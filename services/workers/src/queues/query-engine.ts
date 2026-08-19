@@ -1,7 +1,9 @@
 import { Job, Queue, Worker } from "bullmq";
 import Redis from "ioredis";
 
-import { QUERY_ENGINE_QUEUE_NAME } from "@noisia/query-engine";
+import {
+  QUERY_ENGINE_QUEUE_NAME
+} from "@noisia/query-engine";
 import { applyQueryAdjustmentsJob } from "../workers/apply-query-adjustments";
 import { assessCorpusJob } from "../workers/assess-corpus";
 import { cleanupApplyJob } from "../workers/cleanup-apply";
@@ -25,6 +27,36 @@ const queryEngineQueueName = resolveQueueName(QUERY_ENGINE_QUEUE_NAME);
 const queryEngineProducer = new Queue(queryEngineQueueName, {
   connection: redisConnection
 });
+
+export type WorkspaceImportQueueDataV1 = {
+  workspaceId: string;
+  dataSourceId: string;
+  corpusId: string | null;
+  importBatchId: string;
+  sourceFileName: string;
+  storageBucket: string;
+  storageObjectKey: string;
+  storagePartCount: number;
+  storagePartSizeBytes: number;
+  entityLabel: string | null;
+  testFailAfterRecords?: number;
+  testCrashAfterRecords?: number;
+};
+
+export async function enqueueWorkspaceImportJobV1(
+  data: WorkspaceImportQueueDataV1,
+  stableJobId: string
+) {
+  const existing = await Job.fromId(queryEngineProducer,stableJobId);
+  if (existing) return { id: existing.id ?? stableJobId,reconciled: true };
+  const job = await queryEngineProducer.add("ingest_mentions_csv",data,{
+    jobId: stableJobId,
+    attempts: 1,
+    removeOnComplete: { age: 60*60*24*7,count: 1000 },
+    removeOnFail: { age: 60*60*24*30,count: 1000 }
+  });
+  return { id: job.id ?? stableJobId,reconciled: false };
+}
 
 export function startQueryEngineWorker() {
   // TODO mejora-futura: mover concurrency a env por ambiente y agregar

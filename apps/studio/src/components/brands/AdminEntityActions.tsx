@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { createPortal } from "react-dom";
 
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceConfirmDialog } from "@/components/workspace/WorkspaceShell";
 
 export function ArchiveCorpusButton({
   corpusId,
@@ -38,10 +38,10 @@ export function ArchiveCorpusButton({
 
   return (
     <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
+      <button className="admin-button admin-button--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
         <Icon name={busy ? "spinner" : "x"} size={13} /> {busy ? t("archiving") : t("archiveCorpus")}
       </button>
-      <ConfirmActionDialog
+      <WorkspaceConfirmDialog
         busy={busy}
         cancelLabel={t("confirmCancel")}
         confirmLabel={t("confirmArchive")}
@@ -98,7 +98,7 @@ export function DeleteBrandButton({
     <div className={`admin-action-stack${compact ? " admin-action-stack--compact" : ""}`}>
       <button
         aria-label={t("deleteBrand")}
-        className={compact ? "brand-os-action brand-os-action--icon brand-os-action--danger admin-action-button--compact" : "wizard-cta wizard-cta--danger"}
+        className={compact ? "admin-button admin-button--danger admin-button--icon" : "admin-button admin-button--danger"}
         type="button"
         disabled={busy}
         title={t("deleteBrand")}
@@ -107,7 +107,7 @@ export function DeleteBrandButton({
         <Icon name={busy ? "spinner" : compact ? "trash" : "x"} size={13} />
         {!compact ? (busy ? t("deleting") : t("deleteBrand")) : null}
       </button>
-      <ConfirmActionDialog
+      <WorkspaceConfirmDialog
         busy={busy}
         cancelLabel={t("confirmCancel")}
         confirmLabel={t("confirmDelete")}
@@ -159,7 +159,7 @@ export function PermanentDeleteBrandButton({
     <div className={`admin-action-stack${compact ? " admin-action-stack--compact" : ""}`}>
       <button
         aria-label={t("permanentDelete")}
-        className={compact ? "brand-os-action brand-os-action--icon brand-os-action--danger admin-action-button--compact" : "wizard-cta wizard-cta--danger"}
+        className={compact ? "admin-button admin-button--danger admin-button--icon" : "admin-button admin-button--danger"}
         type="button"
         disabled={busy}
         title={t("permanentDelete")}
@@ -168,7 +168,7 @@ export function PermanentDeleteBrandButton({
         <Icon name={busy ? "spinner" : compact ? "trash" : "x"} size={13} />
         {!compact ? (busy ? t("deleting") : t("permanentDelete")) : null}
       </button>
-      <ConfirmActionDialog
+      <WorkspaceConfirmDialog
         busy={busy}
         cancelLabel={t("confirmCancel")}
         confirmLabel={t("confirmPermanentDelete")}
@@ -224,11 +224,11 @@ export function DeleteThemeButton({
 
   return (
     <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
+      <button className="admin-button admin-button--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
         <Icon name={busy ? "spinner" : "x"} size={13} />{" "}
         {busy ? t("deleting") : isArchived ? t("permanentDelete") : t("deleteTheme")}
       </button>
-      <ConfirmActionDialog
+      <WorkspaceConfirmDialog
         busy={busy}
         cancelLabel={t("confirmCancel")}
         confirmLabel={isArchived ? t("confirmPermanentDelete") : t("confirmDelete")}
@@ -241,84 +241,5 @@ export function DeleteThemeButton({
       />
       {message ? <span className={`team-msg team-msg--${message.tone}`}>{message.text}</span> : null}
     </div>
-  );
-}
-
-function ConfirmActionDialog({
-  busy,
-  cancelLabel,
-  confirmLabel,
-  message,
-  open,
-  title,
-  tone,
-  onClose,
-  onConfirm
-}: {
-  busy: boolean;
-  cancelLabel: string;
-  confirmLabel: string;
-  message: string;
-  open: boolean;
-  title: string;
-  tone: "danger" | "default";
-  onClose: () => void;
-  onConfirm: () => void | Promise<void>;
-}) {
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !busy) onClose();
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onClose, open]);
-
-  if (!open) return null;
-
-  return createPortal(
-    <div
-      className="confirm-dialog-backdrop"
-      role="presentation"
-      onMouseDown={() => {
-        if (!busy) onClose();
-      }}
-    >
-      <section
-        aria-modal="true"
-        className="confirm-dialog"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <button
-          aria-label={cancelLabel}
-          className="confirm-dialog-close"
-          disabled={busy}
-          type="button"
-          onClick={onClose}
-        >
-          <Icon name="x" size={18} />
-        </button>
-        <div className={`confirm-dialog-mark confirm-dialog-mark--${tone}`}>
-          <Icon name={busy ? "spinner" : "alert"} size={18} />
-        </div>
-        <div className="confirm-dialog-copy">
-          <h2>{title}</h2>
-          <p>{message}</p>
-        </div>
-        <div className="confirm-dialog-actions">
-          <button className="confirm-dialog-button confirm-dialog-button--ghost" disabled={busy} type="button" onClick={onClose}>
-            {cancelLabel}
-          </button>
-          <button className="confirm-dialog-button confirm-dialog-button--primary" disabled={busy} type="button" onClick={onConfirm}>
-            {busy ? <Icon name="spinner" size={14} /> : null}
-            {confirmLabel}
-          </button>
-        </div>
-      </section>
-    </div>,
-    document.body
   );
 }

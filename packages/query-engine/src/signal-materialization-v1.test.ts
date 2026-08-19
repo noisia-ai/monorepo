@@ -6,6 +6,9 @@ import {
   buildSignalMentionDrillDownPlanV1,
   buildSignalAdHocMaterializationJobV1,
   buildSignalMentionPredicateV1,
+  buildSignalMentionReadPredicateV1,
+  buildSignalPopulationMentionReadPredicateV1,
+  buildSignalWorkspaceCanonicalMentionReadPredicateV1,
   buildSignalMetricMaterializationPlanV1,
   buildSignalPrecomputedFiltersV1,
   classifySignalFilterCacheScopeV1,
@@ -20,6 +23,7 @@ import {
 
 const corpusId = "10000000-0000-4000-8000-000000000001";
 const workspaceId = "20000000-0000-4000-8000-000000000001";
+const populationId = "20000000-0000-4000-8000-000000000002";
 const baseFilter = {
   date_range: { start: "2026-06-01", end: "2026-06-30" },
   timezone: "America/Mexico_City",
@@ -55,6 +59,108 @@ test("materialization and drill-down use the exact same canonical predicate", ()
   );
   assert.match(drillDown.sql, /count\(\*\) OVER\(\)::int AS total_count/u);
   assert.match(drillDown.sql, /tag\.review_status = 'approved'/u);
+  assert.doesNotMatch(drillDown.sql, /canonical_mention_id/u);
+});
+
+test("population drill-down reads active canonical membership without a corpus owner", () => {
+  const predicate = buildSignalPopulationMentionReadPredicateV1(
+    baseFilter,
+    populationId,
+    workspaceId
+  );
+  const drillDown = buildSignalMentionDrillDownPlanV1({
+    filter: baseFilter,
+    population_id: populationId,
+    workspace_id: workspaceId
+  });
+
+  assert.equal(drillDown.predicate.fingerprint, predicate.fingerprint);
+  assert.match(predicate.sql, /signal_population_memberships population_membership/u);
+  assert.match(predicate.sql, /population_membership\.removed_at IS NULL/u);
+  assert.match(predicate.sql, /m\.canonical_mention_id = m\.id/u);
+  assert.doesNotMatch(predicate.sql, /m\.study_corpus_id/u);
+  assert.ok(predicate.params.includes(populationId));
+  assert.ok(predicate.params.includes(workspaceId));
+  assert.match(drillDown.sql, /tagged_mention\.canonical_mention_id/u);
+});
+
+test("workspace canonical drill-down reads every canonical mention without operational membership", () => {
+  const predicate = buildSignalWorkspaceCanonicalMentionReadPredicateV1(baseFilter, workspaceId);
+  const drillDown = buildSignalMentionDrillDownPlanV1({
+    filter: baseFilter,
+    workspace_canonical: true,
+    workspace_id: workspaceId
+  });
+
+  assert.equal(drillDown.predicate.fingerprint, predicate.fingerprint);
+  assert.match(predicate.sql, /m\.workspace_id = \$1::uuid/u);
+  assert.match(predicate.sql, /m\.canonical_mention_id = m\.id/u);
+  assert.doesNotMatch(predicate.sql, /signal_population_memberships/u);
+  assert.doesNotMatch(predicate.sql, /m\.inclusion_status = 'included'/u);
+  assert.doesNotMatch(predicate.sql, /m\.study_corpus_id/u);
+  assert.match(drillDown.sql, /tagged_mention\.canonical_mention_id/u);
+  assert.match(drillDown.sql, /WITH scoped_mentions AS MATERIALIZED/u);
+  assert.match(drillDown.sql, /page_mentions AS \(/u);
+  assert.match(drillDown.sql, /FROM page_mentions m/u);
+  assert.match(drillDown.sql, /\(SELECT count\(\*\)::int FROM scoped_mentions\) AS total_count/u);
+  assert.match(drillDown.sql, /tag\.subject_id = ANY\(ARRAY\(/u);
+  assert.doesNotMatch(drillDown.sql, /count\(\*\) OVER\(\)::int AS total_count/u);
+});
+
+test("workspace canonical drill-down rejects a second ownership source", () => {
+  assert.throws(
+    () => buildSignalMentionDrillDownPlanV1({
+      filter: baseFilter,
+      workspace_canonical: true,
+      workspace_id: workspaceId,
+      population_id: populationId
+    }),
+    /exactly one ownership source/u
+  );
+});
+
+test("governed materialization identity includes population version and definition hash", () => {
+  const populationDefinitionHash = `sha256:${"a".repeat(64)}`;
+  const plan = buildSignalMetricMaterializationPlanV1({
+    metric_key: "conversation.volume",
+    filter: { ...baseFilter, dimensions: {} },
+    population_id: populationId,
+    workspace_id: workspaceId
+  });
+  assert.match(plan.predicate.sql, /signal_population_memberships/u);
+  assert.doesNotMatch(plan.predicate.sql, /m\.study_corpus_id/u);
+  const key = signalMetricMaterializationKeyV1({
+    workspace_id: workspaceId,
+    population_id: populationId,
+    population_version: 3,
+    population_definition_hash: populationDefinitionHash,
+    metric_key: "conversation.volume",
+    metric_version: 1,
+    granularity: "day",
+    period_start: "2026-06-01",
+    period_end: "2026-06-01",
+    filters_hash: plan.predicate.filters_hash
+  });
+  const revised = signalMetricMaterializationKeyV1({
+    workspace_id: workspaceId,
+    population_id: populationId,
+    population_version: 4,
+    population_definition_hash: `sha256:${"b".repeat(64)}`,
+    metric_key: "conversation.volume",
+    metric_version: 1,
+    granularity: "day",
+    period_start: "2026-06-01",
+    period_end: "2026-06-01",
+    filters_hash: plan.predicate.filters_hash
+  });
+  assert.notEqual(key, revised);
+  assert.throws(() => buildSignalMetricMaterializationPlanV1({
+    metric_key: "conversation.volume",
+    filter: baseFilter,
+    population_id: populationId,
+    study_corpus_ids: [corpusId],
+    workspace_id: workspaceId
+  }), /exactly one operational ownership scope/u);
 });
 
 test("metric drill-down adds the same governed constituent rule used by aggregation", () => {
@@ -73,6 +179,8 @@ test("metric drill-down adds the same governed constituent rule used by aggregat
   assert.match(topic.sql, /record_tags tag/u);
   assert.match(topic.sql, /signal_taxonomy_profiles profile/u);
   assert.match(topic.sql, /profile\.kind = 'topic'/u);
+  assert.match(topic.sql, /tagged_mention\.id = m\.id/u);
+  assert.doesNotMatch(topic.sql, /canonical_mention_id/u);
   assert.doesNotMatch(topic.sql, /LIKE '%topic%'/u);
 });
 
@@ -133,6 +241,25 @@ test("mention drill-down keeps enriched filters, sorting and offset server-side"
   assert.ok(plan.params.includes(100));
 });
 
+test("mention drill-down can resolve a stable enriched mention without weakening corpus filters", () => {
+  const mentionId = "30000000-0000-4000-8000-000000000001";
+  const plan = buildSignalMentionDrillDownPlanV1({
+    filter: baseFilter,
+    limit: 1,
+    study_corpus_ids: [corpusId],
+    subject_ids: [mentionId, mentionId]
+  });
+
+  assert.match(plan.sql, /m\.id = ANY\(\$\d+::uuid\[\]\)/u);
+  assert.match(plan.sql, /m\.study_corpus_id = ANY\(\$\d+::uuid\[\]\)/u);
+  assert.ok(plan.params.some((value) => (
+    Array.isArray(value)
+    && value.length === 1
+    && value[0] === mentionId
+  )));
+  assert.doesNotMatch(plan.sql, new RegExp(mentionId, "u"));
+});
+
 test("mention engagement sorting accepts numeric JSON values and numeric strings", () => {
   const plan = buildSignalMentionDrillDownPlanV1({
     filter: baseFilter,
@@ -187,6 +314,13 @@ test("topic and narrative filters bind exact active workspace profiles", () => {
   assert.match(narrative.sql, /profile\.kind = 'narrative'/u);
   assert.match(narrative.sql, /profile\.workspace_id = \$\d+::uuid/u);
   assert.match(narrative.sql, /tag\.review_status = 'approved'/u);
+  assert.match(narrative.sql, /tagged_mention\.id = m\.id/u);
+  assert.doesNotMatch(narrative.sql, /canonical_mention_id/u);
+  const governedNarrative = buildSignalPopulationMentionReadPredicateV1({
+    ...baseFilter,
+    dimensions: { narrative: ["care-is-prevention"] }
+  }, populationId, workspaceId);
+  assert.match(governedNarrative.sql, /tagged_mention\.canonical_mention_id/u);
   assert.doesNotMatch(narrative.sql, /LIKE '%narrative%'/u);
   assert.throws(
     () => buildSignalMentionPredicateV1({
@@ -257,12 +391,19 @@ test("conversation velocity permits its derived lookback at the maximum visible 
 });
 
 test("governed classification SQL excludes unreviewed evidence and marks provisional periods partial", () => {
-  const plan = buildSignalMetricMaterializationPlanV1({
+  const legacyPlan = buildSignalMetricMaterializationPlanV1({
     metric_key: "topic.volume",
     filter: { ...baseFilter, dimensions: {} },
     study_corpus_ids: [corpusId],
     workspace_id: workspaceId
   });
+  const governedPlan = buildSignalMetricMaterializationPlanV1({
+    metric_key: "topic.volume",
+    filter: { ...baseFilter, dimensions: {} },
+    population_id: populationId,
+    workspace_id: workspaceId
+  });
+  const plan = governedPlan;
   assert.match(plan.sql, /tag\.review_status = 'approved'/u);
   assert.match(plan.sql, /signal_taxonomy_profiles profile/u);
   assert.match(plan.sql, /'included_mentions'/u);
@@ -273,6 +414,9 @@ test("governed classification SQL excludes unreviewed evidence and marks provisi
   assert.match(plan.sql, /'share_of_classified'/u);
   assert.match(plan.sql, /'cooccurrences'/u);
   assert.match(plan.sql, /classification_review_pending/u);
+  assert.match(plan.sql, /tagged_mention\.canonical_mention_id = b\.id/u);
+  assert.match(legacyPlan.sql, /tagged_mention\.id = b\.id/u);
+  assert.doesNotMatch(legacyPlan.sql, /canonical_mention_id/u);
   assert.doesNotMatch(plan.sql, /LIKE '%topic%'/u);
 });
 
@@ -320,6 +464,24 @@ test("planner rejects excessive ranges and dimension cardinality with typed erro
     study_corpus_ids: [corpusId],
     workspace_id: workspaceId
   }));
+});
+
+test("historical read predicates accept ranges that materializations must split", () => {
+  const historicalFilter = {
+    date_range: { start: "2025-07-14", end: "2026-07-25" },
+    timezone: "America/Mexico_City",
+    granularity: "month",
+    dimensions: {}
+  };
+  assert.throws(
+    () => buildSignalMentionPredicateV1(historicalFilter, [corpusId]),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "invalid_filter"
+  );
+  const predicate = buildSignalMentionReadPredicateV1(historicalFilter, [corpusId]);
+  assert.equal(predicate.normalized_filter.date_range.start, "2025-07-14");
+  assert.equal(predicate.normalized_filter.date_range.end, "2026-07-25");
+  assert.equal(predicate.normalized_filter.granularity, "month");
+  assert.match(predicate.sql, /published_at/u);
 });
 
 test("default, bounded precomputed and ad hoc cache scopes cannot expand silently", () => {

@@ -188,7 +188,7 @@ export async function getBrandDetailForUser(appUser: AppUser, brandId: string) {
     })
     .from(competitors)
     .innerJoin(brandSeeds, eq(brandSeeds.id, competitors.competitorBrandSeedId))
-    .where(eq(competitors.brandId, brand.id));
+    .where(and(eq(competitors.brandId, brand.id),eq(competitors.status,"current")));
   const knowledgeRows = await db
     .select({
       id: brandKnowledgeSources.id,

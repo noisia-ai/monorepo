@@ -1,15 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
-  Bell,
   CaretDown,
-  ClockCounterClockwise,
   Database,
   DotsThree,
   FileText,
@@ -42,24 +40,59 @@ import type {
   SignalBrandMonitoringV1
 } from "@/lib/signal-v2/brand-monitoring";
 import type { SignalWorkspaceOption } from "@/lib/data-os/signal-workspace";
+import type { SignalMentionRecordV1 } from "@/lib/data-os/signal-workspace-serving";
 import type { SignalStrategicStudyNavigationItem } from "@/lib/signal-v2/workspace-navigation";
+import type { SignalTriggersBarriersOverviewV2 } from "@/lib/data-os/signal-triggers-barriers-serving";
+import type { SignalClientSettingsV1 } from "@/lib/data-os/signal-client-settings";
 import {
   SignalAnalyticsFilter,
   type SignalAnalyticsFilterSelection
 } from "@/components/signal-v2/SignalAnalyticsFilter";
 import { SignalEChart } from "@/components/signal-v2/SignalEChart";
+import { SignalDataScopeFilter } from "@/components/signal-v2/SignalDataScopeFilter";
 import { SignalFilterControls } from "@/components/signal-v2/SignalFilterControls";
 import {
   SignalMetricHelp as MetricHelp,
   type SignalMetricHelpContent as MetricHelpContent
 } from "@/components/signal-v2/SignalMetricHelp";
-import {
-  SignalV2Mentions,
-  type SignalMentionsViewData
-} from "@/components/signal-v2/SignalV2Mentions";
-import { SignalV2TopicsNarratives } from "@/components/signal-v2/SignalV2TopicsNarratives";
-import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
+import type { SignalMentionsViewData } from "@/components/signal-v2/SignalV2Mentions";
 import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCarousel";
+import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
+import { SignalV2Settings } from "@/components/signal-v2/SignalV2Settings";
+import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
+import {
+  WorkspaceGlobalSidebar,
+  WorkspaceAccount,
+  WorkspaceMain,
+  WorkspaceNavLink,
+  WorkspaceProductBrand,
+  WorkspaceSearchTrigger,
+  WorkspaceOverlay,
+  WorkspaceShell,
+  WorkspaceSkipLink,
+  WorkspaceTopbar,
+  WorkspaceTopbarActions
+} from "@/components/workspace/WorkspaceShell";
+
+const loadSignalV2Mentions = () => import("@/components/signal-v2/SignalV2Mentions");
+const loadSignalV2TopicsNarratives = () => import("@/components/signal-v2/SignalV2TopicsNarratives");
+const loadSignalV2TriggersBarriers = () => import("@/components/signal-v2/SignalV2TriggersBarriers");
+const SignalV2Mentions = dynamic(
+  () => loadSignalV2Mentions().then((module) => module.SignalV2Mentions),
+  { loading: () => null }
+);
+const SignalV2TopicsNarratives = dynamic(
+  () => loadSignalV2TopicsNarratives().then((module) => module.SignalV2TopicsNarratives),
+  { loading: () => null }
+);
+const SignalV2TriggersBarriers = dynamic(
+  () => loadSignalV2TriggersBarriers().then((module) => module.SignalV2TriggersBarriers),
+  {
+    loading: () => (
+      <SignalV2ModuleSkeleton brandName="" showBody variant="triggersBarriers" />
+    )
+  }
+);
 
 const CHART_BLUE = "#1689f5";
 const CHART_BLUE_SOFT = "#8fcef9";
@@ -70,6 +103,14 @@ const CHART_PURPLE = "#7157d9";
 const CHART_TEAL = "#008060";
 
 type ConversationMetric = "mentions" | "conversations" | "root_posts" | "comments";
+type SignalStandardModule = "monitoring" | "mentions" | "topics";
+type SignalWorkspaceModule = SignalStandardModule | "settings" | "study";
+type SignalWorkspaceModulePayload = (
+  SignalBrandMonitoringV1
+  | SignalMentionsViewData
+  | SignalTopicsNarrativesOverviewV1
+  | SignalTriggersBarriersOverviewV2
+);
 const CHART_TOOLTIP_STYLE = {
   appendToBody: true,
   confine: false,
@@ -97,38 +138,55 @@ export function SignalV2BrandMonitoring({
   activeStudy,
   brandName,
   canRefreshInsights,
+  emptyWorkspace = false,
   initialData,
+  initialMention,
   initialMentions,
+  initialSettings,
   initialTopicsNarratives,
+  initialTriggersBarriers,
   legacyOutputId,
   strategicStudies,
   userName,
-  workspaceOptions
+  workspaceOptions,
+  workspaceSubjectId,
+  viewKey = "brand"
 }: {
-  activeModule: "monitoring" | "mentions" | "topics";
+  activeModule: "monitoring" | "mentions" | "topics" | "settings";
   activeStudy: SignalStrategicStudyNavigationItem | null;
   brandName: string;
   canRefreshInsights: boolean;
+  emptyWorkspace?: boolean;
   initialData: SignalBrandMonitoringV1;
+  initialMention: SignalMentionRecordV1 | null;
   initialMentions: SignalMentionsViewData | null;
+  initialSettings: SignalClientSettingsV1 | null;
   initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | null;
+  initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
   strategicStudies: SignalStrategicStudyNavigationItem[];
   userName: string;
   workspaceOptions: SignalWorkspaceOption[];
+  workspaceSubjectId: string;
+  viewKey?: "brand" | "competition" | "category" | "all-governed";
 }) {
   const t = useTranslations("SignalV2");
   const [data, setData] = useState(initialData);
   const [mentionsData, setMentionsData] = useState(initialMentions);
   const [topicsNarrativesData, setTopicsNarrativesData] = useState(initialTopicsNarratives);
-  const [currentModule, setCurrentModule] = useState<"monitoring" | "mentions" | "topics">(activeModule);
+  const [triggersBarriersData, setTriggersBarriersData] = useState(initialTriggersBarriers);
+  const [currentStudy, setCurrentStudy] = useState(activeStudy);
+  const [currentModule, setCurrentModule] = useState<SignalWorkspaceModule>(
+    activeStudy ? "study" : activeModule
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [scopeOpen, setScopeOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [pendingModule, setPendingModule] = useState<"monitoring" | "mentions" | "topics" | null>(null);
+  const [pendingModule, setPendingModule] = useState<SignalStandardModule | "study" | null>(null);
+  const [showPendingModuleBody, setShowPendingModuleBody] = useState(false);
+  const [contentArriving, setContentArriving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationMetric, setConversationMetric] = useState<ConversationMetric>("mentions");
   const [insightRunState, setInsightRunState] = useState<
@@ -137,7 +195,12 @@ export function SignalV2BrandMonitoring({
   const [insightRunError, setInsightRunError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
-  const scopeRef = useRef<HTMLDivElement>(null);
+  const moduleCacheRef = useRef(new Map<string, SignalWorkspaceModulePayload>());
+  const filterRequestRef = useRef<AbortController | null>(null);
+  const filterSequenceRef = useRef(0);
+  const navigationRequestRef = useRef<AbortController | null>(null);
+  const navigationSequenceRef = useRef(0);
+  const contentArrivalTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -150,7 +213,6 @@ export function SignalV2BrandMonitoring({
         setSidebarOpen(false);
         setWorkspaceMenuOpen(false);
         setControlsOpen(false);
-        setScopeOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -173,20 +235,80 @@ export function SignalV2BrandMonitoring({
   }, [workspaceMenuOpen]);
 
   useEffect(() => {
-    if (!scopeOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!scopeRef.current?.contains(event.target as Node)) setScopeOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [scopeOpen]);
+    setCurrentModule(activeStudy ? "study" : moduleFromPathname(window.location.pathname));
+    setCurrentStudy(activeStudy);
+    setTriggersBarriersData(initialTriggersBarriers);
+    setPendingModule(null);
+  }, [activeModule, activeStudy, initialTriggersBarriers]);
 
   useEffect(() => {
-    setCurrentModule(activeModule);
-    setPendingModule(null);
-  }, [activeModule, activeStudy]);
+    setShowPendingModuleBody(false);
+    if (!pendingModule || pendingModule === currentModule) return;
+    const timer = window.setTimeout(() => setShowPendingModuleBody(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [currentModule, pendingModule]);
+
+  useEffect(() => () => {
+    filterRequestRef.current?.abort();
+    navigationRequestRef.current?.abort();
+    if (contentArrivalTimerRef.current != null) {
+      window.clearTimeout(contentArrivalTimerRef.current);
+    }
+  }, []);
+
+  const beginContentArrival = useCallback(() => {
+    if (contentArrivalTimerRef.current != null) {
+      window.clearTimeout(contentArrivalTimerRef.current);
+    }
+    setContentArriving(true);
+    contentArrivalTimerRef.current = window.setTimeout(() => {
+      setContentArriving(false);
+      contentArrivalTimerRef.current = null;
+    }, 170);
+  }, []);
+
+  const applyModulePayload = useCallback((
+    target: SignalWorkspaceModule,
+    payload: SignalWorkspaceModulePayload
+  ) => {
+    beginContentArrival();
+    if (target === "study") {
+      const studyPayload = payload as SignalTriggersBarriersOverviewV2;
+      setTriggersBarriersData(studyPayload);
+      setCurrentStudy(
+        strategicStudies.find((study) => study.id === studyPayload.study.id) ?? null
+      );
+      return;
+    }
+    setCurrentStudy(null);
+    if (target === "mentions") {
+      const mentions = payload as SignalMentionsViewData;
+      setMentionsData(mentions);
+      setData((current) => ({
+        ...current,
+        filter: mentions.filter,
+        comparison: mentions.comparison
+      }));
+      return;
+    }
+    if (target === "topics") {
+      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
+      return;
+    }
+    setData(payload as SignalBrandMonitoringV1);
+  }, [beginContentArrival, strategicStudies]);
+
+  const updateMentionsData = useCallback((next: SignalMentionsViewData) => {
+    beginContentArrival();
+    setMentionsData(next);
+  }, [beginContentArrival]);
 
   const loadFilter = useCallback(async (selection: SignalAnalyticsFilterSelection) => {
+    filterRequestRef.current?.abort();
+    const controller = new AbortController();
+    filterRequestRef.current = controller;
+    const sequence = filterSequenceRef.current + 1;
+    filterSequenceRef.current = sequence;
     setLoading(true);
     setError(null);
     try {
@@ -209,31 +331,23 @@ export function SignalV2BrandMonitoring({
       for (const [dimension, values] of Object.entries(dimensions)) {
         for (const value of values ?? []) params.append(`dimension.${dimension}`, value);
       }
-      if (currentModule !== "topics" && !legacyOutputId) {
-        throw new Error(t("errors.noOperationalOutput"));
-      }
       const endpoint = currentModule === "mentions"
-        ? `/api/signal-v2/${legacyOutputId}/mentions`
+        ? `/api/data-os/signal/${data.workspace.id}/mentions`
         : currentModule === "topics"
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
-          : `/api/signal-v2/${legacyOutputId}/brand-monitoring`;
+          : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
       if (currentModule === "topics") addTaxonomyComparisonParams(params);
       const response = await fetch(`${endpoint}?${params}`, {
-        cache: "no-store"
+        cache: "no-store",
+        signal: controller.signal
       });
       const payload = await response.json() as (
         SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
       ) & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
-      if (currentModule === "mentions") {
-        const mentions = payload as SignalMentionsViewData;
-        setMentionsData(mentions);
-        setData((current) => ({
-          ...current,
-          filter: mentions.filter,
-          comparison: mentions.comparison
-        }));
-      } else if (currentModule === "topics") {
+      if (filterSequenceRef.current !== sequence) return false;
+      applyModulePayload(currentModule, payload);
+      if (currentModule === "topics") {
         setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
         const parsed = localSignalAnalyticsSelection({
           comparisonMode: selection.comparisonMode,
@@ -251,20 +365,25 @@ export function SignalV2BrandMonitoring({
           filter: parsed.filter,
           comparison: parsed.comparison
         }));
-      } else {
-        setData(payload as SignalBrandMonitoringV1);
       }
+      moduleCacheRef.current.set(moduleCacheKey(currentModule, params), payload);
       const next = new URL(window.location.href);
       next.search = params.toString();
       window.history.replaceState(null, "", next);
       return true;
     } catch (loadError) {
+      if (loadError instanceof DOMException && loadError.name === "AbortError") return false;
+      if (filterSequenceRef.current !== sequence) return false;
       setError(loadError instanceof Error ? loadError.message : t("errors.load"));
       return false;
     } finally {
-      setLoading(false);
+      if (filterSequenceRef.current === sequence) {
+        filterRequestRef.current = null;
+        setLoading(false);
+      }
     }
   }, [
+    applyModulePayload,
     currentModule,
     data.filter.dimensions,
     data.filter.search_query,
@@ -275,104 +394,230 @@ export function SignalV2BrandMonitoring({
   ]);
 
   const navigateToModule = useCallback(async (
-    target: "monitoring" | "mentions" | "topics",
-    historyMode: "push" | "none" = "push"
+    target: SignalStandardModule,
+    historyMode: "push" | "none" = "push",
+    requestedQuery?: URLSearchParams
   ) => {
-    if (target === currentModule || pendingModule || activeStudy) return;
+    if (pendingModule === target || (target === currentModule && !pendingModule)) return;
+    navigationRequestRef.current?.abort();
+    const controller = new AbortController();
+    navigationRequestRef.current = controller;
+    const sequence = navigationSequenceRef.current + 1;
+    navigationSequenceRef.current = sequence;
+
+    const previousModule = currentModule;
+    preloadSignalWorkspaceModule(target);
+    const previousQuery = previousModule === "study"
+      ? buildStudyQuery(window.location.search)
+      : previousModule === "settings"
+        ? new URLSearchParams()
+        : buildModuleQuery(window.location.search, data, previousModule);
+    const currentPayload = currentModulePayload(
+      previousModule,
+      data,
+      mentionsData,
+      topicsNarrativesData,
+      triggersBarriersData
+    );
+    if (currentPayload) {
+      moduleCacheRef.current.set(moduleCacheKey(previousModule, previousQuery), currentPayload);
+    }
+
+    const query = requestedQuery ?? buildModuleQuery(window.location.search, data, target);
+    const cachedPayload = moduleCacheRef.current.get(moduleCacheKey(target, query));
     setPendingModule(target);
     setSidebarOpen(false);
     setError(null);
 
-    try {
-      if (target !== "topics" && !legacyOutputId) {
-        throw new Error(t("errors.noOperationalOutput"));
-      }
-      const query = new URLSearchParams(window.location.search);
-      query.delete("study");
-      if (!query.has("start")) query.set("start", data.filter.date_range.start);
-      if (!query.has("end")) query.set("end", data.filter.date_range.end);
-      if (!query.has("timezone")) query.set("timezone", data.workspace.timezone);
-      if (!query.has("granularity")) query.set("granularity", data.filter.granularity);
-      if (!query.has("compare")) query.set("compare", data.comparison.mode);
-      if (!query.has("q") && data.filter.search_query) {
-        query.set("q", data.filter.search_query);
-      }
-      for (const [dimension, values] of Object.entries(data.filter.dimensions)) {
-        if (query.has(`dimension.${dimension}`)) continue;
-        for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
-      }
+    if (historyMode === "push") {
+      window.history.pushState(null, "", moduleHref(data.workspace.slug, target, query));
+    }
+    if (cachedPayload) {
+      applyModulePayload(target, cachedPayload);
+      setCurrentModule(target);
+    }
 
+    try {
       const endpoint = target === "mentions"
-        ? `/api/signal-v2/${legacyOutputId}/mentions`
+        ? `/api/data-os/signal/${data.workspace.id}/mentions`
         : target === "topics"
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
-          : `/api/signal-v2/${legacyOutputId}/brand-monitoring`;
-      if (target === "topics") addTaxonomyComparisonParams(query);
+          : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
       const response = await fetch(`${endpoint}?${query}`, {
-        cache: "no-store"
+        cache: "no-store",
+        signal: controller.signal
       });
       const payload = await response.json() as (
         SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
       ) & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
-
-      if (target === "mentions") {
-        const mentions = payload as SignalMentionsViewData;
-        setMentionsData(mentions);
-        setData((current) => ({
-          ...current,
-          filter: mentions.filter,
-          comparison: mentions.comparison
-        }));
-      } else if (target === "topics") {
-        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
-      } else {
-        setData(payload as SignalBrandMonitoringV1);
-      }
-
+      if (sequence !== navigationSequenceRef.current) return;
+      moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
+      applyModulePayload(target, payload);
       setCurrentModule(target);
-      if (historyMode === "push") {
-        const pathname = target === "mentions"
-          ? `/signal/${data.workspace.slug}/mentions`
-          : target === "topics"
-            ? `/signal/${data.workspace.slug}/topics-narratives`
-            : `/signal/${data.workspace.slug}`;
-        window.history.pushState(null, "", `${pathname}?${query}`);
-      }
     } catch (navigationError) {
+      if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
       setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
+      if (!cachedPayload) {
+        window.history.replaceState(
+          null,
+          "",
+          moduleHref(data.workspace.slug, previousModule, previousQuery)
+        );
+      }
     } finally {
-      setPendingModule(null);
+      if (sequence === navigationSequenceRef.current) {
+        setPendingModule(null);
+        navigationRequestRef.current = null;
+      }
     }
   }, [
-    activeStudy,
+    applyModulePayload,
     currentModule,
-    data.comparison.mode,
-    data.filter,
-    data.workspace.id,
-    data.workspace.slug,
-    data.workspace.timezone,
+    currentStudy?.id,
+    data,
     legacyOutputId,
+    mentionsData,
     pendingModule,
-    t
+    t,
+    topicsNarrativesData,
+    triggersBarriersData
+  ]);
+
+  const navigateToStudy = useCallback(async (
+    study: SignalStrategicStudyNavigationItem,
+    historyMode: "push" | "none" = "push"
+  ) => {
+    if (
+      pendingModule === "study"
+      || (currentModule === "study" && currentStudy?.id === study.id && !pendingModule)
+    ) return;
+    navigationRequestRef.current?.abort();
+    const controller = new AbortController();
+    navigationRequestRef.current = controller;
+    const sequence = navigationSequenceRef.current + 1;
+    navigationSequenceRef.current = sequence;
+
+    const previousModule = currentModule;
+    preloadSignalWorkspaceModule("study");
+    const previousQuery = previousModule === "study"
+      ? buildStudyQuery(window.location.search)
+      : previousModule === "settings"
+        ? new URLSearchParams()
+        : buildModuleQuery(window.location.search, data, previousModule);
+    const currentPayload = currentModulePayload(
+      previousModule,
+      data,
+      mentionsData,
+      topicsNarrativesData,
+      triggersBarriersData
+    );
+    if (currentPayload) {
+      moduleCacheRef.current.set(
+        moduleCacheKey(previousModule, previousQuery),
+        currentPayload
+      );
+    }
+
+    const query = historyMode === "none"
+      ? buildStudyQuery(window.location.search)
+      : new URLSearchParams();
+    const cachedPayload = moduleCacheRef.current.get(moduleCacheKey("study", query));
+    setPendingModule("study");
+    setSidebarOpen(false);
+    setError(null);
+
+    if (historyMode === "push") {
+      window.history.pushState(null, "", moduleHref(data.workspace.slug, "study", query));
+    }
+    if (cachedPayload) {
+      applyModulePayload("study", cachedPayload);
+      setCurrentModule("study");
+    }
+
+    try {
+      const endpoint = `/api/data-os/signal/${data.workspace.id}/triggers-barriers`;
+      const response = await fetch(`${endpoint}?${query}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const payload = await response.json() as SignalTriggersBarriersOverviewV2 & {
+        message?: string;
+      };
+      if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
+      if (sequence !== navigationSequenceRef.current) return;
+      moduleCacheRef.current.set(moduleCacheKey("study", query), payload);
+      applyModulePayload("study", payload);
+      setCurrentModule("study");
+    } catch (navigationError) {
+      if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
+      setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
+      if (!cachedPayload) {
+        window.history.replaceState(
+          null,
+          "",
+          moduleHref(data.workspace.slug, previousModule, previousQuery)
+        );
+      }
+    } finally {
+      if (sequence === navigationSequenceRef.current) {
+        setPendingModule(null);
+        navigationRequestRef.current = null;
+      }
+    }
+  }, [
+    applyModulePayload,
+    currentModule,
+    currentStudy?.id,
+    data,
+    mentionsData,
+    pendingModule,
+    t,
+    topicsNarrativesData,
+    triggersBarriersData
   ]);
 
   useEffect(() => {
     const onPopState = () => {
-      const target = window.location.pathname.endsWith("/mentions")
-        ? "mentions"
-        : window.location.pathname.endsWith("/topics-narratives")
-          ? "topics"
-          : "monitoring";
-      void navigateToModule(target, "none");
+      const requestedStudy = window.location.pathname.endsWith("/reports/triggers-barriers")
+        ? strategicStudies.find((study) => study.reportKey === "triggers-barriers")
+        : null;
+      if (requestedStudy) {
+        void navigateToStudy(requestedStudy, "none");
+        return;
+      }
+      const requestedModule = moduleFromPathname(window.location.pathname);
+      if (requestedModule === "settings") {
+        setCurrentModule("settings");
+        setCurrentStudy(null);
+        setPendingModule(null);
+        return;
+      }
+      void navigateToModule(requestedModule, "none");
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [navigateToModule]);
+  }, [navigateToModule, navigateToStudy, strategicStudies]);
 
   const goToCorpus = useCallback(() => {
     void navigateToModule("mentions");
   }, [navigateToModule]);
+
+  const goToStudyCorpus = useCallback(() => {
+    const studyFilter = triggersBarriersData?.filter;
+    if (!studyFilter) {
+      void navigateToModule("mentions");
+      return;
+    }
+    const query = new URLSearchParams({
+      compare: "none",
+      end: studyFilter.date_range.end,
+      granularity: studyFilter.granularity,
+      start: studyFilter.date_range.start,
+      timezone: studyFilter.timezone
+    });
+    void navigateToModule("mentions", "push", query);
+  }, [navigateToModule, triggersBarriersData?.filter]);
 
   const reloadCurrentData = useCallback(async () => {
     const query = new URLSearchParams(window.location.search);
@@ -390,14 +635,13 @@ export function SignalV2BrandMonitoring({
       if (query.has(`dimension.${dimension}`)) continue;
       for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
     }
-    if (!legacyOutputId) throw new Error(t("errors.noOperationalOutput"));
-    const response = await fetch(`/api/signal-v2/${legacyOutputId}/brand-monitoring?${query}`, {
+    const response = await fetch(`/api/data-os/signal/${data.workspace.id}/brand-monitoring?${query}`, {
       cache: "no-store"
     });
     const payload = await response.json() as SignalBrandMonitoringV1 & { message?: string };
     if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
     setData(payload);
-  }, [data.comparison, data.filter, data.workspace.timezone, legacyOutputId, t]);
+  }, [data.comparison, data.filter, data.workspace.id, data.workspace.timezone, t]);
 
   const refreshMonthlyInsights = useCallback(async () => {
     setInsightRunError(null);
@@ -724,9 +968,11 @@ export function SignalV2BrandMonitoring({
     };
   }, [data.conversation_drivers.items, t]);
 
-  const canonicalHome = `/signal/${data.workspace.slug}`;
-  const canonicalMentions = `${canonicalHome}/mentions`;
-  const canonicalTopicsNarratives = `${canonicalHome}/topics-narratives`;
+  const viewSuffix = viewKey === "brand" ? "" : `?view=${encodeURIComponent(viewKey)}`;
+  const canonicalHome = `/signal/${data.workspace.slug}${viewSuffix}`;
+  const canonicalMentions = `/signal/${data.workspace.slug}/mentions${viewSuffix}`;
+  const canonicalTopicsNarratives = `/signal/${data.workspace.slug}/topics-narratives${viewSuffix}`;
+  const canonicalSettings = `/signal/${data.workspace.slug}/settings${viewSuffix}`;
   const legacyReport = legacyOutputId ? `/signal/${legacyOutputId}` : canonicalHome;
   const firstStrategicStudy = strategicStudies[0] ?? null;
   const activeGlobalFilterCount = Object.values(data.filter.dimensions)
@@ -734,14 +980,14 @@ export function SignalV2BrandMonitoring({
     + Number(Boolean(data.filter.search_query));
 
   return (
-    <div className={[
+    <WorkspaceShell className={[
       "signal-v2-shell",
       sidebarOpen ? "signal-v2-shell--nav-open" : "",
       controlsOpen ? "signal-v2-shell--controls-open" : ""
     ].filter(Boolean).join(" ")}>
-      <a className="signal-v2-skip" href="#signal-v2-content">{t("a11y.skip")}</a>
+      <WorkspaceSkipLink className="signal-v2-skip" href="#signal-v2-content">{t("a11y.skip")}</WorkspaceSkipLink>
 
-      <header className="signal-v2-topbar">
+      <WorkspaceTopbar className="signal-v2-topbar">
         <button
           aria-controls="signal-v2-sidebar"
           aria-expanded={sidebarOpen}
@@ -752,31 +998,16 @@ export function SignalV2BrandMonitoring({
         >
           <List size={19} weight="bold" />
         </button>
-        <Link className="signal-v2-brand" href={canonicalHome} prefetch={false}>
-          <Image alt="Noisia" height={23} priority src="/assets/logos/logo_black.svg" width={79} />
-          <span>Signal</span>
-        </Link>
-        <button
-          className="signal-v2-search-trigger"
-          onClick={() => setSearchOpen(true)}
-          type="button"
-        >
-          <MagnifyingGlass size={16} />
-          <span>{t("search.placeholder")}</span>
-          <kbd>⌘ K</kbd>
-        </button>
-        <div className="signal-v2-topbar__actions">
-          <button aria-label={t("actions.notifications")} className="signal-v2-icon-button" type="button">
-            <Bell size={17} />
-          </button>
-          <div className="signal-v2-account">
-            <span>{initials(userName)}</span>
-            <strong>{brandName}</strong>
-          </div>
-        </div>
-      </header>
+        <WorkspaceProductBrand href={canonicalHome} product="Signal" />
+        <WorkspaceSearchTrigger onClick={() => setSearchOpen(true)}>
+          {t("search.placeholder")}
+        </WorkspaceSearchTrigger>
+        <WorkspaceTopbarActions>
+          <WorkspaceAccount label={initials(userName)} name={brandName} tone="brand" />
+        </WorkspaceTopbarActions>
+      </WorkspaceTopbar>
 
-      <aside className="signal-v2-sidebar" aria-label={t("nav.label")} id="signal-v2-sidebar">
+      <WorkspaceGlobalSidebar className="signal-v2-sidebar" aria-label={t("nav.label")} id="signal-v2-sidebar">
         <div className="signal-v2-workspace-picker" ref={workspaceMenuRef}>
           <button
             aria-expanded={workspaceMenuOpen}
@@ -822,90 +1053,104 @@ export function SignalV2BrandMonitoring({
         </div>
         <nav className="signal-v2-nav">
           <NavLink
-            active={(pendingModule ?? currentModule) === "monitoring" && !activeStudy}
+            active={(pendingModule ?? currentModule) === "monitoring"}
             href={canonicalHome}
             icon={<Gauge />}
             label={t("nav.monitoring")}
-            onNavigate={() => void navigateToModule("monitoring")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("monitoring")}
+            pending={pendingModule === "monitoring"}
           />
           <NavLink
             active={(pendingModule ?? currentModule) === "mentions"}
             href={canonicalMentions}
             icon={<ListMagnifyingGlass />}
             label={t("nav.mentions")}
-            onNavigate={() => void navigateToModule("mentions")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("mentions")}
+            pending={pendingModule === "mentions"}
           />
           <NavLink
             active={(pendingModule ?? currentModule) === "topics"}
             href={canonicalTopicsNarratives}
             icon={<Pulse />}
             label={t("nav.topics")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("topics")}
+            pending={pendingModule === "topics"}
           />
           <NavLink
-            active={Boolean(activeStudy)}
+            active={(pendingModule ?? currentModule) === "study"}
             href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`}
-            icon={<Target />}
-            label={t("nav.tb")}
+            icon={<FileText />}
+            label={t("nav.reports")}
+            onNavigate={firstStrategicStudy
+              ? () => void navigateToStudy(firstStrategicStudy)
+              : undefined}
+            pending={pendingModule === "study"}
           />
-          {strategicStudies.length > 0 ? (
-            <div aria-label={t("nav.tbStudies")} className="signal-v2-nav__studies">
-              {strategicStudies.map((study) => (
-                <Link
-                  aria-current={activeStudy?.id === study.id ? "page" : undefined}
-                  className={activeStudy?.id === study.id ? "signal-v2-nav__study--active" : undefined}
-                  href={study.href}
-                  key={study.id}
-                  prefetch={false}
-                  title={study.title}
-                >
-                  <span />
-                  {study.title}
-                </Link>
-              ))}
-            </div>
-          ) : null}
-          <NavLink href={`${legacyReport}#opportunities`} icon={<Sparkle />} label={t("nav.opportunities")} />
-          <NavLink href={`${legacyReport}#evidence`} icon={<Database />} label={t("nav.evidence")} />
-          <div className="signal-v2-nav__section">{t("nav.reports")}</div>
-          <NavLink href={firstStrategicStudy?.href ?? legacyReport} icon={<FileText />} label={t("nav.strategic")} />
-          <NavLink href={`${legacyReport}#historical-overview`} icon={<ClockCounterClockwise />} label={t("nav.history")} />
         </nav>
         <div className="signal-v2-sidebar__footer">
-          <NavLink href={`${legacyReport}#settings`} icon={<SlidersHorizontal />} label={t("nav.settings")} />
+          <NavLink
+            active={(pendingModule ?? currentModule) === "settings"}
+            href={canonicalSettings}
+            icon={<SlidersHorizontal />}
+            label={t("nav.settings")}
+          />
         </div>
-      </aside>
-      <button
+      </WorkspaceGlobalSidebar>
+      <WorkspaceOverlay
         aria-hidden={!sidebarOpen}
         aria-label={t("nav.close")}
         className="signal-v2-nav-scrim"
         onClick={() => setSidebarOpen(false)}
         tabIndex={sidebarOpen ? 0 : -1}
-        type="button"
       />
 
-      <main
-        aria-busy={loading}
-        className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}`}
+      <WorkspaceMain
+        aria-busy={loading || Boolean(pendingModule)}
+        className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}${pendingModule ? " signal-v2-main--updating" : ""}`}
         id="signal-v2-content"
       >
-        {pendingModule ? (
-          <SignalV2ModuleSkeleton variant={pendingModule} />
-        ) : activeStudy ? (
-          <StrategicStudyContent canonicalHome={canonicalHome} study={activeStudy} />
+        {pendingModule && currentModule !== pendingModule ? (
+          <SignalV2ModuleSkeleton
+            brandName={brandName}
+            showBody={showPendingModuleBody}
+            variant={pendingModule === "study" ? "triggersBarriers" : pendingModule}
+          />
+        ) : (
+        <div className={`signal-v2-module-content${contentArriving ? " signal-v2-module-content--arriving" : ""}`}>
+        {currentModule === "settings" && initialSettings ? (
+          <SignalV2Settings data={initialSettings} />
+        ) : emptyWorkspace ? (
+          <SignalV2EmptyWorkspace
+            brandName={brandName}
+            canManage={canRefreshInsights}
+            workspaceSubjectId={workspaceSubjectId}
+          />
+        ) : currentModule === "study" && currentStudy && triggersBarriersData ? (
+          <SignalV2TriggersBarriers
+            brandName={brandName}
+            data={triggersBarriersData}
+            key={`${triggersBarriersData.cut.analysis_id}:${triggersBarriersData.filter.date_range.start}:${triggersBarriersData.filter.date_range.end}`}
+            onOpenMentions={goToStudyCorpus}
+            workspaceSlug={data.workspace.slug}
+          />
+        ) : currentModule === "study" && currentStudy ? (
+          <StrategicStudyContent canonicalHome={canonicalHome} study={currentStudy} />
         ) : currentModule === "mentions" && mentionsData ? (
           <SignalV2Mentions
             brandName={brandName}
             coverage={data.coverage}
             data={mentionsData}
+            initialMention={initialMention}
             loading={loading}
             onApplyFilter={loadFilter}
-            onDataChange={setMentionsData}
+            onDataChange={updateMentionsData}
             onOpenControls={() => setControlsOpen(true)}
-            outputId={legacyOutputId}
+            workspaceId={data.workspace.id}
           />
         ) : currentModule === "topics" && topicsNarrativesData ? (
           <SignalV2TopicsNarratives
             brandName={brandName}
+            canRefreshInsights={canRefreshInsights}
             comparison={data.comparison}
             coverage={data.coverage}
             data={topicsNarrativesData}
@@ -913,24 +1158,16 @@ export function SignalV2BrandMonitoring({
             loading={loading}
             onApplyFilter={loadFilter}
             onOpenControls={() => setControlsOpen(true)}
+            onOpenMentions={goToCorpus}
+            workspaceSlug={data.workspace.slug}
           />
         ) : (
           <>
-        <div className="signal-v2-page-head">
-          <div>
-            <div className="signal-v2-title-line">
-              <Megaphone size={20} weight="fill" />
-              <h1>{t("title")}</h1>
-              <span>{t("status.beta")}</span>
-            </div>
-            <p>{t("subtitle")}</p>
-          </div>
-          <button className="signal-v2-tertiary-button" type="button">
+        <SignalV2ModuleHeader
+          aside={<button className="signal-v2-tertiary-button" type="button">
             <DotsThree size={18} weight="bold" />
-          </button>
-        </div>
-
-        <div className="signal-v2-filterbar">
+          </button>}
+          controls={<>
           <SignalAnalyticsFilter
             comparison={data.comparison}
             coverage={data.coverage}
@@ -939,39 +1176,13 @@ export function SignalV2BrandMonitoring({
             onApply={loadFilter}
           />
 
-          <div className="signal-v2-filter-anchor" ref={scopeRef}>
-            <button
-              aria-expanded={scopeOpen}
-              className={`signal-v2-filter${scopeOpen ? " signal-v2-filter--active" : ""}`}
-              onClick={() => setScopeOpen((open) => !open)}
-              type="button"
-            >
-              <Database size={15} />
-              {t("filters.dataScope", { brand: brandName })}
-              <CaretDown size={13} />
-            </button>
-            {scopeOpen ? (
-              <div className="signal-v2-scope-popover" role="dialog">
-                <small>{t("dataScope.eyebrow")}</small>
-                <strong>{brandName}</strong>
-                <p>{t("dataScope.body")}</p>
-                <dl>
-                  <div>
-                    <dt>{t("dataScope.mentions")}</dt>
-                    <dd>{formatNumber(data.coverage.mentions)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("dataScope.coverage")}</dt>
-                    <dd>{formatDate(data.coverage.date_from)} – {formatDate(data.coverage.date_through)}</dd>
-                  </div>
-                </dl>
-                <button onClick={goToCorpus} type="button">
-                  {t("dataScope.open")}
-                  <ArrowRight size={14} />
-                </button>
-              </div>
-            ) : null}
-          </div>
+          <SignalDataScopeFilter
+            brandName={brandName}
+            coverageFrom={data.coverage.date_from ?? data.filter.date_range.start}
+            coverageThrough={data.coverage.date_through ?? data.filter.date_range.end}
+            mentionCount={data.coverage.mentions}
+            onOpenMentions={goToCorpus}
+          />
           <button
             aria-expanded={controlsOpen}
             className={`signal-v2-filter${controlsOpen ? " signal-v2-filter--active" : ""}`}
@@ -1008,7 +1219,12 @@ export function SignalV2BrandMonitoring({
             <span />
             {freshnessLabel(data.freshness.state, t)}
           </span>
-        </div>
+          </>}
+          icon={<Megaphone size={20} weight="fill" />}
+          status={t("status.beta")}
+          subtitle={t("subtitle")}
+          title={t("title")}
+        />
 
         {error ? (
           <div className="signal-v2-error" role="alert">
@@ -1034,8 +1250,6 @@ export function SignalV2BrandMonitoring({
           aria-busy={loading}
           className={`signal-v2-dashboard-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}
         >
-          {loading ? <DashboardLoadingState label={t("actions.loading")} /> : null}
-
           <ConversationKpis
             current={data.conversation_structure.summary}
             hasComparison={hasComparison}
@@ -1304,7 +1518,9 @@ export function SignalV2BrandMonitoring({
         </div>
           </>
         )}
-      </main>
+        </div>
+        )}
+      </WorkspaceMain>
 
       <SignalFilterControls
         comparison={data.comparison}
@@ -1313,7 +1529,7 @@ export function SignalV2BrandMonitoring({
         onApply={loadFilter}
         onClose={() => setControlsOpen(false)}
         open={controlsOpen}
-        outputId={legacyOutputId}
+        workspaceId={data.workspace.id}
       />
 
       {searchOpen ? (
@@ -1331,15 +1547,68 @@ export function SignalV2BrandMonitoring({
                 <ListMagnifyingGlass size={16} />{t("nav.mentions")}
               </Link>
               <Link href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`} onClick={() => setSearchOpen(false)} prefetch={false}>
-                <Target size={16} />{t("nav.tb")}
-              </Link>
-              <Link href={`${legacyReport}#opportunities`} onClick={() => setSearchOpen(false)} prefetch={false}>
-                <Sparkle size={16} />{t("nav.opportunities")}
+                <FileText size={16} />{t("nav.reports")}
               </Link>
             </div>
           </div>
         </div>
       ) : null}
+    </WorkspaceShell>
+  );
+}
+
+function SignalV2EmptyWorkspace({
+  brandName,
+  canManage,
+  workspaceSubjectId
+}: {
+  brandName: string;
+  canManage: boolean;
+  workspaceSubjectId: string;
+}) {
+  const t = useTranslations("SignalV2");
+  return (
+    <div className="signal-v2-empty-workspace">
+      <SignalV2ModuleHeader
+        icon={<Gauge size={20} weight="fill" />}
+        status={t("emptyWorkspace.status")}
+        subtitle={t("emptyWorkspace.subtitle", { brand: brandName })}
+        title={t("title")}
+      />
+      <section className="signal-v2-empty-workspace__body">
+        <div className="signal-v2-empty-workspace__lead">
+          <Database aria-hidden="true" size={22} weight="duotone" />
+          <small>{t("emptyWorkspace.eyebrow")}</small>
+          <h2>{t("emptyWorkspace.title")}</h2>
+          <p>{t("emptyWorkspace.body")}</p>
+          {canManage ? (
+            <Link
+              className="signal-v2-primary-link"
+              href={`/studio/brands/${workspaceSubjectId}`}
+              prefetch={false}
+            >
+              {t("emptyWorkspace.action")}
+              <ArrowRight aria-hidden="true" size={15} weight="bold" />
+            </Link>
+          ) : null}
+        </div>
+        <ol className="signal-v2-empty-workspace__steps">
+          <li>
+            <span>1</span>
+            <div>
+              <strong>{t("emptyWorkspace.sourceTitle")}</strong>
+              <p>{t("emptyWorkspace.sourceBody")}</p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <strong>{t("emptyWorkspace.scopeTitle")}</strong>
+              <p>{t("emptyWorkspace.scopeBody")}</p>
+            </div>
+          </li>
+        </ol>
+      </section>
     </div>
   );
 }
@@ -1361,19 +1630,15 @@ function StrategicStudyContent({
 
   return (
     <div className="signal-v2-strategic-page">
-      <div className="signal-v2-page-head">
-        <div>
-          <div className="signal-v2-title-line">
-            <Target size={20} weight="fill" />
-            <h1>{study.title}</h1>
-            <span>{t("strategicStudy.status")}</span>
-          </div>
-          <p>{t("strategicStudy.subtitle")}</p>
-        </div>
-        <Link className="signal-v2-secondary-link" href={canonicalHome} prefetch={false}>
+      <SignalV2ModuleHeader
+        aside={<Link className="signal-v2-secondary-link" href={canonicalHome} prefetch={false}>
           {t("strategicStudy.backToMonitoring")}
-        </Link>
-      </div>
+        </Link>}
+        icon={<Target size={20} weight="fill" />}
+        status={t("strategicStudy.status")}
+        subtitle={t("strategicStudy.subtitle")}
+        title={study.title}
+      />
 
       {release ? (
         <>
@@ -1485,41 +1750,121 @@ function StrategicStudyContent({
   );
 }
 
+function moduleFromPathname(pathname: string): SignalStandardModule | "settings" {
+  if (pathname.endsWith("/mentions")) return "mentions";
+  if (pathname.endsWith("/topics-narratives")) return "topics";
+  if (pathname.endsWith("/settings")) return "settings";
+  return "monitoring";
+}
+
+function preloadSignalWorkspaceModule(module: SignalWorkspaceModule) {
+  if (module === "mentions") {
+    void loadSignalV2Mentions();
+    return;
+  }
+  if (module === "topics") {
+    void loadSignalV2TopicsNarratives();
+    return;
+  }
+  if (module === "study") void loadSignalV2TriggersBarriers();
+}
+
+function currentModulePayload(
+  module: SignalWorkspaceModule,
+  monitoring: SignalBrandMonitoringV1,
+  mentions: SignalMentionsViewData | null,
+  topics: SignalTopicsNarrativesOverviewV1 | null,
+  triggersBarriers: SignalTriggersBarriersOverviewV2 | null
+): SignalWorkspaceModulePayload | null {
+  if (module === "mentions") return mentions;
+  if (module === "topics") return topics;
+  if (module === "study") return triggersBarriers;
+  if (module === "settings") return null;
+  return monitoring;
+}
+
+function buildModuleQuery(
+  currentSearch: string,
+  data: SignalBrandMonitoringV1,
+  target: SignalStandardModule
+) {
+  const query = new URLSearchParams(currentSearch);
+  query.delete("study");
+  query.delete("mention");
+  query.delete("comparison_start");
+  query.delete("comparison_end");
+  if (!query.has("start")) query.set("start", data.filter.date_range.start);
+  if (!query.has("end")) query.set("end", data.filter.date_range.end);
+  if (!query.has("timezone")) query.set("timezone", data.workspace.timezone);
+  if (!query.has("granularity")) query.set("granularity", data.filter.granularity);
+  if (!query.has("compare")) query.set("compare", data.comparison.mode);
+  if (!query.has("q") && data.filter.search_query) query.set("q", data.filter.search_query);
+  for (const [dimension, values] of Object.entries(data.filter.dimensions)) {
+    if (query.has(`dimension.${dimension}`)) continue;
+    for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
+  }
+  if (target === "topics") addTaxonomyComparisonParams(query);
+  return query;
+}
+
+function buildStudyQuery(currentSearch: string) {
+  const current = new URLSearchParams(currentSearch);
+  const query = new URLSearchParams();
+  for (const key of ["start", "end", "timezone"] as const) {
+    const value = current.get(key);
+    if (value) query.set(key, value);
+  }
+  return query;
+}
+
+function moduleCacheKey(module: SignalWorkspaceModule, query: URLSearchParams) {
+  return `${module}:${query.toString()}`;
+}
+
+function moduleHref(
+  workspaceSlug: string,
+  module: SignalWorkspaceModule,
+  query: URLSearchParams
+) {
+  const base = `/signal/${workspaceSlug}`;
+  const pathname = module === "mentions"
+    ? `${base}/mentions`
+    : module === "topics"
+      ? `${base}/topics-narratives`
+      : module === "study"
+        ? `${base}/reports/triggers-barriers`
+        : module === "settings"
+          ? `${base}/settings`
+        : base;
+  const search = query.toString();
+  return search ? `${pathname}?${search}` : pathname;
+}
+
 function NavLink({
   active = false,
   href,
   icon,
   label,
-  onNavigate
+  onNavigate,
+  pending = false
 }: {
   active?: boolean;
   href: string;
   icon: React.ReactNode;
   label: string;
   onNavigate?: () => void;
+  pending?: boolean;
 }) {
   return (
-    <Link
-      aria-current={active ? "page" : undefined}
-      className={`signal-v2-nav__item${active ? " signal-v2-nav__item--active" : ""}`}
+    <WorkspaceNavLink
+      active={active}
       href={href}
-      onClick={(event) => {
-        if (!onNavigate || active) return;
-        if (
-          event.button !== 0
-          || event.metaKey
-          || event.ctrlKey
-          || event.shiftKey
-          || event.altKey
-        ) return;
-        event.preventDefault();
-        onNavigate();
-      }}
-      prefetch={false}
-    >
-      <span>{icon}</span>
-      {label}
-    </Link>
+      icon={icon}
+      label={label}
+      onNavigate={onNavigate}
+      pending={pending}
+      pendingIconClassName="signal-v2-nav__pending"
+    />
   );
 }
 
@@ -1739,14 +2084,6 @@ function EmptyMetric({ message }: { message: string }) {
       <Pulse size={22} />
       <p>{message}</p>
     </div>
-  );
-}
-
-function DashboardLoadingState({ label }: { label: string }) {
-  return (
-    <span aria-live="polite" className="signal-v2-loading-status" role="status">
-      {label}
-    </span>
   );
 }
 

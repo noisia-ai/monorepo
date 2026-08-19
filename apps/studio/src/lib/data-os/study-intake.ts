@@ -21,6 +21,7 @@ import {
   lineageEdges,
   sourceSyncRuns
 } from "@noisia/db";
+import { resolveSignalWorkspaceIdForStudyCorpus } from "@/lib/data-os/workspace-ingestion";
 import { buildSourceObservations } from "@noisia/query-engine";
 import type { DataOsAudienceSpec, DataOsSignalSpec, StudyDataOsFieldSpecs } from "@/lib/data-os/field-specs";
 import { db } from "@/lib/db";
@@ -448,6 +449,7 @@ async function catalogSourceManifestAssets(
   briefId: string,
   args: InitializeDataOsStudyIntakeArgs
 ) {
+  const workspaceId = await resolveSignalWorkspaceIdForStudyCorpus(args.corpusId);
   let sources = 0;
   let assets = 0;
   let fields = 0;
@@ -463,6 +465,7 @@ async function catalogSourceManifestAssets(
     const [createdSource] = await db
       .insert(dataSources)
       .values({
+        workspaceId,
         studyCorpusId: args.corpusId,
         organizationId: args.subject.organizationId ?? undefined,
         brandId: args.subject.type === "brand" ? args.subject.id : undefined,
@@ -506,6 +509,7 @@ async function catalogSourceManifestAssets(
     sources += 1;
 
     const [syncRun] = await db.insert(sourceSyncRuns).values({
+      workspaceId,
       dataSourceId: createdSource.id,
       finishedAt: new Date(),
       status: source.preview_status === "error" ? "failed" : "completed",

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { AdminWorkspaceHeader } from "@/components/admin/AdminWorkspacePrimitives";
 import { Icon } from "@/components/ui/Icon";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
@@ -28,25 +29,23 @@ export default async function TbAnalysisIndexPage({ params }: { params: Promise<
   }
 
   return (
-    <div className="studio-page analysis-review-page">
-      <section className="analysis-review-hero">
-        <div>
-          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
-            <Icon name="arrow-right" size={14} />
-            Volver al engine
-          </Link>
-          <p className="vitals-eyebrow">{corpus.methodologySlug === "signal-pulse" ? "Review Signal Pulse" : "Review T&B"}</p>
-          <h1>{corpus.methodologySlug === "signal-pulse" ? "Todavía no hay corte" : "Todavía no hay síntesis"}</h1>
-          <p>
-            Primero aprueba el corpus y lanza el análisis desde Engine. Cuando termine,
-            esta ruta abre la revisión del output antes de publicar.
-          </p>
-        </div>
-        <Link prefetch={false} className="wizard-cta" href={`/studio/corpora/${corpus.id}/engine`}>
-          <Icon name="play" size={16} />
-          Ir al flujo
-        </Link>
-      </section>
+    <div className="admin-workspace-page admin-study-surface analysis-review-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            <Link prefetch={false} className="admin-button" href={`/studio/corpora/${corpus.id}/engine`}>
+              Volver al engine
+            </Link>
+            <Link prefetch={false} className="admin-button admin-button--primary" href={`/studio/corpora/${corpus.id}/engine`}>
+              <Icon name="play" size={16} />
+              Ir al flujo
+            </Link>
+          </>
+        )}
+        eyebrow={corpus.methodologySlug === "signal-pulse" ? "Review Signal Pulse" : "Review T&B"}
+        subtitle="Primero aprueba el corpus y lanza el análisis desde Engine. Cuando termine, esta ruta abre la revisión del output antes de publicar."
+        title={corpus.methodologySlug === "signal-pulse" ? "Todavía no hay corte" : "Todavía no hay síntesis"}
+      />
     </div>
   );
 }

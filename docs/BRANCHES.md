@@ -1,6 +1,6 @@
 # Noisia Branch State
 
-> Current as of 2026-07-21. This is branch context for production-bound agent work;
+> Current as of 2026-08-03. This is branch context for production-bound agent work;
 > verify with `git branch -vv --all` before making release decisions.
 
 ## Production Branch
@@ -73,6 +73,67 @@ Cut 1 adds:
   `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence`;
 - Pulse dashboard internal shadow badge while clients continue reading
   `published_outputs.payload`.
+
+Subsequent work on the same branch also adds or has active local WIP for:
+
+- one stable `/signal/{workspaceSlug}` client workspace;
+- Brand Monitoring, Mentions and Topics & Narratives on relational serving;
+- governed and incremental topic/narrative profiles and assignments;
+- Signal V2 filters, charts, evidence drawers, skeletons and navigation behavior based
+  on direct Shopify Admin inspection;
+- T&B relational releases, Decision Field, finding reading and evidence UI;
+- taxonomy insight research and persistent mention enrichment;
+- a cleaned client navigation organized around operational modules, Reports and
+  Settings.
+
+### Current local architecture state
+
+The workspace-owned ingestion boundary and **Phase 4A primary-brand operational
+serving** are implemented locally in additive migrations 0059–0061. Canonical mentions,
+source/import provenance, scope attribution, current operational population, materializations, invalidations,
+watermarks and the Brand Monitoring/Mentions/Topics & Narratives readers can now resolve
+the workspace population without a study corpus. Client rollout is controlled by one
+closed-by-default `legacy | shadow | governed` read mode; shadow does not alter the
+visible payload, writes comparisons to a durable deduplicated outbox and rollback
+requires only returning the configuration to `legacy`.
+Topics & Narratives derives its private overview ETag from the served semantic body,
+so membership changes cannot reuse a validator from an older denominator while an
+equivalent rematerialization keeps the same validator.
+
+Phase 4 is not declared complete: competitor/category exploration remains explicitly
+deferred until it has a server-owned governed population contract. Staging handoff is
+blocked until that scope decision and a separate authorization/configuration step; no
+remote migration or cutover has been run.
+
+**Phase 5 Strategic Consumption** is structurally closed and locally exercised in
+additive migrations 0062–0063. A workspace/report run now creates an explicit approved analysis
+population, freezes IDs/watermarks into an immutable relational snapshot, reuses the
+existing T&B pipeline behind containment gates, promotes only selected reviewed tags
+to canonical mention enrichment and publishes append-only revisions under one
+`(workspace_id, report_key='triggers-barriers')` current pointer. The client uses one
+stable `/signal/{workspaceSlug}/reports/triggers-barriers` surface; corpus routes and
+legacy URLs remain adapters, not product identity. PostgreSQL fixtures cover two runs,
+releases 1→2, alias lineage, concurrency and snapshot/release invariance without an LLM
+or paid pipeline run. Workers owns recoverable dispatch: startup/periodic drains claim
+due rows with leases and `SKIP LOCKED`, use deterministic BullMQ IDs, reconcile a job
+accepted before PostgreSQL ACK, and dead-letter bounded repeated failures.
+
+This is local evidence only. Migrations 0062–0063 have not been applied remotely, no staging
+run or cutover occurred, and production accessibility/build identity remains
+unverified. Phase 4A's deferred exploration-scope contract is unaffected.
+
+Canon and handoff:
+
+- `docs/adr/014-signal-workspace-owned-data-plane.md`;
+- `docs/product/42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md`;
+- `docs/product/43_SIGNAL_V2_FRONTEND_SYSTEM.md`;
+- `docs/product/44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md`.
+
+Local PostgreSQL and browser evidence is recorded in
+`docs/product/45_SIGNAL_WORKSPACE_DATA_PLANE_IMPLEMENTATION_AUDIT.md`. Staging, remote
+migration and client cutover remain explicitly unexecuted. Do not infer production
+readiness from the local governed gate, and do not pursue blind equality with a legacy
+reader that includes non-primary scopes.
 
 ## Merge Order
 
