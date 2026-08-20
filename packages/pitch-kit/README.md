@@ -11,7 +11,7 @@ agent to "armar un pitch para <cliente>"). Editing the kit itself? Read `AGENTS.
 ```
 engine/      brand engine: noisia-tokens.css, deck.css, deck-stage.js, deck-template.html
 slides/      reusable slide templates + catalog.json (the index of what's available)
-builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx)
+builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
 assets/      brand logos / backgrounds
 examples/    sanitized demo decks only (examples/_local/ is gitignored for real work)

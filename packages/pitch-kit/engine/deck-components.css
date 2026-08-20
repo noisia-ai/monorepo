@@ -1,0 +1,159 @@
+/* ============================================================================
+   deck-components.css — reusable layout components for Noisia decks
+   ----------------------------------------------------------------------------
+   Load AFTER noisia-tokens.css and deck.css. These are the building blocks the
+   report (R) and study (T&B) layouts are made of, extracted from the shipped
+   Smart Speakers / Alexa+ decks so every deck reuses the same, tested pieces
+   instead of re-inventing CSS per project.
+
+   See LAYOUTS.md for which components each canonical layout uses, ICONS.md for
+   the icon rules, and COPY_RULES.md for the words.
+   ============================================================================ */
+
+:root { --coral:#e2543c; --coral-soft:#fdece8; --teal:#008a8a; --teal-soft:#e6f7f7; }
+.slide .slide-header .right span { color:var(--fg-secondary); font-weight:500; font-size:24px; }
+.slide.dark .slide-header .right span { color:rgba(255,255,255,0.5); }
+
+/* --- eyebrow + section title ------------------------------------------------ */
+.eb { display:inline-flex; align-items:center; gap:10px; font-size:21px; font-weight:700; color:var(--teal); margin-bottom:14px; }
+.slide.dark .eb { color:var(--signal); }
+.ic { width:24px; height:24px; flex:none; display:block; }
+.eb .ic { width:22px; height:22px; }
+.hl { font-size:54px; font-weight:500; line-height:1.07; margin:0 0 22px; color:var(--ink); }
+.slide.dark .hl { color:#fff; }
+.accent { color:var(--teal); } .slide.dark .accent { color:var(--signal); }
+.sub { font-size:23px; line-height:1.45; color:var(--fg-secondary); max-width:1200px; }
+.ph { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); margin-bottom:16px; }
+
+/* --- icon chip (tinted square holding an Iconoir glyph) --------------------- */
+.icobox { width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:none; }
+.t-teal{background:var(--teal-soft);color:var(--teal);} .t-coral{background:var(--coral-soft);color:var(--coral);}
+.t-green{background:var(--positive-soft);color:var(--positive);} .t-ink{background:#f0f0f0;color:var(--ink);}
+
+/* --- layout helpers -------------------------------------------------------- */
+.mid { flex:1; display:flex; flex-direction:column; justify-content:center; min-height:0; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:48px; }
+.up{color:var(--positive);} .dn{color:var(--coral);}
+
+/* --- KPI tiles ------------------------------------------------------------- */
+.kpi { border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; display:flex; flex-direction:column; gap:5px; }
+.kpi .kl { font-size:17px; font-weight:600; color:var(--fg-secondary); }
+.kpi .kn { font-size:46px; font-weight:700; line-height:1; color:var(--ink); }
+.kpi .km { font-size:15px; color:var(--fg-secondary); }
+
+/* --- horizontal bars (share of voice, channels) — SOFT gradient ------------ */
+.bars { display:flex; flex-direction:column; gap:13px; }
+.bar { display:grid; grid-template-columns:220px 1fr 58px; align-items:center; gap:15px; }
+.bar .bl { display:flex; align-items:center; gap:10px; font-size:19px; font-weight:600; color:var(--fg-primary); }
+.bar .track { display:block; height:12px; background:var(--surface-02); border-radius:99px; overflow:hidden; }
+.bar .fill { display:block; height:12px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+.bar .bv { font-size:19px; font-weight:700; text-align:right; color:var(--teal); }
+.bar.mut .fill{background:var(--neutral-05);} .bar.mut .bv{color:var(--fg-secondary);}
+/* labelled bar variant with trailing channel chips (study "lo que empuja/frena") */
+.barh { display:flex; align-items:center; gap:14px; }
+.barh .bl{font-size:20px;font-weight:600;color:var(--fg-primary);width:340px;display:flex;align-items:center;gap:11px;}
+.barh .track{flex:1;height:12px;background:var(--surface-02);border-radius:99px;overflow:hidden;}
+.barh .fill{display:block;height:12px;border-radius:99px;background:linear-gradient(90deg,#0d8a8a,#37b0ad);}
+.barh .fill.c{background:linear-gradient(90deg,#d6492f,#e8735c);}
+.barh .bv{font-size:19px;font-weight:700;color:var(--teal);width:56px;text-align:right;} .barh .bv.c{color:var(--coral);}
+.chns{display:flex;gap:6px;justify-content:flex-end;}
+.cc{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;flex:none;} .cc svg{width:15px;height:15px;}
+
+/* --- sentiment split bar (neg vs pos among those with an opinion) ----------- */
+.sbrow { display:grid; grid-template-columns:150px 1fr 62px; align-items:center; gap:15px; }
+.sbrow .bl { display:flex; align-items:center; gap:10px; font-size:20px; font-weight:600; color:var(--fg-primary); }
+.split { display:flex; height:15px; border-radius:99px; overflow:hidden; background:var(--surface-02); }
+.split i { display:block; height:15px; }
+.split .neg { background:linear-gradient(90deg,#d6492f,#e8735c); }
+.split .pos { background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+.sbrow .bv { font-size:20px; font-weight:700; text-align:right; color:var(--coral); }
+
+/* --- topics / data table --------------------------------------------------- */
+.tbl { width:100%; border-collapse:collapse; }
+.tbl th { text-align:left; font-size:15px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); padding:0 0 14px; border-bottom:1px solid var(--border-subtle); }
+.tbl td { padding:14px 0; border-bottom:1px solid var(--border-subtle); font-size:21px; color:var(--fg-primary); }
+.tbl td .nm { font-weight:600; color:var(--ink); }
+.tag { font-size:14px; font-weight:600; padding:3px 11px; border-radius:99px; }
+.tag.neg{background:var(--coral-soft);color:var(--coral);} .tag.pos{background:var(--positive-soft);color:var(--positive);} .tag.neu{background:#f0f0f0;color:var(--fg-secondary);}
+.chn { display:inline-flex; align-items:center; gap:9px; font-size:19px; font-weight:600; color:var(--fg-primary); }
+.mini { display:inline-block; width:120px; height:9px; border-radius:99px; background:var(--surface-02); overflow:hidden; vertical-align:middle; }
+.mini i { display:block; height:9px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+
+/* --- verbatim card (real quote + source chip + link) ----------------------- */
+.vq { border:1px solid var(--border-subtle); border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:10px; background:var(--canvas); }
+.vq .qt { font-size:19px; font-style:italic; line-height:1.4; color:var(--fg-primary); }
+.sq { width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
+.sq .ic { width:14px; height:14px; }
+.src { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-secondary); font-weight:600; }
+.src a { color:var(--teal); text-decoration:none; }
+
+/* --- read rows (icon + label + description) -------------------------------- */
+.irow { display:grid; grid-template-columns:46px 1fr; gap:15px; align-items:start; }
+.irow .il { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); margin-bottom:3px; }
+.irow .id { font-size:19px; color:var(--fg-secondary); line-height:1.4; }
+.irow.coral .il { color:var(--coral); } .irow.green .il { color:var(--positive); }
+
+/* --- soft note (NEVER a black card) ---------------------------------------- */
+.note { display:grid; grid-template-columns:44px 1fr; gap:14px; align-items:center; background:var(--teal-soft); border-radius:14px; padding:18px 22px; }
+.note .icobox { width:44px; height:44px; background:#fff; color:var(--teal); }
+.note p { margin:0; font-size:20px; line-height:1.4; color:var(--fg-primary); max-width:none; }
+.note b { color:var(--teal); font-weight:700; }
+
+/* --- consolidated cards (chart + bars at equal height) --------------------- */
+.vcard { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:26px 30px; display:flex; flex-direction:column; }
+.vbody { height:230px; display:flex; flex-direction:column; justify-content:center; margin:18px 0 16px; }
+.vfoot { font-size:18px; line-height:1.45; color:var(--fg-secondary); border-top:1px solid var(--border-subtle); padding-top:16px; }
+.vfoot b { color:var(--fg-primary); }
+
+/* --- head-to-head card ----------------------------------------------------- */
+.hh { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:24px 28px; display:flex; flex-direction:column; gap:12px; }
+.hh .he { display:inline-flex; align-items:center; gap:10px; font-size:15px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); }
+.hh .hc { font-size:22px; line-height:1.32; color:var(--ink); font-weight:500; } .hh .hc b { color:var(--teal); font-weight:700; }
+.hh .hq { font-size:16px; font-style:italic; color:var(--fg-secondary); line-height:1.4; border-top:1px solid var(--border-subtle); padding-top:12px; margin-top:auto; }
+
+/* --- Triggers & Barriers matrix (4 layers x push/pull) --------------------- */
+.mtx { display:grid; grid-template-columns:170px 1fr 1fr; gap:11px; }
+.mtx .mh { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:0 18px 4px; }
+.mtx .lay { display:flex; flex-direction:column; justify-content:center; padding:0 4px; } .mtx .lay h4 { font-size:21px; margin:0; color:var(--ink); }
+.cell { border-radius:14px; padding:15px 18px; display:flex; flex-direction:column; gap:8px; }
+.cell.tr { background:var(--positive-soft); } .cell.br { background:var(--coral-soft); } .cell.dim { background:#f3f3f3; }
+.cell .ct { font-size:20px; font-weight:600; color:var(--ink); line-height:1.15; }
+.cmeta { display:flex; align-items:center; gap:14px; font-size:14px; font-weight:600; color:var(--fg-secondary); }
+.cmeta .cn{font-weight:700;} .cell.tr .cn{color:var(--positive);} .cell.br .cn{color:var(--coral);}
+.sdot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle;}
+
+/* --- kanban (where a brand can act: full / partial / align only) ----------- */
+.kan { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:22px; align-items:start; }
+.kcol { display:flex; flex-direction:column; gap:14px; }
+.khead { font-size:16px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:0 4px; }
+.kcard { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; }
+.kcard h4{font-size:22px;margin:10px 0 6px;color:var(--ink);} .kcard p{font-size:17px;margin:0;color:var(--fg-secondary);line-height:1.4;}
+/* NOTE: chip modifier is `kmid`, never `mid` — `.mid` is the slide content wrapper (flex-column) and collides. */
+.kchip{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:6px 13px;border-radius:99px;background:var(--teal-soft);color:var(--teal);white-space:nowrap;}
+.kchip.kmid{background:#eef3f6;color:#5f86a0;} .kchip.no{background:#f0f0f0;color:var(--fg-secondary);}
+.kchip svg{width:15px;height:15px;flex:none;}
+
+/* --- mirror (every pull has a shadow) -------------------------------------- */
+.mir { display:grid; grid-template-columns:1fr 54px 1fr; gap:18px; align-items:stretch; }
+.mcell { border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+.mcell.tr{background:var(--positive-soft);} .mcell.br{background:var(--coral-soft);}
+.mcell .ml{font-size:14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;} .mcell.tr .ml{color:var(--positive);} .mcell.br .ml{color:var(--coral);}
+.mcell .mt{font-size:20px;color:var(--ink);line-height:1.25;}
+.mvs{display:flex;align-items:center;justify-content:center;color:var(--fg-secondary);}
+
+/* --- index cards (brief) --------------------------------------------------- */
+.idx { display:grid; grid-template-columns:repeat(5,1fr); gap:16px; }
+.idxc { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:14px; padding:20px 18px; display:flex; flex-direction:column; gap:8px; }
+.idxc .n{font-size:15px;font-weight:700;color:var(--teal);} .idxc h4{font-size:19px;margin:0;color:var(--ink);line-height:1.2;} .idxc p{font-size:15px;margin:0;color:var(--fg-secondary);line-height:1.35;}
+
+/* --- glossary -------------------------------------------------------------- */
+.gloss { display:grid; grid-template-columns:1fr 1fr; gap:22px 56px; }
+.gterm { display:grid; grid-template-columns:40px 1fr; gap:14px; }
+.gterm h4 { font-size:23px; margin:0 0 4px; color:var(--ink); }
+.gterm p { font-size:18px; color:var(--fg-secondary); line-height:1.4; margin:0; }
+
+/* --- brand / channel chip (holds a Simple Icons glyph, white on brand color) */
+.chip { display:inline-flex; align-items:center; gap:9px; font-size:18px; font-weight:600; color:var(--fg-primary); background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:99px; padding:8px 16px; }
+.bmk { width:22px; height:22px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex:none; } .bmk svg { width:13px; height:13px; }
+
+.lg { display:flex; align-items:center; gap:11px; font-size:20px; } .dot { width:13px; height:13px; border-radius:50%; flex:none; }
