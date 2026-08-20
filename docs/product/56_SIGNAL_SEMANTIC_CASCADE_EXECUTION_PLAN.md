@@ -1404,3 +1404,28 @@ SIGNAL_10C2_EXECUTION_AUTHORIZED=false
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## 27. 10C.2A · cierre de secuencia, autorización y lineage ejecutable
+
+**Registrado:** 2026-08-20T12:08:21-06:00 (`America/Mexico_City`)
+
+El audit final corrigió dos inconsistencias del harness sin tocar el plan firmado: el
+orden técnico ahora prioriza coverage macro igual por partición y `holdout_open_once`
+es una transición real, irreversible e idempotente. `prepare` mantiene la ejecución
+cerrada. Un artefacto externo debe autorizar `smoke → calibration → full`; el harness
+lo sella contra plan/export y no puede crearlo por sí mismo. Después de full multi-seed,
+`freeze-finalists` sella finalistas, summary y stability; un segundo artefacto externo
+autoriza la única apertura de holdout. `packet` falla cerrado si falta ese gate.
+
+El run state sella plan, corpus, export file, source del exporter, source del harness,
+dependency lock y fingerprint de hardware. Authority/rights y source del exporter ya no
+comparten un campo ambiguo. No se emitió ninguna autorización real en este checkpoint.
+
+```text
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_HARNESS_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=false
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

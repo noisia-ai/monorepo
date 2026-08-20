@@ -194,7 +194,7 @@ def build_blinded_packet(
         "review_scope": review_scope,
         "population_denominator": population_denominator or len(records),
         "modeling_decision_allowed": modeling_decision_allowed,
-        "decision_sheet_contract": "signal-topic-discovery-blind-decision-sheet-v1",
+        "decision_sheet_contract": "signal-topic-discovery-blind-decision-sheet-v2",
         "packet_policy_version": PACKET_POLICY_VERSION,
         "packet_policy_digest": policy_digest,
         "packet_token_count": packet_token_count,
@@ -232,7 +232,8 @@ def build_blinded_packet(
             ),
             (
                 "Complete the separate blind decision sheet with review_outcome set to "
-                "candidate_preferred or none_acceptable; this review never authorizes adoption."
+                "candidate_preferred, none_acceptable or rerun_requested; this review "
+                "never authorizes adoption."
             ),
             "Save reviewer identity and completed scores as a separate append-only artifact.",
         ],
@@ -616,8 +617,8 @@ def _write_decision_sheet(path: Path) -> None:
         )
         writer.writerow(
             [
-                "signal-topic-discovery-blind-decision-sheet-v1",
-                "candidate_preferred|none_acceptable",
+                "signal-topic-discovery-blind-decision-sheet-v2",
+                "candidate_preferred|none_acceptable|rerun_requested",
                 "",
                 "",
                 "",

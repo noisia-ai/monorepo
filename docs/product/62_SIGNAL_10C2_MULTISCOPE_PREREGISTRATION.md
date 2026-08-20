@@ -239,3 +239,24 @@ La siguiente autorización necesaria no es de modelado: el operador debe resolve
 forma explícita `strategic-analysis` para los imports actuales del corpus congelado y
 después repetir el preflight V2 read-only. La ejecución de candidatos requiere otra
 autorización separada.
+
+## 11. Auditoría de completitud del harness
+
+**Registrado:** 2026-08-20T12:08:21-06:00 (`America/Mexico_City`)
+
+La auditoría de cierre preservó ambos archivos de plan y sus digests. Encontró dos gaps
+en código, no en decisiones preregistradas: el desempate técnico todavía usaba coverage
+micro global y no existía una transición para el stage `holdout_open_once`. Ambos se
+corrigieron de forma genérica.
+
+El resultado por candidate expone ahora métricas de assignments por partición, macro con
+peso igual y micro global; el ranking primario usa el macro coverage. El run state sella
+además un fingerprint de hardware y el digest del source exportador, distinto del digest
+de rights. Una autorización externa y digest-sealed puede habilitar en el futuro
+`smoke`, `calibration` y `full` sin mutar el preregistro. Tras full multi-seed,
+`freeze-finalists` sella finalistas/summary/stability; otro artefacto explícito es
+necesario para abrir holdout una sola vez. El packet de un finalista no puede saltarse
+esta secuencia.
+
+En esta misión no se creó ni aplicó ninguno de esos artefactos al corpus real. El
+holdout permanece sellado, los candidates no se ejecutaron y 10D continúa bloqueado.

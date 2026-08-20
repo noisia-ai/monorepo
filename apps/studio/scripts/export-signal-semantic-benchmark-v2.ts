@@ -70,6 +70,15 @@ await chmod(outputDirectory, 0o700);
 const pseudonymKey = await loadOrCreatePseudonymKey(
   resolve(outputDirectory, "pseudonym-key.private.bin")
 );
+const exporterSourceDigest = hash([
+  "apps/studio/scripts/export-signal-semantic-benchmark-v2.ts",
+  await readFile(resolve(process.cwd(), "scripts/export-signal-semantic-benchmark-v2.ts"), "utf8"),
+  "apps/studio/src/lib/data-os/signal-semantic-benchmark-export.ts",
+  await readFile(
+    resolve(process.cwd(), "src/lib/data-os/signal-semantic-benchmark-export.ts"),
+    "utf8"
+  )
+].join("\u0000"));
 
 const [
   { pool },
@@ -105,7 +114,8 @@ try {
   const manifest = buildSignalSemanticBenchmarkExportManifestV2({
     exported,
     frozenCorpus: plan.corpus,
-    exportFileSha256: hash(body)
+    exportFileSha256: hash(body),
+    exporterSourceDigest
   });
   const manifestPath = resolve(outputDirectory, "source-export-v2.manifest.private.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
@@ -129,6 +139,7 @@ try {
     watermark_digest: manifest.watermark_digest,
     export_file_sha256: manifest.export_file_sha256,
     export_records_digest: manifest.export_records_digest,
+    exporter_source_digest: manifest.exporter_source_digest,
     read_only: true,
     writes_performed: false,
     provider_calls: 0,

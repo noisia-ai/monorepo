@@ -178,6 +178,7 @@ export type SignalSemanticBenchmarkExportManifestV2 = {
   provenance_digest: Digest;
   watermark_digest: Digest;
   authority_digest: Digest;
+  exporter_source_digest: Digest;
   export_records_digest: Digest;
   schema_version: typeof SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT;
   acquisition_denominator: number;
@@ -520,8 +521,12 @@ export function buildSignalSemanticBenchmarkExportManifestV2(args: {
   exported: SignalSemanticBenchmarkExportResultV2;
   frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
   exportFileSha256: Digest;
+  exporterSourceDigest: Digest;
 }): SignalSemanticBenchmarkExportManifestV2 {
-  if (!/^sha256:[0-9a-f]{64}$/u.test(args.exportFileSha256)) {
+  if (
+    !/^sha256:[0-9a-f]{64}$/u.test(args.exportFileSha256)
+    || !/^sha256:[0-9a-f]{64}$/u.test(args.exporterSourceDigest)
+  ) {
     throw new Error("signal_benchmark_export_file_digest_invalid");
   }
   if (
@@ -551,6 +556,7 @@ export function buildSignalSemanticBenchmarkExportManifestV2(args: {
     provenance_digest: args.exported.provenance_digest,
     watermark_digest: args.exported.watermark_digest,
     authority_digest: args.exported.authority_digest,
+    exporter_source_digest: args.exporterSourceDigest,
     export_records_digest: args.exported.export_records_digest,
     schema_version: SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT,
     acquisition_denominator: args.exported.acquisition_denominator,

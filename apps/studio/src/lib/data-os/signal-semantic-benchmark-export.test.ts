@@ -105,11 +105,13 @@ test("acquisition export v2 keeps one physical root with multiple partition memb
       protected_state_digest_after: digest("a")
     },
     frozenCorpus: frozenCorpusV2,
-    exportFileSha256: digest("b")
+    exportFileSha256: digest("b"),
+    exporterSourceDigest: digest("c")
   });
   assert.equal(manifest.schema_version, "signal-semantic-benchmark-record-v2");
   assert.equal(manifest.partitions.category?.entity_ref, frozenCorpusV2.partitions[1]?.entity_ref);
   assert.equal(manifest.exclusion_contract, "acquisition-quality-exclusive-v2");
+  assert.equal(manifest.exporter_source_digest, digest("c"));
 });
 
 test("acquisition export v2 fails closed on strategic rights or frozen partition drift", () => {

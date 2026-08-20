@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -40,6 +41,7 @@ from .plan import (
     load_plan,
     load_run_plan,
     plan_digest,
+    require_digest_value,
 )
 from .review_packet import build_blinded_packet
 from .schema import BenchmarkRecord, BenchmarkRecordV2, ExportManifest, ExportManifestV2
@@ -111,6 +113,12 @@ def prepare_run(
     os.chmod(copied_manifest, 0o600)
     harness_source_digest = compute_harness_source_digest()
     lock_path = Path(__file__).resolve().parents[2] / "uv.lock"
+    hardware = {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python": sys.version.split()[0],
+    }
     run = {
         "contract_version": (
             "signal-local-modeling-run-v2" if _is_v3(plan) else "signal-local-modeling-run-v1"
@@ -118,7 +126,7 @@ def prepare_run(
         "plan_digest": plan_digest(plan),
         "plan_file_sha256": sha256_file(sealed_plan),
         "harness_source_digest": harness_source_digest,
-        "exporter_source_digest": export_manifest.authority_digest
+        "exporter_source_digest": export_manifest.exporter_source_digest
         if isinstance(export_manifest, ExportManifestV2)
         else export_manifest.projection_snapshot_digest,
         "dependency_lock_digest": sha256_file(lock_path),
@@ -138,22 +146,22 @@ def prepare_run(
             )
         ),
         "parquet_sha256": sha256_file(parquet_path),
-        "hardware": {
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "processor": platform.processor(),
-            "python": sys.version.split()[0],
-        },
+        "hardware": hardware,
+        "hardware_fingerprint": sha256_text(canonical_json(hardware)),
         "stage_state": {
             "prepared": "completed",
             "smoke": "not_started",
             "calibration": "not_started",
             "full": "not_started",
             "multi_seed_complete": "not_started",
+            "holdout_open_once": "not_started",
             "operator_review": "not_started",
         },
         "holdout_state": "sealed",
         "execution_authorized": bool(plan.get("execution_authorized", True)),
+        "execution_authorization_digest": None,
+        "holdout_authorization_digest": None,
+        "full_finalists_digest": None,
         "provider_calls": 0,
         "remote_writes": 0,
         "serving_writes": 0,
@@ -171,11 +179,7 @@ def run_stage(run_dir: Path, stage: str) -> dict[str, Any]:
     if run_state.get("harness_source_digest") != compute_harness_source_digest():
         raise ValueError("benchmark_run_harness_source_digest_mismatch")
     if _is_v3(plan):
-        if (
-            plan["execution_authorized"] is not True
-            or run_state.get("execution_authorized") is not True
-        ):
-            raise ValueError("benchmark_execution_not_authorized")
+        _assert_execution_authorized(run_dir, plan, run_state)
         _assert_stage_transition(run_state, stage)
         if run_state.get("holdout_state") != "sealed":
             raise ValueError("benchmark_holdout_opened_before_authorized_gate")
@@ -728,8 +732,12 @@ def _passes_v3_candidate_gates(metrics: dict[str, Any], gates: dict[str, Any]) -
 
 def technical_sort_key(result: dict[str, Any]) -> tuple[float, float, float, float]:
     metrics = result["metrics"]
+    multiscope = metrics.get("multiscope", {})
+    primary_coverage = multiscope.get("macro_equal_partition", {}).get(
+        "coverage", metrics["coverage"]
+    )
     return (
-        -float(metrics["coverage"]),
+        -float(primary_coverage),
         -float(metrics["topic_diversity"]),
         float(metrics["topic_redundancy"] if metrics["topic_redundancy"] is not None else 1),
         float(metrics["duration_seconds"]),
@@ -785,6 +793,265 @@ def _assert_stage_transition(run_state: dict[str, Any], stage: str) -> None:
         return
     if stage_state.get(required) != "completed":
         raise ValueError(f"benchmark_stage_prerequisite_missing:{required}")
+
+
+def authorize_run(run_dir: Path, authorization_path: Path) -> dict[str, Any]:
+    """Apply an explicit external execution authorization without mutating the plan.
+
+    The preregistration remains sealed with ``execution_authorized=false``. This
+    transition records a separate operator-owned authorization whose digest is bound to
+    the exact plan and export manifest. The harness never creates this authorization.
+    """
+
+    plan = load_run_plan(run_dir)
+    if not _is_v3(plan):
+        raise ValueError("benchmark_execution_authorization_requires_v3")
+    run_state = _load_run_state(run_dir, plan)
+    payload = _load_authorization(
+        authorization_path,
+        expected_contract="signal-local-modeling-execution-authorization-v1",
+        expected_action="authorize_execution",
+        expected_plan_digest=plan_digest(plan),
+    )
+    if payload["export_manifest_digest"] != run_state["export_manifest_digest"]:
+        raise ValueError("benchmark_execution_authorization_export_mismatch")
+    if payload["authorized_stages"] != ["smoke", "calibration", "full"]:
+        raise ValueError("benchmark_execution_authorization_stages_invalid")
+    existing = run_state.get("execution_authorization_digest")
+    sealed_path = run_dir / "execution-authorization.sealed.private.json"
+    if run_state.get("execution_authorized") is True:
+        if (
+            existing != payload["authorization_digest"]
+            or not sealed_path.is_file()
+            or json.loads(sealed_path.read_text()) != payload
+        ):
+            raise ValueError("benchmark_execution_authorization_incompatible_replay")
+        return {
+            "contract_version": payload["contract_version"],
+            "authorization_digest": existing,
+            "execution_authorized": True,
+            "replayed": True,
+        }
+    if sealed_path.exists():
+        if json.loads(sealed_path.read_text()) != payload:
+            raise ValueError("benchmark_execution_authorization_partial_state")
+    else:
+        write_private_json(sealed_path, payload)
+    run_state["execution_authorized"] = True
+    run_state["execution_authorization_digest"] = payload["authorization_digest"]
+    run_state["status"] = "execution_authorized"
+    write_private_json(run_dir / "run-state.private.json", run_state)
+    return {
+        "contract_version": payload["contract_version"],
+        "authorization_digest": payload["authorization_digest"],
+        "execution_authorized": True,
+        "replayed": False,
+    }
+
+
+def freeze_full_finalists(run_dir: Path) -> dict[str, Any]:
+    """Seal the exact full results before any holdout transition."""
+
+    plan = load_run_plan(run_dir)
+    run_state = _load_run_state(run_dir, plan)
+    if not _is_v3(plan):
+        raise ValueError("benchmark_execution_authorization_required_before_finalist_freeze")
+    _assert_execution_authorized(run_dir, plan, run_state)
+    stage_state = run_state.get("stage_state", {})
+    if (
+        stage_state.get("full") != "completed"
+        or stage_state.get("multi_seed_complete") != "completed"
+    ):
+        raise ValueError("benchmark_full_multiseed_required_before_finalist_freeze")
+    finalists_path = run_dir / "finalists.private.json"
+    summary_path = run_dir / "full" / "summary.private.json"
+    if not finalists_path.is_file() or not summary_path.is_file():
+        raise ValueError("benchmark_full_finalist_artifact_missing")
+    stability = build_stability(run_dir)
+    stability_path = run_dir / "full" / "stability.private.json"
+    payload = {
+        "contract_version": "signal-local-modeling-full-finalists-freeze-v1",
+        "plan_digest": plan_digest(plan),
+        "export_manifest_digest": run_state["export_manifest_digest"],
+        "finalists_sha256": sha256_file(finalists_path),
+        "full_summary_sha256": sha256_file(summary_path),
+        "stability_sha256": sha256_file(stability_path),
+        "candidate_keys": json.loads(finalists_path.read_text())["candidate_keys"],
+        "stability_candidate_keys": sorted(stability),
+    }
+    payload["full_finalists_digest"] = sha256_text(canonical_json(payload))
+    path = run_dir / "full-finalists.sealed.private.json"
+    if path.is_file():
+        existing = json.loads(path.read_text())
+        if existing != payload:
+            raise ValueError("benchmark_full_finalists_freeze_incompatible_replay")
+    else:
+        write_private_json(path, payload)
+    run_state["full_finalists_digest"] = payload["full_finalists_digest"]
+    run_state["status"] = "full_finalists_frozen"
+    write_private_json(run_dir / "run-state.private.json", run_state)
+    return payload
+
+
+def open_holdout_once(run_dir: Path, authorization_path: Path) -> dict[str, Any]:
+    """Record the one-way holdout opening after full finalists are frozen."""
+
+    plan = load_run_plan(run_dir)
+    run_state = _load_run_state(run_dir, plan)
+    if not _is_v3(plan):
+        raise ValueError("benchmark_execution_authorization_required_before_holdout")
+    _assert_execution_authorized(run_dir, plan, run_state)
+    payload = _load_authorization(
+        authorization_path,
+        expected_contract="signal-local-modeling-holdout-authorization-v1",
+        expected_action="open_holdout_once",
+        expected_plan_digest=plan_digest(plan),
+    )
+    frozen_digest = run_state.get("full_finalists_digest")
+    require_digest_value(frozen_digest, "benchmark_full_finalists_not_frozen")
+    if payload["full_finalists_digest"] != frozen_digest:
+        raise ValueError("benchmark_holdout_authorization_finalists_mismatch")
+    if run_state.get("holdout_state") == "opened_once":
+        sealed_path = run_dir / "holdout-authorization.sealed.private.json"
+        if (
+            run_state.get("holdout_authorization_digest") != payload["authorization_digest"]
+            or not sealed_path.is_file()
+            or json.loads(sealed_path.read_text()) != payload
+        ):
+            raise ValueError("benchmark_holdout_authorization_incompatible_replay")
+        return {
+            "contract_version": payload["contract_version"],
+            "holdout_state": "opened_once",
+            "authorization_digest": payload["authorization_digest"],
+            "replayed": True,
+        }
+    if run_state.get("holdout_state") != "sealed":
+        raise ValueError("benchmark_holdout_state_invalid")
+    sealed_path = run_dir / "holdout-authorization.sealed.private.json"
+    if sealed_path.exists():
+        if json.loads(sealed_path.read_text()) != payload:
+            raise ValueError("benchmark_holdout_authorization_partial_state")
+    else:
+        write_private_json(sealed_path, payload)
+    run_state["holdout_state"] = "opened_once"
+    run_state["holdout_authorization_digest"] = payload["authorization_digest"]
+    run_state["stage_state"]["holdout_open_once"] = "completed"
+    run_state["status"] = "holdout_opened_once"
+    write_private_json(run_dir / "run-state.private.json", run_state)
+    return {
+        "contract_version": payload["contract_version"],
+        "holdout_state": "opened_once",
+        "authorization_digest": payload["authorization_digest"],
+        "full_finalists_digest": frozen_digest,
+        "replayed": False,
+    }
+
+
+def _load_run_state(run_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    path = run_dir / "run-state.private.json"
+    if not path.is_file():
+        raise ValueError("benchmark_run_state_missing")
+    state = json.loads(path.read_text())
+    if state.get("plan_digest") != plan_digest(plan):
+        raise ValueError("benchmark_run_plan_digest_mismatch")
+    if state.get("harness_source_digest") != compute_harness_source_digest():
+        raise ValueError("benchmark_run_harness_source_digest_mismatch")
+    safety_counters = ("provider_calls", "remote_writes", "serving_writes")
+    if any(int(state.get(field, -1)) != 0 for field in safety_counters):
+        raise ValueError("benchmark_run_safety_counter_nonzero")
+    return state
+
+
+def _load_authorization(
+    path: Path,
+    *,
+    expected_contract: str,
+    expected_action: str,
+    expected_plan_digest: str,
+) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    common = {
+        "contract_version",
+        "action",
+        "plan_digest",
+        "actor_ref",
+        "authorized_at",
+        "provider_calls_allowed",
+        "remote_writes_allowed",
+        "serving_writes_allowed",
+        "ten_d_authorized",
+        "authorization_digest",
+    }
+    extra = (
+        {"export_manifest_digest", "authorized_stages"}
+        if expected_action == "authorize_execution"
+        else {"full_finalists_digest"}
+    )
+    if set(payload) != common | extra:
+        raise ValueError("benchmark_authorization_shape_invalid")
+    if (
+        payload["contract_version"] != expected_contract
+        or payload["action"] != expected_action
+        or payload["plan_digest"] != expected_plan_digest
+        or payload["provider_calls_allowed"] is not False
+        or payload["remote_writes_allowed"] is not False
+        or payload["serving_writes_allowed"] is not False
+        or payload["ten_d_authorized"] is not False
+    ):
+        raise ValueError("benchmark_authorization_boundary_invalid")
+    require_digest_value(payload["plan_digest"], "benchmark_authorization_plan_digest_invalid")
+    require_digest_value(payload["actor_ref"], "benchmark_authorization_actor_ref_invalid")
+    timestamp = datetime.fromisoformat(str(payload["authorized_at"]))
+    if timestamp.utcoffset() is None:
+        raise ValueError("benchmark_authorization_timestamp_timezone_required")
+    supplied = require_digest_value(
+        payload["authorization_digest"], "benchmark_authorization_digest_invalid"
+    )
+    unsigned = {key: value for key, value in payload.items() if key != "authorization_digest"}
+    if supplied != sha256_text(canonical_json(unsigned)):
+        raise ValueError("benchmark_authorization_digest_mismatch")
+    return payload
+
+
+def _assert_execution_authorized(
+    run_dir: Path, plan: dict[str, Any], run_state: dict[str, Any]
+) -> None:
+    if run_state.get("execution_authorized") is not True:
+        raise ValueError("benchmark_execution_not_authorized")
+    path = run_dir / "execution-authorization.sealed.private.json"
+    if not path.is_file():
+        raise ValueError("benchmark_execution_authorization_missing")
+    payload = _load_authorization(
+        path,
+        expected_contract="signal-local-modeling-execution-authorization-v1",
+        expected_action="authorize_execution",
+        expected_plan_digest=plan_digest(plan),
+    )
+    if (
+        payload["authorization_digest"] != run_state.get("execution_authorization_digest")
+        or payload["export_manifest_digest"] != run_state.get("export_manifest_digest")
+        or payload["authorized_stages"] != ["smoke", "calibration", "full"]
+    ):
+        raise ValueError("benchmark_execution_authorization_state_mismatch")
+
+
+def _assert_holdout_authorized(
+    run_dir: Path, plan: dict[str, Any], run_state: dict[str, Any]
+) -> None:
+    path = run_dir / "holdout-authorization.sealed.private.json"
+    if not path.is_file():
+        raise ValueError("benchmark_holdout_authorization_missing")
+    payload = _load_authorization(
+        path,
+        expected_contract="signal-local-modeling-holdout-authorization-v1",
+        expected_action="open_holdout_once",
+        expected_plan_digest=plan_digest(plan),
+    )
+    if (
+        payload["authorization_digest"] != run_state.get("holdout_authorization_digest")
+        or payload["full_finalists_digest"] != run_state.get("full_finalists_digest")
+    ):
+        raise ValueError("benchmark_holdout_authorization_state_mismatch")
 
 
 def compute_harness_source_digest() -> str:
@@ -868,7 +1135,9 @@ def sanitize_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def build_packet(run_dir: Path) -> dict[str, Any]:
     plan = load_run_plan(run_dir)
-    run_state = json.loads((run_dir / "run-state.private.json").read_text())
+    run_state = _load_run_state(run_dir, plan) if _is_v3(plan) else json.loads(
+        (run_dir / "run-state.private.json").read_text()
+    )
     modeling_harness_source_digest = str(run_state["harness_source_digest"])
     packet_harness_source_digest = compute_harness_source_digest()
     records, export_manifest = load_export(
@@ -876,13 +1145,29 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
     )
     finalist_payload = json.loads((run_dir / "finalists.private.json").read_text())
     finalists = finalist_payload["candidate_keys"]
+    if _is_v3(plan):
+        stage_state = run_state.get("stage_state", {})
+        if finalists and (
+            stage_state.get("multi_seed_complete") != "completed"
+            or stage_state.get("holdout_open_once") != "completed"
+            or run_state.get("holdout_state") != "opened_once"
+        ):
+            raise ValueError("benchmark_holdout_gate_required_before_packet")
+        if finalists:
+            _assert_execution_authorized(run_dir, plan, run_state)
+            _assert_holdout_authorized(run_dir, plan, run_state)
+            _assert_full_finalists_frozen(run_dir, run_state, plan)
+        if not finalists and stage_state.get("calibration") != "completed":
+            raise ValueError("benchmark_calibration_required_before_no_adoption_packet")
     if not finalists:
         result = build_no_adoption_packet(
             run_dir, records, _manifest_denominator(export_manifest), plan
         )
-        return seal_packet_source_lineage(
+        sealed = seal_packet_source_lineage(
             result, modeling_harness_source_digest, packet_harness_source_digest
         )
+        _mark_packet_ready(run_dir, run_state)
+        return sealed
     stability = build_stability(run_dir)
     stable_finalists = [
         key
@@ -899,9 +1184,11 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
             finalists,
             stability,
         )
-        return seal_packet_source_lineage(
+        sealed = seal_packet_source_lineage(
             result, modeling_harness_source_digest, packet_harness_source_digest
         )
+        _mark_packet_ready(run_dir, run_state)
+        return sealed
     seed = int(plan["stages"]["final_seeds"][0])
     candidate_results = [
         {
@@ -918,9 +1205,43 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
         seed=271828,
         population_denominator=_manifest_denominator(export_manifest),
     )
-    return seal_packet_source_lineage(
+    sealed = seal_packet_source_lineage(
         result, modeling_harness_source_digest, packet_harness_source_digest
     )
+    _mark_packet_ready(run_dir, run_state)
+    return sealed
+
+
+def _mark_packet_ready(run_dir: Path, run_state: dict[str, Any]) -> None:
+    if "stage_state" not in run_state:
+        return
+    run_state["stage_state"]["operator_review"] = "packet_ready"
+    run_state["status"] = "operator_review_packet_ready"
+    write_private_json(run_dir / "run-state.private.json", run_state)
+
+
+def _assert_full_finalists_frozen(
+    run_dir: Path, run_state: dict[str, Any], plan: dict[str, Any]
+) -> None:
+    path = run_dir / "full-finalists.sealed.private.json"
+    if not path.is_file():
+        raise ValueError("benchmark_full_finalists_not_frozen")
+    payload = json.loads(path.read_text())
+    supplied = payload.get("full_finalists_digest")
+    unsigned = {key: value for key, value in payload.items() if key != "full_finalists_digest"}
+    if (
+        supplied != run_state.get("full_finalists_digest")
+        or supplied != sha256_text(canonical_json(unsigned))
+        or payload.get("plan_digest") != plan_digest(plan)
+        or payload.get("finalists_sha256") != sha256_file(run_dir / "finalists.private.json")
+        or payload.get("full_summary_sha256") != sha256_file(
+            run_dir / "full" / "summary.private.json"
+        )
+        or payload.get("stability_sha256") != sha256_file(
+            run_dir / "full" / "stability.private.json"
+        )
+    ):
+        raise ValueError("benchmark_full_finalists_freeze_drift")
 
 
 def seal_packet_source_lineage(

@@ -302,6 +302,7 @@ class ExportManifestV2(BaseModel):
     provenance_digest: Digest
     watermark_digest: Digest
     authority_digest: Digest
+    exporter_source_digest: Digest
     export_records_digest: Digest
     schema_version: Literal["signal-semantic-benchmark-record-v2"]
     acquisition_denominator: int = Field(ge=0)
@@ -333,6 +334,7 @@ class ExportManifestV2(BaseModel):
         "provenance_digest",
         "watermark_digest",
         "authority_digest",
+        "exporter_source_digest",
         "export_records_digest",
         "protected_state_digest_before",
         "protected_state_digest_after",

@@ -525,10 +525,10 @@ def test_adaptive_packet_is_deterministic_diverse_redacted_and_bounded(
     assert sha256_file(decision_sheet) == sha256_file(
         tmp_path / "second" / "blind-review-decision-sheet.private.csv"
     )
-    assert "candidate_preferred|none_acceptable" in decision_sheet.read_text()
+    assert "candidate_preferred|none_acceptable|rerun_requested" in decision_sheet.read_text()
     assert "review_outcome" in decision_sheet.read_text()
     assert first_packet["decision_sheet_contract"] == (
-        "signal-topic-discovery-blind-decision-sheet-v1"
+        "signal-topic-discovery-blind-decision-sheet-v2"
     )
     assert first_packet["candidates"][0]["packet_token_count"] <= first_packet[
         "candidates"

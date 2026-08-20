@@ -1289,3 +1289,23 @@ SIGNAL_10C2_EXECUTION_AUTHORIZED=false
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+### Auditoría de cierre 10C.2A · autorización y holdout fail-closed
+
+**Registrado:** 2026-08-20T12:08:21-06:00 (`America/Mexico_City`)
+
+La revisión requisito-por-requisito detectó y cerró dos gaps de operabilidad antes de
+autorizar modelos: la selección técnica todavía ordenaba por coverage micro global y la
+secuencia declaraba `holdout_open_once` sin una transición ejecutable. El ranking usa
+ahora coverage macro con peso igual por partición; las métricas publican macro y micro
+por separado.
+
+La preregistración continúa inmutable y desautorizada. La futura ejecución exige un
+artefacto externo sellado contra plan y export; después de full multi-seed se congelan
+finalistas, summary y stability, y otro artefacto explícito abre holdout una sola vez.
+El harness no genera esas autorizaciones, rechaza replay incompatible y no construye un
+packet de finalistas antes del gate. El manifest V2 también distingue el digest del
+código exportador del digest de authority/rights.
+
+En este checkpoint no se autorizó ni ejecutó 10C.2, no se abrió holdout y no hubo
+providers, jobs, remote/serving writes, readers, pointers, bindings o 10D.

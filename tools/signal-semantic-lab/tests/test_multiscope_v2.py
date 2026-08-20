@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from signal_semantic_lab.canonical import sha256_file
+from signal_semantic_lab.canonical import (
+    canonical_json,
+    sha256_file,
+    sha256_text,
+    write_private_json,
+)
 from signal_semantic_lab.fixture import generate_multiscope_fixture
 from signal_semantic_lab.input_data import load_export
 from signal_semantic_lab.multiscope import (
@@ -19,10 +24,14 @@ from signal_semantic_lab.multiscope import (
 )
 from signal_semantic_lab.plan import load_plan, plan_digest
 from signal_semantic_lab.runner import (
+    authorize_run,
+    freeze_full_finalists,
     load_completed_result,
+    open_holdout_once,
     passes_hard_gates,
     prepare_run,
     run_stage,
+    technical_sort_key,
 )
 from signal_semantic_lab.schema import BenchmarkRecordV2, ExportManifestV2
 from signal_semantic_lab.splits import assert_no_leakage, deterministic_splits
@@ -69,6 +78,12 @@ def _fixture_plan(tmp_path: Path, manifest: ExportManifestV2) -> Path:
     path = tmp_path / "fixture-plan-v3.json"
     path.write_text(json.dumps(plan))
     os.chmod(path, 0o600)
+    return path
+
+
+def _authorization(path: Path, payload: dict[str, object]) -> Path:
+    payload["authorization_digest"] = sha256_text(canonical_json(payload))
+    write_private_json(path, payload)
     return path
 
 
@@ -207,7 +222,39 @@ def test_macro_micro_and_partition_gates(tmp_path: Path) -> None:
     assert dry_run["unstable_case"]["passes_stability_gates"] is False
     assert dry_run["majority_stopword_case"]["passes_representation_gate"] is False
     assert dry_run["valid_case"]["multiscope"]["macro_equal_partition_coverage"] == 1
+    macro = dry_run["valid_case"]["multiscope"]["macro_equal_partition"]
+    assert set(macro) == {
+        "concentration_hhi",
+        "coverage",
+        "effective_topics",
+        "outlier_rate",
+        "topic_count",
+    }
+    assert macro["coverage"] == 1 and macro["outlier_rate"] == 0
+    assert dry_run["valid_case"]["multiscope"]["micro_global"]["denominator"] == 400
     assert dry_run["equal_partition_weights"] == {key: 0.25 for key in manifest.partitions}
+
+
+def test_finalist_ranking_uses_equal_partition_macro_coverage() -> None:
+    stronger_global = {
+        "metrics": {
+            "coverage": 0.9,
+            "topic_diversity": 0.8,
+            "topic_redundancy": 0.1,
+            "duration_seconds": 1,
+            "multiscope": {"macro_equal_partition": {"coverage": 0.6}},
+        }
+    }
+    stronger_macro = {
+        "metrics": {
+            "coverage": 0.8,
+            "topic_diversity": 0.8,
+            "topic_redundancy": 0.1,
+            "duration_seconds": 1,
+            "multiscope": {"macro_equal_partition": {"coverage": 0.7}},
+        }
+    }
+    assert technical_sort_key(stronger_macro) < technical_sort_key(stronger_global)
 
 
 def test_partition_language_market_platform_and_month_slices(tmp_path: Path) -> None:
@@ -284,9 +331,137 @@ def test_prepare_seals_lineage_but_execution_and_holdout_remain_closed(
     state = prepare_run(source, manifest_path, run_dir, plan_path=plan_path)
     assert state["holdout_state"] == "sealed"
     assert state["execution_authorized"] is False
+    assert state["exporter_source_digest"] == manifest.exporter_source_digest
+    assert state["hardware_fingerprint"] == sha256_text(canonical_json(state["hardware"]))
     assert state["provider_calls"] == state["remote_writes"] == 0
     with pytest.raises(ValueError, match="benchmark_execution_not_authorized"):
         run_stage(run_dir, "smoke")
+    tampered = json.loads((run_dir / "run-state.private.json").read_text())
+    tampered["execution_authorized"] = True
+    tampered["execution_authorization_digest"] = sha256_text("fabricated-authorization")
+    write_private_json(run_dir / "run-state.private.json", tampered)
+    with pytest.raises(ValueError, match="benchmark_execution_authorization_missing"):
+        run_stage(run_dir, "smoke")
+
+
+def test_execution_authorization_is_external_digest_bound_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    _records, manifest = _fixture(tmp_path)
+    plan_path = _fixture_plan(tmp_path, manifest)
+    run_dir = tmp_path / "run"
+    state = prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        run_dir,
+        plan_path=plan_path,
+    )
+    authorization = _authorization(
+        tmp_path / "execution-authorization.json",
+        {
+            "contract_version": "signal-local-modeling-execution-authorization-v1",
+            "action": "authorize_execution",
+            "plan_digest": state["plan_digest"],
+            "export_manifest_digest": state["export_manifest_digest"],
+            "authorized_stages": ["smoke", "calibration", "full"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T12:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    first = authorize_run(run_dir, authorization)
+    second = authorize_run(run_dir, authorization)
+    assert first["execution_authorized"] is True and first["replayed"] is False
+    assert second["replayed"] is True
+    with pytest.raises(ValueError, match="stage_prerequisite_missing:smoke"):
+        run_stage(run_dir, "calibration")
+    changed_payload = json.loads(authorization.read_text())
+    changed_payload["actor_ref"] = sha256_text("different-operator")
+    changed_payload.pop("authorization_digest")
+    incompatible = _authorization(tmp_path / "incompatible.json", changed_payload)
+    with pytest.raises(ValueError, match="incompatible_replay"):
+        authorize_run(run_dir, incompatible)
+
+    recovery_run = tmp_path / "recovery-run"
+    prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        recovery_run,
+        plan_path=plan_path,
+    )
+    write_private_json(
+        recovery_run / "execution-authorization.sealed.private.json",
+        json.loads(authorization.read_text()),
+    )
+    recovered = authorize_run(recovery_run, authorization)
+    assert recovered["execution_authorized"] is True and recovered["replayed"] is False
+
+
+def test_holdout_opens_once_only_after_full_finalists_are_frozen(tmp_path: Path) -> None:
+    _records, manifest = _fixture(tmp_path)
+    plan_path = _fixture_plan(tmp_path, manifest)
+    run_dir = tmp_path / "run"
+    state = prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        run_dir,
+        plan_path=plan_path,
+    )
+    execution = _authorization(
+        tmp_path / "execution.json",
+        {
+            "contract_version": "signal-local-modeling-execution-authorization-v1",
+            "action": "authorize_execution",
+            "plan_digest": state["plan_digest"],
+            "export_manifest_digest": state["export_manifest_digest"],
+            "authorized_stages": ["smoke", "calibration", "full"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T12:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    authorize_run(run_dir, execution)
+    current = json.loads((run_dir / "run-state.private.json").read_text())
+    with pytest.raises(ValueError, match="full_multiseed_required"):
+        freeze_full_finalists(run_dir)
+    current["stage_state"]["full"] = "completed"
+    current["stage_state"]["multi_seed_complete"] = "completed"
+    write_private_json(run_dir / "run-state.private.json", current)
+    write_private_json(run_dir / "finalists.private.json", {"candidate_keys": []})
+    (run_dir / "full").mkdir()
+    write_private_json(run_dir / "full" / "summary.private.json", {"results": []})
+    frozen = freeze_full_finalists(run_dir)
+    holdout = _authorization(
+        tmp_path / "holdout.json",
+        {
+            "contract_version": "signal-local-modeling-holdout-authorization-v1",
+            "action": "open_holdout_once",
+            "plan_digest": state["plan_digest"],
+            "full_finalists_digest": frozen["full_finalists_digest"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T13:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    write_private_json(
+        run_dir / "holdout-authorization.sealed.private.json",
+        json.loads(holdout.read_text()),
+    )
+    opened = open_holdout_once(run_dir, holdout)
+    replayed = open_holdout_once(run_dir, holdout)
+    assert opened["holdout_state"] == "opened_once" and opened["replayed"] is False
+    assert replayed["replayed"] is True
+    final_state = json.loads((run_dir / "run-state.private.json").read_text())
+    assert final_state["stage_state"]["holdout_open_once"] == "completed"
 
 
 def test_wrong_corpus_digest_is_rejected_before_any_stage(tmp_path: Path) -> None:

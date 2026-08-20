@@ -12,7 +12,15 @@ from .multiscope import dry_run_multiscope_contract
 from .plan import load_plan, plan_digest
 from .preflight import run_preflight
 from .report import build_manifest, build_report_data, enforce_private_tree, execute_notebook
-from .runner import build_packet, import_embedding_cache, prepare_run, run_stage
+from .runner import (
+    authorize_run,
+    build_packet,
+    freeze_full_finalists,
+    import_embedding_cache,
+    open_holdout_once,
+    prepare_run,
+    run_stage,
+)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -36,12 +44,20 @@ def parser() -> argparse.ArgumentParser:
     cache_import = commands.add_parser("cache-import")
     cache_import.add_argument("--manifest", type=Path, required=True)
     cache_import.add_argument("--embedding-cache", type=Path, required=True)
+    authorize = commands.add_parser("authorize-execution")
+    authorize.add_argument("--run-dir", type=Path, required=True)
+    authorize.add_argument("--authorization", type=Path, required=True)
     run = commands.add_parser("run")
     run.add_argument("--stage", choices=["smoke", "calibration", "full"], required=True)
     run.add_argument("--run-dir", type=Path, required=True)
     for stage in ("smoke", "calibration", "full"):
         stage_parser = commands.add_parser(stage)
         stage_parser.add_argument("--run-dir", type=Path, required=True)
+    freeze_finalists = commands.add_parser("freeze-finalists")
+    freeze_finalists.add_argument("--run-dir", type=Path, required=True)
+    open_holdout = commands.add_parser("open-holdout")
+    open_holdout.add_argument("--run-dir", type=Path, required=True)
+    open_holdout.add_argument("--authorization", type=Path, required=True)
     packet = commands.add_parser("packet")
     packet.add_argument("--run-dir", type=Path, required=True)
     report = commands.add_parser("report")
@@ -106,6 +122,8 @@ def main() -> None:
         )
     elif args.command == "cache-import":
         result = import_embedding_cache(args.manifest, args.embedding_cache)
+    elif args.command == "authorize-execution":
+        result = authorize_run(args.run_dir, args.authorization)
     elif args.command == "run":
         summary = run_stage(args.run_dir, args.stage)
         summary_path = args.run_dir / args.stage / "summary.private.json"
@@ -128,6 +146,10 @@ def main() -> None:
             "record_count": summary["record_count"],
             "summary": str(args.run_dir / args.command / "summary.private.json"),
         }
+    elif args.command == "freeze-finalists":
+        result = freeze_full_finalists(args.run_dir)
+    elif args.command == "open-holdout":
+        result = open_holdout_once(args.run_dir, args.authorization)
     elif args.command == "packet":
         result = build_packet(args.run_dir)
     elif args.command == "report":

@@ -125,10 +125,27 @@ def multiscope_metrics(
         }
         coverages.append(float(coverage))
     global_metrics = assignment_metrics(labels)
+    macro_metric_names = (
+        "coverage",
+        "outlier_rate",
+        "effective_topics",
+        "topic_count",
+        "concentration_hhi",
+    )
+    macro_equal_partition: dict[str, float | None] = {}
+    for name in macro_metric_names:
+        values = [
+            float(partitions[key][name])
+            for key in required_partitions
+            if partitions[key][name] is not None
+        ]
+        macro_equal_partition[name] = float(np.mean(values)) if values else None
     return {
         "global": global_metrics,
         "partitions": partitions,
-        "macro_equal_partition_coverage": float(np.mean(coverages)),
+        "macro_equal_partition": macro_equal_partition,
+        "micro_global": global_metrics,
+        "macro_equal_partition_coverage": macro_equal_partition["coverage"],
         "micro_global_coverage": global_metrics["coverage"],
         "partition_coverage_gap": max(coverages) - min(coverages),
         "partition_weights": {key: 1 / len(required_partitions) for key in required_partitions},
