@@ -1276,3 +1276,39 @@ SQL directo o relajación de gates.
 | 10C.2 | `blocked_by_clean_multiscope_corpus` | Preregistro separado |
 | 10D | `blocked_by_no_adoption` | Artifact adoptado + decisión operativa separada |
 | Reader cutover | `not_authorized` | Canary gobernado posterior |
+
+## 23. Checkpoint ejecutado · Preview/UAT greenfield category smoke
+
+**Registrado:** 2026-08-20T01:03:18-06:00 (`America/Mexico_City`)
+
+Las fases A–E del handoff se ejecutaron hasta el primer import aceptado y el rollback de
+aplicación. El control plane hospedado creó un workspace greenfield, Brand OS canónico,
+ocho slots, Brief sellado, connector y governance explícita. Query Composer se mantuvo
+en preflight gratuito: ocho slots, máximo dos llamadas, estimate USD 0.27 contra hard cap
+USD 1; no se ejecutó generación.
+
+El único CSV de esta iteración se importó mediante `category` y Query Evidence
+`unavailable/historical_export`. Cierre exacto: 408 records, 358 included, 31 excluded,
+19 duplicates; 389 memberships/typed observations; sync, watermark e invalidation
+exactamente una vez; cero import outboxes no terminales.
+
+Tres defectos UAT se cerraron sin ramas de fixture:
+
+1. UAT-001 incorporó accepted source intent al read model canónico de Mentions.
+2. UAT-002 suprimió sólo el falso fallback unknown de imports Acquisition V2, preservando
+   historia legacy realmente unknown.
+3. UAT-003 activó el Worker Data OS de UAT después de preflight vacío; la proyección
+   Semantic Review quedó ready con 358 raíces, 277 candidate pending, 81 unresolved y
+   cero provider/child work.
+
+El rollback Railway a `787b7d1` y redeploy a `6da4980` preservó health HTTP 200, sesión,
+brand list y counters del batch. Producción, readers, pointers, bindings, clustering,
+T&B y 10D permanecieron intactos. La decisión del gate sigue cerrada: falta viewport
+angosto y, para multi-scope, primary + dos competitor imports separados.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

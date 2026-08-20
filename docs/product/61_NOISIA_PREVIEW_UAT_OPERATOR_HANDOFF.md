@@ -433,3 +433,54 @@ Also report production_accessed, provider_calls, paid_jobs, staging_writes,
 nonterminal_jobs, orphan_jobs, active deployment commit, rollback result, test results,
 manifest path/SHA-256 and unresolved UAT defect IDs.
 ```
+
+## 12. Execution checkpoint — 2026-08-20T01:03:18-06:00
+
+The authenticated desktop run completed the control-plane, one async import, Mentions,
+Semantic Review and application rollback phases without logging out the final handoff
+session.
+
+### Proven outcomes
+
+- Canonical Brand OS, current Acquisition Plan, eight slots, sealed Brief, connector and
+  explicit quality/retention/licensing/provenance are present.
+- Query Composer preflight was ready and bounded; proposal generation was not executed.
+- One category-slot import completed asynchronously with honest unavailable-query
+  evidence and exact counters: 408 = 358 + 31 + 19.
+- 389 accepted memberships/typed observations retain category source intent as pending
+  and not eligible; no semantic approval was inferred.
+- Mentions table/filter/detail display category intent and no longer add a false legacy
+  unknown attribution.
+- Semantic Review projection is ready for 358 included roots: 277 candidates and 81
+  unresolved. First page is bounded to 30 with a cursor; Resolver was not clicked.
+- Worker Data OS/projection recovery is online, all projection/child/import/strategic
+  executable outboxes are zero, and no provider call or paid job occurred.
+- Studio rollback to `787b7d1` and restore to `6da4980` both kept deep health HTTP 200;
+  accepted DB state and the authenticated session survived.
+
+### Closed defects
+
+| ID | Severity | Final state |
+|---|---:|---|
+| UAT-001 | P1 | `verified` — accepted Acquisition V2 source intent is visible in Mentions |
+| UAT-002 | P2 | `verified` — spurious legacy unknown fallback removed |
+| UAT-003 | P1 | `verified` — UAT Data OS Worker and projection drainer operational |
+
+### Remaining gates
+
+1. Repeat the final Mentions/Review interactions on a narrow/mobile viewport. The
+   authenticated automation surface used here was desktop-only.
+2. Import one bounded primary-brand file and one file for each of at least two competitor
+   slots through the same product flow.
+3. Reconcile typed observations and accepted provenance for all four scopes, then freeze
+   the clean multi-scope digest before preregistering 10C.2.
+
+The operator can resume from the authenticated Semantic Review page; no further logout is
+required. Do not click Resolver or generate queries without a new budget authorization.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

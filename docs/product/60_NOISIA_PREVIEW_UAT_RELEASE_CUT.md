@@ -329,3 +329,32 @@ NOISIA_PREVIEW_UAT_ONLINE_READY=false
 NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
 SIGNAL_10D_READY=false
 ```
+
+## 13. Operator QA checkpoint — 2026-08-20T01:03:18-06:00
+
+The hosted control-plane and one bounded async category import have now passed on the
+intended UAT topology. The accepted batch reconciled 408 records as 358 included,
+31 excluded and 19 duplicates, with one sync/watermark boundary and zero nonterminal
+import work. Mentions and Semantic Review consume only accepted provenance; Review is a
+bounded projection of 358 roots and no resolver/provider action was invoked.
+
+UAT-001 and UAT-002 repaired the generic Mentions attribution bridge. UAT-003 was a UAT
+runtime configuration gap: the Data OS Worker flag was false, so the projection drainer
+never claimed its valid outbox. The flag is now true only on `workers-uat`; startup proved
+zero executable Redis work and the completed reconciliation left projection and child
+outboxes at zero. Paid T&B, taxonomy full-pop and reader cutover remain disabled.
+
+The application rollback rehearsal passed: Studio returned to `787b7d1`, health/session/
+brand/import state remained valid, and intended head `6da4980` was redeployed with deep
+health HTTP 200. No database rollback or production action occurred.
+
+This does not yet close the entire release cut. Narrow/mobile browser coverage remains
+unexecuted and the clean acquisition gate still needs primary + two competitor imports.
+
+```text
+NOISIA_PREVIEW_UAT_ONLINE_READY=false
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

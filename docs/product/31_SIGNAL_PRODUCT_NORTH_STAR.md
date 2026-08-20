@@ -1165,3 +1165,42 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint Preview/UAT · primer import greenfield y Semantic Review
+
+**Registrado:** 2026-08-20T01:03:18-06:00 (`America/Mexico_City`)
+
+El recorrido hospedado ya probó Brand OS canónico, Acquisition Plan current con ocho
+slots, Brief sellado, connector reutilizable, governance explícita y un import CSV
+asíncrono por el slot `category`. El batch aceptado cerró exactamente
+`408 = 358 incluidos + 31 excluidos + 19 duplicados`; produjo 389 memberships y typed
+observations, una frontera de sync/watermark y cero import outboxes no terminales. Query
+Evidence permanece honestamente `unavailable/historical_export`; no se generó ni se
+atestiguó una query que el archivo no puede probar.
+
+El QA descubrió y cerró tres defectos generales. Mentions ahora incorpora el
+`source_intent` append-only de batches completed, evita el falso fallback legacy
+`Sin atribuir` y conserva pending/not-eligible. Semantic Review estaba correctamente
+fail-closed porque su proyección seguía stale: el Worker UAT no iniciaba el drainer Data
+OS. Tras demostrar Redis ejecutable=0 y todos los outboxes pagados/import/estratégicos en
+cero, se habilitó el Worker Data OS sólo en UAT. La proyección terminó ready con 358
+raíces: 277 candidates + 81 unresolved, cero approved/rejected, digests sellados y cero
+outboxes de projection/child. Resolver no fue invocado; provider calls y gasto siguen en
+cero.
+
+La aplicación Studio ensayó rollback Railway al known-good `787b7d1`, conservó health,
+sesión, brand list y el batch aceptado, y luego restauró el head UAT `6da4980`. No hubo
+rollback de base, movimiento de pointers/bindings, acceso a producción ni cambio del read
+mode `legacy`.
+
+El checklist completo permanece abierto por cobertura verificable, no por un defecto P0/P1:
+falta repetir Mentions/Review en viewport angosto y completar imports separados de
+primary brand y al menos dos competitors. Por eso todavía no existe un corpus limpio
+multi-scope ni preregistro 10C.2.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=false
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```
