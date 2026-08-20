@@ -1260,3 +1260,32 @@ SIGNAL_10C2_PREREGISTRATION_READY=true
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint 10C.2A · harness multi-scope listo, export real fail-closed
+
+**Registrado:** 2026-08-20T11:42:43-06:00 (`America/Mexico_City`)
+
+La preregistración conceptual 10C.2 permanece inmutable con SHA-256
+`8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736`.
+Su normalización ejecutable V3 conserva corpus, candidatos, revisiones, thresholds,
+seeds y stop conditions; sólo resuelve el schema incompatible con el runner 10C.1. El
+harness ahora representa roots físicas una vez, conserva memberships multi-scope,
+agrupa splits por canonical family/content hash, estratifica por partición, entidad,
+idioma, mercado, mes y plataforma, y calcula métricas globales, macro iguales por
+partición, micro y slices.
+
+El export V2 retira Semantic Review y `llm_eligible_count` como autoridad del benchmark:
+resuelve exclusivamente Acquisition completed, seals, typed observations, canonical
+roots, accepted provenance y rights vigentes. Su preflight read-only verificó todos los
+digests y `23,296 = 21,195 + 2,101`, pero bloqueó correctamente porque el uso
+`strategic-analysis` no está autorizado. No hubo cambios de governance, modelos,
+providers, jobs, serving, readers, pointers o bindings.
+
+```text
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_HARNESS_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=false
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

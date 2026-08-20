@@ -1370,3 +1370,37 @@ SIGNAL_10C2_PREREGISTRATION_READY=true
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## 26. 10C.2A · contrato ejecutable y harness multi-scope
+
+**Registrado:** 2026-08-20T11:42:43-06:00 (`America/Mexico_City`)
+
+El preregistro original `benchmark-plan-10c2.json` se conserva con SHA-256
+`8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736`.
+`benchmark-plan-10c2-v3.json` lo supersede únicamente como schema ejecutable y tiene
+file SHA-256 `53d1e16852bf85bebe93ddb122037d8db0e23cab6b584daa1b160a55c994c462`
+y digest contractual
+`sha256:325e0af8098c9eb1df2bc183f80c90227fbeadc94fbd9b319f7a2b64b902a5b4`.
+No cambió ninguna decisión sustantiva y ejecución/10D permanecen desautorizados.
+
+El exportador `signal-semantic-benchmark-export-v2` es Acquisition-owned y estrictamente
+read-only. Requiere `strategic-analysis`, no `llm-processing`, y reconcilia una root
+física con una o más memberships. El preflight real comprobó digests, denominator y
+particiones del freeze, con `writes=provider_calls=jobs=serving_writes=0`, pero devolvió
+el único blocker `strategic_analysis_denied`. La corrección de rights requiere decisión
+explícita del operador y no forma parte de 10C.2A.
+
+El harness valida y sella plan/corpus/exporter/source/lock/hardware, impide saltar
+stages, mantiene holdout cerrado y rechaza artefactos parciales o de otro digest. Un
+fixture sintético validó 400 roots físicos, 510 memberships, 100 roots compartidas, 40
+quality excluded, cuatro particiones, macro/micro, slices, gaps, inestabilidad y stopword
+dominance sin ejecutar un modelo real.
+
+```text
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_HARNESS_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=false
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

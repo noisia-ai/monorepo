@@ -5,15 +5,19 @@
 | Estado | `preregistered_not_executed` |
 | Registrado | `2026-08-20T09:38:00-06:00` (`America/Mexico_City`) |
 | Evidencia | Noisia Preview/UAT + `noisia-staging` |
-| Plan ejecutable | `tools/signal-semantic-lab/config/benchmark-plan-10c2.json` |
-| SHA-256 del plan | `8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736` |
+| Preregistro conceptual firmado | `tools/signal-semantic-lab/config/benchmark-plan-10c2.json` |
+| SHA-256 del preregistro original | `8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736` |
+| Normalización ejecutable | `tools/signal-semantic-lab/config/benchmark-plan-10c2-v3.json` |
+| SHA-256 del archivo V3 | `53d1e16852bf85bebe93ddb122037d8db0e23cab6b584daa1b160a55c994c462` |
+| Digest contractual V3 | `sha256:325e0af8098c9eb1df2bc183f80c90227fbeadc94fbd9b319f7a2b64b902a5b4` |
 | 10C.2 ejecutado | `false` |
 | 10D listo | `false` |
 
 Este documento congela la pregunta, el corpus, los candidatos y los criterios antes de
 observar un resultado 10C.2. No adopta un modelo y no autoriza clustering, embeddings,
-providers, serving, readers, pointers, bindings o 10D. El plan JSON es la fuente
-ejecutable; este documento explica sus decisiones y límites.
+providers, serving, readers, pointers, bindings o 10D. El preregistro JSON original es
+la fuente firmada de decisiones; el contrato V3 lo normaliza de forma ejecutable sin
+cambiar corpus, candidatos, thresholds, seeds o stop conditions.
 
 ## 1. Pregunta y resultados permitidos
 
@@ -187,3 +191,51 @@ SIGNAL_10D_READY=false
 
 Durante este cierre: producción no fue accedida; provider calls y jobs pagados fueron
 cero; read mode permaneció `legacy`; readers, pointers y bindings no cambiaron.
+
+## 10. Checkpoint de operabilidad del harness
+
+**Registrado:** 2026-08-20T11:42:43-06:00 (`America/Mexico_City`)
+
+La auditoría contractual reprodujo seis incompatibilidades antes de ejecutar modelos:
+el loader 10C.1 rechazaba la versión del preregistro, esperaba otro shape para hardware,
+stages, candidates y hard gates, el exportador V1 tomaba Semantic Review y
+`llm_eligible_count` como autoridad, mientras este freeze declara Acquisition, y el
+runner no aplicaba completamente macro-promedio igual por partición, mínimo/gap de
+coverage, mercado declarado, roots multi-scope, sampling estratificado ni métricas por
+locale/market. Contract tests, no resultados de candidatos, prueban ese diagnóstico.
+
+El preregistro firmado se preservó byte-for-byte. La normalización
+`signal-local-modeling-benchmark-plan-v3` declara que supersede su digest sólo por
+operabilidad/schema y valida las cuatro particiones, pesos `0.25`, digests congelados,
+revisiones/artifacts/licencias, presupuestos, etapas, métricas, hard gates y stop
+conditions. Mantiene `execution_authorized=false`, `ten_d_authorized=false` y el holdout
+sellado.
+
+El nuevo `signal-semantic-benchmark-export-v2` usa exclusivamente batches Acquisition
+completed, seals inmutables, typed observations, canonical roots, accepted provenance y
+rights vigentes. Requiere `strategic-analysis`, no `llm-processing`, y una root física
+conserva todas sus memberships. El preflight real read-only reconcilió
+`23,296 = 21,195 + 2,101`, los cuatro partition counts y `21,820` memberships sobre
+`21,195` roots, pero
+terminó fail-closed por `strategic_analysis_denied`. No se cambió governance dentro de
+esta misión.
+
+El fixture sintético multi-scope cerró `440 = 400 + 40`, con 510 memberships y 100 roots
+compartidas; demostró splits sin leakage, macro/micro, slices locale/market, baja
+coverage, gap entre particiones, inestabilidad, stopword dominance, parameter drift,
+artefactos parciales y cero writes/providers. Ningún modelo del corpus real fue
+descargado o ejecutado.
+
+```text
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_HARNESS_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=false
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```
+
+La siguiente autorización necesaria no es de modelado: el operador debe resolver de
+forma explícita `strategic-analysis` para los imports actuales del corpus congelado y
+después repetir el preflight V2 read-only. La ejecución de candidatos requiere otra
+autorización separada.
