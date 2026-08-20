@@ -565,6 +565,24 @@ export function buildSignalMentionDrillDownPlanV1(args: {
               ELSE 4
             END AS rank
           WHERE import_batch.id IS NOT NULL
+            AND (
+              lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN (
+                'brand', 'primary_brand', 'competitor', 'competitors', 'category'
+              )
+              OR NOT EXISTS (
+                SELECT 1
+                FROM signal_mention_attributions accepted_intent
+                JOIN mentions accepted_intent_mention
+                  ON accepted_intent_mention.id = accepted_intent.mention_id
+                 AND ${linkedMentionIdentity("accepted_intent_mention")}
+                JOIN import_batches accepted_intent_batch
+                  ON accepted_intent_batch.id = accepted_intent.import_batch_id
+                 AND accepted_intent_batch.status = 'completed'
+                WHERE accepted_intent.workspace_id = m.workspace_id
+                  AND accepted_intent.attribution_basis = 'source_intent'
+                  AND accepted_intent.is_current = true
+              )
+            )
         ) scoped
       ) attribution ON true
       LEFT JOIN LATERAL (
@@ -1171,6 +1189,24 @@ function dimensionPredicate(
         END
         FROM import_batches batch
         WHERE batch.id = m.source_file_id
+          AND (
+            lower(COALESCE(batch.entity_kind, batch.mention_type, '')) IN (
+              'brand', 'primary_brand', 'competitor', 'competitors', 'category'
+            )
+            OR NOT EXISTS (
+              SELECT 1
+              FROM signal_mention_attributions accepted_intent
+              JOIN mentions accepted_intent_mention
+                ON accepted_intent_mention.id = accepted_intent.mention_id
+               AND ${linkedMentionJoin("accepted_intent_mention")}
+              JOIN import_batches accepted_intent_batch
+                ON accepted_intent_batch.id = accepted_intent.import_batch_id
+               AND accepted_intent_batch.status = 'completed'
+              WHERE accepted_intent.workspace_id = m.workspace_id
+                AND accepted_intent.attribution_basis = 'source_intent'
+                AND accepted_intent.is_current = true
+            )
+          )
         UNION ALL
         SELECT CASE
           WHEN intent.scope = 'primary_brand' THEN 'brand'

@@ -45,3 +45,32 @@ test("workspace canonical corpus-scope filters use the same accepted source inte
   assert.match(plan.predicate.sql, /intent_batch\.status = 'completed'/u);
   assert.match(plan.predicate.sql, /WHEN intent\.scope = 'category' THEN 'category'/u);
 });
+
+test("accepted source intent suppresses only the legacy unknown attribution fallback", () => {
+  const plan = buildSignalMentionDrillDownPlanV1({
+    filter: baseFilter,
+    workspace_canonical: true,
+    workspace_id: workspaceId
+  });
+
+  assert.match(
+    plan.sql,
+    /lower\(COALESCE\(import_batch\.entity_kind, import_batch\.mention_type, ''\)\) IN \(\s+'brand', 'primary_brand', 'competitor', 'competitors', 'category'\s+\)\s+OR NOT EXISTS/u
+  );
+  assert.match(plan.sql, /FROM signal_mention_attributions accepted_intent/u);
+  assert.match(plan.sql, /accepted_intent\.attribution_basis = 'source_intent'/u);
+  assert.match(plan.sql, /accepted_intent_batch\.status = 'completed'/u);
+
+  const filteredPlan = buildSignalMentionDrillDownPlanV1({
+    filter: {
+      ...baseFilter,
+      dimensions: { corpus_scope: ["category"] }
+    },
+    workspace_canonical: true,
+    workspace_id: workspaceId
+  });
+  assert.match(
+    filteredPlan.predicate.sql,
+    /lower\(COALESCE\(batch\.entity_kind, batch\.mention_type, ''\)\) IN \(\s+'brand', 'primary_brand', 'competitor', 'competitors', 'category'\s+\)\s+OR NOT EXISTS/u
+  );
+});
