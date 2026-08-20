@@ -1,13 +1,14 @@
 {
   "$schema": "./catalog.schema.json",
   "version": 1,
-  "updated": "2026-07-22",
+  "updated": "2026-08-20",
   "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop).",
   "engine": {
     "canvas": "1920x1080",
     "files": [
       "noisia-tokens.css",
       "deck.css",
+      "deck-components.css",
       "deck-stage.js"
     ],
     "shell": "engine/deck-template.html"

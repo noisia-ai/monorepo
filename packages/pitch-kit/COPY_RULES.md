@@ -14,7 +14,11 @@ El cliente ve **solo su mensaje**. Nunca dejes en la slide:
 - **Emojis** y signos decorativos.
 - **El header derecho siempre es `noisia.ai`** (la marca), nunca una etiqueta de propósito.
 
+- **Nada que revele intención comercial de análisis.** No nombres el *framing* del entregable: "subcategoría", "categoría", "monitoreo de categoría", "share of voice de la categoría" delatan que vendemos análisis de categorías. Escribe sobre el sujeto (la marca, la conversación, el mercado), no sobre el método de venta. Ej. ❌ "The category got louder" → ✅ "The conversation got louder this month".
+
 Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no es para él, fuera.
+
+> Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
 
 ## 1. Español mexicano — NO traduzcas tecnicismos ni modismos
 
@@ -44,6 +48,8 @@ Regla: usa el término como lo usa **el cliente y su categoría**. Ante la duda,
 - **Em dashes y negritas mecánicas.** Usa comas y puntos; negrita solo si es estructural.
 - **Gerundios de relleno.** ❌ "destacando, reflejando, mostrando…" → afirma el hecho.
 - **Conclusiones genéricas optimistas.** Cierra con un hecho o un siguiente paso concreto, no con "el futuro es prometedor".
+- **Títulos con colon-reveal.** Nadie habla así. ❌ "The screen, mapped: every pull casts a shadow" / "X: subtítulo dramático" → ✅ frase natural declarativa: "Every pull the screen creates has a matching barrier".
+- **Frase repetida en la misma slide.** El eyebrow, el header derecho y el título **no** dicen lo mismo. ❌ "how a decision reads" en los tres → cada uno distinto y natural.
 
 **Lo que sí queremos:** frases de largo variado, una opinión/postura clara, lenguaje concreto y específico, y la voz directa de Noisia (sin vender de más). Citas literales sin maquillar (la imperfección es información — regla de `kb/03-process/delivery-format.md`).
 
