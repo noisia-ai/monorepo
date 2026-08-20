@@ -81,6 +81,7 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 59 | `59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md` | Handoff 10C.0/10C.1: reparación de canon, benchmark locale-aware y contratos offline de contexto/naming |
 | 60 | `60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md` | Corte online Preview/UAT: Railway aislado, Supabase staging, Redis UAT, guardas de Worker, QA y rollback |
 | 61 | `61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md` | Handoff operativo UAT: custodia de accesos, checklist browser/async, rollback, defect protocol y continuación greenfield Amazon Alexa |
+| 62 | `62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md` | Preregistración 10C.2 ligada al corpus Amazon Alexa multi-scope congelado; sampling, splits, candidatos y hard gates, sin ejecutar modelado ni abrir 10D |
 
 ---
 
@@ -246,7 +247,8 @@ noisia_studio_product_spec/
 ├── 58_SIGNAL_LOCAL_MODELING_BENCHMARK.md
 ├── 59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md
 ├── 60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md
-└── 61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md
+├── 61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md
+└── 62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md
 ```
 
-Este índice es un paquete vivo; el canon vigente incluye los documentos 00-61 y los YAMLs de metodología.
+Este índice es un paquete vivo; el canon vigente incluye los documentos 00-62 y los YAMLs de metodología.

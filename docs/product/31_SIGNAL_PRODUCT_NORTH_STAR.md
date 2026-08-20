@@ -1229,3 +1229,34 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint Preview/UAT · corpus greenfield multi-scope congelado
+
+**Registrado:** 2026-08-20T09:48:29-06:00 (`America/Mexico_City`)
+
+Amazon Alexa cerró el corpus de adquisición greenfield mediante Acquisition Plan,
+Query Evidence V2 y signed multipart imports. El corpus aceptado reúne `23,296`
+canonical roots únicos: `21,195` incluidos para modelado y `2,101` excluidos por
+quality. Primary brand, category, Google Nest y Apple HomePod conservan source intent
+explícito. Los imports manuales sellaron `unavailable/historical_export` y query nula;
+ninguna query propuesta se presentó como evidencia de ejecución.
+
+El snapshot quedó sellado por population
+`sha256:067fe82f4b8010c0207ef5be17ad62dae0e98b70bdc3bb11971b8038af11c149`, content
+`sha256:76c232dadc63a2f1da659efbdfaed67fdda23bea6308d93e6283bbed60c5e71c`, provenance
+`sha256:8f4902ef5aca4c049c2655e364dcf6ad38e2fb577d74a690f4cf2607f877b4d8` y watermark
+`sha256:974107099028dda1694b1d6d761220aa636353bf01516d867d6fb9e83a807da1`.
+
+La [preregistración 10C.2](./62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md) queda
+ligada a esos digests exactos, con sampling multi-scope, splits/gold bajo autoridad 10B,
+criterios locale-aware y `no_adoption` como resultado válido. No se ejecutó clustering,
+embeddings, Claude, Voyage, T&B ni otro provider. El read mode continúa `legacy`;
+readers, pointers y bindings visibles no cambiaron.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=true
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

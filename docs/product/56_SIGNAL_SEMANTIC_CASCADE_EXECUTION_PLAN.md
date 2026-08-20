@@ -1335,3 +1335,38 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 25. Corpus multi-scope cerrado y 10C.2 preregistrado
+
+**Registrado:** 2026-08-20T09:48:29-06:00 (`America/Mexico_City`)
+
+El gate se cerró con cinco batches aceptados: el smoke category histórico preservado y
+cuatro imports nuevos procesados secuencialmente por el pipeline asíncrono soportado.
+Ningún archivo o scope fuera del corpus autorizado fue utilizado.
+
+| Scope | Canonical roots | Incluidos | Excluidos | Population digest |
+|---|---:|---:|---:|---|
+| `primary_brand` | 4,193 | 3,277 | 916 | `sha256:51565dfd…2b13c9` |
+| `category` | 2,242 | 2,195 | 47 | `sha256:53606249…3fa067` |
+| Google Nest | 2,870 | 2,662 | 208 | `sha256:c934b156…9452c9` |
+| Apple HomePod | 14,678 | 13,686 | 992 | `sha256:e8baccc4…70895b` |
+
+Los scopes se solapan por canonical root; el denominator global deduplicado es `23,296`,
+no la suma de la tabla. El corpus incluido contiene `21,195` roots. Los digests globales
+son population `sha256:067fe82f…c149`, content `sha256:76c232da…e71c`, provenance
+`sha256:8f4902ef…b4d8` y watermark `sha256:97410709…7da1`. `unexplained_roots=0`,
+`unknown_source_intent=0` para imports nuevos y no hay batches/outboxes no terminales.
+
+La configuración
+[`benchmark-plan-10c2.json`](../../tools/signal-semantic-lab/config/benchmark-plan-10c2.json)
+tiene SHA-256 `8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736`.
+El contrato completo vive en [doc 62](./62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md).
+El gate se detuvo antes de ejecutar candidatos, abrir holdout o llamar un provider; 10D
+continúa bloqueado.
+
+```text
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=true
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

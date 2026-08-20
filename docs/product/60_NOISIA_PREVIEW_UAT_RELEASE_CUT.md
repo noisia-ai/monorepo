@@ -380,3 +380,36 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 15. Multi-scope acquisition closure — 2026-08-20T09:48:29-06:00
+
+The clean Amazon Alexa corpus is closed in Preview/UAT. Four authorized CSVs completed
+sequentially through the workspace-owned multipart importer; the accepted 408-record
+category smoke remains intact. The deduplicated population contains `23,296` roots:
+`21,195` quality-included and `2,101` excluded. Primary, category, Google Nest and Apple
+HomePod retain exact slot intent, accepted provenance, typed observations and honest
+`unavailable/historical_export` query evidence.
+
+Frozen digests are population `sha256:067fe82f…c149`, content
+`sha256:76c232da…e71c`, provenance `sha256:8f4902ef…b4d8` and watermark
+`sha256:97410709…7da1`. No nonterminal import batches or outboxes remain and no root is
+unexplained. Semantic Review loaded all `21,195` projected roots without Resolver or a
+provider.
+
+UAT-003 corrected the operator-facing observed-period projection to use the sealed
+import timezone instead of UTC. PostgreSQL regression, Studio typecheck/tests/build and
+lint passed. Railway accepted deployment commit `e8a7690`; activation was delayed by its
+documented platform incident while the prior application stayed online and deep-health
+green.
+
+[Doc 62](./62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md) preregisters the exact frozen
+corpus. No benchmark, model, provider or 10D work ran.
+
+```text
+NOISIA_PREVIEW_UAT_ONLINE_READY=true
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=true
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

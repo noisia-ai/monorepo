@@ -511,3 +511,35 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 15. Multi-scope corpus handoff — 2026-08-20T09:48:29-06:00
+
+The four authorized imports completed sequentially through the supported product path.
+The earlier category smoke remains accepted and unmodified.
+
+| Scope/file | Records | Included | Excluded | Duplicates | Memberships/typed |
+|---|---:|---:|---:|---:|---:|
+| Primary Alexa MX | 4,499 | 2,934 | 885 | 680 | 4,193 |
+| Full category MX | 3,070 | 1,829 | 16 | 1,225 | 2,242 |
+| Google Nest US | 3,147 | 2,662 | 204 | 281 | 2,870 |
+| Apple HomePod US | 15,483 | 13,412 | 965 | 1,106 | 14,678 |
+
+Every row reconciles `records = included + excluded + duplicates`. Each content has one
+completed accepted attempt, one sync boundary, one invalidation and no orphaned import
+outbox. The global denominator is `23,296`; the quality-included population is `21,195`.
+Scope overlap is deduplicated globally and preserved as provenance, never copied into
+duplicate mention records.
+
+The freeze and stop-before-run contract are in
+[doc 62](./62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md). Sanitized private evidence is
+under `.data/noisia-preview-uat/amazon-alexa-multiscope-2026-08-20/` with mode `0600`.
+The authenticated browser session remains open in Semantic Review; do not log it out.
+The next action is operator review of the preregistration, not a model run.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=true
+SIGNAL_10C2_PREREGISTRATION_READY=true
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```
