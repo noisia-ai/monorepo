@@ -28,6 +28,12 @@ from .metrics import (
     topic_diversity,
     topic_redundancy,
 )
+from .multiscope import (
+    multiscope_metrics,
+    passes_multiscope_hard_gates,
+    smoke_partition_limit,
+    stratified_multiscope_indexes,
+)
 from .plan import (
     discovery_config,
     embedding_config,
@@ -36,7 +42,7 @@ from .plan import (
     plan_digest,
 )
 from .review_packet import build_blinded_packet
-from .schema import BenchmarkRecord, ExportManifest
+from .schema import BenchmarkRecord, BenchmarkRecordV2, ExportManifest, ExportManifestV2
 from .splits import assert_no_leakage, deterministic_splits, stable_value
 from .stability import (
     match_clusters,
@@ -84,7 +90,10 @@ def prepare_run(
                 "month": record.month,
                 "language": record.language,
                 "platform": record.platform,
-                "scopes": sorted({intent.scope for intent in record.provenance_intents}),
+                "scopes": _record_scopes(record),
+                "partitions": _record_partitions(record),
+                "declared_markets": _record_markets(record),
+                "country": record.country,
                 "text": record.text,
                 "split": split_by_record[record.record_key],
             }
@@ -101,11 +110,18 @@ def prepare_run(
     os.chmod(copied_input, 0o600)
     os.chmod(copied_manifest, 0o600)
     harness_source_digest = compute_harness_source_digest()
+    lock_path = Path(__file__).resolve().parents[2] / "uv.lock"
     run = {
-        "contract_version": "signal-local-modeling-run-v1",
+        "contract_version": (
+            "signal-local-modeling-run-v2" if _is_v3(plan) else "signal-local-modeling-run-v1"
+        ),
         "plan_digest": plan_digest(plan),
         "plan_file_sha256": sha256_file(sealed_plan),
         "harness_source_digest": harness_source_digest,
+        "exporter_source_digest": export_manifest.authority_digest
+        if isinstance(export_manifest, ExportManifestV2)
+        else export_manifest.projection_snapshot_digest,
+        "dependency_lock_digest": sha256_file(lock_path),
         "embedding_cache_contract": "signal-content-addressed-embedding-cache-v1",
         "embedding_cache_dir": str(cache_dir),
         "export_manifest_digest": sha256_file(manifest_path),
@@ -128,6 +144,19 @@ def prepare_run(
             "processor": platform.processor(),
             "python": sys.version.split()[0],
         },
+        "stage_state": {
+            "prepared": "completed",
+            "smoke": "not_started",
+            "calibration": "not_started",
+            "full": "not_started",
+            "multi_seed_complete": "not_started",
+            "operator_review": "not_started",
+        },
+        "holdout_state": "sealed",
+        "execution_authorized": bool(plan.get("execution_authorized", True)),
+        "provider_calls": 0,
+        "remote_writes": 0,
+        "serving_writes": 0,
         "status": "prepared",
     }
     write_private_json(output_dir / "run-state.private.json", run)
@@ -141,6 +170,15 @@ def run_stage(run_dir: Path, stage: str) -> dict[str, Any]:
         raise ValueError("benchmark_run_plan_digest_mismatch")
     if run_state.get("harness_source_digest") != compute_harness_source_digest():
         raise ValueError("benchmark_run_harness_source_digest_mismatch")
+    if _is_v3(plan):
+        if (
+            plan["execution_authorized"] is not True
+            or run_state.get("execution_authorized") is not True
+        ):
+            raise ValueError("benchmark_execution_not_authorized")
+        _assert_stage_transition(run_state, stage)
+        if run_state.get("holdout_state") != "sealed":
+            raise ValueError("benchmark_holdout_opened_before_authorized_gate")
     records, export_manifest = load_export(
         run_dir / "source-export.private.jsonl", run_dir / "source-export.manifest.private.json"
     )
@@ -208,21 +246,77 @@ def run_stage(run_dir: Path, stage: str) -> dict[str, Any]:
         finalists = select_finalists(results, plan)
         write_private_json(run_dir / "finalists.private.json", finalists)
     summary = {
-        "contract_version": "signal-local-modeling-stage-v1",
+        "contract_version": (
+            "signal-local-modeling-stage-v2" if _is_v3(plan) else "signal-local-modeling-stage-v1"
+        ),
         "stage": stage,
         "record_count": len(selected),
-        "population_denominator": export_manifest.denominator,
+        "population_denominator": _manifest_denominator(export_manifest),
         "population_exported": export_manifest.exported,
         "resource_rejections": list(resource_rejections.values()),
         "results": [sanitize_result(item) for item in results],
     }
     write_private_json(stage_dir / "summary.private.json", summary)
+    if _is_v3(plan):
+        run_state["stage_state"][stage] = "completed"
+        if stage == "full":
+            run_state["stage_state"]["multi_seed_complete"] = "completed"
+        run_state["status"] = f"{stage}_completed"
+        write_private_json(run_dir / "run-state.private.json", run_state)
     return summary
 
 
 def assert_preregistered_corpus(
-    plan: dict[str, Any], export_manifest: ExportManifest, record_count: int
+    plan: dict[str, Any],
+    export_manifest: ExportManifest | ExportManifestV2,
+    record_count: int,
 ) -> None:
+    if _is_v3(plan):
+        if not isinstance(export_manifest, ExportManifestV2):
+            raise ValueError("benchmark_preregistered_export_contract_mismatch")
+        corpus = plan["corpus"]
+        expected = {
+            "population_digest": corpus["population_digest"],
+            "content_digest": corpus["content_digest"],
+            "provenance_digest": corpus["provenance_digest"],
+            "watermark_digest": corpus["watermark_digest"],
+            "acquisition_denominator": int(corpus["acquisition_denominator"]),
+            "modeling_population": int(corpus["included_modeling_population"]),
+            "quality_excluded_roots": int(corpus["quality_excluded_roots"]),
+        }
+        observed = {
+            "population_digest": export_manifest.population_digest,
+            "content_digest": export_manifest.content_digest,
+            "provenance_digest": export_manifest.provenance_digest,
+            "watermark_digest": export_manifest.watermark_digest,
+            "acquisition_denominator": export_manifest.acquisition_denominator,
+            "modeling_population": export_manifest.modeling_population,
+            "quality_excluded_roots": export_manifest.quality_excluded_roots,
+        }
+        if observed != expected or record_count != expected["modeling_population"]:
+            raise ValueError("benchmark_preregistered_corpus_digest_mismatch")
+        expected_partitions = {item["key"]: item for item in corpus["partitions"]}
+        if set(export_manifest.partitions) != set(expected_partitions):
+            raise ValueError("benchmark_required_partition_missing")
+        for key, partition in export_manifest.partitions.items():
+            frozen = expected_partitions[key]
+            compared = {
+                "scope": partition.scope,
+                "entity_ref": partition.entity_ref,
+                "declared_market": partition.declared_market,
+                "total": partition.total,
+                "included": partition.included,
+                "excluded": partition.excluded,
+                "population_digest": partition.population_digest,
+                "modeling_digest": partition.modeling_digest,
+                "plan_version": partition.plan_version,
+                "plan_digest": partition.plan_digest,
+                "slot_digest": partition.slot_digest,
+            }
+            expected_partition = {name: frozen[name] for name in compared}
+            if compared != expected_partition:
+                raise ValueError(f"benchmark_partition_drift:{key}")
+        return
     sealed_content_digest = plan["corpus"].get("sealed_content_digest")
     if sealed_content_digest and export_manifest.content_digest != sealed_content_digest:
         raise ValueError("benchmark_preregistered_corpus_digest_mismatch")
@@ -231,7 +325,7 @@ def assert_preregistered_corpus(
 
 
 def execute_candidate(
-    records: list[BenchmarkRecord],
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
     texts: list[str],
     stage_dir: Path,
     candidate: dict[str, Any],
@@ -333,6 +427,13 @@ def execute_candidate(
         },
         "diagnostics": output.diagnostics,
     }
+    if records and isinstance(records[0], BenchmarkRecordV2):
+        typed_records = [record for record in records if isinstance(record, BenchmarkRecordV2)]
+        metrics["multiscope"] = multiscope_metrics(
+            typed_records,
+            output.labels,
+            [partition["key"] for partition in plan["corpus"]["partitions"]],
+        )
     evaluation_seconds = perf_counter() - metrics_started
     runtime_components = {
         "embedding_seconds": embedding_duration,
@@ -343,9 +444,7 @@ def execute_candidate(
     pre_serialization_seconds = sum(runtime_components.values())
     metrics["runtime_components_seconds"] = runtime_components
     metrics["runtime_projection_population"] = int(run_state["record_count"])
-    metrics["observed_candidate_pipeline_before_serialization_seconds"] = (
-        pre_serialization_seconds
-    )
+    metrics["observed_candidate_pipeline_before_serialization_seconds"] = pre_serialization_seconds
     metrics["estimated_full_runtime_seconds"] = (
         pre_serialization_seconds / max(1, len(records)) * int(run_state["record_count"])
     )
@@ -401,7 +500,11 @@ def execute_candidate(
     )
 
 
-def stage_indexes(records: list[BenchmarkRecord], stage: str, plan: dict[str, Any]) -> list[int]:
+def stage_indexes(
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
+    stage: str,
+    plan: dict[str, Any],
+) -> list[int]:
     if stage == "full":
         return list(range(len(records)))
     split_name = "train" if stage == "smoke" else "calibration"
@@ -411,6 +514,26 @@ def stage_indexes(records: list[BenchmarkRecord], stage: str, plan: dict[str, An
         train=float(plan["splits"]["train_fraction"]),
         calibration=float(plan["splits"]["calibration_fraction"]),
     )
+    if _is_v3(plan):
+        typed_records = [record for record in records if isinstance(record, BenchmarkRecordV2)]
+        if len(typed_records) != len(records):
+            raise ValueError("benchmark_record_contract_mismatch")
+        partition_keys = [partition["key"] for partition in plan["corpus"]["partitions"]]
+        if stage == "smoke":
+            limit = smoke_partition_limit(
+                int(plan["stages"]["smoke_max_records"]), len(partition_keys)
+            )
+        else:
+            limit = int(plan["stages"]["maximum_calibration_roots_per_partition"])
+        return stratified_multiscope_indexes(
+            typed_records,
+            assignments,
+            split=split_name,
+            required_partitions=partition_keys,
+            maximum_per_partition=limit,
+            seed=int(plan["splits"]["seed"]),
+            stage=stage,
+        )
     stratum_by_key = {
         assignment.record_key: assignment.stratum
         for assignment in assignments
@@ -451,7 +574,10 @@ def stage_indexes(records: list[BenchmarkRecord], stage: str, plan: dict[str, An
 
 
 def candidate_matrix(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    if plan.get("contract_version") == "signal-local-modeling-benchmark-plan-v2":
+    if plan.get("contract_version") in {
+        "signal-local-modeling-benchmark-plan-v2",
+        "signal-local-modeling-benchmark-plan-v3",
+    }:
         return [dict(candidate) for candidate in plan["candidates"]]
     matrix = [{"discovery": "lexical-nmf", "embedding": None}]
     for discovery in ("bertopic", "fastopic"):
@@ -463,7 +589,10 @@ def candidate_matrix(plan: dict[str, Any]) -> list[dict[str, Any]]:
 def select_finalists(results: list[dict[str, Any]], plan: dict[str, Any]) -> dict[str, Any]:
     gates = plan["hard_gates"]
     passing = [item for item in results if passes_hard_gates(item["metrics"], gates)]
-    if plan.get("contract_version") == "signal-local-modeling-benchmark-plan-v2":
+    if plan.get("contract_version") in {
+        "signal-local-modeling-benchmark-plan-v2",
+        "signal-local-modeling-benchmark-plan-v3",
+    }:
         limit = int(plan["stages"]["finalist_count"])
         selected = sorted(
             [row for row in passing if not row["candidate_key"].startswith("lexical")],
@@ -517,6 +646,9 @@ def load_finalists(run_dir: Path, plan: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def passes_hard_gates(metrics: dict[str, Any], gates: dict[str, Any]) -> bool:
+    if "minimum_global_coverage" in gates:
+        base = _passes_v3_candidate_gates(metrics, gates)
+        return base and passes_multiscope_hard_gates(metrics, gates)
     coverage = metrics.get("coverage")
     diversity = metrics.get("topic_diversity")
     effective = metrics.get("effective_topics")
@@ -557,6 +689,43 @@ def passes_hard_gates(metrics: dict[str, Any], gates: dict[str, Any]) -> bool:
     )
 
 
+def _passes_v3_candidate_gates(metrics: dict[str, Any], gates: dict[str, Any]) -> bool:
+    diversity = metrics.get("topic_diversity")
+    effective = metrics.get("effective_topics")
+    representation = metrics.get("representation", {})
+    geometry = metrics.get("cluster_geometry", {})
+    sizes = metrics.get("cluster_size_distribution", {})
+    diagnostics = metrics.get("diagnostics", {})
+    return bool(
+        diversity is not None
+        and float(diversity) >= float(gates["minimum_topic_diversity"])
+        and effective is not None
+        and int(gates["minimum_effective_topics"])
+        <= int(effective)
+        <= int(gates["maximum_effective_topics"])
+        and int(metrics.get("peak_rss_bytes", gates["maximum_peak_ram_bytes"] + 1))
+        <= int(gates["maximum_peak_ram_bytes"])
+        and float(
+            metrics.get(
+                "estimated_full_runtime_seconds",
+                float(gates["maximum_full_runtime_seconds"]) + 1,
+            )
+        )
+        <= float(gates["maximum_full_runtime_seconds"])
+        and representation.get("majority_stopword_topic_rate") is not None
+        and float(representation["majority_stopword_topic_rate"])
+        <= float(gates["maximum_majority_stopword_topic_rate"])
+        and sizes.get("largest_cluster_share") is not None
+        and float(sizes["largest_cluster_share"]) <= float(gates["maximum_largest_cluster_share"])
+        and geometry.get("nearest_cluster_separation_mean") is not None
+        and float(geometry["nearest_cluster_separation_mean"])
+        >= float(gates["minimum_nearest_cluster_separation_mean"])
+        and diagnostics.get("parameters_changed") is False
+        and diagnostics.get("declared_parameters") == diagnostics.get("effective_parameters")
+        and metrics.get("accounting_reconciles") is True
+    )
+
+
 def technical_sort_key(result: dict[str, Any]) -> tuple[float, float, float, float]:
     metrics = result["metrics"]
     return (
@@ -575,6 +744,49 @@ def candidate_key_for(candidate: dict[str, Any]) -> str:
     return f"{candidate['discovery']}--{candidate['embedding']}"
 
 
+def _is_v3(plan: dict[str, Any]) -> bool:
+    return plan.get("contract_version") == "signal-local-modeling-benchmark-plan-v3"
+
+
+def _manifest_denominator(manifest: ExportManifest | ExportManifestV2) -> int:
+    if isinstance(manifest, ExportManifestV2):
+        return manifest.acquisition_denominator
+    return manifest.denominator
+
+
+def _record_scopes(record: BenchmarkRecord | BenchmarkRecordV2) -> list[str]:
+    if isinstance(record, BenchmarkRecordV2):
+        return sorted({item.scope for item in record.partition_memberships})
+    return sorted({item.scope for item in record.provenance_intents})
+
+
+def _record_partitions(record: BenchmarkRecord | BenchmarkRecordV2) -> list[str]:
+    if isinstance(record, BenchmarkRecordV2):
+        return sorted({item.partition_key for item in record.partition_memberships})
+    return []
+
+
+def _record_markets(record: BenchmarkRecord | BenchmarkRecordV2) -> list[str]:
+    if isinstance(record, BenchmarkRecordV2):
+        return sorted({item.declared_market for item in record.partition_memberships})
+    return []
+
+
+def _assert_stage_transition(run_state: dict[str, Any], stage: str) -> None:
+    if stage not in {"smoke", "calibration", "full"}:
+        raise ValueError("benchmark_stage_invalid")
+    required = {
+        "smoke": "prepared",
+        "calibration": "smoke",
+        "full": "calibration",
+    }[stage]
+    stage_state = run_state.get("stage_state", {})
+    if stage_state.get(stage) == "completed":
+        return
+    if stage_state.get(required) != "completed":
+        raise ValueError(f"benchmark_stage_prerequisite_missing:{required}")
+
+
 def compute_harness_source_digest() -> str:
     root = Path(__file__).resolve().parents[2]
     paths = [
@@ -587,10 +799,7 @@ def compute_harness_source_digest() -> str:
         raise ValueError("benchmark_harness_source_incomplete")
     return sha256_text(
         canonical_json(
-            [
-                {"path": str(path.relative_to(root)), "sha256": sha256_file(path)}
-                for path in paths
-            ]
+            [{"path": str(path.relative_to(root)), "sha256": sha256_file(path)} for path in paths]
         )
     )
 
@@ -668,7 +877,9 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
     finalist_payload = json.loads((run_dir / "finalists.private.json").read_text())
     finalists = finalist_payload["candidate_keys"]
     if not finalists:
-        result = build_no_adoption_packet(run_dir, records, export_manifest.denominator, plan)
+        result = build_no_adoption_packet(
+            run_dir, records, _manifest_denominator(export_manifest), plan
+        )
         return seal_packet_source_lineage(
             result, modeling_harness_source_digest, packet_harness_source_digest
         )
@@ -683,7 +894,7 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
         result = build_unstable_full_packet(
             run_dir,
             records,
-            export_manifest.denominator,
+            _manifest_denominator(export_manifest),
             plan,
             finalists,
             stability,
@@ -705,7 +916,7 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
         candidate_results,
         run_dir / "operator-review",
         seed=271828,
-        population_denominator=export_manifest.denominator,
+        population_denominator=_manifest_denominator(export_manifest),
     )
     return seal_packet_source_lineage(
         result, modeling_harness_source_digest, packet_harness_source_digest
@@ -738,7 +949,7 @@ def seal_packet_source_lineage(
 
 def build_unstable_full_packet(
     run_dir: Path,
-    records: list[BenchmarkRecord],
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
     population_denominator: int,
     plan: dict[str, Any],
     finalist_keys: list[str],
@@ -782,15 +993,14 @@ def summarize_stability(comparisons: dict[str, dict[str, Any]]) -> dict[str, flo
             float(metrics["adjusted_rand"]) for metrics in comparisons.values()
         ),
         "minimum_matched_assignment_consistency": min(
-            float(metrics["matched_assignment_consistency"])
-            for metrics in comparisons.values()
+            float(metrics["matched_assignment_consistency"]) for metrics in comparisons.values()
         ),
     }
 
 
 def build_no_adoption_packet(
     run_dir: Path,
-    records: list[BenchmarkRecord],
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
     population_denominator: int,
     plan: dict[str, Any],
 ) -> dict[str, Any]:
@@ -868,11 +1078,18 @@ def build_no_adoption_packet(
 def passes_full_stability_gates(
     comparisons: dict[str, dict[str, Any]], gates: dict[str, Any]
 ) -> bool:
-    return bool(comparisons) and all(
-        float(metrics["adjusted_rand"]) >= float(gates["minimum_full_adjusted_rand"])
-        and float(metrics["matched_assignment_consistency"])
-        >= float(gates["minimum_full_matched_assignment_consistency"])
-        for metrics in comparisons.values()
+    consistency_gate = gates.get(
+        "minimum_full_matched_assignment_consistency",
+        gates.get("minimum_matched_assignment_consistency"),
+    )
+    return (
+        bool(comparisons)
+        and consistency_gate is not None
+        and all(
+            float(metrics["adjusted_rand"]) >= float(gates["minimum_full_adjusted_rand"])
+            and float(metrics["matched_assignment_consistency"]) >= float(consistency_gate)
+            for metrics in comparisons.values()
+        )
     )
 
 
@@ -978,9 +1195,7 @@ def _load_or_encode_embedding(
         manifest = json.loads(manifest_path.read_text())
         expected_backend = "onnx" if config["key"] == "bge-m3" else "torch"
         expected_execution_provider = (
-            str(config["onnx_execution_provider"])
-            if expected_backend == "onnx"
-            else "PyTorchCPU"
+            str(config["onnx_execution_provider"]) if expected_backend == "onnx" else "PyTorchCPU"
         )
         if (
             manifest.get("benchmark_identity") != benchmark_identity

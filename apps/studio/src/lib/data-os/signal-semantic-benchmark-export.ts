@@ -10,8 +10,198 @@ export const SIGNAL_SEMANTIC_BENCHMARK_EXPORT_CONTRACT =
   "signal-semantic-benchmark-export-v1" as const;
 export const SIGNAL_SEMANTIC_BENCHMARK_RECORD_CONTRACT =
   "signal-semantic-benchmark-record-v1" as const;
+export const SIGNAL_SEMANTIC_BENCHMARK_EXPORT_V2_CONTRACT =
+  "signal-semantic-benchmark-export-v2" as const;
+export const SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT =
+  "signal-semantic-benchmark-record-v2" as const;
 
 type Digest = `sha256:${string}`;
+
+export type SignalSemanticBenchmarkFrozenPartitionV2 = {
+  key: string;
+  scope: "primary_brand" | "competitor" | "category" | "reference";
+  entity_ref: Digest;
+  declared_market: string;
+  total: number;
+  included: number;
+  excluded: number;
+  population_digest: Digest;
+  modeling_digest: Digest;
+  plan_version: number;
+  plan_digest: Digest;
+  slot_digest: Digest;
+};
+
+export type SignalSemanticBenchmarkFrozenCorpusV2 = {
+  identity: string;
+  acquisition_denominator: number;
+  included_modeling_population: number;
+  quality_excluded_roots: number;
+  population_digest: Digest;
+  content_digest: Digest;
+  provenance_digest: Digest;
+  watermark_digest: Digest;
+  timezone: string;
+  observed_period_local: { from: string; to: string };
+  partitions: SignalSemanticBenchmarkFrozenPartitionV2[];
+};
+
+type AcquisitionRootAuthorityRowV2 = {
+  mention_id: string;
+  inclusion_status: string;
+  published_at: string;
+  text_clean: string | null;
+  language: string | null;
+  country: string | null;
+  platform: string | null;
+  canonical_alias_count: number;
+  partition_key: string;
+  scope: SignalSemanticBenchmarkFrozenPartitionV2["scope"];
+  entity_ref: Digest;
+  declared_market: string;
+  plan_version: number;
+  plan_digest: Digest;
+  slot_digest: Digest;
+  slot_key: string;
+  provenance_digest: Digest;
+  authority_state: string;
+  authority_digest: Digest | null;
+  authority_valid_until: string | null;
+};
+
+export type SignalSemanticBenchmarkRecordV2 = {
+  contract_version: typeof SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT;
+  record_key: Digest;
+  canonical_family_key: Digest;
+  canonical_alias_count: number;
+  content_hash: Digest;
+  text: string;
+  published_at: string;
+  month: string;
+  language: string;
+  country: string;
+  platform: string;
+  partition_memberships: Array<{
+    partition_key: string;
+    scope: SignalSemanticBenchmarkFrozenPartitionV2["scope"];
+    entity_ref: Digest;
+    declared_market: string;
+    plan_version: number;
+    plan_digest: Digest;
+    slot_key: string;
+    slot_digest: Digest;
+    provenance_digest: Digest;
+    authority_digest: Digest;
+    authority_valid_until: string | null;
+  }>;
+  quality_disposition: "included";
+  authority_usage: "strategic-analysis";
+  authority_digest: Digest;
+};
+
+export type SignalSemanticBenchmarkExportPreflightV2 = {
+  contract_version: typeof SIGNAL_SEMANTIC_BENCHMARK_EXPORT_V2_CONTRACT;
+  ready: boolean;
+  blockers: string[];
+  corpus_identity: string;
+  acquisition_denominator: number;
+  modeling_population: number;
+  quality_excluded_roots: number;
+  partitions: Record<string, {
+    scope: SignalSemanticBenchmarkFrozenPartitionV2["scope"];
+    declared_market: string;
+    total: number;
+    included: number;
+    excluded: number;
+  }>;
+  population_digest: Digest;
+  content_digest: Digest;
+  provenance_digest: Digest;
+  watermark_digest: Digest;
+  required_usage: "strategic-analysis";
+  authority_digest: Digest | null;
+  resource_estimate: {
+    physical_roots: number;
+    partition_memberships: number;
+    estimated_private_jsonl_bytes: number | null;
+  };
+  transaction_read_only: true;
+  transaction_id_assigned: false;
+  writes_performed: false;
+  provider_calls: 0;
+  jobs_enqueued: 0;
+  serving_writes: 0;
+};
+
+export type SignalSemanticBenchmarkExportResultV2 =
+  SignalSemanticBenchmarkExportPreflightV2 & {
+    ready: true;
+    blockers: [];
+    authority_digest: Digest;
+    workspace_ref: Digest;
+    export_timestamp: string;
+    period_start: string;
+    period_end: string;
+    timezone: string;
+    export_records_digest: Digest;
+    exported: number;
+    excluded_by_reason: { quality_excluded: number };
+    language_counts: Record<string, number>;
+    country_counts: Record<string, number>;
+    platform_counts: Record<string, number>;
+    declared_market_membership_counts: Record<string, number>;
+    shared_root_count: number;
+    licensing_evaluation: "allowed";
+    retention_evaluation: "current";
+    quality_evaluation: "current";
+    protected_state_digest_before: Digest;
+    protected_state_digest_after: Digest;
+    records: SignalSemanticBenchmarkRecordV2[];
+  };
+
+export type SignalSemanticBenchmarkExportManifestV2 = {
+  contract_version: typeof SIGNAL_SEMANTIC_BENCHMARK_EXPORT_V2_CONTRACT;
+  target: "noisia-staging";
+  read_only: true;
+  writes_performed: false;
+  provider_calls: 0;
+  jobs_enqueued: 0;
+  serving_writes: 0;
+  workspace_ref: Digest;
+  corpus_identity: string;
+  export_timestamp: string;
+  period_start: string;
+  period_end: string;
+  timezone: string;
+  population_digest: Digest;
+  content_digest: Digest;
+  provenance_digest: Digest;
+  watermark_digest: Digest;
+  authority_digest: Digest;
+  export_records_digest: Digest;
+  schema_version: typeof SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT;
+  acquisition_denominator: number;
+  modeling_population: number;
+  quality_excluded_roots: number;
+  exported: number;
+  excluded_by_reason: { quality_excluded: number };
+  partitions: Record<string, Omit<SignalSemanticBenchmarkFrozenPartitionV2, "key">>;
+  language_counts: Record<string, number>;
+  country_counts: Record<string, number>;
+  platform_counts: Record<string, number>;
+  declared_market_membership_counts: Record<string, number>;
+  shared_root_count: number;
+  required_usage: "strategic-analysis";
+  licensing_evaluation: "allowed";
+  retention_evaluation: "current";
+  quality_evaluation: "current";
+  exclusion_contract: "acquisition-quality-exclusive-v2";
+  protected_state_digest_before: Digest;
+  protected_state_digest_after: Digest;
+  transaction_read_only: true;
+  transaction_id_assigned: false;
+  export_file_sha256: Digest;
+};
 
 type WorkspaceRow = {
   workspace_id: string;
@@ -89,6 +279,306 @@ export type SignalSemanticBenchmarkExportResultV1 = {
   transaction_id_assigned: false;
   records: SignalSemanticBenchmarkRecordV1[];
 };
+
+export async function preflightSignalSemanticBenchmarkExportV2(args: {
+  client: PoolClient;
+  workspaceId: string;
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+}): Promise<SignalSemanticBenchmarkExportPreflightV2> {
+  return withAcquisitionBenchmarkReadOnlyTransaction(args.client, async () => {
+    const rows = await loadAcquisitionBenchmarkAuthorityRowsV2({
+      client: args.client,
+      workspaceId: args.workspaceId,
+      frozenCorpus: args.frozenCorpus,
+      includeText: false
+    });
+    const result = buildSignalSemanticBenchmarkPreflightV2({
+      rows,
+      frozenCorpus: args.frozenCorpus
+    });
+    return result;
+  });
+}
+
+export async function exportSignalSemanticBenchmarkV2(args: {
+  client: PoolClient;
+  workspaceId: string;
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+  pseudonymKey: Buffer;
+}): Promise<SignalSemanticBenchmarkExportResultV2> {
+  if (args.pseudonymKey.byteLength < 32) {
+    throw new Error("signal_benchmark_pseudonym_key_too_short");
+  }
+  return withAcquisitionBenchmarkReadOnlyTransaction(args.client, async () => {
+    const before = await protectedStateDigest(args.client, args.workspaceId);
+    const rows = await loadAcquisitionBenchmarkAuthorityRowsV2({
+      client: args.client,
+      workspaceId: args.workspaceId,
+      frozenCorpus: args.frozenCorpus,
+      includeText: true
+    });
+    const artifacts = buildSignalSemanticBenchmarkArtifactsV2({
+      rows,
+      frozenCorpus: args.frozenCorpus,
+      workspaceId: args.workspaceId,
+      pseudonymKey: args.pseudonymKey
+    });
+    const after = await protectedStateDigest(args.client, args.workspaceId);
+    if (before !== after) throw new Error("signal_benchmark_protected_state_changed");
+    return {
+      ...artifacts,
+      protected_state_digest_before: before,
+      protected_state_digest_after: after
+    };
+  });
+}
+
+export function buildSignalSemanticBenchmarkPreflightV2(args: {
+  rows: AcquisitionRootAuthorityRowV2[];
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+}): SignalSemanticBenchmarkExportPreflightV2 {
+  assertFrozenCorpusV2(args.frozenCorpus);
+  const rootStates = aggregateAcquisitionRowsV2(args.rows, args.frozenCorpus);
+  const blockers = [...rootStates.blockers];
+  if (rootStates.uniqueRoots !== args.frozenCorpus.acquisition_denominator) {
+    blockers.push("acquisition_denominator_drift");
+  }
+  if (rootStates.includedRoots !== args.frozenCorpus.included_modeling_population) {
+    blockers.push("modeling_population_drift");
+  }
+  if (rootStates.excludedRoots !== args.frozenCorpus.quality_excluded_roots) {
+    blockers.push("quality_excluded_roots_drift");
+  }
+  const partitions = Object.fromEntries(args.frozenCorpus.partitions.map((partition) => {
+    const observed = rootStates.partitionCounts.get(partition.key) ?? {
+      total: 0,
+      included: 0,
+      excluded: 0
+    };
+    if (
+      observed.total !== partition.total
+      || observed.included !== partition.included
+      || observed.excluded !== partition.excluded
+    ) {
+      blockers.push(`partition_drift:${partition.key}`);
+    }
+    return [partition.key, {
+      scope: partition.scope,
+      declared_market: partition.declared_market,
+      ...observed
+    }];
+  }));
+  const uniqueBlockers = [...new Set(blockers)].sort();
+  return {
+    contract_version: SIGNAL_SEMANTIC_BENCHMARK_EXPORT_V2_CONTRACT,
+    ready: uniqueBlockers.length === 0,
+    blockers: uniqueBlockers,
+    corpus_identity: args.frozenCorpus.identity,
+    acquisition_denominator: rootStates.uniqueRoots,
+    modeling_population: rootStates.includedRoots,
+    quality_excluded_roots: rootStates.excludedRoots,
+    partitions,
+    population_digest: args.frozenCorpus.population_digest,
+    content_digest: args.frozenCorpus.content_digest,
+    provenance_digest: args.frozenCorpus.provenance_digest,
+    watermark_digest: args.frozenCorpus.watermark_digest,
+    required_usage: "strategic-analysis",
+    authority_digest: rootStates.authorityDigest,
+    resource_estimate: {
+      physical_roots: rootStates.includedRoots,
+      partition_memberships: rootStates.includedMemberships,
+      estimated_private_jsonl_bytes: null
+    },
+    transaction_read_only: true,
+    transaction_id_assigned: false,
+    writes_performed: false,
+    provider_calls: 0,
+    jobs_enqueued: 0,
+    serving_writes: 0
+  };
+}
+
+export function buildSignalSemanticBenchmarkArtifactsV2(args: {
+  rows: AcquisitionRootAuthorityRowV2[];
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+  workspaceId: string;
+  pseudonymKey: Buffer;
+}): Omit<
+  SignalSemanticBenchmarkExportResultV2,
+  "protected_state_digest_before" | "protected_state_digest_after"
+> {
+  const preflight = buildSignalSemanticBenchmarkPreflightV2(args);
+  if (!preflight.ready || !preflight.authority_digest) {
+    throw new Error(`signal_benchmark_acquisition_authority_blocked:${preflight.blockers.join(",")}`);
+  }
+  const grouped = groupAcquisitionRowsByRoot(args.rows);
+  const records: SignalSemanticBenchmarkRecordV2[] = [];
+  const languageCounts: Record<string, number> = {};
+  const countryCounts: Record<string, number> = {};
+  const platformCounts: Record<string, number> = {};
+  const marketCounts: Record<string, number> = {};
+  let sharedRootCount = 0;
+  for (const rows of grouped.values()) {
+    const included = rows.filter((row) => row.inclusion_status === "included");
+    if (included.length === 0) continue;
+    const first = included[0]!;
+    if (!first.text_clean) throw new Error("signal_benchmark_text_not_loaded");
+    const text = normalizeBenchmarkText(first.text_clean);
+    if (!text) throw new Error("signal_benchmark_text_empty");
+    const memberships = included.map((row) => {
+      if (row.authority_state !== "eligible" || !row.authority_digest) {
+        throw new Error("signal_benchmark_acquisition_authority_incomplete");
+      }
+      increment(marketCounts, row.declared_market);
+      return {
+        partition_key: row.partition_key,
+        scope: row.scope,
+        entity_ref: row.entity_ref,
+        declared_market: row.declared_market,
+        plan_version: row.plan_version,
+        plan_digest: row.plan_digest,
+        slot_key: hmacDigest(args.pseudonymKey, `slot:${row.slot_key}`),
+        slot_digest: row.slot_digest,
+        provenance_digest: row.provenance_digest,
+        authority_digest: row.authority_digest,
+        authority_valid_until: row.authority_valid_until
+          ? isoTimestamp(row.authority_valid_until)
+          : null
+      };
+    }).sort((left, right) => left.partition_key.localeCompare(right.partition_key));
+    if (memberships.length > 1) sharedRootCount += 1;
+    const language = normalizeFacet(first.language, "und");
+    const country = normalizeCountry(first.country);
+    const platform = normalizeFacet(first.platform, "unknown");
+    increment(languageCounts, language);
+    increment(countryCounts, country);
+    increment(platformCounts, platform);
+    const recordKey = hmacDigest(args.pseudonymKey, `root:${first.mention_id}`);
+    records.push({
+      contract_version: SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT,
+      record_key: recordKey,
+      canonical_family_key: recordKey,
+      canonical_alias_count: Number(first.canonical_alias_count),
+      content_hash: sha256Digest(text),
+      text,
+      published_at: isoTimestamp(first.published_at),
+      month: first.published_at.slice(0, 7),
+      language,
+      country,
+      platform,
+      partition_memberships: memberships,
+      quality_disposition: "included",
+      authority_usage: "strategic-analysis",
+      authority_digest: sha256Digest(stableJson(memberships.map((item) => ({
+        partition_key: item.partition_key,
+        authority_digest: item.authority_digest
+      }))))
+    });
+  }
+  records.sort((left, right) => left.record_key.localeCompare(right.record_key));
+  const dates = records.map((record) => record.published_at.slice(0, 10)).sort();
+  const exportRecordsDigest = sha256Digest(records.map((record) => [
+    record.record_key,
+    record.content_hash,
+    record.authority_digest,
+    record.partition_memberships.map((membership) =>
+      `${membership.partition_key}:${membership.provenance_digest}:${membership.authority_digest}`
+    ).join(",")
+  ].join("|")).join("\n"));
+  return {
+    ...preflight,
+    ready: true,
+    blockers: [],
+    authority_digest: preflight.authority_digest,
+    workspace_ref: hmacDigest(args.pseudonymKey, `workspace:${args.workspaceId}`),
+    export_timestamp: new Date().toISOString(),
+    period_start: dates[0]!,
+    period_end: dates.at(-1)!,
+    timezone: args.frozenCorpus.timezone,
+    export_records_digest: exportRecordsDigest,
+    exported: records.length,
+    excluded_by_reason: { quality_excluded: preflight.quality_excluded_roots },
+    language_counts: sortRecord(languageCounts),
+    country_counts: sortRecord(countryCounts),
+    platform_counts: sortRecord(platformCounts),
+    declared_market_membership_counts: sortRecord(marketCounts),
+    shared_root_count: sharedRootCount,
+    licensing_evaluation: "allowed",
+    retention_evaluation: "current",
+    quality_evaluation: "current",
+    resource_estimate: {
+      ...preflight.resource_estimate,
+      estimated_private_jsonl_bytes: Buffer.byteLength(
+        records.map((record) => JSON.stringify(record)).join("\n") + "\n"
+      )
+    },
+    records
+  };
+}
+
+export function buildSignalSemanticBenchmarkExportManifestV2(args: {
+  exported: SignalSemanticBenchmarkExportResultV2;
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+  exportFileSha256: Digest;
+}): SignalSemanticBenchmarkExportManifestV2 {
+  if (!/^sha256:[0-9a-f]{64}$/u.test(args.exportFileSha256)) {
+    throw new Error("signal_benchmark_export_file_digest_invalid");
+  }
+  if (
+    args.exported.records.length !== args.exported.modeling_population
+    || args.exported.protected_state_digest_before
+      !== args.exported.protected_state_digest_after
+    || args.exported.corpus_identity !== args.frozenCorpus.identity
+  ) {
+    throw new Error("signal_benchmark_export_manifest_invariant_failed");
+  }
+  return {
+    contract_version: SIGNAL_SEMANTIC_BENCHMARK_EXPORT_V2_CONTRACT,
+    target: "noisia-staging",
+    read_only: true,
+    writes_performed: false,
+    provider_calls: 0,
+    jobs_enqueued: 0,
+    serving_writes: 0,
+    workspace_ref: args.exported.workspace_ref,
+    corpus_identity: args.exported.corpus_identity,
+    export_timestamp: args.exported.export_timestamp,
+    period_start: args.exported.period_start,
+    period_end: args.exported.period_end,
+    timezone: args.exported.timezone,
+    population_digest: args.exported.population_digest,
+    content_digest: args.exported.content_digest,
+    provenance_digest: args.exported.provenance_digest,
+    watermark_digest: args.exported.watermark_digest,
+    authority_digest: args.exported.authority_digest,
+    export_records_digest: args.exported.export_records_digest,
+    schema_version: SIGNAL_SEMANTIC_BENCHMARK_RECORD_V2_CONTRACT,
+    acquisition_denominator: args.exported.acquisition_denominator,
+    modeling_population: args.exported.modeling_population,
+    quality_excluded_roots: args.exported.quality_excluded_roots,
+    exported: args.exported.exported,
+    excluded_by_reason: args.exported.excluded_by_reason,
+    partitions: Object.fromEntries(args.frozenCorpus.partitions.map(({ key, ...partition }) => [
+      key,
+      partition
+    ])),
+    language_counts: args.exported.language_counts,
+    country_counts: args.exported.country_counts,
+    platform_counts: args.exported.platform_counts,
+    declared_market_membership_counts: args.exported.declared_market_membership_counts,
+    shared_root_count: args.exported.shared_root_count,
+    required_usage: "strategic-analysis",
+    licensing_evaluation: "allowed",
+    retention_evaluation: "current",
+    quality_evaluation: "current",
+    exclusion_contract: "acquisition-quality-exclusive-v2",
+    protected_state_digest_before: args.exported.protected_state_digest_before,
+    protected_state_digest_after: args.exported.protected_state_digest_after,
+    transaction_read_only: true,
+    transaction_id_assigned: false,
+    export_file_sha256: args.exportFileSha256
+  };
+}
 
 const VALID_SCOPES = new Set([
   "primary_brand",
@@ -309,6 +799,175 @@ export function buildSignalSemanticBenchmarkArtifactsV1(args: {
   };
 }
 
+async function withAcquisitionBenchmarkReadOnlyTransaction<T>(
+  client: PoolClient,
+  operation: () => Promise<T>
+): Promise<T> {
+  await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  try {
+    await client.query("SET LOCAL statement_timeout='15min'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout='20min'");
+    const result = await operation();
+    const transaction = await client.query<{
+      transaction_read_only: string;
+      transaction_id: string | null;
+    }>(`SELECT current_setting('transaction_read_only') AS transaction_read_only,
+      txid_current_if_assigned()::text AS transaction_id`);
+    if (
+      transaction.rows[0]?.transaction_read_only !== "on"
+      || transaction.rows[0]?.transaction_id !== null
+    ) {
+      throw new Error("signal_benchmark_read_only_contract_failed");
+    }
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
+async function loadAcquisitionBenchmarkAuthorityRowsV2(args: {
+  client: PoolClient;
+  workspaceId: string;
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+  includeText: boolean;
+}) {
+  assertFrozenCorpusV2(args.frozenCorpus);
+  const result = await args.client.query<AcquisitionRootAuthorityRowV2>(
+    ACQUISITION_ROOT_AUTHORITY_V2_SQL,
+    [args.workspaceId, JSON.stringify(args.frozenCorpus.partitions), args.includeText]
+  );
+  return result.rows;
+}
+
+function aggregateAcquisitionRowsV2(
+  rows: AcquisitionRootAuthorityRowV2[],
+  frozen: SignalSemanticBenchmarkFrozenCorpusV2
+) {
+  const grouped = groupAcquisitionRowsByRoot(rows);
+  const blockers: string[] = [];
+  const frozenPartitions = new Map(frozen.partitions.map((item) => [item.key, item]));
+  const partitionCounts = new Map<string, {
+    total: number;
+    included: number;
+    excluded: number;
+  }>();
+  let includedRoots = 0;
+  let excludedRoots = 0;
+  let includedMemberships = 0;
+  const authorityRows: string[] = [];
+  for (const [rootId, rootRows] of grouped) {
+    const dispositions = new Set(rootRows.map((row) => row.inclusion_status));
+    if (dispositions.size !== 1) blockers.push("root_quality_disposition_conflict");
+    const disposition = rootRows[0]?.inclusion_status;
+    if (disposition === "included") includedRoots += 1;
+    else if (disposition === "excluded") excludedRoots += 1;
+    else blockers.push("root_quality_disposition_unknown");
+    const seenPartitions = new Set<string>();
+    for (const row of rootRows) {
+      if (seenPartitions.has(row.partition_key)) {
+        blockers.push(`root_partition_duplicate:${row.partition_key}`);
+        continue;
+      }
+      seenPartitions.add(row.partition_key);
+      const expected = frozenPartitions.get(row.partition_key);
+      if (!expected || !rowMatchesFrozenPartition(row, expected)) {
+        blockers.push(`partition_authority_mismatch:${row.partition_key}`);
+      }
+      const counts = partitionCounts.get(row.partition_key) ?? {
+        total: 0,
+        included: 0,
+        excluded: 0
+      };
+      counts.total += 1;
+      if (disposition === "included") counts.included += 1;
+      if (disposition === "excluded") counts.excluded += 1;
+      partitionCounts.set(row.partition_key, counts);
+      if (disposition === "included") {
+        includedMemberships += 1;
+        if (row.authority_state !== "eligible" || !row.authority_digest) {
+          blockers.push(`strategic_authority_blocked:${row.authority_state}`);
+        } else {
+          authorityRows.push([
+            rootId,
+            row.partition_key,
+            row.provenance_digest,
+            row.authority_digest
+          ].join("|"));
+        }
+      }
+    }
+  }
+  return {
+    uniqueRoots: grouped.size,
+    includedRoots,
+    excludedRoots,
+    includedMemberships,
+    partitionCounts,
+    blockers,
+    authorityDigest: blockers.length === 0
+      ? sha256Digest(authorityRows.sort().join("\n"))
+      : null
+  };
+}
+
+function groupAcquisitionRowsByRoot(rows: AcquisitionRootAuthorityRowV2[]) {
+  const grouped = new Map<string, AcquisitionRootAuthorityRowV2[]>();
+  for (const row of rows) {
+    const values = grouped.get(row.mention_id) ?? [];
+    values.push(row);
+    grouped.set(row.mention_id, values);
+  }
+  return grouped;
+}
+
+function rowMatchesFrozenPartition(
+  row: AcquisitionRootAuthorityRowV2,
+  expected: SignalSemanticBenchmarkFrozenPartitionV2
+) {
+  return row.scope === expected.scope
+    && row.entity_ref === expected.entity_ref
+    && row.declared_market === expected.declared_market
+    && Number(row.plan_version) === expected.plan_version
+    && row.plan_digest === expected.plan_digest
+    && row.slot_digest === expected.slot_digest;
+}
+
+function assertFrozenCorpusV2(corpus: SignalSemanticBenchmarkFrozenCorpusV2) {
+  if (
+    corpus.partitions.length < 4
+    || corpus.included_modeling_population < 1
+    || corpus.acquisition_denominator
+      !== corpus.included_modeling_population + corpus.quality_excluded_roots
+    || new Set(corpus.partitions.map((item) => item.key)).size !== corpus.partitions.length
+  ) {
+    throw new Error("signal_benchmark_frozen_corpus_invalid");
+  }
+  for (const value of [
+    corpus.population_digest,
+    corpus.content_digest,
+    corpus.provenance_digest,
+    corpus.watermark_digest
+  ]) {
+    if (!/^sha256:[0-9a-f]{64}$/u.test(value)) {
+      throw new Error("signal_benchmark_frozen_digest_invalid");
+    }
+  }
+  for (const partition of corpus.partitions) {
+    if (
+      partition.total !== partition.included + partition.excluded
+      || partition.included < 1
+      || !/^[A-Z]{2}$/u.test(partition.declared_market)
+      || !/^sha256:[0-9a-f]{64}$/u.test(partition.entity_ref)
+      || !/^sha256:[0-9a-f]{64}$/u.test(partition.plan_digest)
+      || !/^sha256:[0-9a-f]{64}$/u.test(partition.slot_digest)
+    ) {
+      throw new Error("signal_benchmark_frozen_partition_invalid");
+    }
+  }
+}
+
 async function loadWorkspace(client: PoolClient, workspaceId: string): Promise<WorkspaceRow> {
   const result = await client.query<WorkspaceRow>(`
     SELECT workspace.id::text AS workspace_id,workspace.timezone,
@@ -460,6 +1119,11 @@ function normalizeBenchmarkText(value: string) {
 function normalizeFacet(value: string | null, fallback: string) {
   const normalized = value?.normalize("NFKC").trim().toLowerCase();
   return normalized || fallback;
+}
+
+function normalizeCountry(value: string | null) {
+  const normalized = value?.normalize("NFKC").trim().toUpperCase();
+  return normalized || "UNKNOWN";
 }
 
 function isoTimestamp(value: string) {
@@ -634,4 +1298,145 @@ const ROOT_AUTHORITY_SQL = `
       AS source_intents
   FROM roots root JOIN authority ON authority.mention_id=root.mention_id
   ORDER BY root.mention_id
+`;
+
+const ACQUISITION_ROOT_AUTHORITY_V2_SQL = `
+  WITH requested AS MATERIALIZED (
+    SELECT value.key AS partition_key,value.scope,value.entity_ref,
+      value.declared_market,value.plan_version,value.plan_digest,value.slot_digest
+    FROM jsonb_to_recordset($2::jsonb) AS value(
+      key text,scope text,entity_ref text,declared_market text,plan_version integer,
+      plan_digest text,slot_digest text,total integer,included integer,excluded integer,
+      population_digest text,modeling_digest text
+    )
+  ), accepted_batches AS MATERIALIZED (
+    SELECT request.partition_key,request.scope,request.entity_ref,request.declared_market,
+      request.plan_version,request.plan_digest,request.slot_digest,
+      batch.id AS import_batch_id,batch.data_source_id,batch.acquisition_slot_id,
+      batch.acquisition_import_seal_digest,slot.slot_key
+    FROM requested request
+    JOIN signal_acquisition_plans plan
+      ON plan.workspace_id=$1::uuid AND plan.plan_version=request.plan_version
+     AND plan.definition_hash=request.plan_digest
+    JOIN signal_acquisition_slots slot
+      ON slot.workspace_id=plan.workspace_id AND slot.plan_id=plan.id
+     AND slot.definition_hash=request.slot_digest AND slot.scope=request.scope
+    JOIN import_batches batch
+      ON batch.workspace_id=plan.workspace_id AND batch.acquisition_plan_id=plan.id
+     AND batch.acquisition_slot_id=slot.id AND batch.status='completed'
+     AND batch.acquisition_contract_version='signal-acquisition-import-v2'
+     AND batch.acquisition_plan_digest=request.plan_digest
+     AND batch.acquisition_slot_digest=request.slot_digest
+     AND batch.acquisition_import_seal_digest IS NOT NULL
+     AND batch.provider_observation_projection_state='ready'
+  ), member_observations AS MATERIALIZED (
+    SELECT batch.*,root.id AS root_id,root.inclusion_status,root.published_at,
+      CASE WHEN $3::boolean THEN root.text_clean END AS text_clean,
+      root.language,root.country,COALESCE(root.resolved_platform,root.platform) AS platform,
+      observation.observation_hash,observation.provenance_binding_id,
+      observation.rights_definition_hash,observation.retention_until,
+      alias_count.value AS canonical_alias_count
+    FROM accepted_batches batch
+    JOIN signal_mention_import_memberships membership
+      ON membership.workspace_id=$1::uuid
+     AND membership.import_batch_id=batch.import_batch_id
+    JOIN mentions member
+      ON member.workspace_id=membership.workspace_id AND member.id=membership.mention_id
+    JOIN mentions root
+      ON root.workspace_id=member.workspace_id AND root.id=member.canonical_mention_id
+     AND root.canonical_mention_id=root.id
+    JOIN signal_provider_mention_observations observation
+      ON observation.workspace_id=membership.workspace_id
+     AND observation.import_batch_id=membership.import_batch_id
+     AND observation.mention_id=membership.mention_id
+     AND NOT EXISTS(
+       SELECT 1 FROM signal_provider_mention_observations successor
+       WHERE successor.supersedes_observation_id=observation.id
+     )
+    JOIN LATERAL (
+      SELECT greatest(count(*)::int-1,0) AS value
+      FROM mentions alias
+      WHERE alias.workspace_id=root.workspace_id AND alias.canonical_mention_id=root.id
+    ) alias_count ON true
+  ), evaluated AS MATERIALIZED (
+    SELECT member.*,
+      CASE
+        WHEN binding.id IS NULL OR binding.status<>'active'
+          OR binding.effective_from>transaction_timestamp()
+          OR (binding.effective_to IS NOT NULL
+            AND binding.effective_to<=transaction_timestamp())
+          THEN 'provenance_binding_unavailable'
+        WHEN member.rights_definition_hash IS NULL
+          OR member.provenance_binding_id IS DISTINCT FROM binding.id
+          THEN 'typed_rights_unavailable'
+        WHEN quality.id IS NULL OR quality.status<>'active'
+          OR quality.effective_from>transaction_timestamp()
+          OR (quality.effective_to IS NOT NULL
+            AND quality.effective_to<=transaction_timestamp())
+          THEN 'quality_policy_unavailable'
+        WHEN retention.id IS NULL OR retention.status<>'active'
+          OR retention.effective_from>transaction_timestamp()
+          OR retention.retention_state<>'allowed'
+          OR (retention.effective_to IS NOT NULL
+            AND retention.effective_to<=transaction_timestamp())
+          OR (retention.retention_mode='until'
+            AND retention.retain_until<=transaction_timestamp())
+          OR (member.retention_until IS NOT NULL
+            AND member.retention_until<=transaction_timestamp())
+          THEN 'retention_unavailable'
+        WHEN licensing.id IS NULL OR licensing.status<>'active'
+          OR licensing.effective_from>transaction_timestamp()
+          OR (licensing.effective_to IS NOT NULL
+            AND licensing.effective_to<=transaction_timestamp())
+          THEN 'licensing_unavailable'
+        WHEN EXISTS(
+          SELECT 1 FROM signal_licensing_policy_usages denied
+          WHERE denied.licensing_policy_id=licensing.id
+            AND denied.usage_purpose='strategic-analysis'
+            AND denied.decision='prohibited'
+        ) THEN 'strategic_analysis_denied'
+        WHEN NOT EXISTS(
+          SELECT 1 FROM signal_licensing_policy_usages allowed
+          WHERE allowed.licensing_policy_id=licensing.id
+            AND allowed.usage_purpose='strategic-analysis'
+            AND allowed.decision='allowed'
+        ) THEN 'strategic_analysis_unknown'
+        ELSE 'eligible'
+      END AS authority_state,
+      CASE WHEN binding.id IS NOT NULL THEN
+        'sha256:'||encode(digest(convert_to(concat_ws('|',binding.id::text,
+          quality.definition_hash,retention.definition_hash,licensing.definition_hash,
+          member.rights_definition_hash),'UTF8'),'sha256'),'hex')
+      END AS authority_digest,
+      least(binding.effective_to,quality.effective_to,retention.effective_to,
+        retention.retain_until,licensing.effective_to,member.retention_until)
+        AS authority_valid_until
+    FROM member_observations member
+    LEFT JOIN signal_provenance_policy_bindings binding
+      ON binding.workspace_id=$1::uuid AND binding.id=member.provenance_binding_id
+    LEFT JOIN signal_quality_policies quality ON quality.id=binding.quality_policy_id
+    LEFT JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id
+    LEFT JOIN signal_licensing_policies licensing ON licensing.id=binding.licensing_policy_id
+  )
+  SELECT root_id::text AS mention_id,inclusion_status,published_at::text,
+    max(text_clean) AS text_clean,max(language) AS language,max(country) AS country,
+    max(platform) AS platform,max(canonical_alias_count)::int AS canonical_alias_count,
+    partition_key,scope,entity_ref,declared_market,plan_version,plan_digest,slot_digest,
+    slot_key,
+    'sha256:'||encode(digest(convert_to(string_agg(DISTINCT concat_ws('|',
+      import_batch_id::text,acquisition_import_seal_digest,observation_hash),E'\n'
+      ORDER BY concat_ws('|',import_batch_id::text,acquisition_import_seal_digest,
+        observation_hash)),'UTF8'),'sha256'),'hex') AS provenance_digest,
+    CASE WHEN bool_or(authority_state='eligible') THEN 'eligible'
+      ELSE min(authority_state) END AS authority_state,
+    CASE WHEN bool_or(authority_state='eligible') THEN
+      'sha256:'||encode(digest(convert_to(string_agg(DISTINCT authority_digest,E'\n'
+        ORDER BY authority_digest) FILTER(WHERE authority_state='eligible'),
+        'UTF8'),'sha256'),'hex') END AS authority_digest,
+    min(authority_valid_until) FILTER(WHERE authority_state='eligible')::text
+      AS authority_valid_until
+  FROM evaluated
+  GROUP BY root_id,inclusion_status,published_at,partition_key,scope,entity_ref,
+    declared_market,plan_version,plan_digest,slot_digest,slot_key
+  ORDER BY root_id,partition_key
 `;

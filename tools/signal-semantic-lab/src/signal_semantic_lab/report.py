@@ -15,6 +15,7 @@ from .runner import (
     passes_full_candidate_gates,
     passes_full_stability_gates,
 )
+from .schema import ExportManifestV2
 from .splits import assert_no_leakage, deterministic_splits
 
 
@@ -61,10 +62,8 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
             raise ValueError("benchmark_report_harness_source_digest_mismatch")
         packet_lineage = json.loads(packet_lineage_path.read_text())
         if not (
-            packet_lineage.get("modeling_harness_source_digest")
-            == modeling_harness_source_digest
-            and packet_lineage.get("packet_harness_source_digest")
-            == current_harness_source_digest
+            packet_lineage.get("modeling_harness_source_digest") == modeling_harness_source_digest
+            and packet_lineage.get("packet_harness_source_digest") == current_harness_source_digest
             and packet_lineage.get("packet_built_after_modeling_harness_change") is True
         ):
             raise ValueError("benchmark_report_harness_source_digest_mismatch")
@@ -133,14 +132,13 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
         raise ValueError("benchmark_operator_review_artifact_missing")
     packet = json.loads(packet_path.read_text())
     expected_review_status = (
-        "operator_review_required"
-        if stable_candidates
-        else "technical_no_adoption_review"
+        "operator_review_required" if stable_candidates else "technical_no_adoption_review"
     )
     if (
         packet.get("review_status") != expected_review_status
         or packet.get("modeling_decision_allowed") is not bool(stable_candidates)
-        or int(packet.get("population_denominator", -1)) != validated_manifest.denominator
+        or int(packet.get("population_denominator", -1))
+        != _manifest_denominator(validated_manifest)
     ):
         raise ValueError("benchmark_operator_review_artifact_state_mismatch")
     report = {
@@ -174,32 +172,7 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
         "postprocessing_sealed_separately": (
             modeling_harness_source_digest != current_harness_source_digest
         ),
-        "export": {
-            "target": manifest["target"],
-            "workspace_ref": manifest["workspace_ref"],
-            "population_digest": manifest["population_digest"],
-            "watermark_digest": manifest["watermark_digest"],
-            "content_digest": manifest["content_digest"],
-            "denominator": manifest["denominator"],
-            "exported": manifest["exported"],
-            "excluded_by_reason": manifest["excluded_by_reason"],
-            "scope_counts": manifest["scope_counts"],
-            "language_counts": manifest["language_counts"],
-            "platform_counts": manifest["platform_counts"],
-            "general_adoption_limitation": plan["corpus"].get("general_adoption_limitation"),
-            "read_only": manifest["read_only"],
-            "transaction_read_only": manifest["transaction_read_only"],
-            "transaction_id_assigned": manifest["transaction_id_assigned"],
-            "protected_state_digest_before": manifest["protected_state_digest_before"],
-            "protected_state_digest_after": manifest["protected_state_digest_after"],
-            "protected_state_unchanged": (
-                manifest["protected_state_digest_before"]
-                == manifest["protected_state_digest_after"]
-            ),
-            "writes_performed": manifest["writes_performed"],
-            "jobs_enqueued": manifest["jobs_enqueued"],
-            "provider_calls": manifest["provider_calls"],
-        },
+        "export": _report_export(manifest, plan),
         "evaluation_layers": plan.get("evaluation_layers", []),
         "data_quality": {
             "as_of": validated_manifest.export_timestamp.isoformat(),
@@ -209,9 +182,8 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
             "canonical_family_duplicate_count": 0,
             "content_hash_mismatch_count": 0,
             "denominator_reconciles": (
-                validated_manifest.denominator
-                == validated_manifest.exported
-                + sum(validated_manifest.excluded_by_reason.values())
+                _manifest_denominator(validated_manifest)
+                == validated_manifest.exported + sum(validated_manifest.excluded_by_reason.values())
             ),
             "canonical_family_leakage": False,
             "content_hash_leakage": False,
@@ -219,10 +191,10 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
             "split_digest": computed_split_digest,
             "holdout_used_before_finalist_selection": False,
             "authority_valid_at_export": True,
-            "scope_evidence": plan["corpus"]["scope_evidence"],
-            "general_adoption_limitation": plan["corpus"].get(
-                "general_adoption_limitation"
+            "scope_evidence": plan["corpus"].get(
+                "scope_evidence", "acquisition_multiscope_partitions"
             ),
+            "general_adoption_limitation": plan["corpus"].get("general_adoption_limitation"),
         },
         "offline_contract_fixtures_sha256": (
             sha256_file(contract_fixture_path) if contract_fixture_path.is_file() else None
@@ -279,6 +251,48 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
     output = run_dir / "report-data.sanitized.json"
     write_private_json(output, report)
     return {**report, "report_path": str(output), "report_sha256": sha256_file(output)}
+
+
+def _manifest_denominator(manifest: Any) -> int:
+    if isinstance(manifest, ExportManifestV2):
+        return manifest.acquisition_denominator
+    return manifest.denominator
+
+
+def _report_export(manifest: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    is_v2 = manifest.get("contract_version") == "signal-semantic-benchmark-export-v2"
+    protected_before = manifest.get("protected_state_digest_before")
+    protected_after = manifest.get("protected_state_digest_after")
+    return {
+        "target": manifest["target"],
+        "workspace_ref": manifest["workspace_ref"],
+        "population_digest": manifest["population_digest"],
+        "watermark_digest": manifest["watermark_digest"],
+        "content_digest": manifest["content_digest"],
+        "provenance_digest": manifest.get("provenance_digest"),
+        "denominator": (manifest["acquisition_denominator"] if is_v2 else manifest["denominator"]),
+        "exported": manifest["exported"],
+        "excluded_by_reason": manifest["excluded_by_reason"],
+        "partitions": manifest.get("partitions"),
+        "scope_counts": manifest.get("scope_counts"),
+        "language_counts": manifest["language_counts"],
+        "country_counts": manifest.get("country_counts"),
+        "declared_market_membership_counts": manifest.get("declared_market_membership_counts"),
+        "platform_counts": manifest["platform_counts"],
+        "general_adoption_limitation": plan["corpus"].get("general_adoption_limitation"),
+        "read_only": manifest["read_only"],
+        "transaction_read_only": manifest["transaction_read_only"],
+        "transaction_id_assigned": manifest["transaction_id_assigned"],
+        "protected_state_digest_before": protected_before,
+        "protected_state_digest_after": protected_after,
+        "protected_state_unchanged": (
+            protected_before == protected_after if protected_before is not None else None
+        ),
+        "writes_performed": manifest["writes_performed"],
+        "jobs_enqueued": manifest["jobs_enqueued"],
+        "provider_calls": manifest["provider_calls"],
+        "serving_writes": manifest.get("serving_writes", 0),
+    }
 
 
 def build_manifest(run_dir: Path) -> dict[str, Any]:

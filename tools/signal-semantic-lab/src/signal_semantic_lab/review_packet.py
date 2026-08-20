@@ -15,7 +15,7 @@ from sklearn.preprocessing import normalize
 
 from .canonical import canonical_json, sha256_text, write_private_json
 from .naming_contracts import RepresentativeEvidenceV1, SealedRepresentativePacketV1
-from .schema import BenchmarkRecord
+from .schema import BenchmarkRecord, BenchmarkRecordV2
 
 PACKET_POLICY_VERSION = "signal-adaptive-representative-packet-v1"
 PACKET_POLICY = {
@@ -46,7 +46,7 @@ _LONG_NUMBER = re.compile(r"\b\d{7,}\b")
 
 
 def build_blinded_packet(
-    records: list[BenchmarkRecord],
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
     candidates: list[dict[str, Any]],
     output_dir: Path,
     *,
@@ -84,8 +84,7 @@ def build_blinded_packet(
             topic_id: sha256_text(
                 canonical_json(
                     sorted(
-                        records[index].content_hash
-                        for index in np.flatnonzero(labels == topic_id)
+                        records[index].content_hash for index in np.flatnonzero(labels == topic_id)
                     )
                 )
             )
@@ -175,6 +174,7 @@ def build_blinded_packet(
                 ],
                 "packet_token_count": candidate_packet_tokens,
                 "packet_token_limit": candidate_token_limit,
+                "multiscope_summary": candidate.get("metrics", {}).get("multiscope"),
                 "topics": topics,
             }
         )
@@ -282,7 +282,7 @@ def _bounded_topic_selection(
 
 def _sealed_cluster_packet(
     *,
-    records: list[BenchmarkRecord],
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
     labels: np.ndarray,
     strengths: np.ndarray,
     vectors: np.ndarray,
@@ -397,9 +397,7 @@ def _sealed_cluster_packet(
         "scope": dict(
             sorted(
                 Counter(
-                    scope
-                    for index in member_indexes
-                    for scope in {intent.scope for intent in records[index].provenance_intents}
+                    scope for index in member_indexes for scope in _record_scopes(records[index])
                 ).items()
             )
         ),
@@ -439,13 +437,11 @@ def _sealed_cluster_packet(
                 else "not_available"
             ),
         },
-        "local_terms": [
-            _redact_excerpt(value, maximum=120) for value in terms if "_" not in value
-        ][:15],
+        "local_terms": [_redact_excerpt(value, maximum=120) for value in terms if "_" not in value][
+            :15
+        ],
         "local_phrases": [
-            _redact_excerpt(value.replace("_", " "), maximum=240)
-            for value in terms
-            if "_" in value
+            _redact_excerpt(value.replace("_", " "), maximum=240) for value in terms if "_" in value
         ][:15],
         "distributions": distributions,
         "distribution_contracts": {
@@ -457,9 +453,7 @@ def _sealed_cluster_packet(
         },
         "neighboring_clusters": [
             {
-                "cluster_ref": sha256_text(
-                    f"{run_key}:{cluster_content_digests[neighbor]}"
-                ),
+                "cluster_ref": sha256_text(f"{run_key}:{cluster_content_digests[neighbor]}"),
                 "similarity": similarity,
             }
             for neighbor, similarity in neighbors.get(topic_id, [])[:3]
@@ -473,9 +467,7 @@ def _sealed_cluster_packet(
                 {_slice_key(records[index]) for index, _role, _reason in selected}
             ),
             "observed_slice_count": observed_slice_count,
-            "breadth_state": (
-                "too_broad_split_candidate" if breadth_limited else "bounded"
-            ),
+            "breadth_state": ("too_broad_split_candidate" if breadth_limited else "bounded"),
             "maximum_representatives": PACKET_POLICY["maximum_representatives"],
             "reviewed_scope_denominator": len(records),
             "cluster_share_of_reviewed_scope": len(member_indexes) / len(records),
@@ -502,7 +494,8 @@ def _sealed_cluster_packet(
 
 
 def _representation_vectors(
-    records: list[BenchmarkRecord], candidate: dict[str, Any]
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2],
+    candidate: dict[str, Any],
 ) -> np.ndarray:
     manifest = candidate.get("artifact_manifest", {}).get("embedding_manifest")
     if manifest and manifest.get("output_path"):
@@ -512,13 +505,9 @@ def _representation_vectors(
         return np.asarray(normalize(vectors), dtype=np.float32)
     vectorizer = HashingVectorizer(
         n_features=PACKET_POLICY["representation_vector_policy"]["lexical_features"],
-        alternate_sign=PACKET_POLICY["representation_vector_policy"][
-            "lexical_alternate_sign"
-        ],
+        alternate_sign=PACKET_POLICY["representation_vector_policy"]["lexical_alternate_sign"],
         norm="l2",
-        ngram_range=tuple(
-            PACKET_POLICY["representation_vector_policy"]["lexical_ngram_range"]
-        ),
+        ngram_range=tuple(PACKET_POLICY["representation_vector_policy"]["lexical_ngram_range"]),
     )
     return np.asarray(
         vectorizer.transform(record.text for record in records).toarray(), dtype=np.float32
@@ -550,7 +539,9 @@ def _cluster_neighbors(centroids: dict[int, np.ndarray]) -> dict[int, list[tuple
     }
 
 
-def _slice_key(record: BenchmarkRecord) -> tuple[str, str, str, str, str]:
+def _slice_key(
+    record: BenchmarkRecord | BenchmarkRecordV2,
+) -> tuple[str, str, str, str, str]:
     return (
         record.language,
         _primary_scope(record),
@@ -560,8 +551,14 @@ def _slice_key(record: BenchmarkRecord) -> tuple[str, str, str, str, str]:
     )
 
 
-def _primary_scope(record: BenchmarkRecord) -> str:
-    return sorted({intent.scope for intent in record.provenance_intents})[0]
+def _primary_scope(record: BenchmarkRecord | BenchmarkRecordV2) -> str:
+    return _record_scopes(record)[0]
+
+
+def _record_scopes(record: BenchmarkRecord | BenchmarkRecordV2) -> list[str]:
+    if isinstance(record, BenchmarkRecordV2):
+        return sorted({membership.scope for membership in record.partition_memberships})
+    return sorted({intent.scope for intent in record.provenance_intents})
 
 
 def _redact_excerpt(value: str, *, maximum: int) -> str:

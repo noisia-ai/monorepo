@@ -23,7 +23,11 @@ def run_preflight(output: Path, *, plan_path: Path | None = None) -> dict[str, A
     cache_estimate = int(model_bytes * 1.75)
     max_ram = int(plan["hardware_budget"]["max_peak_ram_bytes"])
     result = {
-        "contract_version": "signal-local-modeling-preflight-v1",
+        "contract_version": (
+            "signal-local-modeling-preflight-v2"
+            if plan["contract_version"] == "signal-local-modeling-benchmark-plan-v3"
+            else "signal-local-modeling-preflight-v1"
+        ),
         "plan_digest": plan_digest(plan),
         "hardware": {
             "architecture": platform.machine(),
@@ -71,7 +75,14 @@ def run_preflight(output: Path, *, plan_path: Path | None = None) -> dict[str, A
             "disk_headroom": disk.free >= cache_estimate * 2,
             "lock_present": (Path(__file__).resolve().parents[2] / "uv.lock").is_file(),
         },
-        "safety": {"provider_calls": 0, "remote_reads": 0, "remote_writes": 0},
+        "safety": {
+            "execution_authorized": bool(plan.get("execution_authorized", True)),
+            "holdout_state": "sealed",
+            "provider_calls": 0,
+            "remote_reads": 0,
+            "remote_writes": 0,
+            "serving_writes": 0,
+        },
     }
     if not all(result["checks"].values()):
         raise ValueError("benchmark_preflight_failed")

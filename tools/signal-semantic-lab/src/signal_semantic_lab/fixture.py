@@ -6,7 +6,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .canonical import sha256_file, sha256_text, write_private_json
+from .input_data import export_records_digest_v2
 from .preprocess import normalize_text
+from .schema import BenchmarkRecordV2
 
 
 def generate_fixture(output_dir: Path, count: int) -> dict[str, object]:
@@ -247,4 +249,182 @@ def generate_fixture(output_dir: Path, count: int) -> dict[str, object]:
         "source": str(source),
         "manifest": str(manifest_path),
         "content_digest": content_digest,
+    }
+
+
+def generate_multiscope_fixture(output_dir: Path, count: int = 400) -> dict[str, object]:
+    """Build a generic, deliberately unbalanced multi-scope Acquisition export."""
+
+    if count != 400:
+        raise ValueError("benchmark_multiscope_fixture_count_fixed")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(output_dir, 0o700)
+    partitions = {
+        "primary": {
+            "scope": "primary_brand",
+            "entity_ref": sha256_text("fixture-primary"),
+            "market": "MX",
+            "range": range(0, 100),
+            "excluded": 10,
+        },
+        "category": {
+            "scope": "category",
+            "entity_ref": sha256_text("fixture-category"),
+            "market": "MX",
+            "range": range(70, 150),
+            "excluded": 8,
+        },
+        "competitor_a": {
+            "scope": "competitor",
+            "entity_ref": sha256_text("fixture-competitor-a"),
+            "market": "US",
+            "range": range(130, 200),
+            "excluded": 7,
+        },
+        "competitor_b": {
+            "scope": "competitor",
+            "entity_ref": sha256_text("fixture-competitor-b"),
+            "market": "US",
+            "range": range(140, 400),
+            "excluded": 25,
+        },
+    }
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    rows: list[dict[str, object]] = []
+    for index in range(count):
+        language = "es" if index % 3 else "en"
+        country = "MX" if language == "es" else "US"
+        body = (
+            "no funciona bien pero conserva la negación y el contexto"
+            if language == "es"
+            else "does not work well but preserves negation and context"
+        )
+        if index % 19 == 0:
+            body = "the and of to la el de que"  # representation hard-gate fixture
+        text = normalize_text(f"{body} caso sintético {index}")
+        published = base + timedelta(hours=index * 18)
+        memberships: list[dict[str, object]] = []
+        for key, partition in partitions.items():
+            if index not in partition["range"]:  # type: ignore[operator]
+                continue
+            memberships.append(
+                {
+                    "partition_key": key,
+                    "scope": partition["scope"],
+                    "entity_ref": partition["entity_ref"],
+                    "declared_market": partition["market"],
+                    "plan_version": 1,
+                    "plan_digest": sha256_text("fixture-plan"),
+                    "slot_key": f"slot-{key}",
+                    "slot_digest": sha256_text(f"fixture-slot:{key}"),
+                    "provenance_digest": sha256_text(f"fixture-provenance:{key}:{index}"),
+                    "authority_digest": sha256_text(f"fixture-authority:{key}"),
+                    "authority_valid_until": None,
+                }
+            )
+        if not memberships:
+            raise ValueError("benchmark_multiscope_fixture_root_unassigned")
+        rows.append(
+            {
+                "contract_version": "signal-semantic-benchmark-record-v2",
+                "record_key": sha256_text(f"fixture-record:{index}"),
+                "canonical_family_key": sha256_text(f"fixture-family:{index}"),
+                "canonical_alias_count": 1 if index % 23 == 0 else 0,
+                "content_hash": sha256_text(text),
+                "text": text,
+                "published_at": published.isoformat(),
+                "month": published.strftime("%Y-%m"),
+                "language": language,
+                "country": country,
+                "platform": ["x", "forum", "news", "youtube"][index % 4],
+                "partition_memberships": memberships,
+                "quality_disposition": "included",
+                "authority_usage": "strategic-analysis",
+                "authority_digest": sha256_text(f"fixture-root-authority:{index}"),
+            }
+        )
+    source = output_dir / "source-export-v2.private.jsonl"
+    source.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n")
+    os.chmod(source, 0o600)
+    typed = [BenchmarkRecordV2.model_validate(row) for row in rows]
+    partition_manifest = {}
+    for key, partition in partitions.items():
+        included = len(partition["range"])  # type: ignore[arg-type]
+        excluded = int(partition["excluded"])
+        partition_manifest[key] = {
+            "scope": partition["scope"],
+            "entity_ref": partition["entity_ref"],
+            "declared_market": partition["market"],
+            "total": included + excluded,
+            "included": included,
+            "excluded": excluded,
+            "population_digest": sha256_text(f"fixture-population:{key}"),
+            "modeling_digest": sha256_text(f"fixture-modeling:{key}"),
+            "plan_version": 1,
+            "plan_digest": sha256_text("fixture-plan"),
+            "slot_digest": sha256_text(f"fixture-slot:{key}"),
+        }
+    languages = {key: sum(row["language"] == key for row in rows) for key in ("en", "es")}
+    countries = {key: sum(row["country"] == key for row in rows) for key in ("MX", "US")}
+    platforms = {
+        key: sum(row["platform"] == key for row in rows)
+        for key in ("forum", "news", "x", "youtube")
+    }
+    manifest = {
+        "contract_version": "signal-semantic-benchmark-export-v2",
+        "target": "local-fixture",
+        "read_only": True,
+        "writes_performed": False,
+        "provider_calls": 0,
+        "jobs_enqueued": 0,
+        "serving_writes": 0,
+        "workspace_ref": sha256_text("fixture-workspace"),
+        "corpus_identity": "generic-multiscope-fixture-v1",
+        "export_timestamp": datetime(2026, 8, 20, tzinfo=UTC).isoformat(),
+        "period_start": rows[0]["published_at"][:10],
+        "period_end": rows[-1]["published_at"][:10],
+        "timezone": "UTC",
+        "population_digest": sha256_text("fixture-population"),
+        "content_digest": sha256_text("fixture-content-authority"),
+        "provenance_digest": sha256_text("fixture-provenance-authority"),
+        "watermark_digest": sha256_text("fixture-watermark"),
+        "authority_digest": sha256_text("fixture-authority"),
+        "export_records_digest": export_records_digest_v2(typed),
+        "schema_version": "signal-semantic-benchmark-record-v2",
+        "acquisition_denominator": count + 40,
+        "modeling_population": count,
+        "quality_excluded_roots": 40,
+        "exported": count,
+        "excluded_by_reason": {"quality_excluded": 40},
+        "partitions": partition_manifest,
+        "language_counts": languages,
+        "country_counts": countries,
+        "platform_counts": platforms,
+        "declared_market_membership_counts": {
+            "MX": len(partitions["primary"]["range"]) + len(partitions["category"]["range"]),
+            "US": len(partitions["competitor_a"]["range"])
+            + len(partitions["competitor_b"]["range"]),
+        },
+        "shared_root_count": sum(len(row["partition_memberships"]) > 1 for row in rows),
+        "required_usage": "strategic-analysis",
+        "licensing_evaluation": "allowed",
+        "retention_evaluation": "current",
+        "quality_evaluation": "current",
+        "exclusion_contract": "acquisition-quality-exclusive-v2",
+        "protected_state_digest_before": sha256_text("fixture-protected"),
+        "protected_state_digest_after": sha256_text("fixture-protected"),
+        "transaction_read_only": True,
+        "transaction_id_assigned": False,
+        "export_file_sha256": sha256_file(source),
+    }
+    manifest_path = output_dir / "source-export-v2.manifest.private.json"
+    write_private_json(manifest_path, manifest)
+    return {
+        "records": count,
+        "denominator": count + 40,
+        "partition_memberships": sum(len(row["partition_memberships"]) for row in rows),
+        "shared_roots": manifest["shared_root_count"],
+        "source": str(source),
+        "manifest": str(manifest_path),
+        "export_records_digest": manifest["export_records_digest"],
     }

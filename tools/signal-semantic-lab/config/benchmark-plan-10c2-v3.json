@@ -1,0 +1,274 @@
+{
+  "contract_version": "signal-local-modeling-benchmark-plan-v3",
+  "status": "sealed_not_executed",
+  "preregistered_at": "2026-08-20T09:38:00-06:00",
+  "supersedes": {
+    "contract_version": "signal-local-modeling-benchmark-plan-10c2-v1",
+    "path": "config/benchmark-plan-10c2.json",
+    "sha256": "sha256:8f557769af29f87e89996fd6bc8db3e4fd20e73b96ed21464517eb73244bd736"
+  },
+  "schema_operability": {
+    "changes_limited_to_schema_operability": true,
+    "substantive_decisions_changed": false
+  },
+  "question": "Can a pinned local multilingual stack discover technically coherent and stable clusters across the frozen primary-brand, category and two competitor acquisition partitions without allowing the largest partition to dominate the decision?",
+  "decision_outcomes": ["adopt", "no_adoption", "rerun"],
+  "execution_authorized": false,
+  "ten_d_authorized": false,
+  "corpus": {
+    "identity": "signal-acquisition-multiscope-amazon-alexa-2026-08-20-v1",
+    "export_contract": "signal-semantic-benchmark-export-v2",
+    "record_contract": "signal-semantic-benchmark-record-v2",
+    "authority": "completed-acquisition-import-seals-v1",
+    "required_usage": "strategic-analysis",
+    "acquisition_denominator": 23296,
+    "included_modeling_population": 21195,
+    "quality_excluded_roots": 2101,
+    "population_digest": "sha256:067fe82f4b8010c0207ef5be17ad62dae0e98b70bdc3bb11971b8038af11c149",
+    "content_digest": "sha256:76c232dadc63a2f1da659efbdfaed67fdda23bea6308d93e6283bbed60c5e71c",
+    "provenance_digest": "sha256:8f4902ef5aca4c049c2655e364dcf6ad38e2fb577d74a690f4cf2607f877b4d8",
+    "watermark_digest": "sha256:974107099028dda1694b1d6d761220aa636353bf01516d867d6fb9e83a807da1",
+    "timezone": "America/Mexico_City",
+    "observed_period_local": {"from": "2025-12-31", "to": "2026-08-11"},
+    "partitions": [
+      {
+        "key": "primary_brand",
+        "scope": "primary_brand",
+        "entity_ref": "sha256:05dfc6a9b695749aebd3125182eab4368144249d440d219e767b7d4ef2cf6c90",
+        "declared_market": "MX",
+        "total": 4193,
+        "included": 3277,
+        "excluded": 916,
+        "population_digest": "sha256:51565dfd8acb63f3799efa2d9b8d0cc727c475c0d2091fb4564f9509fc2b13c9",
+        "modeling_digest": "sha256:c3610f9b05c80f04591296bf9d804f5a86a5fc7232cf5c83cbd33bf0f67509bc",
+        "plan_version": 1,
+        "plan_digest": "sha256:14652828db8d9d54c1d46e3855762a1edc1e2cf34356ecf14e5385722a853a1b",
+        "slot_digest": "sha256:18c0c11e5fe429134bb929f472e7aa3cb277dd7eeab320e9b4aa897c31ab73a3"
+      },
+      {
+        "key": "category",
+        "scope": "category",
+        "entity_ref": "sha256:906863149531fa01202960c959d4214176f8a63f03f3603ec4a1fd78b85afed6",
+        "declared_market": "MX",
+        "total": 2242,
+        "included": 2195,
+        "excluded": 47,
+        "population_digest": "sha256:53606249457ef862796013b63a45a6a44e6d5c2c3a6ca2930c010ebec93fa067",
+        "modeling_digest": "sha256:eafb71336b3f18018db266e64f848d22f8a0a29f3f1a7728059329420794434c",
+        "plan_version": 1,
+        "plan_digest": "sha256:14652828db8d9d54c1d46e3855762a1edc1e2cf34356ecf14e5385722a853a1b",
+        "slot_digest": "sha256:5908fae813f7d43256ce0c5b4d6c30b2b09ca964a6f5eec9bfea026fd20f64d0"
+      },
+      {
+        "key": "competitor_google_nest",
+        "scope": "competitor",
+        "entity_ref": "sha256:48006af04905359269d6909f269a76bf93b0f4c3e8f34202ef66e74cff20524d",
+        "declared_market": "US",
+        "total": 2870,
+        "included": 2662,
+        "excluded": 208,
+        "population_digest": "sha256:c934b156f4a55adae3182a3abe2077cfdac9342a8cbb286581365104ee9452c9",
+        "modeling_digest": "sha256:9b056b9b48922cc30015cd7a73f3ffd0d8b95fae64b43fe72b4df0f51b35fab8",
+        "plan_version": 2,
+        "plan_digest": "sha256:2b296641cd91d11c42f5251ee58cfaecdc20c424ff2c1ebcc63dbb087a7092a0",
+        "slot_digest": "sha256:e0ccfbe18b52510588aeba172bb1788858d031801a83ee6eb95b13329b2457d2"
+      },
+      {
+        "key": "competitor_apple_homepod",
+        "scope": "competitor",
+        "entity_ref": "sha256:f086a2e7d0f397f136623569743961ad05290c8bb13eb0015d442ab87728df7e",
+        "declared_market": "US",
+        "total": 14678,
+        "included": 13686,
+        "excluded": 992,
+        "population_digest": "sha256:e8baccc4eeb7c331fdd4cded9731b6e9753e6a98c016a894e3d4ffdc5770895b",
+        "modeling_digest": "sha256:ef94244a56ea08654829f01e40cb52a258575e02d52a46cada92b553a3de2e6f",
+        "plan_version": 2,
+        "plan_digest": "sha256:2b296641cd91d11c42f5251ee58cfaecdc20c424ff2c1ebcc63dbb087a7092a0",
+        "slot_digest": "sha256:ab8ef0cf3f15d842980a7787cc22ad9610faa01e413e1ca965111930012d84c9"
+      }
+    ],
+    "scopes_overlap": true,
+    "scope_totals_are_not_additive": true,
+    "canonical_root_deduplication": true
+  },
+  "sampling": {
+    "policy": "stratified-multiscope-v1",
+    "stratify_by": ["partition", "entity", "language", "declared_market", "month", "platform"],
+    "maximum_calibration_roots_per_partition": 3000,
+    "use_all_when_partition_is_smaller": true,
+    "primary_decision_aggregation": "macro_equal_partition_weight",
+    "partition_weights": {
+      "primary_brand": 0.25,
+      "category": 0.25,
+      "competitor_google_nest": 0.25,
+      "competitor_apple_homepod": 0.25
+    },
+    "micro_metrics_are_supplementary": true,
+    "sample_never_represents_population_count": true
+  },
+  "splits": {
+    "seed": 104729,
+    "train_fraction": 0.6,
+    "calibration_fraction": 0.2,
+    "blind_holdout_fraction": 0.2,
+    "group_by": ["canonical_family_key", "content_hash"],
+    "shared_root_uses_same_split_across_scopes": true,
+    "zero_leakage_required": true,
+    "holdout_open_policy": "open-once-after-full-finalists-are-frozen"
+  },
+  "gold": {
+    "authority": "signal-classification-authority-10b",
+    "human_actor_required": true,
+    "append_only": true,
+    "provenance_required": true,
+    "current_sufficiency": "not_available",
+    "precision_recall_f1_policy": "not_available-until-comparable-gold-exists"
+  },
+  "hardware_budget": {
+    "architecture": "arm64",
+    "device": "cpu",
+    "physical_ram_bytes": 19327352832,
+    "max_peak_ram_bytes": 14495514624,
+    "max_download_bytes": 20000000000,
+    "smoke_timeout_seconds": 1800,
+    "calibration_timeout_seconds": 10800,
+    "full_candidate_timeout_seconds": 28800
+  },
+  "material_dependencies": [
+    {"key": "bertopic", "version": "0.17.4", "license": "MIT", "url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE"},
+    {"key": "umap-learn", "version": "0.5.12", "license": "BSD-3-Clause", "url": "https://github.com/lmcinnes/umap/blob/0.5.12/LICENSE.txt"},
+    {"key": "hdbscan", "version": "0.8.44", "license": "BSD-3-Clause", "url": "https://github.com/scikit-learn-contrib/hdbscan/blob/0.8.44/LICENSE"}
+  ],
+  "embeddings": [
+    {
+      "key": "multilingual-e5-small",
+      "repository": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/intfloat/multilingual-e5-small/blob/614241f622f53c4eeff9890bdc4f31cfecc418b3/README.md",
+      "artifact_bytes": 470642255,
+      "artifact_files": [
+        {"path": "model.safetensors", "sha256": "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477", "bytes": 470641600},
+        {"path": "config.json", "sha256": "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959", "bytes": 655}
+      ],
+      "dimension": 384,
+      "max_sequence_length": 128,
+      "query_prefix": "query: ",
+      "trust_remote_code": false
+    },
+    {
+      "key": "bge-m3",
+      "repository": "BAAI/bge-m3",
+      "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/BAAI/bge-m3/blob/5617a9f61b028005a4858fdac845db406aefb181/README.md",
+      "artifact_bytes": 2267546218,
+      "artifact_files": [
+        {"path": "onnx/model.onnx", "sha256": "f84251230831afb359ab26d9fd37d5936d4d9bb5d1d5410e66442f630f24435b", "bytes": 724923},
+        {"path": "onnx/model.onnx_data", "sha256": "1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4", "bytes": 2266820608},
+        {"path": "config.json", "sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa", "bytes": 687}
+      ],
+      "dimension": 1024,
+      "max_sequence_length": 128,
+      "onnx_execution_provider": "CPUExecutionProvider",
+      "runtime_batch_size": 32,
+      "runtime_batch_order": "normalized-character-length-ascending-stable-v1",
+      "query_prefix": "",
+      "trust_remote_code": false
+    }
+  ],
+  "discovery": [
+    {
+      "key": "lexical-locale-nmf", "framework": "scikit-learn", "version": "1.9.0", "license": "BSD-3-Clause", "role": "lexical_reference_only",
+      "language_families": ["es", "en"], "n_topics": 40, "max_features": 50000, "min_df": 2, "max_df": 0.98, "max_iter": 400, "ngram_min": 1, "ngram_max": 3, "top_n_words": 15
+    },
+    {
+      "key": "bertopic-balanced", "framework": "BERTopic", "version": "0.17.4", "revision": "75f2910562f0e372beee29acbbd2a2835ba72cf2", "license": "MIT", "license_url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE",
+      "language_families": ["es", "en"], "umap_n_neighbors": 30, "umap_n_components": 8, "umap_min_dist": 0.0, "hdbscan_min_cluster_size": 80, "hdbscan_min_samples": 8, "cluster_selection_method": "eom", "vectorizer_min_df": 2, "vectorizer_max_df": 0.98, "vectorizer_max_features": 50000, "ngram_min": 1, "ngram_max": 3, "top_n_words": 15
+    },
+    {
+      "key": "bertopic-detail", "framework": "BERTopic", "version": "0.17.4", "revision": "75f2910562f0e372beee29acbbd2a2835ba72cf2", "license": "MIT", "license_url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE",
+      "language_families": ["es", "en"], "umap_n_neighbors": 15, "umap_n_components": 8, "umap_min_dist": 0.0, "hdbscan_min_cluster_size": 40, "hdbscan_min_samples": 5, "cluster_selection_method": "leaf", "vectorizer_min_df": 2, "vectorizer_max_df": 0.98, "vectorizer_max_features": 50000, "ngram_min": 1, "ngram_max": 3, "top_n_words": 15
+    }
+  ],
+  "candidates": [
+    {"key": "lexical-locale-nmf", "discovery": "lexical-locale-nmf", "embedding": null, "role": "reference"},
+    {"key": "bertopic-e5-balanced", "discovery": "bertopic-balanced", "embedding": "multilingual-e5-small", "role": "candidate"},
+    {"key": "bertopic-e5-detail", "discovery": "bertopic-detail", "embedding": "multilingual-e5-small", "role": "candidate"},
+    {"key": "bertopic-bge-balanced", "discovery": "bertopic-balanced", "embedding": "bge-m3", "role": "candidate"},
+    {"key": "bertopic-bge-detail", "discovery": "bertopic-detail", "embedding": "bge-m3", "role": "candidate"}
+  ],
+  "excluded_candidates": [
+    {"key": "fastopic", "version": "1.0.1", "revision": "51150f1ac22c4599ab0e390b14c031a98cffed68", "reason": "10C.1 measured lower bound exceeded the eight-hour hardware gate before quality evidence existed"}
+  ],
+  "stages": {
+    "sequence": ["prepared", "smoke", "calibration", "full", "multi_seed_complete", "holdout_open_once", "operator_review"],
+    "smoke_max_records": 1200,
+    "calibration_max_records": 12000,
+    "maximum_calibration_roots_per_partition": 3000,
+    "full_population": true,
+    "finalist_count": 2,
+    "final_seeds": [17, 43, 71]
+  },
+  "metrics": {
+    "top_terms": 15,
+    "coherence": "c_npmi@gensim-4.4.0",
+    "coherence_max_records": 20000,
+    "cluster_matching": "maximum-overlap-hungarian-v1",
+    "coverage_slices": ["partition", "entity", "language", "declared_market", "platform", "month"],
+    "stability": ["adjusted_rand", "matched_assignment_consistency", "topic_jaccard"],
+    "gold_metrics": ["precision", "recall", "f1", "pr_auc", "ece", "brier", "risk_coverage"]
+  },
+  "hard_gates": {
+    "denominator_reconciles": true,
+    "unexplained_roots": 0,
+    "leakage": 0,
+    "maximum_full_runtime_seconds": 28800,
+    "maximum_peak_ram_bytes": 14495514624,
+    "minimum_global_coverage": 0.55,
+    "minimum_each_partition_coverage": 0.55,
+    "maximum_partition_coverage_gap": 0.2,
+    "minimum_topic_diversity": 0.55,
+    "minimum_full_adjusted_rand": 0.25,
+    "minimum_matched_assignment_consistency": 0.5,
+    "minimum_effective_topics": 8,
+    "maximum_effective_topics": 120,
+    "maximum_majority_stopword_topic_rate": 0,
+    "maximum_largest_cluster_share": 0.4,
+    "minimum_nearest_cluster_separation_mean": 0.005,
+    "immutable_revisions_and_licenses_required": true,
+    "blind_operator_review_required_for_adoption": true,
+    "finalist_selection": "all-gates-then-macro-coverage-diversity-redundancy-duration-up-to-two-v3"
+  },
+  "parameter_policy": "declared-equals-effective-or-fail-v1",
+  "missing_probability_policy": "not_available-never-one-v1",
+  "future_contextual_naming": {
+    "gate": "10e_after_technical_adoption",
+    "provider": "claude_optional",
+    "input_grain": "sealed_clusters_not_mentions",
+    "server_selected_representative_packets": true,
+    "proposal_initial_disposition": "pending"
+  },
+  "safety": {
+    "provider_calls_allowed": false,
+    "remote_writes_allowed": false,
+    "serving_writes_allowed": false,
+    "holdout_open_allowed": false,
+    "ten_d_allowed": false
+  },
+  "stop_conditions": [
+    "digest_or_denominator_mismatch",
+    "declared_effective_parameter_drift",
+    "fabricated_probability_or_confidence",
+    "unexplained_root",
+    "split_leakage",
+    "required_partition_omitted",
+    "runtime_over_eight_hours",
+    "provider_call",
+    "remote_write",
+    "serving_write",
+    "holdout_opened_without_gate",
+    "attempt_to_open_10d"
+  ]
+}

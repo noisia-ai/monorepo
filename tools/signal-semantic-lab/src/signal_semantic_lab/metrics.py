@@ -8,7 +8,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import normalize
 
 from .preprocess import representation_stopword_fraction
-from .schema import BenchmarkRecord
+from .schema import BenchmarkRecord, BenchmarkRecordV2
 
 
 def topic_diversity(terms: dict[int, list[str]], top_n: int = 10) -> float | None:
@@ -185,26 +185,41 @@ def cluster_size_distribution(labels: np.ndarray) -> dict[str, float | int | Non
 
 
 def slice_coverage(
-    records: list[BenchmarkRecord], labels: np.ndarray
+    records: list[BenchmarkRecord] | list[BenchmarkRecordV2], labels: np.ndarray
 ) -> dict[str, dict[str, dict[str, int | float]]]:
     if len(records) != len(labels):
         raise ValueError("benchmark_slice_assignment_shape_mismatch")
     slices: dict[str, dict[str, list[bool]]] = defaultdict(lambda: defaultdict(list))
     for record, label in zip(records, labels, strict=True):
-        values = {
-            "language": [record.language],
-            "platform": [record.platform],
-            "month": [record.month],
-            "scope": sorted({intent.scope for intent in record.provenance_intents}) or ["unknown"],
-            "entity": sorted(
-                {
-                    intent.entity_ref
-                    for intent in record.provenance_intents
-                    if intent.entity_ref is not None
-                }
-            )
-            or ["unknown"],
-        }
+        if isinstance(record, BenchmarkRecordV2):
+            values = {
+                "language": [record.language],
+                "country": [record.country],
+                "platform": [record.platform],
+                "month": [record.month],
+                "partition": sorted({item.partition_key for item in record.partition_memberships}),
+                "scope": sorted({item.scope for item in record.partition_memberships}),
+                "entity": sorted({item.entity_ref for item in record.partition_memberships}),
+                "declared_market": sorted(
+                    {item.declared_market for item in record.partition_memberships}
+                ),
+            }
+        else:
+            values = {
+                "language": [record.language],
+                "platform": [record.platform],
+                "month": [record.month],
+                "scope": sorted({intent.scope for intent in record.provenance_intents})
+                or ["unknown"],
+                "entity": sorted(
+                    {
+                        intent.entity_ref
+                        for intent in record.provenance_intents
+                        if intent.entity_ref is not None
+                    }
+                )
+                or ["unknown"],
+            }
         for dimension, members in values.items():
             for member in members:
                 slices[dimension][member].append(bool(label >= 0))
