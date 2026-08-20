@@ -358,3 +358,25 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 14. Narrow-viewport closure — 2026-08-20T01:34:30-06:00
+
+The remaining online browser coverage passed in the preserved authenticated session.
+At a 768 px application-window width, Semantic Review and Mentions both survived route
+reloads, opened and closed their canonical filters, and rendered selection/detail state
+without overlapping drawers. Review still reconciled 277 candidates plus 81 unresolved
+to 358 included roots; Mentions still exposed 389 accepted memberships. The Resolver was
+not invoked, no provider work ran, and the browser was restored full-size on Semantic
+Review without logging out.
+
+The operator checklist phases A-E are now complete. This does not close the clean
+multi-scope acquisition gate: bounded primary-brand and two-competitor imports remain
+required before a population digest can authorize a 10C.2 preregistration.
+
+```text
+NOISIA_PREVIEW_UAT_ONLINE_READY=true
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

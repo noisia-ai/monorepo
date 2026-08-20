@@ -1312,3 +1312,26 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 24. Checkpoint ejecutado · cobertura angosta y cierre del operator checklist
+
+**Registrado:** 2026-08-20T01:34:30-06:00 (`America/Mexico_City`)
+
+El flujo final de Mentions y Semantic Review se repitió en una ventana de 768 px sin
+terminar la sesión autenticada. Ambos loaders sobrevivieron refresh, los drawers de
+filtros abrieron/cerraron sin colisión, Review cambió selección con el denominator
+`277 + 81 = 358`, y Mentions abrió el detalle canónico sobre sus 389 memberships sin
+exponer raw metadata. Resolver no fue invocado; provider calls, gasto y jobs pagados
+permanecieron en cero. Chrome quedó restaurado y autenticado en Semantic Review.
+
+Esto cierra el checklist online de fases A–E, pero no adelanta el gate multi-scope: los
+imports separados de primary brand y dos competitors siguen siendo la siguiente acción
+operatoria. 10C.2 no puede preregistrarse ni 10D abrirse hasta reconciliar ese corpus y
+sellar su digest.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

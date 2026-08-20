@@ -1204,3 +1204,28 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint Preview/UAT · checklist online cerrado
+
+**Registrado:** 2026-08-20T01:34:30-06:00 (`America/Mexico_City`)
+
+La cobertura pendiente de viewport angosto quedó ejecutada sobre la misma sesión
+autenticada. En una ventana de 768 px, Semantic Review conservó su ruta después de
+refresh, cargó 277 candidates + 81 unresolved, abrió/cerró filtros y cambió la selección
+sin ejecutar Resolver. Mentions conservó 389 memberships, abrió/cerró filtros y mostró el
+drawer canónico de detalle sin superposición ni metadata operator-unsafe. La ventana fue
+restaurada y la sesión quedó abierta en Semantic Review para continuidad del operador.
+
+Con esto pasan las fases A–E del checklist online: Auth/AuthZ, control plane greenfield,
+primer import asíncrono, Mentions/Review en desktop y angosto, y rollback de aplicación.
+El gate de adquisición multi-scope sigue separado y cerrado: todavía faltan imports
+acotados de primary brand y al menos dos competitors, por lo que no existe un population
+digest limpio para preregistrar 10C.2. No hubo provider calls, jobs pagados, cambios de
+reader/pointer/binding ni acceso a producción.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```

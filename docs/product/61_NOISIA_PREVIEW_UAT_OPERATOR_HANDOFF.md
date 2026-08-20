@@ -484,3 +484,30 @@ AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
 SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
+
+## 14. Operator checklist closure — 2026-08-20T01:34:30-06:00
+
+The final narrow-viewport pass completed on the same authenticated Preview session. In a
+768 px application window:
+
+- Semantic Review reloaded on its canonical route, retained 277 candidates and 81
+  unresolved roots, opened/closed filters and loaded a different selected record.
+- Mentions reloaded on its canonical route, retained 389 accepted memberships,
+  opened/closed filters and rendered the canonical mention-detail drawer without overlap.
+- The detail remained operator-safe; raw metadata and secrets were not exposed in the
+  primary experience, and the screenshot artifacts remain private with mode `0600`.
+- Resolver, query generation, providers and paid jobs were not invoked.
+- Chrome was restored full-size and left authenticated on Semantic Review. No further
+  logout is needed for the next operator session.
+
+The online checklist is therefore complete. The next supported action is still to import
+one bounded primary-brand file and one bounded file for each of at least two competitor
+slots. Those files must retain their own slot/query-evidence/period contracts; category
+data must not be reused to manufacture multi-scope coverage.
+
+```text
+NOISIA_PREVIEW_UAT_OPERATOR_QA_COMPLETE=true
+AMAZON_ALEXA_GREENFIELD_ACQUISITION_READY=false
+SIGNAL_10C2_PREREGISTRATION_READY=false
+SIGNAL_10D_READY=false
+```
