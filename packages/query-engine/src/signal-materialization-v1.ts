@@ -527,6 +527,31 @@ export function buildSignalMentionDrillDownPlanV1(args: {
           UNION
           SELECT
             CASE
+              WHEN intent.scope = 'primary_brand' THEN 'brand'
+              WHEN intent.scope = 'competitor' THEN 'competitor'
+              WHEN intent.scope = 'category' THEN 'category'
+              ELSE 'unknown'
+            END AS scope,
+            COALESCE(NULLIF(intent.entity_label, ''), 'Unattributed') AS label,
+            CASE
+              WHEN intent.scope = 'primary_brand' THEN 1
+              WHEN intent.scope = 'competitor' THEN 2
+              WHEN intent.scope = 'category' THEN 3
+              ELSE 4
+            END AS rank
+          FROM signal_mention_attributions intent
+          JOIN mentions intent_mention
+            ON intent_mention.id = intent.mention_id
+           AND ${linkedMentionIdentity("intent_mention")}
+          JOIN import_batches intent_batch
+            ON intent_batch.id = intent.import_batch_id
+           AND intent_batch.status = 'completed'
+          WHERE intent.workspace_id = m.workspace_id
+            AND intent.attribution_basis = 'source_intent'
+            AND intent.is_current = true
+          UNION
+          SELECT
+            CASE
               WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('brand', 'primary_brand') THEN 'brand'
               WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) IN ('competitor', 'competitors') THEN 'competitor'
               WHEN lower(COALESCE(import_batch.entity_kind, import_batch.mention_type, '')) = 'category' THEN 'category'
@@ -1146,6 +1171,23 @@ function dimensionPredicate(
         END
         FROM import_batches batch
         WHERE batch.id = m.source_file_id
+        UNION ALL
+        SELECT CASE
+          WHEN intent.scope = 'primary_brand' THEN 'brand'
+          WHEN intent.scope = 'competitor' THEN 'competitor'
+          WHEN intent.scope = 'category' THEN 'category'
+          ELSE 'unknown'
+        END
+        FROM signal_mention_attributions intent
+        JOIN mentions intent_mention
+          ON intent_mention.id = intent.mention_id
+         AND ${linkedMentionJoin("intent_mention")}
+        JOIN import_batches intent_batch
+          ON intent_batch.id = intent.import_batch_id
+         AND intent_batch.status = 'completed'
+        WHERE intent.workspace_id = m.workspace_id
+          AND intent.attribution_basis = 'source_intent'
+          AND intent.is_current = true
       ) scoped
       WHERE scoped.scope = ANY(${valuesParameter})
     )`;
