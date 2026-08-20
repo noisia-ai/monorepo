@@ -639,7 +639,8 @@ export async function listWorkspaceImportsV1(args: {
     LEFT JOIN signal_acquisition_plans plan ON plan.id=batch.acquisition_plan_id
       AND plan.workspace_id=batch.workspace_id
     LEFT JOIN LATERAL(
-      SELECT min(observation.published_at)::text period_start,max(observation.published_at)::text period_end,
+      SELECT min(timezone(COALESCE(batch.capture_timezone,'UTC'),observation.published_at))::date::text period_start,
+        max(timezone(COALESCE(batch.capture_timezone,'UTC'),observation.published_at))::date::text period_end,
         COALESCE(array_agg(DISTINCT observation.language_code)
           FILTER(WHERE observation.language_code IS NOT NULL),ARRAY[]::text[]) languages,
         COALESCE(array_agg(DISTINCT observation.country_code)
@@ -678,7 +679,8 @@ async function loadWorkspaceImportInternalV1(workspaceId: string,importBatchId: 
     LEFT JOIN signal_acquisition_plans plan ON plan.id=batch.acquisition_plan_id
       AND plan.workspace_id=batch.workspace_id
     LEFT JOIN LATERAL(
-      SELECT min(observation.published_at)::text period_start,max(observation.published_at)::text period_end,
+      SELECT min(timezone(COALESCE(batch.capture_timezone,'UTC'),observation.published_at))::date::text period_start,
+        max(timezone(COALESCE(batch.capture_timezone,'UTC'),observation.published_at))::date::text period_end,
         COALESCE(array_agg(DISTINCT observation.language_code)
           FILTER(WHERE observation.language_code IS NOT NULL),ARRAY[]::text[]) languages,
         COALESCE(array_agg(DISTINCT observation.country_code)

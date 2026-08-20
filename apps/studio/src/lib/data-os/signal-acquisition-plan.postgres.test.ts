@@ -529,7 +529,7 @@ test("0084-0088 Acquisition Plan supports zero-query readiness and immutable gra
     observation_version,observation_hash,platform,language_code,country_code,published_at,
     provenance_binding_id,rights_definition_hash,retention_until
   ) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'sentione',$5,$6::uuid,$7::uuid,NULL,$8,$9,NULL,
-    'sentione-csv-47-v1',$10,1,$11,'web','es','MX','2026-01-20T12:00:00Z',
+    'sentione-csv-47-v1',$10,1,$11,'web','es','MX','2026-01-01T00:30:00Z',
     $12::uuid,$13,'2030-01-01T00:00:00Z')`,[workspace.id,sourceId,unavailable.batch.id,
     unavailableMentionId,digest(`unavailable-record:${suffix}`),authority.plan_id,authority.slot_id,
     authority.plan_digest,authority.slot_digest,digest("headers-v2"),digest("observation-v2"),
@@ -540,8 +540,8 @@ test("0084-0088 Acquisition Plan supports zero-query readiness and immutable gra
     workspaceId:workspace.id,sourceId,importBatchId:unavailable.batch.id
   });
   assert.deepEqual(completedUnavailable?.observed,{
-    period:{start:"2026-01-20",end:"2026-01-20"},languages:["es"],countries:["MX"],
-    platforms:["web"],warnings:[]
+    period:{start:"2025-12-31",end:"2025-12-31"},languages:["es"],countries:["MX"],
+    platforms:["web"],warnings:["observed_period_outside_declared_period"]
   });
   const unavailableIntent=(await pool.query<{review_status:string;eligibility_status:string;
     evidence_class:string;query_id:string|null;actor_id:string;confidence:string|null}>(`SELECT review_status,eligibility_status,
