@@ -2035,7 +2035,7 @@
     "roles": { "admin": "Admin Noisia", "analyst": "Analista" },
     "context": {
       "label": "Navegación del workspace de marca", "eyebrow": "Marca", "title": "Workspace", "compactLabel": "Vista de marca",
-      "items": { "overview": "Overview", "data": "Datos y fuentes", "data-mentions": "Menciones", "data-review": "Revisión semántica", "brand-os": "Brand OS", "reports": "Reportes", "settings": "Acceso y configuración" }
+      "items": { "overview": "Overview", "data": "Datos y fuentes", "data-mentions": "Menciones", "data-review": "Revisión semántica", "data-discovery-review": "Revisión de descubrimiento", "brand-os": "Brand OS", "reports": "Reportes", "settings": "Acceso y configuración" }
     },
     "studyContext": {
       "label": "Navegación del estudio", "eyebrow": "Estudio", "title": "Workspace de análisis", "compactLabel": "Vista del estudio",
@@ -2223,8 +2223,30 @@
         "subtitle": "Abre cada recurso en su espacio de trabajo; esta vista conserva fuentes, imports y gobernanza.",
         "mentionsDescription": "Consulta el registro canónico completo, filtra y abre el detalle enriquecido.",
         "reviewDescription": "Revisa o corrige las clasificaciones que determinan la población operativa.",
+        "discoveryReviewDescription": "Evalúa propuestas ciegas de discovery sin aprobar contratos, propagación ni serving.",
         "governedViewsDescription": "Reconcilia views aplicables, consulta bloqueos y promueve o retira bindings por módulo de forma explícita.",
         "open": "Abrir"
+      },
+      "discoveryReview": {
+        "eyebrow": "Herramienta interna", "title": "Revisión de descubrimiento", "subtitle": "Evalúa propuestas ciegas antes de decidir si el discovery merece un benchmark posterior.",
+        "summary": { "proposals": "Propuestas", "proposalsHint": "{reviewed} revisadas", "denominator": "Denominator modelado", "denominatorHint": "Raíces físicas del run", "coverage": "Cobertura asignada", "coverageHint": "{assigned, number} raíces en clusters", "outliers": "Outliers", "outliersHint": "{count, number} raíces no asignadas" },
+        "notice": { "title": "Diagnóstico, nunca adopción", "body": "Esta revisión sólo determina si las propuestas son humanamente útiles. No autoriza 10C.3B, Topic Contracts, assignments, Signal ni 10D.", "badge": "Holdout sellado" },
+        "list": { "title": "Propuestas ciegas", "subtitle": "{reviewed, number} de {total, number} revisadas · {percent}%" },
+        "progress": { "label": "Progreso de revisión: {percent}%" },
+        "actions": { "retry": "Reintentar", "reviewOutliers": "Revisar outliers", "finish": "Finalizar review", "loadMore": "Cargar más", "loading": "Cargando…", "close": "Cerrar", "cancel": "Cancelar", "previous": "Anterior", "next": "Siguiente", "saveDraft": "Guardar borrador", "saving": "Guardando…", "scoreSheet": "Score sheet", "decisionSheet": "Decision sheet" },
+        "filters": { "label": "Filtros de propuestas", "search": "Buscar términos o frases", "searchPlaceholder": "Término o frase del packet", "status": "Estado", "decision": "Decisión", "scope": "Scope", "size": "Tamaño", "stability": "Estabilidad", "clear": "Limpiar" },
+        "columns": { "proposal": "Propuesta", "size": "Tamaño y coverage", "scopes": "Scopes", "stability": "Estabilidad", "review": "Review" },
+        "empty": { "title": "No hay propuestas con estos filtros", "body": "Limpia la búsqueda o cambia los filtros del packet." },
+        "errors": { "title": "No se pudo cargar la revisión", "request": "La revisión de descubrimiento no está disponible temporalmente." },
+        "unsaved": { "confirm": "Hay cambios sin guardar. ¿Quieres descartarlos?" },
+        "values": { "pending": "Pendiente", "reviewed": "Revisada", "primary_brand": "Marca primaria", "category": "Categoría", "competitor": "Competidor", "topic_contract_candidate": "Candidata a Topic Contract", "candidate": "Candidata", "merge": "Merge", "split": "Split", "none_acceptable": "Ninguna aceptable", "none": "Ninguna", "small": "Pequeña", "medium": "Mediana", "large": "Grande", "low": "Baja", "high": "Alta", "not_available": "No disponible" },
+        "detail": { "aria": "Detalle de propuesta de discovery", "proposal": "Propuesta", "size": "Raíces", "coverage": "Coverage", "role": "Autoridad", "pendingProposal": "Propuesta pending", "terms": "Términos y frases locales", "evidence": "Evidencia representativa", "distributions": "Distribuciones", "limitations": "Limitaciones", "technical": "Detalles técnicos", "lineage": "Lineage", "holdout": "Holdout", "sealed": "Sellado" },
+        "roles": { "medoid": "Representante central", "diversity": "Representante diverso", "boundary": "Ejemplo de frontera", "counterexample": "Contraejemplo vecino", "outlier_diagnostic_sample": "Muestra de outlier" },
+        "distribution": { "scope": "Scope", "language": "Idioma", "source": "Plataforma", "time": "Periodo", "subregion": "Subregión" },
+        "rubric": { "title": "Rubric humana", "body": "No hay valores por defecto. Guardar un borrador no concede autoridad.", "internal_coherence": "Coherencia interna", "neighbor_distinction": "Distinción contra vecinos", "human_nameability": "Facilidad para nombrarlo", "strategic_utility": "Utilidad estratégica", "merge_needed": "Requiere merge", "split_needed": "Requiere split", "convert_to_topic_contract_candidate": "Candidato a Topic Contract", "none_acceptable": "Ninguna propuesta es aceptable", "notes": "Notas", "shortcut": "Atajo: ⌘/Ctrl + S. Flechas izquierda/derecha navegan entre propuestas." },
+        "outliers": { "eyebrow": "Reservorio separado", "title": "Diagnóstico de outliers", "samples": "Muestra ciega", "decision": "Qué debe estudiar 10C.3B", "study_boundary_thresholds": "Thresholds de frontera", "study_missing_topic_families": "Familias temáticas faltantes", "study_later_recovery": "Recuperación posterior" },
+        "finish": { "title": "Finalizar revisión humana", "body": "La finalización sella todas las decisiones y la decisión sobre outliers. No adopta un modelo.", "outcome": "Outcome del review", "confirm": "Sellar review", "warning": "candidate_preferred sólo indica utilidad potencial para generar proposals." },
+        "outcomes": { "candidate_preferred": "Candidato preferido para proposals", "none_acceptable": "Ninguna propuesta aceptable", "rerun_requested": "Solicitar otro run" }
       },
       "semanticReview": {
         "title": "Revisión semántica",

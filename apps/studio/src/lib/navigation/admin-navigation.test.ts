@@ -21,6 +21,7 @@ test("brand context navigation uses semantic deep links", () => {
     "/studio/brands/brand-1/data",
     "/studio/brands/brand-1/data/mentions",
     "/studio/brands/brand-1/data/review",
+    "/studio/brands/brand-1/data/discovery-review",
     "/studio/brands/brand-1/brand-os",
     "/studio/brands/brand-1/reports",
     "/studio/brands/brand-1/settings"

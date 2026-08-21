@@ -21,6 +21,7 @@ export type BrandContextNavigationKey =
   | "data"
   | "data-mentions"
   | "data-review"
+  | "data-discovery-review"
   | "brand-os"
   | "reports"
   | "settings";
@@ -68,6 +69,7 @@ export function buildBrandContextNavigation(brandId: string): BrandContextNaviga
     { key: "data", href: `${base}/data` },
     { key: "data-mentions", href: `${base}/data/mentions`, depth: 1 },
     { key: "data-review", href: `${base}/data/review`, depth: 1 },
+    { key: "data-discovery-review", href: `${base}/data/discovery-review`, depth: 1 },
     { key: "brand-os", href: `${base}/brand-os` },
     { key: "reports", href: `${base}/reports` },
     { key: "settings", href: `${base}/settings` }

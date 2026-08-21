@@ -344,7 +344,7 @@ function isContextActive(
   key: BrandContextNavigationKey | CorpusContextNavigationKey
 ) {
   if (key === "overview") return pathname === href;
-  if (key === "data" || key === "data-mentions" || key === "data-review") return pathname === href;
+  if (key === "data" || key === "data-mentions" || key === "data-review" || key === "data-discovery-review") return pathname === href;
   if (key === "brand-os") return pathname === href || pathname === `${href.replace(/\/brand-os$/u, "")}/edit`;
   return pathname === href || pathname.startsWith(`${href}/`);
 }

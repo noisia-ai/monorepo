@@ -2035,7 +2035,7 @@
     "roles": { "admin": "Noisia admin", "analyst": "Analyst" },
     "context": {
       "label": "Brand workspace navigation", "eyebrow": "Brand", "title": "Workspace", "compactLabel": "Brand view",
-      "items": { "overview": "Overview", "data": "Data & sources", "data-mentions": "Mentions", "data-review": "Semantic review", "brand-os": "Brand OS", "reports": "Reports", "settings": "Access & settings" }
+      "items": { "overview": "Overview", "data": "Data & sources", "data-mentions": "Mentions", "data-review": "Semantic review", "data-discovery-review": "Discovery review", "brand-os": "Brand OS", "reports": "Reports", "settings": "Access & settings" }
     },
     "studyContext": {
       "label": "Study navigation", "eyebrow": "Study", "title": "Analysis workspace", "compactLabel": "Study view",
@@ -2223,8 +2223,30 @@
         "subtitle": "Open each resource in its own workspace; this overview retains sources, imports, and governance.",
         "mentionsDescription": "Browse the complete canonical record, filter it, and open enriched detail.",
         "reviewDescription": "Review or correct classifications that determine the operational population.",
+        "discoveryReviewDescription": "Evaluate blind discovery proposals without approving contracts, propagation, or serving.",
         "governedViewsDescription": "Reconcile applicable views, inspect blockers, and explicitly promote or withdraw module bindings.",
         "open": "Open"
+      },
+      "discoveryReview": {
+        "eyebrow": "Internal tool", "title": "Discovery review", "subtitle": "Evaluate blind proposals before deciding whether discovery merits another benchmark.",
+        "summary": { "proposals": "Proposals", "proposalsHint": "{reviewed} reviewed", "denominator": "Modeling denominator", "denominatorHint": "Physical roots in the run", "coverage": "Assigned coverage", "coverageHint": "{assigned, number} roots in clusters", "outliers": "Outliers", "outliersHint": "{count, number} unassigned roots" },
+        "notice": { "title": "Diagnostic, never adoption", "body": "This review only determines whether proposals are useful to people. It does not authorize 10C.3B, Topic Contracts, assignments, Signal, or 10D.", "badge": "Holdout sealed" },
+        "list": { "title": "Blind proposals", "subtitle": "{reviewed, number} of {total, number} reviewed · {percent}%" },
+        "progress": { "label": "Review progress: {percent}%" },
+        "actions": { "retry": "Retry", "reviewOutliers": "Review outliers", "finish": "Finish review", "loadMore": "Load more", "loading": "Loading…", "close": "Close", "cancel": "Cancel", "previous": "Previous", "next": "Next", "saveDraft": "Save draft", "saving": "Saving…", "scoreSheet": "Score sheet", "decisionSheet": "Decision sheet" },
+        "filters": { "label": "Proposal filters", "search": "Search terms or phrases", "searchPlaceholder": "Packet term or phrase", "status": "Status", "decision": "Decision", "scope": "Scope", "size": "Size", "stability": "Stability", "clear": "Clear" },
+        "columns": { "proposal": "Proposal", "size": "Size and coverage", "scopes": "Scopes", "stability": "Stability", "review": "Review" },
+        "empty": { "title": "No proposals match these filters", "body": "Clear the search or change packet filters." },
+        "errors": { "title": "The review could not be loaded", "request": "Discovery review is temporarily unavailable." },
+        "unsaved": { "confirm": "You have unsaved changes. Discard them?" },
+        "values": { "pending": "Pending", "reviewed": "Reviewed", "primary_brand": "Primary brand", "category": "Category", "competitor": "Competitor", "topic_contract_candidate": "Topic Contract candidate", "candidate": "Candidate", "merge": "Merge", "split": "Split", "none_acceptable": "None acceptable", "none": "None", "small": "Small", "medium": "Medium", "large": "Large", "low": "Low", "high": "High", "not_available": "Not available" },
+        "detail": { "aria": "Discovery proposal detail", "proposal": "Proposal", "size": "Roots", "coverage": "Coverage", "role": "Authority", "pendingProposal": "Pending proposal", "terms": "Local terms and phrases", "evidence": "Representative evidence", "distributions": "Distributions", "limitations": "Limitations", "technical": "Technical details", "lineage": "Lineage", "holdout": "Holdout", "sealed": "Sealed" },
+        "roles": { "medoid": "Central representative", "diversity": "Diversity representative", "boundary": "Boundary example", "counterexample": "Neighbor counterexample", "outlier_diagnostic_sample": "Outlier sample" },
+        "distribution": { "scope": "Scope", "language": "Language", "source": "Platform", "time": "Period", "subregion": "Subregion" },
+        "rubric": { "title": "Human rubric", "body": "There are no defaults. Saving a draft grants no authority.", "internal_coherence": "Internal coherence", "neighbor_distinction": "Distinction from neighbors", "human_nameability": "Ease of naming", "strategic_utility": "Strategic utility", "merge_needed": "Needs merge", "split_needed": "Needs split", "convert_to_topic_contract_candidate": "Topic Contract candidate", "none_acceptable": "No proposal is acceptable", "notes": "Notes", "shortcut": "Shortcut: ⌘/Ctrl + S. Left/right arrows navigate proposals." },
+        "outliers": { "eyebrow": "Separate reservoir", "title": "Outlier diagnostics", "samples": "Blind sample", "decision": "What 10C.3B should study", "study_boundary_thresholds": "Boundary thresholds", "study_missing_topic_families": "Missing topic families", "study_later_recovery": "Later recovery" },
+        "finish": { "title": "Finish human review", "body": "Finalization seals every proposal decision and the outlier decision. It does not adopt a model.", "outcome": "Review outcome", "confirm": "Seal review", "warning": "candidate_preferred only means potential usefulness for generating proposals." },
+        "outcomes": { "candidate_preferred": "Preferred candidate for proposals", "none_acceptable": "No acceptable proposal", "rerun_requested": "Request another run" }
       },
       "semanticReview": {
         "title": "Semantic review",
