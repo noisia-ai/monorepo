@@ -349,3 +349,27 @@ PRODUCT_PROVIDER_CALLS=0
 REMOTE_WRITES=0
 SERVING_WRITES=0
 ```
+
+## Checkpoint 10C.3A-R · workbench operatorio (`staging_verified`)
+
+**Registrado:** 2026-08-21T17:02:18-06:00 (`America/Mexico_City`).
+
+La revisión ciega deja de depender de editar JSON/CSV: el Admin incorpora
+**Revisión de descubrimiento** como master/detail management-only. El packet privado se
+registra una vez en el artifact/evidence graph con hashes, rights y workspace verificados;
+la UI pagina proposals, carga hasta ocho evidencias bajo demanda y persiste drafts y
+decisiones en ledgers append-only. El packet, la blind key y los paths privados nunca
+llegan al browser.
+
+Preview/UAT confirmó el packet real con 115 proposals, 805 evidencias, 5 muestras de
+outliers y progreso 0/115. El detalle, filtros, paginación y un draft vacío se ejercieron
+en la sesión autenticada; ninguna decisión humana fue completada. La evidencia y la
+limitación del viewport angosto están registradas en
+[doc 67](./67_SIGNAL_TOPIC_DISCOVERY_OPERATOR_REVIEW_WORKBENCH.md).
+
+La autoridad no cambió: los 115 clusters continúan como proposals `pending`, el review
+real empieza en `0/115`, holdout permanece sellado y finalizar sólo expresa
+`candidate_preferred | none_acceptable | rerun_requested`. No adopta modelo, no crea
+Topic Contract, no asigna roots y no autoriza 10C.3B/10D. El detalle contractual y el
+flight card de QA viven en
+[doc 67](./67_SIGNAL_TOPIC_DISCOVERY_OPERATOR_REVIEW_WORKBENCH.md).
