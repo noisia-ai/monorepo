@@ -56,10 +56,13 @@ test("0090 review workbench is append-only, idempotent, workspace-safe, and gran
   [fixture.workspace.id])).rows[0]?.count ?? 0;
   const key = randomBytes(32);
   const evidenceRef = `sha256:${createHmac("sha256", key).update(`root:${fixture.mentionId}`).digest("hex")}` as `sha256:${string}`;
-  const packet = fixturePacket(evidenceRef, fixture.bindingHash, "main");
+  const packet = fixturePacket(evidenceRef, fixture.rootAuthorityHash, "main");
   const expectedAuthority = new Map([[evidenceRef, {
-    authorityDigest: fixture.bindingHash,
-    authorityValidUntil: "2030-01-01T00:00:00.000Z"
+    authorityDigest: fixture.rootAuthorityHash,
+    memberships: [{ partitionKey: "primary_brand",scope: "primary_brand",planVersion: 1,
+      planDigest: fixture.planDigest,slotDigest: fixture.slotDigest,
+      authorityDigest: fixture.membershipAuthorityHash,
+      authorityValidUntil: "2030-01-01T00:00:00.000Z" }]
   }]]);
   const resolved = await resolveSignalTopicDiscoveryEvidenceRootsV1({
     queryable: pool,
@@ -173,7 +176,7 @@ test("0090 review workbench is append-only, idempotent, workspace-safe, and gran
     SELECT count(*)::int count FROM signal_workspace_population_pointers WHERE workspace_id=$1::uuid`,
   [fixture.workspace.id])).rows[0]?.count, protectedPointerCountBefore);
 
-  const expiredPacket = fixturePacket(evidenceRef, fixture.bindingHash, "expired");
+  const expiredPacket = fixturePacket(evidenceRef, fixture.rootAuthorityHash, "expired");
   const expiredAuthority = new Map(resolved);
   expiredAuthority.set(evidenceRef, { ...resolved.get(evidenceRef)!, authorityValidUntil: "2020-01-01T00:00:00.000Z" });
   const expiredClient = await pool.connect();
@@ -246,6 +249,7 @@ async function seedFixture(suffix: string) {
   const userId = randomUUID(); const sourceId = randomUUID(); const importId = randomUUID();
   const mentionId = randomUUID(); const qualityId = randomUUID(); const retentionId = randomUUID();
   const licensingId = randomUUID(); const bindingId = randomUUID();
+  const profileId = randomUUID(); const planId = randomUUID(); const slotId = randomUUID();
   const otherOrgId = randomUUID(); const otherBrandId = randomUUID();
   await pool.query(`INSERT INTO organizations(id,slug,legal_name,display_name,status) VALUES
     ($1::uuid,$2,$3,$3,'active'),($4::uuid,$5,$6,$6,'active')`,
@@ -263,6 +267,36 @@ async function seedFixture(suffix: string) {
     ORDER BY brand_id`, [[brandId, otherBrandId]]);
   const workspaceId = workspaceRows.rows.find((row) => row.brand_id === brandId)!.id;
   const otherWorkspaceId = workspaceRows.rows.find((row) => row.brand_id === otherBrandId)!.id;
+  const brandOsDigest = digest(`brand-os-${suffix}`);
+  const identityDigest = digest(`identity-${suffix}`);
+  const planDigest = digest(`plan-${suffix}`);
+  const slotDigest = digest(`slot-${suffix}`);
+  const headerHash = digest("header");
+  const planOperationKey = digest(`signal-product-operation-v1\x1freview-plan-${suffix}`);
+  await pool.query(`INSERT INTO brand_os_profiles(id,organization_id,brand_id,name,status,version,metadata)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4,'active',1,jsonb_build_object('snapshot_hash',$5::text))`,
+  [profileId, orgId, brandId, `Profile ${suffix}`, brandOsDigest]);
+  await pool.query(`INSERT INTO signal_governance_control_operations(workspace_id,actor_user_id,
+    action,request_digest,idempotency_key,status) VALUES($1::uuid,$2::uuid,
+      'reconcile-acquisition-plan',$3,$4,'in_progress')`,
+  [workspaceId, userId, digest(`plan-operation-request-${suffix}`), planOperationKey]);
+  await pool.query(`INSERT INTO signal_acquisition_plans(id,workspace_id,plan_version,status,
+    brand_os_profile_id,brand_os_profile_version,brand_os_digest,identity_catalog_digest,
+    draft_revision,draft_digest,definition_hash,created_by_user_id,
+    creation_idempotency_key,request_digest)
+    VALUES($1::uuid,$2::uuid,1,'draft',$3::uuid,1,$4,$5,1,$6,NULL,
+      $7::uuid,$8,$9)`,
+  [planId, workspaceId, profileId, brandOsDigest, identityDigest, planDigest, userId,
+    planOperationKey, digest(`plan-request-${suffix}`)]);
+  await pool.query(`INSERT INTO signal_acquisition_slots(id,workspace_id,plan_id,slot_key,
+    slot_version,scope,entity_type,entity_id,entity_revision_digest,label,desired_state,position,
+    definition_hash,created_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,'primary-brand',1,'primary_brand','brand',$4::uuid,$5,$6,
+      'active',0,$7,$8::uuid)`,
+  [slotId, workspaceId, planId, brandId, brandOsDigest, `Primary ${suffix}`, slotDigest, userId]);
+  await pool.query(`UPDATE signal_acquisition_plans SET status='current',definition_hash=draft_digest,
+    effective_from=clock_timestamp(),promoted_by_user_id=$2::uuid,promoted_at=clock_timestamp()
+    WHERE id=$1::uuid`, [planId, userId]);
   await pool.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
     connection_method,name,status,source_contract_version,source_key)
     VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'social-listening','sentione','manual-csv',$5,
@@ -271,9 +305,24 @@ async function seedFixture(suffix: string) {
   await pool.query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,
     source_file_name,source_file_hash,imported_by_user_id,record_count,included_count,excluded_count,
     duplicate_count,status,ingestion_phase,storage_content_hash,processed_bytes,progress_record_count,
-    completed_at) VALUES($1::uuid,$2::uuid,$3::uuid,'sentione','fixture.csv',$4,$5::uuid,1,1,0,0,
-      'completed','completed',$6,100,1,clock_timestamp())`,
-  [importId, workspaceId, sourceId, digest("file").slice(7), userId, digest("storage").slice(7)]);
+    expected_file_size_bytes,storage_part_count,storage_part_size_bytes,upload_protocol,
+    acquisition_contract_version,acquisition_plan_id,acquisition_slot_id,capture_period_start,
+    capture_period_end,capture_timezone,acquisition_plan_digest,acquisition_slot_digest,
+    acquisition_brand_os_digest,acquisition_identity_catalog_digest,provider_schema_version,
+    provider_observation_projection_state,provider_observation_header_hash,
+    provider_observation_count,acquisition_sealed_at,
+    acquisition_query_evidence_class,acquisition_query_evidence_reason,
+    acquisition_query_evidence_actor_user_id,acquisition_query_evidence_attested_at,
+    acquisition_import_seal_digest)
+    VALUES($1::uuid,$2::uuid,$3::uuid,'sentione','fixture.csv',$4,$5::uuid,0,0,0,0,
+      'processing','processing',$6,0,0,100,1,100,'server-stream',
+      'signal-acquisition-import-v2',$7::uuid,$8::uuid,
+      '2026-08-01','2026-08-31','America/Mexico_City',$9,$10,$11,$12,
+      'sentione-csv-47-v1','pending',$13,1,clock_timestamp(),'unavailable','historical_export',
+      $5::uuid,clock_timestamp(),$14)`,
+  [importId, workspaceId, sourceId, digest("file").slice(7), userId, digest("storage").slice(7),
+    planId, slotId, planDigest, slotDigest, brandOsDigest, identityDigest, headerHash,
+    digest(`seal-${suffix}`)]);
   const separator = "\x1f";
   const retentionEvidence = digest("retention-evidence");
   const licensingEvidence = digest("licensing-evidence");
@@ -325,13 +374,30 @@ async function seedFixture(suffix: string) {
   await pool.query(`INSERT INTO signal_provider_mention_observations(workspace_id,data_source_id,
     import_batch_id,mention_id,provider_key,provider_record_key_hash,provider_schema_version,
     provider_header_hash,observation_version,observation_hash,platform,published_at,
-    provenance_binding_id,rights_definition_hash,retention_until)
+    provenance_binding_id,rights_definition_hash,retention_until,acquisition_plan_id,
+    acquisition_slot_id,acquisition_plan_digest,acquisition_slot_digest)
     VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'sentione',$5,'sentione-csv-47-v1',$6,1,$7,
-      'social','2026-08-01T12:00:00Z',$8::uuid,$9,'2030-01-01T00:00:00Z')`,
+      'social','2026-08-01T12:00:00Z',$8::uuid,$9,'2030-01-01T00:00:00Z',
+      $10::uuid,$11::uuid,$12,$13)`,
   [workspaceId, sourceId, importId, mentionId, digest("record"), digest("header"), digest("observation"),
-    bindingId, bindingHash]);
+    bindingId, bindingHash, planId, slotId, planDigest, slotDigest]);
+  await pool.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,
+    import_batch_id,data_source_id,ingestion_disposition)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'included')`,
+  [workspaceId, mentionId, importId, sourceId]);
+  await pool.query(`UPDATE import_batches SET status='completed',ingestion_phase='completed',
+    record_count=1,included_count=1,excluded_count=0,duplicate_count=0,
+    processed_bytes=100,progress_record_count=1,completed_at=clock_timestamp(),
+    provider_observation_projection_state='ready',
+    provider_observation_header_hash=$2 WHERE id=$1::uuid`, [importId, headerHash]);
+  const pathAuthorityHash = digest([bindingId, qualityHash, retentionHash, licensingHash,
+    bindingHash].join("|"));
+  const membershipAuthorityHash = digest(pathAuthorityHash);
+  const rootAuthorityHash = digest(stableJson([{
+    partition_key: "primary_brand",authority_digest: membershipAuthorityHash
+  }]));
   return {
-    mentionId, bindingHash,
+    mentionId, bindingHash,planDigest,slotDigest,membershipAuthorityHash,rootAuthorityHash,
     workspace: { contractVersion: "signal-backend-v1" as const, id: workspaceId, organizationId: orgId,
       slug: `review-workspace-${suffix}`, name: `Review brand ${suffix}`,
       subject: { type: "brand" as const, id: brandId }, timezone: "America/Mexico_City",

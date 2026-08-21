@@ -173,6 +173,19 @@ export type SignalTopicDiscoveryEvidenceAuthorityV1 = {
   authorityValidUntil: string | null;
 };
 
+export type SignalTopicDiscoveryExpectedEvidenceAuthorityV1 = {
+  authorityDigest: string;
+  memberships: Array<{
+    partitionKey: string;
+    scope: string;
+    planVersion: number;
+    planDigest: string;
+    slotDigest: string;
+    authorityDigest: string;
+    authorityValidUntil: string | null;
+  }>;
+};
+
 export type SignalTopicDiscoveryReviewListFiltersV1 = {
   status?: "pending" | "reviewed";
   decision?: "topic_contract_candidate" | "merge" | "split" | "none_acceptable";
@@ -218,74 +231,171 @@ export async function resolveSignalTopicDiscoveryEvidenceRootsV1(args: {
   workspaceId: string;
   evidenceRefs: Set<string>;
   pseudonymKey: Buffer;
-  expectedAuthority: Map<string, { authorityDigest: string; authorityValidUntil: string | null }>;
+  expectedAuthority: Map<string, SignalTopicDiscoveryExpectedEvidenceAuthorityV1>;
 }) {
   if (args.pseudonymKey.byteLength < 32) {
     throw new SignalTopicDiscoveryReviewError("topic_discovery_pseudonym_key_too_short", 422);
   }
-  const roots = await args.queryable.query<{
-    id: string;
-    authority_digest: string;
-    authority_valid_until: string | null;
-  }>(`
-    SELECT DISTINCT root.id::text AS id,observation.rights_definition_hash AS authority_digest,
-      NULLIF(LEAST(
-        COALESCE(binding.effective_to,'infinity'::timestamptz),
-        COALESCE(retention.effective_to,'infinity'::timestamptz),
-        COALESCE(retention.retain_until,'infinity'::timestamptz),
-        COALESCE(licensing.effective_to,'infinity'::timestamptz),
-        COALESCE(observation.retention_until,'infinity'::timestamptz)
-      ),'infinity'::timestamptz)::text AS authority_valid_until
-    FROM mentions root
-    JOIN mentions member ON member.workspace_id=root.workspace_id
-      AND member.canonical_mention_id=root.id
-    JOIN signal_provider_mention_observations observation
-      ON observation.workspace_id=member.workspace_id AND observation.mention_id=member.id
-      AND NOT EXISTS(SELECT 1 FROM signal_provider_mention_observations successor
-        WHERE successor.supersedes_observation_id=observation.id)
-    JOIN import_batches batch ON batch.id=observation.import_batch_id
-      AND batch.workspace_id=observation.workspace_id AND batch.status='completed'
-    JOIN signal_provenance_policy_bindings binding
-      ON binding.id=observation.provenance_binding_id AND binding.workspace_id=root.workspace_id
-      AND binding.status='active' AND binding.effective_from<=transaction_timestamp()
-      AND (binding.effective_to IS NULL OR binding.effective_to>transaction_timestamp())
-    JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id
-      AND retention.status='active' AND retention.retention_state='allowed'
-      AND retention.effective_from<=transaction_timestamp()
-      AND (retention.effective_to IS NULL OR retention.effective_to>transaction_timestamp())
-      AND (retention.retain_until IS NULL OR retention.retain_until>transaction_timestamp())
-      AND (observation.retention_until IS NULL OR observation.retention_until>transaction_timestamp())
-    JOIN signal_licensing_policies licensing ON licensing.id=binding.licensing_policy_id
-      AND licensing.status='active' AND licensing.effective_from<=transaction_timestamp()
-      AND (licensing.effective_to IS NULL OR licensing.effective_to>transaction_timestamp())
-    JOIN signal_licensing_policy_usages usage ON usage.licensing_policy_id=licensing.id
-      AND usage.usage_purpose='strategic-analysis' AND usage.decision='allowed'
-    WHERE root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
-      AND observation.rights_definition_hash=binding.definition_hash
+  const roots = await args.queryable.query<{ id: string }>(`
+    SELECT id::text FROM mentions
+    WHERE workspace_id=$1::uuid AND canonical_mention_id=id
   `, [args.workspaceId]);
-  const resolved = new Map<string, SignalTopicDiscoveryEvidenceAuthorityV1>();
+  const rootByRef = new Map<string, string>();
   for (const row of roots.rows) {
     const ref = hmacDigest(args.pseudonymKey, `root:${row.id}`);
-    if (!args.evidenceRefs.has(ref)) continue;
+    if (args.evidenceRefs.has(ref)) rootByRef.set(ref, row.id);
+  }
+  if (rootByRef.size !== args.evidenceRefs.size) {
+    throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_root_unresolved", 422);
+  }
+
+  const requested: Array<Record<string, unknown>> = [];
+  for (const [ref, mentionId] of rootByRef) {
     const expected = args.expectedAuthority.get(ref);
-    if (!expected || !DIGEST.test(expected.authorityDigest)) {
+    if (!expected || !DIGEST.test(expected.authorityDigest) || expected.memberships.length === 0) {
       throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_authority_missing", 422);
     }
-    if (row.authority_digest !== expected.authorityDigest) continue;
-    const validUntil = row.authority_valid_until ? new Date(row.authority_valid_until).toISOString() : null;
-    if (expected.authorityValidUntil && validUntil !== new Date(expected.authorityValidUntil).toISOString()) {
-      throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_authority_expiry_mismatch", 422);
+    for (const membership of expected.memberships) {
+      if (!DIGEST.test(membership.planDigest) || !DIGEST.test(membership.slotDigest)
+        || !DIGEST.test(membership.authorityDigest)) {
+        throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_authority_missing", 422);
+      }
+      requested.push({ mention_id: mentionId,partition_key: membership.partitionKey,
+        scope: membership.scope,plan_version: membership.planVersion,
+        plan_digest: membership.planDigest,slot_digest: membership.slotDigest });
     }
-    const prior = resolved.get(ref);
-    if (prior && compareNullableDates(prior.authorityValidUntil, validUntil) <= 0) continue;
-    resolved.set(ref, {
-      mentionId: row.id,
-      authorityDigest: expected.authorityDigest as `sha256:${string}`,
-      authorityValidUntil: validUntil
-    });
+  }
+  const current = await args.queryable.query<{ mention_id: string;partition_key: string;
+    authority_digest: string | null;authority_valid_until: string | null }>(`
+    WITH requested AS MATERIALIZED (
+      SELECT value.mention_id::uuid,value.partition_key,value.scope,value.plan_version,
+        value.plan_digest,value.slot_digest
+      FROM jsonb_to_recordset($2::jsonb) AS value(mention_id text,partition_key text,
+        scope text,plan_version integer,plan_digest text,slot_digest text)
+    ), accepted_batches AS MATERIALIZED (
+      SELECT request.*,batch.id AS import_batch_id
+      FROM requested request
+      JOIN signal_acquisition_plans plan ON plan.workspace_id=$1::uuid
+        AND plan.plan_version=request.plan_version AND plan.definition_hash=request.plan_digest
+      JOIN signal_acquisition_slots slot ON slot.workspace_id=plan.workspace_id
+        AND slot.plan_id=plan.id AND slot.definition_hash=request.slot_digest
+        AND slot.scope=request.scope
+      JOIN import_batches batch ON batch.workspace_id=plan.workspace_id
+        AND batch.acquisition_plan_id=plan.id AND batch.acquisition_slot_id=slot.id
+        AND batch.status='completed'
+        AND batch.acquisition_contract_version='signal-acquisition-import-v2'
+        AND batch.acquisition_plan_digest=request.plan_digest
+        AND batch.acquisition_slot_digest=request.slot_digest
+        AND batch.acquisition_import_seal_digest IS NOT NULL
+        AND batch.provider_observation_projection_state='ready'
+    ), paths AS MATERIALIZED (
+      SELECT batch.mention_id,batch.partition_key,observation.provenance_binding_id,
+        observation.rights_definition_hash,observation.retention_until,
+        binding.id AS binding_id,binding.status AS binding_status,
+        binding.effective_from AS binding_from,binding.effective_to AS binding_to,
+        quality.status AS quality_status,quality.effective_from AS quality_from,
+        quality.effective_to AS quality_to,quality.definition_hash AS quality_hash,
+        retention.status AS retention_status,retention.retention_state,
+        retention.effective_from AS retention_from,retention.effective_to AS retention_to,
+        retention.retain_until,retention.definition_hash AS retention_hash,
+        licensing.id AS licensing_id,licensing.status AS licensing_status,
+        licensing.effective_from AS licensing_from,licensing.effective_to AS licensing_to,
+        licensing.definition_hash AS licensing_hash
+      FROM accepted_batches batch
+      JOIN signal_mention_import_memberships membership
+        ON membership.workspace_id=$1::uuid AND membership.import_batch_id=batch.import_batch_id
+      JOIN mentions member ON member.workspace_id=membership.workspace_id
+        AND member.id=membership.mention_id AND member.canonical_mention_id=batch.mention_id
+      JOIN signal_provider_mention_observations observation
+        ON observation.workspace_id=membership.workspace_id
+        AND observation.import_batch_id=membership.import_batch_id
+        AND observation.mention_id=membership.mention_id
+        AND NOT EXISTS(SELECT 1 FROM signal_provider_mention_observations successor
+          WHERE successor.supersedes_observation_id=observation.id)
+      LEFT JOIN signal_provenance_policy_bindings binding
+        ON binding.workspace_id=$1::uuid AND binding.id=observation.provenance_binding_id
+      LEFT JOIN signal_quality_policies quality ON quality.id=binding.quality_policy_id
+      LEFT JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id
+      LEFT JOIN signal_licensing_policies licensing ON licensing.id=binding.licensing_policy_id
+    ), evaluated AS (
+      SELECT path.*,
+        CASE WHEN path.binding_id IS NOT NULL AND path.binding_status='active'
+          AND path.binding_from<=transaction_timestamp()
+          AND (path.binding_to IS NULL OR path.binding_to>transaction_timestamp())
+          AND path.rights_definition_hash IS NOT NULL
+          AND path.provenance_binding_id=path.binding_id
+          AND path.quality_status='active' AND path.quality_from<=transaction_timestamp()
+          AND (path.quality_to IS NULL OR path.quality_to>transaction_timestamp())
+          AND path.retention_status='active' AND path.retention_state='allowed'
+          AND path.retention_from<=transaction_timestamp()
+          AND (path.retention_to IS NULL OR path.retention_to>transaction_timestamp())
+          AND (path.retain_until IS NULL OR path.retain_until>transaction_timestamp())
+          AND (path.retention_until IS NULL OR path.retention_until>transaction_timestamp())
+          AND path.licensing_status='active' AND path.licensing_from<=transaction_timestamp()
+          AND (path.licensing_to IS NULL OR path.licensing_to>transaction_timestamp())
+          AND EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage
+            WHERE usage.licensing_policy_id=path.licensing_id
+              AND usage.usage_purpose='strategic-analysis' AND usage.decision='allowed')
+          AND NOT EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage
+            WHERE usage.licensing_policy_id=path.licensing_id
+              AND usage.usage_purpose='strategic-analysis' AND usage.decision='prohibited')
+        THEN 'sha256:'||encode(digest(convert_to(concat_ws('|',path.binding_id::text,
+          path.quality_hash,path.retention_hash,path.licensing_hash,
+          path.rights_definition_hash),'UTF8'),'sha256'),'hex') END AS path_authority_digest,
+        least(path.binding_to,path.quality_to,path.retention_to,path.retain_until,
+          path.licensing_to,path.retention_until) AS valid_until
+      FROM paths path
+    )
+    SELECT requested.mention_id::text,requested.partition_key,
+      CASE WHEN count(evaluated.path_authority_digest)>0 THEN
+        'sha256:'||encode(digest(convert_to(string_agg(DISTINCT evaluated.path_authority_digest,E'\n'
+          ORDER BY evaluated.path_authority_digest),'UTF8'),'sha256'),'hex') END authority_digest,
+      min(evaluated.valid_until) FILTER(WHERE evaluated.path_authority_digest IS NOT NULL)::text
+        authority_valid_until
+    FROM requested LEFT JOIN evaluated
+      ON evaluated.mention_id=requested.mention_id
+      AND evaluated.partition_key=requested.partition_key
+    GROUP BY requested.mention_id,requested.partition_key
+  `, [args.workspaceId, JSON.stringify(requested)]);
+  const currentByRoot = new Map<string, Map<string, { authorityDigest: string;
+    authorityValidUntil: string | null }>>();
+  for (const row of current.rows) {
+    if (!row.authority_digest) continue;
+    const memberships = currentByRoot.get(row.mention_id) ?? new Map();
+    memberships.set(row.partition_key, { authorityDigest: row.authority_digest,
+      authorityValidUntil: row.authority_valid_until
+        ? new Date(row.authority_valid_until).toISOString() : null });
+    currentByRoot.set(row.mention_id, memberships);
+  }
+  const resolved = new Map<string, SignalTopicDiscoveryEvidenceAuthorityV1>();
+  for (const [ref, mentionId] of rootByRef) {
+    const expected = args.expectedAuthority.get(ref)!;
+    const memberships = currentByRoot.get(mentionId);
+    if (!memberships || memberships.size !== expected.memberships.length) continue;
+    let validUntil: string | null = null;
+    const aggregate: Array<{ partition_key: string;authority_digest: string }> = [];
+    let matches = true;
+    for (const item of [...expected.memberships].sort((left, right) =>
+      left.partitionKey.localeCompare(right.partitionKey))) {
+      const actual = memberships.get(item.partitionKey);
+      if (!actual || actual.authorityDigest !== item.authorityDigest
+        || (item.authorityValidUntil
+          && actual.authorityValidUntil !== new Date(item.authorityValidUntil).toISOString())) {
+        matches = false;
+        break;
+      }
+      aggregate.push({ partition_key: item.partitionKey,authority_digest: actual.authorityDigest });
+      if (actual.authorityValidUntil
+        && (!validUntil || new Date(actual.authorityValidUntil) < new Date(validUntil))) {
+        validUntil = actual.authorityValidUntil;
+      }
+    }
+    if (!matches || sha256(stableJson(aggregate)) !== expected.authorityDigest) continue;
+    resolved.set(ref, { mentionId,authorityDigest: expected.authorityDigest as `sha256:${string}`,
+      authorityValidUntil: validUntil });
   }
   if (resolved.size !== args.evidenceRefs.size) {
-    throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_root_unresolved", 422);
+    throw new SignalTopicDiscoveryReviewError("topic_discovery_evidence_authority_unresolved", 422);
   }
   await assertEvidenceRightsCurrent(args.queryable, args.workspaceId, [...resolved.values()].map((row) => row.mentionId));
   return resolved;
@@ -1611,12 +1721,6 @@ function cryptoUuid() {
 
 function hmacDigest(key: Buffer, value: string) {
   return `sha256:${createHmac("sha256", key).update(value).digest("hex")}`;
-}
-
-function compareNullableDates(left: string | null, right: string | null) {
-  const leftValue = left ? Date.parse(left) : Number.POSITIVE_INFINITY;
-  const rightValue = right ? Date.parse(right) : Number.POSITIVE_INFINITY;
-  return leftValue - rightValue;
 }
 
 function sha256(value: string) {

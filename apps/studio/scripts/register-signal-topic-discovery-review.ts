@@ -271,7 +271,10 @@ async function loadAndValidatePrivateArtifacts() {
     throw new Error("The private export lineage is incompatible or not read-only.");
   }
   const exportRecords = exportBody.trim().split("\n").map((line) => JSON.parse(line) as {
-    record_key: string;authority_digest: string;
+    record_key: string;authority_digest: string;partition_memberships: Array<{
+      partition_key: string;scope: string;plan_version: number;plan_digest: string;
+      slot_digest: string;authority_digest: string;authority_valid_until: string | null;
+    }>;
   });
   return {
     packet,exportManifest,exportRecords,pseudonymKey,
@@ -302,10 +305,21 @@ function packetEvidenceRefs(packet: Record<string, unknown>) {
   return refs;
 }
 
-function authorityForEvidence(records: Array<{ record_key: string;authority_digest: string }>, refs: Set<string>) {
-  const result = new Map<string, { authorityDigest: string;authorityValidUntil: null }>();
+function authorityForEvidence(records: Array<{ record_key: string;authority_digest: string;
+  partition_memberships: Array<{ partition_key: string;scope: string;plan_version: number;
+    plan_digest: string;slot_digest: string;authority_digest: string;
+    authority_valid_until: string | null }> }>, refs: Set<string>) {
+  const result = new Map<string, { authorityDigest: string;memberships: Array<{
+    partitionKey: string;scope: string;planVersion: number;planDigest: string;slotDigest: string;
+    authorityDigest: string;authorityValidUntil: string | null }> }>();
   for (const record of records) if (refs.has(record.record_key)) {
-    result.set(record.record_key, { authorityDigest: record.authority_digest, authorityValidUntil: null });
+    result.set(record.record_key, { authorityDigest: record.authority_digest,
+      memberships: record.partition_memberships.map((membership) => ({
+        partitionKey: membership.partition_key,scope: membership.scope,
+        planVersion: membership.plan_version,planDigest: membership.plan_digest,
+        slotDigest: membership.slot_digest,authorityDigest: membership.authority_digest,
+        authorityValidUntil: membership.authority_valid_until
+      })) });
   }
   if (result.size !== refs.size) throw new Error("Packet evidence does not reconcile the private export.");
   return result;
