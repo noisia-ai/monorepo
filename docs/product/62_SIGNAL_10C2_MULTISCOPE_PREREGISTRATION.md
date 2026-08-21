@@ -189,9 +189,6 @@ SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
 
-Durante este cierre: producción no fue accedida; provider calls y jobs pagados fueron
-cero; read mode permaneció `legacy`; readers, pointers y bindings no cambiaron.
-
 ## 10. Checkpoint de operabilidad del harness
 
 **Registrado:** 2026-08-20T11:42:43-06:00 (`America/Mexico_City`)
@@ -304,3 +301,35 @@ SIGNAL_10C2_EXECUTION_AUTHORIZED=false
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## 13. Checkpoint 10C.2C · ejecución hasta freeze-finalists
+
+**Registrado:** 2026-08-21T03:43:52-06:00 (`America/Mexico_City`)
+
+La autorización externa y digest-sealed habilitó únicamente `smoke`, `calibration` y
+`full`. El export V2 read-only reconcilió nuevamente `23,296 = 21,195 + 2,101`, cuatro
+particiones, 21,820 memberships, 625 roots multi-scope y todos los digests congelados.
+No hubo remote/serving writes, providers o jobs.
+
+Calibration seleccionó sólo `bertopic-bge-detail`. Full lo ejecutó sobre 21,195 roots
+con seeds 17/43/71. Stability pasó (ARI 0.527–0.570; matched consistency 0.625–0.651),
+pero las tres seeds fallaron coverage global, coverage mínima por partición y diversity
+preregistradas. `freeze-finalists` selló una lista vacía y
+`technical_result=no_adoption`. El holdout permanece `sealed`; no se creó packet y 10D
+continúa bloqueado.
+
+La evidencia detallada, la matriz de candidates, recursos y digests están en
+[doc 65](./65_SIGNAL_10C2C_EXECUTION_EVIDENCE.md). Los planes firmados permanecen
+byte-for-byte intactos.
+
+```text
+SIGNAL_10C2C_TECHNICAL_RESULT=no_adoption
+SIGNAL_10C2_EXECUTION_AUTHORIZED=true
+SIGNAL_10C2_EXECUTED=true
+SIGNAL_10C2_HOLDOUT_AUTHORIZATION_REQUIRED=false
+SIGNAL_10C2_HOLDOUT_OPENED=false
+SIGNAL_10D_READY=false
+```
+
+Durante este cierre: producción no fue accedida; provider calls y jobs pagados fueron
+cero; read mode permaneció `legacy`; readers, pointers y bindings no cambiaron.
