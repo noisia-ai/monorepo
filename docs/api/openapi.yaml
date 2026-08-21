@@ -27,6 +27,8 @@ tags:
     description: Protected internal semantic mention Review APIs. Never exposed to Signal clients.
   - name: Signal Acquisition Plan
     description: Protected internal workspace-owned acquisition control-plane APIs.
+  - name: Topic Discovery Review
+    description: Protected internal operator review of pending discovery proposals; never Signal serving or semantic assignment authority.
 paths:
   /api/public/v1/reports:
     get:
@@ -1707,6 +1709,160 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: Import not found in the authorized workspace. }
         "409": { description: Seal, storage ownership or replay is incompatible. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: getTopicDiscoveryReviewOverview
+      summary: Load registered diagnostic runs and review progress.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Operator-safe summary; blind key, private paths and raw packet are absent. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: No compatible registered review exists in this workspace. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/proposals:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: listTopicDiscoveryReviewProposals
+      summary: Keyset-page blind discovery proposals with digest-bound filters.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2000 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, reviewed] } }
+        - { name: decision, in: query, schema: { type: string, enum: [topic_contract_candidate, merge, split, none_acceptable] } }
+        - { name: scope, in: query, schema: { type: string, maxLength: 80 } }
+        - { name: search, in: query, description: Searches only packet terms and phrases, never full private text., schema: { type: string, maxLength: 120 } }
+        - { name: size, in: query, schema: { type: string, enum: [small, medium, large] } }
+        - { name: stability, in: query, schema: { type: string, enum: [low, medium, high] } }
+      responses:
+        "200": { description: Bounded proposal page and next keyset cursor. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { description: Query or cursor/filter digest is incompatible. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/proposals/{proposalKey}:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: getTopicDiscoveryReviewProposal
+      summary: Load one proposal with at most eight rights-current representative excerpts.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: proposalKey, in: path, required: true, schema: { type: string, pattern: '^proposal-[0-9]{3}$' } }
+      responses:
+        "200": { description: Operator-safe proposal detail, evidence refs, distributions, neighbors and current draft. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { description: Workspace authorization or evidence rights are unavailable. }
+        "404": { description: Proposal not found. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/draft:
+    post:
+      tags: [Topic Discovery Review]
+      operationId: saveTopicDiscoveryReviewDraft
+      summary: Append an idempotent human rubric draft without granting semantic authority.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TopicDiscoveryReviewDraftV1" }
+      responses:
+        "200": { description: Draft revision saved append-only. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Review locked, rights drifted or replay payload differs. }
+        "422": { description: Closed rubric input rejected. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/outliers:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: getTopicDiscoveryOutlierReview
+      summary: Load the separate bounded outlier diagnostic reservoir.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Five bounded diagnostic samples and the current outlier draft. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Topic Discovery Review]
+      operationId: saveTopicDiscoveryOutlierDraft
+      summary: Append the operator outlier-study decision.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TopicDiscoveryOutlierDraftV1" }
+      responses:
+        "200": { description: Outlier draft saved append-only. }
+        "409": { description: Review locked or replay payload differs. }
+        "422": { description: Closed decision input rejected. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/finalize:
+    post:
+      tags: [Topic Discovery Review]
+      operationId: finalizeTopicDiscoveryReview
+      summary: Atomically finalize a complete human census; never adopt a model or open 10C.3B/10D.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TopicDiscoveryFinalizeV1" }
+      responses:
+        "200": { description: Final review digest with modeling_adopted=false, ten_c3b_authorized=false and ten_d_ready=false. }
+        "409": { description: Census/outlier decision incomplete, review locked or replay incompatible. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/exports/{kind}:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: exportTopicDiscoveryReview
+      summary: Download contractual score or decision sheet after finalization.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [score-sheet, decision-sheet] } }
+      responses:
+        "200": { description: Contractual CSV with content digest; no excerpts or blind key. }
+        "409": { description: Review is not finalized. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/history:
+    get:
+      tags: [Topic Discovery Review]
+      operationId: getTopicDiscoveryReviewHistory
+      summary: Read append-only review revisions and lifecycle events.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Operator-safe revision/event history. }
+  /api/data-os/signal/{workspaceId}/topic-discovery-review/supersede:
+    post:
+      tags: [Topic Discovery Review]
+      operationId: supersedeTopicDiscoveryReview
+      summary: Create a new open correction revision after finalization.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmed]
+              properties: { confirmed: { const: true } }
+      responses:
+        "200": { description: New review revision; prior decisions and events remain immutable. }
+        "409": { description: Current review is not finalized or replay is incompatible. }
 components:
   securitySchemes:
     bearerAuth:
@@ -1886,6 +2042,39 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    TopicDiscoveryReviewDraftV1:
+      type: object
+      additionalProperties: false
+      required: [proposal_key, internal_coherence, neighbor_distinction, human_nameability,
+        strategic_utility, merge_needed, split_needed, convert_to_topic_contract_candidate,
+        none_acceptable, notes]
+      properties:
+        proposal_key: { type: string, pattern: '^proposal-[0-9]{3}$' }
+        internal_coherence: { type: [integer, "null"], minimum: 1, maximum: 5 }
+        neighbor_distinction: { type: [integer, "null"], minimum: 1, maximum: 5 }
+        human_nameability: { type: [integer, "null"], minimum: 1, maximum: 5 }
+        strategic_utility: { type: [integer, "null"], minimum: 1, maximum: 5 }
+        merge_needed: { type: [boolean, "null"] }
+        split_needed: { type: [boolean, "null"] }
+        convert_to_topic_contract_candidate: { type: [boolean, "null"] }
+        none_acceptable: { type: [boolean, "null"] }
+        notes: { type: [string, "null"], maxLength: 2000 }
+    TopicDiscoveryOutlierDraftV1:
+      type: object
+      additionalProperties: false
+      required: [study_boundary_thresholds, study_missing_topic_families, study_later_recovery, notes]
+      properties:
+        study_boundary_thresholds: { type: [boolean, "null"] }
+        study_missing_topic_families: { type: [boolean, "null"] }
+        study_later_recovery: { type: [boolean, "null"] }
+        notes: { type: [string, "null"], maxLength: 2000 }
+    TopicDiscoveryFinalizeV1:
+      type: object
+      additionalProperties: false
+      required: [outcome, confirmed]
+      properties:
+        outcome: { type: string, enum: [candidate_preferred, none_acceptable, rerun_requested] }
+        confirmed: { const: true }
     SignalDigestV1:
       type: string
       pattern: '^sha256:[0-9a-f]{64}$'

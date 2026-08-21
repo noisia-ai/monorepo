@@ -21,7 +21,12 @@ export type SignalProductOperationActionV1 =
   | "retire-competitor"
   | "reactivate-competitor"
   | "seal-acquisition-import"
-  | "authorize-acquisition-benchmark";
+  | "authorize-acquisition-benchmark"
+  | "register-topic-discovery-review"
+  | "save-topic-discovery-review-draft"
+  | "save-topic-discovery-outlier-draft"
+  | "finalize-topic-discovery-review"
+  | "supersede-topic-discovery-review";
 
 export async function beginSignalProductOperationV1<T>(args: {
   queryable: SignalBrandPolicyQueryable;

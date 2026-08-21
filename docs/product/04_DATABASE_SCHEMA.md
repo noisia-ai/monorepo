@@ -2100,3 +2100,36 @@ vigentes.
 
 Checksum local 0089:
 `a162cff1dd45ff7a2374db81c154db62401904150537cb6d9b743c44cfa05253`.
+
+## 10C.3A-R · Operator Topic Discovery Review (0090)
+
+**Registrado:** 2026-08-21T17:02:18-06:00 (`America/Mexico_City`).
+
+`0090_signal_topic_discovery_operator_review.sql` extiende el artifact/evidence graph
+existente para artifacts workspace-owned de diagnóstico. `analysis_artifacts` conserva
+el owner study-first histórico y acepta de forma mutuamente exclusiva un owner
+`workspace_id + discovery_run_digest`; nunca se fabrica `study_corpus_id`.
+
+La registration privada vive en `signal_topic_discovery_review_packets`. El packet
+padre contiene artifacts `topic_discovery_proposal`, evidence groups y evidence links
+referenciales hacia canonical roots; no duplica menciones ni texto canónico. Los
+digests de packet, policy, candidate, source manifest, rights y discovery run quedan
+sellados antes de abrir Review. La blind key y los paths privados no se persisten en el
+contrato browser-facing.
+
+La revisión usa ledgers append-only:
+
+- `signal_topic_discovery_reviews`: revisión/revisión correctiva por supersession;
+- `signal_topic_discovery_review_decisions`: draft o decisión final por propuesta;
+- `signal_topic_discovery_outlier_decisions`: decisión separada sobre el reservoir;
+- `signal_topic_discovery_review_events`: apertura, draft, finalización, export y
+  supersession ligados a la operación idempotente de governance.
+
+Finalizar materializa nuevas filas `finalized` dentro de una sola transacción; no
+actualiza drafts. Una corrección crea otra review y conserva todo el historial. Triggers
+bloquean UPDATE/DELETE y cualquier mutación del graph después de registrar el packet.
+Ninguna tabla tiene FK o writer hacia Topic Contracts, classification assignments,
+`record_tags`, pointers o governed bindings.
+
+Checksum local 0090:
+`199f2a140ebd166745818b79a331af33addd6cae8c767abfd5faca869225323e`.

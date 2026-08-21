@@ -2472,3 +2472,48 @@ retention/licensing actual. El contrato falla cerrado ante drift, rights incompa
 payload de observación alterado. El preflight de exportación permanece estrictamente
 read-only y declara `required_usage=strategic-analysis`; nunca crea jobs ni ejecuta un
 modelo.
+
+## 25. Operator Topic Discovery Review (`10C.3A-R`)
+
+Las rutas management-only viven bajo
+`/api/data-os/signal/:workspaceId/topic-discovery-review`. Exigen sesión Kinde, AuthZ
+DB-owned del mismo management boundary estratégico y actor interno. `workspaceId` del
+path sólo selecciona contexto: el servidor vuelve a resolver ownership. Nunca son
+endpoints de Signal serving.
+
+| Método/ruta | Contrato |
+|---|---|
+| `GET /` | runs registrados y resumen/progreso |
+| `GET /proposals` | keyset pagination; cursor sellado al digest de filtros |
+| `GET /proposals/:proposalKey` | un detalle y hasta ocho excerpts rights-current |
+| `POST /draft` | draft rubric append-only e idempotente |
+| `GET|POST /outliers` | reservoir y decisión separada |
+| `POST /finalize` | census completo + outliers, cierre atómico |
+| `GET /exports/:kind` | score/decision sheet sólo después de finalizar |
+| `GET /history` | revisions y events append-only |
+| `POST /supersede` | nueva revisión correctiva abierta |
+
+Los request schemas son strict. El browser no puede proporcionar workspace/owner,
+reviewer, digests, candidate/run authority, evidence refs o blind key. El actor proviene
+de la sesión; `Idempotency-Key` es obligatorio en writers. `none_acceptable=true` y
+`convert_to_topic_contract_candidate=true` son incompatibles.
+
+Las respuestas son `private,no-store`, paginadas y operator-safe. La lista busca sólo
+términos/frases del packet, nunca full text. El detalle carga evidencia bajo demanda y
+revalida `strategic-analysis`, completed provenance, retention y Licensing vigentes.
+Cada respuesta válida incluye `Server-Timing` sin texto ni identificadores privados.
+Blind key, paths `.data`, raw packet, raw JSON, mention IDs y hashes completos no se
+devuelven.
+
+`candidate_preferred` significa exclusivamente utilidad humana aparente para generar
+proposals. Toda finalización devuelve y conserva:
+
+```text
+modeling_adopted=false
+ten_c3b_authorized=false
+ten_d_ready=false
+holdout_opened=false
+```
+
+El endpoint no crea Topic Contracts, assignments, tags, jobs, serving materializations,
+pointers o governed bindings.

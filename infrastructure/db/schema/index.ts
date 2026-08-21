@@ -12,6 +12,7 @@ import {
   numeric,
   pgTable,
   primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
@@ -3498,8 +3499,9 @@ export const analysisArtifacts = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     studyCorpusId: uuid("study_corpus_id")
-      .notNull()
       .references(() => studyCorpora.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    discoveryRunDigest: text("discovery_run_digest"),
     tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
     engineAnalysisId: uuid("engine_analysis_id").references(() => engineAnalyses.id, { onDelete: "cascade" }),
     artifactKey: text("artifact_key").notNull(),
@@ -3524,7 +3526,15 @@ export const analysisArtifacts = pgTable(
   (table) => [
     check(
       "analysis_artifacts_exactly_one_analysis",
-      sql`((${table.tbAnalysisId} IS NOT NULL)::int + (${table.engineAnalysisId} IS NOT NULL)::int) = 1`
+      sql`(
+        ${table.studyCorpusId} IS NOT NULL AND ${table.workspaceId} IS NULL
+        AND ${table.discoveryRunDigest} IS NULL
+        AND ((${table.tbAnalysisId} IS NOT NULL)::int + (${table.engineAnalysisId} IS NOT NULL)::int) = 1
+      ) OR (
+        ${table.studyCorpusId} IS NULL AND ${table.workspaceId} IS NOT NULL
+        AND ${table.tbAnalysisId} IS NULL AND ${table.engineAnalysisId} IS NULL
+        AND ${table.discoveryRunDigest} ~ '^sha256:[0-9a-f]{64}$'
+      )`
     ),
     check(
       "analysis_artifacts_source_pair",
@@ -3545,6 +3555,9 @@ export const analysisArtifacts = pgTable(
     uniqueIndex("uq_analysis_artifacts_source_revision")
       .on(table.sourceEntityType, table.sourceEntityId, table.revision)
       .where(sql`${table.sourceEntityType} IS NOT NULL AND ${table.sourceEntityId} IS NOT NULL`),
+    uniqueIndex("uq_analysis_artifacts_discovery_key_revision")
+      .on(table.workspaceId, table.discoveryRunDigest, table.artifactKey, table.revision)
+      .where(sql`${table.workspaceId} IS NOT NULL AND ${table.discoveryRunDigest} IS NOT NULL`),
     index("idx_analysis_artifacts_corpus_type").on(
       table.studyCorpusId,
       table.artifactType,
@@ -3552,7 +3565,10 @@ export const analysisArtifacts = pgTable(
       table.position
     ),
     index("idx_analysis_artifacts_tb").on(table.tbAnalysisId, table.artifactType, table.position),
-    index("idx_analysis_artifacts_engine").on(table.engineAnalysisId, table.artifactType, table.position)
+    index("idx_analysis_artifacts_engine").on(table.engineAnalysisId, table.artifactType, table.position),
+    index("idx_analysis_artifacts_discovery_review")
+      .on(table.workspaceId, table.discoveryRunDigest, table.artifactType, table.reviewStatus, table.position)
+      .where(sql`${table.workspaceId} IS NOT NULL`)
   ]
 );
 
@@ -5172,11 +5188,206 @@ export const signalGovernanceControlOperations = pgTable(
       'activate-policy','create-provenance-binding-draft','activate-provenance-binding',
       'upsert-identity','update-timezone','reconcile-brand-os',
       'create-source','import-source','reconcile-governed-view',
-      'reconcile-strategic-authority','promote-strategic-authority'
+      'reconcile-strategic-authority','promote-strategic-authority',
+      'reconcile-acquisition-plan','promote-acquisition-plan','create-acquisition-query',
+      'review-acquisition-query','retire-acquisition-slot','decide-acquisition-reference',
+      'retire-competitor','reactivate-competitor','create-competitor','seal-acquisition-import',
+      'seal-acquisition-brief','generate-acquisition-queries','authorize-acquisition-benchmark',
+      'register-topic-discovery-review','save-topic-discovery-review-draft',
+      'save-topic-discovery-outlier-draft','finalize-topic-discovery-review',
+      'supersede-topic-discovery-review'
     )`),
     check("signal_governance_control_hashes",sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
     check("signal_governance_control_status",sql`${table.status} IN ('in_progress','completed')`),
     index("idx_signal_governance_control_operations_workspace").on(table.workspaceId,table.createdAt)
+  ]
+);
+
+export const signalTopicDiscoveryReviewPackets = pgTable(
+  "signal_topic_discovery_review_packets",
+  {
+    artifactId: uuid("artifact_id").primaryKey().references(() => analysisArtifacts.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    discoveryRunDigest: text("discovery_run_digest").notNull(),
+    candidateArtifactDigest: text("candidate_artifact_digest").notNull(),
+    packetDigest: text("packet_digest").notNull(),
+    packetFileDigest: text("packet_file_digest").notNull(),
+    sourceManifestDigest: text("source_manifest_digest").notNull(),
+    packetPolicyVersion: text("packet_policy_version").notNull(),
+    packetPolicyDigest: text("packet_policy_digest").notNull(),
+    referenceSeed: integer("reference_seed").notNull(),
+    rightsDigest: text("rights_digest").notNull(),
+    rightsValidUntil: timestamp("rights_valid_until", { withTimezone: true }),
+    modelingDenominator: integer("modeling_denominator").notNull(),
+    proposalCount: integer("proposal_count").notNull(),
+    evidenceCount: integer("evidence_count").notNull(),
+    outlierEvidenceCount: integer("outlier_evidence_count").notNull(),
+    reviewScope: text("review_scope").notNull(),
+    sourceHoldoutState: text("source_holdout_state").notNull(),
+    registeredByUserId: uuid("registered_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    registeredAt: now()
+  },
+  (table) => [
+    unique("uq_signal_topic_discovery_review_packet_digest").on(table.workspaceId, table.packetDigest),
+    check("signal_topic_discovery_review_packet_digests", sql`
+      ${table.discoveryRunDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.candidateArtifactDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.packetDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.packetFileDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.sourceManifestDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.packetPolicyDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.rightsDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_topic_discovery_review_packet_counts", sql`
+      ${table.modelingDenominator} > 0 AND ${table.proposalCount} > 0
+      AND ${table.evidenceCount} >= ${table.proposalCount} AND ${table.outlierEvidenceCount} >= 0`),
+    check("signal_topic_discovery_review_packet_scope", sql`
+      ${table.reviewScope} = 'complete_cluster_census' AND ${table.sourceHoldoutState} = 'sealed'`)
+  ]
+);
+
+export const signalTopicDiscoveryReviews = pgTable(
+  "signal_topic_discovery_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    packetArtifactId: uuid("packet_artifact_id").notNull().references(() => signalTopicDiscoveryReviewPackets.artifactId, { onDelete: "restrict" }),
+    reviewRevision: integer("review_revision").notNull(),
+    supersedesReviewId: uuid("supersedes_review_id").references((): AnyPgColumn => signalTopicDiscoveryReviews.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    check("signal_topic_discovery_review_revision_positive", sql`${table.reviewRevision} > 0`),
+    unique("uq_signal_topic_discovery_review_revision").on(table.packetArtifactId, table.reviewRevision),
+    uniqueIndex("uq_signal_topic_discovery_review_successor").on(table.supersedesReviewId)
+      .where(sql`${table.supersedesReviewId} IS NOT NULL`),
+    index("idx_signal_topic_discovery_reviews_workspace").on(table.workspaceId, table.packetArtifactId, table.reviewRevision)
+  ]
+);
+
+export const signalTopicDiscoveryReviewDecisions = pgTable(
+  "signal_topic_discovery_review_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reviewId: uuid("review_id").notNull().references(() => signalTopicDiscoveryReviews.id, { onDelete: "restrict" }),
+    proposalArtifactId: uuid("proposal_artifact_id").notNull().references(() => analysisArtifacts.id, { onDelete: "restrict" }),
+    decisionRevision: integer("decision_revision").notNull(),
+    supersedesDecisionId: uuid("supersedes_decision_id").references((): AnyPgColumn => signalTopicDiscoveryReviewDecisions.id, { onDelete: "restrict" }),
+    state: text("state").notNull(),
+    candidateArtifactDigest: text("candidate_artifact_digest").notNull(),
+    discoveryProposalKey: text("discovery_proposal_key").notNull(),
+    clusterKey: text("cluster_key").notNull(),
+    evidenceRefs: text("evidence_refs").array().notNull(),
+    dataSplit: text("data_split").notNull(),
+    reviewerUserId: uuid("reviewer_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
+    internalCoherence: smallint("internal_coherence"),
+    neighborDistinction: smallint("neighbor_distinction"),
+    humanNameability: smallint("human_nameability"),
+    strategicUtility: smallint("strategic_utility"),
+    mergeNeeded: boolean("merge_needed"),
+    splitNeeded: boolean("split_needed"),
+    convertToTopicContractCandidate: boolean("convert_to_topic_contract_candidate"),
+    noneAcceptable: boolean("none_acceptable"),
+    notes: text("notes"),
+    decisionDigest: text("decision_digest").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_topic_discovery_review_decision_revision")
+      .on(table.reviewId, table.proposalArtifactId, table.decisionRevision),
+    uniqueIndex("uq_signal_topic_discovery_review_decision_successor").on(table.supersedesDecisionId)
+      .where(sql`${table.supersedesDecisionId} IS NOT NULL`),
+    index("idx_signal_topic_discovery_review_decision_current")
+      .on(table.reviewId, table.proposalArtifactId, table.decisionRevision),
+    check("signal_topic_discovery_review_decision_revision_positive", sql`${table.decisionRevision} > 0`),
+    check("signal_topic_discovery_review_decision_state", sql`${table.state} IN ('draft','finalized')`),
+    check("signal_topic_discovery_review_decision_score_ranges", sql`
+      (${table.internalCoherence} IS NULL OR ${table.internalCoherence} BETWEEN 1 AND 5)
+      AND (${table.neighborDistinction} IS NULL OR ${table.neighborDistinction} BETWEEN 1 AND 5)
+      AND (${table.humanNameability} IS NULL OR ${table.humanNameability} BETWEEN 1 AND 5)
+      AND (${table.strategicUtility} IS NULL OR ${table.strategicUtility} BETWEEN 1 AND 5)`),
+    check("signal_topic_discovery_review_decision_final_complete", sql`${table.state} = 'draft' OR (
+      ${table.internalCoherence} IS NOT NULL AND ${table.neighborDistinction} IS NOT NULL
+      AND ${table.humanNameability} IS NOT NULL AND ${table.strategicUtility} IS NOT NULL
+      AND ${table.mergeNeeded} IS NOT NULL AND ${table.splitNeeded} IS NOT NULL
+      AND ${table.convertToTopicContractCandidate} IS NOT NULL AND ${table.noneAcceptable} IS NOT NULL
+    )`),
+    check("signal_topic_discovery_review_decision_authority_separation", sql`
+      NOT (COALESCE(${table.noneAcceptable},false) AND COALESCE(${table.convertToTopicContractCandidate},false))`),
+    check("signal_topic_discovery_review_decision_digests", sql`
+      ${table.candidateArtifactDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.decisionDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND cardinality(${table.evidenceRefs}) > 0`)
+  ]
+);
+
+export const signalTopicDiscoveryOutlierDecisions = pgTable(
+  "signal_topic_discovery_outlier_decisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reviewId: uuid("review_id").notNull().references(() => signalTopicDiscoveryReviews.id, { onDelete: "restrict" }),
+    decisionRevision: integer("decision_revision").notNull(),
+    supersedesDecisionId: uuid("supersedes_decision_id").references((): AnyPgColumn => signalTopicDiscoveryOutlierDecisions.id, { onDelete: "restrict" }),
+    state: text("state").notNull(),
+    studyBoundaryThresholds: boolean("study_boundary_thresholds"),
+    studyMissingTopicFamilies: boolean("study_missing_topic_families"),
+    studyLaterRecovery: boolean("study_later_recovery"),
+    notes: text("notes"),
+    reviewerUserId: uuid("reviewer_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull().defaultNow(),
+    decisionDigest: text("decision_digest").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_topic_discovery_outlier_decision_revision").on(table.reviewId, table.decisionRevision),
+    uniqueIndex("uq_signal_topic_discovery_outlier_decision_successor").on(table.supersedesDecisionId)
+      .where(sql`${table.supersedesDecisionId} IS NOT NULL`),
+    check("signal_topic_discovery_outlier_decision_revision_positive", sql`${table.decisionRevision} > 0`),
+    check("signal_topic_discovery_outlier_decision_state", sql`${table.state} IN ('draft','finalized')`),
+    check("signal_topic_discovery_outlier_decision_final_complete", sql`${table.state} = 'draft' OR (
+      ${table.studyBoundaryThresholds} IS NOT NULL
+      AND ${table.studyMissingTopicFamilies} IS NOT NULL
+      AND ${table.studyLaterRecovery} IS NOT NULL
+    )`),
+    check("signal_topic_discovery_outlier_decision_digest", sql`${table.decisionDigest} ~ '^sha256:[0-9a-f]{64}$'`)
+  ]
+);
+
+export const signalTopicDiscoveryReviewEvents = pgTable(
+  "signal_topic_discovery_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    reviewId: uuid("review_id").notNull().references(() => signalTopicDiscoveryReviews.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    eventKind: text("event_kind").notNull(),
+    previousState: text("previous_state"),
+    nextState: text("next_state").notNull(),
+    outcome: text("outcome"),
+    outlierDecisionDigest: text("outlier_decision_digest"),
+    scoreSheetDigest: text("score_sheet_digest"),
+    decisionSheetDigest: text("decision_sheet_digest"),
+    reviewDigest: text("review_digest").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_topic_discovery_review_operation_event").on(table.operationId, table.eventIndex),
+    index("idx_signal_topic_discovery_review_events_history").on(table.reviewId, table.createdAt, table.id),
+    check("signal_topic_discovery_review_event_index_nonnegative", sql`${table.eventIndex} >= 0`),
+    check("signal_topic_discovery_review_event_kind", sql`${table.eventKind} IN ('review_opened','review_finalized','review_superseded')`),
+    check("signal_topic_discovery_review_event_state", sql`
+      (${table.previousState} IS NULL OR ${table.previousState} IN ('open','finalized','superseded'))
+      AND ${table.nextState} IN ('open','finalized','superseded')`),
+    check("signal_topic_discovery_review_event_outcome", sql`
+      ${table.outcome} IS NULL OR ${table.outcome} IN ('candidate_preferred','none_acceptable','rerun_requested')`),
+    check("signal_topic_discovery_review_event_digests", sql`${table.reviewDigest} ~ '^sha256:[0-9a-f]{64}$'`)
   ]
 );
 
