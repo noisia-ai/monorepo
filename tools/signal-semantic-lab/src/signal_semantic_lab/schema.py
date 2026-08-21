@@ -406,3 +406,225 @@ def require_digest(value: str) -> str:
     ):
         raise ValueError("benchmark_digest_invalid")
     return value
+
+
+class DiscoveryProposalV1(BaseModel):
+    """A discovery cluster offered for review, never a classification decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["signal-topic-discovery-proposal-v1"]
+    role: Literal["discovery_proposal"]
+    proposal_key: Digest
+    discovery_run_digest: Digest
+    cluster_key: Digest
+    evidence_digest: Digest
+    disposition: Literal["pending"]
+    authority_state: Literal["proposal_only"]
+    operator_review_complete: Literal[False]
+    generated_at: datetime
+
+    @field_validator(
+        "proposal_key",
+        "discovery_run_digest",
+        "cluster_key",
+        "evidence_digest",
+    )
+    @classmethod
+    def proposal_digests(cls, value: str) -> str:
+        return require_digest(value)
+
+    @field_validator("generated_at")
+    @classmethod
+    def proposal_timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("benchmark_role_timestamp_missing")
+        return value
+
+
+class TopicContractCandidateV1(BaseModel):
+    """An operator-created contract candidate derived from one or more proposals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["signal-topic-contract-candidate-v1"]
+    role: Literal["topic_contract_candidate"]
+    candidate_key: Digest
+    source_proposal_keys: list[Digest] = Field(min_length=1)
+    evidence_digest: Digest
+    disposition: Literal["pending"]
+    operator_action: Literal["create", "merge", "split"]
+    actor_ref: Digest
+    created_at: datetime
+
+    @field_validator("candidate_key", "evidence_digest", "actor_ref")
+    @classmethod
+    def candidate_digests(cls, value: str) -> str:
+        return require_digest(value)
+
+    @field_validator("source_proposal_keys")
+    @classmethod
+    def source_proposal_digests(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("benchmark_topic_candidate_proposal_duplicate")
+        return [require_digest(value) for value in values]
+
+    @field_validator("created_at")
+    @classmethod
+    def candidate_timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("benchmark_role_timestamp_missing")
+        return value
+
+
+class ApprovedTopicContractV1(BaseModel):
+    """The authority boundary that 10C.3A can describe but cannot instantiate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["signal-approved-topic-contract-v1"]
+    role: Literal["approved_topic_contract"]
+    contract_key: Digest
+    contract_definition_digest: Digest
+    source_candidate_key: Digest
+    version: int = Field(ge=1)
+    disposition: Literal["approved"]
+    approval_authority: Literal["human", "versioned_policy"]
+    actor_ref: Digest | None = None
+    policy_digest: Digest | None = None
+    approved_at: datetime
+
+    @field_validator(
+        "contract_key",
+        "contract_definition_digest",
+        "source_candidate_key",
+        "actor_ref",
+        "policy_digest",
+    )
+    @classmethod
+    def approved_contract_digests(cls, value: str | None) -> str | None:
+        return require_digest(value) if value is not None else None
+
+    @field_validator("approved_at")
+    @classmethod
+    def approved_timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("benchmark_role_timestamp_missing")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_approval_authority(self) -> ApprovedTopicContractV1:
+        if self.approval_authority == "human" and (
+            self.actor_ref is None or self.policy_digest is not None
+        ):
+            raise ValueError("benchmark_topic_contract_human_authority_invalid")
+        if self.approval_authority == "versioned_policy" and (
+            self.policy_digest is None or self.actor_ref is not None
+        ):
+            raise ValueError("benchmark_topic_contract_policy_authority_invalid")
+        return self
+
+
+class PropagationAssignmentV1(BaseModel):
+    """A later classification evaluation, deliberately outside discovery authority."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["signal-topic-propagation-assignment-v1"]
+    role: Literal["propagation_assignment"]
+    assignment_key: Digest
+    canonical_root_key: Digest
+    propagation_generation_digest: Digest
+    discovery_run_digest: Digest
+    topic_contract_digest: Digest
+    method: Literal["exact", "labeling_function", "model", "human"]
+    disposition: Literal["approved", "pending", "rejected", "abstained"]
+    score: float | None = Field(default=None, ge=0, le=1)
+    approval_authority: Literal["human", "versioned_policy"] | None = None
+    evidence_digest: Digest
+    evaluated_at: datetime
+
+    @field_validator(
+        "assignment_key",
+        "canonical_root_key",
+        "propagation_generation_digest",
+        "discovery_run_digest",
+        "topic_contract_digest",
+        "evidence_digest",
+    )
+    @classmethod
+    def propagation_digests(cls, value: str) -> str:
+        return require_digest(value)
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def propagation_timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("benchmark_role_timestamp_missing")
+        return value
+
+    @model_validator(mode="after")
+    def propagation_authority_is_separate(self) -> PropagationAssignmentV1:
+        if self.propagation_generation_digest == self.discovery_run_digest:
+            raise ValueError("benchmark_propagation_generation_must_be_separate")
+        if self.disposition == "approved" and self.approval_authority is None:
+            raise ValueError("benchmark_propagation_approval_authority_required")
+        if self.disposition != "approved" and self.approval_authority is not None:
+            raise ValueError("benchmark_propagation_approval_authority_unexpected")
+        return self
+
+
+class OperatorDiagnosticReviewItemV1(BaseModel):
+    """Append-only human evidence over already-opened train/calibration artifacts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["signal-topic-diagnostic-operator-review-item-v1"]
+    candidate_artifact_digest: Digest
+    discovery_proposal_key: Digest
+    cluster_key: Digest
+    evidence_refs: list[Digest] = Field(min_length=1, max_length=16)
+    data_split: Literal["train", "calibration"]
+    reviewer_ref: Digest
+    reviewed_at: datetime
+    internal_coherence: int = Field(ge=1, le=5)
+    neighbor_distinction: int = Field(ge=1, le=5)
+    human_nameability: int = Field(ge=1, le=5)
+    strategic_utility: int = Field(ge=1, le=5)
+    merge_needed: bool
+    split_needed: bool
+    convert_to_topic_contract_candidate: bool
+    none_acceptable: bool
+    notes: str = Field(max_length=2_000)
+    decision_digest: Digest
+
+    @field_validator(
+        "candidate_artifact_digest",
+        "discovery_proposal_key",
+        "cluster_key",
+        "reviewer_ref",
+        "decision_digest",
+    )
+    @classmethod
+    def diagnostic_review_digests(cls, value: str) -> str:
+        return require_digest(value)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def diagnostic_evidence_digests(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("benchmark_diagnostic_evidence_duplicate")
+        return [require_digest(value) for value in values]
+
+    @field_validator("reviewed_at")
+    @classmethod
+    def diagnostic_review_timestamp_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("benchmark_role_timestamp_missing")
+        return value
+
+    @model_validator(mode="after")
+    def none_acceptable_is_terminal_for_candidate(self) -> OperatorDiagnosticReviewItemV1:
+        if self.none_acceptable and self.convert_to_topic_contract_candidate:
+            raise ValueError("benchmark_diagnostic_none_acceptable_conflict")
+        return self

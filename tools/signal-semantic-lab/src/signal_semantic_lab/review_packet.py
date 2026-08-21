@@ -4,6 +4,7 @@ import csv
 import random
 import re
 from collections import Counter
+from datetime import datetime
 from math import ceil
 from pathlib import Path
 from time import perf_counter
@@ -56,6 +57,8 @@ def build_blinded_packet(
     population_denominator: int | None = None,
     modeling_decision_allowed: bool = True,
     technical_limitations: list[str] | None = None,
+    diagnostic_role_separation: bool = False,
+    rights_evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     packet_started = perf_counter()
     randomizer = random.Random(seed)
@@ -71,7 +74,11 @@ def build_blinded_packet(
         key[label] = candidate["candidate_key"]
         assignment_artifact = np.load(candidate["assignments_path"], allow_pickle=False)
         labels = assignment_artifact["labels"]
-        strengths = assignment_artifact["strengths"]
+        strengths = (
+            assignment_artifact["strengths"]
+            if "strengths" in assignment_artifact.files
+            else np.full(len(labels), np.nan, dtype=np.float32)
+        )
         if len(labels) != len(records):
             raise ValueError("benchmark_packet_assignment_shape_mismatch")
         vectors = _representation_vectors(records, candidate)
@@ -115,24 +122,40 @@ def build_blinded_packet(
                 packet_policy_digest=policy_digest,
                 sample_scope=sample_scope,
                 population_denominator=population_denominator or len(records),
+                rights_evaluated_at=rights_evaluated_at,
+            )
+            scores = (
+                {
+                    "internal_coherence": None,
+                    "neighbor_distinction": None,
+                    "human_nameability": None,
+                    "strategic_utility": None,
+                    "merge_needed": None,
+                    "split_needed": None,
+                    "convert_to_topic_contract_candidate": None,
+                    "none_acceptable": None,
+                    "notes": "",
+                }
+                if diagnostic_role_separation
+                else {
+                    "faithfulness": None,
+                    "specificity": None,
+                    "non_overlap": None,
+                    "internal_coherence": None,
+                    "neighbor_distinction": None,
+                    "commercial_utility": None,
+                    "locale_quality": None,
+                    "merge_needed": None,
+                    "split_needed": None,
+                    "outlier_correctness": None,
+                    "notes": "",
+                }
             )
             all_topics.append(
                 {
                     "topic_label": f"Topic {topic_index + 1}",
                     "sealed_packet": sealed.model_dump(mode="json"),
-                    "scores": {
-                        "faithfulness": None,
-                        "specificity": None,
-                        "non_overlap": None,
-                        "internal_coherence": None,
-                        "neighbor_distinction": None,
-                        "commercial_utility": None,
-                        "locale_quality": None,
-                        "merge_needed": None,
-                        "split_needed": None,
-                        "outlier_correctness": None,
-                        "notes": "",
-                    },
+                    "scores": scores,
                 }
             )
         topics = _bounded_topic_selection(all_topics, candidate_token_limit)
@@ -169,8 +192,22 @@ def build_blinded_packet(
                 ),
                 "outlier_count": len(outlier_indexes),
                 "outlier_examples": [
-                    _redact_excerpt(records[index].text, maximum=600)
+                    (
+                        {
+                            "evidence_ref": records[index].record_key,
+                            "excerpt": _redact_excerpt(records[index].text, maximum=600),
+                            "language": records[index].language,
+                            "scope": _primary_scope(records[index]),
+                            "platform": records[index].platform,
+                            "time_slice": records[index].month,
+                            "rights_digest": records[index].authority_digest,
+                            "selection_reason": "seeded_bounded_outlier_diagnostic_sample",
+                        }
+                        if diagnostic_role_separation
+                        else _redact_excerpt(records[index].text, maximum=600)
+                    )
                     for index in blinded_outlier_indexes[:5]
+                    if _record_rights_safe(records[index], rights_evaluated_at)
                 ],
                 "packet_token_count": candidate_packet_tokens,
                 "packet_token_limit": candidate_token_limit,
@@ -194,6 +231,11 @@ def build_blinded_packet(
         "review_scope": review_scope,
         "population_denominator": population_denominator or len(records),
         "modeling_decision_allowed": modeling_decision_allowed,
+        "adoption_allowed": False if diagnostic_role_separation else modeling_decision_allowed,
+        "holdout_opened": False if diagnostic_role_separation else None,
+        "count_scope": (
+            "full_population_diagnostic" if diagnostic_role_separation else sample_scope
+        ),
         "decision_sheet_contract": "signal-topic-discovery-blind-decision-sheet-v2",
         "packet_policy_version": PACKET_POLICY_VERSION,
         "packet_policy_digest": policy_digest,
@@ -297,19 +339,34 @@ def _sealed_cluster_packet(
     packet_policy_digest: str,
     sample_scope: str,
     population_denominator: int,
+    rights_evaluated_at: datetime | None,
 ) -> SealedRepresentativePacketV1:
     member_indexes = [int(value) for value in np.flatnonzero(labels == topic_id)]
     if not member_indexes:
         raise ValueError("benchmark_packet_empty_cluster")
+    rights_safe_indexes = [
+        index
+        for index in member_indexes
+        if _record_rights_safe(records[index], rights_evaluated_at)
+    ]
+    if not rights_safe_indexes:
+        raise ValueError("benchmark_packet_no_rights_safe_representatives")
+    rights_safe_set = set(rights_safe_indexes)
     centroid = centroids[topic_id]
     similarities = vectors[member_indexes] @ centroid
-    ranked_central = [member_indexes[index] for index in np.argsort(-similarities, kind="stable")]
+    ranked_central = [
+        member_indexes[index]
+        for index in np.argsort(-similarities, kind="stable")
+        if member_indexes[index] in rights_safe_set
+    ]
     selected: list[tuple[int, str, str]] = []
     for index in ranked_central[: PACKET_POLICY["maximum_medoids"]]:
         selected.append((index, "medoid", "closest_to_cluster_centroid"))
 
     seen_slices = {_slice_key(records[index]) for index, _role, _reason in selected}
-    remaining = [index for index in member_indexes if index not in {row[0] for row in selected}]
+    remaining = [
+        index for index in rights_safe_indexes if index not in {row[0] for row in selected}
+    ]
     while (
         remaining
         and sum(role == "diversity" for _index, role, _reason in selected)
@@ -352,7 +409,9 @@ def _sealed_cluster_packet(
     counterexample_pool = [
         index
         for index, label in enumerate(labels)
-        if int(label) in neighbor_ids and index not in {row[0] for row in selected}
+        if int(label) in neighbor_ids
+        and index not in {row[0] for row in selected}
+        and _record_rights_safe(records[index], rights_evaluated_at)
     ]
     if counterexample_pool:
         counterexample = max(
@@ -573,21 +632,30 @@ def _redact_excerpt(value: str, *, maximum: int) -> str:
     return redacted[:maximum].rstrip()
 
 
+def _record_rights_safe(
+    record: BenchmarkRecord | BenchmarkRecordV2, evaluated_at: datetime | None
+) -> bool:
+    if isinstance(record, BenchmarkRecordV2):
+        if record.authority_usage != "strategic-analysis":
+            return False
+        return all(
+            membership.authority_valid_until is None
+            or evaluated_at is None
+            or membership.authority_valid_until > evaluated_at
+            for membership in record.partition_memberships
+        )
+    return record.authority_valid_until is None or evaluated_at is None or (
+        record.authority_valid_until > evaluated_at
+    )
+
+
 def _write_score_sheet(path: Path, candidates: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    dimensions = [
-        "faithfulness",
-        "specificity",
-        "non_overlap",
-        "internal_coherence",
-        "neighbor_distinction",
-        "commercial_utility",
-        "locale_quality",
-        "merge_needed",
-        "split_needed",
-        "outlier_correctness",
-        "notes",
-    ]
+    dimensions = (
+        list(candidates[0]["topics"][0]["scores"])
+        if candidates and candidates[0]["topics"]
+        else ["notes"]
+    )
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["candidate", "topic", *dimensions])

@@ -12,6 +12,7 @@ from .multiscope import dry_run_multiscope_contract
 from .plan import load_plan, plan_digest
 from .preflight import run_preflight
 from .report import build_manifest, build_report_data, enforce_private_tree, execute_notebook
+from .role_diagnostics import diagnose_role_separation
 from .runner import (
     authorize_run,
     build_packet,
@@ -80,6 +81,10 @@ def parser() -> argparse.ArgumentParser:
     preflight.add_argument("--plan", type=Path)
     contracts = commands.add_parser("contracts")
     contracts.add_argument("--output", type=Path, required=True)
+    diagnose = commands.add_parser("diagnose-role-separation")
+    diagnose.add_argument("--run-dir", type=Path, required=True)
+    diagnose.add_argument("--output", type=Path, required=True)
+    diagnose.add_argument("--source-manifest-sha256", required=True)
     return root
 
 
@@ -211,6 +216,12 @@ def main() -> None:
             "provider_calls": payload["provider_calls"],
             "remote_writes": payload["remote_writes"],
         }
+    elif args.command == "diagnose-role-separation":
+        result = diagnose_role_separation(
+            args.run_dir,
+            args.output,
+            expected_evidence_manifest_sha256=args.source_manifest_sha256,
+        )
     else:  # pragma: no cover
         raise AssertionError(args.command)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

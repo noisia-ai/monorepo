@@ -1,0 +1,126 @@
+{
+  "contract_version": "signal-role-separated-topic-benchmark-plan-proposal-v1",
+  "status": "operator_approval_required",
+  "execution_authorized": false,
+  "holdout_authorized": false,
+  "ten_d_authorized": false,
+  "question": "Which local method best produces human-convertible discovery proposals, and which later propagation method can classify an approved Topic Contract with calibrated abstention?",
+  "authority_boundary": {
+    "discovery_output": "pending_proposal_only",
+    "operator_review_required": true,
+    "topic_contract_approval_required_before_propagation": true,
+    "discovery_cluster_is_not_assignment": true,
+    "score_or_confidence_grants_approval": false
+  },
+  "discovery_proposal_benchmark": {
+    "scope_strategies": [
+      "global_multiscope",
+      "partition_aware_with_posthoc_alignment",
+      "hybrid"
+    ],
+    "families": [
+      {
+        "key": "bge-m3-bertopic-hdbscan",
+        "role": "seed_discovery_reference",
+        "embedding": "bge-m3-pinned-existing-artifact",
+        "framework": "BERTopic/HDBSCAN",
+        "license": "MIT/BSD-3-Clause",
+        "supply_chain_state": "existing_pinned_dependencies",
+        "execution_state": "not_authorized"
+      },
+      {
+        "key": "bge-m3-mutual-knn-leiden",
+        "role": "graph_discovery_challenger",
+        "embedding": "bge-m3-pinned-existing-artifact",
+        "framework": "mutual-kNN + Leiden",
+        "license": "GPL-3.0 for leidenalg; igraph dependencies require review",
+        "primary_sources": [
+          "https://github.com/vtraag/leidenalg",
+          "https://python.igraph.org/en/latest/install.html"
+        ],
+        "supply_chain_state": "operator_decision_required",
+        "execution_state": "not_authorized"
+      },
+      {
+        "key": "bge-m3-normalized-minibatch-kmeans",
+        "role": "coverage_control_challenger",
+        "embedding": "bge-m3-pinned-existing-artifact",
+        "framework": "L2-normalized MiniBatchKMeans",
+        "license": "BSD-3-Clause",
+        "primary_sources": [
+          "https://scikit-learn.org/stable/modules/generated/sklearn.cluster.MiniBatchKMeans.html",
+          "https://github.com/scikit-learn/scikit-learn/blob/1.9.0/COPYING"
+        ],
+        "supply_chain_state": "existing_pinned_dependency",
+        "execution_state": "not_authorized",
+        "limitation": "This is a normalized-vector challenger, not a claim of an exact spherical-k-means implementation."
+      }
+    ],
+    "metrics": [
+      "operator_acceptance_rate",
+      "clusters_convertible_to_contracts",
+      "internal_coherence",
+      "neighbor_distinction",
+      "redundancy",
+      "merge_split_burden",
+      "seed_stability",
+      "proposal_yield",
+      "language_distribution",
+      "scope_distribution",
+      "outlier_transparency"
+    ],
+    "acceptance_thresholds": "operator_decision_required",
+    "coverage_policy": "diagnostic_not_sole_quality_authority"
+  },
+  "propagation_benchmark": {
+    "prerequisite": "approved_topic_contracts_with_append_only_operator_gold",
+    "execution_state": "not_authorized",
+    "candidate_classes": [
+      "server_owned_rule_spec_with_fts_or_pg_trgm",
+      "vector_similarity_with_calibrated_abstention",
+      "local_calibrated_classifier"
+    ],
+    "metrics": [
+      "denominator_reconciliation",
+      "precision",
+      "recall",
+      "f1",
+      "pr_auc",
+      "risk_coverage",
+      "abstention",
+      "false_positive_rate",
+      "false_negative_rate",
+      "language_scope_platform_slices",
+      "incremental_delta",
+      "invalidation",
+      "supersession",
+      "throughput_100k_500k_2m",
+      "peak_ram_100k_500k_2m"
+    ],
+    "acceptance_thresholds": "operator_decision_required"
+  },
+  "gold_contract": {
+    "allowed_splits": [
+      "train",
+      "calibration"
+    ],
+    "holdout_state": "sealed",
+    "append_only": true,
+    "requires_human_actor": true,
+    "evidence_and_candidate_lineage_required": true,
+    "merge_split_and_none_acceptable_first_class": true,
+    "self_score_is_gold": false,
+    "future_consumers": [
+      "local_classifier_evaluation",
+      "cleanlab_style_error_prioritization"
+    ]
+  },
+  "stop_conditions": [
+    "operator_review_missing",
+    "holdout_open_requested",
+    "provider_or_remote_write_requested",
+    "discovery_proposal_treated_as_assignment",
+    "candidate_dependency_license_or_supply_chain_unapproved",
+    "dense_n_by_n_operation_required"
+  ]
+}

@@ -47,6 +47,7 @@ uv run signal-semantic-lab packet --run-dir /private/run
 uv run signal-semantic-lab report --run-dir /private/run
 uv run signal-semantic-lab notebook --run-dir /private/run --output /private/run/10c-report.executed.private.ipynb
 uv run signal-semantic-lab contracts --output /private/run/10c1-offline-contract-fixtures.private.json
+uv run signal-semantic-lab diagnose-role-separation --run-dir /private/10c2c-evidence --output /private/10c3a-diagnostic --source-manifest-sha256 sha256:<sealed-manifest>
 uv run pytest
 ./scripts/run-clean.sh validate --input /private/export.jsonl --manifest /private/export.manifest.json
 ```
@@ -100,3 +101,22 @@ The V2 exporter is read-only and requires `strategic-analysis`; it does not use
 Semantic Review or `llm-processing` as population authority. A root is serialized once
 while retaining all of its partition memberships. No local benchmark or fixture command
 can emit `adopted` or open 10D.
+
+## 10C.3A role-separated diagnostics
+
+`diagnose-role-separation` consumes only a frozen 10C.2C run, its existing full-seed
+assignments and its memory-mapped embedding artifact. It verifies the source evidence
+manifest, sealed plan, freeze, result, assignment and embedding digests; rejects any
+holdout/split artifact; and never exports, embeds, clusters or writes remotely.
+
+The diagnostic makes four roles explicit: `discovery_proposal`,
+`topic_contract_candidate`, `approved_topic_contract` and `propagation_assignment`.
+A discovery cluster is always a pending proposal. Human review or a separately approved,
+versioned policy is required at the authority boundary, and propagation belongs to a
+different generation. Scores and confidence never grant approval.
+
+The command creates a private deterministic cluster/outlier diagnostic and reuses the
+bounded representative selector in `review_packet.py` for an operator packet. Its
+sanitized manifest contains only hashes, counts, resource telemetry and safety state.
+The proposed follow-on plan is `config/benchmark-plan-10c3b-proposed.json`; it is not an
+execution authorization, keeps holdout sealed and leaves 10D blocked.
