@@ -1429,3 +1429,36 @@ SIGNAL_10C2_EXECUTION_AUTHORIZED=false
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## 28. 10C.2B · rights append-only y preflight V2 real
+
+**Registrado:** 2026-08-20T22:53:46-06:00 (`America/Mexico_City`)
+
+La migración forward-only `0089_signal_acquisition_strategic_authority.sql` endurece la
+supersession de typed observations y registra la operación idempotente
+`authorize-acquisition-benchmark`. El writer server-owned identifica imports por el
+freeze/plan/slot, nunca por UUIDs del browser; clona la matriz Licensing vigente,
+habilita sólo `strategic-analysis`, activa bindings import-level y crea nuevas
+observation versions cambiando exclusivamente el snapshot de rights. Quality,
+retention, payload Acquisition y términos se preservan.
+
+Resultado UAT: una policy version, cinco bindings, 24,372 observaciones current y
+24,372 superseded. Los cinco bindings permiten `strategic-analysis`; cero permiten
+`llm-processing`, y cero bindings con esa policy cubren imports fuera del freeze. La
+expiración efectiva es 2026-09-20T04:48:05.011Z. El replay dejó sin cambios los conteos
+workspace-scoped y el operation ledger.
+
+El preflight read-only reconcilió los cuatro digests, `23,296 = 21,195 + 2,101`, cuatro
+particiones, 21,820 memberships y 21,195 roots físicas. Authority digest:
+`sha256:816ded59d915696b7fbe554f34e93e8d8e937cb5f81cbafc9f995a18e79b00b5`.
+No hubo providers, paid jobs, modelos, holdout, serving writes ni cambios a readers,
+pointers o governed-view bindings. El siguiente gate permitido requiere una autorización
+separada para `smoke → calibration → full`; 10D permanece cerrado.
+
+```text
+SIGNAL_10C2_STRATEGIC_AUTHORITY_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=true
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

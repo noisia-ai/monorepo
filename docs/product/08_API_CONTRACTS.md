@@ -2455,3 +2455,20 @@ países, plataformas y warnings contra el envelope declarado. Recovery por stora
 el sello V2 exacto. La readiness del plan distingue `ready_for_import` de
 `query_playbook_complete`: un connector manual autorizado puede importar con query
 `unavailable`, aunque el playbook incompleto permanece visible como warning.
+
+## 24. Strategic authority para benchmark de Acquisition (internal application contract)
+
+10C.2B no agrega una ruta HTTP ni una acción browser-owned. El boundary interno
+`authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1` recibe workspace
+y actor ya autorizados, Idempotency-Key, evidence operator-safe y el freeze sellado. Los
+batches se resuelven server-side por plan/slot/digests; el caller no proporciona UUIDs
+de import, policy o binding.
+
+La operación clona la matriz Licensing, cambia únicamente `strategic-analysis` a
+`allowed`, activa una policy corpus-scoped y bindings import-level, y crea sucesoras
+append-only de las typed observations. La vigencia máxima es 30 días y queda acotada por
+retention/licensing actual. El contrato falla cerrado ante drift, rights incompatibles,
+`llm-processing` previamente permitido, cross-workspace, replay incompatible o un
+payload de observación alterado. El preflight de exportación permanece estrictamente
+read-only y declara `required_usage=strategic-analysis`; nunca crea jobs ni ejecuta un
+modelo.

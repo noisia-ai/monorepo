@@ -260,3 +260,47 @@ esta secuencia.
 
 En esta misión no se creó ni aplicó ninguno de esos artefactos al corpus real. El
 holdout permanece sellado, los candidates no se ejecutaron y 10D continúa bloqueado.
+
+## 12. Checkpoint 10C.2B · strategic authority activada
+
+**Registrado:** 2026-08-20T22:53:46-06:00 (`America/Mexico_City`)
+
+El operador autorizó `strategic-analysis` sólo para los cinco batches completed de este
+freeze, para modelado local interno 10C.2 y por un máximo de 30 días. La operación
+server-owned creó una Licensing policy corpus-scoped sin modificar la policy previa,
+cinco bindings import-level y 24,372 observation versions sucesoras. Se preservaron las
+24,372 versiones anteriores, los import seals, slots, periodos, locale, quality,
+retention, términos y lineage. `llm-processing` permanece bloqueado; no existe herencia
+source-wide ni autorización para imports futuros.
+
+| Evidencia | Resultado UAT |
+|---|---:|
+| Batches autorizados | 5 |
+| Licensing policy versions nuevas | 1 |
+| Binding versions import-level nuevas/current | 5 / 5 |
+| Typed observation versions totales | 48,744 |
+| Typed observations current/superseded | 24,372 / 24,372 |
+| Bindings con `strategic-analysis=allowed` | 5 |
+| Bindings con `llm-processing=allowed` | 0 |
+| Bindings fuera del freeze con la policy nueva | 0 |
+| Expiración | 2026-09-20T04:48:05.011Z |
+
+El preflight `signal-semantic-benchmark-export-v2` ejecutado en `REPEATABLE READ READ
+ONLY` devolvió `ready=true`, blockers vacíos, no asignó transaction ID y realizó cero
+writes, provider calls o jobs. Reconciliación: `23,296 = 21,195 + 2,101`, cuatro
+particiones, 21,820 memberships y 21,195 roots físicas. Los digests originales de
+population, content, provenance y watermark no cambiaron. El nuevo authority digest es
+`sha256:816ded59d915696b7fbe554f34e93e8d8e937cb5f81cbafc9f995a18e79b00b5`.
+
+El replay con la misma Idempotency-Key fue un no-op y conservó los conteos. El snapshot
+protegido de readers/pointers/bindings visibles, materializaciones, Classification
+Authority y `record_tags` fue idéntico antes/después. Este checkpoint no autoriza ni
+ejecuta candidates y no abre holdout o 10D.
+
+```text
+SIGNAL_10C2_STRATEGIC_AUTHORITY_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=true
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

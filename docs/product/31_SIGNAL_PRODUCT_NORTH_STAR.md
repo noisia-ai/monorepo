@@ -1309,3 +1309,36 @@ código exportador del digest de authority/rights.
 
 En este checkpoint no se autorizó ni ejecutó 10C.2, no se abrió holdout y no hubo
 providers, jobs, remote/serving writes, readers, pointers, bindings o 10D.
+
+## Checkpoint 10C.2B · authority estratégica import-level lista
+
+**Registrado:** 2026-08-20T22:53:46-06:00 (`America/Mexico_City`)
+
+La decisión explícita `strategic-analysis=allowed` quedó materializada de forma
+append-only y limitada a los cinco imports completed del freeze 10C.2. La transición
+creó una versión de Licensing corpus-scoped, cinco bindings import-level y 24,372
+sucesoras de observaciones tipadas; las 24,372 versiones anteriores permanecen
+auditables. No existe binding source-level o para imports futuros, y `llm-processing`
+continúa no autorizado.
+
+La vigencia efectiva es 2026-08-21T04:48:05.011Z →
+2026-09-20T04:48:05.011Z, acotada a 30 días y a retention/licensing vigente. El
+preflight V2 independiente cerró `ready=true`, blockers vacíos, transacción read-only
+sin transaction ID, y authority digest
+`sha256:816ded59d915696b7fbe554f34e93e8d8e937cb5f81cbafc9f995a18e79b00b5`.
+Population, content, Acquisition provenance y watermark conservaron exactamente sus
+cuatro digests congelados; `23,296 = 21,195 + 2,101`, cuatro particiones y 21,820
+memberships permanecen reconciliados.
+
+El replay remoto no creó otra policy, binding, observación, término u operación. Los
+digests de pointers, governed bindings visibles, materializaciones, Classification
+Authority y `record_tags` permanecieron iguales. No se ejecutó ningún candidate,
+provider, modelo u holdout; la ejecución 10C.2 y Gate 10D siguen desautorizados.
+
+```text
+SIGNAL_10C2_STRATEGIC_AUTHORITY_READY=true
+SIGNAL_10C2_REAL_EXPORT_PREFLIGHT_READY=true
+SIGNAL_10C2_EXECUTION_AUTHORIZED=false
+SIGNAL_10C2_EXECUTED=false
+SIGNAL_10D_READY=false
+```

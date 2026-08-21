@@ -2081,3 +2081,22 @@ declarados son warnings, no reetiquetado semántico. Batches incompletos no son 
 
 Checksum local 0088:
 `11f28c563f64f8f17d5961d9bd0b9779d48663a4529b4b2025a4f53235f9dfb4`.
+
+## 10C.2B · Strategic authority de Acquisition (0089)
+
+`0089_signal_acquisition_strategic_authority.sql` agrega la acción idempotente
+`authorize-acquisition-benchmark` al ledger de governance y hace inequívoca la cadena
+append-only de `signal_provider_mention_observations`: una observación sólo puede tener
+una sucesora y el trigger exige mismo workspace/import/mention/provider/record key,
+`observation_version + 1` y payload idéntico salvo binding, rights hash, retention y
+metadata de versión.
+
+El writer de aplicación selecciona batches completed desde los digests sellados del
+freeze, crea una policy Licensing corpus-scoped, activa bindings import-level y
+reproyecta rights set-based. No modifica observaciones anteriores ni crea binding
+source-level. Un import futuro no hereda la policy; quality y retention se resuelven del
+binding previo y la expiración efectiva es el mínimo entre 30 días y sus ventanas
+vigentes.
+
+Checksum local 0089:
+`a162cff1dd45ff7a2374db81c154db62401904150537cb6d9b743c44cfa05253`.
