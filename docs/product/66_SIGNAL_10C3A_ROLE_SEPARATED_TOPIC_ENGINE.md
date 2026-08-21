@@ -195,7 +195,7 @@ reconcilian desde assignments append-only, no desde muestras de naming.
 
 El plan propuesto vive en
 `tools/signal-semantic-lab/config/benchmark-plan-10c3b-proposed.json`, SHA-256
-`96ae30cc763f85da9978e86e960136417791c9c0223194deb1a8a3240f02c98d`. No está
+`c50c7336b8f3b0658b589d998f0ed651ac28190f36e329cc39f0be59d79c4eb8`. No está
 autorizado y separa dos benchmarks.
 
 ### Discovery proposal benchmark
@@ -220,6 +220,19 @@ Referencias primarias: [leidenalg](https://github.com/vtraag/leidenalg),
 [MiniBatchKMeans](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.MiniBatchKMeans.html),
 [scikit-learn license](https://github.com/scikit-learn/scikit-learn/blob/1.9.0/COPYING) y
 [BGE-M3 model card](https://huggingface.co/BAAI/bge-m3).
+
+### Supply chain y operabilidad pendientes
+
+| Familia | Revisión/licencia | Evidencia de plataforma y batch | Estado antes de 10C.3B |
+|---|---|---|---|
+| BGE-M3 + BERTopic/HDBSCAN | BGE-M3 `5617a9f…`; BERTopic `0.17.4`; HDBSCAN `0.8.44`; MIT/BSD-3 | macOS ARM64 y 21,195 roots observados en 10C.2C; Linux batch aún requiere smoke limpio | Dependencias existentes y pinneadas; ejecución no autorizada |
+| BGE-M3 + mutual-kNN/Leiden | Revisión inmutable pendiente; `leidenalg` GPL-3.0 | upstream declara plataformas principales y grafos de millones si caben en memoria; macOS ARM64 específico y batch Linux no están probados por Noisia; compilar desde source exige C++/igraph/libleidenalg | Licencia, revisión y smoke operatorios obligatorios |
+| BGE-M3 + MiniBatchKMeans normalizado | BGE-M3 `5617a9f…`; scikit-learn `1.9.0`; BSD-3 | dependencia importada en el entorno 10C.2C y API minibatch disponible; el challenger y Linux batch no fueron ejecutados | Pinneado, pero smoke separado obligatorio |
+
+La presencia de una wheel o un claim upstream no equivale a compatibilidad probada. La
+revisión propuesta conserva esos casos como `not_tested` o
+`operator_decision_required`; no instaló dependencias, no ejecutó challengers y no
+convierte capacidad upstream en un SLO de Noisia.
 
 ### Propagation benchmark posterior
 

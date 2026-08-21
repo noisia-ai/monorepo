@@ -24,8 +24,24 @@
         "role": "seed_discovery_reference",
         "embedding": "bge-m3-pinned-existing-artifact",
         "framework": "BERTopic/HDBSCAN",
+        "versions": {
+          "bge_m3_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+          "bertopic": "0.17.4",
+          "hdbscan": "0.8.44"
+        },
         "license": "MIT/BSD-3-Clause",
+        "primary_sources": [
+          "https://huggingface.co/BAAI/bge-m3/tree/5617a9f61b028005a4858fdac845db406aefb181",
+          "https://github.com/MaartenGr/BERTopic/tree/v0.17.4",
+          "https://github.com/scikit-learn-contrib/hdbscan/tree/0.8.44"
+        ],
         "supply_chain_state": "existing_pinned_dependencies",
+        "maintenance_evidence": "existing_10c2_lock_and_artifact_manifest",
+        "platform_evidence": {
+          "macos_arm64": "observed_in_10c2c",
+          "linux_batch": "requires_clean_environment_smoke_before_authorization"
+        },
+        "batch_capability": "observed_on_21195_roots_in_10c2c",
         "execution_state": "not_authorized"
       },
       {
@@ -38,7 +54,16 @@
           "https://github.com/vtraag/leidenalg",
           "https://python.igraph.org/en/latest/install.html"
         ],
+        "immutable_revisions": "operator_decision_required_before_execution",
         "supply_chain_state": "operator_decision_required",
+        "maintenance_evidence": "official_repository_and_issue_tracker_reviewed; immutable_release_not_selected",
+        "platform_evidence": {
+          "upstream_general": "major_platforms_python_3_9_or_newer",
+          "macos_arm64": "not_proven_by_upstream_general_claim_or_local_smoke",
+          "linux_batch": "not_tested",
+          "source_build": "requires_cplusplus_igraph_and_libleidenalg"
+        },
+        "batch_capability": "upstream_documents_graphs_of_millions_when_graph_fits_memory; no_noisia_batch_smoke_executed",
         "execution_state": "not_authorized"
       },
       {
@@ -51,7 +76,17 @@
           "https://scikit-learn.org/stable/modules/generated/sklearn.cluster.MiniBatchKMeans.html",
           "https://github.com/scikit-learn/scikit-learn/blob/1.9.0/COPYING"
         ],
+        "versions": {
+          "bge_m3_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+          "scikit_learn": "1.9.0"
+        },
         "supply_chain_state": "existing_pinned_dependency",
+        "maintenance_evidence": "scikit_learn_1_9_0_is_pinned_in_uv_lock",
+        "platform_evidence": {
+          "macos_arm64": "dependency_import_observed_in_10c2c; challenger_not_executed",
+          "linux_batch": "requires_clean_environment_smoke_before_authorization"
+        },
+        "batch_capability": "minibatch_api_available; no_noisia_challenger_run_executed",
         "execution_state": "not_authorized",
         "limitation": "This is a normalized-vector challenger, not a claim of an exact spherical-k-means implementation."
       }

@@ -438,8 +438,12 @@ def test_scale_projection_is_explicitly_not_an_slo_and_has_no_n_squared() -> Non
 def test_replay_detects_packet_tampering(tmp_path: Path) -> None:
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
+    review = output / "operator-review"
+    review.mkdir(mode=0o700)
     private = output / "diagnostic.private.json"
+    packet = review / "blind-review-packet.private.json"
     write_private_json(private, {"analytic_digest": _digest("analytic")})
+    write_private_json(packet, {"packet_digest": _digest("packet")})
     manifest = {
         "analytic_digest": _digest("analytic"),
         "files": [
@@ -447,12 +451,17 @@ def test_replay_detects_packet_tampering(tmp_path: Path) -> None:
                 "path": private.name,
                 "bytes": private.stat().st_size,
                 "sha256": sha256_file(private),
+            },
+            {
+                "path": packet.relative_to(output).as_posix(),
+                "bytes": packet.stat().st_size,
+                "sha256": sha256_file(packet),
             }
         ],
     }
     write_private_json(output / "manifest.sanitized.json", manifest)
-    private.write_text("tampered", encoding="utf-8")
-    os.chmod(private, 0o600)
+    packet.write_text("tampered", encoding="utf-8")
+    os.chmod(packet, 0o600)
     with pytest.raises(ValueError, match="replay_artifact_drift"):
         _validate_replay(output)
 
@@ -477,6 +486,20 @@ def test_proposed_plan_cannot_execute_or_open_holdout() -> None:
     assert all(
         family["execution_state"] == "not_authorized"
         for family in plan["discovery_proposal_benchmark"]["families"]
+    )
+    families = {
+        family["key"]: family
+        for family in plan["discovery_proposal_benchmark"]["families"]
+    }
+    leiden = families["bge-m3-mutual-knn-leiden"]
+    assert leiden["immutable_revisions"] == "operator_decision_required_before_execution"
+    assert leiden["platform_evidence"]["macos_arm64"].startswith("not_proven")
+    assert leiden["platform_evidence"]["linux_batch"] == "not_tested"
+    assert leiden["supply_chain_state"] == "operator_decision_required"
+    minibatch = families["bge-m3-normalized-minibatch-kmeans"]
+    assert minibatch["platform_evidence"]["linux_batch"].startswith("requires_")
+    assert minibatch["batch_capability"] == (
+        "minibatch_api_available; no_noisia_challenger_run_executed"
     )
 
 
