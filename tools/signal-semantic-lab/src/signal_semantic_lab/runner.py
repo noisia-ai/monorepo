@@ -16,7 +16,7 @@ import pandas as pd
 from .artifacts import save_discovery_result
 from .canonical import canonical_json, sha256_file, sha256_text, write_private_json
 from .coherence import c_npmi
-from .discovery import run_bertopic, run_fastopic, run_lexical_nmf
+from .discovery import CandidateTechnicalRejection, run_bertopic, run_fastopic, run_lexical_nmf
 from .embeddings import encode_records, load_embeddings
 from .input_data import load_export, observed_counts
 from .metrics import (
@@ -232,19 +232,37 @@ def run_stage(run_dir: Path, stage: str) -> dict[str, Any]:
         embedding_manifests[config["key"]] = embedding_manifest
     seeds = plan["stages"]["final_seeds"] if stage == "full" else [plan["stages"]["final_seeds"][0]]
     results: list[dict[str, Any]] = []
+    candidate_rejections: list[dict[str, Any]] = []
     for candidate in candidates:
         for seed in seeds:
-            result = load_completed_result(stage_dir, candidate_key_for(candidate), int(seed), plan)
+            candidate_key = candidate_key_for(candidate)
+            rejected = load_candidate_rejection(stage_dir, candidate_key, int(seed), plan)
+            if rejected is not None:
+                candidate_rejections.append(rejected)
+                continue
+            result = load_completed_result(stage_dir, candidate_key, int(seed), plan)
             if result is None:
-                result = execute_candidate(
-                    selected,
-                    texts,
-                    stage_dir,
-                    candidate,
-                    int(seed),
-                    plan,
-                    embedding_manifests,
-                )
+                try:
+                    result = execute_candidate(
+                        selected,
+                        texts,
+                        stage_dir,
+                        candidate,
+                        int(seed),
+                        plan,
+                        embedding_manifests,
+                    )
+                except CandidateTechnicalRejection as rejection:
+                    rejected = seal_candidate_rejection(
+                        stage_dir,
+                        candidate_key,
+                        int(seed),
+                        rejection.reason,
+                        plan,
+                        str(run_state["harness_source_digest"]),
+                    )
+                    candidate_rejections.append(rejected)
+                    continue
             results.append(result)
     if stage == "calibration":
         finalists = select_finalists(results, plan)
@@ -258,6 +276,7 @@ def run_stage(run_dir: Path, stage: str) -> dict[str, Any]:
         "population_denominator": _manifest_denominator(export_manifest),
         "population_exported": export_manifest.exported,
         "resource_rejections": list(resource_rejections.values()),
+        "candidate_rejections": candidate_rejections,
         "results": [sanitize_result(item) for item in results],
     }
     write_private_json(stage_dir / "summary.private.json", summary)
@@ -869,15 +888,26 @@ def freeze_full_finalists(run_dir: Path) -> dict[str, Any]:
         raise ValueError("benchmark_full_finalist_artifact_missing")
     stability = build_stability(run_dir)
     stability_path = run_dir / "full" / "stability.private.json"
+    calibration_candidate_keys = json.loads(finalists_path.read_text())["candidate_keys"]
+    technical_candidate_keys = [
+        key
+        for key in calibration_candidate_keys
+        if passes_full_candidate_gates(run_dir, key, plan)
+        and passes_full_stability_gates(stability.get(key, {}), plan["hard_gates"])
+    ]
     payload = {
-        "contract_version": "signal-local-modeling-full-finalists-freeze-v1",
+        "contract_version": "signal-local-modeling-full-finalists-freeze-v2",
         "plan_digest": plan_digest(plan),
         "export_manifest_digest": run_state["export_manifest_digest"],
         "finalists_sha256": sha256_file(finalists_path),
         "full_summary_sha256": sha256_file(summary_path),
         "stability_sha256": sha256_file(stability_path),
-        "candidate_keys": json.loads(finalists_path.read_text())["candidate_keys"],
+        "calibration_candidate_keys": calibration_candidate_keys,
+        "candidate_keys": technical_candidate_keys,
         "stability_candidate_keys": sorted(stability),
+        "technical_result": ("finalists_frozen" if technical_candidate_keys else "no_adoption"),
+        "holdout_authorization_required": bool(technical_candidate_keys),
+        "holdout_opened": False,
     }
     payload["full_finalists_digest"] = sha256_text(canonical_json(payload))
     path = run_dir / "full-finalists.sealed.private.json"
@@ -1047,10 +1077,9 @@ def _assert_holdout_authorized(
         expected_action="open_holdout_once",
         expected_plan_digest=plan_digest(plan),
     )
-    if (
-        payload["authorization_digest"] != run_state.get("holdout_authorization_digest")
-        or payload["full_finalists_digest"] != run_state.get("full_finalists_digest")
-    ):
+    if payload["authorization_digest"] != run_state.get("holdout_authorization_digest") or payload[
+        "full_finalists_digest"
+    ] != run_state.get("full_finalists_digest"):
         raise ValueError("benchmark_holdout_authorization_state_mismatch")
 
 
@@ -1123,6 +1152,56 @@ def load_completed_result(
     }
 
 
+def load_candidate_rejection(
+    stage_dir: Path, candidate_key: str, seed: int, plan: dict[str, Any]
+) -> dict[str, Any] | None:
+    path = stage_dir / f"{candidate_key}.seed-{seed}.rejection.json"
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text())
+    if (
+        payload.get("contract_version") != "signal-local-modeling-candidate-technical-rejection-v1"
+        or payload.get("candidate_key") != candidate_key
+        or payload.get("seed") != seed
+        or payload.get("state") != "rejected"
+        or payload.get("plan_digest") != plan_digest(plan)
+        or not isinstance(payload.get("reason"), str)
+        or not payload["reason"]
+    ):
+        raise ValueError("benchmark_candidate_rejection_identity_mismatch")
+    return {**payload, "rejection_sha256": sha256_file(path)}
+
+
+def seal_candidate_rejection(
+    stage_dir: Path,
+    candidate_key: str,
+    seed: int,
+    reason: str,
+    plan: dict[str, Any],
+    harness_source_digest: str,
+) -> dict[str, Any]:
+    payload = {
+        "contract_version": "signal-local-modeling-candidate-technical-rejection-v1",
+        "candidate_key": candidate_key,
+        "seed": seed,
+        "state": "rejected",
+        "reason": reason,
+        "plan_digest": plan_digest(plan),
+        "harness_source_digest": harness_source_digest,
+        "provider_calls": 0,
+        "remote_writes": 0,
+        "serving_writes": 0,
+    }
+    path = stage_dir / f"{candidate_key}.seed-{seed}.rejection.json"
+    if path.is_file():
+        existing = json.loads(path.read_text())
+        if existing != payload:
+            raise ValueError("benchmark_candidate_rejection_incompatible_replay")
+    else:
+        write_private_json(path, payload)
+    return {**payload, "rejection_sha256": sha256_file(path)}
+
+
 def sanitize_result(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "candidate_key": result["candidate_key"],
@@ -1135,8 +1214,10 @@ def sanitize_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def build_packet(run_dir: Path) -> dict[str, Any]:
     plan = load_run_plan(run_dir)
-    run_state = _load_run_state(run_dir, plan) if _is_v3(plan) else json.loads(
-        (run_dir / "run-state.private.json").read_text()
+    run_state = (
+        _load_run_state(run_dir, plan)
+        if _is_v3(plan)
+        else json.loads((run_dir / "run-state.private.json").read_text())
     )
     modeling_harness_source_digest = str(run_state["harness_source_digest"])
     packet_harness_source_digest = compute_harness_source_digest()
@@ -1147,6 +1228,9 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
     finalists = finalist_payload["candidate_keys"]
     if _is_v3(plan):
         stage_state = run_state.get("stage_state", {})
+        _assert_full_finalists_frozen(run_dir, run_state, plan)
+        frozen = json.loads((run_dir / "full-finalists.sealed.private.json").read_text())
+        finalists = frozen["candidate_keys"]
         if finalists and (
             stage_state.get("multi_seed_complete") != "completed"
             or stage_state.get("holdout_open_once") != "completed"
@@ -1157,8 +1241,8 @@ def build_packet(run_dir: Path) -> dict[str, Any]:
             _assert_execution_authorized(run_dir, plan, run_state)
             _assert_holdout_authorized(run_dir, plan, run_state)
             _assert_full_finalists_frozen(run_dir, run_state, plan)
-        if not finalists and stage_state.get("calibration") != "completed":
-            raise ValueError("benchmark_calibration_required_before_no_adoption_packet")
+        if not finalists and stage_state.get("full") != "completed":
+            raise ValueError("benchmark_full_required_before_no_adoption_packet")
     if not finalists:
         result = build_no_adoption_packet(
             run_dir, records, _manifest_denominator(export_manifest), plan
@@ -1234,12 +1318,10 @@ def _assert_full_finalists_frozen(
         or supplied != sha256_text(canonical_json(unsigned))
         or payload.get("plan_digest") != plan_digest(plan)
         or payload.get("finalists_sha256") != sha256_file(run_dir / "finalists.private.json")
-        or payload.get("full_summary_sha256") != sha256_file(
-            run_dir / "full" / "summary.private.json"
-        )
-        or payload.get("stability_sha256") != sha256_file(
-            run_dir / "full" / "stability.private.json"
-        )
+        or payload.get("full_summary_sha256")
+        != sha256_file(run_dir / "full" / "summary.private.json")
+        or payload.get("stability_sha256")
+        != sha256_file(run_dir / "full" / "stability.private.json")
     ):
         raise ValueError("benchmark_full_finalists_freeze_drift")
 

@@ -9,12 +9,14 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+import signal_semantic_lab.runner as runner_module
 from signal_semantic_lab.canonical import (
     canonical_json,
     sha256_file,
     sha256_text,
     write_private_json,
 )
+from signal_semantic_lab.discovery import CandidateTechnicalRejection
 from signal_semantic_lab.fixture import generate_multiscope_fixture
 from signal_semantic_lab.input_data import load_export
 from signal_semantic_lab.multiscope import (
@@ -23,6 +25,7 @@ from signal_semantic_lab.multiscope import (
     stratified_multiscope_indexes,
 )
 from signal_semantic_lab.plan import load_plan, plan_digest
+from signal_semantic_lab.report import build_report_data
 from signal_semantic_lab.runner import (
     authorize_run,
     freeze_full_finalists,
@@ -464,6 +467,119 @@ def test_holdout_opens_once_only_after_full_finalists_are_frozen(tmp_path: Path)
     assert final_state["stage_state"]["holdout_open_once"] == "completed"
 
 
+def test_freeze_filters_calibration_candidates_through_full_and_stability_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _records, manifest = _fixture(tmp_path)
+    plan_path = _fixture_plan(tmp_path, manifest)
+    run_dir = tmp_path / "run"
+    state = prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        run_dir,
+        plan_path=plan_path,
+    )
+    authorization = _authorization(
+        tmp_path / "execution.json",
+        {
+            "contract_version": "signal-local-modeling-execution-authorization-v1",
+            "action": "authorize_execution",
+            "plan_digest": state["plan_digest"],
+            "export_manifest_digest": state["export_manifest_digest"],
+            "authorized_stages": ["smoke", "calibration", "full"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T12:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    authorize_run(run_dir, authorization)
+    current = json.loads((run_dir / "run-state.private.json").read_text())
+    current["stage_state"]["full"] = "completed"
+    current["stage_state"]["multi_seed_complete"] = "completed"
+    write_private_json(run_dir / "run-state.private.json", current)
+    write_private_json(run_dir / "finalists.private.json", {"candidate_keys": ["passes", "fails"]})
+    (run_dir / "full").mkdir()
+    write_private_json(run_dir / "full" / "summary.private.json", {"results": []})
+
+    def fake_stability(_run_dir: Path) -> dict[str, dict[str, object]]:
+        payload = {"passes": {"43": {}}, "fails": {"43": {}}}
+        write_private_json(_run_dir / "full" / "stability.private.json", payload)
+        return payload
+
+    monkeypatch.setattr(runner_module, "build_stability", fake_stability)
+    monkeypatch.setattr(
+        runner_module,
+        "passes_full_candidate_gates",
+        lambda _run_dir, key, _plan: key == "passes",
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "passes_full_stability_gates",
+        lambda comparisons, _gates: bool(comparisons),
+    )
+    frozen = freeze_full_finalists(run_dir)
+    assert frozen["calibration_candidate_keys"] == ["passes", "fails"]
+    assert frozen["candidate_keys"] == ["passes"]
+    assert frozen["technical_result"] == "finalists_frozen"
+    assert frozen["holdout_authorization_required"] is True
+    assert frozen["holdout_opened"] is False
+
+
+def test_v3_technical_report_does_not_require_or_open_holdout_packet(tmp_path: Path) -> None:
+    _records, manifest = _fixture(tmp_path)
+    plan_path = _fixture_plan(tmp_path, manifest)
+    run_dir = tmp_path / "run"
+    state = prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        run_dir,
+        plan_path=plan_path,
+    )
+    authorization = _authorization(
+        tmp_path / "execution.json",
+        {
+            "contract_version": "signal-local-modeling-execution-authorization-v1",
+            "action": "authorize_execution",
+            "plan_digest": state["plan_digest"],
+            "export_manifest_digest": state["export_manifest_digest"],
+            "authorized_stages": ["smoke", "calibration", "full"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T12:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    authorize_run(run_dir, authorization)
+    current = json.loads((run_dir / "run-state.private.json").read_text())
+    current["stage_state"]["full"] = "completed"
+    current["stage_state"]["multi_seed_complete"] = "completed"
+    write_private_json(run_dir / "run-state.private.json", current)
+    write_private_json(run_dir / "finalists.private.json", {"candidate_keys": []})
+    for stage in ("smoke", "calibration", "full"):
+        (run_dir / stage).mkdir(exist_ok=True)
+        write_private_json(
+            run_dir / stage / "summary.private.json",
+            {"stage": stage, "record_count": 0, "resource_rejections": [], "results": []},
+        )
+    freeze_full_finalists(run_dir)
+    modeled_state = json.loads((run_dir / "run-state.private.json").read_text())
+    modeled_state["harness_source_digest"] = sha256_text("sealed-modeling-harness")
+    write_private_json(run_dir / "run-state.private.json", modeled_state)
+    report = build_report_data(run_dir)
+    assert report["contract_version"] == "signal-local-modeling-technical-report-v3"
+    assert report["technical_result"] == "no_adoption"
+    assert report["human_review"]["state"] == "holdout_sealed"
+    assert report["human_review"]["packet_sha256"] is None
+    assert report["modeling_decision_ready_for_10d"] is False
+    assert report["postprocessing_sealed_separately"] is True
+    assert not (run_dir / "operator-review").exists()
+
+
 def test_wrong_corpus_digest_is_rejected_before_any_stage(tmp_path: Path) -> None:
     _records, manifest = _fixture(tmp_path)
     plan_path = _fixture_plan(tmp_path, manifest)
@@ -487,6 +603,68 @@ def test_partial_candidate_artifact_is_rejected_instead_of_resumed(tmp_path: Pat
     partial.write_text("{}")
     with pytest.raises(ValueError, match="benchmark_partial_candidate_artifact"):
         load_completed_result(stage_dir, "candidate", 104729, plan)
+
+
+def test_candidate_technical_rejection_is_sealed_and_resumed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _records, manifest = _fixture(tmp_path)
+    plan_path = _fixture_plan(tmp_path, manifest)
+    run_dir = tmp_path / "run"
+    state = prepare_run(
+        tmp_path / "fixture" / "source-export-v2.private.jsonl",
+        tmp_path / "fixture" / "source-export-v2.manifest.private.json",
+        run_dir,
+        plan_path=plan_path,
+    )
+    authorization = _authorization(
+        tmp_path / "execution.json",
+        {
+            "contract_version": "signal-local-modeling-execution-authorization-v1",
+            "action": "authorize_execution",
+            "plan_digest": state["plan_digest"],
+            "export_manifest_digest": state["export_manifest_digest"],
+            "authorized_stages": ["smoke", "calibration", "full"],
+            "actor_ref": sha256_text("synthetic-authorized-operator"),
+            "authorized_at": "2026-08-20T12:00:00-06:00",
+            "provider_calls_allowed": False,
+            "remote_writes_allowed": False,
+            "serving_writes_allowed": False,
+            "ten_d_authorized": False,
+        },
+    )
+    authorize_run(run_dir, authorization)
+    monkeypatch.setattr(
+        runner_module,
+        "candidate_matrix",
+        lambda _plan: [
+            {
+                "key": "synthetic-rejected",
+                "discovery": "lexical-locale-nmf",
+                "embedding": None,
+                "role": "candidate",
+            }
+        ],
+    )
+
+    def reject(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise CandidateTechnicalRejection("synthetic_configuration_incompatible")
+
+    monkeypatch.setattr(runner_module, "execute_candidate", reject)
+    first = run_stage(run_dir, "smoke")
+    assert first["results"] == []
+    assert first["candidate_rejections"][0]["reason"] == ("synthetic_configuration_incompatible")
+    current = json.loads((run_dir / "run-state.private.json").read_text())
+    current["stage_state"]["smoke"] = "not_started"
+    current["status"] = "execution_authorized"
+    write_private_json(run_dir / "run-state.private.json", current)
+    monkeypatch.setattr(
+        runner_module,
+        "execute_candidate",
+        lambda *_args, **_kwargs: pytest.fail("sealed rejection was not resumed"),
+    )
+    replay = run_stage(run_dir, "smoke")
+    assert replay["candidate_rejections"] == first["candidate_rejections"]
 
 
 def test_completed_candidate_artifact_is_reused_only_with_exact_lineage(tmp_path: Path) -> None:

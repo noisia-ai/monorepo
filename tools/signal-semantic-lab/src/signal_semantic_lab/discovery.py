@@ -11,6 +11,14 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from .preprocess import LocalePreprocessPolicy, locale_tokens, normalize_text
 
 
+class CandidateTechnicalRejection(RuntimeError):
+    """A reproducible candidate/configuration failure that must not abort the stage."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass
 class DiscoveryResult:
     labels: np.ndarray
@@ -171,7 +179,14 @@ def run_bertopic(
         verbose=False,
     )
     model_started = perf_counter()
-    topics, probabilities = model.fit_transform(texts, np.asarray(embeddings))
+    try:
+        topics, probabilities = model.fit_transform(texts, np.asarray(embeddings))
+    except ValueError as error:
+        if str(error) == "max_df corresponds to < documents than min_df":
+            raise CandidateTechnicalRejection(
+                "bertopic_representation_document_frequency_incompatible"
+            ) from error
+        raise
     model_seconds = perf_counter() - model_started
     labels = np.asarray(topics, dtype=np.int32)
     strengths, availability = _membership_strengths(probabilities, model, len(texts))

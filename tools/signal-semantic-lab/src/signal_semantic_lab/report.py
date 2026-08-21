@@ -51,22 +51,32 @@ def execute_notebook(run_dir: Path, output_path: Path) -> dict[str, Any]:
 
 def build_report_data(run_dir: Path) -> dict[str, Any]:
     plan = load_run_plan(run_dir)
+    is_v3 = plan.get("contract_version") == "signal-local-modeling-benchmark-plan-v3"
     run_state = json.loads((run_dir / "run-state.private.json").read_text())
     if run_state.get("plan_digest") != plan_digest(plan):
         raise ValueError("benchmark_report_plan_digest_mismatch")
     current_harness_source_digest = compute_harness_source_digest()
     modeling_harness_source_digest = str(run_state.get("harness_source_digest"))
     if modeling_harness_source_digest != current_harness_source_digest:
-        packet_lineage_path = run_dir / "operator-review" / "blind-review-packet.private.json"
-        if not packet_lineage_path.is_file():
-            raise ValueError("benchmark_report_harness_source_digest_mismatch")
-        packet_lineage = json.loads(packet_lineage_path.read_text())
-        if not (
-            packet_lineage.get("modeling_harness_source_digest") == modeling_harness_source_digest
-            and packet_lineage.get("packet_harness_source_digest") == current_harness_source_digest
-            and packet_lineage.get("packet_built_after_modeling_harness_change") is True
-        ):
-            raise ValueError("benchmark_report_harness_source_digest_mismatch")
+        if is_v3:
+            if (
+                run_state.get("holdout_state") != "sealed"
+                or not (run_dir / "full-finalists.sealed.private.json").is_file()
+            ):
+                raise ValueError("benchmark_report_harness_source_digest_mismatch")
+        else:
+            packet_lineage_path = run_dir / "operator-review" / "blind-review-packet.private.json"
+            if not packet_lineage_path.is_file():
+                raise ValueError("benchmark_report_harness_source_digest_mismatch")
+            packet_lineage = json.loads(packet_lineage_path.read_text())
+            if not (
+                packet_lineage.get("modeling_harness_source_digest")
+                == modeling_harness_source_digest
+                and packet_lineage.get("packet_harness_source_digest")
+                == current_harness_source_digest
+                and packet_lineage.get("packet_built_after_modeling_harness_change") is True
+            ):
+                raise ValueError("benchmark_report_harness_source_digest_mismatch")
     records, validated_manifest = load_export(
         run_dir / "source-export.private.jsonl",
         run_dir / "source-export.manifest.private.json",
@@ -114,13 +124,42 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
     score_path = review_dir / "blind-review-score-sheet.private.csv"
     decision_path = review_dir / "blind-review-decision-sheet.private.csv"
     contract_fixture_path = run_dir / "10c1-offline-contract-fixtures.private.json"
-    stable_candidates = [
+    full_gate_candidates = [
+        key
+        for key in finalists["candidate_keys"]
+        if passes_full_candidate_gates(run_dir, key, plan)
+    ]
+    stability_gate_candidates = [
         key
         for key in finalists["candidate_keys"]
         if passes_full_stability_gates(stability[key], plan["hard_gates"])
-        and passes_full_candidate_gates(run_dir, key, plan)
     ]
-    technical_status = "finalist_available" if stable_candidates else "no_adoption"
+    stable_candidates = [
+        key
+        for key in finalists["candidate_keys"]
+        if key in full_gate_candidates and key in stability_gate_candidates
+    ]
+    frozen: dict[str, Any] | None = None
+    if is_v3:
+        frozen_path = run_dir / "full-finalists.sealed.private.json"
+        if not frozen_path.is_file():
+            raise ValueError("benchmark_full_finalists_not_frozen")
+        frozen = json.loads(frozen_path.read_text())
+        unsigned = {key: value for key, value in frozen.items() if key != "full_finalists_digest"}
+        if (
+            frozen.get("full_finalists_digest") != run_state.get("full_finalists_digest")
+            or frozen.get("full_finalists_digest") != sha256_text(canonical_json(unsigned))
+            or frozen.get("candidate_keys") != stable_candidates
+            or run_state.get("holdout_state") != "sealed"
+        ):
+            raise ValueError("benchmark_full_finalists_freeze_drift")
+    technical_status = (
+        "finalists_frozen"
+        if stable_candidates and is_v3
+        else "finalist_available"
+        if stable_candidates
+        else "no_adoption"
+    )
     required_review_artifacts = (
         packet_path,
         key_path,
@@ -128,43 +167,68 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
         decision_path,
         contract_fixture_path,
     )
-    if not all(path.is_file() for path in required_review_artifacts):
-        raise ValueError("benchmark_operator_review_artifact_missing")
-    packet = json.loads(packet_path.read_text())
-    expected_review_status = (
-        "operator_review_required" if stable_candidates else "technical_no_adoption_review"
-    )
-    if (
-        packet.get("review_status") != expected_review_status
-        or packet.get("modeling_decision_allowed") is not bool(stable_candidates)
-        or int(packet.get("population_denominator", -1))
-        != _manifest_denominator(validated_manifest)
-    ):
-        raise ValueError("benchmark_operator_review_artifact_state_mismatch")
-    report = {
-        "contract_version": "signal-local-modeling-report-v2",
-        "technical_benchmark_status": technical_status,
-        "technical_result": technical_status,
-        "canon_reconciled": True,
-        "ready_for_operator_review": True,
-        "modeling_decision_ready_for_10d": False,
-        "human_review": {
+    packet: dict[str, Any] | None = None
+    if not is_v3:
+        if not all(path.is_file() for path in required_review_artifacts):
+            raise ValueError("benchmark_operator_review_artifact_missing")
+        packet = json.loads(packet_path.read_text())
+        expected_review_status = (
+            "operator_review_required" if stable_candidates else "technical_no_adoption_review"
+        )
+        if (
+            packet.get("review_status") != expected_review_status
+            or packet.get("modeling_decision_allowed") is not bool(stable_candidates)
+            or int(packet.get("population_denominator", -1))
+            != _manifest_denominator(validated_manifest)
+        ):
+            raise ValueError("benchmark_operator_review_artifact_state_mismatch")
+    human_review = (
+        {
+            "state": "holdout_sealed",
+            "completed": False,
+            "winner": None,
+            "review_status": (
+                "holdout_authorization_required" if stable_candidates else "not_required"
+            ),
+            "modeling_decision_allowed": False,
+            "packet_sha256": None,
+            "score_sheet_sha256": None,
+            "decision_sheet_sha256": None,
+            "required_actions": (
+                ["Obtain a separate operator authorization before opening holdout."]
+                if stable_candidates
+                else []
+            ),
+        }
+        if is_v3
+        else {
             "state": "pending",
             "completed": False,
             "winner": None,
             "review_status": packet["review_status"],
             "modeling_decision_allowed": packet["modeling_decision_allowed"],
-            "packet_sha256": sha256_file(packet_path) if packet_path.is_file() else None,
-            "score_sheet_sha256": sha256_file(score_path) if score_path.is_file() else None,
-            "decision_sheet_sha256": (
-                sha256_file(decision_path) if decision_path.is_file() else None
-            ),
+            "packet_sha256": sha256_file(packet_path),
+            "score_sheet_sha256": sha256_file(score_path),
+            "decision_sheet_sha256": sha256_file(decision_path),
             "required_actions": [
                 "Complete the blind score sheet without opening the private key.",
                 "Record none acceptable when no candidate meets the rubric.",
                 "Create a separate adoption ADR only after the review is signed.",
             ],
-        },
+        }
+    )
+    report = {
+        "contract_version": (
+            "signal-local-modeling-technical-report-v3"
+            if is_v3
+            else "signal-local-modeling-report-v2"
+        ),
+        "technical_benchmark_status": technical_status,
+        "technical_result": technical_status,
+        "canon_reconciled": True,
+        "ready_for_operator_review": not is_v3,
+        "modeling_decision_ready_for_10d": False,
+        "human_review": human_review,
         "plan_digest": plan_digest(plan),
         "harness_source_digest": run_state["harness_source_digest"],
         "modeling_harness_source_digest": modeling_harness_source_digest,
@@ -200,12 +264,16 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
             sha256_file(contract_fixture_path) if contract_fixture_path.is_file() else None
         ),
         "finalists": finalists,
+        "full_finalists_freeze": frozen,
+        "full_gate_candidates": full_gate_candidates,
+        "stability_gate_candidates": stability_gate_candidates,
         "stable_operator_review_candidates": stable_candidates,
         "stability": stability,
         "stages": {
             stage: {
                 "record_count": summary["record_count"],
                 "resource_rejections": summary.get("resource_rejections", []),
+                "candidate_rejections": summary.get("candidate_rejections", []),
                 "results": summary["results"],
             }
             for stage, summary in stage_summaries.items()
@@ -222,21 +290,33 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
                 if stable_candidates
                 else (
                     "No operable finalist pair passed the preregistered calibration gates."
-                    if finalists["state"] == "no_adoption"
-                    else "No finalist passed the preregistered full-seed stability gates."
+                    if finalists.get("state") == "no_adoption"
+                    or not finalists.get("candidate_keys")
+                    else (
+                        "No calibration finalist passed every preregistered full-seed "
+                        "quality and coverage gate."
+                        if not full_gate_candidates
+                        else "No finalist passed the preregistered full-seed stability gates."
+                    )
                 )
             ),
         },
         "safety": {
-            "remote_reads": 0,
-            "remote_read_scope": "noisia_databases",
+            "remote_reads": (1 if manifest.get("target") == "noisia-staging" else 0),
+            "remote_read_scope": (
+                "noisia-staging" if manifest.get("target") == "noisia-staging" else "local_fixture"
+            ),
             "remote_writes": 0,
             "production_reads_writes": 0,
             "provider_calls": 0,
             "paid_jobs": 0,
             "serving_writes": 0,
-            "new_open_source_model_artifact_download_bytes": 2_267_546_218,
-            "reused_open_source_model_artifact_bytes": 470_642_255,
+            "new_open_source_model_artifact_download_bytes": (0 if is_v3 else 2_267_546_218),
+            "reused_open_source_model_artifact_bytes": (
+                sum(int(item["artifact_bytes"]) for item in plan["embeddings"])
+                if is_v3
+                else 470_642_255
+            ),
             "pinned_open_source_model_artifact_bytes": sum(
                 int(item["artifact_bytes"]) for item in plan["embeddings"]
             ),
@@ -244,8 +324,10 @@ def build_report_data(run_dir: Path) -> dict[str, Any]:
                 int(item["artifact_bytes"]) for item in plan["embeddings"]
             )
             + 750_000_000,
-            "open_source_artifact_network_reads_only": True,
-            "reused_sealed_staging_export": True,
+            "open_source_artifact_network_reads_only": not is_v3,
+            "model_artifact_cache_mode": ("offline_pinned_cache" if is_v3 else "network_read_only"),
+            "reused_sealed_staging_export": False if is_v3 else True,
+            "holdout_opened": False if is_v3 else None,
         },
     }
     output = run_dir / "report-data.sanitized.json"
