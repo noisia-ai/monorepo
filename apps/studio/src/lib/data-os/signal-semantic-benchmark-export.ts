@@ -301,6 +301,21 @@ export async function preflightSignalSemanticBenchmarkExportV2(args: {
   });
 }
 
+/** Runs the V2 authority audit inside an existing server-owned transaction. */
+export async function auditSignalSemanticBenchmarkFrozenCorpusV2(args: {
+  client: PoolClient;
+  workspaceId: string;
+  frozenCorpus: SignalSemanticBenchmarkFrozenCorpusV2;
+}): Promise<SignalSemanticBenchmarkExportPreflightV2> {
+  const rows = await loadAcquisitionBenchmarkAuthorityRowsV2({
+    client: args.client,
+    workspaceId: args.workspaceId,
+    frozenCorpus: args.frozenCorpus,
+    includeText: false
+  });
+  return buildSignalSemanticBenchmarkPreflightV2({ rows, frozenCorpus: args.frozenCorpus });
+}
+
 export async function exportSignalSemanticBenchmarkV2(args: {
   client: PoolClient;
   workspaceId: string;

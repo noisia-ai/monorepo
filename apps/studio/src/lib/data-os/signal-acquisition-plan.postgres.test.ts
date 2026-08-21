@@ -29,6 +29,13 @@ import {
   retireSignalCompetitorsV1
 } from "@/lib/data-os/signal-competitor-lifecycle";
 import {
+  authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1
+} from "@/lib/data-os/signal-acquisition-strategic-authority";
+import {
+  preflightSignalSemanticBenchmarkExportV2,
+  type SignalSemanticBenchmarkFrozenCorpusV2
+} from "@/lib/data-os/signal-semantic-benchmark-export";
+import {
   createWorkspaceConnectorSourceProductInTransactionV1
 } from "@/lib/data-os/workspace-ingestion";
 import {
@@ -39,9 +46,9 @@ import { pool } from "@/lib/db";
 
 const DB_URL=process.env.NOISIA_SIGNAL_ACQUISITION_PLAN_INTEGRATION_URL;
 const APPROVED=process.env.NOISIA_SIGNAL_ACQUISITION_PLAN_INTEGRATION_APPROVED==="true";
-const digest=(value:string)=>`sha256:${createHash("sha256").update(value).digest("hex")}`;
+const digest=(value:string)=>`sha256:${createHash("sha256").update(value).digest("hex")}` as `sha256:${string}`;
 
-test("0084-0088 Acquisition Plan supports zero-query readiness and immutable graduated query evidence",{
+test("0084-0089 Acquisition Plan supports query evidence and import-scoped strategic authority",{
   skip:!DB_URL||!APPROVED,timeout:120_000
 },async()=>{
   assert.ok(DB_URL);requireLocal(DB_URL);
@@ -52,6 +59,7 @@ test("0084-0088 Acquisition Plan supports zero-query readiness and immutable gra
     const files=(await readdir(directory)).filter((file)=>/^\d{4}_.+\.sql$/u.test(file)).sort();
     for(const file of files)await admin.query(await readFile(join(directory,file),"utf8"));
     await admin.query(await readFile(join(directory,"0088_signal_acquisition_query_evidence_v2.sql"),"utf8"));
+    await admin.query(await readFile(join(directory,"0089_signal_acquisition_strategic_authority.sql"),"utf8"));
   }finally{await admin.end();}
 
   const userId=randomUUID();
@@ -434,9 +442,9 @@ test("0084-0088 Acquisition Plan supports zero-query readiness and immutable gra
     })),[{status:"retired",sealed:true},{status:"retired",sealed:true},{status:"current",sealed:true}]);
 
   const authority=(await pool.query<{
-    plan_id:string;slot_id:string;slot_key:string;query_id:string;query_version:number;
+    plan_id:string;plan_version:number;slot_id:string;slot_key:string;query_id:string;query_version:number;
     plan_digest:string;slot_digest:string;query_digest:string;brand_os_digest:string;catalog_digest:string;
-  }>(`SELECT plan.id::text plan_id,slot.id::text slot_id,query.id::text query_id,
+  }>(`SELECT plan.id::text plan_id,plan.plan_version,slot.id::text slot_id,query.id::text query_id,
     slot.slot_key,query.query_version,
     plan.definition_hash plan_digest,slot.definition_hash slot_digest,query.definition_hash query_digest,
     plan.brand_os_digest,plan.identity_catalog_digest catalog_digest
@@ -551,6 +559,128 @@ test("0084-0088 Acquisition Plan supports zero-query readiness and immutable gra
     workspace.id,unavailable.batch.id])).rows[0]!;
   assert.deepEqual(unavailableIntent,{review_status:"pending",eligibility_status:"not_eligible",
     evidence_class:"unavailable",query_id:null,actor_id:userId,confidence:null});
+  const strategicBatchIds=[unavailable.batch.id];
+  const firstStrategicObservation=(await pool.query<{id:string}>(`SELECT id::text
+    FROM signal_provider_mention_observations WHERE workspace_id=$1::uuid
+      AND import_batch_id=$2::uuid AND observation_version=1`,[
+    workspace.id,unavailable.batch.id])).rows[0]!.id;
+  await pool.query(`INSERT INTO signal_provider_mention_observation_terms(
+    observation_id,workspace_id,term_kind,ordinal,term_private,term_hash,normalized_term
+  ) VALUES($1::uuid,$2::uuid,'provider-tag',0,'private-fixture-tag',$3,'private fixture tag')`,[
+    firstStrategicObservation,workspace.id,digest("private-fixture-tag")]);
+  for(let index=0;index<4;index+=1){
+    const generated=await createCompletedStrategicFixtureImport({workspace,actor,sourceId,
+      sourceKey:connector.source_key,slotKey:authority.slot_key,planId:authority.plan_id,
+      slotId:authority.slot_id,planDigest:authority.plan_digest,slotDigest:authority.slot_digest,
+      bindingId:policy.bindingId,bindingHash:policy.bindingHash,suffix:`${suffix}-${index}`,
+      storage:fixtureStorage,userId});
+    strategicBatchIds.push(generated.batchId);
+  }
+  const fixturePartition=(key:string):SignalSemanticBenchmarkFrozenCorpusV2["partitions"][number]=>({
+    key,scope:"primary_brand",entity_ref:digest(`entity:${key}`),declared_market:"MX",
+    total:5,included:5,excluded:0,population_digest:digest(`population:${key}`),
+    modeling_digest:digest(`modeling:${key}`),plan_version:authority.plan_version,
+    plan_digest:authority.plan_digest as `sha256:${string}`,
+    slot_digest:authority.slot_digest as `sha256:${string}`
+  });
+  const frozenStrategicCorpus:SignalSemanticBenchmarkFrozenCorpusV2={
+    identity:`generic-strategic-fixture-${suffix}`,acquisition_denominator:5,
+    included_modeling_population:5,quality_excluded_roots:0,
+    population_digest:digest(`strategic-population:${suffix}`),
+    content_digest:digest(`strategic-content:${suffix}`),
+    provenance_digest:digest(`strategic-provenance:${suffix}`),
+    watermark_digest:digest(`strategic-watermark:${suffix}`),timezone:"America/Mexico_City",
+    observed_period_local:{from:"2026-01-01",to:"2026-01-31"},
+    partitions:[fixturePartition("primary"),fixturePartition("category"),
+      fixturePartition("competitor-a"),fixturePartition("competitor-b")]
+  };
+  const preflightClient=await pool.connect();
+  try{
+    const denied=await preflightSignalSemanticBenchmarkExportV2({client:preflightClient,
+      workspaceId:workspace.id,frozenCorpus:frozenStrategicCorpus});
+    assert.equal(denied.ready,false);
+    assert.deepEqual(denied.blockers,["strategic_authority_blocked:strategic_analysis_denied"]);
+  }finally{preflightClient.release();}
+  const strategic=await authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1({
+    workspace,actor,idempotencyKey:`strategic-authority-${suffix}`,
+    approvalEvidence:"Synthetic operator approval for local strategic analysis only.",
+    frozenCorpus:frozenStrategicCorpus
+  });
+  assert.equal(strategic.import_count,5);
+  assert.equal(strategic.import_bindings_created,5);
+  assert.equal(strategic.observation_versions_created,5);
+  assert.equal(strategic.observation_terms_copied,1);
+  assert.equal(strategic.llm_processing_allowed,false);
+  assert.equal(strategic.future_imports_authorized,false);
+  assert.ok(Date.parse(strategic.effective_to)-Date.parse(strategic.effective_from)<=30*86_400_000);
+  assert.deepEqual(await authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1({
+    workspace,actor,idempotencyKey:`strategic-authority-${suffix}`,
+    approvalEvidence:"Synthetic operator approval for local strategic analysis only.",
+    frozenCorpus:frozenStrategicCorpus
+  }),strategic);
+  await assert.rejects(authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1({
+    workspace,actor,idempotencyKey:`strategic-authority-${suffix}`,
+    approvalEvidence:"Different operator evidence must reject incompatible replay.",
+    frozenCorpus:frozenStrategicCorpus
+  }),/incompatible product input/u);
+  assert.equal((await pool.query<{count:number}>(`SELECT count(*)::int count
+    FROM signal_provenance_policy_bindings WHERE workspace_id=$1::uuid
+      AND import_batch_id=ANY($2::uuid[]) AND status='active'`,[
+    workspace.id,strategicBatchIds])).rows[0]!.count,5);
+  assert.equal((await pool.query<{count:number}>(`SELECT count(*)::int count
+    FROM signal_provider_mention_observations successor
+    WHERE successor.workspace_id=$1::uuid AND successor.observation_version=2
+      AND successor.import_batch_id=ANY($2::uuid[])`,[
+    workspace.id,strategicBatchIds])).rows[0]!.count,5);
+  assert.equal((await pool.query<{count:number}>(`SELECT count(*)::int count
+    FROM signal_licensing_policy_usages usage
+    JOIN signal_licensing_policies policy ON policy.id=usage.licensing_policy_id
+    WHERE policy.workspace_id=$1::uuid AND policy.policy_key LIKE 'acquisition-strategic-%'
+      AND usage.usage_purpose='llm-processing' AND usage.decision='allowed'`,[
+    workspace.id])).rows[0]!.count,0);
+  assert.equal((await pool.query<{count:number}>(`SELECT count(*)::int count
+    FROM signal_provenance_policy_bindings WHERE workspace_id=$1::uuid
+      AND import_batch_id=$2::uuid`,[workspace.id,attested.batch.id])).rows[0]!.count,0);
+  await assert.rejects(authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1({
+    workspace,actor,idempotencyKey:`strategic-expired-${suffix}`,
+    approvalEvidence:"Synthetic expired authority decision.",frozenCorpus:frozenStrategicCorpus,
+    requestedEffectiveTo:"2020-01-01T00:00:00.000Z"
+  }),/does not cover/u);
+  const otherWorkspace={...workspace,id:otherWorkspaceId,organizationId:otherOrgId,
+    subject:{type:"brand" as const,id:otherBrandId}};
+  const otherActor={id:otherUserId,userType:"noisia_internal" as const,organizationId:otherOrgId};
+  await assert.rejects(authorizeSignalAcquisitionBenchmarkStrategicAuthorityInTransactionV1({
+    workspace:otherWorkspace,actor:otherActor,idempotencyKey:`strategic-cross-${suffix}`,
+    approvalEvidence:"Synthetic cross-workspace decision must fail.",
+    frozenCorpus:frozenStrategicCorpus
+  }),/Frozen acquisition corpus drifted/u);
+  const readyClient=await pool.connect();
+  try{
+    const ready=await preflightSignalSemanticBenchmarkExportV2({client:readyClient,
+      workspaceId:workspace.id,frozenCorpus:frozenStrategicCorpus});
+    assert.equal(ready.ready,true);
+    assert.equal(ready.authority_digest!==null,true);
+    assert.deepEqual(ready.blockers,[]);
+    assert.equal(ready.provider_calls,0);
+    assert.equal(ready.jobs_enqueued,0);
+    assert.equal(ready.writes_performed,false);
+  }finally{readyClient.release();}
+  await assert.rejects(pool.query(`UPDATE signal_provider_mention_observations SET platform='mutated'
+    WHERE workspace_id=$1::uuid AND observation_version=2`,[workspace.id]),
+  (error:unknown)=>(error as {code?:string}).code==="55000");
+  const supersededObservation=(await pool.query<{id:string}>(`SELECT id::text FROM signal_provider_mention_observations
+    WHERE workspace_id=$1::uuid AND import_batch_id=$2::uuid AND observation_version=1`,[
+    workspace.id,strategicBatchIds[0]])).rows[0]!.id;
+  await assert.rejects(pool.query(`WITH source AS (
+      SELECT observation.* FROM signal_provider_mention_observations observation WHERE id=$1::uuid
+    ), payload AS (
+      SELECT to_jsonb(source)||jsonb_build_object('id',gen_random_uuid(),
+        'observation_version',source.observation_version+1,'supersedes_observation_id',source.id,
+        'created_at',clock_timestamp()) value FROM source
+    ) INSERT INTO signal_provider_mention_observations
+      SELECT (jsonb_populate_record(NULL::signal_provider_mention_observations,value)).* FROM payload`,[
+    supersededObservation]),
+  (error:unknown)=>["23514","23505"].includes((error as {code?:string}).code??""));
   const attestedDispatch=(await pool.query<{worker_job_id:string}>(`
     SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1::uuid,$2::uuid)`,[
     attested.batch.id,userId])).rows[0]!;
@@ -818,7 +948,7 @@ async function seedGovernance(input:{workspaceId:string;organizationId:string;us
   const retentionHash=digest(["retention-policy-v1",input.workspaceId,"acquisition-retention","1","allowed","until",
     "2030-01-01T00:00:00Z","block_use",retentionEvidence].join(separator));
   const licensingHash=digest(["licensing-policy-v1",input.workspaceId,"acquisition-licensing","1",licensingEvidence,
-    "client-derived-metrics:allowed,client-mention-list:allowed,client-text-or-excerpt:allowed"].join(separator));
+    "client-derived-metrics:allowed,client-mention-list:allowed,client-text-or-excerpt:allowed,internal-qa:prohibited,llm-processing:prohibited,strategic-analysis:prohibited"].join(separator));
   const bindingHash=digest(["signal-provenance-policy-binding-v1",input.workspaceId,input.sourceId,"∅","1",
     qualityId,retentionId,licensingId].join(separator));
   await pool.query(`INSERT INTO signal_quality_policies(id,organization_id,workspace_id,policy_key,
@@ -842,7 +972,10 @@ async function seedGovernance(input:{workspaceId:string;organizationId:string;us
   await pool.query(`INSERT INTO signal_licensing_policy_usages(workspace_id,licensing_policy_id,usage_purpose,decision)
     VALUES($1::uuid,$2::uuid,'client-derived-metrics','allowed'),
       ($1::uuid,$2::uuid,'client-mention-list','allowed'),
-      ($1::uuid,$2::uuid,'client-text-or-excerpt','allowed')`,[input.workspaceId,licensingId]);
+      ($1::uuid,$2::uuid,'client-text-or-excerpt','allowed'),
+      ($1::uuid,$2::uuid,'internal-qa','prohibited'),
+      ($1::uuid,$2::uuid,'llm-processing','prohibited'),
+      ($1::uuid,$2::uuid,'strategic-analysis','prohibited')`,[input.workspaceId,licensingId]);
   await pool.query(`UPDATE signal_licensing_policies SET status='active',approved_by_user_id=$2::uuid,
     approved_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[licensingId,input.userId]);
   await pool.query(`INSERT INTO signal_provenance_policy_bindings(id,workspace_id,data_source_id,binding_version,status,
@@ -855,3 +988,54 @@ async function seedGovernance(input:{workspaceId:string;organizationId:string;us
 }
 
 function requireLocal(value:string){const parsed=new URL(value);assert.ok(["127.0.0.1","localhost","::1"].includes(parsed.hostname));}
+
+async function createCompletedStrategicFixtureImport(input:{
+  workspace:{id:string};actor:{id:string};sourceId:string;sourceKey:string;slotKey:string;
+  planId:string;slotId:string;planDigest:string;slotDigest:string;bindingId:string;
+  bindingHash:string;suffix:string;storage:{resolve:()=>{bucket:string};createSignedUploads:(args:{
+    objectPrefix:string;fileSizeBytes:number})=>Promise<{bucket:string;objectPrefix:string;
+    expiresInSeconds:number;partSizeBytes:number;parts:Array<{partNumber:number;
+    expectedSizeBytes:number;objectKey:string;uploadUrl:string}>}>};userId:string;
+}){
+  const upload=await createWorkspaceImportUploadV1({workspace:input.workspace as never,
+    actor:input.actor as never,sourceId:input.sourceId,fileName:`strategic-${input.suffix}.csv`,
+    fileSizeBytes:10,contentType:"text/csv",contributedByStudyCorpusId:null,
+    supersedesImportBatchId:null,idempotencyKey:`strategic-import-${input.suffix}`,
+    storage:input.storage,acquisition:{sourceKey:input.sourceKey,slotKey:input.slotKey,
+      queryEvidence:{class:"unavailable",queryVersion:null,reason:"historical_export"},
+      period:{start:"2026-01-01",end:"2026-01-31",timezone:"America/Mexico_City"}}});
+  const dispatch=(await pool.query<{worker_job_id:string}>(`
+    SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1::uuid,$2::uuid)`,[
+    upload.batch.id,input.userId])).rows[0]!;
+  await pool.query(`SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2)`,[
+    upload.batch.id,dispatch.worker_job_id]);
+  const mentionId=randomUUID();
+  await pool.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,
+    provider_record_id,external_id,source_system,source_file_id,text_hash,text_clean,text_length,
+    published_at,platform,resolved_platform,inclusion_status)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$1::uuid,$4,$4,'sentione',$5::uuid,$6,$7,length($7),
+      '2026-01-20T12:00:00Z','web','web','included')`,[mentionId,input.workspace.id,input.sourceId,
+    `strategic-record-${input.suffix}`,upload.batch.id,digest(`strategic-text:${input.suffix}`).slice(7),
+    `Synthetic strategic fixture mention ${input.suffix} with sufficient content.`]);
+  await pool.query(`SELECT record_signal_workspace_import_provenance_v1($1::uuid,$2::uuid,'included')`,[
+    mentionId,upload.batch.id]);
+  const header=digest("headers-v2");
+  await pool.query(`UPDATE import_batches SET provider_observation_projection_state='ready',
+    provider_observation_header_hash=$2,provider_observation_count=1 WHERE id=$1::uuid`,[
+    upload.batch.id,header]);
+  await pool.query(`INSERT INTO signal_provider_mention_observations(
+    workspace_id,data_source_id,import_batch_id,mention_id,provider_key,provider_record_key_hash,
+    acquisition_plan_id,acquisition_slot_id,acquisition_query_version_id,acquisition_plan_digest,
+    acquisition_slot_digest,acquisition_query_digest,provider_schema_version,provider_header_hash,
+    observation_version,observation_hash,platform,language_code,country_code,published_at,
+    provenance_binding_id,rights_definition_hash,retention_until
+  ) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'sentione',$5,$6::uuid,$7::uuid,NULL,$8,$9,NULL,
+    'sentione-csv-47-v1',$10,1,$11,'web','es','MX','2026-01-20T12:00:00Z',
+    $12::uuid,$13,'2030-01-01T00:00:00Z')`,[input.workspace.id,input.sourceId,upload.batch.id,
+    mentionId,digest(`strategic-record:${input.suffix}`),input.planId,input.slotId,input.planDigest,
+    input.slotDigest,header,digest(`strategic-observation:${input.suffix}`),input.bindingId,input.bindingHash]);
+  await pool.query(`SELECT * FROM complete_signal_workspace_import_v1(
+    $1::uuid,$2,$3,1,1,0,0,10)`,[upload.batch.id,dispatch.worker_job_id,
+    createHash("sha256").update(`strategic-${input.suffix}`).digest("hex")]);
+  return{batchId:upload.batch.id,mentionId};
+}

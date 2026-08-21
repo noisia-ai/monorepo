@@ -20,7 +20,8 @@ export type SignalProductOperationActionV1 =
   | "create-competitor"
   | "retire-competitor"
   | "reactivate-competitor"
-  | "seal-acquisition-import";
+  | "seal-acquisition-import"
+  | "authorize-acquisition-benchmark";
 
 export async function beginSignalProductOperationV1<T>(args: {
   queryable: SignalBrandPolicyQueryable;
