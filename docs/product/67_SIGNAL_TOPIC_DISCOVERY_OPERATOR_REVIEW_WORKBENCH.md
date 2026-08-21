@@ -206,7 +206,7 @@ Evidence sanitizada privada:
 
 ```text
 .data/signal-topic-discovery-review/backend-10c3ar/manifest.sanitized.json
-sha256:c02d9aab79873332c63d1358f653f5b1a9a7d1e5c3aaf070319683ba98ec0894
+sha256:04fe0a931141e874f2632c1b02fbb711594614275e2402f2797e58dc15b9b821
 ```
 
 Estado resultante:
