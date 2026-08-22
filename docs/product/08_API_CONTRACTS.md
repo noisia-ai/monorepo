@@ -2517,3 +2517,60 @@ holdout_opened=false
 
 El endpoint no crea Topic Contracts, assignments, tags, jobs, serving materializations,
 pointers o governed bindings.
+
+## Semantic Context Pack management — 10C.3B-A / NOI-71
+
+**Registrado:** 2026-08-22T01:00:09-06:00 (`America/Mexico_City`).
+
+Base: `/api/data-os/signal/{workspaceId}/semantic-context`.
+
+Todos los contratos son management-only, requieren AuthN, AuthZ DB-owned y actor interno,
+y responden `Cache-Control: private, no-store`. El path selecciona el workspace, pero el
+servidor vuelve a resolver ownership. Los writes requieren `Idempotency-Key`; el browser
+no aporta workspace, profile/Knowledge IDs, digests, prompt, modelo, pricing, reviewer ni
+authority IDs.
+
+| Método/ruta | Contrato |
+|---|---|
+| `GET /` | generación operator-safe y versiones actuales de elementos |
+| `POST /` | crea draft con `{action:"create_draft"}`; snapshots resueltos server-side |
+| `GET /readiness` | digests current, counts, locale/market coverage, drift y readiness |
+| `GET /diff` | compara digests sealed contra Brand OS/Knowledge/locale current |
+| `GET /preflight` | máximo una llamada futura, modelo/pricing pinneados, estimate/hard cap, `provider_calls=0` |
+| `POST /reconcile` | crea/no-op de successor append-only con razón cerrada; authority y provider lineage server-owned |
+| `POST /decisions` | approve/reject/edit o bulk approve explícito y máximo 100 |
+| `POST /publish` | publicación separada con confirmación literal |
+
+No existe endpoint browser para `appendSignalSemanticContextProposalsV1`: es un boundary
+server-owned para una proyección determinística o un adapter de provider futuro. Una
+edición HTTP sólo cambia texto/locale/relación operator-safe y vuelve a `pending`; no
+acepta entity UUIDs. Publication falla si queda cualquier pending, no existe un approved,
+hay colisión canónica o cambiaron Brand OS, Knowledge o locale.
+
+El focused GET conserva `origin`, timestamps, disposition y lineage de supersession. Los
+refs de actor, entidad y evidencia se pseudonimizan server-side; ningún UUID de autoridad
+o bloque Knowledge crudo cruza el contrato del navegador.
+
+El preflight es estrictamente read-only. La configuración incompleta se representa como
+`blocked/provider_configuration_unavailable`; nunca dispara provider, job u outbox.
+
+`POST .../semantic-context/reconcile` acepta únicamente `reason` del enum cerrado y
+requiere `Idempotency-Key`. Relee Brand OS, Knowledge, locale/market y provider lineage
+después del lock. Si la hoja effective ya coincide, devuelve `outcome=noop`; si existe
+drift crea un successor `draft` y devuelve `outcome=created`. Una corrida provider en
+`queued|processing|validating` devuelve 409. La respuesta sólo incluye generation key,
+versión, status y outcome; no expone predecessor ID, snapshots, hashes completos,
+modelo o pricing.
+
+### Ejecución acotada de propuestas — 69A.2
+
+`POST /api/data-os/signal/{workspaceId}/semantic-context/proposals` inicia un run durable
+con `Idempotency-Key`, `generation_key`, `preflight_digest`, la confirmación literal
+`GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS` y un `hard_cap_micro_usd` explícito. El
+servidor fija provider/model/pricing/prompt y relee Brand OS, Knowledge y locale.
+
+`GET .../proposals/{runKey}` devuelve únicamente estado, progreso, lineage de provider,
+budget/settlement, proposal count, result digest y error sanitizado. `POST
+.../proposals/{runKey}/retry` acepta body vacío y sólo reencola un intento cuyo transporte
+demostró que no envió una request. Un outcome ambiguo es `dead_letter` y no es retryable.
+Ningún endpoint devuelve prompt, response cruda, bloques Knowledge o evidence UUIDs.

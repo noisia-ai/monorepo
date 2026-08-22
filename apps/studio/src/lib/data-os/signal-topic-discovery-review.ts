@@ -456,10 +456,11 @@ export async function registerSignalTopicDiscoveryReviewPacketV1(args: {
   const packetArtifactKey = `topic-discovery-packet-${packet.packet_digest.slice(7, 23)}`;
   await args.queryable.query(`
     INSERT INTO analysis_artifacts(
-      id,workspace_id,discovery_run_digest,artifact_key,artifact_type,title,summary,
+      id,workspace_id,workspace_artifact_kind,workspace_authority_digest,
+      discovery_run_digest,artifact_key,artifact_type,title,summary,
       content,review_status,revision,position,metadata
     ) VALUES(
-      $1::uuid,$2::uuid,$3,$4,'topic_discovery_review_packet',$5,$6,$7::jsonb,
+      $1::uuid,$2::uuid,'topic_discovery',$3,$3,$4,'topic_discovery_review_packet',$5,$6,$7::jsonb,
       'needs_review',1,0,$8::jsonb
     )
   `, [
@@ -491,10 +492,11 @@ export async function registerSignalTopicDiscoveryReviewPacketV1(args: {
     const proposalKey = proposalPublicKey(index);
     await args.queryable.query(`
       INSERT INTO analysis_artifacts(
-        id,workspace_id,discovery_run_digest,artifact_key,artifact_type,title,summary,
+        id,workspace_id,workspace_artifact_kind,workspace_authority_digest,
+        discovery_run_digest,artifact_key,artifact_type,title,summary,
         content,review_status,revision,position,metadata
       ) VALUES(
-        $1::uuid,$2::uuid,$3,$4,'topic_discovery_proposal',$5,$6,$7::jsonb,
+        $1::uuid,$2::uuid,'topic_discovery',$3,$3,$4,'topic_discovery_proposal',$5,$6,$7::jsonb,
         'needs_review',1,$8,$9::jsonb
       )
     `, [

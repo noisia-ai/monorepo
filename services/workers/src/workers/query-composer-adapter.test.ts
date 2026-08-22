@@ -10,5 +10,5 @@ test("Study OS Worker is a thin adapter over the single provider-neutral compose
   assert.doesNotMatch(source,/function refreshGenerationContract/u);
   assert.doesNotMatch(source,/buildQueryComposerPrompt/u);
   assert.doesNotMatch(source,/parseComposedQueryJson/u);
-  assert.equal((source.match(/generateText\(/gu)??[]).length,1);
+  assert.equal((source.match(/generateAnthropicBoundedTextV1\(/gu)??[]).length,1);
 });

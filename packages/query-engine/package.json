@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@noisia/methodologies": "workspace:*",
-    "@noisia/types": "workspace:*"
+    "@noisia/types": "workspace:*",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

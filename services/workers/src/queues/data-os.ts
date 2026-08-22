@@ -6,6 +6,7 @@ import {
   SIGNAL_INVALIDATION_JOB_NAME,
   SIGNAL_INTERPRETATION_JOB_NAME,
   SIGNAL_MATERIALIZE_JOB_NAME,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
   SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME,
@@ -23,11 +24,14 @@ import { signalInterpretationJob } from "../workers/signal-interpretation";
 import { signalMonthlyInsightJob } from "../workers/signal-monthly-insights";
 import { signalTaxonomyInsightJob } from "../workers/signal-taxonomy-insights";
 import { assertSignalTaxonomyJobNotRetiredV1 } from "../workers/signal-taxonomy-enrichment-runtime";
+import { signalSemanticContextProposalJob } from "../workers/signal-semantic-context-proposal";
 import { redisConnection } from "./query-engine";
 
+export { redisConnection };
+
 export const DATA_OS_HEARTBEAT_TTL_SECONDS = 45;
-const dataOsQueueName = resolveQueueName(DATA_OS_QUEUE_NAME);
-const dataOsProducer = new Queue(dataOsQueueName, { connection: redisConnection });
+export const dataOsQueueName = resolveQueueName(DATA_OS_QUEUE_NAME);
+export const dataOsProducer = new Queue(dataOsQueueName, { connection: redisConnection });
 
 export async function closeDataOsProducer() {
   await dataOsProducer.close();
@@ -48,6 +52,9 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_INTERPRETATION_JOB_NAME) return signalInterpretationJob(job);
       if (job.name === SIGNAL_MONTHLY_INSIGHT_JOB_NAME) return signalMonthlyInsightJob(job);
       if (job.name === SIGNAL_TAXONOMY_INSIGHT_JOB_NAME) return signalTaxonomyInsightJob(job);
+      if (job.name === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME) {
+        return signalSemanticContextProposalJob(job);
+      }
       throw new Error(`Unsupported Data OS job: ${job.name}`);
     },
     {

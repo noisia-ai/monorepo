@@ -153,7 +153,14 @@ async function verifySchema(client: pg.Client) {
     "signal_classification_evaluations",
     "signal_classification_evaluation_slices",
     "signal_tagging_model_version_events",
-    "signal_classification_projection_runs"
+    "signal_classification_projection_runs",
+    "signal_semantic_context_generations",
+    "signal_semantic_context_element_versions",
+    "signal_semantic_context_events",
+    "signal_semantic_context_proposal_runs",
+    "signal_semantic_context_budget_reservations",
+    "signal_semantic_context_proposal_outbox",
+    "signal_semantic_context_proposal_run_events"
   ];
   const requiredIndexes = [
     "idx_engine_analyses_corpus",
@@ -209,7 +216,14 @@ async function verifySchema(client: pg.Client) {
     "uq_signal_classification_assignment_supersedes",
     "uq_signal_classification_generation_supersedes",
     "uq_record_tags_classification_assignment",
-    "idx_import_batches_query_evidence"
+    "idx_import_batches_query_evidence",
+    "idx_signal_semantic_context_generation_history",
+    "idx_signal_semantic_context_element_current",
+    "idx_signal_semantic_context_events_history",
+    "idx_signal_semantic_context_proposal_run_status",
+    "idx_signal_semantic_context_proposal_run_recovery",
+    "idx_signal_semantic_context_proposal_outbox_claim",
+    "idx_signal_semantic_context_proposal_events"
   ];
 
   const tables = await client.query<{ table_name: string }>(

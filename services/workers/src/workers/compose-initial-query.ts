@@ -1,5 +1,3 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateText } from "ai";
 import type { Job } from "bullmq";
 
 import {
@@ -10,6 +8,7 @@ import {
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { generateAnthropicBoundedTextV1 } from "../providers/anthropic-bounded-text";
 import { ensureQueryStrategyBrief, loadAnalysisRagContext } from "./analysis-rag-context";
 import { materializeQueryPacksForIteration } from "./query-packs";
 
@@ -81,11 +80,8 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
     model,
     provider: {
       async generate(request) {
-        const result = await generateText({
-          model: anthropic(request.model),
-          prompt: request.prompt,
-          temperature: request.temperature
-        });
+        const result = await generateAnthropicBoundedTextV1({ model: request.model,
+          prompt: request.prompt, temperature: request.temperature });
         return { text: result.text };
       }
     }

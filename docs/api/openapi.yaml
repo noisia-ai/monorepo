@@ -29,6 +29,8 @@ tags:
     description: Protected internal workspace-owned acquisition control-plane APIs.
   - name: Topic Discovery Review
     description: Protected internal operator review of pending discovery proposals; never Signal serving or semantic assignment authority.
+  - name: Semantic Context Pack
+    description: Protected management-only authority for structured Brand OS/Knowledge context; never serving or classification authority.
 paths:
   /api/public/v1/reports:
     get:
@@ -1863,6 +1865,213 @@ paths:
       responses:
         "200": { description: New review revision; prior decisions and events remain immutable. }
         "409": { description: Current review is not finalized or replay is incompatible. }
+  /api/data-os/signal/{workspaceId}/semantic-context:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextGeneration
+      summary: Load one operator-safe generation and its current typed element versions.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: generation_key, in: query, schema: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$' } }
+      responses:
+        "200": { description: Generation and current elements without private prompt or raw Knowledge blobs. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Generation unavailable in this workspace. }
+    post:
+      tags: [Semantic Context Pack]
+      operationId: createSemanticContextDraft
+      summary: Create a draft tied server-side to exact Brand OS, Knowledge and locale authority.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties: { action: { const: create_draft } }
+      responses:
+        "201": { description: Idempotent draft generation created. }
+        "400": { description: Idempotency-Key missing. }
+        "409": { description: Existing draft or source authority unavailable. }
+  /api/data-os/signal/{workspaceId}/semantic-context/readiness:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextReadiness
+      summary: Resolve published-pack readiness and Brand OS/Knowledge/locale drift fail-closed.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Operator-safe readiness descriptor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextReadinessV1" }
+  /api/data-os/signal/{workspaceId}/semantic-context/reconcile:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: reconcileSemanticContextGeneration
+      summary: Append an effective draft successor sealed to current server-owned authority.
+      description: Preserves the prior draft or published generation byte-for-byte. Current generations produce an idempotent no-op. A nonterminal provider run blocks reconciliation.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  enum: [brand_os_drift, knowledge_drift, locale_market_drift,
+                    provider_lineage_missing, provider_lineage_changed,
+                    operator_requested_reconciliation]
+      responses:
+        "200": { description: Idempotent created/no-op result with operator-safe generation key and version. }
+        "400": { description: Idempotency-Key missing. }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Active proposal run, authority conflict, or unavailable current source authority. }
+        "422": { description: Closed reason rejected or inconsistent with observed drift. }
+  /api/data-os/signal/{workspaceId}/semantic-context/diff:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextDiff
+      summary: Compare a sealed generation with current Brand OS, Knowledge and locale authority.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: generation_key, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Digest-only drift comparison. }
+  /api/data-os/signal/{workspaceId}/semantic-context/preflight:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextProposalPreflight
+      summary: Free read-only upper-bound provider preflight for one bounded future proposal generation.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200": { description: Server-pinned model, pricing, one call maximum, estimate and hard cap; provider_calls=0 and writes_performed=false. }
+  /api/data-os/signal/{workspaceId}/semantic-context/proposals:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: startSemanticContextProposalRun
+      summary: Queue one bounded, durable provider proposal run against an exact draft preflight.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextProposalStartV1" }
+      responses:
+        "202":
+          description: Idempotent queued run. No proposal is authoritative.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
+        "409": { description: Preflight, draft authority, lineage or idempotency drift. }
+        "422": { description: Closed command, confirmation or hard cap rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextProposalRun
+      summary: Load operator-safe progress and result metadata for one durable proposal run.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: runKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^semantic-context-proposal-[0-9a-f]{16}$' }
+      responses:
+        "200":
+          description: Sanitized run; never includes prompt, raw provider response, Knowledge payload or evidence UUID.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
+        "404": { description: Run unavailable in this authorized workspace. }
+  /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}/retry:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: retrySemanticContextProposalRun
+      summary: Requeue only a transport-confirmed, definitely-not-sent provider attempt.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - name: runKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^semantic-context-proposal-[0-9a-f]{16}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "202":
+          description: Same durable run requeued without changing sealed authority or provider identity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
+        "409": { description: Outcome is ambiguous, terminal, incompatible or otherwise not retry-safe. }
+  /api/data-os/signal/{workspaceId}/semantic-context/decisions:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: decideSemanticContextElement
+      summary: Append an explicit per-element decision/edit or bounded bulk approval.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextDecisionV1" }
+      responses:
+        "200": { description: New append-only element version; an edit remains pending. }
+        "409": { description: Draft, state, drift or replay conflict. }
+        "422": { description: Closed command rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/publish:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: publishSemanticContextGeneration
+      summary: Publish a fully reviewed, reconciled generation in a separate explicit operation.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [generation_key, confirmation]
+              properties:
+                generation_key: { type: string }
+                confirmation: { const: publish_reviewed_semantic_context }
+      responses:
+        "200": { description: Immutable published pack digest. }
+        "409": { description: Pending elements, no approvals, source drift or replay conflict. }
 components:
   securitySchemes:
     bearerAuth:
@@ -2042,6 +2251,110 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SignalSemanticContextReadinessV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, brand_os_digest, knowledge_digest,
+        semantic_context_pack_digest, lifecycle_state, counts, locale_market_coverage,
+        drift_state, drift_reasons, ready_for_context_aware_discovery, limitations]
+      properties:
+        contract_version: { const: signal-semantic-context-pack-v1 }
+        brand_os_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        knowledge_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        semantic_context_pack_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
+        lifecycle_state: { type: string, enum: [not_available, draft, published] }
+        generation: { type: [object, "null"], additionalProperties: true }
+        open_draft: { type: [object, "null"], additionalProperties: true }
+        counts:
+          type: object
+          additionalProperties: false
+          required: [pending, approved, rejected]
+          properties:
+            pending: { type: integer, minimum: 0 }
+            approved: { type: integer, minimum: 0 }
+            rejected: { type: integer, minimum: 0 }
+        locale_market_coverage: { type: object, additionalProperties: true }
+        drift_state: { type: string, enum: [not_available, current, stale] }
+        drift_reasons: { type: array, items: { type: string } }
+        ready_for_context_aware_discovery: { type: boolean }
+        limitations: { type: array, items: { type: string } }
+    SignalSemanticContextDecisionV1:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [action, generation_key, element_key]
+          properties:
+            action: { type: string, enum: [approve, reject] }
+            generation_key: { type: string }
+            element_key: { type: string }
+        - type: object
+          additionalProperties: false
+          required: [action, generation_key, element_key, edit]
+          properties:
+            action: { const: edit }
+            generation_key: { type: string }
+            element_key: { type: string }
+            edit:
+              type: object
+              additionalProperties: false
+              required: [canonical_key, display_text, locale, relation_kind, relation_target_key]
+              properties:
+                canonical_key: { type: string }
+                display_text: { type: string, minLength: 1, maxLength: 500 }
+                locale: { type: [string, "null"] }
+                relation_kind: { type: [string, "null"], enum: [is_a, part_of, surface_of, competes_with, associated_with, null] }
+                relation_target_key: { type: [string, "null"] }
+        - type: object
+          additionalProperties: false
+          required: [action, generation_key, element_keys]
+          properties:
+            action: { const: bulk_approve }
+            generation_key: { type: string }
+            element_keys: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+    SignalSemanticContextProposalStartV1:
+      type: object
+      additionalProperties: false
+      required: [generation_key, preflight_digest, confirmation, hard_cap_micro_usd]
+      properties:
+        generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 160 }
+        preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        confirmation: { const: GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS }
+        hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$', maxLength: 18 }
+    SignalSemanticContextProposalRunV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, run_key, status, progress, generation_ref, provider, budget,
+        provider_call_count, proposal_count, result_digest, error, queued_at, started_at, completed_at]
+      properties:
+        contract_version: { const: signal-semantic-context-proposal-run-v1 }
+        run_key: { type: string, pattern: '^semantic-context-proposal-[0-9a-f]{16}$' }
+        status: { type: string, enum: [queued, processing, validating, completed, failed, stale, dead_letter] }
+        progress: { type: [integer, "null"], minimum: 0, maximum: 100 }
+        generation_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        provider:
+          type: object
+          additionalProperties: false
+          required: [key, model, model_version, pricing_version]
+          properties:
+            key: { const: anthropic }
+            model: { type: string }
+            model_version: { type: string }
+            pricing_version: { type: string }
+        budget:
+          type: object
+          additionalProperties: false
+          required: [hard_cap_micro_usd, reservation_micro_usd, settled_micro_usd]
+          properties:
+            hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
+            reservation_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
+            settled_micro_usd: { type: [string, "null"], pattern: '^[0-9]+$' }
+        provider_call_count: { type: integer, minimum: 0, maximum: 1 }
+        proposal_count: { type: [integer, "null"], minimum: 1, maximum: 250 }
+        result_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
+        error: { type: [object, "null"], additionalProperties: true }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
     TopicDiscoveryReviewDraftV1:
       type: object
       additionalProperties: false

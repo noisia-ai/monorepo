@@ -26,7 +26,13 @@ export type SignalProductOperationActionV1 =
   | "save-topic-discovery-review-draft"
   | "save-topic-discovery-outlier-draft"
   | "finalize-topic-discovery-review"
-  | "supersede-topic-discovery-review";
+  | "supersede-topic-discovery-review"
+  | "create-semantic-context-draft"
+  | "reconcile-semantic-context-generation"
+  | "append-semantic-context-proposals"
+  | "decide-semantic-context-element"
+  | "bulk-approve-semantic-context-elements"
+  | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {
   queryable: SignalBrandPolicyQueryable;

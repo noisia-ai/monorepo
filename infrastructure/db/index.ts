@@ -5,4 +5,5 @@ export * from "./signal-mention-governance";
 export * from "./signal-semantic-resolution";
 export * from "./signal-semantic-review";
 export * from "./signal-taxonomy-profile";
+export * from "./signal-semantic-context-proposal";
 export * from "./sentione-csv-ingest";

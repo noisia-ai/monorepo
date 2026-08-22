@@ -143,6 +143,21 @@ export async function loadDataOsRuntimeReadiness() {
   }
 }
 
+export async function loadSemanticContextProposalRuntimeReadiness(){
+  if(!isDataOsQueueConfigured())return{queue_configured:false,worker_alive:false,recovery_alive:false};
+  try{
+    if(!globalThis.noisiaDataOsRedis)globalThis.noisiaDataOsRedis=getRedisConnection();
+    const queueName=resolveDataOsQueueName();
+    const[workerValue,recoveryValue]=await Promise.all([
+      globalThis.noisiaDataOsRedis.get(`noisia:worker-alive:${queueName}`),
+      globalThis.noisiaDataOsRedis.get(`noisia:drainer-alive:${queueName}:semantic-context-proposal-outbox`)
+    ]);
+    const alive=(value:string|null)=>{const epoch=value?Number(value):Number.NaN;
+      return Number.isFinite(epoch)&&epoch>Date.now()-60_000;};
+    return{queue_configured:true,worker_alive:alive(workerValue),recovery_alive:alive(recoveryValue)};
+  }catch{return{queue_configured:true,worker_alive:false,recovery_alive:false};}
+}
+
 export function resolveSemanticResolutionQueueName(
   env:Record<string,string|undefined>=process.env
 ){

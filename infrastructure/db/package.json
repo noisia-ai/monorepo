@@ -38,6 +38,7 @@
     "db:integration:signal-workspace-async-imports": "node --test --import tsx migrations/signal-workspace-async-imports.integration.test.ts",
     "db:integration:signal-workspace-import-classification": "node --test --import tsx migrations/signal-workspace-import-classification.integration.test.ts",
     "db:integration:signal-classification-authority": "node --test --import tsx migrations/signal-classification-authority.integration.test.ts",
+    "db:integration:signal-semantic-context-proposals": "node --test --import tsx signal-semantic-context-proposal.postgres.test.ts",
     "db:apply:existing": "tsx scripts/apply-existing-migrations.ts",
     "db:apply:signal-topics-narratives": "tsx scripts/apply-signal-topics-narratives-migration.ts",
     "db:apply:signal-workspace-data-plane": "tsx scripts/apply-signal-workspace-data-plane-migration.ts",

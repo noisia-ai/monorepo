@@ -28,6 +28,7 @@ import { startSignalWorkspaceImportOutboxDrainer } from "./workers/signal-worksp
 import { startSignalSemanticReviewProjectionOutboxDrainer } from "./workers/signal-semantic-review-projection-outbox";
 import { startSignalSemanticResolutionChildOutboxDrainer } from "./workers/signal-semantic-resolution-child-outbox";
 import { assertUatWorkerStartup } from "./workers/uat-runtime-preflight";
+import { startSignalSemanticContextProposalOutboxDrainerV1 } from "./workers/signal-semantic-context-proposal-outbox";
 
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
@@ -39,6 +40,7 @@ const queryEngineWorker = startQueryEngineWorker();
 const tbAnalysisWorker = startTbAnalysisWorker();
 const strategicRunOutboxDrainer = startSignalStrategicRunOutboxDrainer();
 const strategicStepOutboxDrainer = startSignalStrategicStepOutboxDrainer();
+const semanticContextProposalOutboxDrainer = startSignalSemanticContextProposalOutboxDrainerV1();
 const workspaceImportOutboxDrainer = startSignalWorkspaceImportOutboxDrainer();
 const tbHeartbeat = startTbAnalysisHeartbeat();
 const engineAnalysisWorker = isEngineRuntimeEnabled() ? startEngineAnalysisWorker() : null;
@@ -112,6 +114,7 @@ async function shutdown() {
   if (semanticResolutionHeartbeat) clearInterval(semanticResolutionHeartbeat);
   await tbHeartbeat.close();
   await strategicStepOutboxDrainer.close();
+  await semanticContextProposalOutboxDrainer.close();
   await workspaceImportOutboxDrainer.close();
   await semanticReviewProjectionOutboxDrainer?.close();
   await semanticResolutionChildOutboxDrainer?.close();

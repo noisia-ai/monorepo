@@ -51,6 +51,7 @@ export * from "./signal-governed-views-v1";
 export * from "./signal-strategic-gate-d-v1";
 export * from "./signal-semantic-review-v1";
 export * from "./signal-semantic-resolution-v1";
+export * from "./signal-semantic-context-proposal-v1";
 export * from "./signal-topics-narratives-v1";
 export * from "./signal-classification-authority-v1";
 export * from "./signal-taxonomy-insights-v1";

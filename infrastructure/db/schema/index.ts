@@ -3502,6 +3502,8 @@ export const analysisArtifacts = pgTable(
       .references(() => studyCorpora.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id").references(() => signalWorkspaces.id, { onDelete: "restrict" }),
     discoveryRunDigest: text("discovery_run_digest"),
+    workspaceArtifactKind: text("workspace_artifact_kind"),
+    workspaceAuthorityDigest: text("workspace_authority_digest"),
     tbAnalysisId: uuid("tb_analysis_id").references(() => tbAnalyses.id, { onDelete: "cascade" }),
     engineAnalysisId: uuid("engine_analysis_id").references(() => engineAnalyses.id, { onDelete: "cascade" }),
     artifactKey: text("artifact_key").notNull(),
@@ -3528,12 +3530,21 @@ export const analysisArtifacts = pgTable(
       "analysis_artifacts_exactly_one_analysis",
       sql`(
         ${table.studyCorpusId} IS NOT NULL AND ${table.workspaceId} IS NULL
+        AND ${table.workspaceArtifactKind} IS NULL AND ${table.workspaceAuthorityDigest} IS NULL
         AND ${table.discoveryRunDigest} IS NULL
         AND ((${table.tbAnalysisId} IS NOT NULL)::int + (${table.engineAnalysisId} IS NOT NULL)::int) = 1
       ) OR (
         ${table.studyCorpusId} IS NULL AND ${table.workspaceId} IS NOT NULL
         AND ${table.tbAnalysisId} IS NULL AND ${table.engineAnalysisId} IS NULL
+        AND ${table.workspaceArtifactKind} = 'topic_discovery'
         AND ${table.discoveryRunDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.workspaceAuthorityDigest} = ${table.discoveryRunDigest}
+      ) OR (
+        ${table.studyCorpusId} IS NULL AND ${table.workspaceId} IS NOT NULL
+        AND ${table.tbAnalysisId} IS NULL AND ${table.engineAnalysisId} IS NULL
+        AND ${table.workspaceArtifactKind} = 'semantic_context'
+        AND ${table.discoveryRunDigest} IS NULL
+        AND ${table.workspaceAuthorityDigest} ~ '^sha256:[0-9a-f]{64}$'
       )`
     ),
     check(
@@ -3558,6 +3569,9 @@ export const analysisArtifacts = pgTable(
     uniqueIndex("uq_analysis_artifacts_discovery_key_revision")
       .on(table.workspaceId, table.discoveryRunDigest, table.artifactKey, table.revision)
       .where(sql`${table.workspaceId} IS NOT NULL AND ${table.discoveryRunDigest} IS NOT NULL`),
+    uniqueIndex("uq_analysis_artifacts_semantic_context_key_revision")
+      .on(table.workspaceId, table.workspaceAuthorityDigest, table.artifactKey, table.revision)
+      .where(sql`${table.workspaceArtifactKind} = 'semantic_context'`),
     index("idx_analysis_artifacts_corpus_type").on(
       table.studyCorpusId,
       table.artifactType,
@@ -3568,7 +3582,11 @@ export const analysisArtifacts = pgTable(
     index("idx_analysis_artifacts_engine").on(table.engineAnalysisId, table.artifactType, table.position),
     index("idx_analysis_artifacts_discovery_review")
       .on(table.workspaceId, table.discoveryRunDigest, table.artifactType, table.reviewStatus, table.position)
-      .where(sql`${table.workspaceId} IS NOT NULL`)
+      .where(sql`${table.workspaceId} IS NOT NULL`),
+    index("idx_analysis_artifacts_semantic_context")
+      .on(table.workspaceId, table.artifactType, table.reviewStatus, table.position)
+      .where(sql`${table.workspaceArtifactKind} = 'semantic_context'`),
+    unique("uq_analysis_artifacts_id_workspace").on(table.id, table.workspaceId)
   ]
 );
 
@@ -5195,7 +5213,9 @@ export const signalGovernanceControlOperations = pgTable(
       'seal-acquisition-brief','generate-acquisition-queries','authorize-acquisition-benchmark',
       'register-topic-discovery-review','save-topic-discovery-review-draft',
       'save-topic-discovery-outlier-draft','finalize-topic-discovery-review',
-      'supersede-topic-discovery-review'
+      'supersede-topic-discovery-review','create-semantic-context-draft',
+      'append-semantic-context-proposals','decide-semantic-context-element',
+      'bulk-approve-semantic-context-elements','publish-semantic-context-generation'
     )`),
     check("signal_governance_control_hashes",sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
     check("signal_governance_control_status",sql`${table.status} IN ('in_progress','completed')`),
@@ -5389,6 +5409,237 @@ export const signalTopicDiscoveryReviewEvents = pgTable(
       ${table.outcome} IS NULL OR ${table.outcome} IN ('candidate_preferred','none_acceptable','rerun_requested')`),
     check("signal_topic_discovery_review_event_digests", sql`${table.reviewDigest} ~ '^sha256:[0-9a-f]{64}$'`)
   ]
+);
+
+export const signalSemanticContextGenerations = pgTable(
+  "signal_semantic_context_generations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    artifactId: uuid("artifact_id").notNull().references(() => analysisArtifacts.id, { onDelete: "restrict" }),
+    generationKey: text("generation_key").notNull(),
+    generationVersion: integer("generation_version").notNull(),
+    status: text("status").notNull().default("draft"),
+    supersedesGenerationId: uuid("supersedes_generation_id")
+      .references((): AnyPgColumn => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+    supersessionReason: text("supersession_reason"),
+    brandOsProfileId: uuid("brand_os_profile_id").notNull().references(() => brandOsProfiles.id, { onDelete: "restrict" }),
+    brandOsProfileVersion: integer("brand_os_profile_version").notNull(),
+    brandOsDigest: text("brand_os_digest").notNull(),
+    knowledgeGenerationKey: text("knowledge_generation_key").notNull(),
+    knowledgeDigest: text("knowledge_digest").notNull(),
+    localeContextDigest: text("locale_context_digest").notNull(),
+    primaryLocale: text("primary_locale").notNull(),
+    localeVariants: text("locale_variants").array().notNull(),
+    markets: text("markets").array().notNull(),
+    timezone: text("timezone").notNull(),
+    proposalModel: text("proposal_model"),
+    proposalModelVersion: text("proposal_model_version"),
+    proposalPromptDigest: text("proposal_prompt_digest"),
+    proposalPricingVersion: text("proposal_pricing_version"),
+    draftDigest: text("draft_digest").notNull(),
+    packDigest: text("pack_digest"),
+    createdOperationId: uuid("created_operation_id").notNull()
+      .references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    publishedOperationId: uuid("published_operation_id")
+      .references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    publishedByUserId: uuid("published_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now(),
+    publishedAt: timestamp("published_at", { withTimezone: true })
+  },
+  (table) => [
+    unique("uq_signal_semantic_context_generation_artifact").on(table.artifactId, table.workspaceId),
+    unique("uq_signal_semantic_context_generation_id_workspace").on(table.id, table.workspaceId),
+    unique("uq_signal_semantic_context_generation_version").on(table.workspaceId, table.generationVersion),
+    unique("uq_signal_semantic_context_generation_key").on(table.workspaceId, table.generationKey),
+    uniqueIndex("uq_signal_semantic_context_generation_successor").on(table.supersedesGenerationId)
+      .where(sql`${table.supersedesGenerationId} IS NOT NULL`),
+    index("idx_signal_semantic_context_generation_history").on(table.workspaceId, table.generationVersion),
+    index("idx_signal_semantic_context_draft_history").on(table.workspaceId, table.generationVersion)
+      .where(sql`${table.status}='draft'`),
+    check("signal_semantic_context_generation_version_positive", sql`${table.generationVersion}>0`),
+    check("signal_semantic_context_generation_status", sql`${table.status} IN ('draft','published')`),
+    check("signal_semantic_context_generation_supersession_reason", sql`
+      ${table.supersessionReason} IS NULL OR ${table.supersessionReason} IN (
+        'brand_os_drift','knowledge_drift','locale_market_drift','provider_lineage_missing',
+        'provider_lineage_changed','operator_requested_reconciliation')`),
+    check("signal_semantic_context_generation_digests", sql`
+      ${table.brandOsDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.knowledgeDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.localeContextDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.draftDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND (${table.packDigest} IS NULL OR ${table.packDigest} ~ '^sha256:[0-9a-f]{64}$')`),
+    check("signal_semantic_context_generation_publication", sql`
+      (${table.status}='draft' AND ${table.packDigest} IS NULL AND ${table.publishedAt} IS NULL)
+      OR (${table.status}='published' AND ${table.packDigest} IS NOT NULL AND ${table.publishedAt} IS NOT NULL)`)
+  ]
+);
+
+export const signalSemanticContextElementVersions = pgTable(
+  "signal_semantic_context_element_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+    artifactId: uuid("artifact_id").notNull().references(() => analysisArtifacts.id, { onDelete: "restrict" }),
+    evidenceGroupId: uuid("evidence_group_id").notNull().references(() => analysisEvidenceGroups.id, { onDelete: "restrict" }),
+    elementKey: text("element_key").notNull(),
+    elementVersion: integer("element_version").notNull(),
+    elementKind: text("element_kind").notNull(),
+    canonicalKey: text("canonical_key").notNull(),
+    displayText: text("display_text").notNull(),
+    scope: text("scope"),
+    entityType: text("entity_type"),
+    entityId: uuid("entity_id"),
+    locale: text("locale"),
+    relationKind: text("relation_kind"),
+    relationTargetKey: text("relation_target_key"),
+    confidence: numeric("confidence", { precision: 7, scale: 6 }),
+    disposition: text("disposition").notNull(),
+    originKind: text("origin_kind").notNull(),
+    supersedesElementId: uuid("supersedes_element_id")
+      .references((): AnyPgColumn => signalSemanticContextElementVersions.id, { onDelete: "restrict" }),
+    originalProposalElementId: uuid("original_proposal_element_id")
+      .references((): AnyPgColumn => signalSemanticContextElementVersions.id, { onDelete: "restrict" }),
+    sourceRefsDigest: text("source_refs_digest").notNull(),
+    elementDigest: text("element_digest").notNull(),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    proposedByUserId: uuid("proposed_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_semantic_context_element_artifact").on(table.artifactId, table.workspaceId),
+    unique("uq_signal_semantic_context_element_id_workspace").on(table.id, table.workspaceId),
+    unique("uq_signal_semantic_context_element_evidence_group").on(table.evidenceGroupId),
+    unique("uq_signal_semantic_context_element_version").on(table.generationId, table.elementKey, table.elementVersion),
+    uniqueIndex("uq_signal_semantic_context_element_successor").on(table.supersedesElementId)
+      .where(sql`${table.supersedesElementId} IS NOT NULL`),
+    index("idx_signal_semantic_context_element_current").on(table.generationId, table.elementKey, table.elementVersion),
+    index("idx_signal_semantic_context_element_disposition").on(table.generationId, table.disposition, table.elementKind),
+    check("signal_semantic_context_element_version_positive", sql`${table.elementVersion}>0`),
+    check("signal_semantic_context_element_disposition", sql`${table.disposition} IN ('pending','approved','rejected')`),
+    check("signal_semantic_context_element_origin", sql`${table.originKind} IN ('server_projection','provider_proposal','operator_decision','operator_correction')`),
+    check("signal_semantic_context_element_confidence", sql`${table.confidence} IS NULL OR (${table.confidence}>=0 AND ${table.confidence}<=1)`),
+    check("signal_semantic_context_element_digests", sql`
+      ${table.sourceRefsDigest} ~ '^sha256:[0-9a-f]{64}$'
+      AND ${table.elementDigest} ~ '^sha256:[0-9a-f]{64}$'`)
+  ]
+);
+
+export const signalSemanticContextEvents = pgTable(
+  "signal_semantic_context_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+    elementId: uuid("element_id").references(() => signalSemanticContextElementVersions.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    eventIndex: integer("event_index").notNull(),
+    eventKind: text("event_kind").notNull(),
+    previousStateDigest: text("previous_state_digest"),
+    nextStateDigest: text("next_state_digest").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: now()
+  },
+  (table) => [
+    unique("uq_signal_semantic_context_operation_event").on(table.operationId, table.eventIndex),
+    index("idx_signal_semantic_context_events_history").on(table.generationId, table.createdAt, table.id),
+    check("signal_semantic_context_event_index", sql`${table.eventIndex}>=0`),
+    check("signal_semantic_context_event_digests", sql`
+      (${table.previousStateDigest} IS NULL OR ${table.previousStateDigest} ~ '^sha256:[0-9a-f]{64}$')
+      AND ${table.nextStateDigest} ~ '^sha256:[0-9a-f]{64}$'`)
+  ]
+);
+
+export const signalSemanticContextProposalRuns = pgTable(
+  "signal_semantic_context_proposal_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    generationId: uuid("generation_id").notNull().references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+    operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    runKey: text("run_key").notNull(), status: text("status").notNull().default("queued"),
+    preflightDigest: text("preflight_digest").notNull(), brandOsDigest: text("brand_os_digest").notNull(),
+    knowledgeDigest: text("knowledge_digest").notNull(), localeContextDigest: text("locale_context_digest").notNull(),
+    promptDigest: text("prompt_digest").notNull(), contextInputDigest: text("context_input_digest").notNull(),
+    provider: text("provider").notNull(), model: text("model").notNull(),
+    modelVersion: text("model_version").notNull(), pricingVersion: text("pricing_version").notNull(),
+    maxInputTokens: integer("max_input_tokens").notNull(), maxOutputTokens: integer("max_output_tokens").notNull(),
+    inputUsdPerMillionTokens: numeric("input_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    outputUsdPerMillionTokens: numeric("output_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    hardCapMicroUsd: bigint("hard_cap_micro_usd", { mode: "bigint" }).notNull(),
+    reservationMicroUsd: bigint("reservation_micro_usd", { mode: "bigint" }).notNull(),
+    providerRequestIdentity: text("provider_request_identity").notNull(),
+    providerRequestId: text("provider_request_id"), providerCallState: text("provider_call_state").notNull().default("not_started"),
+    providerCallCount: integer("provider_call_count").notNull().default(0),
+    providerResponsePrivate: text("provider_response_private"), providerResponseDigest: text("provider_response_digest"),
+    inputTokens: bigint("input_tokens", { mode: "bigint" }), outputTokens: bigint("output_tokens", { mode: "bigint" }),
+    settledMicroUsd: bigint("settled_micro_usd", { mode: "bigint" }), validatedOutputDigest: text("validated_output_digest"),
+    appendedOperationId: uuid("appended_operation_id").references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    proposalCount: integer("proposal_count"), resultDigest: text("result_digest"),
+    attemptCount: integer("attempt_count").notNull().default(0), leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), errorCode: text("error_code"),
+    errorSummary: text("error_summary"), createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }), validatingAt: timestamp("validating_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }), failedAt: timestamp("failed_at", { withTimezone: true }),
+    staleAt: timestamp("stale_at", { withTimezone: true }), deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
+    createdAt: now(), updatedAt: updatedAt()
+  },
+  (table) => [unique("uq_signal_semantic_context_proposal_run_generation").on(table.generationId),
+    unique("uq_signal_semantic_context_proposal_run_key").on(table.workspaceId, table.runKey),
+    index("idx_signal_semantic_context_proposal_run_status").on(table.status, table.updatedAt, table.id),
+    index("idx_signal_semantic_context_proposal_run_recovery").on(table.leaseExpiresAt, table.status)
+      .where(sql`${table.status} IN ('processing','validating')`)]
+);
+
+export const signalSemanticContextBudgetReservations = pgTable(
+  "signal_semantic_context_budget_reservations",
+  { id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalSemanticContextProposalRuns.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("reserved"),
+    reservationMicroUsd: bigint("reservation_micro_usd", { mode: "bigint" }).notNull(),
+    reservedInputTokens: bigint("reserved_input_tokens", { mode: "bigint" }).notNull(),
+    reservedOutputTokens: bigint("reserved_output_tokens", { mode: "bigint" }).notNull(),
+    inputTokens: bigint("input_tokens", { mode: "bigint" }), outputTokens: bigint("output_tokens", { mode: "bigint" }),
+    actualMicroUsd: bigint("actual_micro_usd", { mode: "bigint" }), reservationDigest: text("reservation_digest").notNull(),
+    reservedAt: timestamp("reserved_at", { withTimezone: true }).notNull().defaultNow(),
+    settledAt: timestamp("settled_at", { withTimezone: true }), releasedAt: timestamp("released_at", { withTimezone: true }),
+    releaseReason: text("release_reason") },
+  (table) => [unique("uq_signal_semantic_context_budget_run").on(table.runId)]
+);
+
+export const signalSemanticContextProposalOutbox = pgTable(
+  "signal_semantic_context_proposal_outbox",
+  { id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalSemanticContextProposalRuns.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("pending"), workerJobId: text("worker_job_id").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseToken: uuid("lease_token"), leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    errorSummary: text("error_summary"), dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }), createdAt: now(), updatedAt: updatedAt() },
+  (table) => [unique("uq_signal_semantic_context_proposal_outbox_run").on(table.runId),
+    index("idx_signal_semantic_context_proposal_outbox_claim").on(table.status, table.availableAt, table.createdAt)]
+);
+
+export const signalSemanticContextProposalRunEvents = pgTable(
+  "signal_semantic_context_proposal_run_events",
+  { id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalSemanticContextProposalRuns.id, { onDelete: "restrict" }),
+    transitionKey: text("transition_key").notNull(), eventKind: text("event_kind").notNull(),
+    stateDigest: text("state_digest").notNull(), detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
+    createdAt: now() },
+  (table) => [unique("uq_signal_semantic_context_proposal_event").on(table.runId, table.transitionKey),
+    index("idx_signal_semantic_context_proposal_events").on(table.runId, table.createdAt, table.id)]
 );
 
 export const signalCompetitorLifecycleEvents = pgTable(

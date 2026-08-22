@@ -2133,3 +2133,82 @@ Ninguna tabla tiene FK o writer hacia Topic Contracts, classification assignment
 
 Checksum local 0090:
 `199f2a140ebd166745818b79a331af33addd6cae8c767abfd5faca869225323e`.
+
+## 10C.3B-A / NOI-71 · Semantic Context Pack Authority (0091)
+
+**Registrado:** 2026-08-22T01:00:09-06:00 (`America/Mexico_City`).
+
+`0091_signal_semantic_context_pack_authority.sql` amplía el artifact/evidence graph con
+un discriminator workspace-owned explícito. `topic_discovery` conserva su
+`discovery_run_digest`; `semantic_context` usa un `workspace_authority_digest` y no
+fabrica un discovery run, study corpus, taxonomy o mention store.
+
+La autoridad nueva se compone de tres tablas:
+
+- `signal_semantic_context_generations`: snapshot exacto e inmutable al publicar de
+  Brand OS, Knowledge y locale/market; el successor apunta a la generación anterior;
+- `signal_semantic_context_element_versions`: propuestas y decisiones tipadas
+  append-only, cada una con artifact y evidence group propios;
+- `signal_semantic_context_events`: lifecycle ordenado por `(operation_id,event_index)`.
+
+Los elementos efectivos se obtienen por ausencia de successor. `pending`, `approved` y
+`rejected` son disposiciones explícitas; `superseded` se deriva del ledger. Confidence
+se limita a `[0,1]`, pero ninguna constraint, trigger o writer la interpreta como
+aprobación. Una corrección crea otra versión `pending`; approve/reject crean successors
+con actor humano. Bulk approval está acotado por el writer y publication es una
+operación separada.
+
+Cada elemento referencia Brand OS o Knowledge mediante `analysis_evidence_groups` y
+`analysis_evidence_links`. Los links no copian narrativa, chunks, prompts ni blobs. Una
+vez registrado el elemento, artifacts/evidence y sus decisiones quedan protegidos ante
+`UPDATE/DELETE`. La función `signal_semantic_context_digest_v1(text)` verifica en
+PostgreSQL exactamente los bytes de la serialización canónica TypeScript.
+
+No existe FK ni writer hacia classification assignments, `record_tags`, Topic
+Contracts, serving, pointers o governed bindings.
+
+Checksum local 0091:
+`86a934de4da2f71f22b6705bf9432710153400b73c3954fccb66095a94905402`.
+
+## 10C.3B-A.2 / NOI-72 · Semantic Context proposal execution (0092)
+
+**Registrado:** 2026-08-22T09:53:36-06:00 (`America/Mexico_City`).
+
+`0092_signal_semantic_context_proposal_execution.sql` agrega cuatro piezas de control,
+sin cambiar el ledger semántico de 0091:
+
+- `signal_semantic_context_proposal_runs` — un run máximo por generación y una llamada
+  efectiva máxima, con preflight/context/model/pricing sellados;
+- `signal_semantic_context_budget_reservations` — reserva y settlement exactos en
+  micro-USD;
+- `signal_semantic_context_proposal_outbox` — dispatch/recovery durable sobre la cola
+  Data OS existente;
+- `signal_semantic_context_proposal_run_events` — transiciones sanitizadas append-only.
+
+Una respuesta persistida se valida y anexa atómicamente mediante el writer 69A. Un
+outcome ambiguo dead-letterea el run/outbox y liquida conservadoramente la reserva
+máxima; nunca habilita una segunda llamada. Estados terminales, reservas terminales y
+eventos rechazan UPDATE/DELETE.
+
+Checksum local 0092:
+`5e52de57dd31ee9ca3d699ddfd76280a02c67b6dee7a3be71be66fa24227cc8f`.
+
+## Backend 69A.3 · Semantic Context draft supersession (0093)
+
+**Registrado:** 2026-08-22T15:05:20-06:00 (`America/Mexico_City`).
+
+`0093_signal_semantic_context_draft_supersession.sql` reemplaza el índice incompatible
+de un solo draft histórico por una cadena append-only con una sola hoja efectiva. La
+generación anterior nunca se muta: el successor conserva `supersedes_generation_id`,
+una `supersession_reason` cerrada y un evento `generation_reconciled`. El trigger toma
+el advisory lock del workspace, exige predecessor efectivo y consecutivo, y conserva
+la unicidad de successor.
+
+El operation ledger admite `reconcile-semantic-context-generation`. Los motivos son
+`brand_os_drift`, `knowledge_drift`, `locale_market_drift`,
+`provider_lineage_missing`, `provider_lineage_changed` y
+`operator_requested_reconciliation`. Una corrida provider no terminal bloquea el
+writer; no se copian elementos ni approvals y no existe FK hacia serving.
+
+Checksum local 0093:
+`6eac2acb2465a9d845833a7def98b69777d86000faf3b2d42990274950a056e5`.
