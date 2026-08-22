@@ -136,3 +136,14 @@ published generation, or legacy draft without provider lineage is replaced by th
 append-only reconciliation contract in migration 0093 before preflight can become
 ready. Nonterminal proposal runs block supersession; reconciliation never retries or
 starts a provider call. Historical runs retain their original generation digests.
+
+## Preview/UAT dependency state
+
+**Recorded:** 2026-08-22T15:34:17-06:00 (`America/Mexico_City`).
+
+The append-only stale-draft reconciliation dependency is deployed through migration
+0093 and `POST /semantic-context/reconcile`. The durable adapter remains closed: UAT has
+zero proposal runs, reservations, outbox rows and real proposals, and Anthropic was not
+called. Authenticated visual QA still requires renewal of the expired Kinde session;
+until then this document does not declare a real provider generation or 10C.3B
+readiness.

@@ -190,3 +190,18 @@ El contrato management-only es `POST .../semantic-context/reconcile`; el browser
 autoridad, modelo, pricing o provider. Frontend 69B presenta `Reconciliar contexto` en
 el notice stale y en el preflight bloqueado por lineage, sin ejecutar automáticamente
 una propuesta.
+
+## Preview/UAT cut · 2026-08-22T15:34:17-06:00
+
+Las migraciones `0091`, `0092` y `0093` quedaron aplicadas exactamente una vez en el
+target auditado `noisia-staging`. Un restore point nuevo fue restaurado en PostgreSQL 17
+antes del apply. El hash del estado protegido permaneció idéntico antes/después y las
+tablas nuevas continúan vacías: cero generations, elements, events, proposal runs y
+proposal outbox rows. Studio y Workers publicaron el commit `0b8510d`; ambos deployments
+reportan `Active`, el deep health de Studio está verde y el Worker UAT inició con cinco
+colas `-uat`, cero jobs ejecutables y cero outboxes reclamables.
+
+La comprobación visual autenticada quedó pendiente porque la sesión Kinde del navegador
+expiró al recargar después del deploy. No se intentó eludir AuthN ni usar credenciales.
+No se creó un draft UAT, no se ejecutó `POST /proposals` y no hubo provider calls, paid
+jobs, publicación ni serving writes. Este checkpoint no abre 10C.3B ni 10D.
