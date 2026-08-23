@@ -2641,3 +2641,24 @@ La operación añade siempre `provider_calls_added=0` y
 una revalidación `rejected` con cero propuestas; nunca un append parcial ni retry pagado.
 El GET operator-safe del run incluye `paid_response_revalidation` nullable y sigue sin
 exponer prompt, response privada o Knowledge crudo.
+
+### Descubrimiento server-owned del run terminal — 69A.6C
+
+**Registrado:** 2026-08-23 (`America/Mexico_City`).
+
+`GET /api/data-os/signal/{workspaceId}/semantic-context?generation_key=...` incluye
+`latest_proposal_run`, nullable y limitado a un único resumen operator-safe. La selección
+se resuelve en PostgreSQL dentro del workspace y la generación efectiva: prefiere un run
+`queued|processing|validating`; en ausencia de trabajo activo devuelve el resultado
+terminal/revalidación más reciente de esa misma generación. Una generación superseded no
+puede aportar el run current y un workspace distinto devuelve ausencia, no historia ajena.
+
+La respuesta reutiliza `SignalSemanticContextProposalRunV1`, incluida
+`paid_response_revalidation`, sin prompt, response privada, diagnósticos provider, IDs de
+evidencia ni stack traces. `sessionStorage` deja de descubrir historial: sólo conserva un
+hint acotado para un run activo iniciado en esa pestaña, y el servidor debe corroborar que
+coincide con el run canónico antes de usarlo para polling.
+
+Este cambio es exclusivamente de read model: no crea revalidaciones, proposals,
+reservations, outboxes ni jobs; tampoco modifica settlement, Topic Contracts, assignments,
+tags o serving.

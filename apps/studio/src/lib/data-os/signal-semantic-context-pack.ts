@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 } from "@noisia/query-engine";
 import {
   appendSignalSemanticContextProposalsV1 as appendSignalSemanticContextProposalsDbV1,
+  loadLatestSignalSemanticContextProposalRunForGenerationV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   loadSignalSemanticContextProposalRunV1,
   revalidateSignalSemanticContextPaidResponseV1,
@@ -153,9 +154,13 @@ export async function loadSignalSemanticContextGenerationV1(args:{
   for(const link of links.rows){const refs=refsByGroup.get(link.evidence_group_id)??[];
     refs.push({source_type:link.source_type,source_ref:sha256(link.source_id),relation_type:link.relation_type});
     refsByGroup.set(link.evidence_group_id,refs);}
+  const latestProposalRun=await loadLatestSignalSemanticContextProposalRunForGenerationV1({
+    queryable:args.queryable as never,workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+    generation_key:generation.generation_key});
   return{contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
     generation:publicGeneration(generation,countRows(current)),
     elements:current.map((element)=>publicElement(element,refsByGroup.get(element.evidence_group_id)??[])),
+    latest_proposal_run:latestProposalRun,
     source_authority:{brand_os_digest:generation.brand_os_digest,
       knowledge_digest:generation.knowledge_digest,locale_context_digest:generation.locale_context_digest}} as const;
 }

@@ -16,6 +16,7 @@ import {
 import {
   SignalSemanticContextProviderCallError,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION,
+  loadLatestSignalSemanticContextProposalRunForGenerationV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   loadSignalSemanticContextProposalRunV1,
   prepareSignalSemanticContextProposalInputV1,
@@ -207,6 +208,29 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     assert.equal(rejected.proposals_appended, 0);
     assert.deepEqual(await elementCounts(pool, conflict.workspace.id),
       { pending: 0, approved: 0, rejected: 0 });
+    const discoveryProtectedBefore = await proposalExecutionCounts(pool, conflict.workspace.id);
+    const discoveryServingBefore = await protectedCounts(pool, conflict.workspace.id);
+    const [freshTerminalDiscovery, reloadedTerminalDiscovery] = await Promise.all([1, 2].map(() =>
+      loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
+        workspace: conflict.workspace, actor: conflict.actor,
+        generation_key: conflict.generation_key })));
+    assert.deepEqual(freshTerminalDiscovery, reloadedTerminalDiscovery,
+      "fresh and reloaded clients receive the same deterministic terminal run");
+    assert.equal(freshTerminalDiscovery?.run_key, conflictRun.run_key);
+    assert.equal(freshTerminalDiscovery?.status, "failed");
+    assert.equal(freshTerminalDiscovery?.paid_response_revalidation?.status, "rejected");
+    assert.equal(freshTerminalDiscovery?.paid_response_revalidation?.proposals_appended, 0);
+    assert.equal(freshTerminalDiscovery?.paid_response_revalidation?.provider_calls_added, 0);
+    const publicTerminal = JSON.stringify(freshTerminalDiscovery);
+    for (const privateField of ["provider_response_private", "provider_response_digest",
+      "provider_request_id", "provider_request_identity", "error_summary", "preflight_digest",
+      "context_input_digest", "prompt_digest", "duplicate_decisions"]) {
+      assert.doesNotMatch(publicTerminal, new RegExp(privateField, "u"));
+    }
+    assert.deepEqual(await proposalExecutionCounts(pool, conflict.workspace.id), discoveryProtectedBefore,
+      "server-owned terminal discovery is read-only");
+    assert.deepEqual(await protectedCounts(pool, conflict.workspace.id), discoveryServingBefore,
+      "terminal discovery has no assignment, tag, pointer or binding side effect");
 
     const driftPaid = await seedFixture(pool, "paid-drift");
     const driftPaidRun = await startFor(pool, driftPaid, "paid-drift-start");
@@ -227,6 +251,38 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     const otherWorkspace = await seedFixture(pool, "paid-other-workspace");
     await assert.rejects(revalidateInTransaction(pool, otherWorkspace, paidRun.run_key,
       "paid-cross-workspace"), /not_found/u);
+    assert.equal(await loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
+      workspace: otherWorkspace.workspace, actor: otherWorkspace.actor,
+      generation_key: conflict.generation_key }), null,
+    "a current generation key from another workspace is never discovered");
+
+    const activeDiscovery = await seedFixture(pool, "active-discovery");
+    const activeDiscoveryRun = await startFor(pool, activeDiscovery, "active-discovery-start");
+    const activeState = await loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
+      workspace: activeDiscovery.workspace, actor: activeDiscovery.actor,
+      generation_key: activeDiscovery.generation_key });
+    assert.equal(activeState?.run_key, activeDiscoveryRun.run_key);
+    assert.equal(activeState?.status, "queued", "the current nonterminal run wins discovery");
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: activeDiscoveryRun.id,
+      provider: { async generate() {
+        throw new SignalSemanticContextProviderCallError("not sent", true);
+      } } }));
+
+    const supersededDiscovery = await seedFixture(pool, "superseded-discovery");
+    const supersededRun = await startFor(pool, supersededDiscovery, "superseded-discovery-start");
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: supersededRun.id,
+      provider: { async generate() {
+        throw new SignalSemanticContextProviderCallError("not sent", true);
+      } } }));
+    const successorKey = await supersedeGeneration(pool, supersededDiscovery);
+    assert.equal(await loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
+      workspace: supersededDiscovery.workspace, actor: supersededDiscovery.actor,
+      generation_key: supersededDiscovery.generation_key }), null,
+    "a superseded generation run cannot masquerade as current");
+    assert.equal(await loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
+      workspace: supersededDiscovery.workspace, actor: supersededDiscovery.actor,
+      generation_key: successorKey }), null,
+    "a current successor without a run does not inherit historical state");
 
     const truncated = await seedFixture(pool, "truncated");
     const truncatedRun = await startFor(pool, truncated, "truncated-start");
@@ -515,6 +571,58 @@ async function protectedCounts(pool: pg.Pool, workspaceId: string) { return {
   pointers: await scalar(pool, `SELECT count(*)::int count FROM signal_workspace_population_pointers WHERE workspace_id=$1::uuid`, [workspaceId]),
   bindings: await scalar(pool, `SELECT count(*)::int count FROM signal_governed_view_bindings WHERE workspace_id=$1::uuid`, [workspaceId])
 }; }
+async function proposalExecutionCounts(pool: pg.Pool, workspaceId: string) { return row(pool, `SELECT
+  (SELECT count(*)::int FROM signal_semantic_context_proposal_runs WHERE workspace_id=$1::uuid) runs,
+  (SELECT count(*)::int FROM signal_semantic_context_proposal_revalidations WHERE workspace_id=$1::uuid) revalidations,
+  (SELECT count(*)::int FROM signal_semantic_context_budget_reservations WHERE workspace_id=$1::uuid) reservations,
+  (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox WHERE workspace_id=$1::uuid) outboxes,
+  (SELECT count(*)::int FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid) elements,
+  (SELECT COALESCE(sum(reservation_micro_usd),0)::text FROM signal_semantic_context_budget_reservations
+    WHERE workspace_id=$1::uuid) reserved_micro_usd,
+  (SELECT COALESCE(sum(actual_micro_usd),0)::text FROM signal_semantic_context_budget_reservations
+    WHERE workspace_id=$1::uuid) settled_micro_usd,
+  (SELECT COALESCE(sum(provider_call_count),0)::int FROM signal_semantic_context_proposal_runs
+    WHERE workspace_id=$1::uuid) provider_calls`, [workspaceId]); }
+async function supersedeGeneration(pool: pg.Pool,
+  fixture: Awaited<ReturnType<typeof seedFixture>>) {
+  const operation = randomUUID();
+  const suffix = randomUUID().slice(0, 8);
+  await pool.query(`INSERT INTO signal_governance_control_operations(id,workspace_id,actor_user_id,
+    action,request_digest,idempotency_key,status) VALUES($1::uuid,$2::uuid,$3::uuid,
+    'reconcile-semantic-context-generation',$4,$5,'in_progress')`, [operation, fixture.workspace.id,
+    fixture.actor.id, digest(`supersede-request-${suffix}`), digest(`supersede-key-${suffix}`)]);
+  const predecessor = await row(pool, `SELECT generation.id::text,generation.artifact_id::text,
+    generation.generation_version,artifact.workspace_authority_digest
+    FROM signal_semantic_context_generations generation
+    JOIN analysis_artifacts artifact ON artifact.id=generation.artifact_id
+    WHERE generation.workspace_id=$1::uuid AND generation.generation_key=$2`,
+  [fixture.workspace.id, fixture.generation_key]);
+  const artifact = (await pool.query<{ id: string }>(`INSERT INTO analysis_artifacts(
+    workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
+    content,review_status,revision,metadata) VALUES($1::uuid,'semantic_context',$2,$3,
+      'semantic_context_pack_generation','{}'::jsonb,'needs_review',$4,'{}'::jsonb)
+    RETURNING id::text`, [fixture.workspace.id, predecessor.workspace_authority_digest,
+    `context-successor-${suffix}`, Number(predecessor.generation_version) + 1])).rows[0]!;
+  const successorKey = `${fixture.generation_key}-successor`;
+  await pool.query(`INSERT INTO signal_semantic_context_generations(workspace_id,artifact_id,
+    generation_key,generation_version,status,supersedes_generation_id,supersession_reason,
+    brand_os_profile_id,brand_os_profile_version,brand_os_digest,knowledge_generation_key,
+    knowledge_digest,locale_context_digest,primary_locale,locale_variants,markets,timezone,
+    proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
+    draft_digest,created_operation_id,created_by_user_id)
+    SELECT generation.workspace_id,$1::uuid,$2,generation.generation_version+1,'draft',generation.id,
+      'operator_requested_reconciliation',generation.brand_os_profile_id,generation.brand_os_profile_version,
+      generation.brand_os_digest,generation.knowledge_generation_key,generation.knowledge_digest,
+      generation.locale_context_digest,generation.primary_locale,generation.locale_variants,
+      generation.markets,generation.timezone,generation.proposal_model,generation.proposal_model_version,
+      generation.proposal_prompt_digest,generation.proposal_pricing_version,$3,$4::uuid,$5::uuid
+    FROM signal_semantic_context_generations generation
+    WHERE generation.id=$6::uuid`, [artifact.id, successorKey, digest(`successor-${suffix}`),
+    operation, fixture.actor.id, predecessor.id]);
+  await pool.query(`UPDATE signal_governance_control_operations SET status='completed',result='{}'::jsonb,
+    completed_at=clock_timestamp() WHERE id=$1::uuid`, [operation]);
+  return successorKey;
+}
 async function scalar(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query<{ count: number }>(sql, values)).rows[0]!.count; }
 async function scalarText(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query<{ value: string }>(sql, values)).rows[0]!.value; }
 async function row(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query(sql, values)).rows[0] as Record<string, unknown>; }

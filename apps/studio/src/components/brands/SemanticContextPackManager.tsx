@@ -81,6 +81,7 @@ type Readiness = {
 type GenerationResponse = {
   generation: Generation | null;
   elements: ContextElement[];
+  latest_proposal_run: ProposalRun | null;
   source_authority: unknown;
 };
 
@@ -203,11 +204,15 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       if (!key) {
         setGeneration(null);
         setElements([]);
+        setBoundRun(null);
         return;
       }
       const detail = await requestJson<GenerationResponse>(`${base}?generation_key=${encodeURIComponent(key)}`);
       setGeneration(detail.generation);
       setElements(detail.elements ?? []);
+      setBoundRun(detail.latest_proposal_run
+        ? { generationKey: key, value: detail.latest_proposal_run }
+        : null);
       setSelected((current) => current.filter((item) => detail.elements?.some((element) => element.element_key === item && element.disposition === "pending")));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t("errors.load"));
@@ -226,31 +231,25 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     if (!activeGenerationKey || !saved
       || !isSignalSemanticContextRunSessionCurrentV1(saved, activeGenerationKey)) {
       window.sessionStorage.removeItem(runStorageKey);
-      setBoundRun(null);
       return;
     }
-    let cancelled = false;
-    setBoundRun(null);
-    void requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(saved.run_key)}`)
-      .then((nextRun) => {
-        if (!cancelled) setBoundRun({ generationKey: saved.generation_key, value: nextRun });
-      })
-      .catch(() => window.sessionStorage.removeItem(runStorageKey));
-    return () => { cancelled = true; };
-  }, [activeGenerationKey, base, initialLoading, runStorageKey]);
+    if (!run || terminalRunStates.has(run.status) || saved.run_key !== run.run_key) {
+      window.sessionStorage.removeItem(runStorageKey);
+    }
+  }, [activeGenerationKey, initialLoading, run, runStorageKey]);
 
   useEffect(() => {
     if (!run || terminalRunStates.has(run.status)) {
-      if (run?.status === "completed") {
-        window.sessionStorage.removeItem(runStorageKey);
-        void load();
-      }
+      if (run) window.sessionStorage.removeItem(runStorageKey);
       return;
     }
     const timer = window.setTimeout(() => {
       void requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(run.run_key)}`)
         .then((nextRun) => {
-          if (activeGenerationKey) setBoundRun({ generationKey: activeGenerationKey, value: nextRun });
+          if (activeGenerationKey) {
+            setBoundRun({ generationKey: activeGenerationKey, value: nextRun });
+            if (nextRun.status === "completed") void load();
+          }
         })
         .catch((runError) => setError(runError instanceof Error ? runError.message : t("errors.run")));
     }, 2_500);

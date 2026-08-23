@@ -96,9 +96,11 @@ test("management routes keep authority fields and provider proposal writes off t
 });
 
 test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{
-  const [page,manager,esMx,enUs]=await Promise.all([
+  const [page,manager,service,dbWriter,esMx,enUs]=await Promise.all([
     readFile(resolve(process.cwd(),"src/app/studio/brands/[id]/brand-os/page.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"../../infrastructure/db/signal-semantic-context-proposal.ts"),"utf8"),
     readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
     readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")
   ]);
@@ -111,11 +113,22 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/\/reconcile/u);
   assert.match(manager,/actions\.reconcile/u);
   assert.match(manager,/noisia:semantic-context-run/u,
-    "refresh recovery must retain the durable run key");
+    "same-tab polling may retain a bounded run hint");
   assert.match(manager,/isSignalSemanticContextRunSessionCurrentV1/u,
-    "a remembered run must only hydrate into its own generation");
+    "a remembered run hint must remain generation-bound");
   assert.match(manager,/serializeSignalSemanticContextRunSessionReferenceV1\(generation\.generation_key/u,
-    "run recovery state must persist the generation identity with the run key");
+    "same-tab polling state retains the generation identity with the run key");
+  assert.match(manager,/detail\.latest_proposal_run/u,
+    "fresh loads must bind the server-discovered run without sessionStorage authority");
+  assert.match(manager,/saved\.run_key !== run\.run_key/u,
+    "a browser hint cannot replace the server-selected run");
+  assert.doesNotMatch(manager,/requestJson<ProposalRun>\([^\n]+saved\.run_key/u,
+    "initial hydration must never load an arbitrary browser-supplied run key");
+  assert.match(service,/loadLatestSignalSemanticContextProposalRunForGenerationV1/u);
+  assert.match(dbWriter,/NOT EXISTS\([\s\S]+supersedes_generation_id=generation\.id/u,
+    "superseded generation history must fail closed");
+  assert.match(dbWriter,/signal_data_governance_actor_is_valid\(workspace\.id,\$5::uuid\)/u,
+    "terminal discovery retains DB-owned actor authorization");
   assert.match(manager,/density="compact"/u,
     "Brand OS must use the canonical compact summary density");
   assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,

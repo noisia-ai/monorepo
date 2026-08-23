@@ -554,6 +554,56 @@ export async function loadSignalSemanticContextProposalRunV1(args: {
     paid_response_revalidation: revalidation.rows[0] ? publicRevalidation(revalidation.rows[0]) : null };
 }
 
+export async function loadLatestSignalSemanticContextProposalRunForGenerationV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  actor: SignalSemanticContextProposalActorV1;
+  generation_key: string;
+}) {
+  assertActor(args.actor);
+  const result = await args.queryable.query<RunRow>(`${runSelect}
+    FROM signal_semantic_context_proposal_runs run
+    JOIN signal_semantic_context_generations generation
+      ON generation.id=run.generation_id AND generation.workspace_id=run.workspace_id
+    JOIN signal_workspaces workspace ON workspace.id=run.workspace_id
+    LEFT JOIN LATERAL(
+      SELECT max(revalidation.created_at) latest_revalidation_at
+      FROM signal_semantic_context_proposal_revalidations revalidation
+      WHERE revalidation.workspace_id=run.workspace_id
+        AND revalidation.generation_id=run.generation_id
+        AND revalidation.original_run_id=run.id
+    ) latest_revalidation ON true
+    WHERE workspace.id=$1::uuid
+      AND workspace.organization_id=$2::uuid
+      AND workspace.brand_id=$3::uuid
+      AND workspace.status='active'
+      AND generation.generation_key=$4
+      AND signal_data_governance_actor_is_valid(workspace.id,$5::uuid)
+      AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.workspace_id=generation.workspace_id
+          AND successor.supersedes_generation_id=generation.id)
+    ORDER BY CASE WHEN run.status IN ('queued','processing','validating') THEN 0 ELSE 1 END,
+      CASE WHEN run.status IN ('queued','processing','validating') THEN run.updated_at END DESC NULLS LAST,
+      CASE WHEN run.status NOT IN ('queued','processing','validating')
+        THEN GREATEST(run.updated_at,COALESCE(latest_revalidation.latest_revalidation_at,run.updated_at))
+      END DESC NULLS LAST,
+      run.queued_at DESC,run.id DESC
+    LIMIT 1`, [args.workspace.id, args.workspace.organization_id, args.workspace.brand_id,
+    args.generation_key, args.actor.id]);
+  const run = result.rows[0];
+  if (!run) return null;
+  const revalidation = await args.queryable.query<RevalidationRow>(`${revalidationSelect}
+    FROM signal_semantic_context_proposal_revalidations revalidation
+    WHERE revalidation.workspace_id=$1::uuid
+      AND revalidation.generation_id=$2::uuid
+      AND revalidation.original_run_id=$3::uuid
+    ORDER BY revalidation.created_at DESC,revalidation.id DESC LIMIT 1`,
+  [args.workspace.id, run.generation_id, run.id]);
+  return { ...publicRun(run),
+    paid_response_revalidation: revalidation.rows[0] ? publicRevalidation(revalidation.rows[0]) : null };
+}
+
 export async function retrySignalSemanticContextProposalRunV1(args: {
   pool: Pick<Pool, "connect">;
   workspace: SignalSemanticContextProposalWorkspaceV1;

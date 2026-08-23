@@ -1875,7 +1875,11 @@ paths:
         - { $ref: "#/components/parameters/WorkspaceId" }
         - { name: generation_key, in: query, schema: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$' } }
       responses:
-        "200": { description: Generation and current elements without private prompt or raw Knowledge blobs. }
+        "200":
+          description: Generation, current elements and at most one server-discovered operator-safe proposal run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextGenerationDetailV1" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: Generation unavailable in this workspace. }
@@ -2283,6 +2287,28 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SignalSemanticContextGenerationDetailV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, generation, elements, latest_proposal_run, source_authority]
+      properties:
+        contract_version: { const: signal-semantic-context-pack-v1 }
+        generation: { type: object, additionalProperties: true }
+        elements:
+          type: array
+          items: { type: object, additionalProperties: true }
+        latest_proposal_run:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
+            - { type: "null" }
+        source_authority:
+          type: object
+          additionalProperties: false
+          required: [brand_os_digest, knowledge_digest, locale_context_digest]
+          properties:
+            brand_os_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            knowledge_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            locale_context_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
     SignalSemanticContextReadinessV1:
       type: object
       additionalProperties: false
