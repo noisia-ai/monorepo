@@ -24,6 +24,11 @@ import {
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceConfirmDialog, WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import {
+  isSignalSemanticContextRunSessionCurrentV1,
+  parseSignalSemanticContextRunSessionReferenceV1,
+  serializeSignalSemanticContextRunSessionReferenceV1
+} from "@/lib/data-os/signal-semantic-context-run-session";
 
 type Counts = { pending: number; approved: number; rejected: number };
 type Lifecycle = "draft" | "published";
@@ -126,6 +131,11 @@ type ProposalRun = {
   error: { code: string; message: string } | null;
 };
 
+type GenerationBoundRun = {
+  generationKey: string;
+  value: ProposalRun;
+};
+
 type DrawerState = { mode: "generate" } | { mode: "element"; elementKey: string } | null;
 
 const terminalRunStates = new Set<ProposalRun["status"]>(["completed", "failed", "stale", "dead_letter"]);
@@ -158,7 +168,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const [generation, setGeneration] = useState<Generation | null>(null);
   const [elements, setElements] = useState<ContextElement[]>([]);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
-  const [run, setRun] = useState<ProposalRun | null>(null);
+  const [boundRun, setBoundRun] = useState<GenerationBoundRun | null>(null);
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [budgetConfirmed, setBudgetConfirmed] = useState(false);
@@ -169,6 +179,8 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const activeGenerationKey = generation?.generation_key ?? null;
+  const run = boundRun?.generationKey === activeGenerationKey ? boundRun.value : null;
 
   const load = useCallback(async () => {
     setError(null);
@@ -195,12 +207,25 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    const saved = window.sessionStorage.getItem(runStorageKey);
-    if (!saved) return;
-    void requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(saved)}`)
-      .then(setRun)
+    if (initialLoading) return;
+    const saved = parseSignalSemanticContextRunSessionReferenceV1(
+      window.sessionStorage.getItem(runStorageKey)
+    );
+    if (!activeGenerationKey || !saved
+      || !isSignalSemanticContextRunSessionCurrentV1(saved, activeGenerationKey)) {
+      window.sessionStorage.removeItem(runStorageKey);
+      setBoundRun(null);
+      return;
+    }
+    let cancelled = false;
+    setBoundRun(null);
+    void requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(saved.run_key)}`)
+      .then((nextRun) => {
+        if (!cancelled) setBoundRun({ generationKey: saved.generation_key, value: nextRun });
+      })
       .catch(() => window.sessionStorage.removeItem(runStorageKey));
-  }, [base, runStorageKey]);
+    return () => { cancelled = true; };
+  }, [activeGenerationKey, base, initialLoading, runStorageKey]);
 
   useEffect(() => {
     if (!run || terminalRunStates.has(run.status)) {
@@ -212,11 +237,13 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     }
     const timer = window.setTimeout(() => {
       void requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(run.run_key)}`)
-        .then(setRun)
+        .then((nextRun) => {
+          if (activeGenerationKey) setBoundRun({ generationKey: activeGenerationKey, value: nextRun });
+        })
         .catch((runError) => setError(runError instanceof Error ? runError.message : t("errors.run")));
     }, 2_500);
     return () => window.clearTimeout(timer);
-  }, [base, load, run, runStorageKey, t]);
+  }, [activeGenerationKey, base, load, run, runStorageKey, t]);
 
   const kinds = useMemo(() => Array.from(new Set(elements.map((element) => element.element_kind))).sort(), [elements]);
   const filtered = useMemo(() => {
@@ -254,7 +281,8 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       await requestJson(`${base}/reconcile`, { method: "POST", headers: {
         "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("reconcile")
       }, body: JSON.stringify({ reason }) });
-      setDrawer(null); setPreflight(null); await load();
+      window.sessionStorage.removeItem(runStorageKey);
+      setBoundRun(null); setDrawer(null); setPreflight(null); await load();
     } catch (reconcileError) {
       setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
     } finally { setBusy(null); }
@@ -272,17 +300,22 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     setBusy("generate"); setError(null);
     try {
       const nextRun = await requestJson<ProposalRun>(`${base}/proposals`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("generate") }, body: JSON.stringify({ generation_key: generation.generation_key, preflight_digest: preflight.preflight_digest, confirmation: "GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS", hard_cap_micro_usd: preflight.recommended_hard_cap_micro_usd }) });
-      setRun(nextRun); window.sessionStorage.setItem(runStorageKey, nextRun.run_key); setDrawer(null);
+      setBoundRun({ generationKey: generation.generation_key, value: nextRun });
+      window.sessionStorage.setItem(runStorageKey,
+        serializeSignalSemanticContextRunSessionReferenceV1(generation.generation_key, nextRun.run_key));
+      setDrawer(null);
     } catch (runError) { setError(runError instanceof Error ? runError.message : t("errors.generate")); }
     finally { setBusy(null); }
   }
 
   async function retryProposalRun() {
-    if (!run || run.status !== "failed") return;
+    if (!run || run.status !== "failed" || !generation) return;
     setBusy("retry-run"); setError(null);
     try {
       const nextRun = await requestJson<ProposalRun>(`${base}/proposals/${encodeURIComponent(run.run_key)}/retry`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("retry-run") }, body: "{}" });
-      setRun(nextRun); window.sessionStorage.setItem(runStorageKey, nextRun.run_key);
+      setBoundRun({ generationKey: generation.generation_key, value: nextRun });
+      window.sessionStorage.setItem(runStorageKey,
+        serializeSignalSemanticContextRunSessionReferenceV1(generation.generation_key, nextRun.run_key));
     } catch (retryError) { setError(retryError instanceof Error ? retryError.message : t("errors.run")); }
     finally { setBusy(null); }
   }

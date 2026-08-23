@@ -10,6 +10,38 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES,
   signalSemanticContextProviderConfigurationFromEnvV1
 } from "@/lib/data-os/signal-semantic-context-pack";
+import {
+  isSignalSemanticContextRunSessionCurrentV1,
+  parseSignalSemanticContextRunSessionReferenceV1,
+  serializeSignalSemanticContextRunSessionReferenceV1
+} from "@/lib/data-os/signal-semantic-context-run-session";
+
+test("semantic context run references are bound to their generation", () => {
+  const stored = serializeSignalSemanticContextRunSessionReferenceV1(
+    "semantic-context-v3",
+    "semantic-context-proposal-run-3"
+  );
+  const parsed = parseSignalSemanticContextRunSessionReferenceV1(stored);
+
+  assert.deepEqual(parsed, {
+    version: 1,
+    generation_key: "semantic-context-v3",
+    run_key: "semantic-context-proposal-run-3"
+  });
+  assert.ok(parsed);
+  assert.equal(isSignalSemanticContextRunSessionCurrentV1(parsed, "semantic-context-v3"), true);
+  assert.equal(isSignalSemanticContextRunSessionCurrentV1(parsed, "semantic-context-v4"), false);
+});
+
+test("legacy and malformed run references fail closed", () => {
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1("old-run-key"), null);
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1("{"), null);
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1(JSON.stringify({
+    version: 1,
+    generation_key: "semantic-context-v3",
+    run_key: "../../../private"
+  })), null);
+});
 
 test("semantic context vocabulary is closed and keeps relation authority separate",()=>{
   assert.equal(SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS.length,20);
@@ -75,6 +107,10 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/actions\.reconcile/u);
   assert.match(manager,/noisia:semantic-context-run/u,
     "refresh recovery must retain the durable run key");
+  assert.match(manager,/isSignalSemanticContextRunSessionCurrentV1/u,
+    "a remembered run must only hydrate into its own generation");
+  assert.match(manager,/serializeSignalSemanticContextRunSessionReferenceV1\(generation\.generation_key/u,
+    "run recovery state must persist the generation identity with the run key");
   assert.match(manager,/density="compact"/u,
     "Brand OS must use the canonical compact summary density");
   assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,
