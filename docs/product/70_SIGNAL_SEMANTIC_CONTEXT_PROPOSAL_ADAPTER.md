@@ -246,3 +246,25 @@ digest. The UI exposes `Reconciliar contexto`, leaves budget confirmation unchec
 keeps the paid action disabled. This checkpoint deliberately did not create the
 successor generation; that append-only reconciliation and any later paid execution need
 a separate operator authorization.
+
+## 69A.5 Preview/UAT capacity flight card
+
+**Recorded:** 2026-08-23 (`America/Mexico_City`).
+
+The deterministic capacity policy was deployed to Studio and Workers in Preview/UAT.
+For the current governed structure (three aliases, six competitors, two locale variants,
+two markets, nineteen Knowledge blocks and four evidence-source kinds), it seals a
+minimum useful capacity of 43 proposals, target 66, maximum 83 and a 21,760-token output
+budget. The conservative reservation is USD 0.368598 under the unchanged USD 1
+server-owned hard cap and one-call maximum.
+
+Because the prompt policy digest changed, the existing draft correctly failed preflight
+with provider-lineage drift. The supported management action reconciled it append-only
+from generation v2 to v3. The final authenticated flight card is ready with no blockers,
+healthy Worker/recovery, budget checkbox unchecked and paid action disabled.
+
+A repeatable-read/read-only audit reconciled three historical generations, one effective
+leaf and two supersession links. The original failed run remains the only proposal run:
+one settled historical provider call, zero elements, one dead-letter outbox and zero
+executable work. This 69A.5 mission added zero provider calls and did not publish a pack,
+write serving, open context-aware discovery or advance 10D.
