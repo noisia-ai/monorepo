@@ -75,6 +75,12 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/actions\.reconcile/u);
   assert.match(manager,/noisia:semantic-context-run/u,
     "refresh recovery must retain the durable run key");
+  assert.match(manager,/density="compact"/u,
+    "Brand OS must use the canonical compact summary density");
+  assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,
+    "safe retry is offered only before a provider call starts");
+  assert.doesNotMatch(manager,/run\.error\?\.message/u,
+    "operator UI must never expose raw provider validation messages");
   assert.doesNotMatch(manager,/confidence_authoritative|source_ref\}/u,
     "the operator UI must not present confidence or private source references as authority");
   assert.equal(typeof JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext.title,"string");

@@ -328,7 +328,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       {!initialLoading && error && !generation ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.retry")}</button>} body={error} icon={<Warning size={20}/>} title={t("errors.title")} tone="danger"/> : null}
       {!initialLoading && !error && !generation ? <AdminFeedbackState actions={<button className="admin-button admin-button--primary" disabled={busy === "draft"} onClick={() => void createDraft()} type="button">{busy === "draft" ? t("actions.preparing") : t("actions.prepare")}</button>} body={t("empty.body")} icon={<TreeStructure size={21}/>} title={t("empty.title")}/> : null}
       {!initialLoading && generation ? <>
-        <AdminSummaryStrip items={[
+        <AdminSummaryStrip density="compact" items={[
           { label: t("summary.state"), value: t(`states.${generation.lifecycle_state}`), hint: t("summary.version", { version: generation.generation_version }) },
           { label: t("summary.pending"), value: formatAdminNumber(counts.pending, locale), hint: t("summary.pendingHint") },
           { label: t("summary.approved"), value: formatAdminNumber(counts.approved, locale), hint: t("summary.approvedHint") },
@@ -366,7 +366,19 @@ function PreflightRow({ label, value }: { label: string; value: string }) { retu
 
 function RunBanner({ busy, onRetry, run, t }: { busy: boolean; onRetry: () => void; run: ProposalRun; t: ReturnType<typeof useTranslations> }) {
   const tone = run.status === "completed" ? "good" : run.status === "failed" || run.status === "dead_letter" ? "danger" : run.status === "stale" ? "warning" : "not_available";
-  return <div className="semantic-context-pack__run"><div><span className="semantic-context-pack__run-icon">{terminalRunStates.has(run.status) ? run.status === "completed" ? <Check aria-hidden size={15}/> : <Warning aria-hidden size={15}/> : <CircleNotch aria-hidden className="workspace-shell__nav-pending" size={15}/>}</span><div><strong>{t(`run.${run.status}`)}</strong><p>{run.error?.message ?? t("run.progress", { progress: run.progress ?? 0 })}</p></div></div><div className="semantic-context-pack__run-actions"><AdminStatus state={tone}>{run.status === "completed" ? t("run.proposals", { count: run.proposal_count }) : t(`run.badges.${run.status}`)}</AdminStatus>{run.status === "failed" ? <button className="admin-button" disabled={busy} onClick={onRetry} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.retrySafe")}</button> : null}</div></div>;
+  const retryAllowed = run.status === "failed" && run.provider_call_count === 0;
+  const detail = terminalRunStates.has(run.status)
+    ? run.status === "completed"
+      ? t("run.completedDetail")
+      : run.status === "stale"
+        ? t("run.staleDetail")
+        : run.status === "dead_letter"
+          ? t("run.deadLetterDetail")
+          : run.provider_call_count > 0
+            ? t("run.validationFailedDetail")
+            : t("run.retryableFailedDetail")
+    : t("run.progress", { progress: run.progress ?? 0 });
+  return <div className="semantic-context-pack__run" role={run.status === "failed" || run.status === "dead_letter" ? "alert" : "status"}><div className="semantic-context-pack__run-copy"><span className="semantic-context-pack__run-icon">{terminalRunStates.has(run.status) ? run.status === "completed" ? <Check aria-hidden size={16}/> : <Warning aria-hidden size={16}/> : <CircleNotch aria-hidden className="icon--spin" size={16}/>}</span><div><strong>{t(`run.${run.status}`)}</strong><p>{detail}</p></div></div><div className="semantic-context-pack__run-actions"><AdminStatus state={tone}>{run.status === "completed" ? t("run.proposals", { count: run.proposal_count }) : t(`run.badges.${run.status}`)}</AdminStatus>{retryAllowed ? <button className="admin-button admin-button--compact" disabled={busy} onClick={onRetry} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.retrySafe")}</button> : null}</div></div>;
 }
 
 function ElementReview({ element, generation, busy, onApprove, onEdit, onReject, t }: { element: ContextElement; generation: Generation | null; busy: string | null; onApprove: () => void; onEdit: (form: FormData) => void; onReject: () => void; t: ReturnType<typeof useTranslations> }) {

@@ -57,9 +57,15 @@ export function AdminStatus({
   return <WorkspaceStatus tone={tone}>{children}</WorkspaceStatus>;
 }
 
-export function AdminSummaryStrip({ items }: { items: AdminSummaryItem[] }) {
+export function AdminSummaryStrip({
+  density = "default",
+  items
+}: {
+  density?: "default" | "compact";
+  items: AdminSummaryItem[];
+}) {
   return (
-    <dl className="admin-summary-strip">
+    <dl className={["admin-summary-strip", density === "compact" && "admin-summary-strip--compact"].filter(Boolean).join(" ")}>
       {items.map((item, index) => (
         <div data-tone={item.tone && item.tone !== "neutral" ? item.tone : undefined} key={index}>
           <dt>{item.label}</dt>
