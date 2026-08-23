@@ -205,3 +205,22 @@ content envelope.
 No migration was required. The failed UAT run remains immutable and is not retried.
 This correction does not authorize another provider call, publish a Semantic Context
 Pack, open context-aware 10C.3B, or advance 10D.
+
+## 69A.4 Preview/UAT verification
+
+**Recorded:** 2026-08-22T23:55:00-06:00 (`America/Mexico_City`).
+
+Preview/UAT deployed the validation correction on Studio and Workers. The original run
+remains the single failed run with one settled provider response, zero elements and a
+dead-letter outbox; no runnable proposal work exists. Protected mentions, imports,
+classification assignments, `record_tags`, pointers and governed bindings retain their
+pre-deploy digest.
+
+The new free preflight is operator-safe and reports one maximum call, 19 proposals for
+the sealed 5,000-token output budget, USD 0.115899 estimated maximum cost, the existing
+USD 1 platform cap and healthy Worker/recovery. It correctly fails closed with
+`provider_lineage_drift`, because the explicit closed prompt/schema policy has a new
+digest. The UI exposes `Reconciliar contexto`, leaves budget confirmation unchecked and
+keeps the paid action disabled. This checkpoint deliberately did not create the
+successor generation; that append-only reconciliation and any later paid execution need
+a separate operator authorization.
