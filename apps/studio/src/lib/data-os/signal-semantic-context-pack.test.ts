@@ -83,6 +83,15 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "operator UI must never expose raw provider validation messages");
   assert.doesNotMatch(manager,/confidence_authoritative|source_ref\}/u,
     "the operator UI must not present confidence or private source references as authority");
-  assert.equal(typeof JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext.title,"string");
-  assert.equal(typeof JSON.parse(enUs).AdminWorkspace.brandOs.semanticContext.title,"string");
+  const esMessages=JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext;
+  const enMessages=JSON.parse(enUs).AdminWorkspace.brandOs.semanticContext;
+  for(const blocker of ["semantic_context_capacity_contract_insufficient",
+    "semantic_context_model_output_capacity_unsupported",
+    "semantic_context_configured_output_capacity_insufficient"]){
+    assert.match(manager,new RegExp(blocker,"u"));
+    assert.equal(typeof esMessages.blockers[blocker],"string");
+    assert.equal(typeof enMessages.blockers[blocker],"string");
+  }
+  assert.equal(typeof esMessages.title,"string");
+  assert.equal(typeof enMessages.title,"string");
 });

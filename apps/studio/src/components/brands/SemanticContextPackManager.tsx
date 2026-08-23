@@ -406,7 +406,7 @@ function ElementReview({ element, generation, busy, onApprove, onEdit, onReject,
 }
 
 function blockerLabel(value: string, t: ReturnType<typeof useTranslations>) {
-  const known = new Set(["semantic_context_draft_required", "provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale", "provider_configuration_unavailable", "proposal_queue_unavailable", "proposal_worker_unavailable", "proposal_recovery_unavailable", "semantic_context_input_token_budget_exceeded", "platform_hard_cap_insufficient", "hard_cap_insufficient"]);
+  const known = new Set(["semantic_context_draft_required", "provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale", "provider_configuration_unavailable", "proposal_queue_unavailable", "proposal_worker_unavailable", "proposal_recovery_unavailable", "semantic_context_input_token_budget_exceeded", "semantic_context_capacity_contract_insufficient", "semantic_context_model_output_capacity_unsupported", "semantic_context_configured_output_capacity_insufficient", "platform_hard_cap_insufficient", "hard_cap_insufficient"]);
   return known.has(value) ? t(`blockers.${value}`) : t("blockers.unknown");
 }
 function originLabel(value: string, t: ReturnType<typeof useTranslations>) {
