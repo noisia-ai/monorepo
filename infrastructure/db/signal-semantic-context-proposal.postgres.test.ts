@@ -48,6 +48,13 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
   } finally { await admin.end(); }
   const pool = new pg.Pool({ connectionString: DB_URL, ssl: false, max: 12 });
   try {
+    const missingLineage = await seedFixture(pool, "missing-lineage", { providerLineage: false });
+    const missingLineagePreflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: missingLineage.workspace, actor: missingLineage.actor,
+      generation_key: missingLineage.generation_key, configuration, runtime
+    });
+    assert.ok(missingLineagePreflight.blockers.includes("provider_lineage_required"));
+    assert.ok(!missingLineagePreflight.blockers.includes("provider_lineage_drift"));
     const fixture = await seedFixture(pool, "happy");
     const before = await protectedCounts(pool, fixture.workspace.id);
     const preflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({ queryable: pool,
@@ -186,7 +193,8 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
   } finally { await pool.end(); }
 });
 
-async function seedFixture(pool: pg.Pool, label: string) {
+async function seedFixture(pool: pg.Pool, label: string,
+  options: { providerLineage?: boolean } = {}) {
   const suffix = `${label}-${randomUUID().slice(0, 8)}`; const org = randomUUID();
   const brand = randomUUID(); const user = randomUUID(); const profile = randomUUID();
   await pool.query(`INSERT INTO organizations(id,slug,legal_name,display_name,status)
@@ -239,8 +247,10 @@ async function seedFixture(pool: pg.Pool, label: string) {
       $4::uuid,1,$5,$6,$7,$8,'es-MX',ARRAY['es-MX','en-US']::text[],ARRAY['MX','US']::text[],
       'America/Mexico_City',$9,$10,$11,$12,$13,$14::uuid,$15::uuid)`, [workspace.id, artifact.id,
     generationKey, profile, brandDigest, `knowledge-${knowledgeDigest.slice(7, 23)}`, knowledgeDigest,
-    localeDigest, configuration.model, configuration.model_version,
-    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1, configuration.pricing_version,
+    localeDigest, options.providerLineage === false ? null : configuration.model,
+    options.providerLineage === false ? null : configuration.model_version,
+    options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+    options.providerLineage === false ? null : configuration.pricing_version,
     digest(`${suffix}-draft`), operation, user]);
   return { workspace: { id: workspace.id, organization_id: org, brand_id: brand },
     actor: { id: user, user_type: "noisia_internal" as const }, generation_key: generationKey,

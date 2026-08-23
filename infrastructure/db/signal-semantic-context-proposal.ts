@@ -154,7 +154,11 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
         ? error.code : "semantic_context_authority_unavailable");
     }
   }
-  if (generation && !lineageMatches(generation, args.configuration)) blockers.push("provider_lineage_drift");
+  const providerLineageMissing = Boolean(generation && (!generation.proposal_model
+    || !generation.proposal_model_version || !generation.proposal_prompt_digest
+    || !generation.proposal_pricing_version));
+  if (providerLineageMissing) blockers.push("provider_lineage_required");
+  else if (generation && !lineageMatches(generation, args.configuration)) blockers.push("provider_lineage_drift");
   const inputTokenUpperBound = prepared ? Buffer.byteLength(prepared.prompt, "utf8") : null;
   if (inputTokenUpperBound !== null && inputTokenUpperBound > args.configuration.max_input_tokens) {
     blockers.push("semantic_context_input_token_budget_exceeded");
