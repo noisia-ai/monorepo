@@ -5,7 +5,7 @@ import { z } from "zod";
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME =
   "signal.semantic-context-proposal.v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION =
-  "signal-semantic-context-proposal-input-v1" as const;
+  "signal-semantic-context-proposal-input-v2" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION =
   "signal-semantic-context-proposal-output-v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION =
@@ -25,6 +25,36 @@ export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS = [
 export const SIGNAL_SEMANTIC_CONTEXT_EVIDENCE_RELATIONS = [
   "supports", "limits", "contradicts"
 ] as const;
+export const SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION =
+  "signal-semantic-context-capacity-policy-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1 = 256;
+export const SIGNAL_SEMANTIC_CONTEXT_OUTPUT_ENVELOPE_TOKENS_V1 = 512;
+
+export type SignalSemanticContextCapacityCountsV1 = {
+  aliases: number;
+  products: number;
+  competitors: number;
+  locale_variants: number;
+  markets: number;
+  code_switching: number;
+  category_fields: number;
+  structured_terms: number;
+  knowledge_blocks: number;
+  evidence_source_kinds: number;
+};
+
+export type SignalSemanticContextCapacityPlanV1 = {
+  policy_version: typeof SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION;
+  policy_digest: string;
+  capacity_digest: string;
+  counts: SignalSemanticContextCapacityCountsV1;
+  minimum_useful_proposals: number;
+  target_proposals: number;
+  maximum_proposals: number;
+  output_token_budget: number;
+  contract_capacity_saturated: boolean;
+  explanation: Array<{ factor: string; units: number }>;
+};
 
 const keySchema = z.string().regex(/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u).max(160);
 const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -98,10 +128,25 @@ export const signalSemanticContextProposalInputSchemaV1 = z.object({
   }).strict(),
   knowledge_blocks: z.array(sourceBlockSchema).max(240),
   limits: z.object({
+    capacity_policy_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION),
+    capacity_digest: digestSchema,
+    minimum_useful_proposals: z.number().int().min(1).max(250),
+    target_proposals: z.number().int().min(1).max(250),
     maximum_proposals: z.number().int().min(1).max(250),
+    output_token_budget: z.number().int().min(1).max(64_000),
     abstention_required_when_evidence_is_insufficient: z.literal(true),
     mentions_included: z.literal(false)
-  }).strict()
+  }).strict().superRefine((limits, context) => {
+    if (limits.minimum_useful_proposals > limits.target_proposals
+        || limits.target_proposals > limits.maximum_proposals) {
+      context.addIssue({ code: "custom", message: "capacity proposal bounds must be ordered" });
+    }
+    const required = SIGNAL_SEMANTIC_CONTEXT_OUTPUT_ENVELOPE_TOKENS_V1
+      + limits.maximum_proposals * SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1;
+    if (limits.output_token_budget !== required) {
+      context.addIssue({ code: "custom", message: "output budget must match the sealed capacity" });
+    }
+  })
 }).strict();
 
 export type SignalSemanticContextProposalInputV1 = z.infer<
@@ -195,6 +240,7 @@ export type SignalSemanticContextProposalProviderV1 = {
 
 const PROMPT_POLICY = {
   contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  capacity_policy_version: SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION,
   purpose: "Propose a compact structured Semantic Context Pack from governed Brand OS and Knowledge evidence.",
   authority: [
     "Every proposal is pending and non-authoritative.",
@@ -203,6 +249,7 @@ const PROMPT_POLICY = {
     "Do not return SQL, executable expressions, arbitrary IDs, prose outside JSON, or unknown fields.",
     "Abstain by omitting an element when the supplied evidence is insufficient.",
     "Do not manufacture every element kind; return only evidence-backed proposals.",
+    "Treat target_proposals as a capacity target, not a quota; fewer proposals are correct when evidence is insufficient.",
     "A confidence value is informational and never changes pending disposition."
   ],
   output: {
@@ -290,7 +337,93 @@ export function parseSignalSemanticContextProposalResponseV1(text: string) {
   return output;
 }
 
-export const SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1 = 256;
+export function planSignalSemanticContextCapacityV1(args: {
+  authority: {
+    brand_os_digest: string;
+    knowledge_digest: string;
+    locale_context_digest: string;
+  };
+  counts: SignalSemanticContextCapacityCountsV1;
+}): SignalSemanticContextCapacityPlanV1 {
+  const counts = capacityCountsSchema.parse(args.counts);
+  const authority = z.object({
+    brand_os_digest: digestSchema,
+    knowledge_digest: digestSchema,
+    locale_context_digest: digestSchema
+  }).strict().parse(args.authority);
+  const factors = [
+    { factor: "identity_category_guardrails", units: 8 },
+    { factor: "aliases", units: counts.aliases },
+    { factor: "products", units: counts.products * 2 },
+    { factor: "competitors", units: counts.competitors * 3 },
+    { factor: "locale_variants", units: counts.locale_variants * 2 },
+    { factor: "markets", units: counts.markets },
+    { factor: "code_switching", units: counts.code_switching },
+    { factor: "category_fields", units: counts.category_fields * 2 },
+    { factor: "structured_terms", units: counts.structured_terms },
+    { factor: "knowledge_blocks", units: counts.knowledge_blocks },
+    { factor: "evidence_source_kinds", units: counts.evidence_source_kinds * 2 }
+  ];
+  const rawTarget = factors.reduce((total, factor) => total + factor.units, 0);
+  // 198 keeps the 25% exploration margin within the closed 250-proposal contract.
+  // Saturation is explicit so callers can fail closed rather than silently lose coverage.
+  const targetProposals = Math.max(12, Math.min(198, rawTarget));
+  const maximumProposals = Math.min(250, Math.ceil(targetProposals * 1.25));
+  const minimumUsefulProposals = Math.max(8, Math.ceil(targetProposals * 0.65));
+  const outputTokenBudget = SIGNAL_SEMANTIC_CONTEXT_OUTPUT_ENVELOPE_TOKENS_V1
+    + maximumProposals * SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1;
+  const policyDigest = signalSemanticContextProposalDigestV1({
+    policy_version: SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION,
+    formula: {
+      identity_category_guardrails: 8,
+      aliases: 1,
+      products: 2,
+      competitors: 3,
+      locale_variants: 2,
+      markets: 1,
+      code_switching: 1,
+      category_fields: 2,
+      structured_terms: 1,
+      knowledge_blocks: 1,
+      evidence_source_kinds: 2,
+      minimum_ratio: "0.65",
+      maximum_ratio: "1.25",
+      maximum_target: 198,
+      maximum_contract_proposals: 250,
+      output_envelope_tokens: SIGNAL_SEMANTIC_CONTEXT_OUTPUT_ENVELOPE_TOKENS_V1,
+      output_tokens_per_proposal: SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1
+    }
+  });
+  const planWithoutDigest = {
+    policy_version: SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION,
+    policy_digest: policyDigest,
+    authority,
+    counts,
+    minimum_useful_proposals: minimumUsefulProposals,
+    target_proposals: targetProposals,
+    maximum_proposals: maximumProposals,
+    output_token_budget: outputTokenBudget,
+    contract_capacity_saturated: rawTarget > 198,
+    explanation: factors
+  };
+  return {
+    ...planWithoutDigest,
+    capacity_digest: signalSemanticContextProposalDigestV1(planWithoutDigest)
+  };
+}
+
+const capacityCountsSchema = z.object({
+  aliases: z.number().int().min(0).max(100),
+  products: z.number().int().min(0).max(100),
+  competitors: z.number().int().min(0).max(100),
+  locale_variants: z.number().int().min(1).max(40),
+  markets: z.number().int().min(1).max(40),
+  code_switching: z.number().int().min(0).max(40),
+  category_fields: z.number().int().min(0).max(2),
+  structured_terms: z.number().int().min(0).max(1_700),
+  knowledge_blocks: z.number().int().min(1).max(240),
+  evidence_source_kinds: z.number().int().min(1).max(7)
+}).strict();
 
 export function signalSemanticContextMaximumProposalsForOutputTokensV1(maxOutputTokens: number) {
   if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {

@@ -8,11 +8,12 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
   buildSignalSemanticContextProposalPromptV1,
   parseSignalSemanticContextProposalResponseV1,
+  planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
   signalSemanticContextProposalInputSchemaV1,
-  signalSemanticContextMaximumProposalsForOutputTokensV1,
   SignalSemanticContextProposalValidationError,
+  type SignalSemanticContextCapacityPlanV1,
   type SignalSemanticContextProposalInputV1,
   type SignalSemanticContextProposalProviderV1
 } from "@noisia/query-engine";
@@ -29,6 +30,7 @@ export type SignalSemanticContextProposalRuntimeConfigurationV1 = {
   pricing_version: string;
   max_input_tokens: number;
   max_output_tokens: number;
+  model_max_output_tokens: number;
   input_usd_per_million_tokens: string;
   output_usd_per_million_tokens: string;
   platform_hard_cap_micro_usd: bigint;
@@ -68,6 +70,7 @@ type PreparedContext = {
   source_refs: Map<string, SourceAuthorityRef>;
   entity_refs: Map<string, { entity_type: string; entity_id: string }>;
   generation: GenerationRow;
+  capacity: SignalSemanticContextCapacityPlanV1;
 };
 
 type RunRow = {
@@ -99,6 +102,12 @@ export class SignalSemanticContextProviderCallError extends Error {
   constructor(message: string, public readonly definitelyNotSent: boolean) { super(message); }
 }
 
+export function semanticContextModelMaximumOutputTokensV1(model: string, modelVersion: string) {
+  const identity = `${model.trim()}:${modelVersion.trim()}`;
+  // Closed, server-owned capability registry. Unknown or floating model identities fail closed.
+  return identity === "claude-sonnet-4-6:claude-sonnet-4-6" ? 64_000 : 0;
+}
+
 export function signalSemanticContextProposalRuntimeConfigurationFromEnvV1(
   env: Record<string, string | undefined> = process.env
 ): SignalSemanticContextProposalRuntimeConfigurationV1 {
@@ -119,11 +128,13 @@ export function signalSemanticContextProposalRuntimeConfigurationFromEnvV1(
   const legacyUsdCap = Number(env.NOISIA_SEMANTIC_CONTEXT_HARD_CAP_USD);
   const hardCap = explicitHardCap || (Number.isFinite(legacyUsdCap) && legacyUsdCap > 0
     ? Math.ceil(legacyUsdCap * 1_000_000) : 0);
+  const modelMaxOutput = semanticContextModelMaximumOutputTokensV1(model, modelVersion);
   return {
     available: Boolean(model && modelVersion && pricingVersion && maxInput && maxOutput
-      && inputPrice && outputPrice && hardCap),
+      && modelMaxOutput && inputPrice && outputPrice && hardCap),
     provider: "anthropic", model, model_version: modelVersion, pricing_version: pricingVersion,
     max_input_tokens: maxInput, max_output_tokens: maxOutput,
+    model_max_output_tokens: modelMaxOutput,
     input_usd_per_million_tokens: inputPrice || "0",
     output_usd_per_million_tokens: outputPrice || "0",
     platform_hard_cap_micro_usd: BigInt(hardCap)
@@ -150,10 +161,7 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
   let prepared: PreparedContext | null = null;
   if (generation?.status === "draft") {
     try { prepared = await prepareSignalSemanticContextProposalInputV1({
-      queryable: args.queryable, workspace: args.workspace, generation_key: generation.generation_key,
-      maximum_proposals: signalSemanticContextMaximumProposalsForOutputTokensV1(
-        args.configuration.max_output_tokens
-      )
+      queryable: args.queryable, workspace: args.workspace, generation_key: generation.generation_key
     }); } catch (error) {
       blockers.push(error instanceof SignalSemanticContextProposalExecutionError
         ? error.code : "semantic_context_authority_unavailable");
@@ -168,10 +176,20 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
   if (inputTokenUpperBound !== null && inputTokenUpperBound > args.configuration.max_input_tokens) {
     blockers.push("semantic_context_input_token_budget_exceeded");
   }
-  const reservation = configurationReservation(args.configuration, inputTokenUpperBound ?? undefined);
+  if (prepared?.capacity.contract_capacity_saturated) {
+    blockers.push("semantic_context_capacity_contract_insufficient");
+  }
+  if (prepared && prepared.capacity.output_token_budget > args.configuration.model_max_output_tokens) {
+    blockers.push("semantic_context_model_output_capacity_unsupported");
+  }
+  if (prepared && prepared.capacity.output_token_budget > args.configuration.max_output_tokens) {
+    blockers.push("semantic_context_configured_output_capacity_insufficient");
+  }
+  const reservation = configurationReservation(args.configuration, inputTokenUpperBound ?? undefined,
+    prepared?.capacity.output_token_budget);
   if (reservation > args.configuration.platform_hard_cap_micro_usd) blockers.push("platform_hard_cap_insufficient");
   const payload = {
-    contract_version: "signal-semantic-context-proposal-preflight-v2",
+    contract_version: "signal-semantic-context-proposal-preflight-v3",
     generation_key: generation?.generation_key ?? null,
     authority: generation ? { brand_os_digest: generation.brand_os_digest,
       knowledge_digest: generation.knowledge_digest,
@@ -183,9 +201,23 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
     maximum_provider_calls: 1,
     estimated_input_tokens_upper_bound: inputTokenUpperBound,
     max_input_tokens: args.configuration.max_input_tokens,
-    max_output_tokens: args.configuration.max_output_tokens,
+    max_output_tokens: prepared?.capacity.output_token_budget ?? null,
+    configured_output_token_ceiling: args.configuration.max_output_tokens,
+    model_max_output_tokens: args.configuration.model_max_output_tokens,
+    capacity: prepared ? {
+      policy_version: prepared.capacity.policy_version,
+      policy_digest: prepared.capacity.policy_digest,
+      capacity_digest: prepared.capacity.capacity_digest,
+      counts: prepared.capacity.counts,
+      minimum_useful_proposals: prepared.capacity.minimum_useful_proposals,
+      target_proposals: prepared.capacity.target_proposals,
+      maximum_proposals: prepared.capacity.maximum_proposals,
+      output_token_budget: prepared.capacity.output_token_budget,
+      explanation: prepared.capacity.explanation
+    } : null,
     maximum_proposals: prepared?.input.limits.maximum_proposals ?? null,
     estimated_max_cost_micro_usd: reservation.toString(),
+    recommended_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd.toString(),
     platform_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd.toString(),
     runtime: args.runtime,
     drift: blockers.some((value) => value.includes("drift")) ? "stale" : "current",
@@ -199,7 +231,6 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
   queryable: SignalSemanticContextQueryable;
   workspace: SignalSemanticContextProposalWorkspaceV1;
   generation_key: string;
-  maximum_proposals?: number;
 }): Promise<PreparedContext> {
   const generation = await loadGeneration(args.queryable, args.workspace.id, args.generation_key);
   if (!generation || generation.status !== "draft") {
@@ -309,11 +340,49 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
     ({ key, display_text: display, source_aliases: [alias] });
   const metadataList = (key: string) => Array.isArray(profile.metadata?.[key])
     ? (profile.metadata[key] as unknown[]).filter((entry): entry is string => typeof entry === "string") : [];
+  const structuredKeys = ["features", "surfaces", "needs", "benefits", "frictions",
+    "usage_occasions", "inclusions", "exclusions", "homonyms", "ambiguities",
+    "strategic_questions", "limitations"] as const;
+  const structuredContext = Object.fromEntries(structuredKeys.map((key) => [key,
+    metadataList(key).map((value, index) => namedTerm(`${key}.${index + 1}`, value, profileAlias))]));
+  const knowledgeBlocks = [
+    { source_alias: profileAlias, source_kind: "brand_os_profile" as const,
+      content_kind: "identity", title: "Brand identity", text: [profile.display_name,
+        profile.industry, profile.industry_sub].filter(Boolean).join(" · ") },
+    ...productsResult.rows.filter((row) => row.description).map((row) => ({
+      source_alias: aliasFor("brand_os_product", row.id), source_kind: "brand_os_product" as const,
+      content_kind: row.product_type ?? "product", title: row.name, text: row.description! })),
+    ...competitorsResult.rows.map((row) => ({ source_alias: aliasFor("brand_os_competitor", row.id),
+      source_kind: "brand_os_competitor" as const, content_kind: row.role ?? "competitor",
+      title: row.competitor_name, text: row.competitor_name })),
+    ...seedTermsResult.rows.map((row) => ({ source_alias: aliasFor("brand_os_seed_term", row.id),
+      source_kind: "brand_os_seed_term" as const, content_kind: row.term_type,
+      title: "Governed term", text: row.term })),
+    ...knowledgeResult.rows.filter((row) => row.body.trim()).map((row) => ({
+      source_alias: aliasFor(row.source_type, row.id), source_kind: row.source_type,
+      content_kind: row.content_kind || "knowledge", title: row.title, text: row.body }))
+  ];
+  const authority = { brand_os_digest: generation.brand_os_digest,
+    knowledge_digest: generation.knowledge_digest,
+    locale_context_digest: generation.locale_context_digest };
+  const capacity = planSignalSemanticContextCapacityV1({ authority, counts: {
+    aliases: profile.aliases?.length ?? 0,
+    products: productsResult.rows.length,
+    competitors: competitorsResult.rows.length,
+    locale_variants: generation.locale_variants.length,
+    markets: generation.markets.length,
+    code_switching: metadataList("code_switching").length,
+    category_fields: [profile.industry, profile.industry_sub].filter(Boolean).length,
+    structured_terms: Object.values(structuredContext).reduce(
+      (total, values) => total + values.length, 0
+    ),
+    knowledge_blocks: knowledgeBlocks.length,
+    evidence_source_kinds: new Set(knowledgeBlocks.map((block) => block.source_kind)).size
+  } });
   const input = signalSemanticContextProposalInputSchemaV1.parse({
     contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
     generation_key: generation.generation_key,
-    authority: { brand_os_digest: generation.brand_os_digest, knowledge_digest: generation.knowledge_digest,
-      locale_context_digest: generation.locale_context_digest },
+    authority,
     locale_context: { primary_locale: generation.primary_locale,
       locale_variants: generation.locale_variants, markets: generation.markets,
       timezone: generation.timezone, code_switching: metadataList("code_switching") },
@@ -327,38 +396,20 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
       entity_ref: ref, entity_type: "competitor", display_name: row.competitor_name, aliases: [],
       source_aliases: [aliasFor("brand_os_competitor", row.id)] }; }),
     category: { industry: profile.industry, subindustry: profile.industry_sub, source_aliases: [profileAlias] },
-    structured_context: {
-      features: [], surfaces: [], needs: [], benefits: [], frictions: [], usage_occasions: [],
-      inclusions: [], exclusions: [], homonyms: [], ambiguities: [],
-      strategic_questions: [], limitations: [],
-      ...Object.fromEntries(["features", "surfaces", "needs", "benefits", "frictions",
-        "usage_occasions", "inclusions", "exclusions", "homonyms", "ambiguities",
-        "strategic_questions", "limitations"].map((key) => [key,
-          metadataList(key).map((value, index) => namedTerm(`${key}.${index + 1}`, value, profileAlias))]))
-    },
-    knowledge_blocks: [
-      { source_alias: profileAlias, source_kind: "brand_os_profile", content_kind: "identity",
-        title: "Brand identity", text: [profile.display_name, profile.industry, profile.industry_sub]
-          .filter(Boolean).join(" · ") },
-      ...productsResult.rows.filter((row) => row.description).map((row) => ({
-        source_alias: aliasFor("brand_os_product", row.id), source_kind: "brand_os_product",
-        content_kind: row.product_type ?? "product", title: row.name, text: row.description! })),
-      ...competitorsResult.rows.map((row) => ({ source_alias: aliasFor("brand_os_competitor", row.id),
-        source_kind: "brand_os_competitor", content_kind: row.role ?? "competitor",
-        title: row.competitor_name, text: row.competitor_name })),
-      ...seedTermsResult.rows.map((row) => ({ source_alias: aliasFor("brand_os_seed_term", row.id),
-        source_kind: "brand_os_seed_term", content_kind: row.term_type, title: "Governed term", text: row.term })),
-      ...knowledgeResult.rows.filter((row) => row.body.trim()).map((row) => ({
-        source_alias: aliasFor(row.source_type, row.id), source_kind: row.source_type,
-        content_kind: row.content_kind || "knowledge", title: row.title, text: row.body }))
-    ],
-    limits: { maximum_proposals: args.maximum_proposals ?? 250,
+    structured_context: structuredContext,
+    knowledge_blocks: knowledgeBlocks,
+    limits: { capacity_policy_version: capacity.policy_version,
+      capacity_digest: capacity.capacity_digest,
+      minimum_useful_proposals: capacity.minimum_useful_proposals,
+      target_proposals: capacity.target_proposals,
+      maximum_proposals: capacity.maximum_proposals,
+      output_token_budget: capacity.output_token_budget,
       abstention_required_when_evidence_is_insufficient: true,
       mentions_included: false }
   });
   const prompt = buildSignalSemanticContextProposalPromptV1(input);
   return { input, prompt, input_digest: signalSemanticContextProposalDigestV1(input),
-    source_refs: sourceRefs, entity_refs: entityRefs, generation };
+    source_refs: sourceRefs, entity_refs: entityRefs, generation, capacity };
 }
 
 export async function startSignalSemanticContextProposalRunV1(args: {
@@ -402,10 +453,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       throw new SignalSemanticContextProposalExecutionError("semantic_context_hard_cap_insufficient", 422);
     }
     const prepared = await prepareSignalSemanticContextProposalInputV1({
-      queryable: client, workspace: args.workspace, generation_key: args.generation_key,
-      maximum_proposals: signalSemanticContextMaximumProposalsForOutputTokensV1(
-        args.configuration.max_output_tokens
-      )
+      queryable: client, workspace: args.workspace, generation_key: args.generation_key
     });
     const operation = await beginOperation(client, {
       workspace: args.workspace, actor: args.actor, action: "start-semantic-context-proposal-run",
@@ -439,7 +487,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
       prepared.input_digest, args.configuration.provider, args.configuration.model,
       args.configuration.model_version, args.configuration.pricing_version,
-      args.configuration.max_input_tokens, args.configuration.max_output_tokens,
+      args.configuration.max_input_tokens, prepared.capacity.output_token_budget,
       args.configuration.input_usd_per_million_tokens, args.configuration.output_usd_per_million_tokens,
       args.hard_cap_micro_usd.toString(), reservation.toString(), providerRequestIdentity, args.actor.id
     ]);
@@ -447,11 +495,12 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     const reservationDigest = signalSemanticContextProposalDigestV1({ run_id: run.id,
       reservation_micro_usd: reservation.toString(),
       max_input_tokens: preflight.estimated_input_tokens_upper_bound,
-      max_output_tokens: args.configuration.max_output_tokens });
+      max_output_tokens: prepared.capacity.output_token_budget });
     await client.query(`INSERT INTO signal_semantic_context_budget_reservations(
       workspace_id,run_id,reservation_micro_usd,reserved_input_tokens,reserved_output_tokens,reservation_digest)
       VALUES($1::uuid,$2::uuid,$3,$4,$5,$6)`, [args.workspace.id, run.id, reservation.toString(),
-      preflight.estimated_input_tokens_upper_bound, args.configuration.max_output_tokens, reservationDigest]);
+      preflight.estimated_input_tokens_upper_bound, prepared.capacity.output_token_budget,
+      reservationDigest]);
     await client.query(`INSERT INTO signal_semantic_context_proposal_outbox(
       workspace_id,run_id,worker_job_id) VALUES($1::uuid,$2::uuid,$3)`,
     [args.workspace.id, run.id, buildSignalSemanticContextProposalJobIdV1(run.id)]);
@@ -535,9 +584,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
   let prepared: PreparedContext;
   try {
     prepared = await prepareSignalSemanticContextProposalInputV1({ queryable: lease.client,
-      workspace: lease.workspace, generation_key: lease.generation_key,
-      maximum_proposals: signalSemanticContextMaximumProposalsForOutputTokensV1(run.max_output_tokens) });
+      workspace: lease.workspace, generation_key: lease.generation_key });
     if (prepared.input_digest !== run.context_input_digest
+        || prepared.capacity.output_token_budget !== run.max_output_tokens
         || prepared.generation.brand_os_digest !== run.brand_os_digest
         || prepared.generation.knowledge_digest !== run.knowledge_digest
         || prepared.generation.locale_context_digest !== run.locale_context_digest) {
@@ -625,8 +674,7 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_lease_lost");
     }
     try { prepared = await prepareSignalSemanticContextProposalInputV1({ queryable: finish,
-      workspace: lease.workspace, generation_key: lease.generation_key,
-      maximum_proposals: signalSemanticContextMaximumProposalsForOutputTokensV1(current.max_output_tokens) }); }
+      workspace: lease.workspace, generation_key: lease.generation_key }); }
     catch (error) {
       if (!isAuthorityDrift(error)) throw error;
       await markRunStale(finish, current, lease.token, error.code);
@@ -1127,9 +1175,10 @@ function lineageMatches(generation: GenerationRow,
 }
 
 function configurationReservation(configuration: SignalSemanticContextProposalRuntimeConfigurationV1,
-  inputTokenUpperBound = configuration.max_input_tokens) {
+  inputTokenUpperBound = configuration.max_input_tokens,
+  outputTokenBudget = configuration.max_output_tokens) {
   return signalSemanticContextProposalCostMicroUsdV1({ input_tokens: inputTokenUpperBound,
-    output_tokens: configuration.max_output_tokens,
+    output_tokens: outputTokenBudget,
     input_usd_per_million_tokens: configuration.input_usd_per_million_tokens,
     output_usd_per_million_tokens: configuration.output_usd_per_million_tokens });
 }

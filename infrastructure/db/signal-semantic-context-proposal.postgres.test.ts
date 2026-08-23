@@ -29,9 +29,10 @@ const digest = (value: string) => `sha256:${createHash("sha256").update(value).d
 const runtime = { queue_configured: true, worker_alive: true, recovery_alive: true };
 const configuration: SignalSemanticContextProposalRuntimeConfigurationV1 = {
   available: true, provider: "anthropic", model: "fixture-model", model_version: "immutable-fixture-v1",
-  pricing_version: "fixture-pricing-v1", max_input_tokens: 20_000, max_output_tokens: 2_000,
+  pricing_version: "fixture-pricing-v1", max_input_tokens: 20_000, max_output_tokens: 64_000,
+  model_max_output_tokens: 64_000,
   input_usd_per_million_tokens: "3", output_usd_per_million_tokens: "15",
-  platform_hard_cap_micro_usd: 100_000n
+  platform_hard_cap_micro_usd: 1_000_000n
 };
 
 test("0092 runs one bounded call, appends pending proposals atomically, and recovers fail-closed", {
@@ -65,7 +66,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     const starts = await Promise.all([1, 2].map(() => startSignalSemanticContextProposalRunV1({ pool,
       workspace: fixture.workspace, actor: fixture.actor, idempotency_key: "happy-start-idempotency",
       generation_key: fixture.generation_key, preflight_digest: preflight.preflight_digest,
-      confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION, hard_cap_micro_usd: 100_000n,
+      confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION, hard_cap_micro_usd: 1_000_000n,
       configuration, runtime })));
     assert.deepEqual(starts[0], starts[1], "concurrent same-key replay returns one run");
     const started = starts[0]!;
@@ -94,6 +95,28 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       WHERE run_id=$1::uuid`, [await runId(pool, started.run_key)]);
     assert.ok(runEvents >= 6);
 
+    const capacityFixture = await seedFixture(pool, "capacity");
+    const capacityPreflight = await preflightFor(pool, capacityFixture);
+    assert.ok(capacityPreflight.capacity);
+    assert.ok(capacityPreflight.capacity.target_proposals >= 40);
+    assert.ok(capacityPreflight.capacity.maximum_proposals >= 50);
+    assert.equal(capacityPreflight.max_output_tokens,
+      capacityPreflight.capacity.output_token_budget);
+    const capacityRun = await startFor(pool, capacityFixture, "capacity-start");
+    const capacityPrepared = await prepareSignalSemanticContextProposalInputV1({
+      queryable: pool, workspace: capacityFixture.workspace,
+      generation_key: capacityFixture.generation_key
+    });
+    await processSignalSemanticContextProposalRunV1({ pool, run_id: capacityRun.id,
+      provider: { async generate() { return {
+        text: validResponseCount(capacityPrepared.input.knowledge_blocks[0]!.source_alias,
+          capacityPrepared.input.identity.primary.entity_ref, 50),
+        provider_request_id: "fixture-capacity-request",
+        usage: { input_tokens: 1_000, output_tokens: 8_000 }
+      }; } } });
+    assert.deepEqual(await elementCounts(pool, capacityFixture.workspace.id),
+      { pending: 50, approved: 0, rejected: 0 });
+
     const invalid = await seedFixture(pool, "invalid");
     const invalidRun = await startFor(pool, invalid, "invalid-start");
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: invalidRun.id,
@@ -119,12 +142,16 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
 
     const truncated = await seedFixture(pool, "truncated");
     const truncatedRun = await startFor(pool, truncated, "truncated-start");
+    const truncatedPrepared = await prepareSignalSemanticContextProposalInputV1({
+      queryable: pool, workspace: truncated.workspace,
+      generation_key: truncated.generation_key
+    });
     let truncatedCalls = 0;
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: truncatedRun.id,
       provider: { async generate() { truncatedCalls += 1; return {
         text: "```json\n{\"contract_version\":\"signal-semantic-context-proposal-output-v1\",",
         provider_request_id: null,
-        usage: { input_tokens: 10, output_tokens: configuration.max_output_tokens }
+        usage: { input_tokens: 10, output_tokens: truncatedPrepared.capacity.output_token_budget }
       }; } } }), /semantic_context_provider_response_truncated/u);
     const truncatedState = await loadSignalSemanticContextProposalRunV1({ queryable: pool,
       workspace: truncated.workspace, actor: truncated.actor, run_key: truncatedRun.run_key });
@@ -211,6 +238,22 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     await assert.rejects(loadSignalSemanticContextProposalRunV1({ queryable: pool,
       workspace: invalid.workspace, actor: invalid.actor, run_key: started.run_key }), /not_found/u);
     const future = await seedFixture(pool, "cap");
+    const configuredCapacity = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: future.workspace, actor: future.actor,
+      generation_key: future.generation_key,
+      configuration: { ...configuration, max_output_tokens: 5_000 }, runtime
+    });
+    assert.ok(configuredCapacity.blockers.includes(
+      "semantic_context_configured_output_capacity_insufficient"
+    ));
+    const unsupportedModelCapacity = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: future.workspace, actor: future.actor,
+      generation_key: future.generation_key,
+      configuration: { ...configuration, model_max_output_tokens: 5_000 }, runtime
+    });
+    assert.ok(unsupportedModelCapacity.blockers.includes(
+      "semantic_context_model_output_capacity_unsupported"
+    ));
     const capPreflight = await preflightFor(pool, future);
     const operationsBefore = await scalar(pool, `SELECT count(*)::int count FROM signal_governance_control_operations
       WHERE workspace_id=$1::uuid`, [future.workspace.id]);
@@ -309,7 +352,7 @@ async function startFor(pool: pg.Pool, fixture: Awaited<ReturnType<typeof seedFi
   const run = await startSignalSemanticContextProposalRunV1({ pool, workspace: fixture.workspace,
     actor: fixture.actor, idempotency_key: `${key}-idempotency`, generation_key: fixture.generation_key,
     preflight_digest: preflight.preflight_digest, confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
-    hard_cap_micro_usd: 100_000n, configuration, runtime });
+    hard_cap_micro_usd: 1_000_000n, configuration, runtime });
   return { ...run, id: await runId(pool, run.run_key) };
 }
 function validResponse(sourceAlias: string, entityRef: string) { return JSON.stringify({
@@ -320,6 +363,25 @@ function validResponse(sourceAlias: string, entityRef: string) { return JSON.str
     relation_target_key: null, confidence: 1,
     evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] }]
 }); }
+function validResponseCount(sourceAlias: string, entityRef: string, count: number) {
+  return JSON.stringify({
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+    proposals: Array.from({ length: count }, (_, index) => ({
+      element_key: `feature.fixture-${index + 1}`,
+      element_kind: "feature",
+      canonical_key: `fixture-${index + 1}`,
+      display_text: `Fixture feature ${index + 1}`,
+      scope: "primary_brand",
+      entity_type: "brand",
+      entity_ref: entityRef,
+      locale: "es-MX",
+      relation_kind: null,
+      relation_target_key: null,
+      confidence: 1,
+      evidence: [{ source_alias: sourceAlias, relation_type: "supports" }]
+    }))
+  });
+}
 async function runId(pool: pg.Pool, runKey: string) { return (await pool.query<{ id: string }>(
   `SELECT id::text FROM signal_semantic_context_proposal_runs WHERE run_key=$1`, [runKey])).rows[0]!.id; }
 async function elementCounts(pool: pg.Pool, workspaceId: string) { return row(pool, `SELECT
