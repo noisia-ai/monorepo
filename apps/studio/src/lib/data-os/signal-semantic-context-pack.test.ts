@@ -12,6 +12,7 @@ import {
   signalSemanticContextProviderConfigurationFromEnvV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
+  canPrepareSignalSemanticContextTerminalSuccessorV1,
   canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
@@ -35,6 +36,33 @@ test("proposal generation entry is gated by the server-discovered generation run
   assert.equal(canStartSignalSemanticContextProposalGenerationV1({
     lifecycleState: null, elementCount: 0, hasServerDiscoveredRun: false
   }), false, "missing generation state fails closed");
+});
+
+test("terminal successor preparation is non-paid and restricted to consumed empty drafts", () => {
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "failed", providerCallCount: 1
+  }), true);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "stale", providerCallCount: 0
+  }), true);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "dead_letter", providerCallCount: 0
+  }), true, "a terminal no-call dead letter can advance without spending");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "dead_letter", providerCallCount: 1
+  }), false, "an ambiguous provider outcome is never offered as an eligible transition");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "failed", providerCallCount: 0
+  }), false, "a definitely-not-started run keeps the existing safe retry path");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 1, runStatus: "failed", providerCallCount: 1
+  }), false, "reviewable elements cannot be bypassed");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "published", elementCount: 0, runStatus: "failed", providerCallCount: 1
+  }), false);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "processing", providerCallCount: 0
+  }), false);
 });
 
 test("rejected paid-response reconciliation preserves observed counts generically", () => {
@@ -89,7 +117,7 @@ test("semantic context vocabulary is closed and keeps relation authority separat
     "knowledge_assertion"]);
   assert.deepEqual(SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,["brand_os_drift",
     "knowledge_drift","locale_market_drift","provider_lineage_missing",
-    "provider_lineage_changed","operator_requested_reconciliation"]);
+    "provider_lineage_changed","operator_requested_reconciliation","terminal_provider_run"]);
 });
 
 test("provider preflight configuration is server-owned and unavailable without pinned inputs",()=>{
@@ -149,6 +177,9 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/Idempotency-Key/u);
   assert.match(manager,/\/reconcile/u);
   assert.match(manager,/actions\.reconcile/u);
+  assert.match(manager,/terminal_provider_run/u);
+  assert.match(manager,/actions\.prepareSuccessor/u);
+  assert.match(manager,/terminalSuccessor\.message/u);
   assert.match(manager,/noisia:semantic-context-run/u,
     "same-tab polling may retain a bounded run hint");
   assert.match(manager,/isSignalSemanticContextRunSessionCurrentV1/u,
@@ -215,7 +246,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "terminal paid-response history must not add recovery actions");
   for(const blocker of ["semantic_context_capacity_contract_insufficient",
     "semantic_context_model_output_capacity_unsupported",
-    "semantic_context_configured_output_capacity_insufficient"]){
+    "semantic_context_configured_output_capacity_insufficient",
+    "semantic_context_generation_run_exists"]){
     assert.match(manager,new RegExp(blocker,"u"));
     assert.equal(typeof esMessages.blockers[blocker],"string");
     assert.equal(typeof enMessages.blockers[blocker],"string");

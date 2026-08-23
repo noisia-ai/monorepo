@@ -2232,3 +2232,23 @@ registra `revalidate-semantic-context-proposal-run` con AuthZ DB-owned.
 
 Checksum local 0094:
 `c881dfd50332212f3a434e6bfd8cf3de2c3dff16e0cda869ac085da167828930`.
+
+## Backend 69A.7A · successor de un draft consumido (0095)
+
+**Registrado:** 2026-08-23T14:07:30-06:00 (`America/Mexico_City`).
+
+`0095_signal_semantic_context_terminal_run_successor.sql` extiende la causa cerrada de
+supersession con `terminal_provider_run`. El trigger de generaciones toma el advisory
+lock canónico del workspace y sólo permite esta transición cuando el predecessor es la
+hoja draft efectiva, contiene una corrida terminal no reutilizable, no tiene elementos
+reviewables, outbox ejecutable ni reserva abierta. El successor nace sin corrida,
+elementos, reserva u outbox y conserva un enlace explícito al predecessor inmutable.
+
+El trigger de proposal runs usa el mismo lock, exige una generación draft efectiva sin
+successor y vuelve a comprobar que no exista otra corrida. `UNIQUE(generation_id)` se
+mantiene intacto: el camino soportado es crear una nueva generación, nunca reciclar o
+reabrir el run anterior. La migración es row-inert y no crea producto ni gasto al
+aplicarse.
+
+Checksum local 0095:
+`7fb943fff87f07af5fd69b9714a76194176ca131861ca68b0470b81e7d0aeb4d`.

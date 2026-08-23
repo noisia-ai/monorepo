@@ -174,6 +174,11 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
   const blockers: string[] = [];
   if (!generation) blockers.push("semantic_context_draft_required");
   if (generation?.status !== "draft") blockers.push("semantic_context_draft_required");
+  const existingRun = generation ? await args.queryable.query<{ exists: boolean }>(`SELECT EXISTS(
+    SELECT 1 FROM signal_semantic_context_proposal_runs run
+    WHERE run.workspace_id=$1::uuid AND run.generation_id=$2::uuid) exists`,
+  [args.workspace.id, generation.id]) : null;
+  if (existingRun?.rows[0]?.exists) blockers.push("semantic_context_generation_run_exists");
   if (!args.configuration.available) blockers.push("provider_configuration_unavailable");
   if (!args.runtime.queue_configured) blockers.push("proposal_queue_unavailable");
   if (!args.runtime.worker_alive) blockers.push("proposal_worker_unavailable");
@@ -455,6 +460,18 @@ export async function startSignalSemanticContextProposalRunV1(args: {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`signal-semantic-context:${args.workspace.id}`]);
+    const operation = await beginOperation(client, {
+      workspace: args.workspace, actor: args.actor, action: "start-semantic-context-proposal-run",
+      idempotency_key: args.idempotency_key,
+      input: { generation_key: args.generation_key, preflight_digest: args.preflight_digest,
+        confirmation: args.confirmation, hard_cap_micro_usd: args.hard_cap_micro_usd.toString() }
+    });
+    if (operation.replay) {
+      await client.query("COMMIT");
+      return operation.replay as ReturnType<typeof publicRun>;
+    }
     const preflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({
       queryable: client, workspace: args.workspace, actor: args.actor,
       generation_key: args.generation_key, configuration: args.configuration, runtime: args.runtime
@@ -475,16 +492,6 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     const prepared = await prepareSignalSemanticContextProposalInputV1({
       queryable: client, workspace: args.workspace, generation_key: args.generation_key
     });
-    const operation = await beginOperation(client, {
-      workspace: args.workspace, actor: args.actor, action: "start-semantic-context-proposal-run",
-      idempotency_key: args.idempotency_key,
-      input: { generation_key: args.generation_key, preflight_digest: args.preflight_digest,
-        confirmation: args.confirmation, hard_cap_micro_usd: args.hard_cap_micro_usd.toString() }
-    });
-    if (operation.replay) {
-      await client.query("COMMIT");
-      return operation.replay as ReturnType<typeof publicRun>;
-    }
     const providerRequestIdentity = signalSemanticContextProposalDigestV1({
       contract_version: "signal-semantic-context-provider-request-v1",
       generation_key: args.generation_key, preflight_digest: args.preflight_digest,
@@ -1449,6 +1456,8 @@ async function loadGeneration(queryable: SignalSemanticContextQueryable, workspa
     locale_variants,markets,timezone,proposal_model,proposal_model_version,proposal_prompt_digest,
     proposal_pricing_version FROM signal_semantic_context_generations
     WHERE workspace_id=$1::uuid AND ($2::text IS NULL OR generation_key=$2)
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.supersedes_generation_id=signal_semantic_context_generations.id)
     ORDER BY generation_version DESC LIMIT 1`, [workspaceId, generationKey ?? null]);
   return result.rows[0] ?? null;
 }

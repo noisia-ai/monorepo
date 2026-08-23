@@ -25,6 +25,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceConfirmDialog, WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import {
+  canPrepareSignalSemanticContextTerminalSuccessorV1,
   canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
@@ -186,6 +187,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const [boundRun, setBoundRun] = useState<GenerationBoundRun | null>(null);
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [terminalSuccessorOpen, setTerminalSuccessorOpen] = useState(false);
   const [budgetConfirmed, setBudgetConfirmed] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [query, setQuery] = useState("");
@@ -277,6 +279,12 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     elementCount: elements.length,
     hasServerDiscoveredRun: run !== null
   });
+  const canPrepareTerminalSuccessor = canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: generation?.lifecycle_state ?? null,
+    elementCount: elements.length,
+    runStatus: run?.status ?? null,
+    providerCallCount: run?.provider_call_count ?? 0
+  });
 
   async function createDraft() {
     setBusy("draft"); setError(null);
@@ -287,20 +295,23 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     finally { setBusy(null); }
   }
 
-  async function reconcileContext() {
+  async function reconcileContext(reasonOverride?: "terminal_provider_run") {
     const driftReason = readiness?.drift_reasons.find((reason) =>
       ["brand_os_drift", "knowledge_drift", "locale_market_drift"].includes(reason));
-    const reason = driftReason
+    const reason = reasonOverride ?? driftReason
       ?? (preflight?.blockers.includes("provider_lineage_required") ? "provider_lineage_missing"
         : preflight?.blockers.includes("provider_lineage_drift") ? "provider_lineage_changed"
           : "operator_requested_reconciliation");
-    setBusy("reconcile"); setError(null);
+    const busyKey = reasonOverride ? "terminal-successor" : "reconcile";
+    setBusy(busyKey); setError(null);
     try {
       await requestJson(`${base}/reconcile`, { method: "POST", headers: {
-        "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("reconcile")
+        "Content-Type": "application/json", "Idempotency-Key": idempotencyKey(
+          reasonOverride ? "terminal-successor" : "reconcile")
       }, body: JSON.stringify({ reason }) });
       window.sessionStorage.removeItem(runStorageKey);
-      setBoundRun(null); setDrawer(null); setPreflight(null); await load();
+      setBoundRun(null); setDrawer(null); setPreflight(null); setBudgetConfirmed(false);
+      setTerminalSuccessorOpen(false); await load();
     } catch (reconcileError) {
       setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
     } finally { setBusy(null); }
@@ -387,6 +398,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
 
   const sectionActions = <>
     <button className="admin-button" disabled={Boolean(busy)} onClick={() => void load()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.refresh")}</button>
+    {canPrepareTerminalSuccessor ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => setTerminalSuccessorOpen(true)} type="button"><TreeStructure aria-hidden size={15}/>{t("actions.prepareSuccessor")}</button> : null}
     {canStartProposalGeneration ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button"><MagicWand aria-hidden size={15}/>{t("actions.generate")}</button> : null}
   </>;
 
@@ -402,7 +414,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
           { label: t("summary.approved"), value: formatAdminNumber(counts.approved, locale), hint: t("summary.approvedHint") },
           { label: t("summary.coverage"), value: generation.primary_locale, hint: t("summary.markets", { count: generation.markets.length }) }
         ]}/>
-        {readiness?.drift_state === "stale" ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("drift.title")}</strong><p>{t("drift.body")}</p><button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button></div></div> : null}
+        {readiness?.drift_state === "stale" ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("drift.title")}</strong><p>{t("drift.body")}</p>{!run ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button> : null}</div></div> : null}
         {error ? <div className="semantic-context-pack__notice" data-tone="danger" role="alert"><Warning aria-hidden size={18}/><div><strong>{t("errors.title")}</strong><p>{error}</p></div></div> : null}
         {run ? <RunBanner busy={busy === "retry-run"} onRetry={() => void retryProposalRun()} run={run} t={t}/>:null}
         {canStartProposalGeneration ? <div className="semantic-context-pack__empty"><MagicWand aria-hidden size={24}/><div><strong>{t("draftEmpty.title")}</strong><p>{t("draftEmpty.body")}</p></div><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button">{t("actions.calculate")}</button></div> : null}
@@ -425,6 +437,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     {drawer?.mode === "element" && activeElement ? <WorkspaceDrawer ariaLabel={t("review.aria", { name: activeElement.display_text })} closeLabel={t("actions.close")} eyebrow={`${t(`kinds.${activeElement.element_kind}`)} · ${t(`states.${activeElement.disposition}`)}`} onClose={() => !busy && setDrawer(null)} title={activeElement.display_text}><ElementReview element={activeElement} generation={generation} busy={busy} onApprove={() => void decide("approve", activeElement.element_key)} onEdit={(form) => void saveEdit(form)} onReject={() => void decide("reject", activeElement.element_key)} t={t}/></WorkspaceDrawer> : null}
 
     <WorkspaceConfirmDialog busy={busy === "publish"} cancelLabel={t("actions.cancel")} confirmDisabled={!canPublish} confirmLabel={t("publish.confirm")} message={t("publish.message", { approved: counts.approved })} onClose={() => setPublishOpen(false)} onConfirm={publish} open={publishOpen} title={t("publish.title")}><div className="semantic-context-pack__publish-summary"><CheckCircle aria-hidden size={20}/><p>{t("publish.body")}</p></div></WorkspaceConfirmDialog>
+    <WorkspaceConfirmDialog busy={busy === "terminal-successor"} cancelLabel={t("actions.cancel")} confirmDisabled={!canPrepareTerminalSuccessor} confirmLabel={t("terminalSuccessor.confirm")} message={t("terminalSuccessor.message")} onClose={() => setTerminalSuccessorOpen(false)} onConfirm={() => void reconcileContext("terminal_provider_run")} open={terminalSuccessorOpen} title={t("terminalSuccessor.title")}><div className="semantic-context-pack__publish-summary"><TreeStructure aria-hidden size={20}/><p>{t("terminalSuccessor.body")}</p></div></WorkspaceConfirmDialog>
   </>;
 }
 
@@ -461,7 +474,7 @@ function ElementReview({ element, generation, busy, onApprove, onEdit, onReject,
 }
 
 function blockerLabel(value: string, t: ReturnType<typeof useTranslations>) {
-  const known = new Set(["semantic_context_draft_required", "provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale", "provider_configuration_unavailable", "proposal_queue_unavailable", "proposal_worker_unavailable", "proposal_recovery_unavailable", "semantic_context_input_token_budget_exceeded", "semantic_context_capacity_contract_insufficient", "semantic_context_model_output_capacity_unsupported", "semantic_context_configured_output_capacity_insufficient", "platform_hard_cap_insufficient", "hard_cap_insufficient"]);
+  const known = new Set(["semantic_context_draft_required", "semantic_context_generation_run_exists", "provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale", "provider_configuration_unavailable", "proposal_queue_unavailable", "proposal_worker_unavailable", "proposal_recovery_unavailable", "semantic_context_input_token_budget_exceeded", "semantic_context_capacity_contract_insufficient", "semantic_context_model_output_capacity_unsupported", "semantic_context_configured_output_capacity_insufficient", "platform_hard_cap_insufficient", "hard_cap_insufficient"]);
   return known.has(value) ? t(`blockers.${value}`) : t("blockers.unknown");
 }
 function originLabel(value: string, t: ReturnType<typeof useTranslations>) {

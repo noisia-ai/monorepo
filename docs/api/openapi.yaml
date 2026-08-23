@@ -1922,7 +1922,7 @@ paths:
       tags: [Semantic Context Pack]
       operationId: reconcileSemanticContextGeneration
       summary: Append an effective draft successor sealed to current server-owned authority.
-      description: Preserves the prior draft or published generation byte-for-byte. Current generations produce an idempotent no-op. A nonterminal provider run blocks reconciliation.
+      description: Preserves the prior draft or published generation byte-for-byte. Current generations produce an idempotent no-op. A nonterminal provider run blocks reconciliation; a safely terminal, consumed draft requires terminal_provider_run and produces a fresh run-free successor.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
@@ -1940,7 +1940,7 @@ paths:
                   type: string
                   enum: [brand_os_drift, knowledge_drift, locale_market_drift,
                     provider_lineage_missing, provider_lineage_changed,
-                    operator_requested_reconciliation]
+                    operator_requested_reconciliation, terminal_provider_run]
       responses:
         "200": { description: Idempotent created/no-op result with operator-safe generation key and version. }
         "400": { description: Idempotency-Key missing. }
@@ -1967,7 +1967,7 @@ paths:
       parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
       responses:
         "200":
-          description: Server-pinned model, pricing, one call maximum, proposal bound, estimate and hard cap; provider_calls=0 and writes_performed=false.
+          description: Server-pinned model, pricing, one call maximum, proposal bound, estimate and hard cap; provider_calls=0 and writes_performed=false. Any durable run on the selected generation adds semantic_context_generation_run_exists and keeps readiness blocked.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SignalSemanticContextProposalPreflightV3" }

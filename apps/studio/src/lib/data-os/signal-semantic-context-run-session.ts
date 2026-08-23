@@ -14,6 +14,20 @@ export function canStartSignalSemanticContextProposalGenerationV1(input: {
     && !input.hasServerDiscoveredRun;
 }
 
+export function canPrepareSignalSemanticContextTerminalSuccessorV1(input: {
+  lifecycleState: "draft" | "published" | null;
+  elementCount: number;
+  runStatus: "queued" | "processing" | "validating" | "completed" | "failed" | "stale" | "dead_letter" | null;
+  providerCallCount: number;
+}) {
+  return input.lifecycleState === "draft"
+    && input.elementCount === 0
+    && input.runStatus !== null
+    && ((input.runStatus === "failed" && input.providerCallCount === 1)
+      || input.runStatus === "stale"
+      || (input.runStatus === "dead_letter" && input.providerCallCount === 0));
+}
+
 export function signalSemanticContextRejectedRevalidationCountValuesV1(input: {
   proposal_count_before: number;
   normalized_proposal_count: number;

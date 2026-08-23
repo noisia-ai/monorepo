@@ -308,3 +308,20 @@ The existing Semantic Context run banner now renders this operator-safe result a
 refresh. It never exposes raw response content, private evidence references, full
 digests or provider diagnostics. Authenticated visual QA is a separate handoff and this
 checkpoint does not claim it complete.
+
+## 69A.7A terminal-run successor and transactional start guard
+
+**Recorded:** 2026-08-23T14:07:30-06:00 (`America/Mexico_City`).
+
+The free preflight now reads durable proposal-run authority and emits
+`semantic_context_generation_run_exists` for every consumed generation. It cannot report
+ready merely because lineage, budget and runtime are healthy. The start writer acquires
+the same workspace advisory lock as generation reconciliation and repeats the check
+inside its transaction, while preserving same-key replay semantics.
+
+The canonical reconciliation writer accepts the closed reason
+`terminal_provider_run`. It creates a fresh effective draft only for an unambiguous
+terminal predecessor with zero reviewable elements and zero executable provider work.
+The prior run and its financial/evidence lineage are not changed; the successor starts
+with no run, reservation, outbox or copied proposals. Preparing it is not execution and
+does not authorize a later provider call, 10C.3B, publication or 10D.

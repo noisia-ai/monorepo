@@ -35,7 +35,7 @@ export const SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS = [
 ] as const;
 export const SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS = [
   "brand_os_drift","knowledge_drift","locale_market_drift","provider_lineage_missing",
-  "provider_lineage_changed","operator_requested_reconciliation"
+  "provider_lineage_changed","operator_requested_reconciliation","terminal_provider_run"
 ] as const;
 export const SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES = [
   "brand_os_profile","brand_os_product","brand_os_competitor","brand_os_seed_term",
@@ -293,6 +293,24 @@ export async function reconcileSignalSemanticContextGenerationV1(args:{
   const live=await resolveLiveAuthorityV1(args);
   const current=await loadGeneration(args.queryable,args.workspace.id);
   if(!current)throw new SignalSemanticContextPackError("semantic_context_generation_not_found",404);
+  const runState=await loadGenerationRunStateV1(args.queryable,args.workspace.id,current.id);
+  if(runState&&["queued","processing","validating"].includes(runState.status)){
+    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
+  }
+  if(args.reason==="terminal_provider_run"){
+    if(current.status!=="draft"){
+      throw new SignalSemanticContextPackError("semantic_context_terminal_run_not_eligible");
+    }
+    if(!runState){
+      const result={outcome:"noop" as const,generation_key:current.generation_key,
+        generation_version:current.generation_version,status:current.status};
+      await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+        key:operation.key,result});return result;
+    }
+    assertTerminalRunSuccessorEligibilityV1(runState);
+  }else if(current.status==="draft"&&runState){
+    throw new SignalSemanticContextPackError("semantic_context_terminal_run_successor_required");
+  }
   const authorityReasons=compareAuthority(current,live);
   const providerReason=!current.proposal_model||!current.proposal_model_version
       ||!current.proposal_prompt_digest||!current.proposal_pricing_version
@@ -303,19 +321,15 @@ export async function reconcileSignalSemanticContextGenerationV1(args:{
       ||current.proposal_pricing_version!==args.proposalLineage.pricing_version
       ?"provider_lineage_changed":null;
   const actualReasons=[...authorityReasons,...(providerReason?[providerReason]:[])];
-  if(actualReasons.length===0){const result={outcome:"noop" as const,
+  if(args.reason!=="terminal_provider_run"&&actualReasons.length===0){const result={outcome:"noop" as const,
       generation_key:current.generation_key,generation_version:current.generation_version,
       status:current.status};
     await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
       key:operation.key,result});return result;}
-  if(args.reason!=="operator_requested_reconciliation"&&!actualReasons.includes(args.reason)){
+  if(args.reason!=="terminal_provider_run"&&args.reason!=="operator_requested_reconciliation"
+      &&!actualReasons.includes(args.reason)){
     throw new SignalSemanticContextPackError("semantic_context_reconciliation_reason_mismatch",422);
   }
-  const activeRun=await args.queryable.query<{status:string}>(`
-    SELECT status FROM signal_semantic_context_proposal_runs
-    WHERE workspace_id=$1::uuid AND generation_id=$2::uuid
-      AND status IN ('queued','processing','validating') LIMIT 1`,[args.workspace.id,current.id]);
-  if(activeRun.rows[0])throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
   const inserted=await insertDraftGenerationV1({queryable:args.queryable,workspaceId:args.workspace.id,
     actorId:args.actor.id,operationId:operation.operationId,live,
     proposalLineage:args.proposalLineage,predecessor:current,reason:args.reason});
@@ -327,6 +341,54 @@ export async function reconcileSignalSemanticContextGenerationV1(args:{
     generation_version:inserted.rows[0]!.generation_version,status:"draft" as const};
   await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
     key:operation.key,result});return result;
+}
+
+type GenerationRunStateV1={
+  status:string;provider_call_state:string;provider_call_count:number;
+  provider_response_digest:string|null;reviewable_elements:boolean;
+  executable_outbox:boolean;reserved_budget:boolean;
+};
+
+async function loadGenerationRunStateV1(queryable:SignalBrandPolicyQueryable,workspaceId:string,
+  generationId:string){
+  const result=await queryable.query<GenerationRunStateV1>(`SELECT run.status,
+    run.provider_call_state,run.provider_call_count,run.provider_response_digest,
+    EXISTS(SELECT 1 FROM signal_semantic_context_element_versions element
+      WHERE element.generation_id=run.generation_id AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)) reviewable_elements,
+    EXISTS(SELECT 1 FROM signal_semantic_context_proposal_outbox outbox
+      WHERE outbox.run_id=run.id
+        AND outbox.status IN ('pending','failed','dispatching','dispatched')) executable_outbox,
+    EXISTS(SELECT 1 FROM signal_semantic_context_budget_reservations reservation
+      WHERE reservation.run_id=run.id AND reservation.status='reserved') reserved_budget
+    FROM signal_semantic_context_proposal_runs run
+    WHERE run.workspace_id=$1::uuid AND run.generation_id=$2::uuid LIMIT 1`,
+  [workspaceId,generationId]);
+  return result.rows[0]??null;
+}
+
+function assertTerminalRunSuccessorEligibilityV1(run:GenerationRunStateV1){
+  if(["in_flight","response_persisted","outcome_unknown"].includes(run.provider_call_state)){
+    throw new SignalSemanticContextPackError("semantic_context_provider_outcome_ambiguous");
+  }
+  if(run.reviewable_elements){
+    throw new SignalSemanticContextPackError("semantic_context_generation_review_required");
+  }
+  if(run.executable_outbox||run.reserved_budget){
+    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
+  }
+  const safelyTerminal=(run.status==="failed"&&run.provider_call_state==="settled"
+      &&run.provider_call_count===1&&Boolean(run.provider_response_digest))
+    ||(run.status==="stale"&&["not_started","settled"].includes(run.provider_call_state))
+    ||(run.status==="dead_letter"&&run.provider_call_state==="not_started"
+      &&run.provider_call_count===0);
+  if(!safelyTerminal){
+    throw new SignalSemanticContextPackError(run.status==="failed"
+      &&run.provider_call_state==="not_started"
+      ?"semantic_context_terminal_run_retry_required"
+      :"semantic_context_terminal_run_not_eligible");
+  }
 }
 
 async function insertDraftGenerationV1(args:{queryable:SignalBrandPolicyQueryable;workspaceId:string;

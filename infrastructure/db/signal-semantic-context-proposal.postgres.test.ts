@@ -74,6 +74,37 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       configuration, runtime })));
     assert.deepEqual(starts[0], starts[1], "concurrent same-key replay returns one run");
     const started = starts[0]!;
+    const consumedPreflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: fixture.workspace, actor: fixture.actor,
+      generation_key: fixture.generation_key, configuration, runtime
+    });
+    assert.equal(consumedPreflight.readiness, "blocked");
+    assert.ok(consumedPreflight.blockers.includes("semantic_context_generation_run_exists"));
+    const consumedCounts = await row(pool, `SELECT
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_runs
+        WHERE workspace_id=$1::uuid) runs,
+      (SELECT count(*)::int FROM signal_semantic_context_budget_reservations reservation
+        JOIN signal_semantic_context_proposal_runs run ON run.id=reservation.run_id
+        WHERE run.workspace_id=$1::uuid) reservations,
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox outbox
+        JOIN signal_semantic_context_proposal_runs run ON run.id=outbox.run_id
+        WHERE run.workspace_id=$1::uuid) outboxes`, [fixture.workspace.id]);
+    await assert.rejects(startSignalSemanticContextProposalRunV1({ pool,
+      workspace: fixture.workspace, actor: fixture.actor, idempotency_key: "consumed-start-bypass",
+      generation_key: fixture.generation_key, preflight_digest: preflight.preflight_digest,
+      confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION, hard_cap_micro_usd: 1_000_000n,
+      configuration, runtime }), (error: unknown) =>
+      (error as { code?: string }).code === "semantic_context_generation_run_exists");
+    assert.deepEqual(await row(pool, `SELECT
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_runs
+        WHERE workspace_id=$1::uuid) runs,
+      (SELECT count(*)::int FROM signal_semantic_context_budget_reservations reservation
+        JOIN signal_semantic_context_proposal_runs run ON run.id=reservation.run_id
+        WHERE run.workspace_id=$1::uuid) reservations,
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox outbox
+        JOIN signal_semantic_context_proposal_runs run ON run.id=outbox.run_id
+        WHERE run.workspace_id=$1::uuid) outboxes`, [fixture.workspace.id]), consumedCounts,
+    "the transactional guard creates no second run, reservation or outbox");
     const prepared = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
       workspace: fixture.workspace, generation_key: fixture.generation_key });
     const sourceAlias = prepared.input.knowledge_blocks[0]!.source_alias;
@@ -272,7 +303,9 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     const supersededRun = await startFor(pool, supersededDiscovery, "superseded-discovery-start");
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: supersededRun.id,
       provider: { async generate() {
-        throw new SignalSemanticContextProviderCallError("not sent", true);
+        return { text: JSON.stringify({ contract_version:
+          SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2, proposals: [{ bad: true }] }),
+        provider_request_id: null, usage: { input_tokens: 10, output_tokens: 10 } };
       } } }));
     const successorKey = await supersedeGeneration(pool, supersededDiscovery);
     assert.equal(await loadLatestSignalSemanticContextProposalRunForGenerationV1({ queryable: pool,
@@ -611,7 +644,7 @@ async function supersedeGeneration(pool: pg.Pool,
     proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
     draft_digest,created_operation_id,created_by_user_id)
     SELECT generation.workspace_id,$1::uuid,$2,generation.generation_version+1,'draft',generation.id,
-      'operator_requested_reconciliation',generation.brand_os_profile_id,generation.brand_os_profile_version,
+      'terminal_provider_run',generation.brand_os_profile_id,generation.brand_os_profile_version,
       generation.brand_os_digest,generation.knowledge_generation_key,generation.knowledge_digest,
       generation.locale_context_digest,generation.primary_locale,generation.locale_variants,
       generation.markets,generation.timezone,generation.proposal_model,generation.proposal_model_version,

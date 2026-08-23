@@ -6,6 +6,12 @@ import test from "node:test";
 
 import pg from "pg";
 
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 } from "@noisia/query-engine";
+import {
+  loadSignalSemanticContextProposalPreflightRuntimeV1,
+  type SignalSemanticContextProposalRuntimeConfigurationV1
+} from "@noisia/db";
+
 import {
   appendSignalSemanticContextProposalsV1,
   bulkApproveSignalSemanticContextElementsV1,
@@ -23,6 +29,12 @@ import { pool } from "@/lib/db";
 const DB_URL=process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_INTEGRATION_URL;
 const APPROVED=process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_INTEGRATION_APPROVED==="true";
 const digest=(value:string)=>`sha256:${createHash("sha256").update(value).digest("hex")}`;
+const terminalPreflightConfiguration:SignalSemanticContextProposalRuntimeConfigurationV1={
+  available:true,provider:"anthropic",model:"fixture-model",model_version:"immutable-v1",
+  pricing_version:"pricing-v1",max_input_tokens:100_000,max_output_tokens:64_000,
+  model_max_output_tokens:64_000,input_usd_per_million_tokens:"1",
+  output_usd_per_million_tokens:"2",platform_hard_cap_micro_usd:1_000_000n
+};
 
 test("0091 semantic context authority is append-only, drift-aware, idempotent, and confidence-neutral",{
   skip:!DB_URL||!APPROVED,timeout:180_000
@@ -41,7 +53,8 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"context-draft-idempotent"}));
   assert.deepEqual(await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"context-draft-idempotent"})),legacyDraft);
-  const lineage={model:"fixture-model",model_version:"immutable-v1",prompt_digest:digest("prompt"),
+  const lineage={model:"fixture-model",model_version:"immutable-v1",
+    prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
     pricing_version:"pricing-v1"};
   const reconciledLegacy=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"reconcile-lineage-idempotent",
@@ -167,7 +180,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       WHERE workspace_id=$1::uuid AND generation_key=$2)`,[fixture.workspace.id,nextDraft.generation_key]);
   const concurrent=await Promise.all(["a","b"].map((suffix)=>transaction((queryable)=>
     reconcileSignalSemanticContextGenerationV1({queryable,workspace:fixture.workspace,actor:fixture.actor,
-      idempotencyKey:`reconcile-knowledge-${suffix}`,reason:"knowledge_drift",proposalLineage:lineage}))));
+      idempotencyKey:`reconcile-terminal-${suffix}`,reason:"terminal_provider_run",proposalLineage:lineage}))));
   assert.equal(concurrent.filter((result)=>result.outcome==="created").length,1);
   assert.equal(concurrent.filter((result)=>result.outcome==="noop").length,1);
   assert.equal(concurrent[0]!.generation_key,concurrent[1]!.generation_key);
@@ -177,6 +190,104 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       SELECT 1 FROM signal_semantic_context_generations successor
       WHERE successor.supersedes_generation_id=generation.id)`,[fixture.workspace.id]);
   assert.equal(effectiveDrafts,1,"different concurrent keys converge on one effective draft");
+
+  const terminalFixture=await seedFixture();
+  const terminalDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:terminalFixture.workspace,actor:terminalFixture.actor,
+    idempotencyKey:"terminal-draft-idempotent",proposalLineage:lineage}));
+  const untouchedTerminal=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
+    queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
+    idempotencyKey:"terminal-no-run-noop",reason:"terminal_provider_run",proposalLineage:lineage}));
+  assert.equal(untouchedTerminal.outcome,"noop","a draft without a run is not superseded by this operation");
+  const terminalRun=await seedTerminalProposalRun(terminalFixture,terminalDraft.generation_key,lineage,"safe_failed");
+  const predecessorFingerprint=await fingerprint(`SELECT generation.* FROM
+    signal_semantic_context_generations generation WHERE generation.workspace_id=$1::uuid
+      AND generation.generation_key=$2`,[terminalFixture.workspace.id,terminalDraft.generation_key]);
+  const runFingerprint=await fingerprint(`SELECT run.* FROM signal_semantic_context_proposal_runs run
+    WHERE run.id=$1::uuid`,[terminalRun.id]);
+  const budgetFingerprint=await fingerprint(`SELECT reservation.* FROM
+    signal_semantic_context_budget_reservations reservation WHERE reservation.run_id=$1::uuid`,[terminalRun.id]);
+  const eventsBefore=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_events
+    WHERE workspace_id=$1::uuid`,[terminalFixture.workspace.id]);
+  const protectedTerminalBefore=await protectedCounts(terminalFixture.workspace.id);
+  const terminalConcurrent=await Promise.all(["a","b"].map((suffix)=>transaction((queryable)=>
+    reconcileSignalSemanticContextGenerationV1({queryable,workspace:terminalFixture.workspace,
+      actor:terminalFixture.actor,idempotencyKey:`terminal-successor-${suffix}`,
+      reason:"terminal_provider_run",proposalLineage:lineage}))));
+  assert.equal(terminalConcurrent.filter((result)=>result.outcome==="created").length,1);
+  assert.equal(terminalConcurrent.filter((result)=>result.outcome==="noop").length,1);
+  assert.equal(terminalConcurrent[0]!.generation_key,terminalConcurrent[1]!.generation_key);
+  const createdTerminal=terminalConcurrent.find((result)=>result.outcome==="created")!;
+  assert.deepEqual(await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
+    queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
+    idempotencyKey:"terminal-successor-a",reason:"terminal_provider_run",proposalLineage:lineage})),
+  terminalConcurrent[0],"same-key replay is exact");
+  assert.deepEqual(await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
+    queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
+    idempotencyKey:"terminal-successor-c",reason:"terminal_provider_run",proposalLineage:lineage})),{
+      outcome:"noop",generation_key:createdTerminal.generation_key,
+      generation_version:createdTerminal.generation_version,status:"draft"
+    },"a new key converges on the existing run-free successor");
+  assert.equal(await fingerprint(`SELECT generation.* FROM signal_semantic_context_generations generation
+    WHERE generation.workspace_id=$1::uuid AND generation.generation_key=$2`,
+  [terminalFixture.workspace.id,terminalDraft.generation_key]),predecessorFingerprint);
+  assert.equal(await fingerprint(`SELECT run.* FROM signal_semantic_context_proposal_runs run
+    WHERE run.id=$1::uuid`,[terminalRun.id]),runFingerprint);
+  assert.equal(await fingerprint(`SELECT reservation.* FROM signal_semantic_context_budget_reservations reservation
+    WHERE reservation.run_id=$1::uuid`,[terminalRun.id]),budgetFingerprint);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_events
+    WHERE workspace_id=$1::uuid`,[terminalFixture.workspace.id]),eventsBefore+1);
+  assert.deepEqual(await pool.query(`SELECT generation.supersession_reason,
+    generation.supersedes_generation_id::text supersedes,
+    (SELECT count(*)::int FROM signal_semantic_context_proposal_runs run
+      WHERE run.generation_id=generation.id) runs,
+    (SELECT count(*)::int FROM signal_semantic_context_element_versions element
+      WHERE element.generation_id=generation.id) elements,
+    (SELECT count(*)::int FROM signal_semantic_context_budget_reservations reservation
+      JOIN signal_semantic_context_proposal_runs run ON run.id=reservation.run_id
+      WHERE run.generation_id=generation.id) reservations,
+    (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox outbox
+      JOIN signal_semantic_context_proposal_runs run ON run.id=outbox.run_id
+      WHERE run.generation_id=generation.id) outboxes
+    FROM signal_semantic_context_generations generation
+    WHERE generation.workspace_id=$1::uuid AND generation.generation_key=$2`,
+  [terminalFixture.workspace.id,createdTerminal.generation_key]).then((result)=>result.rows[0]),{
+    supersession_reason:"terminal_provider_run",supersedes:terminalRun.generationId,
+    runs:0,elements:0,reservations:0,outboxes:0
+  });
+  assert.deepEqual(await protectedCounts(terminalFixture.workspace.id),protectedTerminalBefore);
+  const successorPreflight=await loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
+    workspace:{id:terminalFixture.workspace.id,organization_id:terminalFixture.workspace.organizationId,
+      brand_id:terminalFixture.workspace.subject.id},actor:{id:terminalFixture.actor.id,
+      user_type:"noisia_internal"},generation_key:createdTerminal.generation_key,
+    configuration:terminalPreflightConfiguration,runtime:{queue_configured:true,worker_alive:true,
+      recovery_alive:true}});
+  assert.equal(successorPreflight.readiness,"ready");
+  assert.ok(!successorPreflight.blockers.includes("semantic_context_generation_run_exists"));
+
+  const reviewFixture=await seedFixture();
+  const reviewDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:reviewFixture.workspace,actor:reviewFixture.actor,
+    idempotencyKey:"terminal-review-draft",proposalLineage:lineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:reviewFixture.workspace,actor:reviewFixture.actor,idempotencyKey:"terminal-review-element",
+    generationKey:reviewDraft.generation_key,proposals:[proposal("review-me","identity_term",
+      "review-me","Review me",1,reviewFixture.profileId)]}));
+  await seedTerminalProposalRun(reviewFixture,reviewDraft.generation_key,lineage,"safe_failed");
+  await assert.rejects(transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:reviewFixture.workspace,actor:reviewFixture.actor,
+    idempotencyKey:"terminal-review-blocked",reason:"terminal_provider_run",proposalLineage:lineage})),
+  /semantic_context_generation_review_required/u);
+
+  const ambiguousFixture=await seedFixture();
+  const ambiguousDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:ambiguousFixture.workspace,actor:ambiguousFixture.actor,
+    idempotencyKey:"terminal-ambiguous-draft",proposalLineage:lineage}));
+  await seedTerminalProposalRun(ambiguousFixture,ambiguousDraft.generation_key,lineage,"ambiguous_dead_letter");
+  await assert.rejects(transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:ambiguousFixture.workspace,actor:ambiguousFixture.actor,
+    idempotencyKey:"terminal-ambiguous-blocked",reason:"terminal_provider_run",proposalLineage:lineage})),
+  /semantic_context_provider_outcome_ambiguous/u);
 
   await assert.rejects(transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
     workspace:fixture.otherWorkspace,actor:fixture.actor,idempotencyKey:"cross-workspace-rejected",
@@ -243,6 +354,53 @@ async function seedQueuedProposalRun(fixture:Awaited<ReturnType<typeof seedFixtu
     digest("provider-request"),fixture.actor.id]);
 }
 
+async function seedTerminalProposalRun(fixture:Awaited<ReturnType<typeof seedFixture>>,
+  generationKey:string,lineage:{model:string;model_version:string;prompt_digest:string;pricing_version:string},
+  mode:"safe_failed"|"ambiguous_dead_letter"){
+  const generation=await pool.query<{id:string;brand_os_digest:string;knowledge_digest:string;
+    locale_context_digest:string}>(`SELECT id::text,brand_os_digest,knowledge_digest,locale_context_digest
+    FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2`,
+  [fixture.workspace.id,generationKey]);
+  const operation=await pool.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'start-semantic-context-proposal-run',$3,$4,'in_progress')
+    RETURNING id::text`,[fixture.workspace.id,fixture.actor.id,digest(`terminal-run-request-${randomUUID()}`),
+    digest(`terminal-run-key-${randomUUID()}`)]);
+  const row=generation.rows[0]!;const runId=randomUUID();
+  const safe=mode==="safe_failed";const response=safe?JSON.stringify({fixture:"closed-response"}):null;
+  await pool.query(`INSERT INTO signal_semantic_context_proposal_runs(
+    id,workspace_id,generation_id,operation_id,run_key,status,preflight_digest,brand_os_digest,
+    knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
+    model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
+    output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
+    provider_request_identity,provider_call_state,provider_call_count,provider_response_private,
+    provider_response_digest,input_tokens,output_tokens,settled_micro_usd,error_code,error_summary,
+    failed_at,dead_lettered_at,created_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,'fixture',$13,$14,$15,
+      1000,500,1,2,1000000,2000,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::uuid)`,[
+    runId,fixture.workspace.id,row.id,operation.rows[0]!.id,
+    `semantic-context-proposal-${randomUUID().replaceAll("-","").slice(0,16)}`,
+    safe?"failed":"dead_letter",digest("terminal-preflight"),row.brand_os_digest,
+    row.knowledge_digest,row.locale_context_digest,lineage.prompt_digest,digest("terminal-context"),
+    lineage.model,lineage.model_version,lineage.pricing_version,digest("terminal-provider-request"),
+    safe?"settled":"outcome_unknown",1,response,response?digest(response):null,
+    safe?10:null,safe?10:null,safe?100:null,
+    safe?"semantic_context_provider_response_schema_invalid":"provider_outcome_ambiguous",
+    "sanitized fixture",safe?new Date():null,safe?null:new Date(),fixture.actor.id]);
+  if(safe){
+    await pool.query(`INSERT INTO signal_semantic_context_budget_reservations(
+      workspace_id,run_id,status,reservation_micro_usd,reserved_input_tokens,reserved_output_tokens,
+      input_tokens,output_tokens,actual_micro_usd,reservation_digest,settled_at)
+      VALUES($1::uuid,$2::uuid,'settled',2000,1000,500,10,10,100,$3,clock_timestamp())`,
+    [fixture.workspace.id,runId,digest("terminal-reservation")]);
+    await pool.query(`INSERT INTO signal_semantic_context_proposal_outbox(
+      workspace_id,run_id,status,worker_job_id,attempt_count,dead_lettered_at)
+      VALUES($1::uuid,$2::uuid,'dead_letter',$3,1,clock_timestamp())`,
+    [fixture.workspace.id,runId,`terminal-fixture-${runId}`]);
+  }
+  return{id:runId,generationId:row.id};
+}
+
 async function seedFixture(){const suffix=randomUUID().slice(0,8);const orgId=randomUUID(),otherOrgId=randomUUID();
   const brandId=randomUUID(),otherBrandId=randomUUID(),userId=randomUUID();
   await pool.query(`INSERT INTO organizations(id,slug,legal_name,display_name,status) VALUES
@@ -305,6 +463,8 @@ async function seedFixture(){const suffix=randomUUID().slice(0,8);const orgId=ra
 
 async function transaction<T>(fn:(queryable:SignalBrandPolicyQueryable)=>Promise<T>){return withSignalAcquisitionTransactionV1(fn);}
 async function scalar(sql:string,params:unknown[]){return(await pool.query<{count:number}>(sql,params)).rows[0]!.count;}
+async function fingerprint(sql:string,params:unknown[]){return(await pool.query<{value:string}>(
+  `SELECT encode(digest(row_to_json(value)::text,'sha256'),'hex') value FROM (${sql}) value`,params)).rows[0]!.value;}
 async function protectedCounts(workspaceId:string){return{
   assignments:await scalar(`SELECT count(*)::int count FROM signal_classification_assignments WHERE workspace_id=$1::uuid`,[workspaceId]),
   record_tags:await scalar(`SELECT count(*)::int count FROM record_tags`,[]),

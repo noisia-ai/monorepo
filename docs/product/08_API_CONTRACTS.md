@@ -2662,3 +2662,20 @@ coincide con el run canónico antes de usarlo para polling.
 Este cambio es exclusivamente de read model: no crea revalidaciones, proposals,
 reservations, outboxes ni jobs; tampoco modifica settlement, Topic Contracts, assignments,
 tags o serving.
+
+### Successor gratuito después de una corrida terminal — 69A.7A
+
+**Registrado:** 2026-08-23T14:07:30-06:00 (`America/Mexico_City`).
+
+`POST /api/data-os/signal/{workspaceId}/semantic-context/reconcile` acepta ahora la causa
+cerrada `terminal_provider_run`. Continúa siendo management-only y requiere
+`Idempotency-Key`; el browser no envía generation IDs, hashes, snapshots, modelo,
+pricing ni authority IDs. La operación preserva el draft y run históricos y crea, si la
+hoja es elegible, un successor draft sin trabajo provider. Replay y concurrencia
+convergen en la misma hoja efectiva.
+
+El preflight gratuito añade `semantic_context_generation_run_exists` cuando la
+generación solicitada ya tiene cualquier run durable y mantiene `readiness=blocked`.
+El start writer vuelve a resolver esa condición dentro de la misma transacción y bajo el
+advisory lock del workspace. Un replay con la misma idempotency key devuelve su resultado
+durable; una key nueva no puede saltar el guard ni chocar tarde con la unicidad del run.

@@ -270,3 +270,23 @@ permanece failed y settled con el mismo digest y costo; no hubo provider call, r
 outbox o job adicional. El Admin consume ahora el descriptor operator-safe
 `paid_response_revalidation` dentro del banner de run existente. La validación visual
 autenticada queda delegada y no se declara cerrada en este checkpoint.
+
+## Authority boundary 69A.7A · terminal run y nueva hoja draft
+
+**Registrado:** 2026-08-23T14:07:30-06:00 (`America/Mexico_City`).
+
+Una generación draft que ya consumió su única corrida no se reabre ni se recicla. La
+transición `terminal_provider_run` crea una hoja sucesora append-only, ligada a los
+snapshots current de Brand OS, Knowledge, locale/markets y provider lineage. El
+predecessor, su run, response, settlement, revalidación y eventos permanecen inmutables.
+
+La transición sólo es válida para un run terminal inequívoco y una generación sin
+elementos que requieran review. Trabajo no terminal o ambiguo, outbox reclamable,
+presupuesto reservado y elementos current bloquean fail-closed. La preparación de la
+nueva hoja es gratuita: no reserva presupuesto, no crea outbox/job y no llama al
+provider. No concede aprobación, publicación, Topic Contract, assignment ni serving.
+
+Los anchors pendientes en North Star y Execution Plan son: generación consumida como
+historia inmutable, successor gratuito como única ruta de nueva ejecución y blocker
+durable de run en preflight/start. Ambos documentos estaban modificados por otro
+workstream y no se sobrescribieron en este corte.
