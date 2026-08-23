@@ -14,6 +14,18 @@ export function canStartSignalSemanticContextProposalGenerationV1(input: {
     && !input.hasServerDiscoveredRun;
 }
 
+export function signalSemanticContextRejectedRevalidationCountValuesV1(input: {
+  proposal_count_before: number;
+  normalized_proposal_count: number;
+  proposals_appended: number;
+}) {
+  return {
+    received: input.proposal_count_before,
+    retained: input.normalized_proposal_count,
+    appended: input.proposals_appended
+  };
+}
+
 const keyPattern = /^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;
 
 export function serializeSignalSemanticContextRunSessionReferenceV1(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
+import { createTranslator } from "next-intl";
 
 import {
   SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
@@ -14,6 +15,7 @@ import {
   canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
+  signalSemanticContextRejectedRevalidationCountValuesV1,
   serializeSignalSemanticContextRunSessionReferenceV1
 } from "@/lib/data-os/signal-semantic-context-run-session";
 
@@ -33,6 +35,22 @@ test("proposal generation entry is gated by the server-discovered generation run
   assert.equal(canStartSignalSemanticContextProposalGenerationV1({
     lifecycleState: null, elementCount: 0, hasServerDiscoveredRun: false
   }), false, "missing generation state fails closed");
+});
+
+test("rejected paid-response reconciliation preserves observed counts generically", () => {
+  const fixture = {
+    proposal_count_before: 41,
+    normalized_proposal_count: 2,
+    proposals_appended: 1
+  };
+  const first = signalSemanticContextRejectedRevalidationCountValuesV1(fixture);
+  const reload = signalSemanticContextRejectedRevalidationCountValuesV1(fixture);
+  assert.deepEqual(first, { received: 41, retained: 2, appended: 1 });
+  assert.deepEqual(reload, first, "server reload renders the same persisted reconciliation");
+  assert.deepEqual(signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 77, normalized_proposal_count: 0, proposals_appended: 0
+  }), { received: 77, retained: 0, appended: 0 },
+  "observed zeroes must remain explicit instead of being omitted or marked unavailable");
 });
 
 test("semantic context run references are bound to their generation", () => {
@@ -170,6 +188,31 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "the operator UI must not present confidence or private source references as authority");
   const esMessages=JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext;
   const enMessages=JSON.parse(enUs).AdminWorkspace.brandOs.semanticContext;
+  const arbitraryCounts = signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 41, normalized_proposal_count: 2, proposals_appended: 1
+  });
+  const observedZeroCounts = signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 77, normalized_proposal_count: 0, proposals_appended: 0
+  });
+  const esT = createTranslator({ locale: "es-MX", messages: esMessages });
+  const enT = createTranslator({ locale: "en-US", messages: enMessages });
+  for (const [copy, counts] of [
+    [esT("run.revalidationRejectedDetail", arbitraryCounts), arbitraryCounts],
+    [enT("run.revalidationRejectedDetail", arbitraryCounts), arbitraryCounts],
+    [esT("run.revalidationRejectedDetail", observedZeroCounts), observedZeroCounts],
+    [enT("run.revalidationRejectedDetail", observedZeroCounts), observedZeroCounts]
+  ] as const) {
+    assert.match(copy, new RegExp(String(counts.received), "u"));
+    assert.match(copy, new RegExp(String(counts.retained), "u"));
+    assert.match(copy, new RegExp(String(counts.appended), "u"));
+    assert.doesNotMatch(copy, /revalidationRejectedDetail|\{(?:received|retained|appended)\}|not_available/u);
+  }
+  assert.match(esT("run.revalidationRejectedDetail", observedZeroCounts), /segunda llamada/u);
+  assert.match(enT("run.revalidationRejectedDetail", observedZeroCounts), /second provider call/u);
+  assert.match(manager,/revalidationRejectedDetail", rejectedRevalidationCounts/u,
+    "the rejected banner must bind all public reconciliation counts");
+  assert.doesNotMatch(manager,/actions\.(?:recover|revalidate)/u,
+    "terminal paid-response history must not add recovery actions");
   for(const blocker of ["semantic_context_capacity_contract_insufficient",
     "semantic_context_model_output_capacity_unsupported",
     "semantic_context_configured_output_capacity_insufficient"]){

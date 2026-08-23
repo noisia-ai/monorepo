@@ -28,6 +28,7 @@ import {
   canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
+  signalSemanticContextRejectedRevalidationCountValuesV1,
   serializeSignalSemanticContextRunSessionReferenceV1
 } from "@/lib/data-os/signal-semantic-context-run-session";
 
@@ -435,6 +436,9 @@ function RunBanner({ busy, onRetry, run, t }: { busy: boolean; onRetry: () => vo
   const tone = run.status === "completed" ? "good" : run.status === "failed" || run.status === "dead_letter" ? "danger" : run.status === "stale" ? "warning" : "not_available";
   const retryAllowed = run.status === "failed" && run.provider_call_count === 0;
   const revalidation = run.paid_response_revalidation;
+  const rejectedRevalidationCounts = revalidation?.status === "rejected"
+    ? signalSemanticContextRejectedRevalidationCountValuesV1(revalidation)
+    : null;
   const detail = terminalRunStates.has(run.status)
     ? run.status === "completed"
       ? t("run.completedDetail")
@@ -448,7 +452,7 @@ function RunBanner({ busy, onRetry, run, t }: { busy: boolean; onRetry: () => vo
               : t("run.validationFailedDetail")
             : t("run.retryableFailedDetail")
     : t("run.progress", { progress: run.progress ?? 0 });
-  return <div className="semantic-context-pack__run" role={run.status === "failed" || run.status === "dead_letter" ? "alert" : "status"}><div className="semantic-context-pack__run-copy"><span className="semantic-context-pack__run-icon">{terminalRunStates.has(run.status) ? run.status === "completed" ? <Check aria-hidden size={16}/> : <Warning aria-hidden size={16}/> : <CircleNotch aria-hidden className="icon--spin" size={16}/>}</span><div><strong>{t(`run.${run.status}`)}</strong><p>{detail}</p>{revalidation ? <p className="semantic-context-pack__run-revalidation">{revalidation.status === "completed" ? t("run.revalidationCompletedDetail", { count: revalidation.proposals_pending }) : t("run.revalidationRejectedDetail")}</p> : null}</div></div><div className="semantic-context-pack__run-actions">{revalidation ? <AdminStatus state={revalidation.status === "completed" ? "good" : "warning"}>{revalidation.status === "completed" ? t("run.revalidationCompleted") : t("run.revalidationRejected")}</AdminStatus> : null}<AdminStatus state={tone}>{run.status === "completed" ? t("run.proposals", { count: run.proposal_count }) : t(`run.badges.${run.status}`)}</AdminStatus>{retryAllowed ? <button className="admin-button admin-button--compact" disabled={busy} onClick={onRetry} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.retrySafe")}</button> : null}</div></div>;
+  return <div className="semantic-context-pack__run" role={run.status === "failed" || run.status === "dead_letter" ? "alert" : "status"}><div className="semantic-context-pack__run-copy"><span className="semantic-context-pack__run-icon">{terminalRunStates.has(run.status) ? run.status === "completed" ? <Check aria-hidden size={16}/> : <Warning aria-hidden size={16}/> : <CircleNotch aria-hidden className="icon--spin" size={16}/>}</span><div><strong>{t(`run.${run.status}`)}</strong><p>{detail}</p>{revalidation ? <p className="semantic-context-pack__run-revalidation">{revalidation.status === "completed" ? t("run.revalidationCompletedDetail", { count: revalidation.proposals_pending }) : t("run.revalidationRejectedDetail", rejectedRevalidationCounts!)}</p> : null}</div></div><div className="semantic-context-pack__run-actions">{revalidation ? <AdminStatus state={revalidation.status === "completed" ? "good" : "warning"}>{revalidation.status === "completed" ? t("run.revalidationCompleted") : t("run.revalidationRejected")}</AdminStatus> : null}<AdminStatus state={tone}>{run.status === "completed" ? t("run.proposals", { count: run.proposal_count }) : t(`run.badges.${run.status}`)}</AdminStatus>{retryAllowed ? <button className="admin-button admin-button--compact" disabled={busy} onClick={onRetry} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.retrySafe")}</button> : null}</div></div>;
 }
 
 function ElementReview({ element, generation, busy, onApprove, onEdit, onReject, t }: { element: ContextElement; generation: Generation | null; busy: string | null; onApprove: () => void; onEdit: (form: FormData) => void; onReject: () => void; t: ReturnType<typeof useTranslations> }) {
