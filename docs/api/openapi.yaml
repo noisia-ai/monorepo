@@ -1966,7 +1966,7 @@ paths:
           description: Server-pinned model, pricing, one call maximum, proposal bound, estimate and hard cap; provider_calls=0 and writes_performed=false.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalPreflightV2" }
+              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalPreflightV3" }
   /api/data-os/signal/{workspaceId}/semantic-context/proposals:
     post:
       tags: [Semantic Context Pack]
@@ -2324,16 +2324,17 @@ components:
         preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         confirmation: { const: GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS }
         hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$', maxLength: 18 }
-    SignalSemanticContextProposalPreflightV2:
+    SignalSemanticContextProposalPreflightV3:
       type: object
       additionalProperties: false
       required: [contract_version, generation_key, authority, context_input_digest, provider,
         maximum_provider_calls, estimated_input_tokens_upper_bound, max_input_tokens,
-        max_output_tokens, maximum_proposals, estimated_max_cost_micro_usd,
+        max_output_tokens, configured_output_token_ceiling, model_max_output_tokens, capacity,
+        maximum_proposals, estimated_max_cost_micro_usd, recommended_hard_cap_micro_usd,
         platform_hard_cap_micro_usd, runtime, drift, readiness, blockers, writes_performed,
         provider_calls, preflight_digest]
       properties:
-        contract_version: { const: signal-semantic-context-proposal-preflight-v2 }
+        contract_version: { const: signal-semantic-context-proposal-preflight-v3 }
         generation_key: { type: [string, "null"] }
         authority:
           type: [object, "null"]
@@ -2357,9 +2358,52 @@ components:
         maximum_provider_calls: { const: 1 }
         estimated_input_tokens_upper_bound: { type: [integer, "null"], minimum: 1 }
         max_input_tokens: { type: integer, minimum: 1 }
-        max_output_tokens: { type: integer, minimum: 1 }
+        max_output_tokens: { type: [integer, "null"], minimum: 1, maximum: 64000 }
+        configured_output_token_ceiling: { type: integer, minimum: 0 }
+        model_max_output_tokens: { type: integer, minimum: 0 }
+        capacity:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [policy_version, policy_digest, capacity_digest, counts,
+            minimum_useful_proposals, target_proposals, maximum_proposals,
+            output_token_budget, explanation]
+          properties:
+            policy_version: { const: signal-semantic-context-capacity-policy-v1 }
+            policy_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            capacity_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            counts:
+              type: object
+              additionalProperties: false
+              required: [aliases, products, competitors, locale_variants, markets,
+                code_switching, category_fields, structured_terms, knowledge_blocks,
+                evidence_source_kinds]
+              properties:
+                aliases: { type: integer, minimum: 0 }
+                products: { type: integer, minimum: 0 }
+                competitors: { type: integer, minimum: 0 }
+                locale_variants: { type: integer, minimum: 1 }
+                markets: { type: integer, minimum: 1 }
+                code_switching: { type: integer, minimum: 0 }
+                category_fields: { type: integer, minimum: 0, maximum: 2 }
+                structured_terms: { type: integer, minimum: 0 }
+                knowledge_blocks: { type: integer, minimum: 1 }
+                evidence_source_kinds: { type: integer, minimum: 1 }
+            minimum_useful_proposals: { type: integer, minimum: 1, maximum: 250 }
+            target_proposals: { type: integer, minimum: 1, maximum: 250 }
+            maximum_proposals: { type: integer, minimum: 1, maximum: 250 }
+            output_token_budget: { type: integer, minimum: 1, maximum: 64000 }
+            explanation:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [factor, units]
+                properties:
+                  factor: { type: string }
+                  units: { type: integer, minimum: 0 }
         maximum_proposals: { type: [integer, "null"], minimum: 1, maximum: 250 }
         estimated_max_cost_micro_usd: { type: string, pattern: '^[0-9]+$' }
+        recommended_hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
         platform_hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
         runtime:
           type: object

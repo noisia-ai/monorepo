@@ -112,6 +112,28 @@ competitors, MX/US locale authority and a fake provider demonstrated:
 - cross-workspace rejection;
 - zero changes to Topic Contracts, assignments, tags, serving, pointers and bindings.
 
+## 69A.5 — capacity calibration
+
+**Checkpoint:** 2026-08-23 (`America/Mexico_City`).
+
+La capacidad dejó de derivarse al revés desde un límite fijo de output. El planner puro
+`signal-semantic-context-capacity-policy-v1` cuenta únicamente estructura gobernada y
+sellada de Brand OS/Knowledge, calcula mínimo útil, objetivo, máximo y presupuesto de
+salida, y los incorpora al input digest de la generación. El objetivo es una capacidad,
+no una obligación de llenar tipos sin evidencia.
+
+El adapter separa tres límites: presupuesto calculado de la generación, ceiling
+server-owned y máximo soportado por el modelo. La identidad cerrada
+`claude-sonnet-4-6` tiene un máximo síncrono registrado de 64,000 tokens; cualquier
+identidad desconocida o presupuesto superior falla cerrado antes de outbox, job o
+provider call. Una complejidad que sature el contrato de 250 propuestas también bloquea
+en vez de recortar cobertura silenciosamente.
+
+El flight card expone mínimo útil, target, máximo, output tokens, costo estimado, hard
+cap y una explicación compacta basada en conteos. La ejecución sigue limitada a una
+llamada, output estructurado cerrado, validación total antes de append y disposition
+`pending` para todas las propuestas.
+
 No real provider, remote database, staging or production was accessed. The 10C.3B
 context-aware preflight remains blocked until an operator reviews and publishes a real
 pack. 10D remains blocked.

@@ -84,9 +84,26 @@ type Preflight = {
   provider: { key: string; model: string; model_version: string; pricing_version: string };
   maximum_provider_calls: 1;
   maximum_proposals: number;
-  estimated_input_tokens_upper_bound: number;
-  max_output_tokens: number;
+  capacity: {
+    minimum_useful_proposals: number;
+    target_proposals: number;
+    maximum_proposals: number;
+    output_token_budget: number;
+    counts: {
+      aliases: number;
+      products: number;
+      competitors: number;
+      locale_variants: number;
+      markets: number;
+      structured_terms: number;
+      knowledge_blocks: number;
+      evidence_source_kinds: number;
+    };
+  } | null;
+  estimated_input_tokens_upper_bound: number | null;
+  max_output_tokens: number | null;
   estimated_max_cost_micro_usd: string;
+  recommended_hard_cap_micro_usd: string;
   platform_hard_cap_micro_usd: string;
   runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean };
   drift: { state?: string; reasons?: string[] };
@@ -254,7 +271,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     if (!preflight || !generation) return;
     setBusy("generate"); setError(null);
     try {
-      const nextRun = await requestJson<ProposalRun>(`${base}/proposals`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("generate") }, body: JSON.stringify({ generation_key: generation.generation_key, preflight_digest: preflight.preflight_digest, confirmation: "GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS", hard_cap_micro_usd: preflight.estimated_max_cost_micro_usd }) });
+      const nextRun = await requestJson<ProposalRun>(`${base}/proposals`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("generate") }, body: JSON.stringify({ generation_key: generation.generation_key, preflight_digest: preflight.preflight_digest, confirmation: "GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS", hard_cap_micro_usd: preflight.recommended_hard_cap_micro_usd }) });
       setRun(nextRun); window.sessionStorage.setItem(runStorageKey, nextRun.run_key); setDrawer(null);
     } catch (runError) { setError(runError instanceof Error ? runError.message : t("errors.generate")); }
     finally { setBusy(null); }
@@ -352,7 +369,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       </> : null}
     </AdminResourceSection>
 
-    {drawer?.mode === "generate" && preflight ? <WorkspaceDrawer ariaLabel={t("generation.title")} closeLabel={t("actions.close")} eyebrow={t("eyebrow")} onClose={() => !busy && setDrawer(null)} title={t("generation.title")}><div className="admin-drawer-form"><p className="admin-drawer-form__intro">{t("generation.body")}</p><div className="semantic-context-pack__preflight"><PreflightRow label={t("generation.model")} value={preflight.provider.model}/><PreflightRow label={t("generation.calls")} value={String(preflight.maximum_provider_calls)}/><PreflightRow label={t("generation.proposalLimit")} value={String(preflight.maximum_proposals)}/><PreflightRow label={t("generation.estimate")} value={microUsd(preflight.estimated_max_cost_micro_usd)}/><PreflightRow label={t("generation.platformCap")} value={microUsd(preflight.platform_hard_cap_micro_usd)}/><PreflightRow label={t("generation.runtime")} value={preflight.runtime.queue_configured && preflight.runtime.worker_alive && preflight.runtime.recovery_alive ? t("generation.runtimeReady") : t("generation.runtimeBlocked")}/></div>{preflight.blockers.length ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("generation.blocked")}</strong>{preflight.blockers.map((blocker) => <p key={blocker}>{blockerLabel(blocker, t)}</p>)}{preflight.blockers.some((blocker) => ["provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale"].includes(blocker)) ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button> : null}</div></div> : null}<label className="semantic-context-pack__confirmation"><input checked={budgetConfirmed} onChange={(event) => setBudgetConfirmed(event.target.checked)} type="checkbox"/><span>{t("generation.confirmation", { estimate: microUsd(preflight.estimated_max_cost_micro_usd) })}</span></label>{error ? <p className="workspace-form__error" role="alert">{error}</p> : null}<button className="admin-button admin-button--primary" disabled={preflight.readiness !== "ready" || !budgetConfirmed || busy === "generate"} onClick={() => void startProposalRun()} type="button">{busy === "generate" ? <CircleNotch aria-hidden className="workspace-shell__nav-pending" size={15}/> : <MagicWand aria-hidden size={15}/>} {t("actions.confirmGenerate")}</button></div></WorkspaceDrawer> : null}
+    {drawer?.mode === "generate" && preflight ? <WorkspaceDrawer ariaLabel={t("generation.title")} closeLabel={t("actions.close")} eyebrow={t("eyebrow")} onClose={() => !busy && setDrawer(null)} title={t("generation.title")}><div className="admin-drawer-form"><p className="admin-drawer-form__intro">{t("generation.body")}</p><div className="semantic-context-pack__preflight"><PreflightRow label={t("generation.model")} value={preflight.provider.model}/><PreflightRow label={t("generation.calls")} value={String(preflight.maximum_provider_calls)}/>{preflight.capacity ? <><PreflightRow label={t("generation.minimumUseful")} value={formatAdminNumber(preflight.capacity.minimum_useful_proposals, locale)}/><PreflightRow label={t("generation.targetProposals")} value={formatAdminNumber(preflight.capacity.target_proposals, locale)}/><PreflightRow label={t("generation.maximumProposals")} value={formatAdminNumber(preflight.capacity.maximum_proposals, locale)}/><PreflightRow label={t("generation.outputTokenBudget")} value={formatAdminNumber(preflight.capacity.output_token_budget, locale)}/></> : null}<PreflightRow label={t("generation.estimate")} value={microUsd(preflight.estimated_max_cost_micro_usd)}/><PreflightRow label={t("generation.hardCap")} value={microUsd(preflight.recommended_hard_cap_micro_usd)}/><PreflightRow label={t("generation.runtime")} value={preflight.runtime.queue_configured && preflight.runtime.worker_alive && preflight.runtime.recovery_alive ? t("generation.runtimeReady") : t("generation.runtimeBlocked")}/></div>{preflight.capacity ? <p className="admin-drawer-form__hint">{t("generation.capacityExplanation", { aliases: preflight.capacity.counts.aliases, products: preflight.capacity.counts.products, competitors: preflight.capacity.counts.competitors, locales: preflight.capacity.counts.locale_variants, markets: preflight.capacity.counts.markets, structured: preflight.capacity.counts.structured_terms, knowledge: preflight.capacity.counts.knowledge_blocks })}</p> : null}{preflight.blockers.length ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("generation.blocked")}</strong>{preflight.blockers.map((blocker) => <p key={blocker}>{blockerLabel(blocker, t)}</p>)}{preflight.blockers.some((blocker) => ["provider_lineage_required", "provider_lineage_drift", "semantic_context_draft_stale"].includes(blocker)) ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button> : null}</div></div> : null}<label className="semantic-context-pack__confirmation"><input checked={budgetConfirmed} onChange={(event) => setBudgetConfirmed(event.target.checked)} type="checkbox"/><span>{t("generation.confirmation", { estimate: microUsd(preflight.estimated_max_cost_micro_usd), hardCap: microUsd(preflight.recommended_hard_cap_micro_usd) })}</span></label>{error ? <p className="workspace-form__error" role="alert">{error}</p> : null}<button className="admin-button admin-button--primary" disabled={preflight.readiness !== "ready" || !budgetConfirmed || busy === "generate"} onClick={() => void startProposalRun()} type="button">{busy === "generate" ? <CircleNotch aria-hidden className="workspace-shell__nav-pending" size={15}/> : <MagicWand aria-hidden size={15}/>} {t("actions.confirmGenerate")}</button></div></WorkspaceDrawer> : null}
 
     {drawer?.mode === "element" && activeElement ? <WorkspaceDrawer ariaLabel={t("review.aria", { name: activeElement.display_text })} closeLabel={t("actions.close")} eyebrow={`${t(`kinds.${activeElement.element_kind}`)} · ${t(`states.${activeElement.disposition}`)}`} onClose={() => !busy && setDrawer(null)} title={activeElement.display_text}><ElementReview element={activeElement} generation={generation} busy={busy} onApprove={() => void decide("approve", activeElement.element_key)} onEdit={(form) => void saveEdit(form)} onReject={() => void decide("reject", activeElement.element_key)} t={t}/></WorkspaceDrawer> : null}
 

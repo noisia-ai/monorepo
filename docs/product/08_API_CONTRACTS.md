@@ -2593,3 +2593,28 @@ path lógico, conteos y digest del diagnóstico; el GET management devuelve úni
 el código y copy operator-safe. Nunca cruza la respuesta del provider, valores
 inválidos, prompt o Knowledge. Una corrida con `provider_call_count=1` sigue sin ser
 retryable aunque el error sea de truncamiento o schema.
+
+### Capacity planner server-owned — 69A.5
+
+**Registrado:** 2026-08-23 (`America/Mexico_City`).
+
+`GET .../semantic-context/preflight` devuelve ahora
+`signal-semantic-context-proposal-preflight-v3`. El servidor deriva una capacidad
+determinística desde los conteos sellados de Brand OS y Knowledge: aliases, productos,
+competidores, locales, mercados, code-switching, campos de categoría, términos
+estructurados, bloques Knowledge y tipos de fuente de evidencia. El navegador no puede
+enviar ni modificar esos conteos, la fórmula o el presupuesto.
+
+La respuesta añade `capacity.minimum_useful_proposals`, `target_proposals`,
+`maximum_proposals`, `output_token_budget`, sus digests y una explicación por factores.
+`target_proposals` es capacidad, no cuota: el provider debe omitir propuestas sin
+evidencia. `max_output_tokens` es el presupuesto calculado para esa generación, separado
+de `configured_output_token_ceiling` y `model_max_output_tokens`. El preflight falla
+cerrado si la complejidad satura el contrato, el modelo no soporta el presupuesto o el
+ceiling server-owned es insuficiente.
+
+El costo máximo se calcula con el prompt materializado y el presupuesto de salida
+calculado. `recommended_hard_cap_micro_usd` permanece server-owned y nunca supera
+`platform_hard_cap_micro_usd`; el POST sigue rechazando cualquier cap insuficiente o
+superior al límite de plataforma. No cambia el límite de una sola llamada, el append
+atómico, el estado `pending` ni la prohibición de resultados parciales.
