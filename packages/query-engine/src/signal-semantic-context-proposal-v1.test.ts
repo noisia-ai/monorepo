@@ -4,11 +4,14 @@ import test from "node:test";
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  SignalSemanticContextProposalValidationError,
+  buildSignalSemanticContextProviderOutputSchemaV1,
   buildSignalSemanticContextProposalPromptV1,
   parseSignalSemanticContextProposalResponseV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
-  signalSemanticContextProposalInputSchemaV1
+  signalSemanticContextProposalInputSchemaV1,
+  signalSemanticContextMaximumProposalsForOutputTokensV1
 } from "./signal-semantic-context-proposal-v1";
 
 const digest = (value: string) => `sha256:${value.repeat(64)}`;
@@ -63,6 +66,43 @@ test("closed parser accepts confidence 1.0 without granting disposition", () => 
   const output = parseSignalSemanticContextProposalResponseV1(JSON.stringify(validOutput));
   assert.equal(output.proposals[0]?.confidence, 1);
   assert.equal("disposition" in output.proposals[0]!, false);
+});
+
+test("closed parser accepts only an exact JSON fence as bounded schema-preserving normalization", () => {
+  const output = parseSignalSemanticContextProposalResponseV1(
+    `\`\`\`json\n${JSON.stringify(validOutput)}\n\`\`\``
+  );
+  assert.equal(output.proposals.length, 1);
+  assert.throws(() => parseSignalSemanticContextProposalResponseV1(
+    `Result:\n\`\`\`json\n${JSON.stringify(validOutput)}\n\`\`\``
+  ), (error: unknown) => error instanceof SignalSemanticContextProposalValidationError
+    && error.code === "semantic_context_provider_response_not_closed_json");
+});
+
+test("sanitized incident shape remains atomic and reports the exact truncated JSON code", () => {
+  const truncated = `\`\`\`json\n{"contract_version":"signal-semantic-context-proposal-output-v1",`;
+  assert.throws(() => parseSignalSemanticContextProposalResponseV1(truncated),
+    (error: unknown) => error instanceof SignalSemanticContextProposalValidationError
+      && error.code === "semantic_context_provider_response_not_closed_json");
+});
+
+test("schema errors retain a stable operator-safe code and private logical paths", () => {
+  const invalid = { ...validOutput, proposals: [{ ...validOutput.proposals[0], element_kind: "open_kind" }] };
+  assert.throws(() => parseSignalSemanticContextProposalResponseV1(JSON.stringify(invalid)),
+    (error: unknown) => error instanceof SignalSemanticContextProposalValidationError
+      && error.code === "semantic_context_provider_element_kind_invalid"
+      && error.diagnostic.issue_count === 1
+      && error.diagnostic.issues[0]?.logical_path === "proposals.*.element_kind");
+});
+
+test("structured output schema and proposal bound derive from the sealed output budget", () => {
+  assert.equal(signalSemanticContextMaximumProposalsForOutputTokensV1(5_000), 19);
+  assert.equal(signalSemanticContextMaximumProposalsForOutputTokensV1(64_000), 250);
+  const bounded = buildSignalSemanticContextProviderOutputSchemaV1(1);
+  assert.equal(bounded.safeParse(validOutput).success, true);
+  assert.equal(bounded.safeParse({ ...validOutput,
+    proposals: [validOutput.proposals[0], { ...validOutput.proposals[0], element_key: "identity.second" }]
+  }).success, false);
 });
 
 test("closed parser rejects prose, unknown fields and partial invalid responses", () => {

@@ -1962,7 +1962,11 @@ paths:
       security: [{ kindeSession: [] }]
       parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
       responses:
-        "200": { description: Server-pinned model, pricing, one call maximum, estimate and hard cap; provider_calls=0 and writes_performed=false. }
+        "200":
+          description: Server-pinned model, pricing, one call maximum, proposal bound, estimate and hard cap; provider_calls=0 and writes_performed=false.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextProposalPreflightV2" }
   /api/data-os/signal/{workspaceId}/semantic-context/proposals:
     post:
       tags: [Semantic Context Pack]
@@ -2320,6 +2324,57 @@ components:
         preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         confirmation: { const: GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS }
         hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$', maxLength: 18 }
+    SignalSemanticContextProposalPreflightV2:
+      type: object
+      additionalProperties: false
+      required: [contract_version, generation_key, authority, context_input_digest, provider,
+        maximum_provider_calls, estimated_input_tokens_upper_bound, max_input_tokens,
+        max_output_tokens, maximum_proposals, estimated_max_cost_micro_usd,
+        platform_hard_cap_micro_usd, runtime, drift, readiness, blockers, writes_performed,
+        provider_calls, preflight_digest]
+      properties:
+        contract_version: { const: signal-semantic-context-proposal-preflight-v2 }
+        generation_key: { type: [string, "null"] }
+        authority:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [brand_os_digest, knowledge_digest, locale_context_digest]
+          properties:
+            brand_os_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            knowledge_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            locale_context_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        context_input_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
+        provider:
+          type: object
+          additionalProperties: false
+          required: [key, model, model_version, pricing_version, prompt_digest]
+          properties:
+            key: { const: anthropic }
+            model: { type: string }
+            model_version: { type: string }
+            pricing_version: { type: string }
+            prompt_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        maximum_provider_calls: { const: 1 }
+        estimated_input_tokens_upper_bound: { type: [integer, "null"], minimum: 1 }
+        max_input_tokens: { type: integer, minimum: 1 }
+        max_output_tokens: { type: integer, minimum: 1 }
+        maximum_proposals: { type: [integer, "null"], minimum: 1, maximum: 250 }
+        estimated_max_cost_micro_usd: { type: string, pattern: '^[0-9]+$' }
+        platform_hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
+        runtime:
+          type: object
+          additionalProperties: false
+          required: [queue_configured, worker_alive, recovery_alive]
+          properties:
+            queue_configured: { type: boolean }
+            worker_alive: { type: boolean }
+            recovery_alive: { type: boolean }
+        drift: { type: string, enum: [current, stale] }
+        readiness: { type: string, enum: [ready, blocked] }
+        blockers: { type: array, items: { type: string }, uniqueItems: true }
+        writes_performed: { const: false }
+        provider_calls: { const: 0 }
+        preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
     SignalSemanticContextProposalRunV1:
       type: object
       additionalProperties: false
@@ -2351,7 +2406,13 @@ components:
         provider_call_count: { type: integer, minimum: 0, maximum: 1 }
         proposal_count: { type: [integer, "null"], minimum: 1, maximum: 250 }
         result_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
-        error: { type: [object, "null"], additionalProperties: true }
+        error:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { type: string, pattern: '^semantic_context_[a-z0-9_]+$' }
+            message: { type: string, maxLength: 300 }
         queued_at: { type: string, format: date-time }
         started_at: { type: [string, "null"], format: date-time }
         completed_at: { type: [string, "null"], format: date-time }

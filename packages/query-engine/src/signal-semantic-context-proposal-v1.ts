@@ -98,7 +98,7 @@ export const signalSemanticContextProposalInputSchemaV1 = z.object({
   }).strict(),
   knowledge_blocks: z.array(sourceBlockSchema).max(240),
   limits: z.object({
-    maximum_proposals: z.literal(250),
+    maximum_proposals: z.number().int().min(1).max(250),
     abstention_required_when_evidence_is_insufficient: z.literal(true),
     mentions_included: z.literal(false)
   }).strict()
@@ -113,7 +113,7 @@ const evidenceAliasSchema = z.object({
   relation_type: z.enum(SIGNAL_SEMANTIC_CONTEXT_EVIDENCE_RELATIONS)
 }).strict();
 
-const providerProposalSchema = z.object({
+export const signalSemanticContextProviderProposalSchemaV1 = z.object({
   element_key: keySchema,
   element_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS),
   canonical_key: keySchema,
@@ -136,13 +136,42 @@ const providerProposalSchema = z.object({
   }
 });
 
-const providerOutputSchema = z.object({
-  contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION),
-  proposals: z.array(providerProposalSchema).min(1).max(250)
-}).strict();
+export function buildSignalSemanticContextProviderOutputSchemaV1(maximumProposals = 250) {
+  if (!Number.isSafeInteger(maximumProposals) || maximumProposals < 1 || maximumProposals > 250) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_proposal_limit_invalid"
+    );
+  }
+  return z.object({
+    contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION),
+    proposals: z.array(signalSemanticContextProviderProposalSchemaV1).min(1).max(maximumProposals)
+  }).strict();
+}
 
-export type SignalSemanticContextProviderProposalV1 = z.infer<typeof providerProposalSchema>;
-export type SignalSemanticContextProviderOutputV1 = z.infer<typeof providerOutputSchema>;
+export const signalSemanticContextProviderOutputSchemaV1 =
+  buildSignalSemanticContextProviderOutputSchemaV1();
+
+export type SignalSemanticContextProviderProposalV1 = z.infer<
+  typeof signalSemanticContextProviderProposalSchemaV1
+>;
+export type SignalSemanticContextProviderOutputV1 = z.infer<
+  typeof signalSemanticContextProviderOutputSchemaV1
+>;
+
+export type SignalSemanticContextProposalValidationDiagnosticV1 = {
+  issue_count: number;
+  issues: Array<{ code: string; logical_path: string; count: number }>;
+};
+
+export class SignalSemanticContextProposalValidationError extends Error {
+  override readonly name = "SignalSemanticContextProposalValidationError";
+  constructor(public readonly code: string,
+    public readonly diagnostic: SignalSemanticContextProposalValidationDiagnosticV1 = {
+      issue_count: 0, issues: []
+    }) {
+    super(code);
+  }
+}
 
 export type SignalSemanticContextProposalJobDataV1 = {
   contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION;
@@ -156,6 +185,7 @@ export type SignalSemanticContextProposalProviderV1 = {
     max_output_tokens: number;
     temperature: 0;
     request_identity: string;
+    maximum_proposals: number;
   }): Promise<{
     text: string;
     provider_request_id: string | null;
@@ -177,7 +207,25 @@ const PROMPT_POLICY = {
   ],
   output: {
     contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
-    proposals: "1..250 closed proposal objects"
+    proposals: "1..sealed maximum_proposals closed proposal objects",
+    proposal_shape: {
+      element_key: "stable operator-safe key",
+      element_kind: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS,
+      canonical_key: "normalized semantic key",
+      display_text: "operator-safe text",
+      scope: ["primary_brand", "category", "competitor", "reference", null],
+      entity_type: ["brand", "competitor", "product", "category", null],
+      entity_ref: "an opaque entity_ref from GOVERNED_CONTEXT or null",
+      locale: "a governed locale from GOVERNED_CONTEXT or null",
+      relation_kind: [...SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS, null],
+      relation_target_key: "another proposed element_key or null",
+      confidence: "informational number from 0 through 1",
+      evidence: {
+        minimum: 1,
+        source_alias: "an opaque source_alias from GOVERNED_CONTEXT",
+        relation_type: ["supports", "limits", "contradicts"]
+      }
+    }
   }
 } as const;
 
@@ -198,36 +246,60 @@ export function buildSignalSemanticContextProposalPromptV1(
 }
 
 export function parseSignalSemanticContextProposalResponseV1(text: string) {
-  const trimmed = text.trim();
+  const trimmed = normalizeProviderJsonEnvelope(text);
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    throw new Error("semantic_context_provider_response_not_closed_json");
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_response_not_closed_json"
+    );
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
-    throw new Error("semantic_context_provider_response_invalid_json");
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_response_invalid_json"
+    );
   }
-  const output = providerOutputSchema.parse(parsed);
+  const parsedOutput = signalSemanticContextProviderOutputSchemaV1.safeParse(parsed);
+  if (!parsedOutput.success) throw validationErrorForIssues(parsedOutput.error.issues);
+  const output = parsedOutput.data;
   const elementKeys = new Set<string>();
   const semanticKeys = new Set<string>();
   for (const proposal of output.proposals) {
     if (elementKeys.has(proposal.element_key)) {
-      throw new Error("semantic_context_provider_duplicate_element_key");
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_duplicate_element_key"
+      );
     }
     elementKeys.add(proposal.element_key);
     const semanticKey = [proposal.element_kind, proposal.canonical_key, proposal.locale ?? ""].join(":");
     if (semanticKeys.has(semanticKey)) {
-      throw new Error("semantic_context_provider_duplicate_semantic_key");
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_duplicate_semantic_key"
+      );
     }
     semanticKeys.add(semanticKey);
     const evidence = new Set(proposal.evidence.map((item) =>
       `${item.source_alias}:${item.relation_type}`));
     if (evidence.size !== proposal.evidence.length) {
-      throw new Error("semantic_context_provider_duplicate_evidence_alias");
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_duplicate_evidence_alias"
+      );
     }
   }
   return output;
+}
+
+export const SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1 = 256;
+
+export function signalSemanticContextMaximumProposalsForOutputTokensV1(maxOutputTokens: number) {
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_output_token_budget_invalid"
+    );
+  }
+  return Math.max(1, Math.min(250,
+    Math.floor(maxOutputTokens / SIGNAL_SEMANTIC_CONTEXT_OUTPUT_TOKENS_PER_PROPOSAL_V1)));
 }
 
 export function validateSignalSemanticContextProposalJobDataV1(value: unknown) {
@@ -271,6 +343,48 @@ function decimalRate(value: number | string) {
 
 function ceilDivide(numerator: bigint, denominator: bigint) {
   return numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator;
+}
+
+function normalizeProviderJsonEnvelope(value: string) {
+  const trimmed = value.trim();
+  const fenced = /^```json\s*\n([\s\S]*)\n```$/u.exec(trimmed);
+  return fenced?.[1]?.trim() ?? trimmed;
+}
+
+function validationErrorForIssues(issues: z.ZodIssue[]) {
+  const grouped = new Map<string, { code: string; logical_path: string; count: number }>();
+  for (const issue of issues) {
+    const logicalPath = issue.path.map((part) => typeof part === "number" ? "*" : part).join(".") || "$";
+    const key = `${issue.code}:${logicalPath}`;
+    const entry = grouped.get(key) ?? { code: issue.code, logical_path: logicalPath, count: 0 };
+    entry.count += 1;
+    grouped.set(key, entry);
+  }
+  const diagnostic = {
+    issue_count: issues.length,
+    issues: [...grouped.values()].sort((left, right) => left.logical_path.localeCompare(right.logical_path)
+      || left.code.localeCompare(right.code))
+  };
+  const invalidAt = (path: string) => diagnostic.issues.some((issue) =>
+    issue.logical_path === path && issue.code !== "invalid_type");
+  const code = invalidAt("proposals.*.element_kind")
+    ? "semantic_context_provider_element_kind_invalid"
+    : invalidAt("proposals.*.relation_kind")
+      ? "semantic_context_provider_relation_kind_invalid"
+      : invalidAt("proposals.*.evidence.*.relation_type")
+        ? "semantic_context_provider_evidence_relation_invalid"
+        : invalidAt("proposals.*.locale")
+          ? "semantic_context_provider_locale_invalid"
+          : invalidAt("proposals.*.scope")
+            ? "semantic_context_provider_scope_invalid"
+            : invalidAt("proposals.*.confidence")
+              ? "semantic_context_provider_confidence_invalid"
+              : diagnostic.issues.some((issue) => issue.code === "invalid_type")
+                ? "semantic_context_provider_required_field_invalid"
+                : diagnostic.issues.some((issue) => issue.code === "unrecognized_keys")
+                  ? "semantic_context_provider_unknown_field"
+                  : "semantic_context_provider_response_schema_invalid";
+  return new SignalSemanticContextProposalValidationError(code, diagnostic);
 }
 
 function stableJson(value: unknown): string {

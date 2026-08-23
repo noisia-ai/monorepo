@@ -106,6 +106,36 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     { status: "settled", actual_micro_usd: "180" });
     assert.equal((await row(pool, `SELECT status FROM signal_semantic_context_proposal_outbox
       WHERE run_id=$1::uuid`, [invalidRun.id])).status, "dead_letter");
+    const invalidState = await loadSignalSemanticContextProposalRunV1({ queryable: pool,
+      workspace: invalid.workspace, actor: invalid.actor, run_key: invalidRun.run_key });
+    assert.equal(invalidState.error?.code, "semantic_context_provider_required_field_invalid");
+    assert.doesNotMatch(invalidState.error?.message ?? "", /logical_path|provider_response_private|bad/u);
+    const invalidPrivate = JSON.parse(String((await row(pool, `SELECT error_summary FROM
+      signal_semantic_context_proposal_runs WHERE id=$1::uuid`, [invalidRun.id])).error_summary));
+    assert.equal(invalidPrivate.code, "semantic_context_provider_required_field_invalid");
+    assert.ok(invalidPrivate.issue_count > 0);
+    assert.equal(await scalar(pool, `SELECT count(*)::int count FROM signal_semantic_context_proposal_run_events
+      WHERE run_id=$1::uuid AND event_kind='failed'`, [invalidRun.id]), 1);
+
+    const truncated = await seedFixture(pool, "truncated");
+    const truncatedRun = await startFor(pool, truncated, "truncated-start");
+    let truncatedCalls = 0;
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: truncatedRun.id,
+      provider: { async generate() { truncatedCalls += 1; return {
+        text: "```json\n{\"contract_version\":\"signal-semantic-context-proposal-output-v1\",",
+        provider_request_id: null,
+        usage: { input_tokens: 10, output_tokens: configuration.max_output_tokens }
+      }; } } }), /semantic_context_provider_response_truncated/u);
+    const truncatedState = await loadSignalSemanticContextProposalRunV1({ queryable: pool,
+      workspace: truncated.workspace, actor: truncated.actor, run_key: truncatedRun.run_key });
+    assert.equal(truncatedState.error?.code, "semantic_context_provider_response_truncated");
+    assert.equal(truncatedState.provider_call_count, 1);
+    assert.equal((await elementCounts(pool, truncated.workspace.id)).pending, 0);
+    await assert.rejects(retrySignalSemanticContextProposalRunV1({ pool,
+      workspace: truncated.workspace, actor: truncated.actor,
+      idempotency_key: "truncated-retry-blocked", run_key: truncatedRun.run_key
+    }), /not_retryable/u);
+    assert.equal(truncatedCalls, 1);
 
     const alias = await seedFixture(pool, "alias"); const aliasRun = await startFor(pool, alias, "alias-start");
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: aliasRun.id,
@@ -144,9 +174,11 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     assert.equal(crashCalls, 1); assert.equal((await row(pool,
       `SELECT status FROM signal_semantic_context_proposal_runs WHERE id=$1::uuid`, [crashRun.id])).status,
     "dead_letter");
-    assert.deepEqual(await row(pool, `SELECT status,actual_micro_usd::text FROM
-      signal_semantic_context_budget_reservations WHERE run_id=$1::uuid`, [crashRun.id]),
-    { status: "settled", actual_micro_usd: "90000" });
+    const crashBudget = await row(pool, `SELECT status,actual_micro_usd::text,
+      reservation_micro_usd::text FROM
+      signal_semantic_context_budget_reservations WHERE run_id=$1::uuid`, [crashRun.id]);
+    assert.equal(crashBudget.status, "settled");
+    assert.equal(crashBudget.actual_micro_usd, crashBudget.reservation_micro_usd);
     assert.equal((await row(pool, `SELECT status FROM signal_semantic_context_proposal_outbox
       WHERE run_id=$1::uuid`, [crashRun.id])).status, "dead_letter");
 

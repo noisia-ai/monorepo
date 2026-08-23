@@ -169,3 +169,39 @@ therefore no provider request identity was dispatched and no settlement occurred
 This checkpoint validates only the free management path and recovery readiness. It does
 not authorize a real proposal run, publish a pack, open context-aware discovery, or
 advance 10D.
+
+## 69A.4 — validation incident and closed recovery
+
+**Recorded:** 2026-08-22T23:31:58-06:00 (`America/Mexico_City`).
+
+The first authorized Preview/UAT proposal run reached the provider exactly once and was
+rejected atomically. A private, repeatable-read/read-only audit reproduced two generic
+contract failures without logging the response: output usage reached its sealed
+`5000/5000` token limit and left one open Markdown fence with no balanced JSON object;
+the free-text prompt also described “closed proposal objects” without supplying their
+field schema. The partial shape contained 36 `element_kind` entries but no
+`element_key`, `canonical_key` or `evidence` fields. The canonical parser therefore
+rejected the response before append. Settlement stayed within reservation, the outbox
+dead-lettered, and proposal/approval/serving writes remained zero.
+
+The corrected adapter keeps the same shared Anthropic transport but supplies the closed
+schema through structured output. The governed prompt policy now enumerates the same
+closed fields and therefore has a new lineage digest; the failed generation is not
+silently treated as compatible with the corrected transport. A versioned 256-token allowance derives a dynamic
+proposal maximum from each run's sealed output budget; the canonical parser validates
+the complete result again and accepts only raw JSON or one exact JSON fence. Complete
+schema failure still creates zero proposals. The DB now persists a precise private
+diagnostic and append-only failed event while returning only a translated, operator-safe
+error. A response at the exact output cap is classified
+`semantic_context_provider_response_truncated`; retry remains blocked after any paid
+response.
+
+The unrelated PostgreSQL warning was traced to parallel `query()` calls against one
+transaction-scoped `pg.Client` while preparing Brand OS/Knowledge context. Those reads
+are now sequential. The warning did not cause the rejected response: the provider input
+was prepared, the response was durably stored, and validation failed later on its
+content envelope.
+
+No migration was required. The failed UAT run remains immutable and is not retried.
+This correction does not authorize another provider call, publish a Semantic Context
+Pack, open context-aware 10C.3B, or advance 10D.

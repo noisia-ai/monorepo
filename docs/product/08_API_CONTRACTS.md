@@ -2574,3 +2574,22 @@ budget/settlement, proposal count, result digest y error sanitizado. `POST
 .../proposals/{runKey}/retry` acepta body vacío y sólo reencola un intento cuyo transporte
 demostró que no envió una request. Un outcome ambiguo es `dead_letter` y no es retryable.
 Ningún endpoint devuelve prompt, response cruda, bloques Knowledge o evidence UUIDs.
+
+### Diagnóstico cerrado de outputs y presupuesto — 69A.4
+
+**Registrado:** 2026-08-22T23:31:58-06:00 (`America/Mexico_City`).
+
+El preflight V2 declara además `maximum_proposals`, calculado server-side desde el
+presupuesto sellado de output. La reserva usa el tamaño UTF-8 del prompt materializado
+como cota conservadora de tokens de entrada, no el máximo teórico completo del modelo.
+El transporte Anthropic compartido recibe el JSON Schema cerrado; el Worker vuelve a
+validar la respuesta completa antes del único append atómico.
+
+Los fallos conservan códigos específicos como
+`semantic_context_provider_response_truncated`,
+`semantic_context_provider_element_kind_invalid` o
+`semantic_context_provider_required_field_invalid`. El estado privado conserva sólo
+path lógico, conteos y digest del diagnóstico; el GET management devuelve únicamente
+el código y copy operator-safe. Nunca cruza la respuesta del provider, valores
+inválidos, prompt o Knowledge. Una corrida con `provider_call_count=1` sigue sin ser
+retryable aunque el error sea de truncamiento o schema.
