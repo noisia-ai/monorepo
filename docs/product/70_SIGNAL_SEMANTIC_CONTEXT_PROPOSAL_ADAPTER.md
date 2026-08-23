@@ -147,3 +147,25 @@ zero proposal runs, reservations, outbox rows and real proposals, and Anthropic 
 called. Authenticated visual QA still requires renewal of the expired Kinde session;
 until then this document does not declare a real provider generation or 10C.3B
 readiness.
+
+## Authenticated UAT dependency closure
+
+**Recorded:** 2026-08-22T18:38:55-06:00 (`America/Mexico_City`).
+
+The real Preview/UAT flow created draft v1, detected missing provider lineage and
+reconciled it append-only into draft v2. A generic runtime defect was fixed before that
+transition: durable preflight now distinguishes `provider_lineage_required` from
+`provider_lineage_drift`, so Frontend 69B submits the closed
+`provider_lineage_missing` reason only when the writer will independently classify the
+same condition. The server remains the authority for snapshots, digests, provider,
+model and pricing.
+
+The reconciled free preflight is ready with model `claude-sonnet-4-6`, one maximum call,
+USD 0.255 estimated maximum cost, USD 1 platform cap and healthy Worker/recovery. The
+budget confirmation remained unchecked and the paid action remained disabled. Database
+evidence records zero proposal runs, reservations, outbox rows, run events and elements;
+therefore no provider request identity was dispatched and no settlement occurred.
+
+This checkpoint validates only the free management path and recovery readiness. It does
+not authorize a real proposal run, publish a pack, open context-aware discovery, or
+advance 10D.

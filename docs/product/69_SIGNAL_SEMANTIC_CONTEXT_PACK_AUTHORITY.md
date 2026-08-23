@@ -205,3 +205,29 @@ La comprobación visual autenticada quedó pendiente porque la sesión Kinde del
 expiró al recargar después del deploy. No se intentó eludir AuthN ni usar credenciales.
 No se creó un draft UAT, no se ejecutó `POST /proposals` y no hubo provider calls, paid
 jobs, publicación ni serving writes. Este checkpoint no abre 10C.3B ni 10D.
+
+## Checkpoint UAT autenticado · 2026-08-22T18:38:55-06:00
+
+El operador renovó la sesión Kinde de Preview/UAT y el flujo real de Amazon Alexa cerró
+la dependencia anterior. Brand OS y los tres bloques Knowledge cargaron bajo el rol DB
+`Admin Noisia`; Semantic Context apareció inmediatamente después de Knowledge y creó la
+generación draft v1. El preflight detectó correctamente que ese draft legacy carecía de
+provider lineage y ofreció la transición soportada, sin borrar ni actualizar la fila.
+
+`Reconciliar contexto` creó exactamente una generación v2 enlazada a v1, con causa
+`provider_lineage_missing`, provider lineage current y evento `generation_reconciled`.
+Refresh y `Actualizar` conservaron v2. El preflight posterior quedó sin blockers y mostró
+modelo `claude-sonnet-4-6`, una llamada máxima, estimación USD 0.255, hard cap USD 1 y
+Worker/recovery listos. El consentimiento inició desmarcado y la acción pagada permaneció
+deshabilitada.
+
+La verificación read-only de `noisia-staging` reconcilió 2 generations, 0 elements,
+2 events, 0 proposal runs, 0 budget reservations, 0 proposal outbox y 0 proposal-run
+events. Mentions, imports, `record_tags`, population pointers y governed bindings
+conservaron sus conteos y digests protegidos. Studio y Workers ejecutan el commit
+`172f3cd`; ambos están `Online`, el deep health está verde y el Worker inició una sola
+réplica con cinco colas `-uat`, cero jobs ejecutables y cero filas reclamables.
+
+No se ejecutó `POST /proposals`, no hubo llamada a Anthropic, gasto, publicación,
+serving write, cambio de reader/pointer/binding ni cambio de read mode. 10C.3B y 10D
+continúan bloqueados por sus gates independientes.
