@@ -2212,3 +2212,23 @@ writer; no se copian elementos ni approvals y no existe FK hacia serving.
 
 Checksum local 0093:
 `6eac2acb2465a9d845833a7def98b69777d86000faf3b2d42990274950a056e5`.
+
+## Backend 69A.6 · Semantic Context Contract V2 y revalidación pagada (0094)
+
+**Registrado:** 2026-08-23T02:13:03-06:00 (`America/Mexico_City`).
+
+`0094_signal_semantic_context_contract_v2_revalidation.sql` agrega
+`signal_semantic_context_proposal_revalidations`, un ledger append-only para adaptar y
+revalidar server-side una respuesta privada ya pagada. Cada fila sella el run original,
+response digest, contrato original, adapter V1→V2, contrato destino, normalización,
+decisiones de duplicados, conteos y resultado `completed|rejected`. La tabla no contiene
+texto del provider y no crea una nueva reserva, outbox o llamada.
+
+El run fallido liquidado pasa a ser completamente inmutable; su response, settlement y
+eventos permanecen históricos. La revalidación rechazada también es evidencia válida:
+conserva el error estructural sanitizado y exige `appended_proposal_count=0`. Sólo una
+revalidación compatible por run/adapter/contrato puede existir, y el operation ledger
+registra `revalidate-semantic-context-proposal-run` con AuthZ DB-owned.
+
+Checksum local 0094:
+`c881dfd50332212f3a434e6bfd8cf3de2c3dff16e0cda869ac085da167828930`.

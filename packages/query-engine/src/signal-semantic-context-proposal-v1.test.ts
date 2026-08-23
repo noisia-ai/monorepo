@@ -4,10 +4,15 @@ import test from "node:test";
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
   SignalSemanticContextProposalValidationError,
+  adaptSignalSemanticContextProposalResponseV1ToV2,
   buildSignalSemanticContextProviderOutputSchemaV1,
+  buildSignalSemanticContextProviderOutputSchemaV2,
   buildSignalSemanticContextProposalPromptV1,
+  buildSignalSemanticContextProposalPromptV2,
   parseSignalSemanticContextProposalResponseV1,
+  parseSignalSemanticContextProposalResponseV2,
   planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
@@ -66,6 +71,14 @@ const validOutput = {
     relation_kind: null, relation_target_key: null, confidence: 1,
     evidence: [{ source_alias: "src.001", relation_type: "supports" }] }]
 };
+const validOutputV2 = {
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+  proposals: [{ element_key: "identity.example", element_kind: "identity_term",
+    canonical_key: "example", display_text: "Marca ejemplo", scope: "primary_brand",
+    entity_ref: "brand.primary", locale: "es-MX",
+    relation_kind: null, relation_target_key: null, confidence: 1,
+    evidence: [{ source_alias: "src.001", relation_type: "supports" }] }]
+};
 
 test("semantic context proposal prompt is deterministic and contains no mention input", () => {
   const parsed = signalSemanticContextProposalInputSchemaV1.parse(input);
@@ -75,6 +88,15 @@ test("semantic context proposal prompt is deterministic and contains no mention 
   assert.equal(signalSemanticContextProposalDigestV1(left), signalSemanticContextProposalDigestV1(right));
   assert.match(left, /"mentions_included":false/u);
   assert.doesNotMatch(left, /study_corpus_id|workspace_id|prompt_override/iu);
+});
+
+test("V2 prompt removes provider-controlled entity type while retaining governed refs", () => {
+  const prompt = buildSignalSemanticContextProposalPromptV2(
+    signalSemanticContextProposalInputSchemaV1.parse(input)
+  );
+  assert.match(prompt, /signal-semantic-context-proposal-output-v2/u);
+  assert.match(prompt, /"entity_ref"/u);
+  assert.doesNotMatch(prompt, /"proposal_shape":\{[^\n]*"entity_type"/u);
 });
 
 test("closed parser accepts confidence 1.0 without granting disposition", () => {
@@ -118,6 +140,59 @@ test("structured output schema and proposal bound derive from the sealed output 
   assert.equal(bounded.safeParse({ ...validOutput,
     proposals: [validOutput.proposals[0], { ...validOutput.proposals[0], element_key: "identity.second" }]
   }).success, false);
+});
+
+test("V2 provider schema accepts an unbound category and rejects provider entity_type", () => {
+  const category = { ...validOutputV2, proposals: [{ ...validOutputV2.proposals[0],
+    element_key: "category.voice", element_kind: "category", canonical_key: "voice-assistants",
+    display_text: "Asistentes de voz", scope: "category", entity_ref: null }] };
+  assert.equal(buildSignalSemanticContextProviderOutputSchemaV2(1).safeParse(category).success, true);
+  assert.equal(buildSignalSemanticContextProviderOutputSchemaV2(1).safeParse({ ...category,
+    proposals: [{ ...category.proposals[0], entity_type: "category" }]
+  }).success, false);
+});
+
+test("V2 safely collapses only equivalent semantic duplicates", () => {
+  const proposal = validOutputV2.proposals[0]!;
+  const parsed = parseSignalSemanticContextProposalResponseV2(JSON.stringify({ ...validOutputV2,
+    proposals: [proposal, { ...proposal, element_key: "identity.second", confidence: 0.5,
+      evidence: [{ source_alias: "src.002", relation_type: "limits" }] }]
+  }));
+  assert.equal(parsed.output.proposals.length, 1);
+  assert.equal(parsed.output.proposals[0]?.element_key, "identity.example");
+  assert.equal(parsed.output.proposals[0]?.confidence, 1);
+  assert.deepEqual(parsed.output.proposals[0]?.evidence, [
+    { source_alias: "src.001", relation_type: "supports" },
+    { source_alias: "src.002", relation_type: "limits" }
+  ]);
+  assert.deepEqual(parsed.normalization.duplicate_groups[0]?.original_element_keys,
+    ["identity.example", "identity.second"]);
+  assert.throws(() => parseSignalSemanticContextProposalResponseV2(JSON.stringify({ ...validOutputV2,
+    proposals: [proposal, { ...proposal, element_key: "identity.second", display_text: "Otra marca" }]
+  })), /duplicate_semantic_key_conflict/u);
+});
+
+test("V1 paid-response adapter drops provider entity type and preserves explicit lineage", () => {
+  const legacy = { ...validOutput, proposals: [{ ...validOutput.proposals[0],
+    element_kind: "product", entity_type: "product", entity_ref: "brand.primary" } ] };
+  const adapted = adaptSignalSemanticContextProposalResponseV1ToV2(JSON.stringify(legacy));
+  assert.equal(adapted.output.proposals[0]?.element_kind, "product");
+  assert.equal(adapted.output.proposals[0]?.entity_ref, "brand.primary");
+  assert.equal("entity_type" in adapted.output.proposals[0]!, false);
+  assert.equal(adapted.normalization.input_contract_version,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION);
+  assert.match(adapted.normalization.transformation_digest, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test("V1 adapter fails closed for unknown relation targets and duplicate element keys", () => {
+  const proposal = validOutput.proposals[0]!;
+  assert.throws(() => adaptSignalSemanticContextProposalResponseV1ToV2(JSON.stringify({ ...validOutput,
+    proposals: [{ ...proposal, element_key: "relation.one", element_kind: "typed_relation",
+      relation_kind: "associated_with", relation_target_key: "missing.target" }]
+  })), /relation_target_unknown/u);
+  assert.throws(() => adaptSignalSemanticContextProposalResponseV1ToV2(JSON.stringify({ ...validOutput,
+    proposals: [proposal, proposal]
+  })), /duplicate_element_key/u);
 });
 
 test("capacity planner is deterministic and does not over-reserve a small Brand OS", () => {

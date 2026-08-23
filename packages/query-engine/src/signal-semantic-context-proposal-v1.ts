@@ -8,6 +8,12 @@ export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION =
   "signal-semantic-context-proposal-input-v2" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION =
   "signal-semantic-context-proposal-output-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2 =
+  "signal-semantic-context-proposal-output-v2" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION =
+  "signal-semantic-context-proposal-v1-to-v2-adapter-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION =
+  "signal-semantic-context-proposal-normalization-v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION =
   "signal-semantic-context-proposal-run-v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION =
@@ -203,6 +209,63 @@ export type SignalSemanticContextProviderOutputV1 = z.infer<
   typeof signalSemanticContextProviderOutputSchemaV1
 >;
 
+export const signalSemanticContextProviderProposalSchemaV2 = z.object({
+  element_key: keySchema,
+  element_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS),
+  canonical_key: keySchema,
+  display_text: z.string().trim().min(1).max(500),
+  scope: z.enum(["primary_brand", "category", "competitor", "reference"]).nullable(),
+  entity_ref: keySchema.nullable(),
+  locale: localeSchema.nullable(),
+  relation_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS).nullable(),
+  relation_target_key: keySchema.nullable(),
+  confidence: z.number().finite().min(0).max(1).nullable(),
+  evidence: z.array(evidenceAliasSchema).min(1).max(50)
+}).strict().superRefine((proposal, context) => {
+  const relation = proposal.element_kind === "typed_relation";
+  if (relation !== Boolean(proposal.relation_kind && proposal.relation_target_key)) {
+    context.addIssue({ code: "custom", message: "typed relations require a closed relation and target" });
+  }
+});
+
+export function buildSignalSemanticContextProviderOutputSchemaV2(maximumProposals = 250) {
+  if (!Number.isSafeInteger(maximumProposals) || maximumProposals < 1 || maximumProposals > 250) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_proposal_limit_invalid"
+    );
+  }
+  return z.object({
+    contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2),
+    proposals: z.array(signalSemanticContextProviderProposalSchemaV2).min(1).max(maximumProposals)
+  }).strict();
+}
+
+export const signalSemanticContextProviderOutputSchemaV2 =
+  buildSignalSemanticContextProviderOutputSchemaV2();
+
+export type SignalSemanticContextProviderProposalV2 = z.infer<
+  typeof signalSemanticContextProviderProposalSchemaV2
+>;
+export type SignalSemanticContextProviderOutputV2 = z.infer<
+  typeof signalSemanticContextProviderOutputSchemaV2
+>;
+export type SignalSemanticContextProposalNormalizationV1 = {
+  contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION;
+  input_contract_version: string;
+  output_contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2;
+  proposal_count_before: number;
+  proposal_count_after: number;
+  duplicate_groups: Array<{
+    semantic_key_digest: string;
+    original_element_keys: string[];
+    retained_element_key: string;
+    evidence_count_before: number;
+    evidence_count_after: number;
+    confidence_policy: "maximum_non_authoritative_confidence";
+  }>;
+  transformation_digest: string;
+};
+
 export type SignalSemanticContextProposalValidationDiagnosticV1 = {
   issue_count: number;
   issues: Array<{ code: string; logical_path: string; count: number }>;
@@ -292,6 +355,50 @@ export function buildSignalSemanticContextProposalPromptV1(
   ].join("\n");
 }
 
+const PROMPT_POLICY_V2 = {
+  ...PROMPT_POLICY,
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+  authority: [
+    ...PROMPT_POLICY.authority,
+    "element_kind describes the proposed knowledge; entity_ref only contextualizes it under an existing governed entity.",
+    "Never return entity_type. The server derives entity type from a supplied entity_ref.",
+    "A proposed product or category may have entity_ref null when no governed entity exists for it."
+  ],
+  output: {
+    ...PROMPT_POLICY.output,
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    proposal_shape: {
+      element_key: PROMPT_POLICY.output.proposal_shape.element_key,
+      element_kind: PROMPT_POLICY.output.proposal_shape.element_kind,
+      canonical_key: PROMPT_POLICY.output.proposal_shape.canonical_key,
+      display_text: PROMPT_POLICY.output.proposal_shape.display_text,
+      scope: PROMPT_POLICY.output.proposal_shape.scope,
+      entity_ref: "an opaque entity_ref from GOVERNED_CONTEXT or null; never invent a ref",
+      locale: PROMPT_POLICY.output.proposal_shape.locale,
+      relation_kind: PROMPT_POLICY.output.proposal_shape.relation_kind,
+      relation_target_key: PROMPT_POLICY.output.proposal_shape.relation_target_key,
+      confidence: PROMPT_POLICY.output.proposal_shape.confidence,
+      evidence: PROMPT_POLICY.output.proposal_shape.evidence
+    }
+  }
+} as const;
+
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 =
+  signalSemanticContextProposalDigestV1(PROMPT_POLICY_V2);
+
+export function buildSignalSemanticContextProposalPromptV2(
+  input: SignalSemanticContextProposalInputV1
+) {
+  const validated = signalSemanticContextProposalInputSchemaV1.parse(input);
+  return [
+    "You are producing governed acquisition-context proposals for human review.",
+    "Return exactly one JSON object and no markdown or surrounding prose.",
+    stableJson(PROMPT_POLICY_V2),
+    "GOVERNED_CONTEXT:",
+    stableJson(validated)
+  ].join("\n");
+}
+
 export function parseSignalSemanticContextProposalResponseV1(text: string) {
   const trimmed = normalizeProviderJsonEnvelope(text);
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
@@ -335,6 +442,147 @@ export function parseSignalSemanticContextProposalResponseV1(text: string) {
     }
   }
   return output;
+}
+
+const legacyProviderProposalForV2AdapterSchema = z.object({
+  element_key: keySchema,
+  element_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS),
+  canonical_key: keySchema,
+  display_text: z.string().trim().min(1).max(500),
+  scope: z.enum(["primary_brand", "category", "competitor", "reference"]).nullable(),
+  entity_type: z.enum(["brand", "competitor", "product", "category"]).nullable(),
+  entity_ref: keySchema.nullable(),
+  locale: localeSchema.nullable(),
+  relation_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS).nullable(),
+  relation_target_key: keySchema.nullable(),
+  confidence: z.number().finite().min(0).max(1).nullable(),
+  evidence: z.array(evidenceAliasSchema).min(1).max(50)
+}).strict().superRefine((proposal, context) => {
+  const relation = proposal.element_kind === "typed_relation";
+  if (relation !== Boolean(proposal.relation_kind && proposal.relation_target_key)) {
+    context.addIssue({ code: "custom", message: "typed relations require a closed relation and target" });
+  }
+});
+
+const legacyProviderOutputForV2AdapterSchema = z.object({
+  contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION),
+  proposals: z.array(legacyProviderProposalForV2AdapterSchema).min(1).max(250)
+}).strict();
+
+export function parseSignalSemanticContextProposalResponseV2(
+  text: string, maximumProposals = 250
+) {
+  const parsed = parseProviderResponseJson(text);
+  const output = buildSignalSemanticContextProviderOutputSchemaV2(maximumProposals).safeParse(parsed);
+  if (!output.success) throw validationErrorForIssues(output.error.issues);
+  return normalizeSignalSemanticContextProviderOutputV2(output.data, {
+    input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2
+  });
+}
+
+export function adaptSignalSemanticContextProposalResponseV1ToV2(
+  text: string, maximumProposals = 250
+) {
+  const parsed = parseProviderResponseJson(text);
+  const output = legacyProviderOutputForV2AdapterSchema.safeParse(parsed);
+  if (!output.success) throw validationErrorForIssues(output.error.issues);
+  if (output.data.proposals.length > maximumProposals) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_proposal_limit_exceeded"
+    );
+  }
+  const adapted: SignalSemanticContextProviderOutputV2 = {
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    proposals: output.data.proposals.map(({ entity_type: _providerControlledType, ...proposal }) => proposal)
+  };
+  return normalizeSignalSemanticContextProviderOutputV2(adapted, {
+    input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION
+  });
+}
+
+export function normalizeSignalSemanticContextProviderOutputV2(
+  output: SignalSemanticContextProviderOutputV2,
+  args: { input_contract_version: string }
+): { output: SignalSemanticContextProviderOutputV2;
+  normalization: SignalSemanticContextProposalNormalizationV1 } {
+  const elementKeys = new Set<string>();
+  for (const proposal of output.proposals) {
+    if (elementKeys.has(proposal.element_key)) {
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_duplicate_element_key"
+      );
+    }
+    elementKeys.add(proposal.element_key);
+  }
+  for (const proposal of output.proposals) {
+    if (proposal.relation_target_key && !elementKeys.has(proposal.relation_target_key)) {
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_relation_target_unknown"
+      );
+    }
+  }
+  const groups = new Map<string, SignalSemanticContextProviderProposalV2[]>();
+  for (const proposal of output.proposals) {
+    const semanticKey = stableJson([proposal.element_kind, proposal.canonical_key, proposal.locale]);
+    groups.set(semanticKey, [...groups.get(semanticKey) ?? [], proposal]);
+  }
+  const conflictIssues = [...groups.values()].flatMap((group) => {
+    if (group.length < 2) return [];
+    const first = normalizedProposalDefinition(group[0]!);
+    const definitions = group.map(normalizedProposalDefinition);
+    return (Object.keys(first) as Array<keyof typeof first>).flatMap((field) =>
+      definitions.every((definition) => stableJson(definition[field]) === stableJson(first[field]))
+        ? [] : [{ code: "conflict", logical_path: `proposals.*.${field}`, count: group.length }]);
+  });
+  if (conflictIssues.length) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_duplicate_semantic_key_conflict",
+      { issue_count: conflictIssues.reduce((total, issue) => total + issue.count, 0),
+        issues: conflictIssues.sort((left, right) => left.logical_path.localeCompare(right.logical_path)) }
+    );
+  }
+  const retainedByOriginal = new Map<string, string>();
+  const duplicateGroups: SignalSemanticContextProposalNormalizationV1["duplicate_groups"] = [];
+  const normalized = [...groups.entries()].map(([semanticKey, group]) => {
+    const ordered = [...group].sort((left, right) => left.element_key.localeCompare(right.element_key));
+    const retained = ordered[0]!;
+    const definition = normalizedProposalDefinition(retained);
+    if (!ordered.every((proposal) => stableJson(normalizedProposalDefinition(proposal))
+        === stableJson(definition))) throw new Error("unreachable semantic duplicate conflict");
+    for (const proposal of ordered) retainedByOriginal.set(proposal.element_key, retained.element_key);
+    const evidenceBefore = ordered.reduce((total, proposal) => total + proposal.evidence.length, 0);
+    const evidence = [...new Map(ordered.flatMap((proposal) => proposal.evidence)
+      .map((item) => [`${item.source_alias}\u001f${item.relation_type}`, item])).values()]
+      .sort((left, right) => left.source_alias.localeCompare(right.source_alias)
+        || left.relation_type.localeCompare(right.relation_type));
+    const confidenceValues = ordered.flatMap((proposal) => proposal.confidence === null
+      ? [] : [proposal.confidence]);
+    if (ordered.length > 1) duplicateGroups.push({
+      semantic_key_digest: signalSemanticContextProposalDigestV1(semanticKey),
+      original_element_keys: ordered.map((proposal) => proposal.element_key),
+      retained_element_key: retained.element_key,
+      evidence_count_before: evidenceBefore,
+      evidence_count_after: evidence.length,
+      confidence_policy: "maximum_non_authoritative_confidence"
+    });
+    return { ...retained, display_text: normalizeDisplayText(retained.display_text),
+      confidence: confidenceValues.length ? Math.max(...confidenceValues) : null, evidence };
+  }).map((proposal) => ({ ...proposal,
+    relation_target_key: proposal.relation_target_key
+      ? retainedByOriginal.get(proposal.relation_target_key) ?? proposal.relation_target_key : null
+  })).sort((left, right) => left.element_key.localeCompare(right.element_key));
+  const withoutDigest = {
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
+    input_contract_version: args.input_contract_version,
+    output_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    proposal_count_before: output.proposals.length,
+    proposal_count_after: normalized.length,
+    duplicate_groups: duplicateGroups.sort((left, right) =>
+      left.semantic_key_digest.localeCompare(right.semantic_key_digest))
+  } as const;
+  return { output: { contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    proposals: normalized }, normalization: { ...withoutDigest,
+    transformation_digest: signalSemanticContextProposalDigestV1(withoutDigest) } };
 }
 
 export function planSignalSemanticContextCapacityV1(args: {
@@ -482,6 +730,38 @@ function normalizeProviderJsonEnvelope(value: string) {
   const trimmed = value.trim();
   const fenced = /^```json\s*\n([\s\S]*)\n```$/u.exec(trimmed);
   return fenced?.[1]?.trim() ?? trimmed;
+}
+
+function parseProviderResponseJson(text: string) {
+  const trimmed = normalizeProviderJsonEnvelope(text);
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_response_not_closed_json"
+    );
+  }
+  try { return JSON.parse(trimmed) as unknown; }
+  catch {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_response_invalid_json"
+    );
+  }
+}
+
+function normalizeDisplayText(value: string) {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+}
+
+function normalizedProposalDefinition(proposal: SignalSemanticContextProviderProposalV2) {
+  return {
+    element_kind: proposal.element_kind,
+    canonical_key: proposal.canonical_key,
+    locale: proposal.locale,
+    display_text: normalizeDisplayText(proposal.display_text),
+    scope: proposal.scope,
+    entity_ref: proposal.entity_ref,
+    relation_kind: proposal.relation_kind,
+    relation_target_key: proposal.relation_target_key
+  };
 }
 
 function validationErrorForIssues(issues: z.ZodIssue[]) {

@@ -231,3 +231,26 @@ réplica con cinco colas `-uat`, cero jobs ejecutables y cero filas reclamables.
 No se ejecutó `POST /proposals`, no hubo llamada a Anthropic, gasto, publicación,
 serving write, cambio de reader/pointer/binding ni cambio de read mode. 10C.3B y 10D
 continúan bloqueados por sus gates independientes.
+
+## Authority boundary 69A.6 · proposed knowledge versus governed context
+
+**Recorded:** 2026-08-23T02:13:03-06:00 (`America/Mexico_City`).
+
+El contrato V2 separa dos autoridades que V1 mezclaba: `element_kind` es el tipo de
+conocimiento pending que el provider propone; `entity_ref` sólo puede apuntar, de forma
+opcional, a una entidad opaca que el servidor ya resolvió. El provider no declara
+`entity_type`, no fabrica IDs y no tiene que enlazar una categoría o producto nuevo a
+una entidad relacional inexistente. El servidor deriva el tipo contextual o conserva
+ambos campos de entidad como null.
+
+La revalidación de un response ya pagado es una derivación append-only, no una mutación
+de la generación ni una nueva autoridad. Aun cuando su adaptación sea válida, todos los
+elementos nacen `provider_proposal/pending` y confidence permanece informativa. Si existe
+un duplicado semántico conflictivo, la derivación se registra `rejected` y anexa cero
+elementos. No cambia Topic Contracts, classification assignments, `record_tags`,
+readers, pointers, bindings ni serving.
+
+Los anchors pendientes de reconciliar en North Star y Execution Plan son: output V2 sin
+`entity_type` del provider, revalidación pagada sin retry/costo y política de duplicado
+fail-closed. Esos documentos estaban modificados por otro workstream y no se
+sobrescribieron en este corte.

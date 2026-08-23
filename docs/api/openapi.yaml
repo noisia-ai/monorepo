@@ -2035,6 +2035,34 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
         "409": { description: Outcome is ambiguous, terminal, incompatible or otherwise not retry-safe. }
+  /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}/revalidate:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: revalidateSemanticContextPaidResponse
+      summary: Revalidate one immutable paid response server-side without another provider call.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - name: runKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^semantic-context-proposal-[0-9a-f]{16}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextPaidResponseRevalidationRequestV1" }
+      responses:
+        "200":
+          description: Completed or rejected append-only revalidation; provider_calls_added=0 and additional_cost_micro_usd=0.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextPaidResponseRevalidationV1" }
+        "403": { description: Management authority or workspace access denied. }
+        "404": { description: Run unavailable in this authorized workspace. }
+        "409": { description: Run, settlement, response integrity, authority or generation drift blocks revalidation. }
+        "422": { description: Closed confirmation contract rejected. }
   /api/data-os/signal/{workspaceId}/semantic-context/decisions:
     post:
       tags: [Semantic Context Pack]
@@ -2324,6 +2352,43 @@ components:
         preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         confirmation: { const: GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS }
         hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$', maxLength: 18 }
+    SignalSemanticContextPaidResponseRevalidationRequestV1:
+      type: object
+      additionalProperties: false
+      required: [confirmation]
+      properties:
+        confirmation: { const: REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE }
+    SignalSemanticContextPaidResponseRevalidationV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, revalidation_ref, run_ref, status, original_output_contract,
+        target_output_contract, adapter_version, normalization_version, proposal_count_before,
+        normalized_proposal_count, proposals_appended, proposals_pending, proposals_approved,
+        provider_calls_added, additional_cost_micro_usd, error, recorded_at]
+      properties:
+        contract_version: { const: signal-semantic-context-paid-response-revalidation-v1 }
+        revalidation_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        run_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        status: { type: string, enum: [completed, rejected] }
+        original_output_contract: { const: signal-semantic-context-proposal-output-v1 }
+        target_output_contract: { const: signal-semantic-context-proposal-output-v2 }
+        adapter_version: { const: signal-semantic-context-proposal-v1-to-v2-adapter-v1 }
+        normalization_version: { const: signal-semantic-context-proposal-normalization-v1 }
+        proposal_count_before: { type: integer, minimum: 1, maximum: 250 }
+        normalized_proposal_count: { type: integer, minimum: 0, maximum: 250 }
+        proposals_appended: { type: integer, minimum: 0, maximum: 250 }
+        proposals_pending: { type: integer, minimum: 0, maximum: 250 }
+        proposals_approved: { const: 0 }
+        provider_calls_added: { const: 0 }
+        additional_cost_micro_usd: { const: "0" }
+        error:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { type: string, pattern: '^semantic_context_[a-z0-9_]+$' }
+            message: { type: string, maxLength: 300 }
+        recorded_at: { type: string, format: date-time }
     SignalSemanticContextProposalPreflightV3:
       type: object
       additionalProperties: false
@@ -2423,7 +2488,8 @@ components:
       type: object
       additionalProperties: false
       required: [contract_version, run_key, status, progress, generation_ref, provider, budget,
-        provider_call_count, proposal_count, result_digest, error, queued_at, started_at, completed_at]
+        provider_call_count, proposal_count, result_digest, error, queued_at, started_at, completed_at,
+        paid_response_revalidation]
       properties:
         contract_version: { const: signal-semantic-context-proposal-run-v1 }
         run_key: { type: string, pattern: '^semantic-context-proposal-[0-9a-f]{16}$' }
@@ -2460,6 +2526,10 @@ components:
         queued_at: { type: string, format: date-time }
         started_at: { type: [string, "null"], format: date-time }
         completed_at: { type: [string, "null"], format: date-time }
+        paid_response_revalidation:
+          oneOf:
+            - { $ref: "#/components/schemas/SignalSemanticContextPaidResponseRevalidationV1" }
+            - { type: "null" }
     TopicDiscoveryReviewDraftV1:
       type: object
       additionalProperties: false

@@ -75,11 +75,13 @@ test("provider preflight configuration is server-owned and unavailable without p
 
 test("management routes keep authority fields and provider proposal writes off the browser surface",async()=>{
   const root=resolve(process.cwd(),"src/app/api/data-os/signal/[workspaceId]/semantic-context");
-  const [base,decisions,preflight,reconcile,helper]=await Promise.all([
+  const [base,decisions,preflight,reconcile,revalidate,helper]=await Promise.all([
     readFile(resolve(root,"route.ts"),"utf8"),readFile(resolve(root,"decisions/route.ts"),"utf8"),
     readFile(resolve(root,"preflight/route.ts"),"utf8"),
-    readFile(resolve(root,"reconcile/route.ts"),"utf8"),readFile(resolve(root,"_lib.ts"),"utf8")]);
-  const routes=[base,decisions,preflight,reconcile,helper].join("\n");
+    readFile(resolve(root,"reconcile/route.ts"),"utf8"),
+    readFile(resolve(root,"proposals/[runKey]/revalidate/route.ts"),"utf8"),
+    readFile(resolve(root,"_lib.ts"),"utf8")]);
+  const routes=[base,decisions,preflight,reconcile,revalidate,helper].join("\n");
   assert.match(routes,/loadSignalWorkspaceContextForManagement/u);
   assert.match(routes,/noisia_internal/u);
   assert.doesNotMatch(decisions,/workspace_id|brand_os_digest|knowledge_digest|prompt_template_digest|model_version/u);
@@ -88,6 +90,9 @@ test("management routes keep authority fields and provider proposal writes off t
   assert.doesNotMatch(routes,/Anthropic|Voyage|generateText|messages\.create/u);
   assert.doesNotMatch(reconcile,/workspace_id|brand_os_digest|knowledge_digest|model_version|pricing_version/u);
   assert.match(reconcile,/Idempotency-Key/u);
+  assert.match(revalidate,/Idempotency-Key/u);
+  assert.doesNotMatch(revalidate,/response_digest|brand_os_digest|knowledge_digest|entity_type|provider:/u);
+  assert.match(revalidate,/REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE|parseSignalSemanticContextProposalRevalidationRequestV1/u);
 });
 
 test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{

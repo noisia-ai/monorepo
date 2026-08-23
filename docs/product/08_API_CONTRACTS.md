@@ -2618,3 +2618,26 @@ calculado. `recommended_hard_cap_micro_usd` permanece server-owned y nunca super
 `platform_hard_cap_micro_usd`; el POST sigue rechazando cualquier cap insuficiente o
 superior al límite de plataforma. No cambia el límite de una sola llamada, el append
 atómico, el estado `pending` ni la prohibición de resultados parciales.
+
+### Contract V2 y revalidación de response pagado — 69A.6
+
+**Registrado:** 2026-08-23T02:13:03-06:00 (`America/Mexico_City`).
+
+El output `signal-semantic-context-proposal-output-v2` ya no acepta `entity_type` del
+provider. `element_kind` describe el conocimiento propuesto; `entity_ref` es nullable y
+sólo contextualiza contra una entidad opaca existente. El servidor resuelve el ref y
+deriva el tipo. Un candidato `category` sin ref es válido y un candidato `product` puede
+quedar contextualizado bajo una entidad `brand` sin confundir ambas dimensiones.
+
+`POST /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}/revalidate`
+es management-only, exige `Idempotency-Key` y la confirmación literal
+`REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE`. El browser no envía response digest,
+authority digests, IDs de evidencia, provider ni tipos. La operación usa la respuesta
+privada persistida, verifica settlement y autoridad current, adapta explícitamente V1 a
+V2 y responde sólo con refs opacas, conteos y estado `completed|rejected`.
+
+La operación añade siempre `provider_calls_added=0` y
+`additional_cost_micro_usd="0"`. Un conflicto de duplicado u otro fallo integral crea
+una revalidación `rejected` con cero propuestas; nunca un append parcial ni retry pagado.
+El GET operator-safe del run incluye `paid_response_revalidation` nullable y sigue sin
+exponer prompt, response privada o Knowledge crudo.

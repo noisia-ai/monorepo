@@ -5,9 +5,14 @@ import type { Pool } from "pg";
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
-  buildSignalSemanticContextProposalPromptV1,
-  parseSignalSemanticContextProposalResponseV1,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+  adaptSignalSemanticContextProposalResponseV1ToV2,
+  buildSignalSemanticContextProposalPromptV2,
+  parseSignalSemanticContextProposalResponseV2,
   planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
@@ -46,6 +51,9 @@ export type SignalSemanticContextProposalActorV1 = {
   id: string;
   user_type: "noisia_internal";
 };
+
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION =
+  "REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE" as const;
 
 type GenerationRow = {
   id: string; generation_key: string; status: "draft" | "published";
@@ -86,12 +94,24 @@ type RunRow = {
   provider_call_state: "not_started" | "in_flight" | "response_persisted" | "outcome_unknown" | "settled";
   provider_call_count: number; provider_response_private: string | null;
   provider_response_digest: string | null; input_tokens: string | null; output_tokens: string | null;
-  settled_micro_usd: string | null; proposal_count: number | null; result_digest: string | null;
+  settled_micro_usd: string | null; appended_operation_id: string | null;
+  proposal_count: number | null; result_digest: string | null;
   attempt_count: number; lease_token: string | null; lease_expires_at: Date | string | null;
   error_code: string | null; error_summary: string | null; created_by_user_id: string;
   queued_at: Date | string; started_at: Date | string | null; validating_at: Date | string | null;
   completed_at: Date | string | null; failed_at: Date | string | null;
   stale_at: Date | string | null; dead_lettered_at: Date | string | null;
+};
+
+type RevalidationRow = {
+  id: string; workspace_id: string; original_run_id: string; generation_id: string;
+  revalidation_key: string; original_response_digest: string; original_output_contract: string;
+  adapter_version: string; target_output_contract: string; normalization_version: string;
+  transformation_digest: string; duplicate_decision_digest: string;
+  duplicate_decisions: Record<string, unknown>; proposal_count_before: number;
+  normalized_proposal_count: number; appended_proposal_count: number;
+  status: "completed" | "rejected"; error_code: string | null;
+  appended_operation_id: string | null; revalidation_digest: string; created_at: Date | string;
 };
 
 export class SignalSemanticContextProposalExecutionError extends Error {
@@ -197,7 +217,7 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
     context_input_digest: prepared?.input_digest ?? null,
     provider: { key: args.configuration.provider, model: args.configuration.model,
       model_version: args.configuration.model_version, pricing_version: args.configuration.pricing_version,
-      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1 },
+      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 },
     maximum_provider_calls: 1,
     estimated_input_tokens_upper_bound: inputTokenUpperBound,
     max_input_tokens: args.configuration.max_input_tokens,
@@ -407,7 +427,7 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
       abstention_required_when_evidence_is_insufficient: true,
       mentions_included: false }
   });
-  const prompt = buildSignalSemanticContextProposalPromptV1(input);
+  const prompt = buildSignalSemanticContextProposalPromptV2(input);
   return { input, prompt, input_digest: signalSemanticContextProposalDigestV1(input),
     source_refs: sourceRefs, entity_refs: entityRefs, generation, capacity };
 }
@@ -468,7 +488,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     const providerRequestIdentity = signalSemanticContextProposalDigestV1({
       contract_version: "signal-semantic-context-provider-request-v1",
       generation_key: args.generation_key, preflight_digest: args.preflight_digest,
-      input_digest: prepared.input_digest, prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+      input_digest: prepared.input_digest, prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
       model: args.configuration.model, model_version: args.configuration.model_version
     });
     const runKey = `semantic-context-proposal-${providerRequestIdentity.slice(7, 23)}`;
@@ -484,7 +504,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       ${runSelect} FROM inserted run`, [
       args.workspace.id, prepared.generation.id, operation.operation_id, runKey, args.preflight_digest,
       prepared.generation.brand_os_digest, prepared.generation.knowledge_digest,
-      prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+      prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
       prepared.input_digest, args.configuration.provider, args.configuration.model,
       args.configuration.model_version, args.configuration.pricing_version,
       args.configuration.max_input_tokens, prepared.capacity.output_token_budget,
@@ -527,7 +547,11 @@ export async function loadSignalSemanticContextProposalRunV1(args: {
     WHERE run.workspace_id=$1::uuid AND run.run_key=$2`, [args.workspace.id, args.run_key]);
   const run = result.rows[0];
   if (!run) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_run_not_found", 404);
-  return publicRun(run);
+  const revalidation = await args.queryable.query<RevalidationRow>(`${revalidationSelect}
+    FROM signal_semantic_context_proposal_revalidations revalidation
+    WHERE revalidation.original_run_id=$1::uuid ORDER BY revalidation.created_at DESC LIMIT 1`, [run.id]);
+  return { ...publicRun(run),
+    paid_response_revalidation: revalidation.rows[0] ? publicRevalidation(revalidation.rows[0]) : null };
 }
 
 export async function retrySignalSemanticContextProposalRunV1(args: {
@@ -564,6 +588,174 @@ export async function retrySignalSemanticContextProposalRunV1(args: {
     await client.query("COMMIT"); return updated;
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
+}
+
+export async function revalidateSignalSemanticContextPaidResponseV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  actor: SignalSemanticContextProposalActorV1;
+  idempotency_key: string;
+  run_key: string;
+  confirmation: string;
+}) {
+  assertActor(args.actor);
+  if (args.confirmation !== SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_revalidation_confirmation_required", 422
+    );
+  }
+  await args.queryable.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+    [`signal-semantic-context:${args.workspace.id}`]);
+  const operation = await beginOperation(args.queryable, { workspace: args.workspace, actor: args.actor,
+    action: "revalidate-semantic-context-proposal-run", idempotency_key: args.idempotency_key,
+    input: { run_key: args.run_key,
+      confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION,
+      adapter_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+      target_contract: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+      normalization_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION } });
+  if (operation.replay) return operation.replay as ReturnType<typeof publicRevalidation>;
+
+  const selected = await args.queryable.query<RunRow>(`${runSelect}
+    FROM signal_semantic_context_proposal_runs run
+    WHERE run.workspace_id=$1::uuid AND run.run_key=$2 FOR UPDATE`,
+  [args.workspace.id, args.run_key]);
+  const run = selected.rows[0];
+  if (!run) throw new SignalSemanticContextProposalExecutionError(
+    "semantic_context_proposal_run_not_found", 404
+  );
+  if (run.status !== "failed" || run.provider_call_state !== "settled"
+      || run.provider_call_count !== 1 || !run.provider_response_private
+      || !run.provider_response_digest || run.appended_operation_id || (run.proposal_count ?? 0) !== 0) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_not_revalidatable", 409
+    );
+  }
+  if (signalSemanticContextProposalDigestV1(run.provider_response_private)
+      !== run.provider_response_digest) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_digest_mismatch", 409
+    );
+  }
+  const settlement = await args.queryable.query<{ status: string; actual_micro_usd: string | null;
+    reservation_micro_usd: string }>(`SELECT status,actual_micro_usd::text,reservation_micro_usd::text
+    FROM signal_semantic_context_budget_reservations WHERE run_id=$1::uuid FOR UPDATE`, [run.id]);
+  const budget = settlement.rows[0];
+  if (!budget || budget.status !== "settled" || budget.actual_micro_usd === null
+      || budget.actual_micro_usd !== run.settled_micro_usd
+      || BigInt(budget.actual_micro_usd ?? "0") > BigInt(budget.reservation_micro_usd)) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_settlement_invalid", 409
+    );
+  }
+  const existing = await args.queryable.query<RevalidationRow>(`${revalidationSelect}
+    FROM signal_semantic_context_proposal_revalidations revalidation
+    WHERE revalidation.original_run_id=$1::uuid
+      AND revalidation.adapter_version=$2 AND revalidation.target_output_contract=$3
+      AND revalidation.normalization_version=$4`, [run.id,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION]);
+  if (existing.rows[0]) {
+    const replay = publicRevalidation(existing.rows[0]);
+    await completeOperation(args.queryable, args.workspace.id, operation.key, replay);
+    return replay;
+  }
+
+  const generationResult = await args.queryable.query<{ generation_key: string; status: string;
+    brand_os_digest: string; knowledge_digest: string; locale_context_digest: string;
+    proposal_prompt_digest: string | null }>(`SELECT generation_key,status,brand_os_digest,
+      knowledge_digest,locale_context_digest,proposal_prompt_digest
+    FROM signal_semantic_context_generations WHERE id=$1::uuid AND workspace_id=$2::uuid
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.supersedes_generation_id=signal_semantic_context_generations.id)
+    FOR UPDATE`, [run.generation_id, args.workspace.id]);
+  const generation = generationResult.rows[0];
+  if (!generation || generation.status !== "draft"
+      || generation.brand_os_digest !== run.brand_os_digest
+      || generation.knowledge_digest !== run.knowledge_digest
+      || generation.locale_context_digest !== run.locale_context_digest
+      || generation.proposal_prompt_digest !== run.prompt_digest) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_authority_drift", 409
+    );
+  }
+  const prepared = await prepareSignalSemanticContextProposalInputV1({ queryable: args.queryable,
+    workspace: args.workspace, generation_key: generation.generation_key });
+  if (prepared.input_digest !== run.context_input_digest
+      || prepared.generation.brand_os_digest !== run.brand_os_digest
+      || prepared.generation.knowledge_digest !== run.knowledge_digest
+      || prepared.generation.locale_context_digest !== run.locale_context_digest) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_authority_drift", 409
+    );
+  }
+  const beforeCount = privateProposalCount(run.provider_response_private);
+  let adapted: ReturnType<typeof adaptSignalSemanticContextProposalResponseV1ToV2>;
+  try {
+    adapted = adaptSignalSemanticContextProposalResponseV1ToV2(
+      run.provider_response_private, prepared.input.limits.maximum_proposals
+    );
+  } catch (error) {
+    if (!(error instanceof SignalSemanticContextProposalValidationError)) throw error;
+    const duplicateDecisions = sanitizedDuplicateDecision(error);
+    const transformationDigest = signalSemanticContextProposalDigestV1({
+      adapter_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+      target_contract: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+      normalization_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
+      original_response_digest: run.provider_response_digest,
+      outcome: "rejected", error_code: error.code, diagnostic: error.diagnostic
+    });
+    const rejected = await insertRevalidation(args.queryable, { run, operation_id: operation.operation_id,
+      actor_id: args.actor.id, proposal_count_before: beforeCount, normalized_proposal_count: 0,
+      appended_proposal_count: 0, status: "rejected", error_code: error.code,
+      appended_operation_id: null, transformation_digest: transformationDigest,
+      duplicate_decisions: duplicateDecisions });
+    const result = publicRevalidation(rejected);
+    await completeOperation(args.queryable, args.workspace.id, operation.key, result);
+    return result;
+  }
+
+  const proposals = adapted.output.proposals.map((proposal) => {
+    const refs = proposal.evidence.map((evidence) => {
+      const resolved = prepared.source_refs.get(evidence.source_alias);
+      if (!resolved) throw new SignalSemanticContextProposalExecutionError(
+        "semantic_context_evidence_alias_unknown", 422
+      );
+      return { source_type: resolved.source_type, source_id: resolved.source_id,
+        relation_type: evidence.relation_type };
+    });
+    const entity = proposal.entity_ref ? prepared.entity_refs.get(proposal.entity_ref) : null;
+    if (proposal.entity_ref && !entity) throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_entity_alias_unknown", 422
+    );
+    return { element_key: proposal.element_key, element_kind: proposal.element_kind,
+      canonical_key: proposal.canonical_key, display_text: proposal.display_text, scope: proposal.scope,
+      entity_type: entity?.entity_type ?? null, entity_id: entity?.entity_id ?? null,
+      locale: proposal.locale, relation_kind: proposal.relation_kind,
+      relation_target_key: proposal.relation_target_key, confidence: proposal.confidence,
+      origin_kind: "provider_proposal" as const, source_refs: refs };
+  });
+  const appended = await appendSignalSemanticContextProposalsV1({ queryable: args.queryable,
+    workspace: args.workspace, actor: args.actor,
+    idempotency_key: `semantic-context-paid-response-revalidation:${run.id}:${adapted.normalization.transformation_digest}`,
+    generation_key: generation.generation_key, proposals });
+  const completed = await insertRevalidation(args.queryable, { run,
+    operation_id: operation.operation_id, actor_id: args.actor.id,
+    proposal_count_before: adapted.normalization.proposal_count_before,
+    normalized_proposal_count: adapted.normalization.proposal_count_after,
+    appended_proposal_count: proposals.length, status: "completed", error_code: null,
+    appended_operation_id: appended.operation_id,
+    transformation_digest: adapted.normalization.transformation_digest,
+    duplicate_decisions: { outcome: "normalized", groups: adapted.normalization.duplicate_groups.map(
+      (group) => ({ semantic_key_digest: group.semantic_key_digest,
+        original_element_keys: group.original_element_keys,
+        retained_element_key: group.retained_element_key,
+        evidence_count_before: group.evidence_count_before,
+        evidence_count_after: group.evidence_count_after,
+        confidence_policy: group.confidence_policy })) } });
+  const result = publicRevalidation(completed);
+  await completeOperation(args.queryable, args.workspace.id, operation.key, result);
+  return result;
 }
 
 export function buildSignalSemanticContextProposalJobIdV1(runId: string) {
@@ -684,7 +876,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       await markRunStale(finish, current, lease.token, "semantic_context_authority_drift_during_execution");
       await finish.query("COMMIT"); return { status: "stale" as const };
     }
-    const output = parseSignalSemanticContextProposalResponseV1(current.provider_response_private);
+    const parsed = parseSignalSemanticContextProposalResponseV2(current.provider_response_private,
+      prepared.input.limits.maximum_proposals);
+    const output = parsed.output;
     if (output.proposals.length > prepared.input.limits.maximum_proposals) {
       throw new SignalSemanticContextProposalExecutionError(
         "semantic_context_provider_proposal_limit_exceeded", 422
@@ -698,12 +892,12 @@ export async function processSignalSemanticContextProposalRunV1(args: {
           relation_type: evidence.relation_type };
       });
       const entity = proposal.entity_ref ? prepared.entity_refs.get(proposal.entity_ref) : null;
-      if (proposal.entity_ref && (!entity || entity.entity_type !== proposal.entity_type)) {
+      if (proposal.entity_ref && !entity) {
         throw new SignalSemanticContextProposalExecutionError("semantic_context_entity_alias_unknown", 422);
       }
       return { element_key: proposal.element_key, element_kind: proposal.element_kind,
         canonical_key: proposal.canonical_key, display_text: proposal.display_text, scope: proposal.scope,
-        entity_type: proposal.entity_type, entity_id: entity?.entity_id ?? null, locale: proposal.locale,
+        entity_type: entity?.entity_type ?? null, entity_id: entity?.entity_id ?? null, locale: proposal.locale,
         relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key,
         confidence: proposal.confidence, origin_kind: "provider_proposal" as const, source_refs: refs };
     });
@@ -730,7 +924,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       validated_output_digest=$4,appended_operation_id=$5::uuid,proposal_count=$6,result_digest=$7,
       lease_token=NULL,lease_expires_at=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp()
       WHERE id=$1::uuid AND lease_token=$2::uuid AND provider_call_state='response_persisted'`, [
-      current.id, lease.token, actual.toString(), signalSemanticContextProposalDigestV1(output),
+      current.id, lease.token, actual.toString(), signalSemanticContextProposalDigestV1({
+        output, normalization: parsed.normalization
+      }),
       appended.operation_id, proposals.length, resultDigest
     ]);
     if (updated.rowCount !== 1) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_completion_conflict");
@@ -1095,6 +1291,107 @@ async function validateSourceRefs(queryable: SignalSemanticContextQueryable,
   }
 }
 
+async function insertRevalidation(queryable: SignalSemanticContextQueryable, args: {
+  run: RunRow; operation_id: string; actor_id: string; proposal_count_before: number;
+  normalized_proposal_count: number; appended_proposal_count: number;
+  status: "completed" | "rejected"; error_code: string | null;
+  appended_operation_id: string | null; transformation_digest: string;
+  duplicate_decisions: Record<string, unknown>;
+}) {
+  const duplicateDecisionDigest = signalSemanticContextProposalDigestV1(args.duplicate_decisions);
+  const revalidationKey = `semantic-context-revalidation-${shortHash([
+    args.run.id, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION
+  ].join("\u001f"))}`;
+  const revalidationDigest = signalSemanticContextProposalDigestV1({
+    contract_version: "signal-semantic-context-paid-response-revalidation-v1",
+    original_run_id: args.run.id, original_response_digest: args.run.provider_response_digest,
+    adapter_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+    target_output_contract: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    normalization_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
+    transformation_digest: args.transformation_digest,
+    duplicate_decision_digest: duplicateDecisionDigest,
+    proposal_count_before: args.proposal_count_before,
+    normalized_proposal_count: args.normalized_proposal_count,
+    appended_proposal_count: args.appended_proposal_count,
+    status: args.status, error_code: args.error_code
+  });
+  const inserted = await queryable.query<RevalidationRow>(`INSERT INTO
+    signal_semantic_context_proposal_revalidations(workspace_id,original_run_id,generation_id,
+      operation_id,revalidation_key,original_response_digest,original_output_contract,
+      adapter_version,target_output_contract,normalization_version,transformation_digest,
+      duplicate_decision_digest,duplicate_decisions,proposal_count_before,
+      normalized_proposal_count,appended_proposal_count,status,error_code,
+      appended_operation_id,revalidation_digest,created_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
+      $14,$15,$16,$17,$18,$19::uuid,$20,$21::uuid) RETURNING
+      id::text,workspace_id::text,original_run_id::text,generation_id::text,revalidation_key,
+      original_response_digest,original_output_contract,adapter_version,target_output_contract,
+      normalization_version,transformation_digest,duplicate_decision_digest,duplicate_decisions,
+      proposal_count_before,normalized_proposal_count,appended_proposal_count,status,error_code,
+      appended_operation_id::text,revalidation_digest,created_at`, [args.run.workspace_id,
+    args.run.id, args.run.generation_id, args.operation_id, revalidationKey,
+    args.run.provider_response_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,args.transformation_digest,
+    duplicateDecisionDigest,JSON.stringify(args.duplicate_decisions),args.proposal_count_before,
+    args.normalized_proposal_count,args.appended_proposal_count,args.status,args.error_code,
+    args.appended_operation_id,revalidationDigest,args.actor_id]);
+  return inserted.rows[0]!;
+}
+
+function publicRevalidation(row: RevalidationRow) {
+  return {
+    contract_version: "signal-semantic-context-paid-response-revalidation-v1",
+    revalidation_ref: sha256(row.id),
+    run_ref: sha256(row.original_run_id),
+    status: row.status,
+    original_output_contract: row.original_output_contract,
+    target_output_contract: row.target_output_contract,
+    adapter_version: row.adapter_version,
+    normalization_version: row.normalization_version,
+    proposal_count_before: row.proposal_count_before,
+    normalized_proposal_count: row.normalized_proposal_count,
+    proposals_appended: row.appended_proposal_count,
+    proposals_pending: row.appended_proposal_count,
+    proposals_approved: 0,
+    provider_calls_added: 0,
+    additional_cost_micro_usd: "0",
+    error: row.error_code ? { code: row.error_code,
+      message: operatorSafeRunError(row.error_code) } : null,
+    recorded_at: new Date(row.created_at).toISOString()
+  } as const;
+}
+
+function privateProposalCount(response: string) {
+  try {
+    const parsed = JSON.parse(response) as { contract_version?: unknown; proposals?: unknown };
+    if (parsed.contract_version !== SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION
+        || !Array.isArray(parsed.proposals) || parsed.proposals.length < 1) {
+      throw new Error("invalid V1 response envelope");
+    }
+    return parsed.proposals.length;
+  } catch {
+    throw new SignalSemanticContextProposalExecutionError(
+      "semantic_context_paid_response_envelope_invalid", 422
+    );
+  }
+}
+
+function sanitizedDuplicateDecision(error: SignalSemanticContextProposalValidationError) {
+  return {
+    outcome: "rejected",
+    error_code: error.code,
+    conflicting_fields: error.diagnostic.issues.filter((issue) => issue.code === "conflict")
+      .map((issue) => ({ logical_path: issue.logical_path, proposal_count: issue.count }))
+      .sort((left, right) => left.logical_path.localeCompare(right.logical_path)),
+    raw_values_retained_private: true,
+    confidence_authoritative: false
+  };
+}
+
 async function loadGeneration(queryable: SignalSemanticContextQueryable, workspaceId: string,
   generationKey?: string) {
   const result = await queryable.query<GenerationRow>(`SELECT id::text,generation_key,status,
@@ -1109,7 +1406,8 @@ async function loadGeneration(queryable: SignalSemanticContextQueryable, workspa
 async function beginOperation(queryable: SignalSemanticContextQueryable, args: {
   workspace: SignalSemanticContextProposalWorkspaceV1; actor: SignalSemanticContextProposalActorV1;
   action: "start-semantic-context-proposal-run" | "retry-semantic-context-proposal-run"
-    | "append-semantic-context-proposals"; idempotency_key: string; input: unknown;
+    | "append-semantic-context-proposals" | "revalidate-semantic-context-proposal-run";
+  idempotency_key: string; input: unknown;
 }) {
   const normalized = args.idempotency_key.trim();
   if (normalized.length < 8 || normalized.length > 500) {
@@ -1170,7 +1468,7 @@ function lineageMatches(generation: GenerationRow,
   configuration: SignalSemanticContextProposalRuntimeConfigurationV1) {
   return generation.proposal_model === configuration.model
     && generation.proposal_model_version === configuration.model_version
-    && generation.proposal_prompt_digest === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1
+    && generation.proposal_prompt_digest === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2
     && generation.proposal_pricing_version === configuration.pricing_version;
 }
 
@@ -1196,7 +1494,8 @@ function publicRun(run: RunRow) {
       message: operatorSafeRunError(run.error_code) } : null,
     queued_at: new Date(run.queued_at).toISOString(),
     started_at: run.started_at ? new Date(run.started_at).toISOString() : null,
-    completed_at: run.completed_at ? new Date(run.completed_at).toISOString() : null };
+    completed_at: run.completed_at ? new Date(run.completed_at).toISOString() : null,
+    paid_response_revalidation: null };
 }
 
 function assertActor(actor: SignalSemanticContextProposalActorV1) {
@@ -1253,6 +1552,17 @@ const runSelect = `SELECT run.id::text,run.workspace_id::text,run.generation_id:
   run.reservation_micro_usd::text,run.provider_request_identity,run.provider_request_id,
   run.provider_call_state,run.provider_call_count,run.provider_response_private,
   run.provider_response_digest,run.input_tokens::text,run.output_tokens::text,run.settled_micro_usd::text,
-  run.proposal_count,run.result_digest,run.attempt_count,run.lease_token::text,run.lease_expires_at,
+  run.appended_operation_id::text,run.proposal_count,run.result_digest,run.attempt_count,
+  run.lease_token::text,run.lease_expires_at,
   run.error_code,run.error_summary,run.created_by_user_id::text,run.queued_at,run.started_at,
   run.validating_at,run.completed_at,run.failed_at,run.stale_at,run.dead_lettered_at`;
+
+const revalidationSelect = `SELECT revalidation.id::text,revalidation.workspace_id::text,
+  revalidation.original_run_id::text,revalidation.generation_id::text,revalidation.revalidation_key,
+  revalidation.original_response_digest,revalidation.original_output_contract,
+  revalidation.adapter_version,revalidation.target_output_contract,revalidation.normalization_version,
+  revalidation.transformation_digest,revalidation.duplicate_decision_digest,
+  revalidation.duplicate_decisions,revalidation.proposal_count_before,
+  revalidation.normalized_proposal_count,revalidation.appended_proposal_count,
+  revalidation.status,revalidation.error_code,revalidation.appended_operation_id::text,
+  revalidation.revalidation_digest,revalidation.created_at`;

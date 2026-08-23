@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION } from "@noisia/query-engine";
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2 } from "@noisia/query-engine";
 import { createAnthropicSemanticContextProposalProviderV1 } from "../providers/anthropic-bounded-text";
 
 test("semantic context reuses the bounded Anthropic transport with a closed dynamic schema", async () => {
@@ -10,15 +10,15 @@ test("semantic context reuses the bounded Anthropic transport with a closed dyna
     assert.ok(request.structured_output);
     const proposal = { element_key: "identity.fixture", element_kind: "identity_term",
       canonical_key: "fixture", display_text: "Fixture", scope: "primary_brand",
-      entity_type: "brand", entity_ref: "entity.primary", locale: "es-MX",
+      entity_ref: "entity.primary", locale: "es-MX",
       relation_kind: null, relation_target_key: null, confidence: 1,
       evidence: [{ source_alias: "src.0001", relation_type: "supports" }] };
     observedMaximum = request.structured_output.schema.safeParse({
-      contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+      contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
       proposals: [proposal, { ...proposal, element_key: "identity.second" }]
     }).success ? 2 : 1;
     return { text: JSON.stringify({
-      contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+      contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
       proposals: [proposal]
     }), provider_request_id: null, usage: { input_tokens: 10, output_tokens: 20 } };
   });

@@ -268,3 +268,27 @@ leaf and two supersession links. The original failed run remains the only propos
 one settled historical provider call, zero elements, one dead-letter outbox and zero
 executable work. This 69A.5 mission added zero provider calls and did not publish a pack,
 write serving, open context-aware discovery or advance 10D.
+
+## 69A.6 output contract V2 and paid-response revalidation
+
+**Recorded:** 2026-08-23T02:13:03-06:00 (`America/Mexico_City`).
+
+V2 removes provider-controlled `entity_type`. The provider emits a proposed
+`element_kind` and may attach an opaque nullable `entity_ref`; the server resolves that
+reference and derives its governed type. A proposed product or category therefore no
+longer needs to invent a governed product/category ID, and its proposed kind need not
+equal the type of the contextual entity.
+
+The normalization key is `(element_kind, canonical_key, locale)`. Duplicate element
+keys fail closed. Semantic duplicates collapse only when normalized display text,
+scope, entity ref, relation kind and relation target all match; evidence is unioned and
+sorted, confidence uses a deterministic non-authoritative maximum, and original element
+keys remain in transformation lineage. Any contradictory field rejects the complete
+response with zero writes.
+
+The management-only paid-response revalidation endpoint verifies the immutable failed
+run, response digest, settlement and current authority, then records a V1→V2 adaptation
+as a new audit artifact. It never reserves budget, queues provider work or calls the
+provider. The known private response contains one non-equivalent semantic duplicate, so
+its safe result is a rejected revalidation with zero proposals rather than a partial
+recovery. This does not authorize a new call, publication, context-aware 10C.3B or 10D.

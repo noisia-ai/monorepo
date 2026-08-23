@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseSignalSemanticContextProposalRetryRequestV1,
+import { parseSignalSemanticContextProposalRevalidationRequestV1,
+  parseSignalSemanticContextProposalRetryRequestV1,
   parseSignalSemanticContextProposalStartRequestV1 } from "./signal-semantic-context-proposal-api";
 
 const valid = { generation_key: "semantic-context-v1", preflight_digest: `sha256:${"1".repeat(64)}`,
@@ -20,4 +21,15 @@ test("proposal start accepts only operator confirmation, generation key, preflig
 test("retry accepts no browser authority overrides", () => {
   assert.deepEqual(parseSignalSemanticContextProposalRetryRequestV1({}), {});
   assert.throws(() => parseSignalSemanticContextProposalRetryRequestV1({ model: "override" }));
+});
+
+test("paid-response revalidation accepts only the closed confirmation", () => {
+  assert.deepEqual(parseSignalSemanticContextProposalRevalidationRequestV1({
+    confirmation: "REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE"
+  }), { confirmation: "REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE" });
+  for (const hostile of [{}, { confirmation: "yes" }, {
+    confirmation: "REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE", response_digest: `sha256:${"1".repeat(64)}`
+  }, { confirmation: "REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE", entity_type: "category" }]) {
+    assert.throws(() => parseSignalSemanticContextProposalRevalidationRequestV1(hostile));
+  }
 });

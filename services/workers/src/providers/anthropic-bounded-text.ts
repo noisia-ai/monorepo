@@ -2,7 +2,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateText, NoObjectGeneratedError, Output } from "ai";
 import type { ZodTypeAny } from "zod";
 
-import { buildSignalSemanticContextProviderOutputSchemaV1,
+import { buildSignalSemanticContextProviderOutputSchemaV2,
   stableSignalSemanticContextJsonV1,
   type SignalSemanticContextProposalProviderV1 } from "@noisia/query-engine";
 
@@ -46,7 +46,7 @@ export function createAnthropicSemanticContextProposalProviderV1(
   return { generate: (request) => transport({ model: request.model,
     prompt: request.prompt, max_output_tokens: request.max_output_tokens,
     temperature: request.temperature, structured_output: {
-      schema: buildSignalSemanticContextProviderOutputSchemaV1(request.maximum_proposals),
+      schema: buildSignalSemanticContextProviderOutputSchemaV2(request.maximum_proposals),
       name: "signal_semantic_context_proposals",
       description: "Evidence-bound pending Semantic Context Pack proposals for human review."
     } }) };

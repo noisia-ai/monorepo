@@ -46,5 +46,11 @@ function operatorMessage(code:string){return({
   proposal_recovery_unavailable:"The proposal recovery drainer is not ready.",
   semantic_context_provider_outcome_ambiguous:"A provider call may have started; automatic retry is blocked to prevent duplicate spend.",
   semantic_context_proposal_run_not_retryable:"This run cannot be retried without risking duplicate spend."
+  ,semantic_context_revalidation_confirmation_required:"Confirm paid-response revalidation before continuing."
+  ,semantic_context_paid_response_not_revalidatable:"This paid response cannot be revalidated safely."
+  ,semantic_context_paid_response_digest_mismatch:"The stored paid response failed its integrity check."
+  ,semantic_context_paid_response_settlement_invalid:"The original paid run settlement is not reconcilable."
+  ,semantic_context_paid_response_authority_drift:"Brand OS, Knowledge, locale, or generation authority changed; the paid response remains preserved."
+  ,semantic_context_provider_duplicate_semantic_key_conflict:"The paid response contains conflicting proposals for one semantic key; no proposal was saved."
 } as Record<string,string>)[code]??"The Semantic Context Pack operation was rejected.";}
 function safeError(error:unknown){return error instanceof Error?{name:error.name}:{name:"UnknownError"};}

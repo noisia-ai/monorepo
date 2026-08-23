@@ -15,3 +15,9 @@ export function parseSignalSemanticContextProposalStartRequestV1(value: unknown)
 export function parseSignalSemanticContextProposalRetryRequestV1(value: unknown) {
   return z.object({}).strict().parse(value);
 }
+
+export function parseSignalSemanticContextProposalRevalidationRequestV1(value: unknown) {
+  return z.object({
+    confirmation: z.literal("REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE")
+  }).strict().parse(value);
+}

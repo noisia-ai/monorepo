@@ -9,15 +9,18 @@ import pg from "pg";
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
   signalSemanticContextProposalDigestV1
 } from "@noisia/query-engine";
 import {
   SignalSemanticContextProviderCallError,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   loadSignalSemanticContextProposalRunV1,
   prepareSignalSemanticContextProposalInputV1,
   processSignalSemanticContextProposalRunV1,
+  revalidateSignalSemanticContextPaidResponseV1,
   retrySignalSemanticContextProposalRunV1,
   startSignalSemanticContextProposalRunV1,
   type SignalSemanticContextProposalRuntimeConfigurationV1
@@ -121,7 +124,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     const invalidRun = await startFor(pool, invalid, "invalid-start");
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: invalidRun.id,
       provider: { async generate() { return { text: JSON.stringify({ contract_version:
-        SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION, proposals: [{ bad: true }] }),
+        SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2, proposals: [{ bad: true }] }),
         provider_request_id: null, usage: { input_tokens: 10, output_tokens: 10 } }; } } }));
     assert.deepEqual(await elementCounts(pool, invalid.workspace.id), { pending: 0, approved: 0, rejected: 0 });
     assert.deepEqual(await row(pool, `SELECT status,actual_micro_usd::text FROM
@@ -139,6 +142,91 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     assert.ok(invalidPrivate.issue_count > 0);
     assert.equal(await scalar(pool, `SELECT count(*)::int count FROM signal_semantic_context_proposal_run_events
       WHERE run_id=$1::uuid AND event_kind='failed'`, [invalidRun.id]), 1);
+
+    const paid = await seedFixture(pool, "paid-response");
+    const paidRun = await startFor(pool, paid, "paid-response-start");
+    const paidPrepared = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
+      workspace: paid.workspace, generation_key: paid.generation_key });
+    let paidCalls = 0;
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: paidRun.id,
+      provider: { async generate() { paidCalls += 1; return {
+        text: legacyV1Response(paidPrepared.input.knowledge_blocks[0]!.source_alias,
+          paidPrepared.input.identity.primary.entity_ref), provider_request_id: "paid-fixture",
+        usage: { input_tokens: 100, output_tokens: 200 }
+      }; } } }), /semantic_context_provider_/u);
+    const paidFingerprint = await scalarText(pool, `SELECT encode(digest(row_to_json(run)::text,'sha256'),'hex') value
+      FROM signal_semantic_context_proposal_runs run WHERE id=$1::uuid`, [paidRun.id]);
+    const paidBudget = await row(pool, `SELECT status,actual_micro_usd::text,reservation_micro_usd::text
+      FROM signal_semantic_context_budget_reservations WHERE run_id=$1::uuid`, [paidRun.id]);
+    const countsBeforeRevalidation = await row(pool, `SELECT
+      (SELECT count(*)::int FROM signal_semantic_context_budget_reservations) reservations,
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox) outboxes,
+      (SELECT COALESCE(sum(provider_call_count),0)::int FROM signal_semantic_context_proposal_runs) calls`, []);
+    const recoveries = await Promise.all(["paid-revalidate-a", "paid-revalidate-b"].map((key) =>
+      revalidateInTransaction(pool, paid, paidRun.run_key, key)));
+    const recovered = recoveries[0]!;
+    assert.equal(recovered.status, "completed");
+    assert.deepEqual(recovered, recoveries[1]);
+    assert.equal(recovered.proposals_appended, 1);
+    assert.equal(recovered.proposals_approved, 0);
+    assert.equal(recovered.provider_calls_added, 0);
+    assert.equal((await revalidateInTransaction(pool, paid, paidRun.run_key,
+      "paid-revalidate-a")).revalidation_ref, recovered.revalidation_ref);
+    assert.equal(await scalar(pool, `SELECT count(*)::int count FROM
+      signal_semantic_context_proposal_revalidations WHERE original_run_id=$1::uuid`, [paidRun.id]), 1);
+    assert.equal(await scalarText(pool, `SELECT encode(digest(row_to_json(run)::text,'sha256'),'hex') value
+      FROM signal_semantic_context_proposal_runs run WHERE id=$1::uuid`, [paidRun.id]), paidFingerprint);
+    assert.deepEqual(await row(pool, `SELECT status,actual_micro_usd::text,reservation_micro_usd::text
+      FROM signal_semantic_context_budget_reservations WHERE run_id=$1::uuid`, [paidRun.id]), paidBudget);
+    assert.deepEqual(await row(pool, `SELECT
+      (SELECT count(*)::int FROM signal_semantic_context_budget_reservations) reservations,
+      (SELECT count(*)::int FROM signal_semantic_context_proposal_outbox) outboxes,
+      (SELECT COALESCE(sum(provider_call_count),0)::int FROM signal_semantic_context_proposal_runs) calls`, []),
+    countsBeforeRevalidation);
+    assert.equal(paidCalls, 1);
+    assert.deepEqual(await row(pool, `SELECT disposition,origin_kind,entity_type,
+      (confidence=1)::boolean confidence_one FROM signal_semantic_context_element_versions
+      WHERE workspace_id=$1::uuid`, [paid.workspace.id]),
+    { disposition: "pending", origin_kind: "provider_proposal", entity_type: "brand", confidence_one: true });
+    await assert.rejects(pool.query(`UPDATE signal_semantic_context_proposal_runs SET error_code='rewrite'
+      WHERE id=$1::uuid`, [paidRun.id]), /immutable/u);
+
+    const conflict = await seedFixture(pool, "paid-conflict");
+    const conflictRun = await startFor(pool, conflict, "paid-conflict-start");
+    const conflictPrepared = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
+      workspace: conflict.workspace, generation_key: conflict.generation_key });
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: conflictRun.id,
+      provider: { async generate() { return {
+        text: legacyV1ConflictResponse(conflictPrepared.input.knowledge_blocks[0]!.source_alias),
+        provider_request_id: "conflict-fixture", usage: { input_tokens: 100, output_tokens: 200 }
+      }; } } }));
+    const rejected = await revalidateInTransaction(pool, conflict, conflictRun.run_key,
+      "paid-conflict-revalidate");
+    assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.error?.code, "semantic_context_provider_duplicate_semantic_key_conflict");
+    assert.equal(rejected.proposals_appended, 0);
+    assert.deepEqual(await elementCounts(pool, conflict.workspace.id),
+      { pending: 0, approved: 0, rejected: 0 });
+
+    const driftPaid = await seedFixture(pool, "paid-drift");
+    const driftPaidRun = await startFor(pool, driftPaid, "paid-drift-start");
+    const driftPaidPrepared = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
+      workspace: driftPaid.workspace, generation_key: driftPaid.generation_key });
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: driftPaidRun.id,
+      provider: { async generate() { return { text: legacyV1Response(
+        driftPaidPrepared.input.knowledge_blocks[0]!.source_alias,
+        driftPaidPrepared.input.identity.primary.entity_ref), provider_request_id: null,
+        usage: { input_tokens: 100, output_tokens: 200 } }; } } }));
+    await pool.query(`UPDATE brand_os_profiles SET metadata=jsonb_set(metadata,'{snapshot_hash}',to_jsonb($2::text))
+      WHERE id=$1::uuid`, [driftPaid.profile_id, digest("paid-drift-changed")]);
+    await assert.rejects(revalidateInTransaction(pool, driftPaid, driftPaidRun.run_key,
+      "paid-drift-revalidate"), /brand_os_drift|authority_drift/u);
+    assert.equal(await scalar(pool, `SELECT count(*)::int count FROM
+      signal_semantic_context_proposal_revalidations WHERE original_run_id=$1::uuid`, [driftPaidRun.id]), 0);
+
+    const otherWorkspace = await seedFixture(pool, "paid-other-workspace");
+    await assert.rejects(revalidateInTransaction(pool, otherWorkspace, paidRun.run_key,
+      "paid-cross-workspace"), /not_found/u);
 
     const truncated = await seedFixture(pool, "truncated");
     const truncatedRun = await startFor(pool, truncated, "truncated-start");
@@ -324,7 +412,7 @@ async function seedFixture(pool: pg.Pool, label: string,
     generationKey, profile, brandDigest, `knowledge-${knowledgeDigest.slice(7, 23)}`, knowledgeDigest,
     localeDigest, options.providerLineage === false ? null : configuration.model,
     options.providerLineage === false ? null : configuration.model_version,
-    options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+    options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
     options.providerLineage === false ? null : configuration.pricing_version,
     digest(`${suffix}-draft`), operation, user]);
   return { workspace: { id: workspace.id, organization_id: org, brand_id: brand },
@@ -356,23 +444,22 @@ async function startFor(pool: pg.Pool, fixture: Awaited<ReturnType<typeof seedFi
   return { ...run, id: await runId(pool, run.run_key) };
 }
 function validResponse(sourceAlias: string, entityRef: string) { return JSON.stringify({
-  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
   proposals: [{ element_key: "identity.fixture", element_kind: "identity_term",
     canonical_key: "fixture", display_text: "Fixture identity", scope: "primary_brand",
-    entity_type: "brand", entity_ref: entityRef, locale: "es-MX", relation_kind: null,
+    entity_ref: entityRef, locale: "es-MX", relation_kind: null,
     relation_target_key: null, confidence: 1,
     evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] }]
 }); }
 function validResponseCount(sourceAlias: string, entityRef: string, count: number) {
   return JSON.stringify({
-    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
     proposals: Array.from({ length: count }, (_, index) => ({
       element_key: `feature.fixture-${index + 1}`,
       element_kind: "feature",
       canonical_key: `fixture-${index + 1}`,
       display_text: `Fixture feature ${index + 1}`,
       scope: "primary_brand",
-      entity_type: "brand",
       entity_ref: entityRef,
       locale: "es-MX",
       relation_kind: null,
@@ -381,6 +468,39 @@ function validResponseCount(sourceAlias: string, entityRef: string, count: numbe
       evidence: [{ source_alias: sourceAlias, relation_type: "supports" }]
     }))
   });
+}
+function legacyV1Response(sourceAlias: string, entityRef: string) { return JSON.stringify({
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  proposals: [{ element_key: "product.fixture", element_kind: "product",
+    canonical_key: "fixture-product", display_text: "Fixture product", scope: "primary_brand",
+    entity_type: "product", entity_ref: entityRef, locale: "es-MX", relation_kind: null,
+    relation_target_key: null, confidence: 1,
+    evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] }]
+}); }
+function legacyV1ConflictResponse(sourceAlias: string) { return JSON.stringify({
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
+  proposals: ["One", "Two", "Three"].map((display, index) => ({
+    element_key: `category.fixture-${index + 1}`, element_kind: "category",
+    canonical_key: "fixture-category", display_text: display, scope: "category",
+    entity_type: "category", entity_ref: null, locale: "es-MX", relation_kind: null,
+    relation_target_key: null, confidence: 0.5,
+    evidence: [{ source_alias: sourceAlias, relation_type: "supports" }]
+  }))
+}); }
+async function revalidateInTransaction(pool: pg.Pool,
+  fixture: Awaited<ReturnType<typeof seedFixture>>, runKey: string, key: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await revalidateSignalSemanticContextPaidResponseV1({ queryable: client,
+      workspace: fixture.workspace, actor: fixture.actor, idempotency_key: key,
+      run_key: runKey, confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION });
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
 }
 async function runId(pool: pg.Pool, runKey: string) { return (await pool.query<{ id: string }>(
   `SELECT id::text FROM signal_semantic_context_proposal_runs WHERE run_key=$1`, [runKey])).rows[0]!.id; }
@@ -396,6 +516,7 @@ async function protectedCounts(pool: pg.Pool, workspaceId: string) { return {
   bindings: await scalar(pool, `SELECT count(*)::int count FROM signal_governed_view_bindings WHERE workspace_id=$1::uuid`, [workspaceId])
 }; }
 async function scalar(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query<{ count: number }>(sql, values)).rows[0]!.count; }
+async function scalarText(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query<{ value: string }>(sql, values)).rows[0]!.value; }
 async function row(pool: pg.Pool, sql: string, values: unknown[]) { return (await pool.query(sql, values)).rows[0] as Record<string, unknown>; }
 function requireLocal(url: string) { if (!["localhost", "127.0.0.1", "::1"].includes(new URL(url).hostname))
   throw new Error("Refusing non-local PostgreSQL target."); }

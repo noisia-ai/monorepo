@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1 } from "@noisia/query-engine";
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 } from "@noisia/query-engine";
 import {
   appendSignalSemanticContextProposalsV1 as appendSignalSemanticContextProposalsDbV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   loadSignalSemanticContextProposalRunV1,
+  revalidateSignalSemanticContextPaidResponseV1,
   retrySignalSemanticContextProposalRunV1,
   signalSemanticContextProposalRuntimeConfigurationFromEnvV1,
   startSignalSemanticContextProposalRunV1
@@ -221,7 +222,7 @@ export function signalSemanticContextProviderConfigurationFromEnvV1(
   const model=env.NOISIA_SEMANTIC_CONTEXT_MODEL?.trim()??"";
   const modelVersion=env.NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION?.trim()??"";
   const pricing=env.NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION?.trim()??"";
-  const prompt=SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1;
+  const prompt=SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2;
   const numeric=(key:string)=>{const value=Number(env[key]);return Number.isFinite(value)?value:0;};
   const config={available:false,provider,model,model_version:modelVersion,pricing_version:pricing,
     prompt_template_digest:prompt,max_input_tokens:numeric("NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS"),
@@ -476,7 +477,7 @@ export async function publishSignalSemanticContextGenerationV1(args:{
 export async function createSignalSemanticContextDraftProductV1(args:Omit<Parameters<typeof createSignalSemanticContextDraftV1>[0],"queryable"|"proposalLineage">){
   const config=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
   const proposalLineage=config.available?{model:config.model,model_version:config.model_version,
-    prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+    prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
     pricing_version:config.pricing_version}:undefined;
   return withSignalAcquisitionTransactionV1((queryable)=>createSignalSemanticContextDraftV1({
     ...args,queryable,proposalLineage}));
@@ -487,7 +488,7 @@ export async function reconcileSignalSemanticContextGenerationProductV1(args:Omi
   if(!config.available)throw new SignalSemanticContextPackError("provider_configuration_unavailable");
   return withSignalAcquisitionTransactionV1((queryable)=>reconcileSignalSemanticContextGenerationV1({
     ...args,queryable,proposalLineage:{model:config.model,model_version:config.model_version,
-      prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
+      prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
       pricing_version:config.pricing_version}}));
 }
 export async function decideSignalSemanticContextElementProductV1(args:Omit<Parameters<typeof decideSignalSemanticContextElementV1>[0],"queryable">){
@@ -544,6 +545,21 @@ export async function retrySignalSemanticContextProposalRunProductV1(args:{
   const{pool}=await import("@/lib/db");return retrySignalSemanticContextProposalRunV1({pool,
     workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
     idempotency_key:args.idempotencyKey,run_key:args.runKey});
+}
+
+export async function revalidateSignalSemanticContextPaidResponseProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;
+  runKey:string;confirmation:string;
+}){
+  return withSignalAcquisitionTransactionV1(async(queryable)=>{
+    const diff=await loadSignalSemanticContextDiffV1({queryable,workspace:args.workspace,actor:args.actor});
+    if(diff.drift_state!=="current")throw new SignalSemanticContextPackError(
+      "semantic_context_paid_response_authority_drift",409
+    );
+    return revalidateSignalSemanticContextPaidResponseV1({queryable:queryable as never,
+      workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+      idempotency_key:args.idempotencyKey,run_key:args.runKey,confirmation:args.confirmation});
+  });
 }
 
 function proposalWorkspace(workspace:ResolvedSignalWorkspace){
