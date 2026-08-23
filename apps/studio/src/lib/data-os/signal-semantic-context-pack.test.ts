@@ -120,6 +120,10 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "Brand OS must use the canonical compact summary density");
   assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,
     "safe retry is offered only before a provider call starts");
+  assert.match(manager,/paid_response_revalidation/u,
+    "refresh must render the operator-safe paid-response revalidation result");
+  assert.match(manager,/revalidationRejectedDetail/u,
+    "a rejected paid-response recovery must remain visible without exposing private output");
   assert.doesNotMatch(manager,/run\.error\?\.message/u,
     "operator UI must never expose raw provider validation messages");
   assert.doesNotMatch(manager,/confidence_authoritative|source_ref\}/u,

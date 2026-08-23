@@ -292,3 +292,19 @@ as a new audit artifact. It never reserves budget, queues provider work or calls
 provider. The known private response contains one non-equivalent semantic duplicate, so
 its safe result is a rejected revalidation with zero proposals rather than a partial
 recovery. This does not authorize a new call, publication, context-aware 10C.3B or 10D.
+
+### Preview/UAT result
+
+**Recorded:** 2026-08-23T02:51:00-06:00 (`America/Mexico_City`).
+
+The deployed operation recorded one `rejected` revalidation for the paid V1 response.
+It reconciled 77 input proposals to zero normalized/appended proposals because the one
+semantic duplicate group was contradictory under the frozen policy. Replaying the same
+idempotency key returned the same record. The original run fingerprint and settlement
+remained unchanged; total provider calls, reservations, outboxes and proposal elements
+also remained unchanged.
+
+The existing Semantic Context run banner now renders this operator-safe result after a
+refresh. It never exposes raw response content, private evidence references, full
+digests or provider diagnostics. Authenticated visual QA is a separate handoff and this
+checkpoint does not claim it complete.

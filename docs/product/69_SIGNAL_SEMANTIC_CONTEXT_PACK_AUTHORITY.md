@@ -254,3 +254,19 @@ Los anchors pendientes de reconciliar en North Star y Execution Plan son: output
 `entity_type` del provider, revalidación pagada sin retry/costo y política de duplicado
 fail-closed. Esos documentos estaban modificados por otro workstream y no se
 sobrescribieron en este corte.
+
+## Checkpoint 69A.6 Preview/UAT · revalidación rechazada y auditable
+
+**Registrado:** 2026-08-23T02:51:00-06:00 (`America/Mexico_City`).
+
+La operación management-only se ejecutó una vez sobre la respuesta pagada preservada y
+registró exactamente una derivación append-only `rejected`. El adapter V1→V2 encontró
+un grupo de tres propuestas con la misma clave semántica pero distinto `display_text`
+normalizado; la política canónica prohíbe colapsarlas. El replay con la misma key devolvió
+el mismo resultado sin crear otra derivación.
+
+La generación continúa draft con cero elementos pending o approved. El run original
+permanece failed y settled con el mismo digest y costo; no hubo provider call, reserva,
+outbox o job adicional. El Admin consume ahora el descriptor operator-safe
+`paid_response_revalidation` dentro del banner de run existente. La validación visual
+autenticada queda delegada y no se declara cerrada en este checkpoint.

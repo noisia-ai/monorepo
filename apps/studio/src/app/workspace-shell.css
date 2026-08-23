@@ -8875,6 +8875,12 @@ body.semantic-review-controls-open .admin-shell__main {
   line-height: 1.45;
 }
 
+.semantic-context-pack__run .semantic-context-pack__run-revalidation {
+  margin-top: 5px;
+  color: var(--workspace-ink);
+  font-weight: 600;
+}
+
 .semantic-context-pack__empty {
   align-items: center;
   min-height: 104px;
