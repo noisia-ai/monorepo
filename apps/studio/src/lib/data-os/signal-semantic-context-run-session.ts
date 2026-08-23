@@ -4,6 +4,16 @@ export type SignalSemanticContextRunSessionReferenceV1 = {
   run_key: string;
 };
 
+export function canStartSignalSemanticContextProposalGenerationV1(input: {
+  lifecycleState: "draft" | "published" | null;
+  elementCount: number;
+  hasServerDiscoveredRun: boolean;
+}) {
+  return input.lifecycleState === "draft"
+    && input.elementCount === 0
+    && !input.hasServerDiscoveredRun;
+}
+
 const keyPattern = /^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;
 
 export function serializeSignalSemanticContextRunSessionReferenceV1(

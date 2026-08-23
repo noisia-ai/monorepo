@@ -11,10 +11,29 @@ import {
   signalSemanticContextProviderConfigurationFromEnvV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
+  canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
   serializeSignalSemanticContextRunSessionReferenceV1
 } from "@/lib/data-os/signal-semantic-context-run-session";
+
+test("proposal generation entry is gated by the server-discovered generation run", () => {
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 0, hasServerDiscoveredRun: false
+  }), true, "an untouched draft remains actionable");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 0, hasServerDiscoveredRun: true
+  }), false, "terminal and nonterminal server-discovered runs both suppress generation");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 1, hasServerDiscoveredRun: false
+  }), false, "existing elements preserve the established review actions");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "published", elementCount: 0, hasServerDiscoveredRun: false
+  }), false, "published generations cannot start proposal generation");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: null, elementCount: 0, hasServerDiscoveredRun: false
+  }), false, "missing generation state fails closed");
+});
 
 test("semantic context run references are bound to their generation", () => {
   const stored = serializeSignalSemanticContextRunSessionReferenceV1(
@@ -120,6 +139,12 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "same-tab polling state retains the generation identity with the run key");
   assert.match(manager,/detail\.latest_proposal_run/u,
     "fresh loads must bind the server-discovered run without sessionStorage authority");
+  assert.match(manager,/const canStartProposalGeneration = canStartSignalSemanticContextProposalGenerationV1\(\{/u,
+    "all proposal entry points share one server-run-aware state guard");
+  assert.equal(manager.match(/\{canStartProposalGeneration \?/gu)?.length,2,
+    "the action bar and empty state must use the same proposal entry guard");
+  assert.doesNotMatch(manager,/generation\?\.lifecycle_state === "draft" && elements\.length === 0 \?/u,
+    "the action bar must not bypass a server-discovered terminal or active run");
   assert.match(manager,/saved\.run_key !== run\.run_key/u,
     "a browser hint cannot replace the server-selected run");
   assert.doesNotMatch(manager,/requestJson<ProposalRun>\([^\n]+saved\.run_key/u,
@@ -139,6 +164,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "a rejected paid-response recovery must remain visible without exposing private output");
   assert.doesNotMatch(manager,/run\.error\?\.message/u,
     "operator UI must never expose raw provider validation messages");
+  assert.doesNotMatch(manager,/provider_response_private|provider_request_identity|raw_provider_response|response_payload/u,
+    "terminal run rendering must not expose private provider state");
   assert.doesNotMatch(manager,/confidence_authoritative|source_ref\}/u,
     "the operator UI must not present confidence or private source references as authority");
   const esMessages=JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext;

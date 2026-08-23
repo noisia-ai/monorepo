@@ -25,6 +25,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceConfirmDialog, WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import {
+  canStartSignalSemanticContextProposalGenerationV1,
   isSignalSemanticContextRunSessionCurrentV1,
   parseSignalSemanticContextRunSessionReferenceV1,
   serializeSignalSemanticContextRunSessionReferenceV1
@@ -270,6 +271,11 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const allVisibleSelected = pendingVisible.length > 0 && pendingVisible.every((element) => selected.includes(element.element_key));
   const counts = generation?.counts ?? { pending: 0, approved: 0, rejected: 0 };
   const canPublish = generation?.lifecycle_state === "draft" && counts.pending === 0 && counts.approved > 0 && readiness?.drift_state === "current";
+  const canStartProposalGeneration = canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: generation?.lifecycle_state ?? null,
+    elementCount: elements.length,
+    hasServerDiscoveredRun: run !== null
+  });
 
   async function createDraft() {
     setBusy("draft"); setError(null);
@@ -380,7 +386,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
 
   const sectionActions = <>
     <button className="admin-button" disabled={Boolean(busy)} onClick={() => void load()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.refresh")}</button>
-    {generation?.lifecycle_state === "draft" && elements.length === 0 ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button"><MagicWand aria-hidden size={15}/>{t("actions.generate")}</button> : null}
+    {canStartProposalGeneration ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button"><MagicWand aria-hidden size={15}/>{t("actions.generate")}</button> : null}
   </>;
 
   return <>
@@ -398,7 +404,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
         {readiness?.drift_state === "stale" ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("drift.title")}</strong><p>{t("drift.body")}</p><button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button></div></div> : null}
         {error ? <div className="semantic-context-pack__notice" data-tone="danger" role="alert"><Warning aria-hidden size={18}/><div><strong>{t("errors.title")}</strong><p>{error}</p></div></div> : null}
         {run ? <RunBanner busy={busy === "retry-run"} onRetry={() => void retryProposalRun()} run={run} t={t}/>:null}
-        {generation.lifecycle_state === "draft" && elements.length === 0 && !run ? <div className="semantic-context-pack__empty"><MagicWand aria-hidden size={24}/><div><strong>{t("draftEmpty.title")}</strong><p>{t("draftEmpty.body")}</p></div><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button">{t("actions.calculate")}</button></div> : null}
+        {canStartProposalGeneration ? <div className="semantic-context-pack__empty"><MagicWand aria-hidden size={24}/><div><strong>{t("draftEmpty.title")}</strong><p>{t("draftEmpty.body")}</p></div><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void loadPreflight()} type="button">{t("actions.calculate")}</button></div> : null}
         {elements.length > 0 ? <div className="semantic-context-pack__workspace">
           <div className="semantic-context-pack__toolbar">
             <label className="semantic-context-pack__search"><span className="sr-only">{t("filters.search")}</span><input className="workspace-control" onChange={(event) => setQuery(event.target.value)} placeholder={t("filters.searchPlaceholder")} type="search" value={query}/></label>
