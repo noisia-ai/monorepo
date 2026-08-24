@@ -4,21 +4,25 @@ import type { Pool } from "pg";
 
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+  SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
   adaptSignalSemanticContextProposalResponseV1ToV2,
+  buildSignalSemanticContextProviderLineageV1,
   buildSignalSemanticContextProposalPromptV3,
   parseSignalSemanticContextProposalResponseV3,
   planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
   signalSemanticContextProposalInputSchemaV1,
+  signalSemanticContextProviderFullLineageMatchesV1,
+  signalSemanticContextProviderLineageCostMicroUsdV1,
   SignalSemanticContextProposalValidationError,
   type SignalSemanticContextCapacityPlanV1,
+  type SignalSemanticContextProviderLineageV1,
   type SignalSemanticContextProposalInputV1,
   type SignalSemanticContextProposalProviderV1
 } from "@noisia/query-engine";
@@ -62,7 +66,13 @@ type GenerationRow = {
   markets: string[]; timezone: string; proposal_model: string | null;
   proposal_model_version: string | null; proposal_prompt_digest: string | null;
   proposal_pricing_version: string | null;
+  proposal_provider_lineage: SignalSemanticContextProviderLineageV1 | null;
+  proposal_provider_lineage_digest: string | null;
 };
+
+export type SignalSemanticContextProposalAuthoritySnapshotV1 = Pick<GenerationRow,
+  "generation_key" | "brand_os_profile_id" | "brand_os_digest" | "knowledge_digest"
+  | "locale_context_digest" | "primary_locale" | "locale_variants" | "markets" | "timezone">;
 
 type SourceAuthorityRef = {
   source_alias: string;
@@ -90,7 +100,8 @@ type RunRow = {
   max_input_tokens: number; max_output_tokens: number;
   input_usd_per_million_tokens: string; output_usd_per_million_tokens: string;
   hard_cap_micro_usd: string; reservation_micro_usd: string;
-  provider_request_identity: string; provider_request_id: string | null;
+  provider_lineage_digest: string | null; provider_request_identity: string;
+  provider_request_id: string | null;
   provider_call_state: "not_started" | "in_flight" | "response_persisted" | "outcome_unknown" | "settled";
   provider_call_count: number; provider_response_private: string | null;
   provider_response_digest: string | null; input_tokens: string | null; output_tokens: string | null;
@@ -161,6 +172,30 @@ export function signalSemanticContextProposalRuntimeConfigurationFromEnvV1(
   };
 }
 
+export function buildSignalSemanticContextProposalRuntimeLineageV1(
+  configuration: SignalSemanticContextProposalRuntimeConfigurationV1,
+  capacity: SignalSemanticContextCapacityPlanV1 | null = null
+) {
+  if (!configuration.available) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "provider_configuration_unavailable", 503
+    );
+  }
+  return buildSignalSemanticContextProviderLineageV1({
+    provider: configuration.provider,
+    model: configuration.model,
+    model_version: configuration.model_version,
+    pricing_version: configuration.pricing_version,
+    input_usd_per_million_tokens: configuration.input_usd_per_million_tokens,
+    output_usd_per_million_tokens: configuration.output_usd_per_million_tokens,
+    max_input_tokens: configuration.max_input_tokens,
+    configured_max_output_tokens: configuration.max_output_tokens,
+    model_max_output_tokens: configuration.model_max_output_tokens,
+    platform_hard_cap_micro_usd: configuration.platform_hard_cap_micro_usd,
+    capacity
+  });
+}
+
 export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: {
   queryable: SignalSemanticContextQueryable;
   workspace: SignalSemanticContextProposalWorkspaceV1;
@@ -192,11 +227,25 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
         ? error.code : "semantic_context_authority_unavailable");
     }
   }
+  let providerLineage: SignalSemanticContextProviderLineageV1 | null = null;
+  if (args.configuration.available) {
+    try {
+      providerLineage = buildSignalSemanticContextProposalRuntimeLineageV1(
+        args.configuration, prepared?.capacity ?? null
+      );
+    } catch {
+      blockers.push("provider_configuration_unavailable");
+    }
+  }
   const providerLineageMissing = Boolean(generation && (!generation.proposal_model
     || !generation.proposal_model_version || !generation.proposal_prompt_digest
-    || !generation.proposal_pricing_version));
+    || !generation.proposal_pricing_version || !generation.proposal_provider_lineage
+    || !generation.proposal_provider_lineage_digest));
   if (providerLineageMissing) blockers.push("provider_lineage_required");
-  else if (generation && !lineageMatches(generation, args.configuration)) blockers.push("provider_lineage_drift");
+  else if (generation && (!providerLineage
+      || !signalSemanticContextProviderFullLineageMatchesV1(generation, providerLineage))) {
+    blockers.push("provider_lineage_drift");
+  }
   const inputTokenUpperBound = prepared ? Buffer.byteLength(prepared.prompt, "utf8") : null;
   if (inputTokenUpperBound !== null && inputTokenUpperBound > args.configuration.max_input_tokens) {
     blockers.push("semantic_context_input_token_budget_exceeded");
@@ -210,8 +259,9 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
   if (prepared && prepared.capacity.output_token_budget > args.configuration.max_output_tokens) {
     blockers.push("semantic_context_configured_output_capacity_insufficient");
   }
-  const reservation = configurationReservation(args.configuration, inputTokenUpperBound ?? undefined,
-    prepared?.capacity.output_token_budget);
+  const reservation = providerLineage ? configurationReservation(providerLineage,
+    inputTokenUpperBound ?? args.configuration.max_input_tokens,
+    prepared?.capacity.output_token_budget ?? args.configuration.max_output_tokens) : 0n;
   if (reservation > args.configuration.platform_hard_cap_micro_usd) blockers.push("platform_hard_cap_insufficient");
   const payload = {
     contract_version: "signal-semantic-context-proposal-preflight-v3",
@@ -220,9 +270,13 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
       knowledge_digest: generation.knowledge_digest,
       locale_context_digest: generation.locale_context_digest } : null,
     context_input_digest: prepared?.input_digest ?? null,
-    provider: { key: args.configuration.provider, model: args.configuration.model,
-      model_version: args.configuration.model_version, pricing_version: args.configuration.pricing_version,
-      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 },
+    provider: providerLineage ? { key: providerLineage.provider, model: providerLineage.model,
+      model_version: providerLineage.model_version, pricing_version: providerLineage.pricing.version,
+      prompt_digest: providerLineage.prompt.digest } : {
+      key: args.configuration.provider, model: args.configuration.model,
+      model_version: args.configuration.model_version,
+      pricing_version: args.configuration.pricing_version,
+      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.prompt_digest },
     maximum_provider_calls: 1,
     estimated_input_tokens_upper_bound: inputTokenUpperBound,
     max_input_tokens: args.configuration.max_input_tokens,
@@ -261,6 +315,32 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
   if (!generation || generation.status !== "draft") {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_draft_not_found", 404);
   }
+  return prepareSignalSemanticContextProposalInputForGenerationV1({ ...args, generation });
+}
+
+/** Computes the same capacity used by preflight/run start before a new generation is inserted. */
+export async function planSignalSemanticContextProposalCapacityForAuthorityV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  authority: SignalSemanticContextProposalAuthoritySnapshotV1;
+}) {
+  const generation: GenerationRow = {
+    id: "not-persisted", status: "draft", ...args.authority,
+    proposal_model: null, proposal_model_version: null, proposal_prompt_digest: null,
+    proposal_pricing_version: null, proposal_provider_lineage: null,
+    proposal_provider_lineage_digest: null
+  };
+  return (await prepareSignalSemanticContextProposalInputForGenerationV1({
+    queryable: args.queryable, workspace: args.workspace, generation
+  })).capacity;
+}
+
+async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  generation: GenerationRow;
+}): Promise<PreparedContext> {
+  const generation = args.generation;
   // queryable can be a transaction-scoped pg.Client. Keep calls sequential: concurrent
   // client.query calls are unsupported and previously emitted a pg warning.
   const profileResult = await args.queryable.query<{
@@ -492,11 +572,20 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     const prepared = await prepareSignalSemanticContextProposalInputV1({
       queryable: client, workspace: args.workspace, generation_key: args.generation_key
     });
+    const providerLineage = buildSignalSemanticContextProposalRuntimeLineageV1(
+      args.configuration, prepared.capacity
+    );
+    if (!signalSemanticContextProviderFullLineageMatchesV1(
+      prepared.generation, providerLineage
+    )) {
+      throw new SignalSemanticContextProposalExecutionError("provider_lineage_drift", 409);
+    }
     const providerRequestIdentity = signalSemanticContextProposalDigestV1({
       contract_version: "signal-semantic-context-provider-request-v1",
       generation_key: args.generation_key, preflight_digest: args.preflight_digest,
-      input_digest: prepared.input_digest, prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
-      model: args.configuration.model, model_version: args.configuration.model_version
+      input_digest: prepared.input_digest, prompt_digest: providerLineage.prompt.digest,
+      provider_lineage_digest: providerLineage.lineage_digest,
+      model: providerLineage.model, model_version: providerLineage.model_version
     });
     const runKey = `semantic-context-proposal-${providerRequestIdentity.slice(7, 23)}`;
     const inserted = await client.query<RunRow>(`WITH inserted AS (
@@ -505,18 +594,20 @@ export async function startSignalSemanticContextProposalRunV1(args: {
         knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
         model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
         output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
-        provider_request_identity,created_by_user_id)
+        provider_lineage_digest,provider_request_identity,created_by_user_id)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-        $15,$16,$17,$18,$19,$20,$21,$22::uuid) RETURNING *)
+        $15,$16,$17,$18,$19,$20,$21,$22,$23::uuid) RETURNING *)
       ${runSelect} FROM inserted run`, [
       args.workspace.id, prepared.generation.id, operation.operation_id, runKey, args.preflight_digest,
       prepared.generation.brand_os_digest, prepared.generation.knowledge_digest,
-      prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
-      prepared.input_digest, args.configuration.provider, args.configuration.model,
-      args.configuration.model_version, args.configuration.pricing_version,
-      args.configuration.max_input_tokens, prepared.capacity.output_token_budget,
-      args.configuration.input_usd_per_million_tokens, args.configuration.output_usd_per_million_tokens,
-      args.hard_cap_micro_usd.toString(), reservation.toString(), providerRequestIdentity, args.actor.id
+      prepared.generation.locale_context_digest, providerLineage.prompt.digest,
+      prepared.input_digest, providerLineage.provider, providerLineage.model,
+      providerLineage.model_version, providerLineage.pricing.version,
+      providerLineage.token_ceilings.max_input_tokens, prepared.capacity.output_token_budget,
+      providerLineage.pricing.input_usd_per_million_tokens,
+      providerLineage.pricing.output_usd_per_million_tokens,
+      args.hard_cap_micro_usd.toString(), reservation.toString(), providerLineage.lineage_digest,
+      providerRequestIdentity, args.actor.id
     ]);
     const run = inserted.rows[0]!;
     const reservationDigest = signalSemanticContextProposalDigestV1({ run_id: run.id,
@@ -1454,7 +1545,8 @@ async function loadGeneration(queryable: SignalSemanticContextQueryable, workspa
   const result = await queryable.query<GenerationRow>(`SELECT id::text,generation_key,status,
     brand_os_profile_id::text,brand_os_digest,knowledge_digest,locale_context_digest,primary_locale,
     locale_variants,markets,timezone,proposal_model,proposal_model_version,proposal_prompt_digest,
-    proposal_pricing_version FROM signal_semantic_context_generations
+    proposal_pricing_version,proposal_provider_lineage,proposal_provider_lineage_digest
+    FROM signal_semantic_context_generations
     WHERE workspace_id=$1::uuid AND ($2::text IS NULL OR generation_key=$2)
       AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
         WHERE successor.supersedes_generation_id=signal_semantic_context_generations.id)
@@ -1523,21 +1615,11 @@ async function insertRunEvent(queryable: SignalSemanticContextQueryable, run: Pi
   [run.workspace_id, run.id, transitionKey, eventKind, stateDigest, JSON.stringify(detail)]);
 }
 
-function lineageMatches(generation: GenerationRow,
-  configuration: SignalSemanticContextProposalRuntimeConfigurationV1) {
-  return generation.proposal_model === configuration.model
-    && generation.proposal_model_version === configuration.model_version
-    && generation.proposal_prompt_digest === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3
-    && generation.proposal_pricing_version === configuration.pricing_version;
-}
-
-function configurationReservation(configuration: SignalSemanticContextProposalRuntimeConfigurationV1,
-  inputTokenUpperBound = configuration.max_input_tokens,
-  outputTokenBudget = configuration.max_output_tokens) {
-  return signalSemanticContextProposalCostMicroUsdV1({ input_tokens: inputTokenUpperBound,
-    output_tokens: outputTokenBudget,
-    input_usd_per_million_tokens: configuration.input_usd_per_million_tokens,
-    output_usd_per_million_tokens: configuration.output_usd_per_million_tokens });
+function configurationReservation(lineage: SignalSemanticContextProviderLineageV1,
+  inputTokenUpperBound: number,
+  outputTokenBudget: number) {
+  return signalSemanticContextProviderLineageCostMicroUsdV1({ lineage,
+    input_tokens: inputTokenUpperBound, output_tokens: outputTokenBudget });
 }
 
 function publicRun(run: RunRow) {
@@ -1608,7 +1690,8 @@ const runSelect = `SELECT run.id::text,run.workspace_id::text,run.generation_id:
   run.prompt_digest,run.context_input_digest,run.provider,run.model,run.model_version,run.pricing_version,
   run.max_input_tokens,run.max_output_tokens,run.input_usd_per_million_tokens::text,
   run.output_usd_per_million_tokens::text,run.hard_cap_micro_usd::text,
-  run.reservation_micro_usd::text,run.provider_request_identity,run.provider_request_id,
+  run.reservation_micro_usd::text,run.provider_lineage_digest,run.provider_request_identity,
+  run.provider_request_id,
   run.provider_call_state,run.provider_call_count,run.provider_response_private,
   run.provider_response_digest,run.input_tokens::text,run.output_tokens::text,run.settled_micro_usd::text,
   run.appended_operation_id::text,run.proposal_count,run.result_digest,run.attempt_count,

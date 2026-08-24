@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { createTranslator } from "next-intl";
 
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query-engine";
+
 import {
   SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
   SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,
@@ -136,6 +138,9 @@ test("provider preflight configuration is server-owned and unavailable without p
     NOISIA_SEMANTIC_CONTEXT_HARD_CAP_USD:"1"
   });
   assert.equal(configured.available,true);
+  assert.equal(configured.prompt_template_digest,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  "the server-owned product configuration must seal the same prompt lineage as runtime preflight");
 });
 
 test("management routes keep authority fields and provider proposal writes off the browser surface",async()=>{

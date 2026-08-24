@@ -11,11 +11,14 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
-  signalSemanticContextProposalDigestV1
+  planSignalSemanticContextCapacityV1,
+  signalSemanticContextProposalDigestV1,
+  type SignalSemanticContextProviderLineageV1
 } from "@noisia/query-engine";
 import {
   SignalSemanticContextProviderCallError,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_REVALIDATION_CONFIRMATION,
+  buildSignalSemanticContextProposalRuntimeLineageV1,
   loadLatestSignalSemanticContextProposalRunForGenerationV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   loadSignalSemanticContextProposalRunV1,
@@ -31,6 +34,8 @@ const DB_URL = process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INTEGRATION_U
 const APPROVED = process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INTEGRATION_APPROVED === "true";
 const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const runtime = { queue_configured: true, worker_alive: true, recovery_alive: true };
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] extends object ? Mutable<T[Key]> : T[Key] };
+type MutableProviderLineage = Mutable<SignalSemanticContextProviderLineageV1>;
 const configuration: SignalSemanticContextProposalRuntimeConfigurationV1 = {
   available: true, provider: "anthropic", model: "fixture-model", model_version: "immutable-fixture-v1",
   pricing_version: "fixture-pricing-v1", max_input_tokens: 20_000, max_output_tokens: 64_000,
@@ -67,6 +72,17 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       configuration, runtime });
     assert.equal(preflight.readiness, "ready"); assert.deepEqual(preflight.blockers, []);
     assert.equal(preflight.provider_calls, 0); assert.equal(preflight.writes_performed, false);
+    const preparedBeforeStart = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
+      workspace: fixture.workspace, generation_key: fixture.generation_key });
+    const canonicalLineage = buildSignalSemanticContextProposalRuntimeLineageV1(
+      configuration, preparedBeforeStart.capacity
+    );
+    assert.deepEqual(preflight.provider, {
+      key: canonicalLineage.provider, model: canonicalLineage.model,
+      model_version: canonicalLineage.model_version,
+      pricing_version: canonicalLineage.pricing.version,
+      prompt_digest: canonicalLineage.prompt.digest
+    }, "free preflight consumes the canonical provider lineage");
     const starts = await Promise.all([1, 2].map(() => startSignalSemanticContextProposalRunV1({ pool,
       workspace: fixture.workspace, actor: fixture.actor, idempotency_key: "happy-start-idempotency",
       generation_key: fixture.generation_key, preflight_digest: preflight.preflight_digest,
@@ -74,6 +90,19 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       configuration, runtime })));
     assert.deepEqual(starts[0], starts[1], "concurrent same-key replay returns one run");
     const started = starts[0]!;
+    assert.deepEqual(await row(pool, `SELECT provider,model,model_version,pricing_version,
+      prompt_digest,input_usd_per_million_tokens,output_usd_per_million_tokens,
+      max_input_tokens,max_output_tokens FROM signal_semantic_context_proposal_runs
+      WHERE run_key=$1`, [started.run_key]), {
+      provider: canonicalLineage.provider, model: canonicalLineage.model,
+      model_version: canonicalLineage.model_version,
+      pricing_version: canonicalLineage.pricing.version,
+      prompt_digest: canonicalLineage.prompt.digest,
+      input_usd_per_million_tokens: canonicalLineage.pricing.input_usd_per_million_tokens,
+      output_usd_per_million_tokens: canonicalLineage.pricing.output_usd_per_million_tokens,
+      max_input_tokens: canonicalLineage.token_ceilings.max_input_tokens,
+      max_output_tokens: canonicalLineage.capacity.output_token_budget
+    }, "run start persists the same canonical lineage used by preflight");
     const consumedPreflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({
       queryable: pool, workspace: fixture.workspace, actor: fixture.actor,
       generation_key: fixture.generation_key, configuration, runtime
@@ -449,6 +478,92 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     assert.ok(unsupportedModelCapacity.blockers.includes(
       "semantic_context_model_output_capacity_unsupported"
     ));
+    const modelDrift = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: future.workspace, actor: future.actor,
+      generation_key: future.generation_key,
+      configuration: { ...configuration, model: "different-model" }, runtime
+    });
+    assert.ok(modelDrift.blockers.includes("provider_lineage_drift"));
+    const pricingDrift = await loadSignalSemanticContextProposalPreflightRuntimeV1({
+      queryable: pool, workspace: future.workspace, actor: future.actor,
+      generation_key: future.generation_key,
+      configuration: { ...configuration, pricing_version: "different-pricing" }, runtime
+    });
+    assert.ok(pricingDrift.blockers.includes("provider_lineage_drift"));
+
+    for (const [label, transform] of [
+      ["input-rate", (lineage: MutableProviderLineage) => {
+        lineage.pricing.input_usd_per_million_tokens = "3.000001";
+      }],
+      ["output-rate", (lineage: MutableProviderLineage) => {
+        lineage.pricing.output_usd_per_million_tokens = "15.000001";
+      }],
+      ["capacity", (lineage: MutableProviderLineage) => {
+        if (!lineage.capacity.counts || lineage.capacity.output_token_budget === null) {
+          throw new Error("fixture_capacity_required");
+        }
+        lineage.capacity.policy_digest = digest("different-capacity-policy");
+        lineage.capacity.capacity_digest = digest("different-capacity-plan");
+        lineage.capacity.counts.competitors += 1;
+        lineage.capacity.output_token_budget -= 256;
+      }],
+      ["ceilings", (lineage: MutableProviderLineage) => {
+        lineage.token_ceilings.max_input_tokens += 1;
+      }],
+      ["platform-cap", (lineage: MutableProviderLineage) => {
+        lineage.platform_hard_cap_micro_usd = "999999";
+      }]
+    ] as const) {
+      const driftFixture = await seedFixture(pool, `full-${label}-drift`, {
+        lineageTransform: transform
+      });
+      const driftPreflight = await preflightFor(pool, driftFixture);
+      assert.equal(driftPreflight.readiness, "blocked");
+      assert.ok(driftPreflight.blockers.includes("provider_lineage_drift"),
+        `${label} drift with unchanged legacy labels fails closed`);
+      const executionBefore = await proposalExecutionCounts(pool, driftFixture.workspace.id);
+      await assert.rejects(startSignalSemanticContextProposalRunV1({ pool,
+        workspace: driftFixture.workspace, actor: driftFixture.actor,
+        idempotency_key: `full-${label}-drift-start`,
+        generation_key: driftFixture.generation_key,
+        preflight_digest: driftPreflight.preflight_digest,
+        confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+        hard_cap_micro_usd: 900_000n, configuration, runtime
+      }), (error: unknown) =>
+        (error as { code?: string }).code === "provider_lineage_drift");
+      assert.deepEqual(await proposalExecutionCounts(pool, driftFixture.workspace.id), executionBefore,
+        `${label} drift creates no run, reservation, outbox, proposal or provider call`);
+    }
+
+    const contractDrift = await seedFixture(pool, "contract-drift");
+    const contractGeneration = await row(pool, `SELECT proposal_provider_lineage,
+      proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version
+      FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid
+        AND generation_key=$2`, [contractDrift.workspace.id, contractDrift.generation_key]);
+    const futureContract = structuredClone(
+      contractGeneration.proposal_provider_lineage
+    ) as MutableProviderLineage;
+    (futureContract.prompt as unknown as { output_contract_version: string })
+      .output_contract_version = "signal-semantic-context-proposal-output-v4";
+    const { lineage_digest: _oldContractDigest, ...futureContractWithoutDigest } = futureContract;
+    void _oldContractDigest;
+    futureContract.lineage_digest = signalSemanticContextProposalDigestV1(futureContractWithoutDigest);
+    assert.equal((await row(pool, `SELECT signal_semantic_context_provider_lineage_valid_v1(
+      $1::jsonb,$2,$3,$4,$5,$6) valid`, [JSON.stringify(futureContract),
+      futureContract.lineage_digest, contractGeneration.proposal_model,
+      contractGeneration.proposal_model_version, contractGeneration.proposal_prompt_digest,
+      contractGeneration.proposal_pricing_version])).valid, false,
+    "0096 consciously rejects a future output contract until a forward-only validator migration exists");
+    await assert.rejects(pool.query(`UPDATE signal_semantic_context_generations
+      SET proposal_provider_lineage=$3::jsonb,proposal_provider_lineage_digest=$4
+      WHERE workspace_id=$1::uuid AND generation_key=$2`, [contractDrift.workspace.id,
+      contractDrift.generation_key, JSON.stringify(futureContract), futureContract.lineage_digest]),
+    /generation authority cannot be rewritten/u);
+    await assert.rejects(seedFixture(pool, "digest-mismatch", {
+      lineageColumnDigest: digest("not-the-canonical-lineage")
+    }), /signal_semantic_context_generation_full_provider_lineage/u,
+    "a new generation with mismatched full JSON/digest is rejected at the DB boundary");
+
     const capPreflight = await preflightFor(pool, future);
     const operationsBefore = await scalar(pool, `SELECT count(*)::int count FROM signal_governance_control_operations
       WHERE workspace_id=$1::uuid`, [future.workspace.id]);
@@ -460,11 +575,54 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       WHERE workspace_id=$1::uuid`, [future.workspace.id]), operationsBefore);
     assert.equal(await scalar(pool, `SELECT count(*)::int count FROM signal_semantic_context_proposal_outbox
       WHERE workspace_id=$1::uuid`, [future.workspace.id]), 0);
+
+    const lowerOperatorCap = await seedFixture(pool, "lower-operator-cap");
+    const lowerCapPreflight = await preflightFor(pool, lowerOperatorCap);
+    const exactOperatorCap = BigInt(lowerCapPreflight.estimated_max_cost_micro_usd);
+    assert.ok(exactOperatorCap < configuration.platform_hard_cap_micro_usd);
+    const lowerCapRun = await startSignalSemanticContextProposalRunV1({ pool,
+      workspace: lowerOperatorCap.workspace, actor: lowerOperatorCap.actor,
+      idempotency_key: "lower-operator-cap-start",
+      generation_key: lowerOperatorCap.generation_key,
+      preflight_digest: lowerCapPreflight.preflight_digest,
+      confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+      hard_cap_micro_usd: exactOperatorCap, configuration, runtime
+    });
+    const lowerCapSealing = await row(pool, `SELECT run.hard_cap_micro_usd::text,
+      run.provider_lineage_digest,generation.proposal_provider_lineage_digest,
+      run.input_usd_per_million_tokens::text,run.output_usd_per_million_tokens::text,
+      run.max_input_tokens,run.max_output_tokens,
+      generation.proposal_provider_lineage#>>'{capacity,policy_digest}' capacity_policy_digest,
+      generation.proposal_provider_lineage#>>'{capacity,capacity_digest}' capacity_digest,
+      generation.proposal_provider_lineage#>'{capacity,counts}' capacity_counts,
+      generation.proposal_provider_lineage#>>'{capacity,output_token_budget}' capacity_output_budget,
+      generation.proposal_provider_lineage#>>'{token_ceilings,configured_max_output_tokens}' configured_ceiling,
+      generation.proposal_provider_lineage#>>'{token_ceilings,model_max_output_tokens}' model_ceiling,
+      generation.proposal_provider_lineage->>'platform_hard_cap_micro_usd' platform_cap
+      FROM signal_semantic_context_proposal_runs run
+      JOIN signal_semantic_context_generations generation ON generation.id=run.generation_id
+      WHERE run.run_key=$1`, [lowerCapRun.run_key]);
+    assert.equal(lowerCapSealing.hard_cap_micro_usd, exactOperatorCap.toString());
+    assert.equal(lowerCapSealing.provider_lineage_digest,
+      lowerCapSealing.proposal_provider_lineage_digest);
+    assert.equal(lowerCapSealing.input_usd_per_million_tokens, "3.000000");
+    assert.equal(lowerCapSealing.output_usd_per_million_tokens, "15.000000");
+    assert.equal(String(lowerCapSealing.max_output_tokens),
+      lowerCapSealing.capacity_output_budget);
+    assert.ok(lowerCapSealing.capacity_policy_digest);
+    assert.ok(lowerCapSealing.capacity_digest);
+    assert.ok(lowerCapSealing.capacity_counts);
+    assert.equal(lowerCapSealing.configured_ceiling, String(configuration.max_output_tokens));
+    assert.equal(lowerCapSealing.model_ceiling, String(configuration.model_max_output_tokens));
+    assert.equal(lowerCapSealing.platform_cap,
+      configuration.platform_hard_cap_micro_usd.toString());
   } finally { await pool.end(); }
 });
 
 async function seedFixture(pool: pg.Pool, label: string,
-  options: { providerLineage?: boolean } = {}) {
+  options: { providerLineage?: boolean;
+    lineageTransform?: (lineage: MutableProviderLineage) => void;
+    lineageColumnDigest?: string } = {}) {
   const suffix = `${label}-${randomUUID().slice(0, 8)}`; const org = randomUUID();
   const brand = randomUUID(); const user = randomUUID(); const profile = randomUUID();
   await pool.query(`INSERT INTO organizations(id,slug,legal_name,display_name,status)
@@ -496,6 +654,19 @@ async function seedFixture(pool: pg.Pool, label: string,
   const knowledgeDigest = await currentKnowledgeDigest(pool, org, brand);
   const localeDigest = signalSemanticContextProposalDigestV1({ primary_locale: "es-MX",
     locale_variants: ["es-MX", "en-US"], markets: ["MX", "US"], timezone: "America/Mexico_City" });
+  const canonicalProviderLineage = buildSignalSemanticContextProposalRuntimeLineageV1(configuration,
+    planSignalSemanticContextCapacityV1({authority:{brand_os_digest:brandDigest,
+      knowledge_digest:knowledgeDigest,locale_context_digest:localeDigest},counts:{
+        aliases:1,products:1,competitors:1,locale_variants:2,markets:2,code_switching:0,
+        category_fields:2,structured_terms:1,knowledge_blocks:6,evidence_source_kinds:6
+      }}));
+  const providerLineage = structuredClone(canonicalProviderLineage) as MutableProviderLineage;
+  options.lineageTransform?.(providerLineage);
+  if (options.lineageTransform) {
+    const { lineage_digest: _oldDigest, ...withoutDigest } = providerLineage;
+    void _oldDigest;
+    providerLineage.lineage_digest = signalSemanticContextProposalDigestV1(withoutDigest);
+  }
   const operation = randomUUID();
   await pool.query(`INSERT INTO signal_governance_control_operations(id,workspace_id,actor_user_id,
     action,request_digest,idempotency_key,status) VALUES($1::uuid,$2::uuid,$3::uuid,
@@ -513,14 +684,18 @@ async function seedFixture(pool: pg.Pool, label: string,
     generation_version,status,brand_os_profile_id,brand_os_profile_version,brand_os_digest,
     knowledge_generation_key,knowledge_digest,locale_context_digest,primary_locale,locale_variants,
     markets,timezone,proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
+    proposal_provider_lineage,proposal_provider_lineage_digest,
     draft_digest,created_operation_id,created_by_user_id) VALUES($1::uuid,$2::uuid,$3,1,'draft',
       $4::uuid,1,$5,$6,$7,$8,'es-MX',ARRAY['es-MX','en-US']::text[],ARRAY['MX','US']::text[],
-      'America/Mexico_City',$9,$10,$11,$12,$13,$14::uuid,$15::uuid)`, [workspace.id, artifact.id,
+      'America/Mexico_City',$9,$10,$11,$12,$13::jsonb,$14,$15,$16::uuid,$17::uuid)`, [workspace.id, artifact.id,
     generationKey, profile, brandDigest, `knowledge-${knowledgeDigest.slice(7, 23)}`, knowledgeDigest,
     localeDigest, options.providerLineage === false ? null : configuration.model,
     options.providerLineage === false ? null : configuration.model_version,
     options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
     options.providerLineage === false ? null : configuration.pricing_version,
+    options.providerLineage === false ? null : JSON.stringify(providerLineage),
+    options.providerLineage === false ? null : options.lineageColumnDigest
+      ?? providerLineage.lineage_digest,
     digest(`${suffix}-draft`), operation, user]);
   return { workspace: { id: workspace.id, organization_id: org, brand_id: brand },
     actor: { id: user, user_type: "noisia_internal" as const }, generation_key: generationKey,
@@ -676,13 +851,15 @@ async function supersedeGeneration(pool: pg.Pool,
     brand_os_profile_id,brand_os_profile_version,brand_os_digest,knowledge_generation_key,
     knowledge_digest,locale_context_digest,primary_locale,locale_variants,markets,timezone,
     proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
+    proposal_provider_lineage,proposal_provider_lineage_digest,
     draft_digest,created_operation_id,created_by_user_id)
     SELECT generation.workspace_id,$1::uuid,$2,generation.generation_version+1,'draft',generation.id,
       'terminal_provider_run',generation.brand_os_profile_id,generation.brand_os_profile_version,
       generation.brand_os_digest,generation.knowledge_generation_key,generation.knowledge_digest,
       generation.locale_context_digest,generation.primary_locale,generation.locale_variants,
       generation.markets,generation.timezone,generation.proposal_model,generation.proposal_model_version,
-      generation.proposal_prompt_digest,generation.proposal_pricing_version,$3,$4::uuid,$5::uuid
+      generation.proposal_prompt_digest,generation.proposal_pricing_version,
+      generation.proposal_provider_lineage,generation.proposal_provider_lineage_digest,$3,$4::uuid,$5::uuid
     FROM signal_semantic_context_generations generation
     WHERE generation.id=$6::uuid`, [artifact.id, successorKey, digest(`successor-${suffix}`),
     operation, fixture.actor.id, predecessor.id]);

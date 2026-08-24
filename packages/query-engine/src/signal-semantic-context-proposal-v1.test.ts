@@ -9,8 +9,11 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V1,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1,
+  SIGNAL_SEMANTIC_CONTEXT_PROVIDER_LINEAGE_CONTRACT_VERSION,
   SignalSemanticContextProposalValidationError,
   adaptSignalSemanticContextProposalResponseV1ToV2,
+  buildSignalSemanticContextProviderLineageV1,
   buildSignalSemanticContextProviderOutputSchemaV1,
   buildSignalSemanticContextProviderOutputSchemaV2,
   buildSignalSemanticContextProviderOutputSchemaV3,
@@ -20,10 +23,15 @@ import {
   parseSignalSemanticContextProposalResponseV1,
   parseSignalSemanticContextProposalResponseV2,
   parseSignalSemanticContextProposalResponseV3,
+  parseSignalSemanticContextProviderLineageV1,
   planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
   signalSemanticContextProposalInputSchemaV1,
+  signalSemanticContextProviderGenerationLineageMatchesV1,
+  signalSemanticContextProviderFullLineageMatchesV1,
+  signalSemanticContextProviderGenerationLineageV1,
+  signalSemanticContextProviderLineageCostMicroUsdV1,
   isSignalSemanticContextProviderRelationInvariantV3,
   signalSemanticContextMaximumProposalsForOutputTokensV1
 } from "./signal-semantic-context-proposal-v1";
@@ -142,6 +150,110 @@ test("V1 and V2 historical prompt and parser snapshots remain unchanged", () => 
   assert.equal(signalSemanticContextProposalDigestV1(
     parseSignalSemanticContextProposalResponseV2(JSON.stringify(validOutputV2))),
   "sha256:fc4496a94080e2dd1d0d538a8a62bc6a4a01e4d9d68b62509405ff24c16672e1");
+});
+
+test("canonical provider lineage pins V3 and exact integer micro-USD capacity", () => {
+  const capacity = planSignalSemanticContextCapacityV1({ authority: input.authority,
+    counts: { aliases: 3, products: 0, competitors: 6, locale_variants: 2,
+      markets: 2, code_switching: 0, category_fields: 2, structured_terms: 0,
+      knowledge_blocks: 19, evidence_source_kinds: 4 } });
+  assert.deepEqual({ minimum: capacity.minimum_useful_proposals,
+    target: capacity.target_proposals, maximum: capacity.maximum_proposals,
+    output_tokens: capacity.output_token_budget },
+  { minimum: 43, target: 66, maximum: 83, output_tokens: 21_760 });
+  const lineage = buildSignalSemanticContextProviderLineageV1({
+    provider: "anthropic", model: "claude-sonnet-4-6",
+    model_version: "claude-sonnet-4-6", pricing_version: "pricing-2026-08-21",
+    input_usd_per_million_tokens: "3.000000",
+    output_usd_per_million_tokens: "15.000000",
+    max_input_tokens: 120_000, configured_max_output_tokens: 64_000,
+    model_max_output_tokens: 64_000, platform_hard_cap_micro_usd: 1_000_000n,
+    capacity
+  });
+  assert.equal(lineage.contract_version,
+    SIGNAL_SEMANTIC_CONTEXT_PROVIDER_LINEAGE_CONTRACT_VERSION);
+  assert.equal(lineage.prompt.output_contract_version,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3);
+  assert.equal(lineage.prompt.schema_contract_version,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3);
+  assert.equal(lineage.prompt.digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3);
+  assert.deepEqual(SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1, {
+    input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
+    output_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+    schema_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+    prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+    capacity_policy_version: capacity.policy_version
+  }, "advancing the current provider contract requires an explicit contract fixture update");
+  const generationLineage = signalSemanticContextProviderGenerationLineageV1(lineage);
+  assert.deepEqual(generationLineage, { model: "claude-sonnet-4-6",
+    model_version: "claude-sonnet-4-6",
+    prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+    pricing_version: "pricing-2026-08-21" });
+  assert.equal(signalSemanticContextProviderGenerationLineageMatchesV1({
+    proposal_model: generationLineage.model,
+    proposal_model_version: generationLineage.model_version,
+    proposal_prompt_digest: generationLineage.prompt_digest,
+    proposal_pricing_version: generationLineage.pricing_version
+  }, lineage), true);
+  assert.equal(signalSemanticContextProviderGenerationLineageMatchesV1({
+    proposal_model: generationLineage.model,
+    proposal_model_version: generationLineage.model_version,
+    proposal_prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+    proposal_pricing_version: generationLineage.pricing_version
+  }, lineage), false, "historical V2 lineage remains stale under the current V3 contract");
+  assert.equal(signalSemanticContextProviderLineageCostMicroUsdV1({ lineage,
+    input_tokens: 15_072, output_tokens: capacity.output_token_budget }), 371_616n);
+  const normalizedPricingLineage = buildSignalSemanticContextProviderLineageV1({
+    provider: "anthropic", model: "claude-sonnet-4-6",
+    model_version: "claude-sonnet-4-6", pricing_version: "pricing-2026-08-21",
+    input_usd_per_million_tokens: "3", output_usd_per_million_tokens: "15",
+    max_input_tokens: 120_000, configured_max_output_tokens: 64_000,
+    model_max_output_tokens: 64_000, platform_hard_cap_micro_usd: "1000000", capacity
+  });
+  assert.equal(normalizedPricingLineage.lineage_digest, lineage.lineage_digest,
+    "equivalent price spellings normalize before lineage hashing");
+  assert.equal(normalizedPricingLineage.pricing.input_usd_per_million_tokens, "3.000000");
+  assert.equal(normalizedPricingLineage.pricing.output_usd_per_million_tokens, "15.000000");
+  const persistedGeneration = {
+    proposal_model: lineage.model, proposal_model_version: lineage.model_version,
+    proposal_prompt_digest: lineage.prompt.digest,
+    proposal_pricing_version: lineage.pricing.version,
+    proposal_provider_lineage: lineage,
+    proposal_provider_lineage_digest: lineage.lineage_digest
+  };
+  assert.deepEqual(parseSignalSemanticContextProviderLineageV1(lineage), lineage);
+  assert.deepEqual(lineage.capacity.counts,capacity.counts,
+    "capacity inputs are sealed rather than inferred later");
+  assert.equal(signalSemanticContextProviderFullLineageMatchesV1(persistedGeneration,lineage),true);
+  for(const drifted of [
+    { ...lineage, pricing:{...lineage.pricing,input_usd_per_million_tokens:"3.100000"} },
+    { ...lineage, pricing:{...lineage.pricing,output_usd_per_million_tokens:"15.100000"} },
+    { ...lineage, capacity:{...lineage.capacity,
+      policy_digest:digest("different-capacity-policy"),
+      capacity_digest:digest("different-capacity-plan"),
+      counts:{...lineage.capacity.counts!,competitors:lineage.capacity.counts!.competitors+1},
+      target_proposals:lineage.capacity.target_proposals!+1,
+      output_token_budget:lineage.capacity.output_token_budget!-256} },
+    { ...lineage, token_ceilings:{...lineage.token_ceilings,max_input_tokens:119_999} },
+    { ...lineage, platform_hard_cap_micro_usd:"999999" }
+  ]){
+    assert.equal(signalSemanticContextProviderGenerationLineageMatchesV1(
+      persistedGeneration,drifted as typeof lineage),true,
+    "the historical four-label comparison reproduces the 69A.7P blind spot");
+    assert.equal(signalSemanticContextProviderFullLineageMatchesV1(persistedGeneration,
+      drifted as typeof lineage),false,"full lineage drift cannot hide behind unchanged labels");
+  }
+  assert.throws(()=>parseSignalSemanticContextProviderLineageV1({
+    ...lineage,lineage_digest:digest("9")
+  }),/semantic_context_provider_lineage_digest_invalid/u);
+  const {lineage_digest:ignoredDigest,...contractDriftBase}=lineage;
+  void ignoredDigest;
+  const contractDrift={...contractDriftBase,prompt:{...contractDriftBase.prompt,
+    output_contract_version:"signal-semantic-context-proposal-output-v4"}};
+  assert.throws(()=>parseSignalSemanticContextProviderLineageV1({...contractDrift,
+    lineage_digest:signalSemanticContextProposalDigestV1(contractDrift)}),
+  /semantic_context_provider_lineage_contract_invalid/u,
+  "a future contract requires a forward-only validator migration");
 });
 
 test("closed parser accepts confidence 1.0 without granting disposition", () => {

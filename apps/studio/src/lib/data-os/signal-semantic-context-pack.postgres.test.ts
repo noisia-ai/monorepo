@@ -6,9 +6,12 @@ import test from "node:test";
 
 import pg from "pg";
 
-import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 } from "@noisia/query-engine";
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  type SignalSemanticContextProviderLineageV1 } from "@noisia/query-engine";
 import {
+  buildSignalSemanticContextProposalRuntimeLineageV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
+  prepareSignalSemanticContextProposalInputV1,
   type SignalSemanticContextProposalRuntimeConfigurationV1
 } from "@noisia/db";
 
@@ -16,10 +19,12 @@ import {
   appendSignalSemanticContextProposalsV1,
   bulkApproveSignalSemanticContextElementsV1,
   createSignalSemanticContextDraftV1,
+  createSignalSemanticContextDraftProductV1,
   decideSignalSemanticContextElementV1,
   loadSignalSemanticContextProposalPreflightV1,
   loadSignalSemanticContextReadinessV1,
   publishSignalSemanticContextGenerationV1,
+  reconcileSignalSemanticContextGenerationProductV1,
   reconcileSignalSemanticContextGenerationV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import { withSignalAcquisitionTransactionV1 } from "@/lib/data-os/signal-acquisition-plan";
@@ -34,6 +39,13 @@ const terminalPreflightConfiguration:SignalSemanticContextProposalRuntimeConfigu
   pricing_version:"pricing-v1",max_input_tokens:100_000,max_output_tokens:64_000,
   model_max_output_tokens:64_000,input_usd_per_million_tokens:"1",
   output_usd_per_million_tokens:"2",platform_hard_cap_micro_usd:1_000_000n
+};
+const productLineageConfiguration:SignalSemanticContextProposalRuntimeConfigurationV1={
+  available:true,provider:"anthropic",model:"claude-sonnet-4-6",
+  model_version:"claude-sonnet-4-6",pricing_version:"pricing-2026-08-21",
+  max_input_tokens:120_000,max_output_tokens:64_000,model_max_output_tokens:64_000,
+  input_usd_per_million_tokens:"3.000000",output_usd_per_million_tokens:"15.000000",
+  platform_hard_cap_micro_usd:1_000_000n
 };
 
 test("0091 semantic context authority is append-only, drift-aware, idempotent, and confidence-neutral",{
@@ -53,9 +65,8 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"context-draft-idempotent"}));
   assert.deepEqual(await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"context-draft-idempotent"})),legacyDraft);
-  const lineage={model:"fixture-model",model_version:"immutable-v1",
-    prompt_digest:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
-    pricing_version:"pricing-v1"};
+  const lineage=await fullLineageForDraft(fixture,legacyDraft.generation_key,
+    terminalPreflightConfiguration);
   const reconciledLegacy=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"reconcile-lineage-idempotent",
     reason:"provider_lineage_missing",proposalLineage:lineage}));
@@ -192,14 +203,21 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.equal(effectiveDrafts,1,"different concurrent keys converge on one effective draft");
 
   const terminalFixture=await seedFixture();
-  const terminalDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+  const terminalLegacyDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
     workspace:terminalFixture.workspace,actor:terminalFixture.actor,
-    idempotencyKey:"terminal-draft-idempotent",proposalLineage:lineage}));
+    idempotencyKey:"terminal-legacy-draft-idempotent"}));
+  const terminalLineage=await fullLineageForDraft(terminalFixture,terminalLegacyDraft.generation_key,
+    terminalPreflightConfiguration);
+  const terminalDraft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
+    queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
+    idempotencyKey:"terminal-draft-idempotent",reason:"provider_lineage_missing",
+    proposalLineage:terminalLineage}));
   const untouchedTerminal=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
-    idempotencyKey:"terminal-no-run-noop",reason:"terminal_provider_run",proposalLineage:lineage}));
+    idempotencyKey:"terminal-no-run-noop",reason:"terminal_provider_run",proposalLineage:terminalLineage}));
   assert.equal(untouchedTerminal.outcome,"noop","a draft without a run is not superseded by this operation");
-  const terminalRun=await seedTerminalProposalRun(terminalFixture,terminalDraft.generation_key,lineage,"safe_failed");
+  const terminalRun=await seedTerminalProposalRun(terminalFixture,terminalDraft.generation_key,
+    terminalLineage,"safe_failed");
   const predecessorFingerprint=await fingerprint(`SELECT generation.* FROM
     signal_semantic_context_generations generation WHERE generation.workspace_id=$1::uuid
       AND generation.generation_key=$2`,[terminalFixture.workspace.id,terminalDraft.generation_key]);
@@ -213,18 +231,18 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   const terminalConcurrent=await Promise.all(["a","b"].map((suffix)=>transaction((queryable)=>
     reconcileSignalSemanticContextGenerationV1({queryable,workspace:terminalFixture.workspace,
       actor:terminalFixture.actor,idempotencyKey:`terminal-successor-${suffix}`,
-      reason:"terminal_provider_run",proposalLineage:lineage}))));
+      reason:"terminal_provider_run",proposalLineage:terminalLineage}))));
   assert.equal(terminalConcurrent.filter((result)=>result.outcome==="created").length,1);
   assert.equal(terminalConcurrent.filter((result)=>result.outcome==="noop").length,1);
   assert.equal(terminalConcurrent[0]!.generation_key,terminalConcurrent[1]!.generation_key);
   const createdTerminal=terminalConcurrent.find((result)=>result.outcome==="created")!;
   assert.deepEqual(await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
-    idempotencyKey:"terminal-successor-a",reason:"terminal_provider_run",proposalLineage:lineage})),
+    idempotencyKey:"terminal-successor-a",reason:"terminal_provider_run",proposalLineage:terminalLineage})),
   terminalConcurrent[0],"same-key replay is exact");
   assert.deepEqual(await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:terminalFixture.workspace,actor:terminalFixture.actor,
-    idempotencyKey:"terminal-successor-c",reason:"terminal_provider_run",proposalLineage:lineage})),{
+    idempotencyKey:"terminal-successor-c",reason:"terminal_provider_run",proposalLineage:terminalLineage})),{
       outcome:"noop",generation_key:createdTerminal.generation_key,
       generation_version:createdTerminal.generation_version,status:"draft"
     },"a new key converges on the existing run-free successor");
@@ -265,28 +283,91 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.equal(successorPreflight.readiness,"ready");
   assert.ok(!successorPreflight.blockers.includes("semantic_context_generation_run_exists"));
 
+  const productFixture=await seedFixture();
+  const productProtectedBefore=await protectedCounts(productFixture.workspace.id);
+  let productLineageSuccessorKey="";
+  await withProductProviderEnvironment(async()=>{
+    const initial=await createSignalSemanticContextDraftProductV1({
+      workspace:productFixture.workspace,actor:productFixture.actor,
+      idempotencyKey:"product-lineage-initial"});
+    const expectedProductLineage=await generationProviderLineage(productFixture.workspace.id,
+      initial.generation_key);
+    assert.ok(expectedProductLineage.lineage_digest,"initial product draft seals full V3 lineage");
+    await seedTerminalProposalRun(productFixture,initial.generation_key,
+      expectedProductLineage,"safe_failed");
+    const successor=await reconcileSignalSemanticContextGenerationProductV1({
+      workspace:productFixture.workspace,actor:productFixture.actor,
+      idempotencyKey:"product-lineage-successor",reason:"terminal_provider_run"});
+    assert.equal(successor.outcome,"created");
+    productLineageSuccessorKey=successor.generation_key;
+    assert.deepEqual(await generationProviderLineage(productFixture.workspace.id,
+      successor.generation_key),expectedProductLineage,
+    "append-only successor seals the same canonical V3 lineage");
+    const preflight=await loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
+      workspace:{id:productFixture.workspace.id,
+        organization_id:productFixture.workspace.organizationId,
+        brand_id:productFixture.workspace.subject.id},
+      actor:{id:productFixture.actor.id,user_type:"noisia_internal"},
+      generation_key:successor.generation_key,configuration:productLineageConfiguration,
+      runtime:{queue_configured:true,worker_alive:true,recovery_alive:true}});
+    assert.equal(preflight.readiness,"ready");
+    assert.ok(!preflight.blockers.includes("provider_lineage_drift"));
+    assert.equal(preflight.provider.prompt_digest,
+      SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3);
+  });
+  const unchangedProductPredecessor=await generationProviderLineage(productFixture.workspace.id,
+    productLineageSuccessorKey);
+  const rateSuccessor=await withProductProviderEnvironment(async()=>
+    reconcileSignalSemanticContextGenerationProductV1({workspace:productFixture.workspace,
+      actor:productFixture.actor,idempotencyKey:"product-lineage-rate-successor",
+      reason:"provider_lineage_changed"}),{
+    NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS:"3.100000"
+  });
+  assert.equal(rateSuccessor.outcome,"created");
+  const rateSuccessorLineage=await generationProviderLineage(productFixture.workspace.id,
+    rateSuccessor.generation_key);
+  assert.equal(rateSuccessorLineage.pricing.input_usd_per_million_tokens,"3.100000");
+  assert.notEqual(rateSuccessorLineage.lineage_digest,unchangedProductPredecessor.lineage_digest);
+  assert.deepEqual(await generationProviderLineage(productFixture.workspace.id,
+    productLineageSuccessorKey),unchangedProductPredecessor,
+  "provider-lineage reconciliation never mutates its predecessor");
+  assert.deepEqual(await protectedCounts(productFixture.workspace.id),productProtectedBefore,
+    "lineage creation and successor do not write protected serving authorities");
+
   const reviewFixture=await seedFixture();
-  const reviewDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+  const reviewLegacyDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
     workspace:reviewFixture.workspace,actor:reviewFixture.actor,
-    idempotencyKey:"terminal-review-draft",proposalLineage:lineage}));
+    idempotencyKey:"terminal-review-legacy-draft"}));
+  const reviewLineage=await fullLineageForDraft(reviewFixture,reviewLegacyDraft.generation_key,
+    terminalPreflightConfiguration);
+  const reviewDraft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:reviewFixture.workspace,actor:reviewFixture.actor,
+    idempotencyKey:"terminal-review-draft",reason:"provider_lineage_missing",
+    proposalLineage:reviewLineage}));
   await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
     workspace:reviewFixture.workspace,actor:reviewFixture.actor,idempotencyKey:"terminal-review-element",
     generationKey:reviewDraft.generation_key,proposals:[proposal("review-me","identity_term",
       "review-me","Review me",1,reviewFixture.profileId)]}));
-  await seedTerminalProposalRun(reviewFixture,reviewDraft.generation_key,lineage,"safe_failed");
+  await seedTerminalProposalRun(reviewFixture,reviewDraft.generation_key,reviewLineage,"safe_failed");
   await assert.rejects(transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
     workspace:reviewFixture.workspace,actor:reviewFixture.actor,
-    idempotencyKey:"terminal-review-blocked",reason:"terminal_provider_run",proposalLineage:lineage})),
+    idempotencyKey:"terminal-review-blocked",reason:"terminal_provider_run",proposalLineage:reviewLineage})),
   /semantic_context_generation_review_required/u);
 
   const ambiguousFixture=await seedFixture();
-  const ambiguousDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+  const ambiguousLegacyDraft=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
     workspace:ambiguousFixture.workspace,actor:ambiguousFixture.actor,
-    idempotencyKey:"terminal-ambiguous-draft",proposalLineage:lineage}));
-  await seedTerminalProposalRun(ambiguousFixture,ambiguousDraft.generation_key,lineage,"ambiguous_dead_letter");
+    idempotencyKey:"terminal-ambiguous-legacy-draft"}));
+  const ambiguousLineage=await fullLineageForDraft(ambiguousFixture,
+    ambiguousLegacyDraft.generation_key,terminalPreflightConfiguration);
+  const ambiguousDraft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:ambiguousFixture.workspace,actor:ambiguousFixture.actor,
+    idempotencyKey:"terminal-ambiguous-draft",reason:"provider_lineage_missing",
+    proposalLineage:ambiguousLineage}));
+  await seedTerminalProposalRun(ambiguousFixture,ambiguousDraft.generation_key,ambiguousLineage,"ambiguous_dead_letter");
   await assert.rejects(transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
     workspace:ambiguousFixture.workspace,actor:ambiguousFixture.actor,
-    idempotencyKey:"terminal-ambiguous-blocked",reason:"terminal_provider_run",proposalLineage:lineage})),
+    idempotencyKey:"terminal-ambiguous-blocked",reason:"terminal_provider_run",proposalLineage:ambiguousLineage})),
   /semantic_context_provider_outcome_ambiguous/u);
 
   await assert.rejects(transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
@@ -317,6 +398,43 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await pool.end();
 });
 
+async function withProductProviderEnvironment<T>(run:()=>Promise<T>,overrides:Record<string,string>={}){
+  const values:Record<string,string>={
+    NOISIA_SEMANTIC_CONTEXT_MODEL:productLineageConfiguration.model,
+    NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION:productLineageConfiguration.model_version,
+    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION:productLineageConfiguration.pricing_version,
+    NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS:String(productLineageConfiguration.max_input_tokens),
+    NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS:String(productLineageConfiguration.max_output_tokens),
+    NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS:
+      productLineageConfiguration.input_usd_per_million_tokens,
+    NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS:
+      productLineageConfiguration.output_usd_per_million_tokens,
+    NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD:
+      productLineageConfiguration.platform_hard_cap_micro_usd.toString(),
+    ...overrides
+  };
+  const previous=new Map(Object.keys(values).map((key)=>[key,process.env[key]]));
+  Object.assign(process.env,values);
+  try{return await run();}
+  finally{for(const[key,value]of previous){if(value===undefined)delete process.env[key];
+    else process.env[key]=value;}}
+}
+
+async function generationProviderLineage(workspaceId:string,generationKey:string){
+  return pool.query<{lineage:SignalSemanticContextProviderLineageV1}>(`
+    SELECT proposal_provider_lineage lineage FROM signal_semantic_context_generations
+    WHERE workspace_id=$1::uuid AND generation_key=$2`,[workspaceId,generationKey])
+    .then((result)=>result.rows[0]!.lineage);
+}
+
+async function fullLineageForDraft(fixture:Awaited<ReturnType<typeof seedFixture>>,
+  generationKey:string,configuration:SignalSemanticContextProposalRuntimeConfigurationV1){
+  const prepared=await prepareSignalSemanticContextProposalInputV1({queryable:pool,
+    workspace:{id:fixture.workspace.id,organization_id:fixture.workspace.organizationId,
+      brand_id:fixture.workspace.subject.id},generation_key:generationKey});
+  return buildSignalSemanticContextProposalRuntimeLineageV1(configuration,prepared.capacity);
+}
+
 function proposal(elementKey:string,kind:"identity_term"|"product"|"need"|"friction",
   canonicalKey:string,displayText:string,confidence:number,sourceId:string){
   const sourceType=kind==="identity_term"?"brand_os_profile":kind==="product"?"brand_os_product":
@@ -329,7 +447,7 @@ function proposal(elementKey:string,kind:"identity_term"|"product"|"need"|"frict
 }
 
 async function seedQueuedProposalRun(fixture:Awaited<ReturnType<typeof seedFixture>>,
-  generationKey:string,lineage:{model:string;model_version:string;prompt_digest:string;pricing_version:string}){
+  generationKey:string,lineage:SignalSemanticContextProviderLineageV1){
   const generation=await pool.query<{id:string;brand_os_digest:string;knowledge_digest:string;
     locale_context_digest:string}>(`SELECT id::text,brand_os_digest,knowledge_digest,locale_context_digest
     FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2`,
@@ -345,17 +463,20 @@ async function seedQueuedProposalRun(fixture:Awaited<ReturnType<typeof seedFixtu
     knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
     model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
     output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
-    provider_request_identity,created_by_user_id)
-    VALUES($1::uuid,$2::uuid,$3::uuid,$4,'queued',$5,$6,$7,$8,$9,$10,'fixture',$11,$12,$13,
-      1000,500,1,2,1000000,2000,$14,$15::uuid)`,[fixture.workspace.id,row.id,operation.rows[0]!.id,
+    provider_lineage_digest,provider_request_identity,created_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+      $15,$16,$17,$18,$19,$20,$21,$22,$23::uuid)`,[fixture.workspace.id,row.id,operation.rows[0]!.id,
     `semantic-context-proposal-${randomUUID().replaceAll("-","").slice(0,16)}`,digest("preflight"),
-    row.brand_os_digest,row.knowledge_digest,row.locale_context_digest,lineage.prompt_digest,
-    digest("context-input"),lineage.model,lineage.model_version,lineage.pricing_version,
+    row.brand_os_digest,row.knowledge_digest,row.locale_context_digest,lineage.prompt.digest,
+    digest("context-input"),lineage.provider,lineage.model,lineage.model_version,lineage.pricing.version,
+    lineage.token_ceilings.max_input_tokens,lineage.capacity.output_token_budget,
+    lineage.pricing.input_usd_per_million_tokens,lineage.pricing.output_usd_per_million_tokens,
+    lineage.platform_hard_cap_micro_usd,"2000",lineage.lineage_digest,
     digest("provider-request"),fixture.actor.id]);
 }
 
 async function seedTerminalProposalRun(fixture:Awaited<ReturnType<typeof seedFixture>>,
-  generationKey:string,lineage:{model:string;model_version:string;prompt_digest:string;pricing_version:string},
+  generationKey:string,lineage:SignalSemanticContextProviderLineageV1,
   mode:"safe_failed"|"ambiguous_dead_letter"){
   const generation=await pool.query<{id:string;brand_os_digest:string;knowledge_digest:string;
     locale_context_digest:string}>(`SELECT id::text,brand_os_digest,knowledge_digest,locale_context_digest
@@ -373,16 +494,19 @@ async function seedTerminalProposalRun(fixture:Awaited<ReturnType<typeof seedFix
     knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
     model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
     output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
-    provider_request_identity,provider_call_state,provider_call_count,provider_response_private,
+    provider_lineage_digest,provider_request_identity,provider_call_state,provider_call_count,provider_response_private,
     provider_response_digest,input_tokens,output_tokens,settled_micro_usd,error_code,error_summary,
     failed_at,dead_lettered_at,created_by_user_id)
-    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,'fixture',$13,$14,$15,
-      1000,500,1,2,1000000,2000,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::uuid)`,[
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+      $17,$18,$19,$20,$21,2000,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35::uuid)`,[
     runId,fixture.workspace.id,row.id,operation.rows[0]!.id,
     `semantic-context-proposal-${randomUUID().replaceAll("-","").slice(0,16)}`,
     safe?"failed":"dead_letter",digest("terminal-preflight"),row.brand_os_digest,
-    row.knowledge_digest,row.locale_context_digest,lineage.prompt_digest,digest("terminal-context"),
-    lineage.model,lineage.model_version,lineage.pricing_version,digest("terminal-provider-request"),
+    row.knowledge_digest,row.locale_context_digest,lineage.prompt.digest,digest("terminal-context"),
+    lineage.provider,lineage.model,lineage.model_version,lineage.pricing.version,
+    lineage.token_ceilings.max_input_tokens,lineage.capacity.output_token_budget,
+    lineage.pricing.input_usd_per_million_tokens,lineage.pricing.output_usd_per_million_tokens,
+    lineage.platform_hard_cap_micro_usd,lineage.lineage_digest,digest("terminal-provider-request"),
     safe?"settled":"outcome_unknown",1,response,response?digest(response):null,
     safe?10:null,safe?10:null,safe?100:null,
     safe?"semantic_context_provider_response_schema_invalid":"provider_outcome_ambiguous",

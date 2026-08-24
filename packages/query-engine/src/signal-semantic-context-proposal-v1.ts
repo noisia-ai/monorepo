@@ -502,6 +502,239 @@ export function buildSignalSemanticContextProposalPromptV3(
   ].join("\n");
 }
 
+export const SIGNAL_SEMANTIC_CONTEXT_PROVIDER_LINEAGE_CONTRACT_VERSION =
+  "signal-semantic-context-provider-lineage-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PROVIDER_PRICING_UNIT =
+  "usd_per_million_tokens" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1 = {
+  input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
+  output_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+  schema_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+  prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  capacity_policy_version: SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION
+} as const;
+
+export type SignalSemanticContextProviderLineageInputV1 = {
+  provider: string;
+  model: string;
+  model_version: string;
+  pricing_version: string;
+  input_usd_per_million_tokens: string;
+  output_usd_per_million_tokens: string;
+  max_input_tokens: number;
+  configured_max_output_tokens: number;
+  model_max_output_tokens: number;
+  platform_hard_cap_micro_usd: bigint | string;
+  capacity?: SignalSemanticContextCapacityPlanV1 | null;
+};
+
+export type SignalSemanticContextProviderLineageV1 = ReturnType<
+  typeof buildSignalSemanticContextProviderLineageV1
+>;
+
+/**
+ * Canonical provider-neutral lineage. Callers supply only server-owned runtime and
+ * capacity values; browsers never construct or override this object.
+ */
+export function buildSignalSemanticContextProviderLineageV1(
+  input: SignalSemanticContextProviderLineageInputV1
+) {
+  const required = {
+    provider: input.provider.trim(),
+    model: input.model.trim(),
+    model_version: input.model_version.trim(),
+    pricing_version: input.pricing_version.trim()
+  };
+  if (Object.values(required).some((value) => value.length === 0)) {
+    throw new Error("semantic_context_provider_lineage_identity_invalid");
+  }
+  for (const value of [input.max_input_tokens, input.configured_max_output_tokens,
+    input.model_max_output_tokens]) {
+    if (!Number.isSafeInteger(value) || value < 1) {
+      throw new Error("semantic_context_provider_lineage_token_ceiling_invalid");
+    }
+  }
+  const hardCap = String(input.platform_hard_cap_micro_usd).trim();
+  if (!/^[1-9][0-9]*$/u.test(hardCap)) {
+    throw new Error("semantic_context_provider_lineage_hard_cap_invalid");
+  }
+  // Reuse the integer pricing parser; zero tokens validate rates without spending.
+  const inputPrice = normalizedDecimalRate(input.input_usd_per_million_tokens);
+  const outputPrice = normalizedDecimalRate(input.output_usd_per_million_tokens);
+  const capacity = input.capacity ?? null;
+  if (capacity && (capacity.policy_version !== SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION
+      || !digestSchema.safeParse(capacity.policy_digest).success
+      || !digestSchema.safeParse(capacity.capacity_digest).success
+      || !Number.isSafeInteger(capacity.output_token_budget)
+      || capacity.output_token_budget < 1)) {
+    throw new Error("semantic_context_provider_lineage_capacity_invalid");
+  }
+  const withoutDigest = {
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROVIDER_LINEAGE_CONTRACT_VERSION,
+    provider: required.provider,
+    model: required.model,
+    model_version: required.model_version,
+    pricing: {
+      version: required.pricing_version,
+      unit: SIGNAL_SEMANTIC_CONTEXT_PROVIDER_PRICING_UNIT,
+      input_usd_per_million_tokens: inputPrice,
+      output_usd_per_million_tokens: outputPrice
+    },
+    prompt: {
+      input_contract_version: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.input_contract_version,
+      output_contract_version: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.output_contract_version,
+      schema_contract_version: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.schema_contract_version,
+      digest: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.prompt_digest
+    },
+    capacity: {
+      policy_version: SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.capacity_policy_version,
+      policy_digest: capacity?.policy_digest ?? null,
+      capacity_digest: capacity?.capacity_digest ?? null,
+      counts: capacity?.counts ?? null,
+      minimum_useful_proposals: capacity?.minimum_useful_proposals ?? null,
+      target_proposals: capacity?.target_proposals ?? null,
+      maximum_proposals: capacity?.maximum_proposals ?? null,
+      output_token_budget: capacity?.output_token_budget ?? null
+    },
+    token_ceilings: {
+      max_input_tokens: input.max_input_tokens,
+      configured_max_output_tokens: input.configured_max_output_tokens,
+      model_max_output_tokens: input.model_max_output_tokens
+    },
+    platform_hard_cap_micro_usd: hardCap
+  } as const;
+  return { ...withoutDigest,
+    lineage_digest: signalSemanticContextProposalDigestV1(withoutDigest) } as const;
+}
+
+export function signalSemanticContextProviderGenerationLineageV1(
+  lineage: SignalSemanticContextProviderLineageV1
+) {
+  return {
+    model: lineage.model,
+    model_version: lineage.model_version,
+    prompt_digest: lineage.prompt.digest,
+    pricing_version: lineage.pricing.version
+  } as const;
+}
+
+export function signalSemanticContextProviderGenerationLineageMatchesV1(
+  generation: { proposal_model: string | null; proposal_model_version: string | null;
+    proposal_prompt_digest: string | null; proposal_pricing_version: string | null },
+  lineage: SignalSemanticContextProviderLineageV1
+) {
+  const expected = signalSemanticContextProviderGenerationLineageV1(lineage);
+  return generation.proposal_model === expected.model
+    && generation.proposal_model_version === expected.model_version
+    && generation.proposal_prompt_digest === expected.prompt_digest
+    && generation.proposal_pricing_version === expected.pricing_version;
+}
+
+const persistedProviderLineageSchemaV1 = z.object({
+  contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROVIDER_LINEAGE_CONTRACT_VERSION),
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  model_version: z.string().trim().min(1),
+  pricing: z.object({
+    version: z.string().trim().min(1),
+    unit: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROVIDER_PRICING_UNIT),
+    input_usd_per_million_tokens: z.string().regex(/^(0|[1-9][0-9]*)\.[0-9]{6}$/u),
+    output_usd_per_million_tokens: z.string().regex(/^(0|[1-9][0-9]*)\.[0-9]{6}$/u)
+  }).strict(),
+  prompt: z.object({
+    input_contract_version: z.literal(
+      SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.input_contract_version
+    ),
+    output_contract_version: z.literal(
+      SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.output_contract_version
+    ),
+    schema_contract_version: z.literal(
+      SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.schema_contract_version
+    ),
+    digest: z.literal(SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.prompt_digest)
+  }).strict(),
+  capacity: z.object({
+    policy_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_CAPACITY_POLICY_VERSION),
+    policy_digest: digestSchema,
+    capacity_digest: digestSchema,
+    counts: z.object({
+      aliases: z.number().int().nonnegative(),
+      products: z.number().int().nonnegative(),
+      competitors: z.number().int().nonnegative(),
+      locale_variants: z.number().int().nonnegative(),
+      markets: z.number().int().nonnegative(),
+      code_switching: z.number().int().nonnegative(),
+      category_fields: z.number().int().nonnegative(),
+      structured_terms: z.number().int().nonnegative(),
+      knowledge_blocks: z.number().int().nonnegative(),
+      evidence_source_kinds: z.number().int().nonnegative()
+    }).strict(),
+    minimum_useful_proposals: z.number().int().positive(),
+    target_proposals: z.number().int().positive(),
+    maximum_proposals: z.number().int().positive(),
+    output_token_budget: z.number().int().positive()
+  }).strict(),
+  token_ceilings: z.object({
+    max_input_tokens: z.number().int().positive(),
+    configured_max_output_tokens: z.number().int().positive(),
+    model_max_output_tokens: z.number().int().positive()
+  }).strict(),
+  platform_hard_cap_micro_usd: z.string().regex(/^[1-9][0-9]*$/u),
+  lineage_digest: digestSchema
+}).strict();
+
+/** Validates a persisted full-lineage snapshot without accepting partial or open JSON. */
+export function parseSignalSemanticContextProviderLineageV1(value: unknown) {
+  const result = persistedProviderLineageSchemaV1.safeParse(value);
+  if (!result.success) {
+    throw new Error("semantic_context_provider_lineage_contract_invalid");
+  }
+  const parsed = result.data;
+  const { lineage_digest: lineageDigest, ...withoutDigest } = parsed;
+  if (signalSemanticContextProposalDigestV1(withoutDigest) !== lineageDigest) {
+    throw new Error("semantic_context_provider_lineage_digest_invalid");
+  }
+  if (parsed.capacity.minimum_useful_proposals > parsed.capacity.target_proposals
+      || parsed.capacity.target_proposals > parsed.capacity.maximum_proposals
+      || parsed.capacity.output_token_budget > parsed.token_ceilings.configured_max_output_tokens
+      || parsed.capacity.output_token_budget > parsed.token_ceilings.model_max_output_tokens) {
+    throw new Error("semantic_context_provider_lineage_capacity_invalid");
+  }
+  return parsed;
+}
+
+/** Full generation/runtime comparison. The four legacy labels remain defense-in-depth only. */
+export function signalSemanticContextProviderFullLineageMatchesV1(
+  generation: { proposal_model: string | null; proposal_model_version: string | null;
+    proposal_prompt_digest: string | null; proposal_pricing_version: string | null;
+    proposal_provider_lineage: unknown | null; proposal_provider_lineage_digest: string | null },
+  lineage: SignalSemanticContextProviderLineageV1
+) {
+  if (!signalSemanticContextProviderGenerationLineageMatchesV1(generation, lineage)
+      || generation.proposal_provider_lineage_digest !== lineage.lineage_digest) return false;
+  try {
+    const persisted = parseSignalSemanticContextProviderLineageV1(
+      generation.proposal_provider_lineage
+    );
+    return stableJson(persisted) === stableJson(lineage);
+  } catch {
+    return false;
+  }
+}
+
+export function signalSemanticContextProviderLineageCostMicroUsdV1(args: {
+  lineage: SignalSemanticContextProviderLineageV1;
+  input_tokens: number;
+  output_tokens: number;
+}) {
+  return signalSemanticContextProposalCostMicroUsdV1({
+    input_tokens: args.input_tokens,
+    output_tokens: args.output_tokens,
+    input_usd_per_million_tokens: args.lineage.pricing.input_usd_per_million_tokens,
+    output_usd_per_million_tokens: args.lineage.pricing.output_usd_per_million_tokens
+  });
+}
+
 export function parseSignalSemanticContextProposalResponseV1(text: string) {
   const trimmed = normalizeProviderJsonEnvelope(text);
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
@@ -893,10 +1126,14 @@ export function stableSignalSemanticContextJsonV1(value: unknown) {
 }
 
 function decimalRate(value: number | string) {
-  const normalized = String(value).trim();
-  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,6}))?$/u.exec(normalized);
+  const [whole, fraction] = normalizedDecimalRate(value).split(".");
+  return BigInt(whole!) * 1_000_000n + BigInt(fraction!);
+}
+
+function normalizedDecimalRate(value: number | string) {
+  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,6}))?$/u.exec(String(value).trim());
   if (!match) throw new Error("semantic_context_provider_pricing_invalid");
-  return BigInt(match[1]!) * 1_000_000n + BigInt((match[2] ?? "").padEnd(6, "0"));
+  return `${match[1]}.${(match[2] ?? "").padEnd(6, "0")}`;
 }
 
 function ceilDivide(numerator: bigint, denominator: bigint) {
