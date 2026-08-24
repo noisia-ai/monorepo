@@ -1,9 +1,27 @@
 import { ZodError } from "zod";
 
-export function unauthorized() {
+import { loginPath, sessionRefreshPath } from "@/lib/auth/redirects";
+
+export function unauthorized(next = "/studio") {
   return Response.json(
-    { error: "unauthorized", message: "Valid Kinde session required." },
-    { status: 401 }
+    {
+      error: "unauthorized",
+      message: "Valid Kinde session required.",
+      refresh_url: sessionRefreshPath(next),
+      login_url: loginPath(next),
+      retry_policy: {
+        safe_get: "explicit_once_after_session_recovery",
+        mutating_request: "operator_resubmission_required",
+        automatic_replay: false
+      }
+    },
+    {
+      status: 401,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "Vary": "Cookie"
+      }
+    }
   );
 }
 

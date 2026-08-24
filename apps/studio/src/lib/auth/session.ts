@@ -10,103 +10,122 @@ import {
 } from "@/lib/auth/roles";
 import { isLocalAuthOverrideEnabled } from "@/lib/auth/local-auth";
 import { syncClientBrandAccessForOrganization } from "@/lib/auth/org-sync";
+import { resolveKindeSessionSnapshot } from "@/lib/auth/session-lifecycle";
 
 export async function getAuthenticatedAppUser() {
+  return (await resolveAuthenticatedAppSession()).session;
+}
+
+export async function resolveAuthenticatedAppSession() {
   const localSession = await getLocalAuthenticatedAppUser();
-  if (localSession) return localSession;
+  if (localSession) {
+    return { lifecycle: "valid" as const, session: localSession };
+  }
 
   const { getKindeServerSession } = await import("@kinde-oss/kinde-auth-nextjs/server");
   const session = getKindeServerSession();
-  const isAuthenticated = await session.isAuthenticated();
+  return resolveKindeSessionSnapshot({
+    read_raw_access_token: async () => await session.getAccessTokenRaw(),
+    authenticate_valid_snapshot: async () => {
+      const isAuthenticated = await session.isAuthenticated();
 
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  const kindeUser = await session.getUser();
-  const kindeOrganization = await session.getOrganization();
-  const kindeRoles = await session.getRoles();
-
-  if (!kindeUser?.email) {
-    throw new Error("Kinde user email is required.");
-  }
-
-  const email = kindeUser.email;
-  const [existingUser] = await db
-    .select({
-      primaryRole: users.primaryRole,
-      organizationId: users.organizationId
-    })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
-
-  // En el PRIMER login (sin fila previa) buscamos una invitación pendiente para
-  // adoptar el rol y la organización que el admin asignó desde Studio. Si no hay
-  // invitación, sembramos un rol por defecto según el dominio del correo.
-  const invitation = existingUser
-    ? null
-    : await consumePendingInvitation(email);
-
-  // AuthZ = nuestra DB. Kinde sólo autentica (identidad). De aquí en adelante el
-  // rol y la organización se administran desde Studio, no desde el token de Kinde.
-  const existingRole = normalizeRole(existingUser?.primaryRole);
-  const invitedRole = normalizeRole(invitation?.primaryRole);
-  const primaryRole = existingRole ?? invitedRole ?? bootstrapRoleForEmail(email);
-  const userType = getUserType(primaryRole);
-  const fullName = [kindeUser.given_name, kindeUser.family_name].filter(Boolean).join(" ") || null;
-  const organizationId = isInternalRole(primaryRole)
-    ? null
-    : existingUser?.organizationId ?? invitation?.organizationId ?? null;
-
-  const [appUser] = await db
-    .insert(users)
-    .values({
-      email,
-      fullName,
-      userType,
-      primaryRole,
-      organizationId,
-      status: "active",
-      invitedByUserId: invitation?.invitedByUserId ?? null
-    })
-    .onConflictDoUpdate({
-      target: users.email,
-      // No sobrescribimos primaryRole ni organizationId aquí: son fuente de verdad
-      // de nuestra DB. El status conserva 'suspended' si el admin dio de baja a la
-      // persona (un login de Kinde no la reactiva); cualquier otro estado pasa a 'active'.
-      set: {
-        fullName,
-        status: sql`CASE WHEN ${users.status} = 'suspended' THEN 'suspended' ELSE 'active' END`,
-        lastLoginAt: new Date()
+      if (!isAuthenticated) {
+        return null;
       }
-    })
-    .returning();
 
-  if (!appUser) {
-    throw new Error("Could not resolve app user.");
-  }
+      const kindeUser = await session.getUser();
+      const kindeOrganization = await session.getOrganization();
+      const kindeRoles = await session.getRoles();
 
-  // Marca la invitación como aceptada (best-effort; no bloquea el login).
-  if (invitation?.id) {
-    await db
-      .update(invitations)
-      .set({ status: "accepted", acceptedAt: new Date(), acceptedByUserId: appUser.id, updatedAt: new Date() })
-      .where(eq(invitations.id, invitation.id));
-  }
+      if (!kindeUser?.email) {
+        throw new Error("Kinde user email is required.");
+      }
 
-  await syncClientBrandAccessForOrganization({
-    userId: appUser.id,
-    role: primaryRole,
-    organizationId: appUser.organizationId
+      const email = kindeUser.email;
+      const [existingUser] = await db
+        .select({
+          primaryRole: users.primaryRole,
+          organizationId: users.organizationId
+        })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      // En el PRIMER login (sin fila previa) buscamos una invitación pendiente para
+      // adoptar el rol y la organización que el admin asignó desde Studio. Si no hay
+      // invitación, sembramos un rol por defecto según el dominio del correo.
+      const invitation = existingUser
+        ? null
+        : await consumePendingInvitation(email);
+
+      // AuthZ = nuestra DB. Kinde sólo autentica (identidad). De aquí en adelante el
+      // rol y la organización se administran desde Studio, no desde el token de Kinde.
+      const existingRole = normalizeRole(existingUser?.primaryRole);
+      const invitedRole = normalizeRole(invitation?.primaryRole);
+      const primaryRole = existingRole ?? invitedRole ?? bootstrapRoleForEmail(email);
+      const userType = getUserType(primaryRole);
+      const fullName = [kindeUser.given_name, kindeUser.family_name]
+        .filter(Boolean)
+        .join(" ") || null;
+      const organizationId = isInternalRole(primaryRole)
+        ? null
+        : existingUser?.organizationId ?? invitation?.organizationId ?? null;
+
+      const [appUser] = await db
+        .insert(users)
+        .values({
+          email,
+          fullName,
+          userType,
+          primaryRole,
+          organizationId,
+          status: "active",
+          invitedByUserId: invitation?.invitedByUserId ?? null
+        })
+        .onConflictDoUpdate({
+          target: users.email,
+          // No sobrescribimos primaryRole ni organizationId aquí: son fuente de verdad
+          // de nuestra DB. El status conserva 'suspended' si el admin dio de baja a la
+          // persona (un login de Kinde no la reactiva); cualquier otro estado pasa a 'active'.
+          set: {
+            fullName,
+            status: sql`CASE WHEN ${users.status} = 'suspended' THEN 'suspended' ELSE 'active' END`,
+            lastLoginAt: new Date()
+          }
+        })
+        .returning();
+
+      if (!appUser) {
+        throw new Error("Could not resolve app user.");
+      }
+
+      // Marca la invitación como aceptada (best-effort; no bloquea el login).
+      if (invitation?.id) {
+        await db
+          .update(invitations)
+          .set({
+            status: "accepted",
+            acceptedAt: new Date(),
+            acceptedByUserId: appUser.id,
+            updatedAt: new Date()
+          })
+          .where(eq(invitations.id, invitation.id));
+      }
+
+      await syncClientBrandAccessForOrganization({
+        userId: appUser.id,
+        role: primaryRole,
+        organizationId: appUser.organizationId
+      });
+
+      return {
+        appUser,
+        kindeUser,
+        kindeOrganization,
+        kindeRoles
+      };
+    }
   });
-
-  return {
-    appUser,
-    kindeUser,
-    kindeOrganization,
-    kindeRoles
-  };
 }
 
 async function getLocalAuthenticatedAppUser() {

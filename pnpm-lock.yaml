@@ -30,7 +30,7 @@ importers:
         specifier: 3.12.2
         version: 3.12.2
       '@kinde-oss/kinde-auth-nextjs':
-        specifier: ^2.10.2
+        specifier: 2.12.2
         version: 2.12.2(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@noisia/db':
         specifier: workspace:*
