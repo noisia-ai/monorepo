@@ -2252,3 +2252,29 @@ aplicarse.
 
 Checksum local 0095:
 `7fb943fff87f07af5fd69b9714a76194176ca131861ca68b0470b81e7d0aeb4d`.
+
+## Backend 69B.2 · Merge, review annotations y publicación sellada V2 (0097)
+
+**Registrado:** 2026-08-24 (`America/Mexico_City`).
+
+`0097_signal_semantic_context_review_publication_v2.sql` extiende la autoridad 0091 sin
+crear un store paralelo. Añade `merged` y `operator_merge`, el grafo append-only
+`signal_semantic_context_merge_edges`, annotations versionadas en
+`signal_semantic_context_review_annotations` y columnas write-once para los cuatro
+digests de publicación, el pack V2, el preflight y sus conteos sellados.
+
+Los triggers exigen generación/workspace/actor/operation consistentes, un solo target
+successor por operación N→1, fuentes únicas, grafo acíclico, lineage de annotations y
+filas append-only. Toda transición `draft→published` posterior a 0097 recompone el
+publication graph dentro de PostgreSQL y exige schema V2 y seals exactos. Las filas ya
+publicadas con V1 permanecen byte-for-byte y con columnas V2 nulas.
+
+El hardening 69B.2B conserva las garantías de evidence de 0091, valida en SQL que todo
+`typed_relation` approved apunte a una hoja current approved de la misma authority,
+sella el objeto provider lineage completo en `publication_authority_snapshot` y exige
+successors de annotations ligados al subject/related exacto de correction o merge.
+`canonical_json_v2` rechaza keys distintas que colisionen después de NFC. Ninguna de
+estas reglas crea un store o writer paralelo.
+
+Checksum local 0097:
+`b3c03d6f43dd811627c016264bfdfbcebf28dbf2e368c4d7e14db73bf5582bdb`.

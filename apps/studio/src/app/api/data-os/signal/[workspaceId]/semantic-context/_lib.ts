@@ -60,5 +60,13 @@ function operatorMessage(code:string){return({
   ,semantic_context_paid_response_settlement_invalid:"The original paid run settlement is not reconcilable."
   ,semantic_context_paid_response_authority_drift:"Brand OS, Knowledge, locale, or generation authority changed; the paid response remains preserved."
   ,semantic_context_provider_duplicate_semantic_key_conflict:"The paid response contains conflicting proposals for one semantic key; no proposal was saved."
+  ,semantic_context_publish_v1_retired:"Semantic Context publication V1 is retired. Refresh and use the sealed V2 preflight."
+  ,semantic_context_stale_preflight:"The publication graph changed. Refresh the V2 preflight before publishing."
+  ,semantic_context_provider_lineage_drift:"Provider lineage changed. Reconcile the generation before publishing."
+  ,semantic_context_merged_terminal:"A merged source is terminal and cannot be edited or reused."
+  ,semantic_context_merge_annotation_required:"Every merge source requires an open near-duplicate review annotation to the selected target."
+  ,semantic_context_merge_source_annotation_blocked:"Resolve the other open source annotations before merging."
+  ,semantic_context_merge_cycle:"This merge would create a direct or transitive cycle."
+  ,semantic_context_annotation_resolution_stale:"One or more annotation resolutions are stale. Refresh and try again."
 } as Record<string,string>)[code]??"The Semantic Context Pack operation was rejected.";}
 function safeError(error:unknown){return error instanceof Error?{name:error.name}:{name:"UnknownError"};}

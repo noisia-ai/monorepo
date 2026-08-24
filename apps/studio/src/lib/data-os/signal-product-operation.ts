@@ -32,6 +32,9 @@ export type SignalProductOperationActionV1 =
   | "append-semantic-context-proposals"
   | "decide-semantic-context-element"
   | "bulk-approve-semantic-context-elements"
+  | "merge-semantic-context-elements"
+  | "correct-semantic-context-element"
+  | "annotate-semantic-context-element"
   | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {

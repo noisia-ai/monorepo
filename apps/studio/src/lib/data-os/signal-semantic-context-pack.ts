@@ -100,7 +100,7 @@ type ElementRow = {
   element_kind:SignalSemanticContextElementKindV1;canonical_key:string;display_text:string;
   scope:string|null;entity_type:string|null;entity_id:string|null;locale:string|null;
   relation_kind:SignalSemanticContextRelationKindV1|null;relation_target_key:string|null;
-  confidence:string|null;disposition:"pending"|"approved"|"rejected";origin_kind:string;
+  confidence:string|null;disposition:"pending"|"approved"|"rejected"|"merged";origin_kind:string;
   supersedes_element_id:string|null;original_proposal_element_id:string|null;
   source_refs_digest:string;element_digest:string;source_ref_count:number;
   proposed_by_user_id:string|null;decided_by_user_id:string|null;
@@ -116,7 +116,7 @@ export async function loadSignalSemanticContextReadinessV1(args:{
 }){
   assertInternal(args.actor);
   const [live,generations]=await Promise.all([
-    resolveLiveAuthorityV1(args),
+    resolveLiveSignalSemanticContextAuthorityV1(args),
     args.queryable.query<GenerationRow>(`${generationSelect}
       WHERE generation.workspace_id=$1::uuid AND NOT EXISTS(
         SELECT 1 FROM signal_semantic_context_generations successor
@@ -183,7 +183,7 @@ export async function loadSignalSemanticContextDiffV1(args:{
 }){
   assertInternal(args.actor);
   const generation=await loadGeneration(args.queryable,args.workspace.id,args.generationKey);
-  const live=await resolveLiveAuthorityV1(args);
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
   return{contract_version:"signal-semantic-context-diff-v1",generation_key:generation?.generation_key??null,
     drift_state:generation&&compareAuthority(generation,live).length===0?"current":"stale",
     reasons:generation?compareAuthority(generation,live):["generation_missing"],
@@ -198,7 +198,7 @@ export async function loadSignalSemanticContextProposalPreflightV1(args:{
   configuration:SignalSemanticContextProviderConfigurationV1;
 }){
   const [readiness,live]=await Promise.all([
-    loadSignalSemanticContextReadinessV1(args),resolveLiveAuthorityV1(args)
+    loadSignalSemanticContextReadinessV1(args),resolveLiveSignalSemanticContextAuthorityV1(args)
   ]);
   const draft=await loadGeneration(args.queryable,args.workspace.id,undefined,"draft");
   const config=validateProviderConfiguration(args.configuration);
@@ -266,7 +266,7 @@ export async function createSignalSemanticContextDraftV1(args:{
       proposal_lineage:args.proposalLineage??null}
   });
   if(operation.replay)return operation.replay;
-  const live=await resolveLiveAuthorityV1(args);
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
   const existing=await loadGeneration(args.queryable,args.workspace.id);
   if(existing)throw new SignalSemanticContextPackError("semantic_context_draft_exists");
   const inserted=await insertDraftGenerationV1({queryable:args.queryable,workspaceId:args.workspace.id,
@@ -300,7 +300,7 @@ export async function reconcileSignalSemanticContextGenerationV1(args:{
         contract_version:"signal-semantic-context-reconciliation-v1",reason:args.reason}
   });
   if(operation.replay)return operation.replay;
-  const live=await resolveLiveAuthorityV1(args);
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
   const current=await loadGeneration(args.queryable,args.workspace.id);
   if(!current)throw new SignalSemanticContextPackError("semantic_context_generation_not_found",404);
   const runState=await loadGenerationRunStateV1(args.queryable,args.workspace.id,current.id);
@@ -481,6 +481,7 @@ export async function decideSignalSemanticContextElementV1(args:{
       element_key:args.elementKey,action:args.action,edit:args.edit??null}
   });if(operation.replay)return operation.replay;
   const generation=await requireDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertV1ReviewMutationCurrent(args.queryable,args.workspace,generation);
   const current=await loadCurrentElement(args.queryable,generation.id,args.elementKey);
   if(!current)throw new SignalSemanticContextPackError("semantic_context_element_not_found",404);
   if(current.disposition!=="pending")throw new SignalSemanticContextPackError("semantic_context_element_not_pending");
@@ -508,6 +509,7 @@ export async function bulkApproveSignalSemanticContextElementsV1(args:{
     ...args,action:"bulk-approve-semantic-context-elements",input:{generation_key:args.generationKey,element_keys:keys}
   });if(operation.replay)return operation.replay;
   const generation=await requireDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertV1ReviewMutationCurrent(args.queryable,args.workspace,generation);
   const created:string[]=[];
   for(const key of keys){const current=await loadCurrentElement(args.queryable,generation.id,key);
     if(!current||current.disposition!=="pending")throw new SignalSemanticContextPackError("semantic_context_bulk_element_invalid");
@@ -525,44 +527,17 @@ export async function bulkApproveSignalSemanticContextElementsV1(args:{
 export async function publishSignalSemanticContextGenerationV1(args:{
   queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
   idempotencyKey:string;generationKey:string;
-}){
-  assertInternal(args.actor);await lockWorkspace(args.queryable,args.workspace.id);
-  const operation=await beginSignalProductOperationV1<{generation_key:string;generation_version:number;
-    lifecycle_state:"published";semantic_context_pack_digest:string}>({...args,
-      action:"publish-semantic-context-generation",input:{generation_key:args.generationKey}
-  });if(operation.replay)return operation.replay;
-  const generation=await requireDraft(args.queryable,args.workspace.id,args.generationKey);
-  const live=await resolveLiveAuthorityV1(args);const drift=compareAuthority(generation,live);
-  if(drift.length)throw new SignalSemanticContextPackError("semantic_context_authority_drift");
-  const elements=await loadCurrentElements(args.queryable,generation.id);const counts=countRows(elements);
-  if(counts.pending>0||counts.approved<1)throw new SignalSemanticContextPackError("semantic_context_not_publishable");
-  const approved=elements.filter((element)=>element.disposition==="approved").sort(elementSort);
-  if(new Set(approved.map((element)=>`${element.element_kind}:${element.canonical_key}:${element.locale??""}`)).size
-      !==approved.length)throw new SignalSemanticContextPackError("semantic_context_approved_key_collision");
-  const packDigest=sha256(stableJson({contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
-    generation_key:generation.generation_key,source_authority:live.sourceAuthorityDigest,
-    elements:approved.map(packElement)}));
-  const draftDigest=await refreshDraftDigest(args.queryable,generation);
-  const updated=await args.queryable.query(`UPDATE signal_semantic_context_generations SET
-    status='published',draft_digest=$3,pack_digest=$4,published_operation_id=$5::uuid,
-    published_by_user_id=$6::uuid,published_at=clock_timestamp()
-    WHERE id=$1::uuid AND workspace_id=$2::uuid AND status='draft'`,[generation.id,args.workspace.id,
-      draftDigest,packDigest,operation.operationId,args.actor.id]);
-  if(updated.rowCount!==1)throw new SignalSemanticContextPackError("semantic_context_publish_conflict");
-  await insertEvent(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
-    operationId:operation.operationId,eventIndex:0,eventKind:"generation_published",
-    previous:draftDigest,next:packDigest,actorId:args.actor.id});
-  const result={generation_key:generation.generation_key,generation_version:generation.generation_version,
-    lifecycle_state:"published" as const,semantic_context_pack_digest:packDigest};
-  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
-    key:operation.key,result});return result;
+}):Promise<{generation_key:string;generation_version:number;lifecycle_state:"published";
+  semantic_context_pack_digest:string}>{
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_publish_v1_retired",410);
 }
 
 export async function createSignalSemanticContextDraftProductV1(args:Omit<Parameters<typeof createSignalSemanticContextDraftV1>[0],"queryable"|"proposalLineage">){
   const config=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
   return withSignalAcquisitionTransactionV1(async(queryable)=>{
     await lockWorkspace(queryable,args.workspace.id);
-    const live=await resolveLiveAuthorityV1({...args,queryable});
+    const live=await resolveLiveSignalSemanticContextAuthorityV1({...args,queryable});
     const proposalLineage=config.available?await buildProductProviderLineageV1({queryable,
       workspace:args.workspace,live,config}):undefined;
     return createSignalSemanticContextDraftV1({...args,queryable,proposalLineage});
@@ -574,7 +549,7 @@ export async function reconcileSignalSemanticContextGenerationProductV1(args:Omi
   if(!config.available)throw new SignalSemanticContextPackError("provider_configuration_unavailable");
   return withSignalAcquisitionTransactionV1(async(queryable)=>{
     await lockWorkspace(queryable,args.workspace.id);
-    const live=await resolveLiveAuthorityV1({...args,queryable});
+    const live=await resolveLiveSignalSemanticContextAuthorityV1({...args,queryable});
     const proposalLineage=await buildProductProviderLineageV1({queryable,
       workspace:args.workspace,live,config});
     return reconcileSignalSemanticContextGenerationV1({...args,queryable,proposalLineage});
@@ -682,7 +657,8 @@ async function buildProductProviderLineageV1(args:{queryable:SignalBrandPolicyQu
   return buildSignalSemanticContextProposalRuntimeLineageV1(args.config,capacity);
 }
 
-async function resolveLiveAuthorityV1(args:{queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace}):Promise<Authority>{
+export async function resolveLiveSignalSemanticContextAuthorityV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace}):Promise<Authority>{
   if(args.workspace.subject.type!=="brand")throw new SignalSemanticContextPackError("brand_workspace_required",422);
   const profile=await args.queryable.query<{id:string;version:number;digest:string|null}>(`
     SELECT profile.id::text,profile.version,(profile.metadata->>'snapshot_hash')::text digest
@@ -762,6 +738,18 @@ async function loadGeneration(queryable:SignalBrandPolicyQueryable,workspaceId:s
 async function requireDraft(queryable:SignalBrandPolicyQueryable,workspaceId:string,generationKey:string){
   const generation=await loadGeneration(queryable,workspaceId,generationKey,"draft",true);
   if(!generation)throw new SignalSemanticContextPackError("semantic_context_draft_not_found",404);return generation;
+}
+async function assertV1ReviewMutationCurrent(queryable:SignalBrandPolicyQueryable,
+  workspace:ResolvedSignalWorkspace,generation:GenerationRow){
+  const run=await loadGenerationRunStateV1(queryable,workspace.id,generation.id);
+  if(run&&(["queued","processing","validating"].includes(run.status)
+      ||run.executable_outbox||run.reserved_budget)){
+    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
+  }
+  const live=await resolveLiveSignalSemanticContextAuthorityV1({queryable,workspace});
+  if(compareAuthority(generation,live).length>0){
+    throw new SignalSemanticContextPackError("semantic_context_authority_drift");
+  }
 }
 async function loadCurrentElements(queryable:SignalBrandPolicyQueryable,generationId:string){
   const result=await queryable.query<ElementRow>(`${elementSelect}
@@ -874,18 +862,20 @@ async function refreshDraftDigest(queryable:SignalBrandPolicyQueryable,generatio
 }
 
 async function loadCurrentCounts(queryable:SignalBrandPolicyQueryable,generationId:string){
-  const result=await queryable.query<{pending:number;approved:number;rejected:number}>(`SELECT
+  const result=await queryable.query<{pending:number;approved:number;rejected:number;merged:number}>(`SELECT
     count(*) FILTER(WHERE element.disposition='pending')::int pending,
     count(*) FILTER(WHERE element.disposition='approved')::int approved,
-    count(*) FILTER(WHERE element.disposition='rejected')::int rejected
+    count(*) FILTER(WHERE element.disposition='rejected')::int rejected,
+    count(*) FILTER(WHERE element.disposition='merged')::int merged
     FROM signal_semantic_context_element_versions element WHERE element.generation_id=$1::uuid
       AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
         WHERE successor.supersedes_element_id=element.id)`,[generationId]);return result.rows[0]??emptyCounts();
 }
 function countRows(rows:ElementRow[]){return{pending:rows.filter((row)=>row.disposition==="pending").length,
   approved:rows.filter((row)=>row.disposition==="approved").length,
-  rejected:rows.filter((row)=>row.disposition==="rejected").length};}
-function emptyCounts(){return{pending:0,approved:0,rejected:0};}
+  rejected:rows.filter((row)=>row.disposition==="rejected").length,
+  merged:rows.filter((row)=>row.disposition==="merged").length};}
+function emptyCounts(){return{pending:0,approved:0,rejected:0,merged:0};}
 function compareAuthority(generation:GenerationRow,live:Authority){const drift:string[]=[];
   if(generation.brand_os_digest!==live.brandOsDigest)drift.push("brand_os_drift");
   if(generation.knowledge_digest!==live.knowledgeDigest)drift.push("knowledge_drift");
@@ -909,10 +899,6 @@ function publicElement(row:ElementRow,sourceRefs:Array<{source_type:string;sourc
     decided_at:row.decided_at?new Date(row.decided_at).toISOString():null,
     created_at:new Date(row.created_at).toISOString()},source_refs:sourceRefs,
   source_ref_count:row.source_ref_count};}
-function packElement(row:ElementRow){return{element_key:row.element_key,element_kind:row.element_kind,
-  canonical_key:row.canonical_key,display_text:row.display_text,scope:row.scope,entity_type:row.entity_type,
-  entity_ref:row.entity_id?sha256(row.entity_id):null,locale:row.locale,relation_kind:row.relation_kind,
-  relation_target_key:row.relation_target_key,source_refs_digest:row.source_refs_digest};}
 function elementSort(a:ElementRow,b:ElementRow){return a.element_key.localeCompare(b.element_key)||a.element_version-b.element_version;}
 function elementDefinitionDigest(args:{proposal:Omit<SignalSemanticContextProposalV1,"source_refs"|"origin_kind">;
   version:number;disposition:string;sourceRefsDigest:string}){return sha256(stableJson({

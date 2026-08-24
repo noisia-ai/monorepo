@@ -2679,3 +2679,37 @@ generación solicitada ya tiene cualquier run durable y mantiene `readiness=bloc
 El start writer vuelve a resolver esa condición dentro de la misma transacción y bajo el
 advisory lock del workspace. Un replay con la misma idempotency key devuelve su resultado
 durable; una key nueva no puede saltar el guard ni chocar tarde con la unicidad del run.
+
+### Merge, correction, annotations y publicación sellada — 69B.2
+
+**Registrado:** 2026-08-24 (`America/Mexico_City`).
+
+Las cuatro mutaciones management-only requieren rol interno DB-owned,
+`Idempotency-Key`, body cerrado y respuesta `private, no-store`:
+
+- `POST .../semantic-context/merge` resuelve de 1 a 100 source keys same-kind hacia un
+  target key; el servidor resuelve versiones, evidence y actor. Cada fuente termina
+  `merged` y el target vuelve a `pending`. `target_annotation_resolutions` no admite
+  dos entradas con el mismo `annotation_key`.
+- `POST .../semantic-context/corrections` crea un successor
+  `operator_correction/pending` y conserva annotations abiertas mediante successors
+  re-bound. `annotation_resolutions` también exige keys únicas; duplicados
+  contradictorios nunca son last-wins.
+- `POST .../semantic-context/annotations` crea, amplía o resuelve sólo los tipos y
+  resoluciones cerrados del contrato 69B.2A.
+- `POST .../semantic-context/publish` acepta únicamente `generation_key`, el token
+  opaco `preflight_digest` y `publish_reviewed_semantic_context_v2`. La confirmación V1
+  está retirada y el writer legacy devuelve 410 antes de escribir.
+
+`GET .../semantic-context/publish/preflight?generation_key=...` corre en una transacción
+`REPEATABLE READ READ ONLY`. Devuelve conteos exactos —incluido `merged`—, collisions,
+blockers, referencias abreviadas de componentes, el token completo y
+`writes_performed=false`, `provider_calls=0`; no expone UUIDs, rationale, evidence refs
+ni el envelope privado. El POST recompone el grafo bajo lock y sella candidate,
+evidence, review, autoridad y pack antes del único cambio de estado.
+
+Las respuestas de merge/correction exponen `draft_digest_ref` abreviado, nunca el
+`draft_digest` completo. El preflight incluye `invalid_relation_targets` y bloquea toda
+`typed_relation` approved cuyo target no sea una hoja current approved de la misma
+generación/workspace. Modelo, pricing o cualquier otro campo del provider lineage
+completo cambian el token y bloquean publish hasta reconciliación.

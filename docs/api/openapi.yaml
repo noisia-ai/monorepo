@@ -1927,7 +1927,7 @@ paths:
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
         - { name: search, in: query, schema: { type: string, maxLength: 120 } }
-        - { name: disposition, in: query, schema: { type: string, enum: [pending, approved, rejected] } }
+        - { name: disposition, in: query, schema: { type: string, enum: [pending, approved, rejected, merged] } }
         - { name: element_kind, in: query, schema: { type: string } }
         - { name: scope, in: query, schema: { type: string } }
         - { name: locale, in: query, schema: { type: string, enum: [all, explicit, unassigned, needs_review], default: all } }
@@ -2135,7 +2135,7 @@ paths:
     post:
       tags: [Semantic Context Pack]
       operationId: decideSemanticContextElement
-      summary: Append an explicit per-element decision/edit or bounded bulk approval.
+      summary: Append an explicit approval, atomic reasoned rejection, or bounded bulk approval.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
@@ -2146,14 +2146,32 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/SignalSemanticContextDecisionV1" }
       responses:
-        "200": { description: New append-only element version; an edit remains pending. }
+        "200": { description: New append-only terminal element version. }
+        "410": { description: The legacy browser edit command is retired; use the append-only correction endpoint. }
         "409": { description: Draft, state, drift or replay conflict. }
         "422": { description: Closed command rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/publish/preflight:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextPublicationPreflightV2
+      summary: Recompute the read-only sealed-publication V2 preflight for one effective draft.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: generation_key, in: query, required: true, schema: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$' } }
+      responses:
+        "200":
+          description: Operator-safe counts, blockers, digest references and opaque publication token; writes_performed=false and provider_calls=0.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextPublicationPreflightV2" }
+        "409": { description: Generation or authority cannot be evaluated. }
+        "422": { description: Closed query rejected. }
   /api/data-os/signal/{workspaceId}/semantic-context/publish:
     post:
       tags: [Semantic Context Pack]
       operationId: publishSemanticContextGeneration
-      summary: Publish a fully reviewed, reconciled generation in a separate explicit operation.
+      summary: Seal and publish an effective fully reviewed generation under publication graph V2.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
@@ -2162,16 +2180,74 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [generation_key, confirmation]
-              properties:
-                generation_key: { type: string }
-                confirmation: { const: publish_reviewed_semantic_context }
+            schema: { $ref: "#/components/schemas/SignalSemanticContextPublicationCommandV2" }
       responses:
-        "200": { description: Immutable published pack digest. }
-        "409": { description: Pending elements, no approvals, source drift or replay conflict. }
+        "200": { description: Immutable V2 publication sealed with separate candidate, evidence, review and authority digests. }
+        "409": { description: Stale preflight, blocker, authority drift or replay conflict. }
+        "410": { description: V1 confirmation/writer retired. }
+        "422": { description: Closed V2 command or digest rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/merge:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: mergeSemanticContextElementsV2
+      summary: Resolve one to 100 same-kind current elements into one pending target append-only.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextMergeCommandV2" }
+      responses:
+        "200":
+          description: N source successors are terminal merged; the single target successor is pending.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextMergeResultV2" }
+        "409": { description: Generation, current-leaf, annotation, graph, evidence or replay precondition rejected. }
+        "422": { description: Closed merge command rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/corrections:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: correctSemanticContextElementV2
+      summary: Append an operator correction that always reopens the current element as pending.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextCorrectionCommandV2" }
+      responses:
+        "200":
+          description: Pending correction successor and re-bound annotation lineage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextCorrectionResultV2" }
+        "409": { description: Published, stale, merged-terminal, active-run or replay state rejected. }
+        "422": { description: Closed correction command rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/annotations:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: annotateSemanticContextElementV2
+      summary: Append or resolve one closed review annotation without changing semantic disposition.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextAnnotationCommandV2" }
+      responses:
+        "200": { description: Append-only annotation version. }
+        "409": { description: Subject, generation, resolution or replay state rejected. }
+        "422": { description: Closed annotation command rejected. }
 components:
   securitySchemes:
     bearerAuth:
@@ -2389,7 +2465,7 @@ components:
         locale: { type: [string, "null"] }
         relation_kind: { type: [string, "null"] }
         relation_target_key: { type: [string, "null"] }
-        disposition: { type: string, enum: [pending, approved, rejected] }
+        disposition: { type: string, enum: [pending, approved, rejected, merged] }
         origin: { type: string }
         provenance: { type: object, additionalProperties: false, required: [proposed_at, decided_at], properties: { proposed_at: { type: string, format: date-time }, decided_at: { type: [string, "null"], format: date-time } } }
         applicability: { type: object, additionalProperties: true }
@@ -2447,12 +2523,62 @@ components:
     SignalSemanticContextReviewDetailV1:
       type: object
       additionalProperties: false
-      required: [contract_version, generation, element, evidence, evidence_notice, authority]
+      required: [contract_version, generation, element, evidence, review_annotations, merge_lineage,
+        lineage, evidence_notice, authority]
       properties:
         contract_version: { const: signal-semantic-context-review-detail-v1 }
         generation: { type: object, additionalProperties: true }
         element: { $ref: "#/components/schemas/SignalSemanticContextReviewElementV1" }
         evidence: { type: array, items: { $ref: "#/components/schemas/SignalSemanticContextReviewEvidenceV1" } }
+        review_annotations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [annotation_key, annotation_version, annotation_type, state, resolution,
+              subject_element_key, reason, rationale, related_elements, created_at]
+            properties:
+              annotation_key: { type: string, maxLength: 200 }
+              annotation_version: { type: integer, minimum: 1 }
+              annotation_type: { type: string, enum: [uncertain, needs_more_context, near_duplicate, locale_unresolved, competitive_unit_unresolved] }
+              state: { type: string, enum: [open, resolved] }
+              resolution: { type: [string, "null"], enum: [merged, kept_distinct, context_sufficient, not_supported, governed_locale, global, canonical_unit, not_applicable, null] }
+              subject_element_key: { type: string, maxLength: 200 }
+              reason: { type: string }
+              rationale: { type: string, maxLength: 1000 }
+              related_elements:
+                type: array
+                maxItems: 100
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [element_key, element_kind, display_text]
+                  properties:
+                    element_key: { type: string }
+                    element_kind: { type: string }
+                    display_text: { type: string, maxLength: 500 }
+              created_at: { type: string, format: date-time }
+        merge_lineage:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, source_element_key, target_element_key, reason, rationale, created_at]
+            properties:
+              role: { type: string, enum: [source, target] }
+              source_element_key: { type: string }
+              target_element_key: { type: string }
+              reason: { type: string }
+              rationale: { type: string, maxLength: 1000 }
+              created_at: { type: string, format: date-time }
+        lineage:
+          type: object
+          additionalProperties: false
+          required: [element_version, origin, append_only]
+          properties:
+            element_version: { type: integer, minimum: 1 }
+            origin: { type: string }
+            append_only: { const: true }
         evidence_notice: { type: object, additionalProperties: true }
         authority: { type: object, additionalProperties: true }
     SignalSemanticContextGenerationDetailV1:
@@ -2494,11 +2620,12 @@ components:
         counts:
           type: object
           additionalProperties: false
-          required: [pending, approved, rejected]
+          required: [pending, approved, rejected, merged]
           properties:
             pending: { type: integer, minimum: 0 }
             approved: { type: integer, minimum: 0 }
             rejected: { type: integer, minimum: 0 }
+            merged: { type: integer, minimum: 0 }
         locale_market_coverage: { type: object, additionalProperties: true }
         drift_state: { type: string, enum: [not_available, current, stale] }
         drift_reasons: { type: array, items: { type: string } }
@@ -2510,26 +2637,18 @@ components:
           additionalProperties: false
           required: [action, generation_key, element_key]
           properties:
-            action: { type: string, enum: [approve, reject] }
+            action: { const: approve }
             generation_key: { type: string }
             element_key: { type: string }
         - type: object
           additionalProperties: false
-          required: [action, generation_key, element_key, edit]
+          required: [action, generation_key, element_key, reason, rationale]
           properties:
-            action: { const: edit }
+            action: { const: reject }
             generation_key: { type: string }
             element_key: { type: string }
-            edit:
-              type: object
-              additionalProperties: false
-              required: [canonical_key, display_text, locale, relation_kind, relation_target_key]
-              properties:
-                canonical_key: { type: string }
-                display_text: { type: string, minLength: 1, maxLength: 500 }
-                locale: { type: [string, "null"] }
-                relation_kind: { type: [string, "null"], enum: [is_a, part_of, surface_of, competes_with, associated_with, null] }
-                relation_target_key: { type: [string, "null"] }
+            reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+            rationale: { type: string, minLength: 1, maxLength: 1000 }
         - type: object
           additionalProperties: false
           required: [action, generation_key, element_keys]
@@ -2537,6 +2656,190 @@ components:
             action: { const: bulk_approve }
             generation_key: { type: string }
             element_keys: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string } }
+    SignalSemanticContextCorrectionFieldsV2:
+      type: object
+      additionalProperties: false
+      required: [canonical_key, display_text, scope, locale, relation_kind, relation_target_key]
+      properties:
+        canonical_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        display_text: { type: string, minLength: 1, maxLength: 500 }
+        scope: { type: [string, "null"], maxLength: 200 }
+        locale: { type: [string, "null"], pattern: '^[a-z]{2,3}(?:-[A-Z]{2})?$' }
+        relation_kind: { type: [string, "null"], enum: [is_a, part_of, surface_of, competes_with, associated_with, null] }
+        relation_target_key: { type: [string, "null"], pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+    SignalSemanticContextAnnotationResolutionV2:
+      type: object
+      additionalProperties: false
+      required: [annotation_key, resolution]
+      properties:
+        annotation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        resolution: { type: string, enum: [merged, kept_distinct, context_sufficient, not_supported, governed_locale, global, canonical_unit, not_applicable] }
+    SignalSemanticContextMergeCommandV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, target_element_key, source_element_keys, reason, rationale, target_correction]
+      properties:
+        generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        target_element_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        source_element_keys:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+        rationale: { type: string, minLength: 1, maxLength: 1000 }
+        target_correction: { $ref: "#/components/schemas/SignalSemanticContextCorrectionFieldsV2" }
+        target_annotation_resolutions:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Each annotation_key is unique; contradictory or repeated resolutions are rejected atomically.
+          x-unique-by: annotation_key
+          items: { $ref: "#/components/schemas/SignalSemanticContextAnnotationResolutionV2" }
+    SignalSemanticContextCorrectionCommandV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, element_key, reason, rationale, correction]
+      properties:
+        generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        element_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+        rationale: { type: string, minLength: 1, maxLength: 1000 }
+        correction: { $ref: "#/components/schemas/SignalSemanticContextCorrectionFieldsV2" }
+        annotation_resolutions:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          description: Each annotation_key is unique; contradictory or repeated resolutions are rejected atomically.
+          x-unique-by: annotation_key
+          items: { $ref: "#/components/schemas/SignalSemanticContextAnnotationResolutionV2" }
+    SignalSemanticContextCorrectionResultV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, element_key, element_version, disposition, draft_digest_ref]
+      properties:
+        generation_key: { type: string }
+        element_key: { type: string }
+        element_version: { type: integer, minimum: 1 }
+        disposition: { const: pending }
+        draft_digest_ref:
+          type: string
+          description: Abbreviated operator-safe reference; never the full private draft digest.
+          pattern: '^sha256:[0-9a-f]{8}\u2026[0-9a-f]{8}$'
+    SignalSemanticContextMergeResultV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, target_element_key, source_element_keys, merged,
+        target_disposition, draft_digest_ref, annotation_reconciliation]
+      properties:
+        generation_key: { type: string }
+        target_element_key: { type: string }
+        source_element_keys:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        merged: { type: integer, minimum: 1, maximum: 100 }
+        target_disposition: { const: pending }
+        draft_digest_ref:
+          type: string
+          description: Abbreviated operator-safe reference; never the full private draft digest.
+          pattern: '^sha256:[0-9a-f]{8}\u2026[0-9a-f]{8}$'
+        annotation_reconciliation:
+          type: object
+          additionalProperties: false
+          required: [source_count, source_matching_near_duplicate_resolved,
+            source_other_open_annotations, target_open_annotations_before,
+            target_annotations_rebound_open, target_annotations_resolved_in_merge,
+            merged_successor_open_annotations, open_annotations_before, open_annotations_after]
+          properties:
+            source_count: { type: integer, minimum: 1 }
+            source_matching_near_duplicate_resolved: { type: integer, minimum: 0 }
+            source_other_open_annotations: { type: integer, minimum: 0 }
+            target_open_annotations_before: { type: integer, minimum: 0 }
+            target_annotations_rebound_open: { type: integer, minimum: 0 }
+            target_annotations_resolved_in_merge: { type: integer, minimum: 0 }
+            merged_successor_open_annotations: { type: integer, minimum: 0 }
+            open_annotations_before: { type: integer, minimum: 0 }
+            open_annotations_after: { type: integer, minimum: 0 }
+    SignalSemanticContextAnnotationCommandV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, element_key, annotation_key, annotation_type, reason, rationale, related_element_keys]
+      properties:
+        generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        element_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        annotation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        annotation_type: { type: string, enum: [uncertain, needs_more_context, near_duplicate, locale_unresolved, competitive_unit_unresolved] }
+        reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+        rationale: { type: string, minLength: 1, maxLength: 1000 }
+        related_element_keys:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        resolution: { type: string, enum: [merged, kept_distinct, context_sufficient, not_supported, governed_locale, global, canonical_unit, not_applicable] }
+    SignalSemanticContextPublicationCommandV2:
+      type: object
+      additionalProperties: false
+      required: [generation_key, preflight_digest, confirmation]
+      properties:
+        generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+        preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        confirmation: { const: publish_reviewed_semantic_context_v2 }
+    SignalSemanticContextPublicationPreflightV2:
+      type: object
+      additionalProperties: false
+      required: [contract_version, generation_key, generation_version, counts, collisions, blockers,
+        publishable, digest_refs, preflight_digest, writes_performed, provider_calls]
+      properties:
+        contract_version: { const: signal-semantic-context-publish-preflight-v2 }
+        generation_key: { type: string }
+        generation_version: { type: integer, minimum: 1 }
+        counts:
+          type: object
+          additionalProperties: false
+          required: [total_leaves, pending, approved, rejected, merged, open_annotations,
+            open_uncertainty, open_near_duplicate, unresolved_locale,
+            unresolved_competitive_unit, merge_edges, canonical_collisions, invalid_evidence_refs,
+            invalid_relation_targets]
+          properties:
+            total_leaves: { type: integer, minimum: 0 }
+            pending: { type: integer, minimum: 0 }
+            approved: { type: integer, minimum: 0 }
+            rejected: { type: integer, minimum: 0 }
+            merged: { type: integer, minimum: 0 }
+            open_annotations: { type: integer, minimum: 0 }
+            open_uncertainty: { type: integer, minimum: 0 }
+            open_near_duplicate: { type: integer, minimum: 0 }
+            unresolved_locale: { type: integer, minimum: 0 }
+            unresolved_competitive_unit: { type: integer, minimum: 0 }
+            merge_edges: { type: integer, minimum: 0 }
+            canonical_collisions: { type: integer, minimum: 0 }
+            invalid_evidence_refs: { type: integer, minimum: 0 }
+            invalid_relation_targets: { type: integer, minimum: 0 }
+        collisions:
+          type: array
+          items:
+            type: array
+            minItems: 3
+            maxItems: 3
+            items: { type: string }
+        blockers: { type: array, uniqueItems: true, items: { type: string } }
+        publishable: { type: boolean }
+        digest_refs:
+          type: object
+          additionalProperties: false
+          required: [candidate, evidence, review, authority, pack]
+          properties:
+            candidate: { type: string }
+            evidence: { type: string }
+            review: { type: string }
+            authority: { type: string }
+            pack: { type: string }
+        preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        writes_performed: { const: false }
+        provider_calls: { const: 0 }
     SignalSemanticContextProposalStartV1:
       type: object
       additionalProperties: false

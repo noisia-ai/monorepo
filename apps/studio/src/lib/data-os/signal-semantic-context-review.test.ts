@@ -173,7 +173,7 @@ test("evidence relation and unavailable/current states remain exact and operator
   assert.deepEqual(inactive.applicability, { locales: ["en-US"], markets: ["US"], state: "explicit" });
 });
 
-test("review routes and UI preserve management AuthZ, privacy, paging, and no bulk approval", async () => {
+test("review routes and guided UI preserve management AuthZ, privacy, explicit scope, and paging", async () => {
   const root = process.cwd();
   const [pageRoute, detailRoute, summaryRoute, manager, workbench, styles, esMx, enUs] = await Promise.all([
     readFile(resolve(root, "src/app/api/data-os/signal/[workspaceId]/semantic-context/review/route.ts"), "utf8"),
@@ -191,18 +191,45 @@ test("review routes and UI preserve management AuthZ, privacy, paging, and no bu
   assert.doesNotMatch(routes, /POST|Idempotency-Key|generation_key|source_id|workspace_id|provider_response|prompt/gu);
   assert.match(manager, /\/review\/summary/u);
   assert.match(manager, /SemanticContextReviewWorkbench/u);
+  assert.match(manager, /reviewWritable=\{generation\.lifecycle_state === "draft"\}/u);
+  assert.doesNotMatch(manager, /requestJson\(`\$\{base\}\/publish`/u,
+    "manager no longer exposes the unsealed V1 publish action");
   assert.doesNotMatch(manager, /brand_os_digest|knowledge_digest|locale_context_digest|semantic_context_pack_digest/u);
-  assert.doesNotMatch(workbench, /bulk_approve|selected|source_ref|confidence_authoritative|provider_response|raw_prompt/u);
+  assert.match(workbench, /submitSignalSemanticContextBulkApprovalUiV1/u);
+  assert.match(workbench, /signalSemanticContextBoundedPendingSelectionV1/u);
+  assert.match(workbench, /submitSignalSemanticContextGuidedRejectUiV1/u);
+  assert.match(workbench, /submitSignalSemanticContextMergeUiV1/u);
+  assert.match(workbench, /mutationLockRef\.current\.begin\(\)/u);
+  assert.match(workbench, /if \(!beginMutation\("(?:approve|bulk|reject|correct|annotate|merge)"\)\) return/gu);
+  assert.match(workbench, /signalSemanticContextSelectionWithinVisiblePageV1/u);
+  assert.match(workbench, /setSelected\(new Map\(\)\);\s*setMergeOpen\(false\);/u,
+    "page changes clear the exact operator selection");
+  assert.match(workbench, /event\.key === "Escape" && detailMode !== "view"/u);
+  assert.match(workbench, /if \(!busy\) setDetailMode\("view"\)/u);
+  assert.match(workbench, /disposition === "merged" \? "not_available"/u,
+    "merged is neutral lineage rather than a rejected error state");
+  assert.match(workbench, /"operator_merge"/u);
+  assert.match(workbench, /errorRecovery === "preflight" \? \(\) => void loadPublicationPreflight\(\)/u,
+    "preflight errors retry the preflight rather than reloading the proposal page");
+  assert.match(workbench, /onRetry\?: \(\) => void/u,
+    "mutation feedback may remain actionable without a misleading generic reload");
+  assert.match(workbench, /\/publish\/preflight/u);
+  assert.doesNotMatch(workbench, /provider_response|raw_prompt|brand_os_digest|knowledge_digest|preflight_digest/u);
   assert.match(workbench, /next_cursor/u);
   assert.match(workbench, /formatAdminDate\(element\.provenance\.proposed_at, locale/u);
   assert.match(workbench, /context_supplied_to_model/u);
   assert.match(styles, /\.semantic-context-review__row-button:focus-visible/u);
+  assert.match(styles, /@media \(max-width: 700px\)/u);
+  assert.match(styles, /\.semantic-context-review__publication-counts/u);
   assert.match(styles, /font-size: 12px/u);
   for (const messages of [JSON.parse(esMx), JSON.parse(enUs)]) {
     const review = messages.AdminWorkspace.brandOs.semanticContext.reviewWorkbench;
     assert.equal(typeof review.evidence.notCitation, "string");
     assert.equal(typeof review.attention.body, "string");
     assert.equal(typeof review.pagination.next, "string");
+    assert.equal(typeof review.merge.crossKind, "string");
+    assert.equal(typeof review.annotations.types.near_duplicate, "string");
+    assert.equal(typeof review.publication.confirmationBoundary, "string");
   }
 });
 

@@ -12,7 +12,7 @@ import type {
 } from "@/lib/data-os/signal-workspace";
 
 const PAGE_SIZES = [20, 40] as const;
-const DISPOSITIONS = ["pending", "approved", "rejected"] as const;
+const DISPOSITIONS = ["pending", "approved", "rejected", "merged"] as const;
 const EVIDENCE_RELATIONS = ["supports", "limits", "contradicts"] as const;
 const LOCALE_FILTERS = ["all", "explicit", "unassigned", "needs_review"] as const;
 const EVIDENCE_FILTERS = [
@@ -61,6 +61,7 @@ type GenerationRow = {
 };
 
 type ReviewElementRow = {
+  id?: string;
   element_key: string;
   element_version: number;
   element_kind: SignalSemanticContextElementKindV1;
@@ -103,6 +104,34 @@ type EvidenceProjectionRow = {
   source_metadata: unknown;
   resolved: boolean;
   current: boolean;
+};
+
+type ReviewAnnotationProjectionRow = {
+  annotation_key: string;
+  annotation_version: number;
+  annotation_type: "uncertain" | "needs_more_context" | "near_duplicate"
+    | "locale_unresolved" | "competitive_unit_unresolved";
+  state: "open" | "resolved";
+  resolution: "merged" | "kept_distinct" | "context_sufficient" | "not_supported"
+    | "governed_locale" | "global" | "canonical_unit" | "not_applicable" | null;
+  subject_element_key: string;
+  reason_code: string;
+  rationale: string;
+  created_at: string | Date;
+  related_elements: Array<{
+    element_key: string;
+    element_kind: string;
+    display_text: string;
+  }>;
+};
+
+type ReviewMergeProjectionRow = {
+  role: "source" | "target";
+  source_element_key: string;
+  target_element_key: string;
+  reason_code: string;
+  rationale: string;
+  created_at: string | Date;
 };
 
 export type SignalSemanticContextEvidenceProjectionV1 = {
@@ -293,11 +322,70 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
     args.workspace.subject.id,
     generation.brand_os_profile_id
   ]);
+  const annotations = await args.queryable.query<ReviewAnnotationProjectionRow>(`
+    SELECT annotation.annotation_key,annotation.annotation_version,annotation.annotation_type,
+      annotation.state,annotation.resolution,subject.element_key subject_element_key,
+      annotation.reason_code,annotation.rationale,annotation.created_at,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'element_key',related_element.element_key,
+        'element_kind',related_element.element_kind,
+        'display_text',related_element.display_text) ORDER BY related.position)
+        FROM unnest(annotation.related_element_ids) WITH ORDINALITY related(id,position)
+        JOIN signal_semantic_context_element_versions related_element ON related_element.id=related.id
+          AND related_element.generation_id=annotation.generation_id),'[]'::jsonb) related_elements
+    FROM signal_semantic_context_review_annotations annotation
+    JOIN signal_semantic_context_element_versions subject ON subject.id=annotation.subject_element_id
+    WHERE annotation.generation_id=$1::uuid AND subject.element_key=$2
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_review_annotations successor
+        WHERE successor.supersedes_annotation_id=annotation.id)
+    ORDER BY annotation.state,annotation.annotation_type,annotation.annotation_key`, [
+    generation.id,
+    element.element_key
+  ]);
+  const merges = await args.queryable.query<ReviewMergeProjectionRow>(`
+    SELECT CASE WHEN edge.source_element_key=$2 THEN 'source' ELSE 'target' END role,
+      edge.source_element_key,edge.target_element_key,edge.reason_code,edge.rationale,edge.created_at
+    FROM signal_semantic_context_merge_edges edge
+    WHERE edge.generation_id=$1::uuid
+      AND (edge.source_element_key=$2 OR edge.target_element_key=$2)
+    ORDER BY edge.created_at,edge.source_element_key,edge.target_element_key`, [
+    generation.id,
+    element.element_key
+  ]);
   return {
     contract_version: "signal-semantic-context-review-detail-v1" as const,
     generation: publicReviewGeneration(generation),
     element: publicReviewElement(element, generation),
     evidence: evidence.rows.map(projectSignalSemanticContextEvidenceSourceV1),
+    review_annotations: annotations.rows.map((annotation) => ({
+      annotation_key: annotation.annotation_key,
+      annotation_version: Number(annotation.annotation_version),
+      annotation_type: annotation.annotation_type,
+      state: annotation.state,
+      resolution: annotation.resolution,
+      subject_element_key: annotation.subject_element_key,
+      reason: annotation.reason_code,
+      rationale: safeLabel(annotation.rationale, "Review rationale", 1_000),
+      related_elements: annotation.related_elements.map((related) => ({
+        element_key: related.element_key,
+        element_kind: related.element_kind,
+        display_text: safeLabel(related.display_text, related.element_key, 500)
+      })),
+      created_at: new Date(annotation.created_at).toISOString()
+    })),
+    merge_lineage: merges.rows.map((merge) => ({
+      role: merge.role,
+      source_element_key: merge.source_element_key,
+      target_element_key: merge.target_element_key,
+      reason: merge.reason_code,
+      rationale: safeLabel(merge.rationale, "Merge rationale", 1_000),
+      created_at: new Date(merge.created_at).toISOString()
+    })),
+    lineage: {
+      element_version: Number(element.element_version),
+      origin: element.origin_kind,
+      append_only: true as const
+    },
     evidence_notice: {
       context_label: "context_supplied_to_model" as const,
       pinpoint_citation: false,
@@ -469,7 +557,7 @@ function publicOperatorGeneration(value: {
   generation_key: string;
   generation_version: number;
   lifecycle_state: "draft" | "published";
-  counts: { pending: number; approved: number; rejected: number };
+  counts: { pending: number; approved: number; rejected: number; merged: number };
   primary_locale: string;
   locale_variants: string[];
   markets: string[];
@@ -755,7 +843,7 @@ function numericRecord(value: Record<string, number>) {
 }
 
 const reviewElementsCte = `WITH base_elements AS (
-  SELECT element.element_key,element.element_version,element.element_kind,element.canonical_key,
+  SELECT element.id::text,element.element_key,element.element_version,element.element_kind,element.canonical_key,
     element.display_text,element.scope,element.entity_type,element.locale,element.relation_kind,
     element.relation_target_key,element.disposition,element.origin_kind,element.proposed_at,
     element.decided_at,lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,

@@ -3,20 +3,41 @@
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowsMerge,
   Check,
   CircleNotch,
+  Eye,
   MagnifyingGlass,
+  NotePencil,
   PencilSimple,
+  ShieldCheck,
   Warning,
   X
 } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AdminStatus, formatAdminDate } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminStatus, formatAdminDate, formatAdminNumber } from
+  "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import {
+  SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_UI,
+  SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_UI,
+  createSignalSemanticContextMutationLockV1,
+  signalSemanticContextAnnotationResolutionsV1,
+  signalSemanticContextBoundedPendingSelectionV1,
+  signalSemanticContextReviewRangeV1,
+  signalSemanticContextSelectionWithinVisiblePageV1,
+  submitSignalSemanticContextBulkApprovalUiV1,
+  submitSignalSemanticContextGuidedRejectUiV1,
+  submitSignalSemanticContextMergeUiV1,
+  type SignalSemanticContextAnnotationResolutionUi,
+  type SignalSemanticContextAnnotationTypeUi,
+  type SignalSemanticContextReviewReasonUi
+} from "@/lib/data-os/signal-semantic-context-review-ui";
 
-type Disposition = "pending" | "approved" | "rejected";
+type Disposition = "pending" | "approved" | "rejected" | "merged";
+type DetailMode = "view" | "correct" | "reject" | "annotate";
 
 type ReviewElement = {
   element_key: string;
@@ -78,6 +99,33 @@ type EvidenceSource = {
   current_state: "current" | "inactive" | "unavailable";
 };
 
+type ReviewAnnotation = {
+  annotation_key: string;
+  annotation_version: number;
+  annotation_type: SignalSemanticContextAnnotationTypeUi;
+  state: "open" | "resolved";
+  resolution: SignalSemanticContextAnnotationResolutionUi | null;
+  reason: SignalSemanticContextReviewReasonUi;
+  rationale: string;
+  related_elements: Array<{ element_key: string; element_kind: string; display_text: string }>;
+  created_at: string;
+};
+
+type ReviewDetail = {
+  element: ReviewElement;
+  evidence: EvidenceSource[];
+  review_annotations: ReviewAnnotation[];
+  merge_lineage: Array<{
+    role: "source" | "target";
+    source_element_key: string;
+    target_element_key: string;
+    reason: string;
+    rationale: string;
+    created_at: string;
+  }>;
+  lineage: { element_version: number; origin: string; append_only: true };
+};
+
 type ReviewPage = {
   total: number;
   page_size: 20 | 40;
@@ -90,7 +138,17 @@ type ReviewPage = {
   };
 };
 
-type ReviewDetail = { element: ReviewElement; evidence: EvidenceSource[] };
+type PublicationPreflight = {
+  generation_key: string;
+  generation_version: number;
+  counts: Record<string, number>;
+  collisions: string[][];
+  blockers: string[];
+  publishable: boolean;
+  digest_refs: { candidate: string; evidence: string; review: string; authority: string; pack: string };
+  writes_performed: false;
+  provider_calls: 0;
+};
 
 type Filters = {
   disposition: Disposition | "all";
@@ -121,13 +179,19 @@ function idempotencyKey(action: string) {
   return `semantic-context:${action}:${crypto.randomUUID()}`;
 }
 
+function annotationKey(action: string) {
+  return `${action}:${crypto.randomUUID()}`;
+}
+
 export function SemanticContextReviewWorkbench({
   generationKey,
   onMutation,
+  reviewWritable,
   workspaceId
 }: {
   generationKey: string;
   onMutation: () => Promise<void>;
+  reviewWritable: boolean;
   workspaceId: string;
 }) {
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
@@ -136,17 +200,25 @@ export function SemanticContextReviewWorkbench({
   const [page, setPage] = useState<ReviewPage | null>(null);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [detailMode, setDetailMode] = useState<DetailMode>("view");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [cursor, setCursor] = useState<string | null>(null);
   const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([]);
+  const [selected, setSelected] = useState<Map<string, ReviewElement>>(new Map());
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [preflight, setPreflight] = useState<PublicationPreflight | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRecovery, setErrorRecovery] = useState<"page" | "preflight" | "none">("none");
   const reviewOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const activeFormRef = useRef<HTMLFormElement | null>(null);
+  const mutationLockRef = useRef(createSignalSemanticContextMutationLockV1());
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -156,7 +228,27 @@ export function SemanticContextReviewWorkbench({
   useEffect(() => {
     setCursor(null);
     setCursorHistory([]);
+    setSelected(new Map());
+    setMergeOpen(false);
   }, [debouncedQuery, filters]);
+
+  useEffect(() => {
+    setSelected(new Map());
+    setMergeOpen(false);
+  }, [cursor]);
+
+  function beginMutation(label: string) {
+    if (!mutationLockRef.current.begin()) return false;
+    setBusy(label);
+    setError(null);
+    setErrorRecovery("none");
+    return true;
+  }
+
+  function endMutation() {
+    mutationLockRef.current.end();
+    setBusy(null);
+  }
 
   const loadPage = useCallback(async (signal?: AbortSignal) => {
     const params = new URLSearchParams({ page_size: "20" });
@@ -170,11 +262,13 @@ export function SemanticContextReviewWorkbench({
     if (cursor) params.set("cursor", cursor);
     setLoading(true);
     setError(null);
+    setErrorRecovery("none");
     try {
       setPage(await requestJson<ReviewPage>(`${base}/review?${params}`, { signal }));
     } catch (loadError) {
       if ((loadError as { name?: string }).name !== "AbortError") {
         setError(loadError instanceof Error ? loadError.message : t("reviewWorkbench.errors.load"));
+        setErrorRecovery("page");
       }
     } finally {
       if (!signal?.aborted) setLoading(false);
@@ -187,69 +281,37 @@ export function SemanticContextReviewWorkbench({
     return () => controller.abort();
   }, [loadPage]);
 
+  const loadDetail = useCallback(async (elementKey: string) =>
+    requestJson<ReviewDetail>(`${base}/review/${encodeURIComponent(elementKey)}`), [base]);
+
   async function openDetail(elementKey: string, opener: HTMLButtonElement) {
     reviewOpenerRef.current = opener;
     setDetailKey(elementKey);
+    setDetailMode("view");
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
     setError(null);
     try {
-      setDetail(await requestJson<ReviewDetail>(`${base}/review/${encodeURIComponent(elementKey)}`));
-    } catch (detailError) {
-      setDetailError(detailError instanceof Error ? detailError.message : t("reviewWorkbench.errors.detail"));
+      setDetail(await loadDetail(elementKey));
+    } catch (loadError) {
+      setDetailError(loadError instanceof Error ? loadError.message : t("reviewWorkbench.errors.detail"));
     } finally {
       setDetailLoading(false);
     }
   }
 
-  async function decide(action: "approve" | "reject", elementKey: string) {
-    setBusy(action);
-    setError(null);
+  async function retryDetail() {
+    if (!detailKey) return;
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
     try {
-      await requestJson(`${base}/decisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey(action) },
-        body: JSON.stringify({ action, generation_key: generationKey, element_key: elementKey })
-      });
-      closeDetail();
-      await Promise.all([loadPage(), onMutation()]);
-    } catch (decisionError) {
-      setError(decisionError instanceof Error ? decisionError.message : t("errors.decision"));
+      setDetail(await loadDetail(detailKey));
+    } catch (loadError) {
+      setDetailError(loadError instanceof Error ? loadError.message : t("reviewWorkbench.errors.detail"));
     } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveEdit(formData: FormData) {
-    if (!detail) return;
-    setBusy("edit");
-    setError(null);
-    try {
-      const relation = String(formData.get("relation_kind") ?? "").trim();
-      const target = String(formData.get("relation_target_key") ?? "").trim();
-      await requestJson(`${base}/decisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("edit") },
-        body: JSON.stringify({
-          action: "edit",
-          generation_key: generationKey,
-          element_key: detail.element.element_key,
-          edit: {
-            canonical_key: String(formData.get("canonical_key") ?? "").trim(),
-            display_text: String(formData.get("display_text") ?? "").trim(),
-            locale: String(formData.get("locale") ?? "").trim() || null,
-            relation_kind: relation || null,
-            relation_target_key: target || null
-          }
-        })
-      });
-      closeDetail();
-      await Promise.all([loadPage(), onMutation()]);
-    } catch (editError) {
-      setError(editError instanceof Error ? editError.message : t("errors.edit"));
-    } finally {
-      setBusy(null);
+      setDetailLoading(false);
     }
   }
 
@@ -257,165 +319,431 @@ export function SemanticContextReviewWorkbench({
     setDetailKey(null);
     setDetail(null);
     setDetailError(null);
+    setDetailMode("view");
   }
 
-  const resultStart = page && page.elements.length ? cursorHistory.length * page.page_size + 1 : 0;
-  const resultEnd = page ? Math.min(resultStart + page.elements.length - 1, page.total) : 0;
+  async function refreshAfterMutation() {
+    setPreflight(null);
+    closeDetail();
+    setSelected(new Map());
+    await Promise.all([loadPage(), onMutation()]);
+  }
+
+  async function approve(elementKey: string) {
+    if (!beginMutation("approve")) return;
+    try {
+      await requestJson(`${base}/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("approve") },
+        body: JSON.stringify({ action: "approve", generation_key: generationKey, element_key: elementKey })
+      });
+      await refreshAfterMutation();
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("errors.decision"));
+    } finally { endMutation(); }
+  }
+
+  async function bulkApprove() {
+    const elements = page?.elements ?? [];
+    const keys = [...selected.keys()];
+    if (!signalSemanticContextBoundedPendingSelectionV1({ selectedKeys: keys, elements })) {
+      setError(t("reviewWorkbench.bulk.invalid"));
+      return;
+    }
+    if (!beginMutation("bulk")) return;
+    try {
+      await submitSignalSemanticContextBulkApprovalUiV1({
+        request: requestJson, base, generationKey, elementKeys: keys,
+        idempotencyKey: idempotencyKey("bulk-approve")
+      });
+      await refreshAfterMutation();
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("errors.decision"));
+    } finally { endMutation(); }
+  }
+
+  async function reject(form: FormData) {
+    if (!detail) return;
+    const reason = String(form.get("reason")) as SignalSemanticContextReviewReasonUi;
+    const rationale = String(form.get("rationale") ?? "").trim();
+    const elementKey = detail.element.element_key;
+    if (!beginMutation("reject")) return;
+    try {
+      await submitSignalSemanticContextGuidedRejectUiV1({
+        request: requestJson,
+        base,
+        generationKey,
+        elementKey,
+        reason,
+        rationale,
+        idempotencyKey: idempotencyKey(`reject:${elementKey}`)
+      });
+      await refreshAfterMutation();
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.reject"));
+    } finally { endMutation(); }
+  }
+
+  async function correct(form: FormData) {
+    if (!detail) return;
+    const relationKind = String(form.get("relation_kind") ?? "").trim();
+    const relationTarget = String(form.get("relation_target_key") ?? "").trim();
+    if (!beginMutation("correct")) return;
+    try {
+      await requestJson(`${base}/corrections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("correct") },
+        body: JSON.stringify({
+          generation_key: generationKey,
+          element_key: detail.element.element_key,
+          reason: String(form.get("reason")),
+          rationale: String(form.get("rationale") ?? "").trim(),
+          correction: {
+            canonical_key: String(form.get("canonical_key") ?? "").trim(),
+            display_text: String(form.get("display_text") ?? "").trim(),
+            scope: String(form.get("scope") ?? "").trim() || null,
+            locale: String(form.get("locale") ?? "").trim() || null,
+            relation_kind: relationKind || null,
+            relation_target_key: relationTarget || null
+          }
+        })
+      });
+      await refreshAfterMutation();
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.correct"));
+    } finally { endMutation(); }
+  }
+
+  async function annotate(form: FormData) {
+    if (!detail) return;
+    const annotationType = String(form.get("annotation_type")) as SignalSemanticContextAnnotationTypeUi;
+    const related = String(form.get("related_element_key") ?? "").trim();
+    if (!beginMutation("annotate")) return;
+    try {
+      await requestJson(`${base}/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("annotate") },
+        body: JSON.stringify({
+          generation_key: generationKey,
+          element_key: detail.element.element_key,
+          annotation_key: annotationKey("review"),
+          annotation_type: annotationType,
+          reason: String(form.get("reason")),
+          rationale: String(form.get("rationale") ?? "").trim(),
+          related_element_keys: related ? [related] : []
+        })
+      });
+      setDetail(await loadDetail(detail.element.element_key));
+      setDetailMode("view");
+      setPreflight(null);
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.annotate"));
+    } finally { endMutation(); }
+  }
+
+  async function resolveAnnotation(annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) {
+    if (!detail) return;
+    if (!beginMutation(`resolve:${annotation.annotation_key}`)) return;
+    try {
+      await requestJson(`${base}/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("resolve-annotation") },
+        body: JSON.stringify({
+          generation_key: generationKey,
+          element_key: detail.element.element_key,
+          annotation_key: annotation.annotation_key,
+          annotation_type: annotation.annotation_type,
+          reason: annotation.reason,
+          rationale: annotation.rationale,
+          related_element_keys: annotation.related_elements.map((element) => element.element_key),
+          resolution
+        })
+      });
+      setDetail(await loadDetail(detail.element.element_key));
+      setPreflight(null);
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.annotate"));
+    } finally { endMutation(); }
+  }
+
+  async function merge(form: FormData) {
+    const elements = [...selected.values()];
+    const targetKey = String(form.get("target_element_key") ?? "");
+    const target = selected.get(targetKey);
+    const sources = elements.filter((element) => element.element_key !== targetKey);
+    const visibleElementKeys=(page?.elements??[]).map((element)=>element.element_key);
+    if (!signalSemanticContextSelectionWithinVisiblePageV1({selectedKeys:[...selected.keys()],visibleElementKeys})
+      ||!target || !sources.length || elements.some((element) => element.element_kind !== target.element_kind)) {
+      setError(t("reviewWorkbench.merge.sameKindRequired"));
+      return;
+    }
+    if (!beginMutation("merge")) return;
+    try {
+      const sourceDetails = await Promise.all(sources.map((source) => loadDetail(source.element_key)));
+      const missingAnnotationKeys: Record<string, string> = {};
+      sourceDetails.forEach((sourceDetail) => {
+        const matching = sourceDetail.review_annotations.some((annotation) =>
+          annotation.state === "open" && annotation.annotation_type === "near_duplicate"
+          && annotation.related_elements.some((related) => related.element_key === targetKey));
+        if (!matching) missingAnnotationKeys[sourceDetail.element.element_key] = annotationKey("merge-candidate");
+      });
+      await submitSignalSemanticContextMergeUiV1({
+        request: requestJson,
+        base,
+        generationKey,
+        targetElementKey: targetKey,
+        sourceElementKeys: sources.map((source) => source.element_key),
+        missingAnnotationKeys,
+        reason: String(form.get("reason")) as SignalSemanticContextReviewReasonUi,
+        rationale: String(form.get("rationale") ?? "").trim(),
+        targetCorrection: {
+          canonical_key: String(form.get("canonical_key") ?? "").trim(),
+          display_text: String(form.get("display_text") ?? "").trim(),
+          scope: String(form.get("scope") ?? "").trim() || null,
+          locale: String(form.get("locale") ?? "").trim() || null,
+          relation_kind: target.relation_kind,
+          relation_target_key: target.relation_target_key
+        },
+        idempotencyKey: idempotencyKey("merge")
+      });
+      setMergeOpen(false);
+      await refreshAfterMutation();
+    } catch (mutationError) {
+      setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.merge"));
+    } finally { endMutation(); }
+  }
+
+  async function loadPublicationPreflight() {
+    setPreflightLoading(true); setError(null); setErrorRecovery("none");
+    try {
+      setPreflight(await requestJson<PublicationPreflight>(
+        `${base}/publish/preflight?generation_key=${encodeURIComponent(generationKey)}`));
+    } catch (preflightError) {
+      setError(preflightError instanceof Error ? preflightError.message : t("reviewWorkbench.errors.preflight"));
+      setErrorRecovery("preflight");
+    } finally { setPreflightLoading(false); }
+  }
+
+  const range = signalSemanticContextReviewRangeV1({
+    total: page?.total ?? 0,
+    visible: page?.elements.length ?? 0,
+    pageIndex: cursorHistory.length,
+    pageSize: page?.page_size ?? 20
+  });
   const filterOptions = useMemo(() => ({
     kinds: Object.keys(page?.facets.element_kinds ?? {}).sort(),
     scopes: Object.keys(page?.facets.scopes ?? {}).sort()
   }), [page]);
+  const selectedElements = [...selected.values()];
+  const selectedKinds = new Set(selectedElements.map((element) => element.element_kind));
+  const selectedPending = signalSemanticContextBoundedPendingSelectionV1({
+    selectedKeys: [...selected.keys()], elements: page?.elements ?? []
+  });
 
   return <div className="semantic-context-review" data-loading={loading || undefined}>
     <div className="semantic-context-review__header">
-      <div>
-        <strong>{t("reviewWorkbench.title")}</strong>
-        <p>{t("reviewWorkbench.body")}</p>
-      </div>
+      <div><strong>{t("reviewWorkbench.title")}</strong><p>{t("reviewWorkbench.body")}</p></div>
       <AdminStatus state="warning">{t("reviewWorkbench.nonAuthoritative")}</AdminStatus>
     </div>
 
     <div className="semantic-context-review__toolbar" role="search">
-      <label className="semantic-context-review__search">
-        <MagnifyingGlass aria-hidden size={15}/>
-        <span className="sr-only">{t("filters.search")}</span>
-        <input className="workspace-control" onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("reviewWorkbench.searchPlaceholder")} type="search" value={query}/>
-      </label>
+      <label className="semantic-context-review__search"><MagnifyingGlass aria-hidden size={15}/>
+        <span className="sr-only">{t("filters.search")}</span><input className="workspace-control"
+          onChange={(event) => setQuery(event.target.value)} placeholder={t("reviewWorkbench.searchPlaceholder")}
+          type="search" value={query}/></label>
       <FilterSelect label={t("filters.status")} onChange={(value) => setFilters((current) => ({ ...current, disposition: value as Filters["disposition"] }))} value={filters.disposition}>
-        <option value="all">{t("filters.allStatuses")}</option>
-        <option value="pending">{t("states.pending")}</option>
-        <option value="approved">{t("states.approved")}</option>
-        <option value="rejected">{t("states.rejected")}</option>
+        <option value="all">{t("filters.allStatuses")}</option>{["pending", "approved", "rejected", "merged"].map((state) => <option key={state} value={state}>{t(`states.${state}`)}</option>)}
       </FilterSelect>
       <FilterSelect label={t("filters.type")} onChange={(value) => setFilters((current) => ({ ...current, kind: value }))} value={filters.kind}>
-        <option value="all">{t("filters.allTypes")}</option>
-        {filterOptions.kinds.map((kind) => <option key={kind} value={kind}>{kindLabel(kind, t)}</option>)}
+        <option value="all">{t("filters.allTypes")}</option>{filterOptions.kinds.map((kind) => <option key={kind} value={kind}>{kindLabel(kind, t)}</option>)}
       </FilterSelect>
       <FilterSelect label={t("reviewWorkbench.filters.scope")} onChange={(value) => setFilters((current) => ({ ...current, scope: value }))} value={filters.scope}>
-        <option value="all">{t("reviewWorkbench.filters.allScopes")}</option>
-        {filterOptions.scopes.map((scope) => <option key={scope} value={scope}>{scope}</option>)}
+        <option value="all">{t("reviewWorkbench.filters.allScopes")}</option>{filterOptions.scopes.map((scope) => <option key={scope} value={scope}>{scope}</option>)}
       </FilterSelect>
       <FilterSelect label={t("reviewWorkbench.filters.locale")} onChange={(value) => setFilters((current) => ({ ...current, locale: value as Filters["locale"] }))} value={filters.locale}>
-        <option value="all">{t("reviewWorkbench.filters.allLocales")}</option>
-        <option value="explicit">{t("reviewWorkbench.filters.explicitLocale")}</option>
-        <option value="unassigned">{t("reviewWorkbench.filters.unassignedLocale")}</option>
-        <option value="needs_review">{t("reviewWorkbench.filters.localeAttention")}</option>
+        <option value="all">{t("reviewWorkbench.filters.allLocales")}</option><option value="explicit">{t("reviewWorkbench.filters.explicitLocale")}</option><option value="unassigned">{t("reviewWorkbench.filters.unassignedLocale")}</option><option value="needs_review">{t("reviewWorkbench.filters.localeAttention")}</option>
       </FilterSelect>
       <FilterSelect label={t("reviewWorkbench.filters.evidence")} onChange={(value) => setFilters((current) => ({ ...current, evidence: value as Filters["evidence"] }))} value={filters.evidence}>
-        <option value="all">{t("reviewWorkbench.filters.allEvidence")}</option>
-        <option value="needs_review">{t("reviewWorkbench.filters.evidenceAttention")}</option>
-        <option value="one_source_only">{t("reviewWorkbench.filters.oneSource")}</option>
-        <option value="supports_only">{t("reviewWorkbench.filters.supportsOnly")}</option>
-        <option value="has_limits">{t("reviewWorkbench.filters.hasLimits")}</option>
-        <option value="has_contradictions">{t("reviewWorkbench.filters.hasContradictions")}</option>
+        <option value="all">{t("reviewWorkbench.filters.allEvidence")}</option><option value="needs_review">{t("reviewWorkbench.filters.evidenceAttention")}</option><option value="one_source_only">{t("reviewWorkbench.filters.oneSource")}</option><option value="supports_only">{t("reviewWorkbench.filters.supportsOnly")}</option><option value="has_limits">{t("reviewWorkbench.filters.hasLimits")}</option><option value="has_contradictions">{t("reviewWorkbench.filters.hasContradictions")}</option>
       </FilterSelect>
       <FilterSelect label={t("reviewWorkbench.filters.duplicates")} onChange={(value) => setFilters((current) => ({ ...current, duplicate: value as Filters["duplicate"] }))} value={filters.duplicate}>
-        <option value="all">{t("reviewWorkbench.filters.allDuplicates")}</option>
-        <option value="exact">{t("reviewWorkbench.filters.exactDuplicate")}</option>
-        <option value="display">{t("reviewWorkbench.filters.displayDuplicate")}</option>
+        <option value="all">{t("reviewWorkbench.filters.allDuplicates")}</option><option value="exact">{t("reviewWorkbench.filters.exactDuplicate")}</option><option value="display">{t("reviewWorkbench.filters.displayDuplicate")}</option>
       </FilterSelect>
     </div>
 
-    {error ? <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={18}/><span>{error}</span><button className="admin-button admin-button--compact" onClick={() => void loadPage()} type="button">{t("actions.retry")}</button></div> : null}
-    {loading ? <div aria-busy="true" aria-live="polite" className="semantic-context-review__loading" role="status"><CircleNotch aria-hidden className="icon--spin" size={18}/>{t("reviewWorkbench.loading")}</div> : null}
+    {error ? <Feedback message={error}
+      onRetry={errorRecovery === "page" ? () => void loadPage()
+        : errorRecovery === "preflight" ? () => void loadPublicationPreflight() : undefined}
+      retryLabel={t("actions.retry")}/> : null}
+    {loading ? <ReviewSkeleton label={t("reviewWorkbench.loading")}/> : null}
 
     {!loading && page ? <>
-      <div aria-live="polite" className="semantic-context-review__count">
-        {t("reviewWorkbench.resultRange", { start: resultStart, end: resultEnd, total: page.total })}
+      <div className="semantic-context-review__count-row">
+        <span aria-live="polite">{t("reviewWorkbench.resultRange", { start: range.start, end: range.end, total: page.total })}</span>
+        {reviewWritable && page.elements.some((element) => element.disposition === "pending") ? <button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={() => {
+          const next = new Map<string,ReviewElement>(); page.elements.filter((element) => element.disposition === "pending").forEach((element) => next.set(element.element_key, element)); setSelected(next);
+        }} type="button">{t("selection.allVisible")}</button> : null}
       </div>
+      {selected.size ? <div className="semantic-context-review__selection" aria-live="polite">
+        <strong>{t("selection.count", { count: selected.size })}</strong><span>{t("reviewWorkbench.bulk.explicitOnly")}</span>
+        <div><button className="admin-button" disabled={Boolean(busy)} onClick={() => setSelected(new Map())} type="button">{t("selection.clear")}</button>
+          <button className="admin-button" disabled={selected.size < 2 || Boolean(busy)} onClick={() => setMergeOpen(true)} type="button"><ArrowsMerge aria-hidden size={14}/>{t("reviewWorkbench.merge.action")}</button>
+          <button className="admin-button admin-button--primary" disabled={!selectedPending || Boolean(busy)} onClick={() => void bulkApprove()} type="button"><Check aria-hidden size={14}/>{t("selection.approve")}</button></div>
+      </div> : null}
+      {mergeOpen ? <MergePanel busy={busy} elements={selectedElements} onCancel={() => setMergeOpen(false)} onSubmit={(form) => void merge(form)} sameKind={selectedKinds.size === 1} t={t}/> : null}
       <div className="semantic-context-review__list">
         {page.elements.map((element) => <article className="semantic-context-review__row" key={element.element_key}>
+          <label className="semantic-context-review__row-select"><input aria-label={t("selection.one", { name: element.display_text })} checked={selected.has(element.element_key)} disabled={!reviewWritable || element.disposition === "merged" || Boolean(busy)} onChange={(event) => {
+            const next = new Map(selected); if (event.target.checked) next.set(element.element_key, element); else next.delete(element.element_key); setSelected(next);
+          }} type="checkbox"/></label>
           <button className="semantic-context-review__row-button" onClick={(event) => void openDetail(element.element_key, event.currentTarget)} type="button">
             <span className="semantic-context-review__row-main"><strong>{element.display_text}</strong><small>{element.canonical_key}</small></span>
             <span className="semantic-context-review__row-meta"><span>{kindLabel(element.element_kind, t)}</span><span>{element.scope ?? t("values.workspaceScope")}</span><span>{element.locale ?? t("values.noLocale")}</span></span>
-            <span className="semantic-context-review__row-signals">
-              <AdminStatus state={element.disposition === "approved" ? "good" : element.disposition === "rejected" ? "danger" : "warning"}>{t(`states.${element.disposition}`)}</AdminStatus>
-              <span>{t("values.evidenceCount", { count: element.evidence_summary.count })}</span>
-              {element.attention.needs_locale_review ? <AttentionChip>{t("reviewWorkbench.attention.locale")}</AttentionChip> : null}
-              {element.attention.needs_evidence_review ? <AttentionChip>{t("reviewWorkbench.attention.evidence")}</AttentionChip> : null}
-              {element.attention.duplicates.exact ? <AttentionChip>{t("reviewWorkbench.attention.exactDuplicate", { count: element.attention.duplicates.exact_count })}</AttentionChip> : null}
-              {!element.attention.duplicates.exact && element.attention.duplicates.display ? <AttentionChip>{t("reviewWorkbench.attention.displayDuplicate", { count: element.attention.duplicates.display_count })}</AttentionChip> : null}
-            </span>
+            <span className="semantic-context-review__row-signals"><DispositionStatus disposition={element.disposition} t={t}/><span>{t("values.evidenceCount", { count: element.evidence_summary.count })}</span>{element.attention.needs_locale_review ? <AttentionChip>{t("reviewWorkbench.attention.locale")}</AttentionChip> : null}{element.attention.needs_evidence_review ? <AttentionChip>{t("reviewWorkbench.attention.evidence")}</AttentionChip> : null}</span>
           </button>
         </article>)}
-        {page.elements.length === 0 ? <div className="admin-empty"><strong>{t("filters.emptyTitle")}</strong><p>{t("reviewWorkbench.emptyBody")}</p></div> : null}
+        {!page.elements.length ? <div className="admin-empty"><strong>{t("filters.emptyTitle")}</strong><p>{t("reviewWorkbench.emptyBody")}</p></div> : null}
       </div>
       <nav aria-label={t("reviewWorkbench.pagination.label")} className="semantic-context-review__pagination">
-        <button className="admin-button" disabled={!cursorHistory.length} onClick={() => {
-          setCursorHistory((history) => { const previous = history.slice(0, -1); setCursor(history.at(-1) ?? null); return previous; });
-        }} type="button"><ArrowLeft aria-hidden size={15}/>{t("reviewWorkbench.pagination.previous")}</button>
+        <button className="admin-button" disabled={!cursorHistory.length} onClick={() => { setSelected(new Map()); setCursorHistory((history) => { const previous = history.slice(0, -1); setCursor(history.at(-1) ?? null); return previous; }); }} type="button"><ArrowLeft aria-hidden size={15}/>{t("reviewWorkbench.pagination.previous")}</button>
         <span>{t("reviewWorkbench.pagination.page", { page: cursorHistory.length + 1 })}</span>
-        <button className="admin-button" disabled={!page.next_cursor} onClick={() => {
-          setCursorHistory((history) => [...history, cursor]); setCursor(page.next_cursor);
-        }} type="button">{t("reviewWorkbench.pagination.next")}<ArrowRight aria-hidden size={15}/></button>
+        <button className="admin-button" disabled={!page.next_cursor} onClick={() => { setSelected(new Map()); setCursorHistory((history) => [...history, cursor]); setCursor(page.next_cursor); }} type="button">{t("reviewWorkbench.pagination.next")}<ArrowRight aria-hidden size={15}/></button>
       </nav>
     </> : null}
 
+    <PublicationBoundary loading={preflightLoading} locale={locale} onLoad={() => void loadPublicationPreflight()} preflight={preflight} t={t}/>
+
     {detailKey ? <WorkspaceDrawer ariaLabel={t("review.aria", { name: detail?.element.display_text ?? t("reviewWorkbench.loadingDetail") })}
       closeLabel={t("actions.close")} eyebrow={detail ? `${kindLabel(detail.element.element_kind, t)} · ${t(`states.${detail.element.disposition}`)}` : t("reviewWorkbench.loadingDetail")}
-      onClose={() => !busy && closeDetail()} returnFocusRef={reviewOpenerRef}
-      title={detail?.element.display_text ?? t("reviewWorkbench.loadingDetail")}>
-      {detailError ? <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={18}/><span>{detailError}</span><button className="admin-button admin-button--compact" onClick={() => {
-        const opener = reviewOpenerRef.current;
-        if (opener) void openDetail(detailKey, opener);
-      }} type="button">{t("actions.retry")}</button></div>
-        : detailLoading || !detail ? <div aria-busy="true" aria-live="polite" className="semantic-context-review__detail-loading" role="status"><CircleNotch aria-hidden className="icon--spin" size={18}/>{t("reviewWorkbench.loadingDetail")}</div>
-        : <ElementReviewDetail busy={busy} detail={detail} generationVersion={undefined} locale={locale}
-          onApprove={() => void decide("approve", detail.element.element_key)}
-          onEdit={(form) => void saveEdit(form)} onReject={() => void decide("reject", detail.element.element_key)} t={t}/>}
+      onClose={() => !busy && closeDetail()} returnFocusRef={reviewOpenerRef} title={detail?.element.display_text ?? t("reviewWorkbench.loadingDetail")}>
+      <div onKeyDown={(event) => {
+        if (event.key === "Escape" && detailMode !== "view") { event.preventDefault(); event.stopPropagation(); if (!busy) setDetailMode("view"); return; }
+        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s" && activeFormRef.current) { event.preventDefault(); activeFormRef.current.requestSubmit(); }
+      }}>
+        {error ? <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={16}/><span>{error}</span></div> : null}
+        {detailError ? <Feedback message={detailError} onRetry={() => void retryDetail()} retryLabel={t("actions.retry")}/>
+          : detailLoading || !detail ? <ReviewSkeleton label={t("reviewWorkbench.loadingDetail")}/>
+            : <ElementReviewDetail activeFormRef={activeFormRef} busy={busy} detail={detail} locale={locale} mode={detailMode}
+              onAnnotate={(form) => void annotate(form)} onApprove={() => void approve(detail.element.element_key)}
+              onCorrect={(form) => void correct(form)} onMode={setDetailMode} onReject={(form) => void reject(form)}
+              onResolve={(annotation, resolution) => void resolveAnnotation(annotation, resolution)} reviewWritable={reviewWritable} t={t}/>}
+      </div>
     </WorkspaceDrawer> : null}
   </div>;
 }
 
-function FilterSelect({ children, label, onChange, value }: {
-  children: React.ReactNode;
-  label: string;
-  onChange: (value: string) => void;
-  value: string;
-}) {
+function FilterSelect({ children, label, onChange, value }: { children: React.ReactNode; label: string; onChange: (value: string) => void; value: string }) {
   return <label><span>{label}</span><select className="workspace-control" onChange={(event) => onChange(event.target.value)} value={value}>{children}</select></label>;
+}
+
+function ReviewSkeleton({ label }: { label: string }) {
+  return <div aria-busy="true" aria-live="polite" className="semantic-context-review__skeleton" role="status"><span className="sr-only">{label}</span><i/><i/><i/></div>;
+}
+
+function Feedback({ message, onRetry, retryLabel }: { message: string; onRetry?: () => void; retryLabel: string }) {
+  return <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={18}/><span>{message}</span>{onRetry ? <button className="admin-button admin-button--compact" onClick={onRetry} type="button">{retryLabel}</button> : null}</div>;
 }
 
 function AttentionChip({ children }: { children: React.ReactNode }) {
   return <span className="semantic-context-review__attention"><Warning aria-hidden size={13}/>{children}</span>;
 }
 
-function ElementReviewDetail({ busy, detail, locale, onApprove, onEdit, onReject, t }: {
+function DispositionStatus({ disposition, t }: { disposition: Disposition; t: ReturnType<typeof useTranslations> }) {
+  return <AdminStatus state={disposition === "approved" ? "good" : disposition === "rejected" ? "danger" : disposition === "merged" ? "not_available" : "warning"}>{t(`states.${disposition}`)}</AdminStatus>;
+}
+
+function ElementReviewDetail({ activeFormRef, busy, detail, locale, mode, onAnnotate, onApprove, onCorrect, onMode, onReject, onResolve, reviewWritable, t }: {
+  activeFormRef: React.MutableRefObject<HTMLFormElement | null>;
   busy: string | null;
   detail: ReviewDetail;
-  generationVersion?: number;
   locale: string;
+  mode: DetailMode;
+  onAnnotate: (form: FormData) => void;
   onApprove: () => void;
-  onEdit: (form: FormData) => void;
-  onReject: () => void;
+  onCorrect: (form: FormData) => void;
+  onMode: (mode: DetailMode) => void;
+  onReject: (form: FormData) => void;
+  onResolve: (annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) => void;
+  reviewWritable: boolean;
   t: ReturnType<typeof useTranslations>;
 }) {
-  const [editing, setEditing] = useState(false);
   const element = detail.element;
+  if (mode === "correct") return <MutationForm busy={busy} formRef={activeFormRef} onCancel={() => onMode("view")} onSubmit={onCorrect} submitLabel={t("actions.saveCorrection")} t={t} title={t("reviewWorkbench.correction.title")}>
+    <CorrectionFields element={element} t={t}/><ReasonFields t={t}/>
+  </MutationForm>;
+  if (mode === "reject") return <MutationForm busy={busy} danger formRef={activeFormRef} onCancel={() => onMode("view")} onSubmit={onReject} submitLabel={t("actions.reject")} t={t} title={t("reviewWorkbench.reject.title")}><p className="admin-drawer-form__intro">{t("reviewWorkbench.reject.body")}</p><ReasonFields autoFocusRationale t={t}/></MutationForm>;
+  if (mode === "annotate") return <MutationForm busy={busy} formRef={activeFormRef} onCancel={() => onMode("view")} onSubmit={onAnnotate} submitLabel={t("reviewWorkbench.annotations.save")} t={t} title={t("reviewWorkbench.annotations.title")}>
+    <label className="workspace-field"><span>{t("reviewWorkbench.annotations.type")}</span><select className="workspace-control" name="annotation_type" required>{SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_UI.map((type) => <option key={type} value={type}>{t(`reviewWorkbench.annotations.types.${type}`)}</option>)}</select></label>
+    <label className="workspace-field"><span>{t("reviewWorkbench.annotations.related")}</span><input className="workspace-control" name="related_element_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/><small>{t("reviewWorkbench.annotations.relatedHelp")}</small></label><ReasonFields autoFocusRationale t={t}/>
+  </MutationForm>;
+
   return <div className="semantic-context-pack__review semantic-context-review__detail">
-    <div className="semantic-context-pack__review-summary"><AdminStatus state={element.disposition === "approved" ? "good" : element.disposition === "rejected" ? "danger" : "warning"}>{t(`states.${element.disposition}`)}</AdminStatus><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p></div>
-    {editing ? <form className="admin-drawer-form" onSubmit={(event) => { event.preventDefault(); onEdit(new FormData(event.currentTarget)); }}>
-      <label className="workspace-field"><span>{t("fields.displayText")}</span><input className="workspace-control" defaultValue={element.display_text} maxLength={500} name="display_text" required/></label>
-      <label className="workspace-field"><span>{t("fields.canonicalKey")}</span><input className="workspace-control" defaultValue={element.canonical_key} name="canonical_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*" required/></label>
-      <label className="workspace-field"><span>{t("fields.locale")}</span><input className="workspace-control" defaultValue={element.locale ?? ""} name="locale" placeholder="es-MX"/></label>
-      <label className="workspace-field"><span>{t("fields.relation")}</span><select className="workspace-control" defaultValue={element.relation_kind ?? ""} name="relation_kind"><option value="">{t("values.noRelation")}</option>{["is_a", "part_of", "surface_of", "competes_with", "associated_with"].map((kind) => <option key={kind} value={kind}>{t(`relations.${kind}`)}</option>)}</select></label>
-      <label className="workspace-field"><span>{t("fields.relationTarget")}</span><input className="workspace-control" defaultValue={element.relation_target_key ?? ""} name="relation_target_key"/></label>
-      <div className="semantic-context-pack__drawer-actions"><button className="admin-button" disabled={Boolean(busy)} onClick={() => setEditing(false)} type="button">{t("actions.cancelEdit")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} type="submit"><PencilSimple aria-hidden size={14}/>{t("actions.saveCorrection")}</button></div>
-    </form> : <>
-      <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{element.locale ?? t("values.noLocale")}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
-      <div className="semantic-context-review__attention-summary"><strong>{t("reviewWorkbench.attention.title")}</strong><p>{t("reviewWorkbench.attention.body")}</p><div>{element.attention.locale_reasons.map((reason) => <AttentionChip key={reason}>{t(`reviewWorkbench.attention.reasons.${reason}`)}</AttentionChip>)}{element.attention.evidence_reasons.map((reason) => <AttentionChip key={reason}>{t(`reviewWorkbench.attention.reasons.${reason}`)}</AttentionChip>)}</div></div>
-      <section className="semantic-context-review__evidence"><div><h3>{t("reviewWorkbench.evidence.title")}</h3><p>{t("reviewWorkbench.evidence.body")}</p></div>
-        {detail.evidence.map((source, index) => <article className="semantic-context-review__source" key={`${source.source_type}-${source.section_label}-${index}`}>
-          <header><div><span>{sourceKindLabel(source.source_type, t)}</span><strong>{source.source_title}</strong><small>{source.section_label}</small></div><AdminStatus state={source.current_state === "current" ? "good" : source.current_state === "inactive" ? "warning" : "not_available"}>{t(`reviewWorkbench.evidence.states.${source.current_state}`)}</AdminStatus></header>
-          <div className="semantic-context-review__source-meta"><span>{t("reviewWorkbench.evidence.relation", { relation: t(`evidenceRelations.${source.relation}`) })}</span><span>{t("reviewWorkbench.evidence.generationValidated")}</span><span>{source.applicability.state === "explicit" ? t("reviewWorkbench.evidence.coverage", { locales: source.applicability.locales.join(", ") || "—", markets: source.applicability.markets.join(", ") || "—" }) : t("reviewWorkbench.evidence.coverageUnknown")}</span></div>
-          <div className="semantic-context-review__source-context"><strong>{t("reviewWorkbench.evidence.contextLabel")}</strong><p>{source.source_context.preview ?? t("reviewWorkbench.evidence.contextUnavailable")}</p><small>{t("reviewWorkbench.evidence.notCitation")}</small></div>
-        </article>)}
-        {!detail.evidence.length ? <p>{t("review.noEvidence")}</p> : null}
-      </section>
-      {element.disposition === "pending" ? <div className="semantic-context-pack__drawer-actions"><button className="admin-button admin-button--danger" disabled={Boolean(busy)} onClick={onReject} type="button"><X aria-hidden size={14}/>{t("actions.reject")}</button><button className="admin-button" disabled={Boolean(busy)} onClick={() => setEditing(true)} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.edit")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={onApprove} type="button"><Check aria-hidden size={14}/>{t("actions.approve")}</button></div> : null}
-    </>}
+    <div className="semantic-context-pack__review-summary"><DispositionStatus disposition={element.disposition} t={t}/><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
+    <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{element.locale ?? t("values.noLocale")}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
+    <AnnotationsList busy={busy} items={detail.review_annotations} onResolve={onResolve} t={t}/>
+    {detail.merge_lineage.length ? <section className="semantic-context-review__lineage"><h3>{t("reviewWorkbench.merge.lineage")}</h3>{detail.merge_lineage.map((entry) => <div key={`${entry.source_element_key}:${entry.target_element_key}`}><ArrowsMerge aria-hidden size={14}/><span>{entry.source_element_key} → {entry.target_element_key}</span><small>{entry.rationale}</small></div>)}</section> : null}
+    <section className="semantic-context-review__evidence"><div><h3>{t("reviewWorkbench.evidence.title")}</h3><p>{t("reviewWorkbench.evidence.body")}</p></div>{detail.evidence.map((source, index) => <article className="semantic-context-review__source" key={`${source.source_type}-${source.section_label}-${index}`}><header><div><span>{sourceKindLabel(source.source_type, t)}</span><strong>{source.source_title}</strong><small>{source.section_label}</small></div><AdminStatus state={source.current_state === "current" ? "good" : source.current_state === "inactive" ? "warning" : "not_available"}>{t(`reviewWorkbench.evidence.states.${source.current_state}`)}</AdminStatus></header><div className="semantic-context-review__source-meta"><span>{t("reviewWorkbench.evidence.relation", { relation: t(`evidenceRelations.${source.relation}`) })}</span><span>{t("reviewWorkbench.evidence.generationValidated")}</span></div><div className="semantic-context-review__source-context"><strong>{t("reviewWorkbench.evidence.contextLabel")}</strong><p>{source.source_context.preview ?? t("reviewWorkbench.evidence.contextUnavailable")}</p><small>{t("reviewWorkbench.evidence.notCitation")}</small></div></article>)}{!detail.evidence.length ? <p>{t("review.noEvidence")}</p> : null}</section>
+    {reviewWritable && element.disposition !== "merged" ? <div className="semantic-context-pack__drawer-actions">{element.disposition === "pending" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("annotate")} type="button"><NotePencil aria-hidden size={14}/>{t("reviewWorkbench.annotations.action")}</button> : null}<button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("correct")} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.edit")}</button>{element.disposition === "pending" ? <><button className="admin-button admin-button--danger" disabled={Boolean(busy)} onClick={() => onMode("reject")} type="button"><X aria-hidden size={14}/>{t("actions.reject")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={onApprove} type="button"><Check aria-hidden size={14}/>{t("actions.approve")}</button></> : null}</div> : null}
   </div>;
+}
+
+function MutationForm({ busy, children, danger, formRef, onCancel, onSubmit, submitLabel, t, title }: {
+  busy: string | null;
+  children: React.ReactNode;
+  danger?: boolean;
+  formRef: React.MutableRefObject<HTMLFormElement | null>;
+  onCancel: () => void;
+  onSubmit: (form: FormData) => void;
+  submitLabel: string;
+  t: ReturnType<typeof useTranslations>;
+  title: string;
+}) {
+  return <form aria-busy={Boolean(busy)} className="admin-drawer-form" onSubmit={(event) => { event.preventDefault(); if (!busy) onSubmit(new FormData(event.currentTarget)); }} ref={formRef}>
+    <div className="semantic-context-review__form-heading"><strong>{title}</strong><small>{t("reviewWorkbench.shortcuts")}</small></div>{children}<div className="semantic-context-pack__drawer-actions"><button className="admin-button" disabled={Boolean(busy)} onClick={onCancel} type="button">{t("actions.cancelEdit")}</button><button className={`admin-button ${danger ? "admin-button--danger" : "admin-button--primary"}`} disabled={Boolean(busy)} type="submit">{submitLabel}</button></div>
+  </form>;
+}
+
+function CorrectionFields({ element, t }: { element: ReviewElement; t: ReturnType<typeof useTranslations> }) {
+  return <><label className="workspace-field"><span>{t("fields.displayText")}</span><input autoFocus className="workspace-control" defaultValue={element.display_text} maxLength={500} name="display_text" required/></label><label className="workspace-field"><span>{t("fields.canonicalKey")}</span><input className="workspace-control" defaultValue={element.canonical_key} maxLength={200} name="canonical_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*" required/></label><label className="workspace-field"><span>{t("fields.scope")}</span><input className="workspace-control" defaultValue={element.scope ?? ""} maxLength={200} name="scope"/></label><label className="workspace-field"><span>{t("fields.locale")}</span><input className="workspace-control" defaultValue={element.locale ?? ""} name="locale" pattern="[a-z]{2,3}(?:-[A-Z]{2})?" placeholder="es-MX"/></label><label className="workspace-field"><span>{t("fields.relation")}</span><select className="workspace-control" defaultValue={element.relation_kind ?? ""} name="relation_kind"><option value="">{t("values.noRelation")}</option>{["is_a", "part_of", "surface_of", "competes_with", "associated_with"].map((kind) => <option key={kind} value={kind}>{t(`relations.${kind}`)}</option>)}</select></label><label className="workspace-field"><span>{t("fields.relationTarget")}</span><input className="workspace-control" defaultValue={element.relation_target_key ?? ""} name="relation_target_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/></label></>;
+}
+
+function ReasonFields({ autoFocusRationale=false, t }: { autoFocusRationale?: boolean; t: ReturnType<typeof useTranslations> }) {
+  return <><label className="workspace-field"><span>{t("reviewWorkbench.reason")}</span><select className="workspace-control" name="reason" required>{SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_UI.map((reason) => <option key={reason} value={reason}>{t(`reviewWorkbench.reasons.${reason}`)}</option>)}</select></label><label className="workspace-field"><span>{t("reviewWorkbench.rationale")}</span><textarea autoFocus={autoFocusRationale} className="workspace-control" maxLength={1000} minLength={1} name="rationale" required rows={4}/></label></>;
+}
+
+function AnnotationsList({ busy, items, onResolve, t }: { busy: string | null; items: ReviewAnnotation[]; onResolve: (annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) => void; t: ReturnType<typeof useTranslations> }) {
+  if (!items.length) return null;
+  return <section className="semantic-context-review__annotations"><h3>{t("reviewWorkbench.annotations.history")}</h3>{items.map((annotation) => <article key={annotation.annotation_key}><div><strong>{t(`reviewWorkbench.annotations.types.${annotation.annotation_type}`)}</strong><AdminStatus state={annotation.state === "resolved" ? "good" : "warning"}>{t(`reviewWorkbench.annotations.states.${annotation.state}`)}</AdminStatus></div><p>{annotation.rationale}</p>{annotation.related_elements.length ? <small>{annotation.related_elements.map((element) => element.display_text).join(", ")}</small> : null}{annotation.state === "open" ? <div>{signalSemanticContextAnnotationResolutionsV1(annotation.annotation_type).map((resolution) => <button className="admin-button admin-button--compact" disabled={Boolean(busy)} key={resolution} onClick={() => onResolve(annotation, resolution)} type="button">{t(`reviewWorkbench.annotations.resolutions.${resolution}`)}</button>)}</div> : <small>{t(`reviewWorkbench.annotations.resolutions.${annotation.resolution}`)}</small>}</article>)}</section>;
+}
+
+function MergePanel({ busy, elements, onCancel, onSubmit, sameKind, t }: { busy: string | null; elements: ReviewElement[]; onCancel: () => void; onSubmit: (form: FormData) => void; sameKind: boolean; t: ReturnType<typeof useTranslations> }) {
+  const [targetKey, setTargetKey] = useState(elements[0]?.element_key ?? "");
+  const target = elements.find((element) => element.element_key === targetKey) ?? elements[0];
+  return <form className="semantic-context-review__merge" onKeyDown={(event) => {
+    if (event.key === "Escape") { event.preventDefault(); if (!busy) onCancel(); }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!busy) event.currentTarget.requestSubmit(); }
+  }} onSubmit={(event) => { event.preventDefault(); if (!busy) onSubmit(new FormData(event.currentTarget)); }}>
+    <div className="semantic-context-review__merge-head"><div><strong>{t("reviewWorkbench.merge.title")}</strong><p>{t("reviewWorkbench.merge.body", { count: elements.length })}</p></div><button aria-label={t("actions.close")} className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={onCancel} type="button"><X aria-hidden size={14}/></button></div>
+    {!sameKind ? <div className="semantic-context-review__feedback"><Warning aria-hidden size={16}/><span>{t("reviewWorkbench.merge.crossKind")}</span></div> : null}
+    <div className="semantic-context-review__merge-grid"><label className="workspace-field"><span>{t("reviewWorkbench.merge.target")}</span><select autoFocus className="workspace-control" name="target_element_key" onChange={(event) => setTargetKey(event.target.value)} value={targetKey}>{elements.map((element) => <option key={element.element_key} value={element.element_key}>{element.display_text}</option>)}</select></label><div className="semantic-context-review__merge-consequences"><strong>{t("reviewWorkbench.merge.preview")}</strong><p>{t("reviewWorkbench.merge.targetConsequence", { name: target?.display_text ?? "—" })}</p><p>{t("reviewWorkbench.merge.sourceConsequence", { count: Math.max(0, elements.length - 1) })}</p></div></div>
+    {target ? <div className="semantic-context-review__merge-correction" key={target.element_key}><label className="workspace-field"><span>{t("fields.displayText")}</span><input className="workspace-control" defaultValue={target.display_text} maxLength={500} name="display_text" required/></label><label className="workspace-field"><span>{t("fields.canonicalKey")}</span><input className="workspace-control" defaultValue={target.canonical_key} name="canonical_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*" required/></label><label className="workspace-field"><span>{t("fields.scope")}</span><input className="workspace-control" defaultValue={target.scope ?? ""} maxLength={200} name="scope"/></label><label className="workspace-field"><span>{t("fields.locale")}</span><input className="workspace-control" defaultValue={target.locale ?? ""} name="locale" pattern="[a-z]{2,3}(?:-[A-Z]{2})?"/></label></div> : null}<ReasonFields t={t}/><div className="semantic-context-pack__drawer-actions"><button className="admin-button" disabled={Boolean(busy)} onClick={onCancel} type="button">{t("actions.cancel")}</button><button className="admin-button admin-button--primary" disabled={!sameKind || Boolean(busy)} type="submit"><ArrowsMerge aria-hidden size={14}/>{t("reviewWorkbench.merge.confirm")}</button></div>
+  </form>;
+}
+
+function PublicationBoundary({ loading, locale, onLoad, preflight, t }: { loading: boolean; locale: string; onLoad: () => void; preflight: PublicationPreflight | null; t: ReturnType<typeof useTranslations> }) {
+  const counts = preflight ? [
+    ["pending", preflight.counts.pending ?? 0], ["approved", preflight.counts.approved ?? 0],
+    ["rejected", preflight.counts.rejected ?? 0], ["merged", preflight.counts.merged ?? 0],
+    ["open_annotations", preflight.counts.open_annotations ?? 0],
+    ["canonical_collisions", preflight.counts.canonical_collisions ?? 0],
+    ["blockers", preflight.blockers.length]
+  ] as const : [];
+  return <section className="semantic-context-review__publication"><div className="semantic-context-review__publication-head"><div><strong>{t("reviewWorkbench.publication.title")}</strong><p>{t("reviewWorkbench.publication.body")}</p></div><button className="admin-button" disabled={loading} onClick={onLoad} type="button">{loading ? <CircleNotch aria-hidden className="icon--spin" size={14}/> : <ShieldCheck aria-hidden size={14}/>} {t("reviewWorkbench.publication.preflight")}</button></div>{preflight ? <><div className="semantic-context-review__publication-counts">{counts.map(([key, value]) => <div key={key}><span>{t(`reviewWorkbench.publication.counts.${key}`)}</span><strong>{formatAdminNumber(value, locale)}</strong></div>)}</div><div className="semantic-context-review__publication-digests">{Object.entries(preflight.digest_refs).map(([key, value]) => <span key={key}>{key}: <code>{value}</code></span>)}</div>{preflight.blockers.length ? <div className="semantic-context-review__feedback"><Warning aria-hidden size={16}/><span>{preflight.blockers.map((blocker) => t(`reviewWorkbench.publication.blockers.${knownPublicationBlocker(blocker)}`)).join(" · ")}</span></div> : <div className="semantic-context-review__publication-ready"><Eye aria-hidden size={16}/><span>{t("reviewWorkbench.publication.confirmationBoundary")}</span></div>}</> : null}</section>;
+}
+
+function knownPublicationBlocker(blocker: string) {
+  const known = new Set(["generation_not_effective_draft", "proposal_run_nonterminal", "executable_outbox", "reserved_budget", "pending_elements", "unresolved_correction", "zero_approved_elements", "open_uncertainty", "open_near_duplicate", "locale_unresolved", "competitive_unit_unresolved", "open_annotation", "canonical_collision", "invalid_current_evidence", "invalid_relation_target", "authority_drift", "provider_lineage_not_current"]);
+  return known.has(blocker) ? blocker : "unknown";
 }
 
 function kindLabel(kind: string, t: ReturnType<typeof useTranslations>) {
@@ -426,4 +754,9 @@ function kindLabel(kind: string, t: ReturnType<typeof useTranslations>) {
 function sourceKindLabel(kind: string, t: ReturnType<typeof useTranslations>) {
   const known = new Set(["brand_os_profile", "brand_os_product", "brand_os_competitor", "brand_os_seed_term", "knowledge_source", "knowledge_chunk", "knowledge_assertion"]);
   return known.has(kind) ? t(`sources.${kind}`) : t("sources.authority");
+}
+
+function originLabel(origin: string, t: ReturnType<typeof useTranslations>) {
+  const known = new Set(["provider_proposal", "operator_correction", "operator_decision", "operator_merge"]);
+  return known.has(origin) ? t(`origins.${origin}`) : t("origins.other");
 }

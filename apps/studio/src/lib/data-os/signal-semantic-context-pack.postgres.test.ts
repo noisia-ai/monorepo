@@ -28,6 +28,15 @@ import {
   reconcileSignalSemanticContextGenerationV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
+  annotateSignalSemanticContextElementV2,
+  correctSignalSemanticContextElementV2,
+  loadSignalSemanticContextPublicationPreflightV2,
+  mergeSignalSemanticContextElementsV2,
+  publishSignalSemanticContextGenerationV2,
+  rejectSignalSemanticContextElementV2,
+  SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
+} from "@/lib/data-os/signal-semantic-context-publication-v2";
+import {
   loadSignalSemanticContextReviewDetailV1,
   loadSignalSemanticContextReviewPageV1,
   loadSignalSemanticContextReviewSummaryV1,
@@ -41,7 +50,7 @@ const DB_URL=process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_INTEGRATION_URL;
 const APPROVED=process.env.NOISIA_SIGNAL_SEMANTIC_CONTEXT_INTEGRATION_APPROVED==="true";
 const digest=(value:string)=>`sha256:${createHash("sha256").update(value).digest("hex")}`;
 const terminalPreflightConfiguration:SignalSemanticContextProposalRuntimeConfigurationV1={
-  available:true,provider:"anthropic",model:"fixture-model",model_version:"immutable-v1",
+  available:true,provider:"anthropic",model:"claude-sonnet-4-6",model_version:"claude-sonnet-4-6",
   pricing_version:"pricing-v1",max_input_tokens:100_000,max_output_tokens:64_000,
   model_max_output_tokens:64_000,input_usd_per_million_tokens:"1",
   output_usd_per_million_tokens:"2",platform_hard_cap_micro_usd:1_000_000n
@@ -56,14 +65,40 @@ const productLineageConfiguration:SignalSemanticContextProposalRuntimeConfigurat
 
 test("0091 semantic context authority is append-only, drift-aware, idempotent, and confidence-neutral",{
   skip:!DB_URL||!APPROVED,timeout:180_000
-},async()=>{
+},async(t)=>{
   assert.ok(DB_URL);requireLocal(DB_URL);
+  t.after(installProviderEnvironment(terminalPreflightConfiguration));
+  let migration0097="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
     const files=(await readdir(directory)).filter((file)=>/^\d{4}_.+\.sql$/u.test(file)).sort();
-    for(const file of files)await admin.query(await readFile(join(directory,file),"utf8"));
+    for(const file of files){const sql=await readFile(join(directory,file),"utf8");
+      if(file.startsWith("0097_"))migration0097=sql;else await admin.query(sql);}
   }finally{await admin.end();}
+
+  const historicalV1=await seedHistoricalV1Publication();
+  const historicalBefore=await pool.query(`SELECT row_to_json(generation)::text value FROM (
+    SELECT status,pack_digest,published_operation_id,published_by_user_id,published_at
+    FROM signal_semantic_context_generations
+    WHERE workspace_id=$1::uuid AND generation_key=$2) generation`,
+  [historicalV1.workspaceId,historicalV1.generationKey]);
+  assert.ok(migration0097,"0097 migration is present");
+  const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
+  try{await migrationClient.query(migration0097);}finally{await migrationClient.end();}
+  const historicalAfter=await pool.query(`SELECT row_to_json(generation)::text value FROM (
+    SELECT status,pack_digest,published_operation_id,published_by_user_id,published_at
+    FROM signal_semantic_context_generations
+    WHERE workspace_id=$1::uuid AND generation_key=$2) generation`,
+  [historicalV1.workspaceId,historicalV1.generationKey]);
+  assert.deepEqual(historicalAfter.rows,historicalBefore.rows,"0097 preserves historical V1 publication byte-for-byte");
+  const historicalV2Columns=await pool.query(`SELECT publication_schema_version,candidate_pack_digest,
+    evidence_graph_digest,review_graph_digest,publication_authority_digest,semantic_context_pack_digest,
+    publish_preflight_digest,publication_counts FROM signal_semantic_context_generations
+    WHERE workspace_id=$1::uuid AND generation_key=$2`,[historicalV1.workspaceId,historicalV1.generationKey]);
+  assert.deepEqual(historicalV2Columns.rows,[{publication_schema_version:null,candidate_pack_digest:null,
+    evidence_graph_digest:null,review_graph_digest:null,publication_authority_digest:null,
+    semantic_context_pack_digest:null,publish_preflight_digest:null,publication_counts:null}]);
 
   const fixture=await seedFixture();
   const protectedBefore=await protectedCounts(fixture.workspace.id);
@@ -120,7 +155,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.equal(productDetail.authority.review_decision_written,false);
   const reviewSummary=await transaction((queryable)=>loadSignalSemanticContextReviewSummaryV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor}));
-  assert.deepEqual(reviewSummary.generation?.counts,{pending:4,approved:0,rejected:0});
+  assert.deepEqual(reviewSummary.generation?.counts,{pending:4,approved:0,rejected:0,merged:0});
   assert.equal(reviewSummary.authority.private_fields_withheld,true);
   assert.doesNotMatch(JSON.stringify(reviewSummary),/sha256:|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu,
     "the Review hydration contract withholds hashes and private database identifiers");
@@ -129,7 +164,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())})),hasCode("semantic_context_generation_not_found"));
   let readiness=await loadSignalSemanticContextReadinessV1({queryable:pool,workspace:fixture.workspace,
     actor:fixture.actor});
-  assert.deepEqual(readiness.counts,{pending:4,approved:0,rejected:0});
+  assert.deepEqual(readiness.counts,{pending:4,approved:0,rejected:0,merged:0});
   assert.equal(readiness.ready_for_context_aware_discovery,false);
   assert.equal(readiness.counts.approved,0,"confidence=1.0 never approves a proposal");
 
@@ -155,16 +190,30 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"bulk-approve-idempotent",
     generationKey:draft.generation_key,elementKeys:["need-main","friction-main"]})),bulk);
 
-  const published=await transaction((queryable)=>publishSignalSemanticContextGenerationV1({queryable,
-    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"publish-context-idempotent",
-    generationKey:draft.generation_key}));
-  assert.deepEqual(await transaction((queryable)=>publishSignalSemanticContextGenerationV1({queryable,
-    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"publish-context-idempotent",
-    generationKey:draft.generation_key})),published);
+  await assert.rejects(pool.query(`UPDATE signal_semantic_context_generations SET status='published',
+    pack_digest=$3,published_operation_id=created_operation_id,published_by_user_id=created_by_user_id,
+    published_at=clock_timestamp() WHERE workspace_id=$1::uuid AND generation_key=$2`,
+  [fixture.workspace.id,draft.generation_key,digest("raw-v1-publication")]),hasCode("23514"));
+  await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"publish-context-v1-retired",
+    generationKey:draft.generation_key})),/semantic_context_publish_v1_retired/u);
+  const publishPreflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(publishPreflight.writes_performed,false);
+  assert.equal(publishPreflight.provider_calls,0);
+  assert.equal(publishPreflight.publishable,true,JSON.stringify(publishPreflight));
+  const published=await transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"publish-context-idempotent-v2",
+    generationKey:draft.generation_key,preflightDigest:publishPreflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2}));
+  assert.deepEqual(await transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"publish-context-idempotent-v2",
+    generationKey:draft.generation_key,preflightDigest:publishPreflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),published);
   readiness=await loadSignalSemanticContextReadinessV1({queryable:pool,workspace:fixture.workspace,
     actor:fixture.actor});
   assert.equal(readiness.ready_for_context_aware_discovery,true);
-  assert.deepEqual(readiness.counts,{pending:0,approved:4,rejected:0});
+  assert.deepEqual(readiness.counts,{pending:0,approved:4,rejected:0,merged:0});
   const publishedNoop=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({
     queryable,workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"reconcile-current-published",
     reason:"operator_requested_reconciliation",proposalLineage:lineage}));
@@ -423,33 +472,686 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),operationsBefore,"preflight is read-only");
   assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
 
+  await exerciseReviewPublicationV2();
+  await exerciseMixedStateMergeV2();
+  await exerciseRelationTargetAuthorityV2();
+  await exerciseMutationAuthorityDriftV2();
+  await exerciseProviderAuthorityDriftV2();
+  await exercisePublicationPreflightScaleV2();
+
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
     `SELECT signal_semantic_context_digest_v1($1) digest`,[canonical])).rows[0]!.digest;
   assert.equal(postgresDigest,digest(canonical),"TypeScript and PostgreSQL hash identical canonical bytes");
+  const goldenVectors=[
+    {value:{s:"Cafe\u0301"},canonical:'{"s":"Café"}',hash:"d4f21edc957c8d5f5c6ba620f820dabb8b4afc2398a7603cf49e875cf2a36269"},
+    {value:{s:"🧠"},canonical:'{"s":"🧠"}',hash:"b2d883dfb70d681a2de3ee4bc8866c220e62896dc61a333cd348fe7a01c37283"},
+    {value:{s:"a\u2028b\u2029c"},canonical:'{"s":"a\\u2028b\\u2029c"}',hash:"7970f45418dae559568b46bf9e8df590584d1f531ad30fe670521565d2b36cf4"},
+    {value:{b:2,a:[3,{z:"last",a:"first"}]},canonical:'{"a":[3,{"a":"first","z":"last"}],"b":2}',
+      hash:"c707db5812c5616df37b78e3147bfb3ae755ffd7b0f716e42321a4ac92099111"}
+  ];
+  for(const vector of goldenVectors){const row=(await pool.query<{canonical:string;digest:string}>(
+    `SELECT signal_semantic_context_canonical_json_v2($1::jsonb) canonical,
+      signal_semantic_context_digest_json_v2($1::jsonb) digest`,[JSON.stringify(vector.value)])).rows[0]!;
+    assert.equal(row.canonical,vector.canonical);assert.equal(row.digest,`sha256:${vector.hash}`);}
+  await assert.rejects(pool.query(
+    `SELECT signal_semantic_context_canonical_json_v2($1::jsonb)`,
+    ['{"Café":1,"Cafe\\u0301":2}']),/normalized key collisions/u,
+  "PostgreSQL rejects distinct JSON keys that collide after NFC just like TypeScript");
+  // PostgreSQL text/jsonb cannot contain a U+0000 scalar. Prove the frozen canonical
+  // byte sequence and database SHA independently; TypeScript proves semantic encoding.
+  const nulCanonical='{"s":"quote\\" slash/ backslash\\\\ LF\\u000A NUL\\u0000"}';
+  const nulDigest=(await pool.query<{digest:string}>(`SELECT signal_semantic_context_digest_v1($1) digest`,
+    [nulCanonical])).rows[0]!.digest;
+  assert.equal(nulDigest,"sha256:c0998b854a4e659786347d2f3bdbed948fe8091f73161be23a18e21e50a53b41");
   await pool.end();
 });
 
-async function withProductProviderEnvironment<T>(run:()=>Promise<T>,overrides:Record<string,string>={}){
+async function exerciseReviewPublicationV2(){
+  const fixture=await seedFixture();
+  const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-review-initial-draft"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-review-lineage-draft",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  await assert.rejects(transaction((queryable)=>attemptRawCrossAuthorityElementInsert(queryable,
+    fixture,draft.generation_key)),hasCode("23514"),
+  "the PostgreSQL element trigger rejects cross-workspace evidence under direct SQL bypass");
+  const elements=[
+    proposal("merge-target","identity_term","amazon-alexa","Amazon Alexa",0.8,fixture.profileId),
+    {...proposal("merge-source-a","identity_term","alexa-plus","Alexa Plus",0.8,fixture.profileId),
+      source_refs:[{source_type:"brand_os_profile" as const,source_id:fixture.profileId,
+        relation_type:"limits" as const}]},
+    {...proposal("merge-source-b","identity_term","alexa-plus-variant","Alexa+",0.8,fixture.profileId),
+      source_refs:[{source_type:"brand_os_profile" as const,source_id:fixture.profileId,
+        relation_type:"contradicts" as const}]},
+    proposal("correction-pending","identity_term","echo","Echo",0.8,fixture.profileId),
+    proposal("correction-rejected","identity_term","echo-dot","Echo Dot",0.8,fixture.profileId)
+  ];
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-review-proposals",
+    generationKey:draft.generation_key,proposals:elements}));
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-near-duplicate",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"near-a",
+    annotationType:"near_duplicate",reason:"duplicate_same_concept",rationale:"Same governed identity.",
+    relatedElementKeys:["merge-target"]}));
+  await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-new-annotation-cannot-resolve",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"invalid-resolve",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Cannot resolve before opening.",
+    relatedElementKeys:[],resolution:"context_sufficient"})),/semantic_context_annotation_resolution_requires_open/u);
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-blocker",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Needs an explicit review.",
+    relatedElementKeys:[]}));
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-b-near-duplicate",
+    generationKey:draft.generation_key,elementKey:"merge-source-b",annotationKey:"near-b",
+    annotationType:"near_duplicate",reason:"duplicate_same_concept",rationale:"Same governed identity.",
+    relatedElementKeys:["merge-target"]}));
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-target-uncertain",
+    generationKey:draft.generation_key,elementKey:"merge-target",annotationKey:"target-uncertain",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Confirm the target wording.",
+    relatedElementKeys:[]}));
+  await assert.rejects(transaction(async(queryable)=>{
+    const authority=await queryable.query<{annotation_id:string;generation_id:string;wrong_subject_id:string;
+      related_element_ids:string[]}>(`SELECT annotation.id::text annotation_id,annotation.generation_id::text,
+        target.id::text wrong_subject_id,annotation.related_element_ids::text[]
+      FROM signal_semantic_context_review_annotations annotation
+      JOIN signal_semantic_context_element_versions target ON target.generation_id=annotation.generation_id
+        AND target.element_key='merge-target' AND NOT EXISTS(SELECT 1
+          FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=target.id)
+      WHERE annotation.workspace_id=$1::uuid AND annotation.annotation_key='near-a'
+        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_review_annotations successor
+          WHERE successor.supersedes_annotation_id=annotation.id)`,[fixture.workspace.id]);
+    const operation=await queryable.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+      VALUES($1::uuid,$2::uuid,'annotate-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+    [fixture.workspace.id,fixture.actor.id,digest("invalid-annotation-rebind-request"),
+      digest("invalid-annotation-rebind-key")]);
+    const row=authority.rows[0]!;
+    await queryable.query(`INSERT INTO signal_semantic_context_review_annotations(
+      workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+      subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,
+      operation_id,actor_user_id) VALUES($1::uuid,$2::uuid,'near-a',2,'near_duplicate','resolved',
+      'kept_distinct',$3::uuid,$4::uuid[],'duplicate_same_concept','Invalid arbitrary rebind.',
+      $5::uuid,$6::uuid,$7::uuid)`,[fixture.workspace.id,row.generation_id,row.wrong_subject_id,
+      row.related_element_ids,row.annotation_id,operation.rows[0]!.id,fixture.actor.id]);
+  }),hasCode("23514"),"the DB backstop rejects an arbitrary annotation subject rebind");
+  await assert.rejects(transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-duplicate-annotation-resolution",
+    generationKey:draft.generation_key,targetElementKey:"merge-target",
+    sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
+    rationale:"Duplicate resolution fixture.",targetCorrection:{canonical_key:"amazon-alexa",
+      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null},targetAnnotationResolutions:[
+      {annotation_key:"target-uncertain",resolution:"context_sufficient"},
+      {annotation_key:"target-uncertain",resolution:"not_supported"}]})),
+  /semantic_context_duplicate_annotation_resolution/u,
+  "the service rejects contradictory duplicate annotation resolutions before any write");
+  await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-near-duplicate-merge-requires-merge-operation",
+    generationKey:draft.generation_key,elementKey:"merge-source-b",annotationKey:"near-b",
+    annotationType:"near_duplicate",reason:"duplicate_same_concept",
+    rationale:"A merged resolution requires the atomic N-to-1 writer.",relatedElementKeys:["merge-target"],
+    resolution:"merged"})),/semantic_context_merge_operation_required/u);
+  const versionsBeforeFailedMerge=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  await assert.rejects(transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-merge-blocked-by-extra-annotation",
+    generationKey:draft.generation_key,targetElementKey:"merge-target",
+    sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
+    rationale:"Merge duplicate identity variants.",targetCorrection:{canonical_key:"amazon-alexa",
+      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}})),/semantic_context_merge_source_annotation_blocked/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBeforeFailedMerge,"failed merge is atomic");
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-resolve-blocker",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Context is now sufficient.",
+    relatedElementKeys:[],resolution:"context_sufficient"}));
+  const merged=await transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-merge-two-into-one",
+    generationKey:draft.generation_key,targetElementKey:"merge-target",
+    sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
+    rationale:"Merge duplicate identity variants.",targetCorrection:{canonical_key:"amazon-alexa",
+      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null},targetAnnotationResolutions:[{annotation_key:"target-uncertain",
+      resolution:"context_sufficient"}]}));
+  assert.equal(merged.merged,2);
+  assert.deepEqual(merged.annotation_reconciliation,{source_count:2,
+    source_matching_near_duplicate_resolved:2,source_other_open_annotations:0,
+    target_open_annotations_before:1,target_annotations_rebound_open:0,
+    target_annotations_resolved_in_merge:1,merged_successor_open_annotations:0,
+    open_annotations_before:3,open_annotations_after:0});
+  const mergeEvents=await pool.query<{event_kind:string;count:number}>(`SELECT event.event_kind,count(*)::int count
+    FROM signal_semantic_context_events event JOIN signal_governance_control_operations operation
+      ON operation.id=event.operation_id WHERE event.workspace_id=$1::uuid
+      AND operation.action='merge-semantic-context-elements' GROUP BY event.event_kind ORDER BY event.event_kind`,
+  [fixture.workspace.id]);
+  assert.deepEqual(mergeEvents.rows,[{event_kind:"elements_merged",count:1},
+    {event_kind:"review_annotation_resolved",count:3}],
+  "merge records each annotation resolution and the N-to-1 authority event");
+  const leaves=await pool.query<{disposition:string;count:number}>(`SELECT disposition,count(*)::int count
+    FROM signal_semantic_context_element_versions element WHERE workspace_id=$1::uuid AND generation_id=(
+      SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2)
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id) GROUP BY disposition ORDER BY disposition`,
+  [fixture.workspace.id,draft.generation_key]);
+  assert.deepEqual(leaves.rows,[{disposition:"merged",count:2},{disposition:"pending",count:3}]);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_merge_edges
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),2);
+  const unionRelations=await pool.query<{relation_type:string}>(`SELECT DISTINCT link.relation_type
+    FROM signal_semantic_context_element_versions element JOIN analysis_evidence_links link
+      ON link.evidence_group_id=element.evidence_group_id
+    WHERE element.workspace_id=$1::uuid AND element.element_key='merge-target'
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id) ORDER BY link.relation_type`,[fixture.workspace.id]);
+  assert.deepEqual(unionRelations.rows.map((row)=>row.relation_type),["contradicts","limits","supports"]);
+  const mergedPage=await transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams("disposition=merged"))}));
+  assert.equal(mergedPage.total,2);
+  await assert.rejects(transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-merged-is-terminal",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",reason:"operator_correction",
+    rationale:"A merged leaf cannot reopen.",correction:{canonical_key:"alexa-plus",display_text:"Alexa Plus",
+      scope:"primary_brand",locale:"es-MX",relation_kind:null,relation_target_key:null}})),
+  /semantic_context_merged_terminal/u);
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correction-open-annotation",
+    generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey:"correction-context",
+    annotationType:"needs_more_context",reason:"insufficient_context",rationale:"Review before correction.",
+    relatedElementKeys:[]}));
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correct-pending",
+    generationKey:draft.generation_key,elementKey:"correction-pending",reason:"operator_correction",
+    rationale:"Apply the governed canonical wording.",correction:{canonical_key:"amazon-echo",
+      display_text:"Amazon Echo",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  const carried=await pool.query<{subject_current:boolean;state:string}>(`SELECT annotation.state,
+    annotation.subject_element_id=(SELECT id FROM signal_semantic_context_element_versions element
+      WHERE element.workspace_id=$1::uuid AND element.element_key='correction-pending'
+        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+          WHERE successor.supersedes_element_id=element.id)) subject_current
+    FROM signal_semantic_context_review_annotations annotation WHERE annotation.workspace_id=$1::uuid
+      AND annotation.annotation_key='correction-context' AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_review_annotations successor
+        WHERE successor.supersedes_annotation_id=annotation.id)`,[fixture.workspace.id]);
+  assert.deepEqual(carried.rows,[{state:"open",subject_current:true}]);
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-resolve-correction-context",
+    generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey:"correction-context",
+    annotationType:"needs_more_context",reason:"insufficient_context",rationale:"Context is sufficient.",
+    relatedElementKeys:[],resolution:"context_sufficient"}));
+  await assert.rejects(transaction((queryable)=>rejectSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-reject-fault-boundary",
+    generationKey:draft.generation_key,elementKey:"correction-rejected",reason:"insufficient_context",
+    rationale:"Reject only when the terminal decision is committed.",
+    faultAfterRationaleResolutionForTest:()=>{throw new Error("fault after rationale resolution");}})),
+  /fault after rationale resolution/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_review_annotations annotation
+    JOIN signal_semantic_context_element_versions element ON element.id=annotation.subject_element_id
+    WHERE annotation.workspace_id=$1::uuid AND element.element_key='correction-rejected'`,
+  [fixture.workspace.id]),0,"a cut after rationale resolution rolls both annotation versions back");
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions element
+    WHERE element.workspace_id=$1::uuid AND element.element_key='correction-rejected'
+      AND element.disposition='pending' AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)`,[fixture.workspace.id]),1,
+  "the faulted atomic rejection preserves the pending predecessor");
+  await transaction((queryable)=>rejectSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-reject-before-correction",
+    generationKey:draft.generation_key,elementKey:"correction-rejected",reason:"insufficient_context",
+    rationale:"The governed evidence does not support the current wording."}));
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correct-rejected",
+    generationKey:draft.generation_key,elementKey:"correction-rejected",reason:"operator_correction",
+    rationale:"Reopen a rejected candidate with governed wording.",correction:{canonical_key:"amazon-echo-dot",
+      display_text:"Amazon Echo Dot",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  for(const key of ["merge-target","correction-pending","correction-rejected"]){
+    await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+      workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:`v2-approve-${key}`,
+      generationKey:draft.generation_key,elementKey:key,action:"approve"}));
+  }
+  const beforePreflightOps=await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  let preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.publishable,true);
+  assert.deepEqual(preflight.blockers,[]);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),beforePreflightOps,"V2 preflight is read-only");
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-stale-review-correction",
+    generationKey:draft.generation_key,elementKey:"merge-target",reason:"operator_correction",
+    rationale:"Reconfirm the reviewed target wording.",correction:{canonical_key:"amazon-alexa",
+      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-stale-review-reapprove",
+    generationKey:draft.generation_key,elementKey:"merge-target",action:"approve"}));
+  await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-stale-publication",
+    generationKey:draft.generation_key,preflightDigest:preflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),/semantic_context_stale_preflight/u);
+  preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  await pool.query(`CREATE OR REPLACE FUNCTION signal_semantic_context_publication_fault_fixture_v2()
+    RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.event_kind='generation_published' THEN
+        RAISE EXCEPTION 'fixture publication fault' USING ERRCODE='40001';
+      END IF; RETURN NEW; END $$;
+    CREATE TRIGGER trg_signal_semantic_context_publication_fault_fixture_v2
+      BEFORE INSERT ON signal_semantic_context_events FOR EACH ROW
+      EXECUTE FUNCTION signal_semantic_context_publication_fault_fixture_v2()`);
+  await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-faulted-publish",
+    generationKey:draft.generation_key,preflightDigest:preflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),/fixture publication fault/u);
+  await pool.query(`DROP TRIGGER trg_signal_semantic_context_publication_fault_fixture_v2
+      ON signal_semantic_context_events;
+    DROP FUNCTION signal_semantic_context_publication_fault_fixture_v2()`);
+  const afterFault=await pool.query<{status:string;published_operation_id:string|null}>(
+    `SELECT status,published_operation_id::text FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2`,[fixture.workspace.id,draft.generation_key]);
+  assert.deepEqual(afterFault.rows,[{status:"draft",published_operation_id:null}],
+  "fault injection rolls publication back atomically");
+  const concurrentPublish=await Promise.all([1,2].map(()=>transaction((queryable)=>
+    publishSignalSemanticContextGenerationV2({queryable,workspace:fixture.workspace,actor:fixture.actor,
+      idempotencyKey:"v2-sealed-publish",generationKey:draft.generation_key,
+      preflightDigest:preflight.preflight_digest,
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2}))));
+  assert.deepEqual(concurrentPublish[0],concurrentPublish[1],"concurrent publication converges by idempotency key");
+  const published=concurrentPublish[0]!;
+  assert.equal(published.lifecycle_state,"published");
+  assert.deepEqual(await transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-sealed-publish",
+    generationKey:draft.generation_key,preflightDigest:preflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),published,"V2 publish replay is exact");
+  await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-sealed-publish",
+    generationKey:draft.generation_key,preflightDigest:digest("different-preflight"),
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),/semantic_context_idempotency_conflict/u);
+  await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-second-publish-key",
+    generationKey:draft.generation_key,preflightDigest:preflight.preflight_digest,
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2})),/semantic_context_draft_not_found/u);
+  await assert.rejects(pool.query(`UPDATE signal_semantic_context_generations SET review_graph_digest=$2
+    WHERE workspace_id=$1::uuid AND generation_key=$3`,[fixture.workspace.id,digest("tamper"),draft.generation_key]),
+  hasCode("55000"));
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
+}
+
+async function exercisePublicationPreflightScaleV2(){
+  const fixture=await seedFixture();
+  const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-scale-initial-draft"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-scale-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  const proposals=Array.from({length:250},(_,index)=>proposal(`scale-${String(index).padStart(3,"0")}`,
+    "identity_term",`scale-canonical-${String(index).padStart(3,"0")}`,
+    `Scale candidate ${String(index).padStart(3,"0")}`,0.5,fixture.profileId));
+  const appended=await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-scale-250-proposals",
+    generationKey:draft.generation_key,proposals}));
+  assert.equal(appended.created,250);
+  const operationsBefore=await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  const startedAt=performance.now();
+  const preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  const elapsedMs=performance.now()-startedAt;
+  assert.equal(preflight.publishable,false);
+  assert.equal(preflight.counts.total_leaves,250);
+  assert.equal(preflight.counts.pending,250);
+  assert.equal(preflight.blockers.includes("pending_elements"),true);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),operationsBefore,
+  "250-element publication preflight remains read-only");
+  assert.ok(elapsedMs<5_000,`250-element publication preflight exceeded 5 seconds: ${elapsedMs}ms`);
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
+}
+
+async function exerciseMutationAuthorityDriftV2(){
+  const fixture=await seedFixture();
+  const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-initial-draft"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-proposals",
+    generationKey:draft.generation_key,proposals:[
+      proposal("drift-target","identity_term","drift-target","Drift target",0.5,fixture.profileId),
+      proposal("drift-source","identity_term","drift-source","Drift source",0.5,fixture.profileId)
+    ]}));
+  const versionsBefore=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  const operationsBefore=await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  await pool.query(`UPDATE brand_os_profiles SET metadata=jsonb_set(metadata,'{snapshot_hash}',to_jsonb($2::text),true)
+    WHERE id=$1::uuid`,[fixture.profileId,digest("brand-os-drift")]);
+  await assert.rejects(transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-correction-blocked",
+    generationKey:draft.generation_key,elementKey:"drift-target",reason:"operator_correction",
+    rationale:"A stale authority must block correction.",correction:{canonical_key:"drift-target",
+      display_text:"Drift target",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}})),/semantic_context_authority_drift/u);
+  await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-annotation-blocked",
+    generationKey:draft.generation_key,elementKey:"drift-target",annotationKey:"drift-annotation",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Stale authority blocks review.",
+    relatedElementKeys:[]})),/semantic_context_authority_drift/u);
+  await assert.rejects(transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-merge-blocked",
+    generationKey:draft.generation_key,targetElementKey:"drift-target",sourceElementKeys:["drift-source"],
+    reason:"duplicate_same_concept",rationale:"Stale authority blocks merge.",targetCorrection:{
+      canonical_key:"drift-target",display_text:"Drift target",scope:"primary_brand",locale:"es-MX",
+      relation_kind:null,relation_target_key:null}})),/semantic_context_authority_drift/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBefore);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),operationsBefore,
+  "authority drift rejects every mutation before a durable operation survives rollback");
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
+}
+
+async function exerciseProviderAuthorityDriftV2(){
+  const fixture=await seedFixture();
+  const draft=await withProductProviderEnvironment(()=>createSignalSemanticContextDraftProductV1({
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-provider-authority-draft"}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-provider-authority-proposal",
+    generationKey:draft.generation_key,proposals:[proposal("provider-authority","identity_term",
+      "provider-authority","Provider authority",0.5,fixture.profileId)]}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-provider-authority-approve",
+    generationKey:draft.generation_key,elementKey:"provider-authority",action:"approve"}));
+  const baseline=await withProductProviderEnvironment(()=>transaction((queryable)=>
+    loadSignalSemanticContextPublicationPreflightV2({queryable,workspace:fixture.workspace,
+      actor:fixture.actor,generationKey:draft.generation_key})));
+  assert.equal(baseline.publishable,true);
+  const modelDrift=await withProductProviderEnvironment(()=>transaction((queryable)=>
+    loadSignalSemanticContextPublicationPreflightV2({queryable,workspace:fixture.workspace,
+      actor:fixture.actor,generationKey:draft.generation_key})),{
+    NOISIA_SEMANTIC_CONTEXT_MODEL:"unregistered-model"
+  });
+  assert.equal(modelDrift.publishable,false);
+  assert.ok(modelDrift.blockers.includes("provider_lineage_not_current"));
+  assert.notEqual(modelDrift.preflight_digest,baseline.preflight_digest);
+  const pricingDrift=await withProductProviderEnvironment(()=>transaction((queryable)=>
+    loadSignalSemanticContextPublicationPreflightV2({queryable,workspace:fixture.workspace,
+      actor:fixture.actor,generationKey:draft.generation_key})),{
+    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION:"pricing-drift"
+  });
+  assert.equal(pricingDrift.publishable,false);
+  assert.notEqual(pricingDrift.preflight_digest,baseline.preflight_digest);
+  const lineageDrift=await withProductProviderEnvironment(()=>transaction((queryable)=>
+    loadSignalSemanticContextPublicationPreflightV2({queryable,workspace:fixture.workspace,
+      actor:fixture.actor,generationKey:draft.generation_key})),{
+    NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS:"3.100000"
+  });
+  assert.equal(lineageDrift.publishable,false);
+  assert.notEqual(lineageDrift.preflight_digest,baseline.preflight_digest);
+}
+
+async function exerciseRelationTargetAuthorityV2(){
+  const fixture=await seedFixture();
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  const relation=(key:string,target:string)=>({
+    element_key:key,element_kind:"typed_relation" as const,canonical_key:key,display_text:key,
+    scope:"primary_brand",entity_type:null,entity_id:null,locale:"es-MX",
+    relation_kind:"associated_with" as const,relation_target_key:target,confidence:0.5,
+    origin_kind:"server_projection" as const,source_refs:[{source_type:"brand_os_profile" as const,
+      source_id:fixture.profileId,relation_type:"supports" as const}]
+  });
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-proposals",
+    generationKey:draft.generation_key,proposals:[
+      proposal("relation-target-approved","identity_term","target-approved","Target approved",0.5,fixture.profileId),
+      proposal("relation-target-pending","identity_term","target-pending","Target pending",0.5,fixture.profileId),
+      proposal("relation-target-rejected","identity_term","target-rejected","Target rejected",0.5,fixture.profileId),
+      proposal("relation-merge-target","identity_term","merge-target","Merge target",0.5,fixture.profileId),
+      proposal("relation-target-merged","identity_term","target-merged","Target merged",0.5,fixture.profileId),
+      proposal("relation-target-superseded","identity_term","target-superseded","Target superseded",0.5,fixture.profileId),
+      relation("relation-valid","relation-target-approved"),relation("relation-missing","missing-target"),
+      relation("relation-pending","relation-target-pending"),relation("relation-rejected","relation-target-rejected"),
+      relation("relation-merged","relation-target-merged"),relation("relation-self","relation-self"),
+      relation("relation-current-successor","relation-target-superseded")
+    ]}));
+  for(const key of ["relation-target-approved","relation-valid","relation-missing","relation-pending",
+    "relation-rejected","relation-merged","relation-self","relation-current-successor"]){
+    await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+      workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:`v2-relation-approve-${key}`,
+      generationKey:draft.generation_key,elementKey:key,action:"approve"}));
+  }
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-reject-target",
+    generationKey:draft.generation_key,elementKey:"relation-target-rejected",action:"reject"}));
+  await seedOpenNearDuplicateAnnotation(fixture,draft.generation_key,"relation-target-merged",
+    "relation-merge-target","relation-merge-review");
+  await transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-merge-target",
+    generationKey:draft.generation_key,targetElementKey:"relation-merge-target",
+    sourceElementKeys:["relation-target-merged"],reason:"duplicate_same_concept",
+    rationale:"Merge relation target fixture.",targetCorrection:{canonical_key:"merge-target",
+      display_text:"Merge target",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-correct-successor",
+    generationKey:draft.generation_key,elementKey:"relation-target-superseded",reason:"operator_correction",
+    rationale:"Create a current successor for target resolution.",correction:{canonical_key:"target-superseded-current",
+      display_text:"Target superseded current",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-approve-successor",
+    generationKey:draft.generation_key,elementKey:"relation-target-superseded",action:"approve"}));
+  const blocked=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(blocked.counts.invalid_relation_targets,5,
+  "missing, pending, rejected, merged and self targets are invalid; approved current/successor targets are valid");
+  assert.ok(blocked.blockers.includes("invalid_relation_target"));
+  const tokenBefore=blocked.preflight_digest;
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-target-change",
+    generationKey:draft.generation_key,elementKey:"relation-target-approved",reason:"operator_correction",
+    rationale:"Changing target authority invalidates the prior preflight.",correction:{canonical_key:"target-approved-v2",
+      display_text:"Target approved v2",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      relation_target_key:null}}));
+  const changed=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(changed.counts.invalid_relation_targets,6);
+  assert.notEqual(changed.preflight_digest,tokenBefore,"target authority changes invalidate the preflight token");
+}
+
+async function exerciseMixedStateMergeV2(){
+  const fixture=await seedFixture();
+  const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-initial-draft"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-proposals",
+    generationKey:draft.generation_key,proposals:[
+      proposal("mixed-target","identity_term","mixed-target","Mixed target",0.5,fixture.profileId),
+      proposal("mixed-approved","identity_term","mixed-approved","Mixed approved",0.5,fixture.profileId),
+      proposal("mixed-rejected","identity_term","mixed-rejected","Mixed rejected",0.5,fixture.profileId)
+    ]}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-approve-source",
+    generationKey:draft.generation_key,elementKey:"mixed-approved",action:"approve"}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-reject-source",
+    generationKey:draft.generation_key,elementKey:"mixed-rejected",action:"reject"}));
+  await seedOpenNearDuplicateAnnotation(fixture,draft.generation_key,"mixed-approved","mixed-target",
+    "mixed-approved-near-target");
+  await seedOpenNearDuplicateAnnotation(fixture,draft.generation_key,"mixed-rejected","mixed-target",
+    "mixed-rejected-near-target");
+  const counts=async()=>pool.query<{disposition:string;count:number}>(`SELECT disposition,count(*)::int count
+    FROM signal_semantic_context_element_versions element WHERE workspace_id=$1::uuid AND generation_id=(
+      SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2)
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id) GROUP BY disposition ORDER BY disposition`,
+  [fixture.workspace.id,draft.generation_key]).then((result)=>result.rows);
+  assert.deepEqual(await counts(),[{disposition:"approved",count:1},{disposition:"pending",count:1},
+    {disposition:"rejected",count:1}]);
+  await transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-mixed-state-merge",
+    generationKey:draft.generation_key,targetElementKey:"mixed-target",
+    sourceElementKeys:["mixed-approved","mixed-rejected"],reason:"duplicate_same_concept",
+    rationale:"Resolve reviewed same-kind variants into one pending target.",targetCorrection:{
+      canonical_key:"mixed-target",display_text:"Mixed target",scope:"primary_brand",locale:"es-MX",
+      relation_kind:null,relation_target_key:null}}));
+  assert.deepEqual(await counts(),[{disposition:"merged",count:2},{disposition:"pending",count:1}],
+  "mixed approved/rejected sources reconcile to merged while total leaves remain constant");
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
+}
+
+async function attemptRawCrossAuthorityElementInsert(queryable:SignalBrandPolicyQueryable,
+  fixture:Awaited<ReturnType<typeof seedFixture>>,generationKey:string){
+  const generation=await queryable.query<{id:string}>(`SELECT id::text FROM signal_semantic_context_generations
+    WHERE workspace_id=$1::uuid AND generation_key=$2`,[fixture.workspace.id,generationKey]);
+  const operation=await queryable.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'append-semantic-context-proposals',$3,$4,'in_progress') RETURNING id::text`,
+  [fixture.workspace.id,fixture.actor.id,digest("raw-cross-authority-request"),
+    digest("raw-cross-authority-key")]);
+  const elementDigest=digest("raw-cross-authority-element");
+  const artifact=await queryable.query<{id:string}>(`INSERT INTO analysis_artifacts(
+    workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
+    content,confidence,review_status,revision,metadata)
+    VALUES($1::uuid,'semantic_context',$2,'raw-cross-authority','semantic_context_element',
+      '{}'::jsonb,'0.5','needs_review',1,'{}'::jsonb) RETURNING id::text`,
+  [fixture.workspace.id,elementDigest]);
+  const group=await queryable.query<{id:string}>(`INSERT INTO analysis_evidence_groups(
+    artifact_id,group_key,role,label,summary,position,metadata)
+    VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,'{}'::jsonb)
+    RETURNING id::text`,[artifact.rows[0]!.id]);
+  await queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,
+    relation_type,evidence_role,locator,position,metadata) VALUES($1::uuid,'brand_os_profile',$2::uuid,
+    'supports','supporting','{}'::jsonb,0,'{}'::jsonb)`,[group.rows[0]!.id,fixture.otherProfileId]);
+  await queryable.query(`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
+    canonical_key,display_text,scope,locale,confidence,disposition,origin_kind,source_refs_digest,
+    element_digest,operation_id,proposed_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'raw-cross-authority',1,'identity_term',
+      'raw-cross-authority','Raw cross authority','primary_brand','es-MX',0.5,'pending','server_projection',
+      $5,$6,$7::uuid,$8::uuid)`,[fixture.workspace.id,generation.rows[0]!.id,artifact.rows[0]!.id,
+    group.rows[0]!.id,digest("raw-cross-authority-refs"),elementDigest,operation.rows[0]!.id,
+    fixture.actor.id]);
+}
+
+async function seedOpenNearDuplicateAnnotation(fixture:Awaited<ReturnType<typeof seedFixture>>,
+  generationKey:string,subjectKey:string,targetKey:string,annotationKey:string){
+  const row=await pool.query<{generation_id:string;subject_id:string;target_id:string}>(`SELECT generation.id::text generation_id,
+    subject.id::text subject_id,target.id::text target_id FROM signal_semantic_context_generations generation
+    JOIN signal_semantic_context_element_versions subject ON subject.generation_id=generation.id AND subject.element_key=$3
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=subject.id)
+    JOIN signal_semantic_context_element_versions target ON target.generation_id=generation.id AND target.element_key=$4
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=target.id)
+    WHERE generation.workspace_id=$1::uuid AND generation.generation_key=$2`,
+  [fixture.workspace.id,generationKey,subjectKey,targetKey]);
+  const authority=row.rows[0]!;
+  const operation=await pool.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'annotate-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+  [fixture.workspace.id,fixture.actor.id,digest(`fixture-request:${annotationKey}`),
+    digest(`fixture-key:${annotationKey}`)]);
+  const annotation=await pool.query<{id:string}>(`INSERT INTO signal_semantic_context_review_annotations(
+    workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+    subject_element_id,related_element_ids,reason_code,rationale,operation_id,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3,1,'near_duplicate','open',NULL,$4::uuid,ARRAY[$5::uuid],
+      'duplicate_same_concept','Mixed-state fixture review.',$6::uuid,$7::uuid) RETURNING id::text`,
+  [fixture.workspace.id,authority.generation_id,annotationKey,authority.subject_id,authority.target_id,
+    operation.rows[0]!.id,fixture.actor.id]);
+  await pool.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,operation_id,
+    event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,0,'review_annotation_created',NULL,$5,$6::uuid)`,
+  [fixture.workspace.id,authority.generation_id,authority.subject_id,operation.rows[0]!.id,
+    digest(`fixture-annotation:${annotation.rows[0]!.id}`),fixture.actor.id]);
+  await pool.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,
+  [operation.rows[0]!.id,JSON.stringify({annotation_key:annotationKey,annotation_version:1,state:"open",
+    resolution:null})]);
+}
+
+async function seedHistoricalV1Publication(){
+  const fixture=await seedFixture();
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"historical-v1-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"historical-v1-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"historical-v1-proposal",
+    generationKey:draft.generation_key,proposals:[proposal("historical-v1-element","identity_term",
+      "historical-v1","Historical V1",0.5,fixture.profileId)]}));
+  await transaction((queryable)=>decideSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"historical-v1-approve",
+    generationKey:draft.generation_key,elementKey:"historical-v1-element",action:"approve"}));
+  const operation=await pool.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'publish-semantic-context-generation',$3,$4,'in_progress') RETURNING id::text`,
+  [fixture.workspace.id,fixture.actor.id,digest("historical-v1-publish-request"),
+    digest("historical-v1-publish-key")]);
+  await pool.query(`UPDATE signal_semantic_context_generations SET status='published',pack_digest=$3,
+    published_operation_id=$4::uuid,published_by_user_id=$5::uuid,published_at=clock_timestamp()
+    WHERE workspace_id=$1::uuid AND generation_key=$2`,[fixture.workspace.id,draft.generation_key,
+    digest("historical-v1-pack"),operation.rows[0]!.id,fixture.actor.id]);
+  await pool.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,
+  [operation.rows[0]!.id,JSON.stringify({generation_key:draft.generation_key,lifecycle_state:"published"})]);
+  return{workspaceId:fixture.workspace.id,generationKey:draft.generation_key};
+}
+
+function installProviderEnvironment(configuration:SignalSemanticContextProposalRuntimeConfigurationV1,
+  overrides:Record<string,string>={}){
   const values:Record<string,string>={
-    NOISIA_SEMANTIC_CONTEXT_MODEL:productLineageConfiguration.model,
-    NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION:productLineageConfiguration.model_version,
-    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION:productLineageConfiguration.pricing_version,
-    NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS:String(productLineageConfiguration.max_input_tokens),
-    NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS:String(productLineageConfiguration.max_output_tokens),
+    NOISIA_SEMANTIC_CONTEXT_MODEL:configuration.model,
+    NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION:configuration.model_version,
+    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION:configuration.pricing_version,
+    NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS:String(configuration.max_input_tokens),
+    NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS:String(configuration.max_output_tokens),
     NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS:
-      productLineageConfiguration.input_usd_per_million_tokens,
+      configuration.input_usd_per_million_tokens,
     NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS:
-      productLineageConfiguration.output_usd_per_million_tokens,
+      configuration.output_usd_per_million_tokens,
     NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD:
-      productLineageConfiguration.platform_hard_cap_micro_usd.toString(),
+      configuration.platform_hard_cap_micro_usd.toString(),
     ...overrides
   };
   const previous=new Map(Object.keys(values).map((key)=>[key,process.env[key]]));
   Object.assign(process.env,values);
-  try{return await run();}
-  finally{for(const[key,value]of previous){if(value===undefined)delete process.env[key];
-    else process.env[key]=value;}}
+  return()=>{for(const[key,value]of previous){if(value===undefined)delete process.env[key];
+    else process.env[key]=value;}};
+}
+
+async function withProductProviderEnvironment<T>(run:()=>Promise<T>,overrides:Record<string,string>={}){
+  const restore=installProviderEnvironment(productLineageConfiguration,overrides);
+  try{return await run();}finally{restore();}
 }
 
 async function generationProviderLineage(workspaceId:string,generationKey:string){
@@ -574,10 +1276,11 @@ async function seedFixture(){const suffix=randomUUID().slice(0,8);const orgId=ra
   [[brandId,otherBrandId]]);const workspaceRow=workspaces.rows.find((row)=>row.brand_id===brandId)!;
   const otherRow=workspaces.rows.find((row)=>row.brand_id===otherBrandId)!;
   await pool.query(`UPDATE signal_workspaces SET timezone='America/Mexico_City' WHERE id=$1::uuid`,[workspaceRow.id]);
-  const profileId=randomUUID(),productId=randomUUID();const brandOsDigest=digest("brand-os-v1");
+  const profileId=randomUUID(),otherProfileId=randomUUID(),productId=randomUUID();const brandOsDigest=digest("brand-os-v1");
   await pool.query(`INSERT INTO brand_os_profiles(id,organization_id,brand_id,name,status,version,metadata)
-    VALUES($1::uuid,$2::uuid,$3::uuid,'Profile v1','active',1,jsonb_build_object('snapshot_hash',$4::text))`,
-  [profileId,orgId,brandId,brandOsDigest]);
+    VALUES($1::uuid,$2::uuid,$3::uuid,'Profile v1','active',1,jsonb_build_object('snapshot_hash',$4::text)),
+      ($5::uuid,$6::uuid,$7::uuid,'Other profile','active',1,jsonb_build_object('snapshot_hash',$8::text))`,
+  [profileId,orgId,brandId,brandOsDigest,otherProfileId,otherOrgId,otherBrandId,digest("other-brand-os")]);
   await pool.query(`INSERT INTO brand_os_products(id,brand_os_profile_id,name,status)
     VALUES($1::uuid,$2::uuid,'Smart speaker','active')`,[productId,profileId]);
   const sourceId=randomUUID(),chunkId=randomUUID();
@@ -615,7 +1318,7 @@ async function seedFixture(){const suffix=randomUUID().slice(0,8);const orgId=ra
     slug:otherRow.slug,name:`Other ${suffix}`,subject:{type:"brand" as const,id:otherBrandId},
     timezone:otherRow.timezone,status:"active" as const,corpora:[]};
   const actor={id:userId,userType:"noisia_internal" as const,primaryRole:"noisia_admin",organizationId:null};
-  return{workspace,otherWorkspace,actor,profileId,productId,sourceId,chunkId};}
+  return{workspace,otherWorkspace,actor,profileId,otherProfileId,productId,sourceId,chunkId};}
 
 async function transaction<T>(fn:(queryable:SignalBrandPolicyQueryable)=>Promise<T>){return withSignalAcquisitionTransactionV1(fn);}
 async function scalar(sql:string,params:unknown[]){return(await pool.query<{count:number}>(sql,params)).rows[0]!.count;}

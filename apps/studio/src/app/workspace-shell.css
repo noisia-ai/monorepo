@@ -9524,6 +9524,249 @@ body.semantic-review-controls-open .admin-shell__main {
   white-space: pre-wrap;
 }
 
+.semantic-context-review__skeleton {
+  display: grid;
+  gap: 9px;
+  min-height: 150px;
+  padding: 16px;
+}
+
+.semantic-context-review__skeleton i {
+  display: block;
+  height: 34px;
+  border-radius: 8px;
+  background: #ededed;
+  animation: semantic-review-skeleton 1.2s ease-in-out infinite;
+}
+
+.semantic-context-review__skeleton i:nth-child(2) { width: 88%; }
+.semantic-context-review__skeleton i:nth-child(3) { width: 72%; }
+
+.semantic-context-review__count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--workspace-border);
+  color: var(--workspace-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.semantic-context-review__selection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #bfd7d9;
+  background: #f2fafa;
+  font-size: 12px;
+}
+
+.semantic-context-review__selection > span {
+  flex: 1;
+  color: var(--workspace-muted);
+}
+
+.semantic-context-review__selection > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.semantic-context-review__row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.semantic-context-review__row-select {
+  display: grid;
+  place-items: center;
+  border-right: 1px solid var(--workspace-border);
+}
+
+.semantic-context-review__row-select input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--signal);
+}
+
+.semantic-context-review__merge,
+.semantic-context-review__publication {
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--workspace-border);
+  background: #fbfbfa;
+}
+
+.semantic-context-review__merge {
+  border-left: 3px solid var(--signal);
+}
+
+.semantic-context-review__merge-head,
+.semantic-context-review__publication-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.semantic-context-review__merge-head strong,
+.semantic-context-review__publication-head strong,
+.semantic-context-review__form-heading strong {
+  display: block;
+  font-size: 13px;
+}
+
+.semantic-context-review__merge-head p,
+.semantic-context-review__publication-head p {
+  margin: 3px 0 0;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.semantic-context-review__merge-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, .75fr) minmax(260px, 1fr);
+  gap: 12px;
+}
+
+.semantic-context-review__merge-correction {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.semantic-context-review__merge-consequences {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 9px;
+  background: var(--workspace-surface);
+}
+
+.semantic-context-review__merge-consequences strong,
+.semantic-context-review__merge-consequences p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.semantic-context-review__merge-consequences p { color: var(--workspace-muted); }
+
+.semantic-context-review__form-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.semantic-context-review__form-heading small {
+  color: var(--workspace-muted);
+  font-size: 11px;
+}
+
+.semantic-context-review__annotations,
+.semantic-context-review__lineage {
+  display: grid;
+  gap: 8px;
+}
+
+.semantic-context-review__annotations h3,
+.semantic-context-review__lineage h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.semantic-context-review__annotations article,
+.semantic-context-review__lineage > div {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 9px;
+  background: var(--workspace-surface);
+}
+
+.semantic-context-review__annotations article > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.semantic-context-review__annotations article > div:first-child {
+  justify-content: space-between;
+}
+
+.semantic-context-review__annotations p,
+.semantic-context-review__annotations small,
+.semantic-context-review__lineage small {
+  margin: 0;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.semantic-context-review__lineage > div {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.semantic-context-review__lineage small { grid-column: 2; }
+
+.semantic-context-review__publication {
+  border-top: 1px solid var(--workspace-border);
+  border-bottom: 0;
+}
+
+.semantic-context-review__publication-counts {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(80px, 1fr));
+  gap: 1px;
+  padding: 1px;
+  background: var(--workspace-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.semantic-context-review__publication-counts > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  background: var(--workspace-surface);
+}
+
+.semantic-context-review__publication-counts span { color: var(--workspace-muted); font-size: 11px; }
+.semantic-context-review__publication-counts strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+
+.semantic-context-review__publication-digests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  color: var(--workspace-muted);
+  font-size: 11px;
+}
+
+.semantic-context-review__publication-digests code { color: var(--workspace-ink); }
+
+.semantic-context-review__publication-ready {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #b9d8c8;
+  border-radius: 9px;
+  background: #f2faf6;
+  color: #185c3d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 @media (max-width: 980px) {
   .semantic-context-pack__toolbar {
     grid-template-columns: 1fr 1fr;
@@ -9543,6 +9786,9 @@ body.semantic-review-controls-open .admin-shell__main {
   }
   .semantic-context-review__row-signals {
     grid-column: 1 / -1;
+  }
+  .semantic-context-review__publication-counts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -9592,7 +9838,10 @@ body.semantic-review-controls-open .admin-shell__main {
     width: 100%;
   }
   .semantic-context-review__header,
-  .semantic-context-review__source header {
+  .semantic-context-review__source header,
+  .semantic-context-review__merge-head,
+  .semantic-context-review__publication-head,
+  .semantic-context-review__selection {
     align-items: stretch;
     flex-direction: column;
   }
@@ -9612,6 +9861,17 @@ body.semantic-review-controls-open .admin-shell__main {
   .semantic-context-review__pagination .admin-button {
     min-width: 104px;
   }
+  .semantic-context-review__count-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .semantic-context-review__selection > span { flex: none; }
+  .semantic-context-review__selection > div,
+  .semantic-context-review__selection .admin-button { width: 100%; }
+  .semantic-context-review__merge-grid,
+  .semantic-context-review__merge-correction { grid-template-columns: 1fr; }
+  .semantic-context-review__publication-counts { grid-template-columns: 1fr 1fr; }
+  .semantic-context-review__publication-head .admin-button { width: 100%; }
 }
 
 @keyframes semantic-review-skeleton {

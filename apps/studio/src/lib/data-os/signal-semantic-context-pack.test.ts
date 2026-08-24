@@ -184,7 +184,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/WorkspaceDrawer/u);
   assert.match(manager,/WorkspaceConfirmDialog/u);
   assert.match(manager,/GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS/u);
-  assert.match(manager,/publish_reviewed_semantic_context/u);
+  assert.match(manager,/SemanticContextReviewWorkbench/u);
+  assert.doesNotMatch(manager,/publish_reviewed_semantic_context/u);
   assert.match(manager,/Idempotency-Key/u);
   assert.match(manager,/\/reconcile/u);
   assert.match(manager,/actions\.reconcile/u);
@@ -216,6 +217,12 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "terminal discovery retains DB-owned actor authorization");
   assert.match(manager,/density="compact"/u,
     "Brand OS must use the canonical compact summary density");
+  assert.match(manager,/type Counts = \{ pending: number; approved: number; rejected: number; merged: number \}/u,
+    "the manager hydration contract includes merged leaves");
+  assert.match(manager,/\{ pending: 0, approved: 0, rejected: 0, merged: 0 \}/u,
+    "the empty summary preserves the complete V2 disposition shape");
+  assert.match(manager,/counts\.pending \+ counts\.approved \+ counts\.rejected \+ counts\.merged/u,
+    "terminal merged leaves remain part of the generation element count");
   assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,
     "safe retry is offered only before a provider call starts");
   assert.match(manager,/paid_response_revalidation/u,
