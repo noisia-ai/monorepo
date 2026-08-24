@@ -1917,6 +1917,70 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SignalSemanticContextReadinessV1" }
+  /api/data-os/signal/{workspaceId}/semantic-context/review:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: listSemanticContextReviewElements
+      summary: List current Semantic Context elements through a stable, server-filtered review cursor.
+      description: Management-only operator projection. Exact totals and deterministic attention signals are non-authoritative; no private evidence identifiers or authority digests are returned.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: search, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: disposition, in: query, schema: { type: string, enum: [pending, approved, rejected] } }
+        - { name: element_kind, in: query, schema: { type: string } }
+        - { name: scope, in: query, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string, enum: [all, explicit, unassigned, needs_review], default: all } }
+        - { name: evidence, in: query, schema: { type: string, enum: [all, needs_review, one_source_only, supports_only, has_limits, has_contradictions], default: all } }
+        - { name: duplicate, in: query, schema: { type: string, enum: [all, exact, display], default: all } }
+        - { name: evidence_relation, in: query, schema: { type: string, enum: [supports, limits, contradicts] } }
+        - { name: page_size, in: query, schema: { type: integer, enum: [20, 40], default: 20 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque cursor bound to generation, filters and sort. }
+      responses:
+        "200":
+          description: Exact filtered total, one stable page, facets and an optional next cursor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextReviewPageV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Generation unavailable in this workspace. }
+        "422": { description: Closed filter or filter-bound cursor rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/review/summary:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextReviewSummary
+      summary: Load the operator-safe lifecycle, generation counts and latest run needed by Review.
+      description: Management-only allowlist. Authority digests, hashed references, provider request identities, result digests and private payloads are withheld.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Review lifecycle summary with no private identifiers or hashes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextReviewSummaryV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/data-os/signal/{workspaceId}/semantic-context/review/{elementKey}:
+    get:
+      tags: [Semantic Context Pack]
+      operationId: getSemanticContextReviewElement
+      summary: Load one element and bounded, operator-safe governed evidence under the current generation.
+      description: Context is explicitly labelled as context supplied to the model and never represented as a pinpoint citation.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: elementKey, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$' } }
+      responses:
+        "200":
+          description: Element detail and bounded evidence projection without source IDs, raw prompts or provider responses.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalSemanticContextReviewDetailV1" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Generation or element unavailable in this workspace. }
   /api/data-os/signal/{workspaceId}/semantic-context/reconcile:
     post:
       tags: [Semantic Context Pack]
@@ -2287,6 +2351,110 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    SignalSemanticContextReviewSummaryV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, readiness, generation, latest_proposal_run, authority]
+      properties:
+        contract_version: { const: signal-semantic-context-review-summary-v1 }
+        readiness: { type: object, additionalProperties: true }
+        generation: { type: [object, "null"], additionalProperties: true }
+        latest_proposal_run:
+          oneOf:
+            - type: object
+              additionalProperties: true
+              description: Operator allowlist only; no refs, digests, raw request/response or provider request identity.
+            - { type: "null" }
+        authority:
+          type: object
+          additionalProperties: false
+          required: [source, private_fields_withheld]
+          properties:
+            source: { const: server_owned }
+            private_fields_withheld: { const: true }
+    SignalSemanticContextReviewElementV1:
+      type: object
+      additionalProperties: false
+      required: [element_key, element_version, element_kind, canonical_key, display_text, scope,
+        entity_type, locale, relation_kind, relation_target_key, disposition, origin, provenance,
+        applicability, evidence_summary, attention]
+      properties:
+        element_key: { type: string }
+        element_version: { type: integer, minimum: 1 }
+        element_kind: { type: string }
+        canonical_key: { type: string }
+        display_text: { type: string }
+        scope: { type: [string, "null"] }
+        entity_type: { type: [string, "null"] }
+        locale: { type: [string, "null"] }
+        relation_kind: { type: [string, "null"] }
+        relation_target_key: { type: [string, "null"] }
+        disposition: { type: string, enum: [pending, approved, rejected] }
+        origin: { type: string }
+        provenance: { type: object, additionalProperties: false, required: [proposed_at, decided_at], properties: { proposed_at: { type: string, format: date-time }, decided_at: { type: [string, "null"], format: date-time } } }
+        applicability: { type: object, additionalProperties: true }
+        evidence_summary: { type: object, additionalProperties: true }
+        attention:
+          type: object
+          additionalProperties: true
+          description: Deterministic review-priority hints. authoritative is always false.
+          required: [authoritative]
+          properties: { authoritative: { const: false } }
+    SignalSemanticContextReviewPageV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, generation, total, page_size, next_cursor, elements, facets, authority]
+      properties:
+        contract_version: { const: signal-semantic-context-review-page-v1 }
+        generation: { type: object, additionalProperties: true }
+        total: { type: integer, minimum: 0 }
+        page_size: { type: integer, enum: [20, 40] }
+        next_cursor: { type: [string, "null"] }
+        elements: { type: array, items: { $ref: "#/components/schemas/SignalSemanticContextReviewElementV1" } }
+        facets: { type: object, additionalProperties: true }
+        authority:
+          type: object
+          additionalProperties: false
+          required: [source, attention_signals_authoritative]
+          properties:
+            source: { const: server_owned }
+            attention_signals_authoritative: { const: false }
+    SignalSemanticContextReviewEvidenceV1:
+      type: object
+      additionalProperties: false
+      required: [relation, source_type, source_kind, source_title, section_label, source_context,
+        applicability, generation_state, current_state, unavailable_reason]
+      properties:
+        relation: { type: string, enum: [supports, limits, contradicts] }
+        source_type: { type: string }
+        source_kind: { type: string }
+        source_title: { type: string }
+        section_label: { type: string }
+        source_context:
+          type: object
+          additionalProperties: false
+          required: [label, preview, truncated, redacted, pinpoint_citation]
+          properties:
+            label: { const: context_supplied_to_model }
+            preview: { type: [string, "null"], maxLength: 720 }
+            truncated: { type: boolean }
+            redacted: { type: boolean }
+            pinpoint_citation: { const: false }
+        applicability: { type: object, additionalProperties: true }
+        generation_state: { const: validated_at_generation }
+        current_state: { type: string, enum: [current, inactive, unavailable] }
+        unavailable_reason: { type: [string, "null"], enum: [source_unavailable, context_not_available, null] }
+    SignalSemanticContextReviewDetailV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, generation, element, evidence, evidence_notice, authority]
+      properties:
+        contract_version: { const: signal-semantic-context-review-detail-v1 }
+        generation: { type: object, additionalProperties: true }
+        element: { $ref: "#/components/schemas/SignalSemanticContextReviewElementV1" }
+        evidence: { type: array, items: { $ref: "#/components/schemas/SignalSemanticContextReviewEvidenceV1" } }
+        evidence_notice: { type: object, additionalProperties: true }
+        authority: { type: object, additionalProperties: true }
     SignalSemanticContextGenerationDetailV1:
       type: object
       additionalProperties: false

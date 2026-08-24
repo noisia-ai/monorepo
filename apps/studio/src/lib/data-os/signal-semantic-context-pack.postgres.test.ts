@@ -27,6 +27,12 @@ import {
   reconcileSignalSemanticContextGenerationProductV1,
   reconcileSignalSemanticContextGenerationV1
 } from "@/lib/data-os/signal-semantic-context-pack";
+import {
+  loadSignalSemanticContextReviewDetailV1,
+  loadSignalSemanticContextReviewPageV1,
+  loadSignalSemanticContextReviewSummaryV1,
+  parseSignalSemanticContextReviewFiltersV1
+} from "@/lib/data-os/signal-semantic-context-review";
 import { withSignalAcquisitionTransactionV1 } from "@/lib/data-os/signal-acquisition-plan";
 import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
 import { pool } from "@/lib/db";
@@ -95,6 +101,32 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.deepEqual(await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"context-proposals-idempotent",
     generationKey:draft.generation_key,proposals})),appended);
+  const reviewPage=await transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())}));
+  assert.equal(reviewPage.total,4);
+  assert.deepEqual(reviewPage.elements.map((element)=>element.element_key),
+    ["friction-main","identity-main","need-main","product-main"]);
+  assert.equal(reviewPage.elements.every((element)=>element.attention.authoritative===false),true);
+  assert.doesNotMatch(JSON.stringify(reviewPage),/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu,
+    "the review page contains no private database identifiers");
+  const productDetail=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"product-main"}));
+  assert.equal(productDetail.evidence.length,1);
+  assert.equal(productDetail.evidence[0]!.source_type,"brand_os_product");
+  assert.equal(productDetail.evidence[0]!.source_context.label,"context_supplied_to_model");
+  assert.equal(productDetail.evidence[0]!.source_context.pinpoint_citation,false);
+  assert.equal(productDetail.authority.review_decision_written,false);
+  const reviewSummary=await transaction((queryable)=>loadSignalSemanticContextReviewSummaryV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor}));
+  assert.deepEqual(reviewSummary.generation?.counts,{pending:4,approved:0,rejected:0});
+  assert.equal(reviewSummary.authority.private_fields_withheld,true);
+  assert.doesNotMatch(JSON.stringify(reviewSummary),/sha256:|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu,
+    "the Review hydration contract withholds hashes and private database identifiers");
+  await assert.rejects(transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.otherWorkspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())})),hasCode("semantic_context_generation_not_found"));
   let readiness=await loadSignalSemanticContextReadinessV1({queryable:pool,workspace:fixture.workspace,
     actor:fixture.actor});
   assert.deepEqual(readiness.counts,{pending:4,approved:0,rejected:0});

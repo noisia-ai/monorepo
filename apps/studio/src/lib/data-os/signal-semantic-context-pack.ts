@@ -150,12 +150,13 @@ export async function loadSignalSemanticContextReadinessV1(args:{
 
 export async function loadSignalSemanticContextGenerationV1(args:{
   queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
-  generationKey?:string;
+  generationKey?:string;includeElements?:boolean;
 }){
   assertInternal(args.actor);
   const generation=await loadGeneration(args.queryable,args.workspace.id,args.generationKey);
   if(!generation)throw new SignalSemanticContextPackError("semantic_context_generation_not_found",404);
-  const current=await loadCurrentElements(args.queryable,generation.id);
+  const includeElements=args.includeElements!==false;
+  const current=includeElements?await loadCurrentElements(args.queryable,generation.id):[];
   const links=current.length?await args.queryable.query<{evidence_group_id:string;source_type:string;
     source_id:string;relation_type:string}>(`SELECT evidence_group_id::text,source_type,
       source_id::text,relation_type FROM analysis_evidence_links
@@ -169,7 +170,7 @@ export async function loadSignalSemanticContextGenerationV1(args:{
     queryable:args.queryable as never,workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
     generation_key:generation.generation_key});
   return{contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
-    generation:publicGeneration(generation,countRows(current)),
+    generation:publicGeneration(generation,includeElements?countRows(current):await loadCurrentCounts(args.queryable,generation.id)),
     elements:current.map((element)=>publicElement(element,refsByGroup.get(element.evidence_group_id)??[])),
     latest_proposal_run:latestProposalRun,
     source_authority:{brand_os_digest:generation.brand_os_digest,

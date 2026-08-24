@@ -197,7 +197,7 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "a remembered run hint must remain generation-bound");
   assert.match(manager,/serializeSignalSemanticContextRunSessionReferenceV1\(generation\.generation_key/u,
     "same-tab polling state retains the generation identity with the run key");
-  assert.match(manager,/detail\.latest_proposal_run/u,
+  assert.match(manager,/summary\.latest_proposal_run/u,
     "fresh loads must bind the server-discovered run without sessionStorage authority");
   assert.match(manager,/const canStartProposalGeneration = canStartSignalSemanticContextProposalGenerationV1\(\{/u,
     "all proposal entry points share one server-run-aware state guard");

@@ -51,6 +51,9 @@ function operatorMessage(code:string){return({
   proposal_recovery_unavailable:"The proposal recovery drainer is not ready.",
   semantic_context_provider_outcome_ambiguous:"A provider call may have started; automatic retry is blocked to prevent duplicate spend.",
   semantic_context_proposal_run_not_retryable:"This run cannot be retried without risking duplicate spend."
+  ,semantic_context_review_filter_invalid:"One or more review filters are invalid."
+  ,semantic_context_review_cursor_invalid:"The review page changed. Return to the first page and try again."
+  ,semantic_context_review_element_not_found:"This Semantic Context element is not available in the selected generation."
   ,semantic_context_revalidation_confirmation_required:"Confirm paid-response revalidation before continuing."
   ,semantic_context_paid_response_not_revalidatable:"This paid response cannot be revalidated safely."
   ,semantic_context_paid_response_digest_mismatch:"The stored paid response failed its integrity check."

@@ -9015,7 +9015,7 @@ body.semantic-review-controls-open .admin-shell__main {
 .semantic-context-pack__element-button small {
   max-width: 100%;
   color: var(--workspace-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .semantic-context-pack__footer {
@@ -9234,12 +9234,314 @@ body.semantic-review-controls-open .admin-shell__main {
 }
 .semantic-context-pack__skeleton div span { height: 76px; }
 
+.semantic-context-review {
+  position: relative;
+  min-width: 0;
+}
+
+.semantic-context-review__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 16px 12px;
+}
+
+.semantic-context-review__header strong {
+  display: block;
+  font-size: 14px;
+}
+
+.semantic-context-review__header p {
+  max-width: 760px;
+  margin: 4px 0 0;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.semantic-context-review__toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(5, minmax(130px, 0.72fr));
+  gap: 8px;
+  padding: 12px 16px;
+  border-block: 1px solid var(--workspace-border);
+  background: color-mix(in srgb, var(--workspace-surface) 82%, #f3f4f6);
+}
+
+.semantic-context-review__toolbar label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.semantic-context-review__search {
+  position: relative;
+}
+
+.semantic-context-review__search > svg {
+  position: absolute;
+  left: 11px;
+  bottom: 11px;
+  z-index: 1;
+  color: var(--workspace-muted);
+}
+
+.semantic-context-review__search input {
+  width: 100%;
+  padding-left: 32px;
+}
+
+.semantic-context-review__loading,
+.semantic-context-review__detail-loading,
+.semantic-context-review__feedback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 72px;
+  padding: 16px;
+  color: var(--workspace-muted);
+  font-size: 12px;
+}
+
+.semantic-context-review__feedback {
+  justify-content: flex-start;
+  min-height: 56px;
+  color: #852f2a;
+  background: #fff4f2;
+}
+
+.semantic-context-review__feedback span {
+  flex: 1;
+}
+
+.semantic-context-review__count {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--workspace-border);
+  color: var(--workspace-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.semantic-context-review__list {
+  display: grid;
+}
+
+.semantic-context-review__row {
+  min-width: 0;
+  border-bottom: 1px solid var(--workspace-border);
+}
+
+.semantic-context-review__row-button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+  align-items: center;
+  gap: 18px;
+  padding: 13px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.semantic-context-review__row-button:hover {
+  background: #f8f8f7;
+}
+
+.semantic-context-review__row-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #202020;
+  outline-offset: -2px;
+}
+
+.semantic-context-review__row-main,
+.semantic-context-review__row-meta,
+.semantic-context-review__row-signals {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.semantic-context-review__row-main {
+  flex-direction: column;
+}
+
+.semantic-context-review__row-main strong,
+.semantic-context-review__row-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.semantic-context-review__row-main strong {
+  font-size: 13px;
+}
+
+.semantic-context-review__row-main small,
+.semantic-context-review__row-meta,
+.semantic-context-review__row-signals {
+  color: var(--workspace-muted);
+  font-size: 12px;
+}
+
+.semantic-context-review__row-meta,
+.semantic-context-review__row-signals {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.semantic-context-review__row-meta span + span::before {
+  margin-right: 6px;
+  content: "·";
+}
+
+.semantic-context-review__attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid #dfc886;
+  border-radius: 999px;
+  background: #fff9e8;
+  color: #6a4a00;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.semantic-context-review__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 16px;
+}
+
+.semantic-context-review__pagination > span {
+  color: var(--workspace-muted);
+  font-size: 12px;
+}
+
+.semantic-context-review__attention-summary,
+.semantic-context-review__evidence {
+  display: grid;
+  gap: 10px;
+}
+
+.semantic-context-review__attention-summary {
+  padding: 12px;
+  border: 1px solid #dfc886;
+  border-radius: 10px;
+  background: #fffaf0;
+}
+
+.semantic-context-review__attention-summary > strong,
+.semantic-context-review__evidence h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.semantic-context-review__attention-summary p,
+.semantic-context-review__evidence > div > p {
+  margin: 0;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.semantic-context-review__attention-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.semantic-context-review__source {
+  overflow: hidden;
+  border: 1px solid var(--workspace-border);
+  border-radius: 10px;
+  background: var(--workspace-surface);
+}
+
+.semantic-context-review__source header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+}
+
+.semantic-context-review__source header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.semantic-context-review__source header span,
+.semantic-context-review__source header small,
+.semantic-context-review__source-meta,
+.semantic-context-review__source-context small {
+  color: var(--workspace-muted);
+  font-size: 12px;
+}
+
+.semantic-context-review__source header strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.semantic-context-review__source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 9px 12px;
+  border-block: 1px solid var(--workspace-border);
+  background: #fafafa;
+}
+
+.semantic-context-review__source-context {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+}
+
+.semantic-context-review__source-context strong,
+.semantic-context-review__source-context p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.semantic-context-review__source-context p {
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 980px) {
   .semantic-context-pack__toolbar {
     grid-template-columns: 1fr 1fr;
   }
   .semantic-context-pack__search,
   .semantic-context-pack__result-count {
+    grid-column: 1 / -1;
+  }
+  .semantic-context-review__toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .semantic-context-review__search {
+    grid-column: 1 / -1;
+  }
+  .semantic-context-review__row-button {
+    grid-template-columns: minmax(210px, 1fr) minmax(0, 1fr);
+  }
+  .semantic-context-review__row-signals {
     grid-column: 1 / -1;
   }
 }
@@ -9288,6 +9590,27 @@ body.semantic-review-controls-open .admin-shell__main {
   .semantic-context-pack__footer .admin-button,
   .semantic-context-pack__empty .admin-button {
     width: 100%;
+  }
+  .semantic-context-review__header,
+  .semantic-context-review__source header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .semantic-context-review__toolbar {
+    grid-template-columns: 1fr;
+  }
+  .semantic-context-review__search {
+    grid-column: auto;
+  }
+  .semantic-context-review__row-button {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .semantic-context-review__row-signals {
+    grid-column: auto;
+  }
+  .semantic-context-review__pagination .admin-button {
+    min-width: 104px;
   }
 }
 
