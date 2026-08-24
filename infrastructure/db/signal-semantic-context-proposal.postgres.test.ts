@@ -9,8 +9,8 @@ import pg from "pg";
 import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
   signalSemanticContextProposalDigestV1
 } from "@noisia/query-engine";
 import {
@@ -156,7 +156,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     const invalidRun = await startFor(pool, invalid, "invalid-start");
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: invalidRun.id,
       provider: { async generate() { return { text: JSON.stringify({ contract_version:
-        SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2, proposals: [{ bad: true }] }),
+        SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3, proposals: [{ bad: true }] }),
         provider_request_id: null, usage: { input_tokens: 10, output_tokens: 10 } }; } } }));
     assert.deepEqual(await elementCounts(pool, invalid.workspace.id), { pending: 0, approved: 0, rejected: 0 });
     assert.deepEqual(await row(pool, `SELECT status,actual_micro_usd::text FROM
@@ -166,14 +166,32 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       WHERE run_id=$1::uuid`, [invalidRun.id])).status, "dead_letter");
     const invalidState = await loadSignalSemanticContextProposalRunV1({ queryable: pool,
       workspace: invalid.workspace, actor: invalid.actor, run_key: invalidRun.run_key });
-    assert.equal(invalidState.error?.code, "semantic_context_provider_required_field_invalid");
+    assert.equal(invalidState.error?.code, "semantic_context_provider_element_kind_invalid");
     assert.doesNotMatch(invalidState.error?.message ?? "", /logical_path|provider_response_private|bad/u);
     const invalidPrivate = JSON.parse(String((await row(pool, `SELECT error_summary FROM
       signal_semantic_context_proposal_runs WHERE id=$1::uuid`, [invalidRun.id])).error_summary));
-    assert.equal(invalidPrivate.code, "semantic_context_provider_required_field_invalid");
+    assert.equal(invalidPrivate.code, "semantic_context_provider_element_kind_invalid");
     assert.ok(invalidPrivate.issue_count > 0);
     assert.equal(await scalar(pool, `SELECT count(*)::int count FROM signal_semantic_context_proposal_run_events
       WHERE run_id=$1::uuid AND event_kind='failed'`, [invalidRun.id]), 1);
+
+    const relationMismatch = await seedFixture(pool, "relation-mismatch");
+    const relationMismatchRun = await startFor(pool, relationMismatch, "relation-mismatch-start");
+    const relationMismatchPrepared = await prepareSignalSemanticContextProposalInputV1({ queryable: pool,
+      workspace: relationMismatch.workspace, generation_key: relationMismatch.generation_key });
+    let relationMismatchCalls = 0;
+    await assert.rejects(processSignalSemanticContextProposalRunV1({ pool,
+      run_id: relationMismatchRun.id, provider: { async generate() {
+        relationMismatchCalls += 1;
+        return { text: sanitizedRelationMismatchResponse(
+          relationMismatchPrepared.input.knowledge_blocks[0]!.source_alias,
+          relationMismatchPrepared.input.identity.primary.entity_ref),
+        provider_request_id: "fixture-relation-mismatch",
+        usage: { input_tokens: 100, output_tokens: 200 } };
+      } } }), /semantic_context_provider_response_schema_invalid/u);
+    assert.equal(relationMismatchCalls, 1);
+    assert.deepEqual(await elementCounts(pool, relationMismatch.workspace.id),
+      { pending: 0, approved: 0, rejected: 0 });
 
     const paid = await seedFixture(pool, "paid-response");
     const paidRun = await startFor(pool, paid, "paid-response-start");
@@ -304,7 +322,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
     await assert.rejects(processSignalSemanticContextProposalRunV1({ pool, run_id: supersededRun.id,
       provider: { async generate() {
         return { text: JSON.stringify({ contract_version:
-          SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2, proposals: [{ bad: true }] }),
+          SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3, proposals: [{ bad: true }] }),
         provider_request_id: null, usage: { input_tokens: 10, output_tokens: 10 } };
       } } }));
     const successorKey = await supersedeGeneration(pool, supersededDiscovery);
@@ -501,7 +519,7 @@ async function seedFixture(pool: pg.Pool, label: string,
     generationKey, profile, brandDigest, `knowledge-${knowledgeDigest.slice(7, 23)}`, knowledgeDigest,
     localeDigest, options.providerLineage === false ? null : configuration.model,
     options.providerLineage === false ? null : configuration.model_version,
-    options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+    options.providerLineage === false ? null : SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
     options.providerLineage === false ? null : configuration.pricing_version,
     digest(`${suffix}-draft`), operation, user]);
   return { workspace: { id: workspace.id, organization_id: org, brand_id: brand },
@@ -533,7 +551,7 @@ async function startFor(pool: pg.Pool, fixture: Awaited<ReturnType<typeof seedFi
   return { ...run, id: await runId(pool, run.run_key) };
 }
 function validResponse(sourceAlias: string, entityRef: string) { return JSON.stringify({
-  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
   proposals: [{ element_key: "identity.fixture", element_kind: "identity_term",
     canonical_key: "fixture", display_text: "Fixture identity", scope: "primary_brand",
     entity_ref: entityRef, locale: "es-MX", relation_kind: null,
@@ -542,7 +560,7 @@ function validResponse(sourceAlias: string, entityRef: string) { return JSON.str
 }); }
 function validResponseCount(sourceAlias: string, entityRef: string, count: number) {
   return JSON.stringify({
-    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
     proposals: Array.from({ length: count }, (_, index) => ({
       element_key: `feature.fixture-${index + 1}`,
       element_kind: "feature",
@@ -556,6 +574,22 @@ function validResponseCount(sourceAlias: string, entityRef: string, count: numbe
       confidence: 1,
       evidence: [{ source_alias: sourceAlias, relation_type: "supports" }]
     }))
+  });
+}
+function sanitizedRelationMismatchResponse(sourceAlias: string, entityRef: string) {
+  return JSON.stringify({
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+    proposals: [{ element_key: "identity.fixture", element_kind: "identity_term",
+      canonical_key: "fixture", display_text: "Fixture identity",
+      scope: "primary_brand", entity_ref: entityRef, locale: "es-MX",
+      relation_kind: null, relation_target_key: null, confidence: 1,
+      evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] },
+    { element_key: "feature.fixture", element_kind: "feature",
+      canonical_key: "fixture-feature", display_text: "Fixture feature",
+      scope: "primary_brand", entity_ref: entityRef, locale: "es-MX",
+      relation_kind: "associated_with", relation_target_key: "identity.fixture",
+      confidence: 1,
+      evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] }]
   });
 }
 function legacyV1Response(sourceAlias: string, entityRef: string) { return JSON.stringify({

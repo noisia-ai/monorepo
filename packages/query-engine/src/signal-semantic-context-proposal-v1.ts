@@ -10,6 +10,8 @@ export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION =
   "signal-semantic-context-proposal-output-v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2 =
   "signal-semantic-context-proposal-output-v2" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3 =
+  "signal-semantic-context-proposal-output-v3" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION =
   "signal-semantic-context-proposal-v1-to-v2-adapter-v1" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION =
@@ -249,10 +251,70 @@ export type SignalSemanticContextProviderProposalV2 = z.infer<
 export type SignalSemanticContextProviderOutputV2 = z.infer<
   typeof signalSemanticContextProviderOutputSchemaV2
 >;
+
+const signalSemanticContextNonRelationElementKindSchema =
+  z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS).exclude(["typed_relation"]);
+const signalSemanticContextProviderProposalBaseShapeV3 = {
+  element_key: keySchema,
+  canonical_key: keySchema,
+  display_text: z.string().trim().min(1).max(500),
+  scope: z.enum(["primary_brand", "category", "competitor", "reference"]).nullable(),
+  entity_ref: keySchema.nullable(),
+  locale: localeSchema.nullable(),
+  confidence: z.number().finite().min(0).max(1).nullable(),
+  evidence: z.array(evidenceAliasSchema).min(1).max(50)
+};
+
+const signalSemanticContextTypedRelationProposalSchemaV3 = z.object({
+  ...signalSemanticContextProviderProposalBaseShapeV3,
+  element_kind: z.literal("typed_relation"),
+  relation_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS),
+  relation_target_key: keySchema
+}).strict();
+
+const signalSemanticContextNonRelationProposalSchemaV3 = z.object({
+  ...signalSemanticContextProviderProposalBaseShapeV3,
+  element_kind: signalSemanticContextNonRelationElementKindSchema,
+  relation_kind: z.null(),
+  relation_target_key: z.null()
+}).strict();
+
+/**
+ * The union is intentionally provider-serializable. Its two branches carry the relation
+ * invariant into JSON Schema instead of relying on a runtime-only Zod refinement.
+ */
+export const signalSemanticContextProviderProposalSchemaV3 = z.discriminatedUnion(
+  "element_kind",
+  [signalSemanticContextTypedRelationProposalSchemaV3,
+    signalSemanticContextNonRelationProposalSchemaV3]
+);
+
+export function buildSignalSemanticContextProviderOutputSchemaV3(maximumProposals = 250) {
+  if (!Number.isSafeInteger(maximumProposals) || maximumProposals < 1 || maximumProposals > 250) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_proposal_limit_invalid"
+    );
+  }
+  return z.object({
+    contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3),
+    proposals: z.array(signalSemanticContextProviderProposalSchemaV3).min(1).max(maximumProposals)
+  }).strict();
+}
+
+export const signalSemanticContextProviderOutputSchemaV3 =
+  buildSignalSemanticContextProviderOutputSchemaV3();
+
+export type SignalSemanticContextProviderProposalV3 = z.infer<
+  typeof signalSemanticContextProviderProposalSchemaV3
+>;
+export type SignalSemanticContextProviderOutputV3 = z.infer<
+  typeof signalSemanticContextProviderOutputSchemaV3
+>;
 export type SignalSemanticContextProposalNormalizationV1 = {
   contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION;
   input_contract_version: string;
-  output_contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2;
+  output_contract_version: typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2
+    | typeof SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3;
   proposal_count_before: number;
   proposal_count_after: number;
   duplicate_groups: Array<{
@@ -399,6 +461,47 @@ export function buildSignalSemanticContextProposalPromptV2(
   ].join("\n");
 }
 
+const PROMPT_POLICY_V3 = {
+  ...PROMPT_POLICY_V2,
+  contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+  authority: [
+    ...PROMPT_POLICY_V2.authority,
+    "When element_kind is typed_relation, relation_kind and relation_target_key are both required and non-null.",
+    "For every element_kind other than typed_relation, relation_kind and relation_target_key must both be null."
+  ],
+  output: {
+    ...PROMPT_POLICY_V2.output,
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+    relation_contract: {
+      typed_relation: {
+        relation_kind: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS,
+        relation_target_key: "an existing proposed element_key; non-null"
+      },
+      non_relation: {
+        element_kinds: signalSemanticContextNonRelationElementKindSchema.options,
+        relation_kind: null,
+        relation_target_key: null
+      }
+    }
+  }
+} as const;
+
+export const SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 =
+  signalSemanticContextProposalDigestV1(PROMPT_POLICY_V3);
+
+export function buildSignalSemanticContextProposalPromptV3(
+  input: SignalSemanticContextProposalInputV1
+) {
+  const validated = signalSemanticContextProposalInputSchemaV1.parse(input);
+  return [
+    "You are producing governed acquisition-context proposals for human review.",
+    "Return exactly one JSON object and no markdown or surrounding prose.",
+    stableJson(PROMPT_POLICY_V3),
+    "GOVERNED_CONTEXT:",
+    stableJson(validated)
+  ].join("\n");
+}
+
 export function parseSignalSemanticContextProposalResponseV1(text: string) {
   const trimmed = normalizeProviderJsonEnvelope(text);
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
@@ -477,6 +580,57 @@ export function parseSignalSemanticContextProposalResponseV2(
   if (!output.success) throw validationErrorForIssues(output.error.issues);
   return normalizeSignalSemanticContextProviderOutputV2(output.data, {
     input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2
+  });
+}
+
+export function isSignalSemanticContextProviderRelationInvariantV3(proposal: {
+  element_kind: string;
+  relation_kind: string | null;
+  relation_target_key: string | null;
+}) {
+  return proposal.element_kind === "typed_relation"
+    ? proposal.relation_kind !== null && proposal.relation_target_key !== null
+    : proposal.relation_kind === null && proposal.relation_target_key === null;
+}
+
+export function parseSignalSemanticContextProposalResponseV3(
+  text: string, maximumProposals = 250
+) {
+  const parsed = parseProviderResponseJson(text);
+  const providerSchema = buildSignalSemanticContextProviderOutputSchemaV3(maximumProposals);
+  const runtimeEnvelope = z.object({
+    contract_version: z.literal(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3),
+    proposals: z.array(z.object({
+      ...signalSemanticContextProviderProposalBaseShapeV3,
+      element_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS),
+      relation_kind: z.enum(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RELATION_KINDS).nullable(),
+      relation_target_key: keySchema.nullable()
+    }).strict()).min(1).max(maximumProposals)
+  }).strict().safeParse(parsed);
+  if (runtimeEnvelope.success) {
+    const invalidRelations = runtimeEnvelope.data.proposals.filter((proposal) =>
+      !isSignalSemanticContextProviderRelationInvariantV3(proposal)).length;
+    if (invalidRelations > 0) {
+      throw new SignalSemanticContextProposalValidationError(
+        "semantic_context_provider_response_schema_invalid",
+        { issue_count: invalidRelations, issues: [{ code: "custom",
+          logical_path: "proposals.*.relation_contract", count: invalidRelations }] }
+      );
+    }
+  }
+  const output = providerSchema.safeParse(parsed);
+  if (!output.success) throw validationErrorForIssues(output.error.issues);
+  const invalidRelations = output.data.proposals.filter((proposal) =>
+    !isSignalSemanticContextProviderRelationInvariantV3(proposal)).length;
+  if (invalidRelations > 0) {
+    throw new SignalSemanticContextProposalValidationError(
+      "semantic_context_provider_response_schema_invalid",
+      { issue_count: invalidRelations, issues: [{ code: "custom",
+        logical_path: "proposals.*", count: invalidRelations }] }
+    );
+  }
+  return normalizeSignalSemanticContextProviderOutputV3(output.data, {
+    input_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3
   });
 }
 
@@ -583,6 +737,29 @@ export function normalizeSignalSemanticContextProviderOutputV2(
   return { output: { contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
     proposals: normalized }, normalization: { ...withoutDigest,
     transformation_digest: signalSemanticContextProposalDigestV1(withoutDigest) } };
+}
+
+export function normalizeSignalSemanticContextProviderOutputV3(
+  output: SignalSemanticContextProviderOutputV3,
+  args: { input_contract_version: string }
+): { output: SignalSemanticContextProviderOutputV3;
+  normalization: SignalSemanticContextProposalNormalizationV1 } {
+  const normalizedV2 = normalizeSignalSemanticContextProviderOutputV2({
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
+    proposals: output.proposals
+  }, args);
+  const withoutDigest = {
+    ...normalizedV2.normalization,
+    output_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3
+  } as const;
+  return {
+    output: {
+      contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+      proposals: normalizedV2.output.proposals as SignalSemanticContextProviderProposalV3[]
+    },
+    normalization: { ...withoutDigest,
+      transformation_digest: signalSemanticContextProposalDigestV1(withoutDigest) }
+  };
 }
 
 export function planSignalSemanticContextCapacityV1(args: {

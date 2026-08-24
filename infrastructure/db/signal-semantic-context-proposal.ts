@@ -8,11 +8,11 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_NORMALIZATION_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
-  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_V1_TO_V2_ADAPTER_VERSION,
   adaptSignalSemanticContextProposalResponseV1ToV2,
-  buildSignalSemanticContextProposalPromptV2,
-  parseSignalSemanticContextProposalResponseV2,
+  buildSignalSemanticContextProposalPromptV3,
+  parseSignalSemanticContextProposalResponseV3,
   planSignalSemanticContextCapacityV1,
   signalSemanticContextProposalCostMicroUsdV1,
   signalSemanticContextProposalDigestV1,
@@ -222,7 +222,7 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
     context_input_digest: prepared?.input_digest ?? null,
     provider: { key: args.configuration.provider, model: args.configuration.model,
       model_version: args.configuration.model_version, pricing_version: args.configuration.pricing_version,
-      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2 },
+      prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 },
     maximum_provider_calls: 1,
     estimated_input_tokens_upper_bound: inputTokenUpperBound,
     max_input_tokens: args.configuration.max_input_tokens,
@@ -432,7 +432,7 @@ export async function prepareSignalSemanticContextProposalInputV1(args: {
       abstention_required_when_evidence_is_insufficient: true,
       mentions_included: false }
   });
-  const prompt = buildSignalSemanticContextProposalPromptV2(input);
+  const prompt = buildSignalSemanticContextProposalPromptV3(input);
   return { input, prompt, input_digest: signalSemanticContextProposalDigestV1(input),
     source_refs: sourceRefs, entity_refs: entityRefs, generation, capacity };
 }
@@ -495,7 +495,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     const providerRequestIdentity = signalSemanticContextProposalDigestV1({
       contract_version: "signal-semantic-context-provider-request-v1",
       generation_key: args.generation_key, preflight_digest: args.preflight_digest,
-      input_digest: prepared.input_digest, prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+      input_digest: prepared.input_digest, prompt_digest: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
       model: args.configuration.model, model_version: args.configuration.model_version
     });
     const runKey = `semantic-context-proposal-${providerRequestIdentity.slice(7, 23)}`;
@@ -511,7 +511,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       ${runSelect} FROM inserted run`, [
       args.workspace.id, prepared.generation.id, operation.operation_id, runKey, args.preflight_digest,
       prepared.generation.brand_os_digest, prepared.generation.knowledge_digest,
-      prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2,
+      prepared.generation.locale_context_digest, SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
       prepared.input_digest, args.configuration.provider, args.configuration.model,
       args.configuration.model_version, args.configuration.pricing_version,
       args.configuration.max_input_tokens, prepared.capacity.output_token_budget,
@@ -933,7 +933,7 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       await markRunStale(finish, current, lease.token, "semantic_context_authority_drift_during_execution");
       await finish.query("COMMIT"); return { status: "stale" as const };
     }
-    const parsed = parseSignalSemanticContextProposalResponseV2(current.provider_response_private,
+    const parsed = parseSignalSemanticContextProposalResponseV3(current.provider_response_private,
       prepared.input.limits.maximum_proposals);
     const output = parsed.output;
     if (output.proposals.length > prepared.input.limits.maximum_proposals) {
@@ -1527,7 +1527,7 @@ function lineageMatches(generation: GenerationRow,
   configuration: SignalSemanticContextProposalRuntimeConfigurationV1) {
   return generation.proposal_model === configuration.model
     && generation.proposal_model_version === configuration.model_version
-    && generation.proposal_prompt_digest === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V2
+    && generation.proposal_prompt_digest === SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3
     && generation.proposal_pricing_version === configuration.pricing_version;
 }
 
