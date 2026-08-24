@@ -7,6 +7,10 @@ import { createTranslator } from "next-intl";
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query-engine";
 
 import { formatSignalSemanticContextUsdPerMillionTokensV1 } from "@/components/brands/SemanticContextPackManager";
+import {
+  cycleWorkspaceDrawerFocusV1,
+  restoreWorkspaceDrawerFocusV1
+} from "@/components/workspace/WorkspaceShell";
 
 import {
   SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
@@ -287,12 +291,13 @@ test("Semantic Context flight card exposes server pricing and remains keyboard-s
   assert.equal(formatSignalSemanticContextUsdPerMillionTokensV1("invalid","es-MX"),"USD —");
 
   assert.match(drawer,/event\.key !== "Tab"/u);
-  assert.match(drawer,/panel\.querySelectorAll<HTMLElement>/u);
-  assert.match(drawer,/event\.shiftKey && active === first/u);
-  assert.match(drawer,/!event\.shiftKey && active === last/u);
-  assert.match(drawer,/returnFocusTo\?\.focus\(\)/u);
+  assert.match(drawer,/cycleWorkspaceDrawerFocusV1\(panel, document\.activeElement, event\.shiftKey\)/u);
+  assert.match(drawer,/restoreWorkspaceDrawerFocusV1\(explicitReturnFocusTo \?\? fallbackReturnFocusTo\)/u);
   assert.match(drawer,/aria-hidden="true"[\s\S]+tabIndex=\{-1\}/u,
     "the click-only scrim must not impersonate the close control in keyboard order");
+  assert.match(manager,/preflightOpenerRef\.current = event\.currentTarget/u,
+    "the opener is captured before the asynchronous preflight can move focus to BODY");
+  assert.match(manager,/returnFocusRef=\{preflightOpenerRef\}/u);
 
   assert.match(manager,/aria-busy="true" aria-live="polite"[\s\S]+role="status"/u);
   assert.match(styles,/\.semantic-context-pack__preflight-loading[\s\S]+justify-content: center/u);
@@ -307,4 +312,62 @@ test("Semantic Context flight card exposes server pricing and remains keyboard-s
       assert.ok(generation[key].length>0);
     }
   }
+});
+
+test("canonical drawer cycles live focusables and restores its captured opener",()=>{
+  let focused = "";
+  const createControl = (name: string, options: { disabled?: boolean; hidden?: boolean } = {}) => {
+    const control = {
+      disabled: options.disabled ?? false,
+      hidden: options.hidden ?? false,
+      isConnected: true,
+      ownerDocument: {
+        defaultView: {
+          getComputedStyle: () => ({ display: "block", visibility: "visible" })
+        }
+      },
+      getAttribute: (attribute: string) => attribute === "aria-hidden" ? "false" : null,
+      closest: () => null,
+      getClientRects: () => control.hidden ? [] : [{}],
+      focus: (options?: FocusOptions) => {
+        assert.equal(options?.preventScroll, true);
+        focused = name;
+      }
+    };
+    return control;
+  };
+
+  const close = createControl("close");
+  const checkbox = createControl("checkbox");
+  const paidAction = createControl("paid-action", { disabled: true });
+  const hiddenAction = createControl("hidden-action", { hidden: true });
+  const controls = [close, checkbox, paidAction, hiddenAction];
+  const panel = {
+    querySelectorAll: () => controls
+  } as unknown as HTMLElement;
+
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, close as unknown as Element, false), checkbox);
+  assert.equal(focused, "checkbox", "normal forward interior navigation is explicit");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), close);
+  assert.equal(focused, "close", "forward navigation wraps at the last enabled control");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, close as unknown as Element, true), checkbox);
+  assert.equal(focused, "checkbox", "backward navigation wraps at the first enabled control");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, true), close);
+  assert.equal(focused, "close", "normal backward interior navigation is explicit");
+
+  paidAction.disabled = false;
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), paidAction,
+    "each key press re-queries newly enabled controls instead of retaining stale refs");
+  paidAction.hidden = true;
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), close,
+    "a control hidden after render is removed from the live cycle");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, null, false), close);
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, null, true), checkbox);
+
+  const opener = createControl("opener");
+  assert.equal(restoreWorkspaceDrawerFocusV1(opener as unknown as HTMLElement), true);
+  assert.equal(focused, "opener");
+  opener.isConnected = false;
+  assert.equal(restoreWorkspaceDrawerFocusV1(opener as unknown as HTMLElement), false,
+    "detached openers fail safely instead of sending focus to BODY or stale DOM");
 });

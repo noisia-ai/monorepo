@@ -6,6 +6,7 @@ import { MagnifyingGlass, SpinnerGap, X } from "@phosphor-icons/react";
 import {
   type ComponentPropsWithoutRef,
   type ReactNode,
+  type RefObject,
   useEffect,
   useRef
 } from "react";
@@ -418,6 +419,7 @@ export function WorkspaceDrawer({
   layerClassName,
   onClose,
   panelClassName,
+  returnFocusRef,
   scrimClassName,
   title
 }: {
@@ -431,6 +433,7 @@ export function WorkspaceDrawer({
   layerClassName?: string;
   onClose: () => void;
   panelClassName?: string;
+  returnFocusRef?: RefObject<HTMLElement | null>;
   scrimClassName?: string;
   title: ReactNode;
 }) {
@@ -443,7 +446,8 @@ export function WorkspaceDrawer({
   }, [onClose]);
 
   useEffect(() => {
-    const returnFocusTo = document.activeElement instanceof HTMLElement
+    const explicitReturnFocusTo = returnFocusRef?.current ?? null;
+    const fallbackReturnFocusTo = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
     const containKeyboardFocus = (event: KeyboardEvent) => {
@@ -454,26 +458,8 @@ export function WorkspaceDrawer({
       if (event.key !== "Tab") return;
       const panel = panelRef.current;
       if (!panel) return;
-      const controls = Array.from(panel.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )).filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
-      if (controls.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = controls[0]!;
-      const last = controls[controls.length - 1]!;
-      const active = document.activeElement;
-      if (!panel.contains(active)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      event.preventDefault();
+      cycleWorkspaceDrawerFocusV1(panel, document.activeElement, event.shiftKey);
     };
     document.body.classList.add("workspace-drawer-open");
     document.addEventListener("keydown", containKeyboardFocus);
@@ -481,9 +467,9 @@ export function WorkspaceDrawer({
     return () => {
       document.body.classList.remove("workspace-drawer-open");
       document.removeEventListener("keydown", containKeyboardFocus);
-      returnFocusTo?.focus();
+      restoreWorkspaceDrawerFocusV1(explicitReturnFocusTo ?? fallbackReturnFocusTo);
     };
-  }, []);
+  }, [returnFocusRef]);
 
   return (
     <div className={classes("workspace-drawer-layer", layerClassName)}>
@@ -515,6 +501,60 @@ export function WorkspaceDrawer({
       </aside>
     </div>
   );
+}
+
+const WORKSPACE_DRAWER_FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "area[href]",
+  "button:not([disabled])",
+  'input:not([disabled]):not([type="hidden"])',
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "iframe",
+  "object",
+  "embed",
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])'
+].join(",");
+
+function isWorkspaceDrawerControlAvailableV1(element: HTMLElement) {
+  if (!element.isConnected || element.hidden || element.getAttribute("aria-hidden") === "true") {
+    return false;
+  }
+  if (element.getAttribute("aria-disabled") === "true") return false;
+  if ("disabled" in element && Boolean((element as HTMLButtonElement).disabled)) return false;
+  if (element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  if (style?.display === "none" || style?.visibility === "hidden" || style?.visibility === "collapse") {
+    return false;
+  }
+  return element.getClientRects().length > 0;
+}
+
+/** Re-queries the live dialog on every Tab press so loading and disabled states cannot stale. */
+export function cycleWorkspaceDrawerFocusV1(
+  panel: HTMLElement,
+  activeElement: Element | null,
+  backwards: boolean
+) {
+  const controls = Array.from(
+    panel.querySelectorAll<HTMLElement>(WORKSPACE_DRAWER_FOCUSABLE_SELECTOR)
+  ).filter(isWorkspaceDrawerControlAvailableV1);
+  if (controls.length === 0) return null;
+
+  const activeIndex = controls.findIndex((element) => element === activeElement);
+  const nextIndex = activeIndex < 0
+    ? backwards ? controls.length - 1 : 0
+    : (activeIndex + (backwards ? -1 : 1) + controls.length) % controls.length;
+  const next = controls[nextIndex]!;
+  next.focus({ preventScroll: true });
+  return next;
+}
+
+export function restoreWorkspaceDrawerFocusV1(target: HTMLElement | null) {
+  if (!target || !isWorkspaceDrawerControlAvailableV1(target)) return false;
+  target.focus({ preventScroll: true });
+  return true;
 }
 
 export function WorkspaceControlsPanel({
