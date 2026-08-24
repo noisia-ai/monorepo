@@ -9042,6 +9042,17 @@ body.semantic-review-controls-open .admin-shell__main {
   border-radius: 10px;
 }
 
+.semantic-context-pack__preflight-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  color: var(--workspace-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .semantic-context-pack__preflight > div {
   display: flex;
   align-items: center;
@@ -9062,6 +9073,7 @@ body.semantic-review-controls-open .admin-shell__main {
 }
 
 .semantic-context-pack__preflight strong {
+  overflow-wrap: anywhere;
   font-size: 12px;
   text-align: right;
 }

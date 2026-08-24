@@ -600,10 +600,15 @@ export async function loadSignalSemanticContextDiffProductV1(args:Omit<Parameter
 export async function loadSignalSemanticContextProposalPreflightProductV1(args:Omit<Parameters<typeof loadSignalSemanticContextProposalPreflightV1>[0],"queryable"|"configuration">){
   const [{pool},{loadSemanticContextProposalRuntimeReadiness}]=await Promise.all([
     import("@/lib/db"),import("@/lib/queue/data-os")]);
-  return loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
+  const configuration=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
+  const preflight=await loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
     workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
-    configuration:signalSemanticContextProposalRuntimeConfigurationFromEnvV1(),
+    configuration,
     runtime:await loadSemanticContextProposalRuntimeReadiness()});
+  return{...preflight,provider:{...preflight.provider,
+    pricing_unit:"usd_per_million_tokens" as const,
+    input_usd_per_million_tokens:configuration.input_usd_per_million_tokens,
+    output_usd_per_million_tokens:configuration.output_usd_per_million_tokens}};
 }
 
 export async function startSignalSemanticContextProposalRunProductV1(args:{

@@ -6,6 +6,8 @@ import { createTranslator } from "next-intl";
 
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query-engine";
 
+import { formatSignalSemanticContextUsdPerMillionTokensV1 } from "@/components/brands/SemanticContextPackManager";
+
 import {
   SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
   SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,
@@ -259,4 +261,50 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   }
   assert.equal(typeof esMessages.title,"string");
   assert.equal(typeof enMessages.title,"string");
+});
+
+test("Semantic Context flight card exposes server pricing and remains keyboard-safe before consent",async()=>{
+  const root=process.cwd();
+  const[manager,service,drawer,styles,esMx,enUs]=await Promise.all([
+    readFile(resolve(root,"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
+    readFile(resolve(root,"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
+    readFile(resolve(root,"src/components/workspace/WorkspaceShell.tsx"),"utf8"),
+    readFile(resolve(root,"src/app/workspace-shell.css"),"utf8"),
+    readFile(resolve(root,"messages/es-MX.json"),"utf8"),
+    readFile(resolve(root,"messages/en-US.json"),"utf8")
+  ]);
+
+  assert.match(service,/pricing_unit:"usd_per_million_tokens"/u);
+  assert.match(service,/input_usd_per_million_tokens:configuration\.input_usd_per_million_tokens/u);
+  assert.match(service,/output_usd_per_million_tokens:configuration\.output_usd_per_million_tokens/u);
+  assert.match(manager,/generation\.pricingVersion/u);
+  assert.match(manager,/provider\.input_usd_per_million_tokens/u);
+  assert.match(manager,/provider\.output_usd_per_million_tokens/u);
+  assert.doesNotMatch(manager,/anthropic-public-2026-08-12|USD\s*3(?:\.0+)?\b|USD\s*15(?:\.0+)?\b/u,
+    "pricing values must remain server-owned");
+  assert.match(formatSignalSemanticContextUsdPerMillionTokensV1("3","en-US"),/^USD\s*3$/u);
+  assert.match(formatSignalSemanticContextUsdPerMillionTokensV1("15","es-MX"),/^USD\s*15$/u);
+  assert.equal(formatSignalSemanticContextUsdPerMillionTokensV1("invalid","es-MX"),"USD —");
+
+  assert.match(drawer,/event\.key !== "Tab"/u);
+  assert.match(drawer,/panel\.querySelectorAll<HTMLElement>/u);
+  assert.match(drawer,/event\.shiftKey && active === first/u);
+  assert.match(drawer,/!event\.shiftKey && active === last/u);
+  assert.match(drawer,/returnFocusTo\?\.focus\(\)/u);
+  assert.match(drawer,/aria-hidden="true"[\s\S]+tabIndex=\{-1\}/u,
+    "the click-only scrim must not impersonate the close control in keyboard order");
+
+  assert.match(manager,/aria-busy="true" aria-live="polite"[\s\S]+role="status"/u);
+  assert.match(styles,/\.semantic-context-pack__preflight-loading[\s\S]+justify-content: center/u);
+  assert.match(manager,/const \[budgetConfirmed, setBudgetConfirmed\] = useState\(false\)/u);
+  assert.match(manager,/preflight\.readiness !== "ready" \|\| !budgetConfirmed \|\| busy === "generate"/u);
+  assert.match(manager,/setBudgetConfirmed\(false\); setDrawer\(null\)/u);
+
+  for(const messages of [JSON.parse(esMx),JSON.parse(enUs)]){
+    const generation=messages.AdminWorkspace.brandOs.semanticContext.generation;
+    for(const key of ["pricingVersion","inputRate","outputRate","perMillionTokens","loadingPreflight"]){
+      assert.equal(typeof generation[key],"string");
+      assert.ok(generation[key].length>0);
+    }
+  }
 });

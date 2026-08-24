@@ -435,6 +435,7 @@ export function WorkspaceDrawer({
   title: ReactNode;
 }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -445,15 +446,41 @@ export function WorkspaceDrawer({
     const returnFocusTo = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
+    const containKeyboardFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+      if (controls.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.body.classList.add("workspace-drawer-open");
-    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", containKeyboardFocus);
     closeButtonRef.current?.focus();
     return () => {
       document.body.classList.remove("workspace-drawer-open");
-      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("keydown", containKeyboardFocus);
       returnFocusTo?.focus();
     };
   }, []);
@@ -461,15 +488,17 @@ export function WorkspaceDrawer({
   return (
     <div className={classes("workspace-drawer-layer", layerClassName)}>
       <button
-        aria-label={closeLabel}
+        aria-hidden="true"
         className={classes("workspace-drawer__scrim", scrimClassName)}
         onClick={onClose}
+        tabIndex={-1}
         type="button"
       />
       <aside
         aria-label={ariaLabel}
         aria-modal="true"
         className={classes("workspace-drawer", panelClassName)}
+        ref={panelRef}
         role="dialog"
       >
         <header className={classes("workspace-drawer__header", headerClassName)}>
