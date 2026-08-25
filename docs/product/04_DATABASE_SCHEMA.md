@@ -2278,3 +2278,25 @@ estas reglas crea un store o writer paralelo.
 
 Checksum local 0097:
 `b3c03d6f43dd811627c016264bfdfbcebf28dbf2e368c4d7e14db73bf5582bdb`.
+
+## 69B.4C-A · Decision basis append-only (0098)
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+0098 añade a `signal_semantic_context_element_versions` los campos nullable
+`decision_contract_version`, `decision_reason_code`, `decision_rationale` y
+`decision_basis_digest`. Las decisiones históricas permanecen legibles con NULL; toda
+nueva hoja `operator_decision/approved|rejected` debe sellar los cuatro campos. Un
+trigger PostgreSQL recompone tanto el basis digest como el element digest V3 y rechaza
+inserts incompletos o incoherentes. El snapshot de publicación incorpora la base al
+review graph y bloquea drafts current con `decision_basis_missing`; no reescribe packs
+históricos publicados.
+
+69B.4C-B añade al mismo 0098 `semantic_context_decision_input` y
+`semantic_context_decision_input_digest` en `signal_governance_control_operations`.
+Ambos son inmutables y sólo se rellenan para las decisiones V2. Un constraint trigger
+deferred liga el input exacto, la operación completed, los predecessors current pending,
+los successors y el evento al commit. Para bulk impone 2–15 keys únicas, conjunto exacto,
+same-kind, basis único y disposition approved; para single impone una sola key y
+action/confirmation/disposition exactas. Las operaciones anteriores permanecen NULL y
+no se reescriben.

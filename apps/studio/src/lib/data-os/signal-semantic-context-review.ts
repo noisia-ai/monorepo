@@ -76,6 +76,9 @@ type ReviewElementRow = {
   origin_kind: string;
   proposed_at: string | Date;
   decided_at: string | Date | null;
+  decision_contract_version: string | null;
+  decision_reason_code: string | null;
+  decision_rationale: string | null;
   source_ref_count: number;
   distinct_source_count: number;
   supports_count: number;
@@ -352,6 +355,12 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
     generation.id,
     element.element_key
   ]);
+  const decisionBasisState = element.origin_kind === "operator_decision"
+    && (element.disposition === "approved" || element.disposition === "rejected")
+    ? element.decision_contract_version && element.decision_reason_code && element.decision_rationale
+      ? "complete" as const
+      : "missing_historical" as const
+    : "not_applicable" as const;
   return {
     contract_version: "signal-semantic-context-review-detail-v1" as const,
     generation: publicReviewGeneration(generation),
@@ -381,6 +390,21 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
       rationale: safeLabel(merge.rationale, "Merge rationale", 1_000),
       created_at: new Date(merge.created_at).toISOString()
     })),
+    decision_basis: decisionBasisState === "complete" ? {
+      state: decisionBasisState,
+      contract_version: element.decision_contract_version,
+      reason: element.decision_reason_code,
+      rationale: safeLabel(element.decision_rationale, "Review rationale", 1_000),
+      decided_at: element.decided_at ? new Date(element.decided_at).toISOString() : null,
+      reviewer: "authenticated_operator" as const
+    } : {
+      state: decisionBasisState,
+      contract_version: null,
+      reason: null,
+      rationale: null,
+      decided_at: element.decided_at ? new Date(element.decided_at).toISOString() : null,
+      reviewer: decisionBasisState === "missing_historical" ? "authenticated_operator" as const : null
+    },
     lineage: {
       element_version: Number(element.element_version),
       origin: element.origin_kind,
@@ -846,7 +870,8 @@ const reviewElementsCte = `WITH base_elements AS (
   SELECT element.id::text,element.element_key,element.element_version,element.element_kind,element.canonical_key,
     element.display_text,element.scope,element.entity_type,element.locale,element.relation_kind,
     element.relation_target_key,element.disposition,element.origin_kind,element.proposed_at,
-    element.decided_at,lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,
+    element.decided_at,element.decision_contract_version,element.decision_reason_code,
+    element.decision_rationale,lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,
     count(link.id)::int source_ref_count,
     count(DISTINCT (link.source_type,link.source_id))::int distinct_source_count,
     count(link.id) FILTER(WHERE link.relation_type='supports')::int supports_count,

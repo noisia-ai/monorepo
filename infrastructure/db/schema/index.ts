@@ -5195,6 +5195,8 @@ export const signalGovernanceControlOperations = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     status: text("status").notNull().default("in_progress"),
     result: jsonb("result"),
+    semanticContextDecisionInput: jsonb("semantic_context_decision_input"),
+    semanticContextDecisionInputDigest: text("semantic_context_decision_input_digest"),
     createdAt: now(),
     updatedAt: updatedAt(),
     completedAt: timestamp("completed_at", { withTimezone: true })
@@ -5507,6 +5509,10 @@ export const signalSemanticContextElementVersions = pgTable(
     operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
     proposedByUserId: uuid("proposed_by_user_id").references(() => users.id, { onDelete: "restrict" }),
     decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+    decisionContractVersion: text("decision_contract_version"),
+    decisionReasonCode: text("decision_reason_code"),
+    decisionRationale: text("decision_rationale"),
+    decisionBasisDigest: text("decision_basis_digest"),
     proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     createdAt: now()

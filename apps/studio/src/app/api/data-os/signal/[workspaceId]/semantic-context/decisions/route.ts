@@ -1,19 +1,30 @@
 import { z } from "zod";
 import {
-  bulkApproveSignalSemanticContextElementsProductV1,
-  decideSignalSemanticContextElementProductV1 } from "@/lib/data-os/signal-semantic-context-pack";
-import { rejectSignalSemanticContextElementProductV2,SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2 } from
+  bulkApproveSignalSemanticContextElementsProductV2,
+  decideSignalSemanticContextElementProductV2,
+  rejectSignalSemanticContextElementProductV2,
+  SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2,
+  SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2,
+  SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2 } from
   "@/lib/data-os/signal-semantic-context-publication-v2";
 import { loadSignalWorkspaceContextForSemanticContextManagement,requireIdempotencyKey,semanticContextError,
   semanticContextResponse } from "../_lib";
 export const runtime="nodejs";export const dynamic="force-dynamic";
 const key=z.string().regex(/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u).max(200);
+const rationale=z.string().transform((value)=>value.trim().normalize("NFC")).refine((value)=>{
+  const scalarCount=[...value].length;return scalarCount>=1&&scalarCount<=1000;
+},"rationale must contain between 1 and 1000 Unicode scalar values");
 const command=z.discriminatedUnion("action",[
-  z.object({action:z.literal("approve"),generation_key:key,element_key:key}).strict(),
+  z.object({action:z.literal("approve"),generation_key:key,element_key:key,
+    reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale,
+    confirmation:z.literal(SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2)}).strict(),
   z.object({action:z.literal("reject"),generation_key:key,element_key:key,
     reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),
-    rationale:z.string().trim().min(1).max(1000)}).strict(),
-  z.object({action:z.literal("bulk_approve"),generation_key:key,element_keys:z.array(key).min(1).max(100)}).strict()
+    rationale}).strict(),
+  z.object({action:z.literal("bulk_approve"),generation_key:key,element_keys:z.array(key).min(2).max(15)
+    .refine((keys)=>new Set(keys).size===keys.length,"element_keys must be unique"),
+    reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale,
+    confirmation:z.literal(SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2)}).strict()
 ]);
 export async function POST(request:Request,context:{params:Promise<{workspaceId:string}>}){
   const params=await context.params;const loaded=await loadSignalWorkspaceContextForSemanticContextManagement(params.workspaceId);
@@ -29,16 +40,18 @@ export async function POST(request:Request,context:{params:Promise<{workspaceId:
   if(!parsed.success)return semanticContextResponse({error:"invalid_semantic_context_decision",
     message:"The semantic context decision is invalid.",details:parsed.error.flatten()},422);
   try{if(parsed.data.action==="bulk_approve")return semanticContextResponse(
-    await bulkApproveSignalSemanticContextElementsProductV1({workspace:loaded.workspace,
+    await bulkApproveSignalSemanticContextElementsProductV2({workspace:loaded.workspace,
       actor:loaded.session.appUser,idempotencyKey,generationKey:parsed.data.generation_key,
-      elementKeys:parsed.data.element_keys}));
+      elementKeys:parsed.data.element_keys,reason:parsed.data.reason,rationale:parsed.data.rationale,
+      confirmation:parsed.data.confirmation}));
     if(parsed.data.action==="reject")return semanticContextResponse(
       await rejectSignalSemanticContextElementProductV2({workspace:loaded.workspace,
         actor:loaded.session.appUser,idempotencyKey,generationKey:parsed.data.generation_key,
         elementKey:parsed.data.element_key,reason:parsed.data.reason,rationale:parsed.data.rationale}));
-    return semanticContextResponse(await decideSignalSemanticContextElementProductV1({
+    return semanticContextResponse(await decideSignalSemanticContextElementProductV2({
       workspace:loaded.workspace,actor:loaded.session.appUser,idempotencyKey,
       generationKey:parsed.data.generation_key,elementKey:parsed.data.element_key,
-      action:"approve"}));}
+      action:"approve",reason:parsed.data.reason,rationale:parsed.data.rationale,
+      confirmation:parsed.data.confirmation}));}
   catch(error){return semanticContextError(error,"semantic_context_decision_rejected");}
 }

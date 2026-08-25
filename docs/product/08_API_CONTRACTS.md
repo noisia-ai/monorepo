@@ -2713,3 +2713,24 @@ Las respuestas de merge/correction exponen `draft_digest_ref` abreviado, nunca e
 `typed_relation` approved cuyo target no sea una hoja current approved de la misma
 generación/workspace. Modelo, pricing o cualquier otro campo del provider lineage
 completo cambian el token y bloquean publish hasta reconciliación.
+
+### Decisiones deliberadas de Semantic Context — 69B.4C-A
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+`POST .../semantic-context/decisions` acepta únicamente el contrato V2. Approve y
+reject requieren un reason cerrado y rationale NFC de 1–1000 Unicode scalars; approve
+además exige `approve_selected_semantic_context_element`. Bulk approve acepta 2–15
+hojas pending, explícitamente seleccionadas y del mismo `element_kind`, con una base
+compartida y `apply_shared_decision_basis_to_all_selected_elements`. Actor, workspace,
+versión, evidence y digests continúan server-owned. Los entrypoints de decisión V1 son
+tombstones 410 y reject V2 usa el mismo writer de decisión, sin fabricar una annotation.
+
+El servidor sella ese payload operator-owned en el ledger; PostgreSQL reconcilia al
+commit el input exacto con todo el grafo de successors y eventos. Por ello un writer SQL
+directo no puede ampliar el bulk a 16, omitir o sustituir keys, mezclar kinds/bases,
+insertar rejected bajo bulk ni completar un single con más de un successor.
+
+El GET gratuito de publicación puede devolver `decision_basis_missing` cuando una hoja
+current approved/rejected de un draft procede de historia anterior a 0098. El blocker
+no muta esa historia: exige una reparación append-only posterior antes de publicar.

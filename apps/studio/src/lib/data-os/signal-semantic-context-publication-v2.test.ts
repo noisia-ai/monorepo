@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   canonicalJsonV2,
   digestCanonicalJsonV2,
+  normalizeSignalSemanticContextDecisionBasisV2,
+  signalSemanticContextDecisionElementDigestV2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
 
@@ -106,15 +108,64 @@ test("browser decisions retire V1 edit and route guided rejection through the at
   assert.ok(route.includes("},410)"));
   assert.doesNotMatch(route, /action:z\.literal\("edit"\)/u);
   assert.match(route, /rejectSignalSemanticContextElementProductV2/u);
+  assert.match(route, /decideSignalSemanticContextElementProductV2/u);
+  assert.match(route, /bulkApproveSignalSemanticContextElementsProductV2/u);
+  assert.doesNotMatch(route, /decideSignalSemanticContextElementProductV1|bulkApproveSignalSemanticContextElementsProductV1/u);
   assert.match(route, /reason:z\.enum\(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2\)/u);
+  assert.match(route, /\.normalize\("NFC"\)/u);
+  assert.match(route, /\[\.\.\.value\]\.length/u,
+    "the HTTP boundary uses the same Unicode-scalar limit as TypeScript and PostgreSQL");
+  assert.match(route, /element_keys:z\.array\(key\)\.min\(2\)\.max\(15\)/u);
+  assert.match(route, /SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2/u);
+  assert.match(route, /SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2/u);
   assert.doesNotMatch(route, /workspace_id|authority_digest|proposal_model/u);
 });
 
-test("all remaining V1 review mutations reject stale authority and active runs server-side", async () => {
+test("all V1 decision entrances are terminal tombstones", async () => {
   const service = await readFile(new URL("./signal-semantic-context-pack.ts", import.meta.url), "utf8");
-  assert.equal((service.match(/await assertV1ReviewMutationCurrent\(/gu) ?? []).length, 2,
-    "single and bounded bulk V1 decisions use the same current-authority guard");
-  assert.match(service, /\["queued","processing","validating"\]\.includes\(run\.status\)/u);
-  assert.match(service, /run\.executable_outbox\|\|run\.reserved_budget/u);
-  assert.match(service, /semantic_context_authority_drift/u);
+  assert.match(service, /semantic_context_decision_v1_retired/u);
+  assert.match(service, /semantic_context_bulk_approval_v1_retired/u);
+  assert.equal((service.match(/await assertV1ReviewMutationCurrent\(/gu) ?? []).length, 0);
+});
+
+test("decision basis is closed, NFC-normalized, scalar-bounded, and digest-authoritative", () => {
+  assert.deepEqual(normalizeSignalSemanticContextDecisionBasisV2({
+    reason: "semantic_boundary", rationale: "  Cafe\u0301 boundary  "
+  }), { contract_version: "signal-semantic-context-decision-v2", reason: "semantic_boundary",
+    rationale: "Café boundary" });
+  assert.throws(() => normalizeSignalSemanticContextDecisionBasisV2({
+    reason: "open_reason" as never, rationale: "Valid rationale"
+  }), /semantic_context_decision_reason_invalid/u);
+  assert.throws(() => normalizeSignalSemanticContextDecisionBasisV2({
+    reason: "semantic_boundary", rationale: "   "
+  }), /semantic_context_rationale_invalid/u);
+  assert.throws(() => normalizeSignalSemanticContextDecisionBasisV2({
+    reason: "semantic_boundary", rationale: "🧠".repeat(1001)
+  }), /semantic_context_rationale_invalid/u);
+  assert.equal([...normalizeSignalSemanticContextDecisionBasisV2({
+    reason: "semantic_boundary", rationale: "🧠".repeat(1000)
+  }).rationale].length, 1000);
+  const definition = { element_key: "identity-a", element_kind: "identity_term", canonical_key: "identity-a",
+    display_text: "Identity A", scope: "primary_brand", entity_type: "brand", entity_id: null, locale: "es-MX",
+    relation_kind: null, relation_target_key: null };
+  const first = signalSemanticContextDecisionElementDigestV2({ definition, elementVersion: 2,
+    disposition: "approved", sourceRefsDigest: "sha256:" + "a".repeat(64),
+    basis: normalizeSignalSemanticContextDecisionBasisV2({ reason: "semantic_boundary", rationale: "First basis" }) });
+  const second = signalSemanticContextDecisionElementDigestV2({ definition, elementVersion: 2,
+    disposition: "approved", sourceRefsDigest: "sha256:" + "a".repeat(64),
+    basis: normalizeSignalSemanticContextDecisionBasisV2({ reason: "semantic_boundary", rationale: "Second basis" }) });
+  assert.notEqual(first, second, "rationale participates in the element digest");
+});
+
+test("review UI opens deliberate approval forms and never posts from the first click", async () => {
+  const component = await readFile(new URL("../../components/brands/SemanticContextReviewWorkbench.tsx",
+    import.meta.url), "utf8");
+  assert.match(component, /onClick=\{\(\) => onMode\("approve"\)\}/u);
+  assert.match(component, /setBulkApproveOpen\(true\)/u);
+  assert.doesNotMatch(component, /onClick=\{onApprove\}/u);
+  assert.match(component, /apply_shared_decision_basis_to_all_selected_elements/u);
+  assert.match(component, /DecisionBasisHistory/u,
+    "the operator-safe detail keeps the sealed reason and rationale visible in history");
+  assert.match(component, /\.trim\(\)\.normalize\("NFC"\)\]\.length>1000/u,
+    "the browser applies the same Unicode-scalar bound before submit");
 });

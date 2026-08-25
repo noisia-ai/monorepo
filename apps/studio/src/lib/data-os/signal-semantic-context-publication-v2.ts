@@ -10,7 +10,6 @@ import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "@noi
 import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
 import { withSignalAcquisitionTransactionV1 } from "@/lib/data-os/signal-acquisition-plan";
 import {
-  decideSignalSemanticContextElementV1,
   SignalSemanticContextPackError,
   SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS,
   resolveLiveSignalSemanticContextAuthorityV1
@@ -25,6 +24,12 @@ export const SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_SCHEMA_V2 =
   "signal-semantic-context-publication-v2" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2 =
   "publish_reviewed_semantic_context_v2" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2 =
+  "signal-semantic-context-decision-v2" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2 =
+  "approve_selected_semantic_context_element" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2 =
+  "apply_shared_decision_basis_to_all_selected_elements" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2 = [
   "duplicate_same_concept","alias_or_variant","canonicalization","semantic_boundary",
   "locale_resolution","competitive_unit_resolution","insufficient_context","operator_correction"
@@ -38,7 +43,12 @@ export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2 = [
   "global","canonical_unit","not_applicable"
 ] as const;
 
-type ReasonV2=typeof SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2[number];
+export type SignalSemanticContextReviewReasonV2=typeof SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2[number];
+type ReasonV2=SignalSemanticContextReviewReasonV2;
+export type SignalSemanticContextDecisionBasisV2={
+  contract_version:typeof SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2;
+  reason:ReasonV2;rationale:string;
+};
 type AnnotationTypeV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2[number];
 type AnnotationResolutionV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2[number];
 type DispositionV2="pending"|"approved"|"rejected"|"merged";
@@ -87,36 +97,120 @@ export function digestCanonicalJsonV2(value:unknown){
   return`sha256:${createHash("sha256").update(canonicalJsonV2(value),"utf8").digest("hex")}`;
 }
 
-/**
- * Atomically preserves the rejection rationale and applies the terminal decision. The
- * intermediate annotation versions never escape the surrounding transaction: a crash
- * after rationale resolution rolls every step back and therefore cannot leave a pending
- * leaf without an open publication blocker.
- */
+export function normalizeSignalSemanticContextDecisionBasisV2(args:{reason:ReasonV2;rationale:string}):
+  SignalSemanticContextDecisionBasisV2{
+  if(!SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2.includes(args.reason))
+    throw new SignalSemanticContextPackError("semantic_context_decision_reason_invalid",422);
+  return{contract_version:SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2,
+    reason:args.reason,rationale:normalizeRationale(args.rationale)};
+}
+
+export function signalSemanticContextDecisionElementDigestV2(args:{
+  definition:{element_key:string;element_kind:string;canonical_key:string;display_text:string;
+    scope:string|null;entity_type:string|null;entity_id:string|null;locale:string|null;
+    relation_kind:string|null;relation_target_key:string|null};
+  elementVersion:number;disposition:"approved"|"rejected";sourceRefsDigest:string;
+  basis:SignalSemanticContextDecisionBasisV2;
+}){
+  return digestCanonicalJsonV2({contract_version:"signal-semantic-context-element-v3",
+    ...args.definition,element_version:args.elementVersion,disposition:args.disposition,
+    source_refs_digest:args.sourceRefsDigest,decision_basis:args.basis});
+}
+
+export async function decideSignalSemanticContextElementV2(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;elementKey:string;action:"approve"|"reject";
+  reason:ReasonV2;rationale:string;confirmation:typeof SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2|
+    "reject_selected_semantic_context_element";
+}){
+  assertInternal(args.actor);
+  if(args.action==="approve"&&args.confirmation!==SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2)
+    throw new SignalSemanticContextPackError("semantic_context_approval_confirmation_required",422);
+  if(args.action==="reject"&&args.confirmation!=="reject_selected_semantic_context_element")
+    throw new SignalSemanticContextPackError("semantic_context_rejection_confirmation_required",422);
+  const basis=normalizeSignalSemanticContextDecisionBasisV2(args);
+  const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2,
+    generation_key:args.generationKey,element_key:args.elementKey,action:args.action,
+    decision_basis:basis,confirmation:args.confirmation};
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const operation=await beginSignalProductOperationV1<{element_key:string;element_version:number;
+    disposition:"approved"|"rejected";draft_digest_ref:string}>({...args,
+    action:"decide-semantic-context-element",input:operationInput,
+    semanticContextDecisionInput:{payload:operationInput,digest:digestCanonicalJsonV2(operationInput)}});
+  if(operation.replay)return operation.replay;
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertNoActiveRun(args.queryable,generation.id);
+  await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const current=await requireCurrentElement(args.queryable,generation.id,args.elementKey,true);
+  if(current.disposition!=="pending")
+    throw new SignalSemanticContextPackError("semantic_context_element_not_pending");
+  const created=await createDecisionElementV2(args.queryable,{workspaceId:args.workspace.id,generation,current,
+    disposition:args.action==="approve"?"approved":"rejected",basis,operationId:operation.operationId,
+    actorId:args.actor.id});
+  const draftDigest=await refreshDraftDigestV2(args.queryable,generation.id);
+  await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
+    elementId:created.id,operationId:operation.operationId,eventIndex:0,
+    eventKind:args.action==="approve"?"element_approved":"element_rejected",
+    previous:current.element_digest,next:created.elementDigest,actorId:args.actor.id});
+  const result={element_key:current.element_key,element_version:current.element_version+1,
+    disposition:args.action==="approve"?"approved" as const:"rejected" as const,
+    draft_digest_ref:shortDigest(draftDigest)};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+export async function bulkApproveSignalSemanticContextElementsV2(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;elementKeys:string[];reason:ReasonV2;rationale:string;
+  confirmation:typeof SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2;
+}){
+  assertInternal(args.actor);
+  if(args.confirmation!==SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2)
+    throw new SignalSemanticContextPackError("semantic_context_bulk_approval_confirmation_required",422);
+  const keys=uniqueKeys(args.elementKeys,15);if(keys.length<2)
+    throw new SignalSemanticContextPackError("semantic_context_bulk_scope_invalid",422);
+  const basis=normalizeSignalSemanticContextDecisionBasisV2(args);
+  const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2,
+    generation_key:args.generationKey,element_keys:keys,decision_basis:basis,confirmation:args.confirmation};
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const operation=await beginSignalProductOperationV1<{generation_key:string;approved:number;
+    draft_digest_ref:string}>({...args,action:"bulk-approve-semantic-context-elements",
+    input:operationInput,semanticContextDecisionInput:{payload:operationInput,
+      digest:digestCanonicalJsonV2(operationInput)}});
+  if(operation.replay)return operation.replay;
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertNoActiveRun(args.queryable,generation.id);
+  await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const current:ElementRow[]=[];
+  for(const key of keys){const element=await requireCurrentElement(args.queryable,generation.id,key,true);
+    if(element.disposition!=="pending")throw new SignalSemanticContextPackError("semantic_context_bulk_element_invalid");
+    current.push(element);}
+  if(new Set(current.map((element)=>element.element_kind)).size!==1)
+    throw new SignalSemanticContextPackError("semantic_context_bulk_kind_mismatch",422);
+  for(const element of current)await createDecisionElementV2(args.queryable,{workspaceId:args.workspace.id,
+    generation,current:element,disposition:"approved",basis,operationId:operation.operationId,
+    actorId:args.actor.id});
+  const draftDigest=await refreshDraftDigestV2(args.queryable,generation.id);
+  await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
+    operationId:operation.operationId,eventIndex:0,eventKind:"elements_bulk_approved",
+    previous:generation.draft_digest,next:draftDigest,actorId:args.actor.id});
+  const result={generation_key:generation.generation_key,approved:current.length,
+    draft_digest_ref:shortDigest(draftDigest)};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+/** Rejection is the same first-class decision boundary as approval; annotations are separate evidence. */
 export async function rejectSignalSemanticContextElementV2(args:{
   queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
   idempotencyKey:string;generationKey:string;elementKey:string;reason:ReasonV2;rationale:string;
-  faultAfterRationaleResolutionForTest?:()=>void;
 }){
-  const rationale=normalizeRationale(args.rationale);
-  const annotationKey=`reject-rationale:${createHash("sha256").update(canonicalJsonV2({
-    generation_key:args.generationKey,element_key:args.elementKey,idempotency_key:args.idempotencyKey
-  })).digest("hex").slice(0,32)}`;
-  const command={queryable:args.queryable,workspace:args.workspace,actor:args.actor,
-    generationKey:args.generationKey,elementKey:args.elementKey,annotationKey,
-    annotationType:"uncertain" as const,reason:args.reason,rationale,relatedElementKeys:[]};
-  await annotateSignalSemanticContextElementV2({...command,
-    idempotencyKey:`${args.idempotencyKey}:rationale-open`});
-  await annotateSignalSemanticContextElementV2({...command,
-    idempotencyKey:`${args.idempotencyKey}:rationale-resolved`,resolution:"not_supported"});
-  args.faultAfterRationaleResolutionForTest?.();
-  return decideSignalSemanticContextElementV1({queryable:args.queryable,workspace:args.workspace,
-    actor:args.actor,idempotencyKey:`${args.idempotencyKey}:decision`,generationKey:args.generationKey,
-    elementKey:args.elementKey,action:"reject"});
+  return decideSignalSemanticContextElementV2({...args,action:"reject",
+    confirmation:"reject_selected_semantic_context_element"});
 }
 
 export async function rejectSignalSemanticContextElementProductV2(args:Omit<
-  Parameters<typeof rejectSignalSemanticContextElementV2>[0],"queryable"|"faultAfterRationaleResolutionForTest">){
+  Parameters<typeof rejectSignalSemanticContextElementV2>[0],"queryable">){
   return withSignalAcquisitionTransactionV1((queryable)=>rejectSignalSemanticContextElementV2({...args,queryable}));
 }
 
@@ -403,6 +497,10 @@ export async function publishSignalSemanticContextGenerationV2(args:{queryable:S
 
 export async function mergeSignalSemanticContextElementsProductV2(args:Omit<Parameters<typeof mergeSignalSemanticContextElementsV2>[0],"queryable">){
   return withSignalAcquisitionTransactionV1((queryable)=>mergeSignalSemanticContextElementsV2({...args,queryable}));}
+export async function decideSignalSemanticContextElementProductV2(args:Omit<Parameters<typeof decideSignalSemanticContextElementV2>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>decideSignalSemanticContextElementV2({...args,queryable}));}
+export async function bulkApproveSignalSemanticContextElementsProductV2(args:Omit<Parameters<typeof bulkApproveSignalSemanticContextElementsV2>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>bulkApproveSignalSemanticContextElementsV2({...args,queryable}));}
 export async function correctSignalSemanticContextElementProductV2(args:Omit<Parameters<typeof correctSignalSemanticContextElementV2>[0],"queryable">){
   return withSignalAcquisitionTransactionV1((queryable)=>correctSignalSemanticContextElementV2({...args,queryable}));}
 export async function annotateSignalSemanticContextElementProductV2(args:Omit<Parameters<typeof annotateSignalSemanticContextElementV2>[0],"queryable">){
@@ -492,6 +590,47 @@ async function createElement(queryable:SignalBrandPolicyQueryable,args:{workspac
     args.proposal.locale,args.proposal.relation_kind,args.proposal.relation_target_key,args.proposal.confidence,args.disposition,
     args.originKind,args.supersedes,args.originalProposal,sourceRefsDigest,elementDigest,args.operationId,args.actorId,
     args.disposition==="pending"?null:args.actorId]);return{...inserted.rows[0]!,elementDigest};}
+
+async function createDecisionElementV2(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;
+  generation:GenerationRow;current:ElementRow;disposition:"approved"|"rejected";
+  basis:SignalSemanticContextDecisionBasisV2;operationId:string;actorId:string}){
+  const proposal=definition(args.current);const refs=await loadRefs(queryable,args.current.evidence_group_id);
+  const sourceRefsDigest=digestCanonicalJsonV2(refs);const version=args.current.element_version+1;
+  const elementDigest=signalSemanticContextDecisionElementDigestV2({definition:withoutConfidence(proposal),
+    elementVersion:version,disposition:args.disposition,sourceRefsDigest,basis:args.basis});
+  const basisDigest=digestCanonicalJsonV2(args.basis);
+  const artifact=await queryable.query<{id:string}>(`INSERT INTO analysis_artifacts(workspace_id,
+    workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,content,confidence,
+    review_status,revision,metadata) VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,
+    $5,$6,$7,$8::jsonb) RETURNING id::text`,[args.workspaceId,elementDigest,proposal.element_key,
+    JSON.stringify({element_kind:proposal.element_kind,canonical_key:proposal.canonical_key,
+      display_text:proposal.display_text,scope:proposal.scope,locale:proposal.locale,
+      relation_kind:proposal.relation_kind,relation_target_key:proposal.relation_target_key}),
+    proposal.confidence===null?null:String(proposal.confidence),args.disposition==="approved"?"accepted":"rejected",
+    version,JSON.stringify({authority_only:true,confidence_authoritative:false,decision_basis_digest:basisDigest})]);
+  const group=await queryable.query<{id:string}>(`INSERT INTO analysis_evidence_groups(artifact_id,group_key,role,
+    label,summary,position,metadata) VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,$2::jsonb)
+    RETURNING id::text`,[artifact.rows[0]!.id,JSON.stringify({source_refs_digest:sourceRefsDigest})]);
+  await queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,relation_type,
+    evidence_role,quote,locator,position,metadata) SELECT $1::uuid,input.source_type,input.source_id,input.relation_type,
+    'supporting',NULL,'{}'::jsonb,input.position,'{}'::jsonb FROM unnest($2::text[],$3::uuid[],$4::text[],$5::int[])
+    input(source_type,source_id,relation_type,position)`,[group.rows[0]!.id,refs.map((ref)=>ref.source_type),
+    refs.map((ref)=>ref.source_id),refs.map((ref)=>ref.relation_type),refs.map((_,index)=>index)]);
+  const inserted=await queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,canonical_key,
+    display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,confidence,disposition,origin_kind,
+    supersedes_element_id,original_proposal_element_id,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+    decided_by_user_id,decided_at,decision_contract_version,decision_reason_code,decision_rationale,decision_basis_digest)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$15,$16,$17,
+      'operator_decision',$18::uuid,$19::uuid,$20,$21,$22::uuid,$23::uuid,$23::uuid,clock_timestamp(),$24,$25,$26,$27)
+    RETURNING id::text`,[args.workspaceId,args.generation.id,artifact.rows[0]!.id,group.rows[0]!.id,
+    proposal.element_key,version,proposal.element_kind,proposal.canonical_key,proposal.display_text,proposal.scope,
+    proposal.entity_type,proposal.entity_id,proposal.locale,proposal.relation_kind,proposal.relation_target_key,
+    proposal.confidence,args.disposition,args.current.id,args.current.original_proposal_element_id??args.current.id,
+    sourceRefsDigest,elementDigest,args.operationId,args.actorId,args.basis.contract_version,args.basis.reason,
+    args.basis.rationale,basisDigest]);
+  return{...inserted.rows[0]!,elementDigest};
+}
 async function loadOpenAnnotations(queryable:SignalBrandPolicyQueryable,generationId:string,subjectIds:string[],lock:boolean){
   const result=await queryable.query<AnnotationRow>(`SELECT id::text,annotation_key,annotation_version,annotation_type,
     state,resolution,subject_element_id::text,related_element_ids::text[],reason_code,rationale
@@ -587,7 +726,7 @@ async function refreshDraftDigestV2(queryable:SignalBrandPolicyQueryable,generat
   element_key:string;element_version:number;element_digest:string;disposition:string}>(`SELECT element_key,element_version,
   element_digest,disposition FROM signal_semantic_context_element_versions element WHERE generation_id=$1::uuid
   AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=element.id)
-  ORDER BY element_key`,[generationId]);const digest=digestCanonicalJsonV2({contract_version:"signal-semantic-context-draft-v2",
+  ORDER BY convert_to(element_key,'UTF8')`,[generationId]);const digest=digestCanonicalJsonV2({contract_version:"signal-semantic-context-draft-v2",
   elements:rows.rows});await queryable.query(`UPDATE signal_semantic_context_generations SET draft_digest=$2
   WHERE id=$1::uuid AND status='draft'`,[generationId,digest]);return digest;}
 async function insertEventV2(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generationId:string;

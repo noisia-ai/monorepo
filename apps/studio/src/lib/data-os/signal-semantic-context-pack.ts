@@ -473,55 +473,16 @@ export async function decideSignalSemanticContextElementV1(args:{
     entity_id?:string|null;locale:string|null;relation_kind:SignalSemanticContextRelationKindV1|null;
     relation_target_key:string|null};
 }){
-  assertInternal(args.actor);await lockWorkspace(args.queryable,args.workspace.id);
-  if(args.action==="edit"&&!args.edit)throw new SignalSemanticContextPackError("semantic_context_edit_required",422);
-  if(args.action!=="edit"&&args.edit)throw new SignalSemanticContextPackError("semantic_context_edit_forbidden",422);
-  const operation=await beginSignalProductOperationV1<{element_key:string;element_version:number;disposition:string}>({
-    ...args,action:"decide-semantic-context-element",input:{generation_key:args.generationKey,
-      element_key:args.elementKey,action:args.action,edit:args.edit??null}
-  });if(operation.replay)return operation.replay;
-  const generation=await requireDraft(args.queryable,args.workspace.id,args.generationKey);
-  await assertV1ReviewMutationCurrent(args.queryable,args.workspace,generation);
-  const current=await loadCurrentElement(args.queryable,generation.id,args.elementKey);
-  if(!current)throw new SignalSemanticContextPackError("semantic_context_element_not_found",404);
-  if(current.disposition!=="pending")throw new SignalSemanticContextPackError("semantic_context_element_not_pending");
-  const created=await createDecisionSuccessor(args.queryable,{workspaceId:args.workspace.id,generation,current,
-    action:args.action,edit:args.edit,operationId:operation.operationId,actorId:args.actor.id});
-  const draftDigest=await refreshDraftDigest(args.queryable,generation);
-  await insertEvent(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
-    elementId:created.id,operationId:operation.operationId,eventIndex:0,
-    eventKind:args.action==="approve"?"element_approved":args.action==="reject"?"element_rejected":"element_corrected",
-    previous:current.element_digest,next:created.elementDigest,actorId:args.actor.id});
-  const result={element_key:current.element_key,element_version:current.element_version+1,
-    disposition:created.disposition,draft_digest:draftDigest};
-  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
-    key:operation.key,result});return result;
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_decision_v1_retired",410);
 }
 
 export async function bulkApproveSignalSemanticContextElementsV1(args:{
   queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
   idempotencyKey:string;generationKey:string;elementKeys:string[];
 }){
-  assertInternal(args.actor);const keys=[...new Set(args.elementKeys)].sort();
-  if(keys.length<1||keys.length>100)throw new SignalSemanticContextPackError("semantic_context_bulk_scope_invalid",422);
-  await lockWorkspace(args.queryable,args.workspace.id);
-  const operation=await beginSignalProductOperationV1<{generation_key:string;approved:number;draft_digest:string}>({
-    ...args,action:"bulk-approve-semantic-context-elements",input:{generation_key:args.generationKey,element_keys:keys}
-  });if(operation.replay)return operation.replay;
-  const generation=await requireDraft(args.queryable,args.workspace.id,args.generationKey);
-  await assertV1ReviewMutationCurrent(args.queryable,args.workspace,generation);
-  const created:string[]=[];
-  for(const key of keys){const current=await loadCurrentElement(args.queryable,generation.id,key);
-    if(!current||current.disposition!=="pending")throw new SignalSemanticContextPackError("semantic_context_bulk_element_invalid");
-    const next=await createDecisionSuccessor(args.queryable,{workspaceId:args.workspace.id,generation,current,
-      action:"approve",operationId:operation.operationId,actorId:args.actor.id});created.push(next.id);}
-  const draftDigest=await refreshDraftDigest(args.queryable,generation);
-  await insertEvent(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
-    operationId:operation.operationId,eventIndex:0,eventKind:"elements_bulk_approved",
-    previous:generation.draft_digest,next:draftDigest,actorId:args.actor.id});
-  const result={generation_key:generation.generation_key,approved:created.length,draft_digest:draftDigest};
-  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
-    key:operation.key,result});return result;
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_bulk_approval_v1_retired",410);
 }
 
 export async function publishSignalSemanticContextGenerationV1(args:{
@@ -735,34 +696,12 @@ async function loadGeneration(queryable:SignalBrandPolicyQueryable,workspaceId:s
       status??null,effectiveOnly]);
   return result.rows[0]??null;
 }
-async function requireDraft(queryable:SignalBrandPolicyQueryable,workspaceId:string,generationKey:string){
-  const generation=await loadGeneration(queryable,workspaceId,generationKey,"draft",true);
-  if(!generation)throw new SignalSemanticContextPackError("semantic_context_draft_not_found",404);return generation;
-}
-async function assertV1ReviewMutationCurrent(queryable:SignalBrandPolicyQueryable,
-  workspace:ResolvedSignalWorkspace,generation:GenerationRow){
-  const run=await loadGenerationRunStateV1(queryable,workspace.id,generation.id);
-  if(run&&(["queued","processing","validating"].includes(run.status)
-      ||run.executable_outbox||run.reserved_budget)){
-    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
-  }
-  const live=await resolveLiveSignalSemanticContextAuthorityV1({queryable,workspace});
-  if(compareAuthority(generation,live).length>0){
-    throw new SignalSemanticContextPackError("semantic_context_authority_drift");
-  }
-}
 async function loadCurrentElements(queryable:SignalBrandPolicyQueryable,generationId:string){
   const result=await queryable.query<ElementRow>(`${elementSelect}
     WHERE element.generation_id=$1::uuid AND NOT EXISTS(
       SELECT 1 FROM signal_semantic_context_element_versions successor
       WHERE successor.supersedes_element_id=element.id)
     ORDER BY element.element_key`,[generationId]);return result.rows;
-}
-async function loadCurrentElement(queryable:SignalBrandPolicyQueryable,generationId:string,elementKey:string){
-  const result=await queryable.query<ElementRow>(`${elementSelect}
-    WHERE element.generation_id=$1::uuid AND element.element_key=$2 AND NOT EXISTS(
-      SELECT 1 FROM signal_semantic_context_element_versions successor
-      WHERE successor.supersedes_element_id=element.id) LIMIT 1`,[generationId,elementKey]);return result.rows[0]??null;
 }
 const elementSelect=`SELECT element.id::text,element.artifact_id::text,element.evidence_group_id::text,
   element.element_key,element.element_version,element.element_kind,element.canonical_key,element.display_text,
@@ -818,48 +757,6 @@ async function createElementGraph(queryable:SignalBrandPolicyQueryable,args:{wor
   return inserted.rows[0]!;
 }
 
-async function createDecisionSuccessor(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;
-  generation:GenerationRow;current:ElementRow;action:"approve"|"reject"|"edit";
-  edit?:{canonical_key:string;display_text:string;scope?:string|null;entity_type?:string|null;entity_id?:string|null;
-    locale:string|null;relation_kind:SignalSemanticContextRelationKindV1|null;relation_target_key:string|null};
-  operationId:string;actorId:string}){
-  const refs=await queryable.query<SignalSemanticContextSourceRefV1>(`SELECT source_type,
-    source_id::text source_id,relation_type FROM analysis_evidence_links
-    WHERE evidence_group_id=$1::uuid ORDER BY position,id`,[args.current.evidence_group_id]);
-  const proposal={element_key:args.current.element_key,element_kind:args.current.element_kind,
-    canonical_key:args.edit?.canonical_key??args.current.canonical_key,
-    display_text:args.edit?.display_text??args.current.display_text,
-    scope:args.edit&&"scope" in args.edit?args.edit.scope??null:args.current.scope,
-    entity_type:args.edit&&"entity_type" in args.edit?args.edit.entity_type??null:args.current.entity_type,
-    entity_id:args.edit&&"entity_id" in args.edit?args.edit.entity_id??null:args.current.entity_id,
-    locale:args.edit?.locale??args.current.locale,relation_kind:args.edit?.relation_kind??args.current.relation_kind,
-    relation_target_key:args.edit?.relation_target_key??args.current.relation_target_key,
-    confidence:args.current.confidence===null?null:Number(args.current.confidence)};
-  validateProposalShape({...proposal,origin_kind:"server_projection",source_refs:refs.rows});
-  const disposition=args.action==="edit"?"pending":args.action==="approve"?"approved":"rejected";
-  const version=args.current.element_version+1;
-  const elementDigest=elementDefinitionDigest({proposal,version,disposition,
-    sourceRefsDigest:args.current.source_refs_digest});
-  const created=await createElementGraph(queryable,{workspaceId:args.workspaceId,generation:args.generation,
-    proposal,version,disposition,originKind:args.action==="edit"?"operator_correction":"operator_decision",
-    supersedes:args.current.id,originalProposal:args.current.original_proposal_element_id??args.current.id,
-    sourceRefsDigest:args.current.source_refs_digest,elementDigest,operationId:args.operationId,
-    actorId:args.actorId,sourceRefs:refs.rows});
-  return{...created,elementDigest,disposition};
-}
-
-async function refreshDraftDigest(queryable:SignalBrandPolicyQueryable,generation:GenerationRow){
-  const elements=await loadCurrentElements(queryable,generation.id);
-  const draftDigest=sha256(stableJson({contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
-    generation_key:generation.generation_key,source_authority:{brand_os_digest:generation.brand_os_digest,
-      knowledge_digest:generation.knowledge_digest,locale_context_digest:generation.locale_context_digest},
-    elements:elements.sort(elementSort).map((element)=>({key:element.element_key,version:element.element_version,
-      digest:element.element_digest,disposition:element.disposition}))}));
-  const updated=await queryable.query(`UPDATE signal_semantic_context_generations
-    SET draft_digest=$2 WHERE id=$1::uuid AND status='draft'`,[generation.id,draftDigest]);
-  if(updated.rowCount!==1)throw new SignalSemanticContextPackError("semantic_context_draft_conflict");
-  return draftDigest;
-}
 
 async function loadCurrentCounts(queryable:SignalBrandPolicyQueryable,generationId:string){
   const result=await queryable.query<{pending:number;approved:number;rejected:number;merged:number}>(`SELECT
@@ -899,7 +796,6 @@ function publicElement(row:ElementRow,sourceRefs:Array<{source_type:string;sourc
     decided_at:row.decided_at?new Date(row.decided_at).toISOString():null,
     created_at:new Date(row.created_at).toISOString()},source_refs:sourceRefs,
   source_ref_count:row.source_ref_count};}
-function elementSort(a:ElementRow,b:ElementRow){return a.element_key.localeCompare(b.element_key)||a.element_version-b.element_version;}
 function elementDefinitionDigest(args:{proposal:Omit<SignalSemanticContextProposalV1,"source_refs"|"origin_kind">;
   version:number;disposition:string;sourceRefsDigest:string}){return sha256(stableJson({
     contract_version:"signal-semantic-context-element-v1",...args.proposal,element_version:args.version,

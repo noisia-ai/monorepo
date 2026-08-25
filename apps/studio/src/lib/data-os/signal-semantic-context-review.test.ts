@@ -195,7 +195,8 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   assert.doesNotMatch(manager, /requestJson\(`\$\{base\}\/publish`/u,
     "manager no longer exposes the unsealed V1 publish action");
   assert.doesNotMatch(manager, /brand_os_digest|knowledge_digest|locale_context_digest|semantic_context_pack_digest/u);
-  assert.match(workbench, /submitSignalSemanticContextBulkApprovalUiV1/u);
+  assert.match(workbench, /submitSignalSemanticContextBulkApprovalFormUiV2/u);
+  assert.match(workbench, /submitSignalSemanticContextDeliberateApprovalFormUiV2/u);
   assert.match(workbench, /signalSemanticContextBoundedPendingSelectionV1/u);
   assert.match(workbench, /submitSignalSemanticContextGuidedRejectUiV1/u);
   assert.match(workbench, /submitSignalSemanticContextMergeUiV1/u);
@@ -204,8 +205,9 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   assert.match(workbench, /signalSemanticContextSelectionWithinVisiblePageV1/u);
   assert.match(workbench, /setSelected\(new Map\(\)\);\s*setMergeOpen\(false\);/u,
     "page changes clear the exact operator selection");
-  assert.match(workbench, /event\.key === "Escape" && detailMode !== "view"/u);
-  assert.match(workbench, /if \(!busy\) setDetailMode\("view"\)/u);
+  assert.match(workbench, /handleSignalSemanticContextDecisionKeyV1/u);
+  assert.match(workbench, /cancel:\(\)=>setDetailMode\("view"\)/u);
+  assert.match(workbench, /DecisionBasisHistory/u);
   assert.match(workbench, /disposition === "merged" \? "not_available"/u,
     "merged is neutral lineage rather than a rejected error state");
   assert.match(workbench, /"operator_merge"/u);
@@ -230,6 +232,7 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
     assert.equal(typeof review.merge.crossKind, "string");
     assert.equal(typeof review.annotations.types.near_duplicate, "string");
     assert.equal(typeof review.publication.confirmationBoundary, "string");
+    assert.equal(typeof review.decisionBasis.historicalMissing, "string");
   }
 });
 

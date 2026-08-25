@@ -36,6 +36,32 @@ export type SignalSemanticContextReviewUiRequest = (
   init: RequestInit
 ) => Promise<unknown>;
 
+const SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_UI =
+  "approve_selected_semantic_context_element" as const;
+const SIGNAL_SEMANTIC_CONTEXT_BULK_CONFIRMATION_UI =
+  "apply_shared_decision_basis_to_all_selected_elements" as const;
+
+function parseDecisionBasisFormUiV2(form: FormData) {
+  const reason = String(form.get("reason") ?? "");
+  const rationale = String(form.get("rationale") ?? "").trim().normalize("NFC");
+  if (!SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_UI.includes(
+    reason as SignalSemanticContextReviewReasonUi
+  ) || [...rationale].length < 1 || [...rationale].length > 1000) return null;
+  return { reason: reason as SignalSemanticContextReviewReasonUi, rationale };
+}
+
+export function parseSignalSemanticContextApprovalFormUiV2(form: FormData) {
+  const basis = parseDecisionBasisFormUiV2(form);
+  if (!basis || form.get("confirmation") !== SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_UI) return null;
+  return basis;
+}
+
+export function parseSignalSemanticContextBulkApprovalFormUiV2(form: FormData) {
+  const basis = parseDecisionBasisFormUiV2(form);
+  if (!basis || form.get("confirmation") !== SIGNAL_SEMANTIC_CONTEXT_BULK_CONFIRMATION_UI) return null;
+  return basis;
+}
+
 export function createSignalSemanticContextMutationLockV1() {
   let active = false;
   return {
@@ -75,12 +101,14 @@ export function signalSemanticContextAnnotationResolutionsV1(
 
 export function signalSemanticContextBoundedPendingSelectionV1(args: {
   selectedKeys: string[];
-  elements: Array<{ element_key: string; disposition: string }>;
+  elements: Array<{ element_key: string; element_kind: string; disposition: string }>;
 }) {
   const keys = [...new Set(args.selectedKeys)].sort();
   const byKey = new Map(args.elements.map((element) => [element.element_key, element]));
-  return keys.length > 0 && keys.length <= 100
-    && keys.every((key) => byKey.get(key)?.disposition === "pending");
+  const selected = keys.map((key) => byKey.get(key));
+  return keys.length >= 2 && keys.length <= 15
+    && selected.every((element) => element?.disposition === "pending")
+    && new Set(selected.map((element) => element?.element_kind)).size === 1;
 }
 
 export function signalSemanticContextSelectionWithinVisiblePageV1(args: {
@@ -92,24 +120,92 @@ export function signalSemanticContextSelectionWithinVisiblePageV1(args: {
   return selected.length > 0 && selected.every((key) => visible.has(key));
 }
 
+export function handleSignalSemanticContextDecisionKeyV1(args: {
+  key: string;
+  busy: boolean;
+  mode: "view" | "approve" | "correct" | "reject" | "annotate";
+  cancel: () => void;
+}) {
+  if (args.key !== "Escape" || args.mode === "view" || args.busy) return false;
+  args.cancel();
+  return true;
+}
+
 export async function submitSignalSemanticContextBulkApprovalUiV1(args: {
   request: SignalSemanticContextReviewUiRequest;
   base: string;
   generationKey: string;
   elementKeys: string[];
+  reason: SignalSemanticContextReviewReasonUi;
+  rationale: string;
   idempotencyKey: string;
 }) {
-  const keys = [...new Set(args.elementKeys)].sort();
-  if (keys.length < 1 || keys.length > 100) throw new Error("semantic_context_bulk_scope_invalid");
+  if (new Set(args.elementKeys).size !== args.elementKeys.length) throw new Error("semantic_context_duplicate_key");
+  const keys = [...args.elementKeys].sort();
+  if (keys.length < 2 || keys.length > 15) throw new Error("semantic_context_bulk_scope_invalid");
   return args.request(`${args.base}/decisions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": args.idempotencyKey },
     body: JSON.stringify({
       action: "bulk_approve",
       generation_key: args.generationKey,
-      element_keys: keys
+      element_keys: keys,
+      reason: args.reason,
+      rationale: args.rationale.trim().normalize("NFC"),
+      confirmation: "apply_shared_decision_basis_to_all_selected_elements"
     })
   });
+}
+
+export async function submitSignalSemanticContextBulkApprovalFormUiV2(args: {
+  form: FormData;
+  request: SignalSemanticContextReviewUiRequest;
+  base: string;
+  generationKey: string;
+  elementKeys: string[];
+  idempotencyKey: string;
+}) {
+  const basis = parseSignalSemanticContextBulkApprovalFormUiV2(args.form);
+  if (!basis) return false;
+  await submitSignalSemanticContextBulkApprovalUiV1({ ...args, ...basis });
+  return true;
+}
+
+export async function submitSignalSemanticContextDeliberateApprovalUiV2(args: {
+  request: SignalSemanticContextReviewUiRequest;
+  base: string;
+  generationKey: string;
+  elementKey: string;
+  reason: SignalSemanticContextReviewReasonUi;
+  rationale: string;
+  idempotencyKey: string;
+}) {
+  return args.request(`${args.base}/decisions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": args.idempotencyKey },
+    body: JSON.stringify({
+      action: "approve",
+      generation_key: args.generationKey,
+      element_key: args.elementKey,
+      reason: args.reason,
+      rationale: args.rationale.trim().normalize("NFC"),
+      confirmation: "approve_selected_semantic_context_element"
+    })
+  });
+}
+
+export async function submitSignalSemanticContextDeliberateApprovalFormUiV2(args: {
+  form: FormData;
+  request: SignalSemanticContextReviewUiRequest;
+  base: string;
+  generationKey: string;
+  elementKey: string;
+  idempotencyKey: string;
+}) {
+  const basis = parseSignalSemanticContextApprovalFormUiV2(args.form);
+  if (!basis) return false;
+  await submitSignalSemanticContextDeliberateApprovalUiV2({ ...args, ...basis });
+  return true;
 }
 
 /** One browser command crosses the atomic, server-owned rationale + rejection boundary. */

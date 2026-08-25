@@ -45,7 +45,8 @@ un `study_corpus_id` o `discovery_run_digest`.
 2. `appendSignalSemanticContextProposalsV1` es server-only, valida cada ref contra el
    workspace y crea artifacts/evidence antes del elemento registrado.
 3. approve, reject y edit crean successors. Confidence `1.0` permanece informativa.
-4. bulk approval requiere una lista explícita, deduplicada y acotada a 100.
+4. bulk approval requiere 2–15 hojas pending explícitas, únicas, del mismo kind y una
+   base de decisión compartida confirmada por el operador.
 5. publish relee digests current, exige cero pending y al menos un approved, y sella el
    digest determinista del pack.
 6. Brand OS/Knowledge/locale drift no cambia historia; readiness pasa a `stale`.
@@ -902,3 +903,38 @@ completo.
 Este gate no implementa UI, no despliega, no toma decisiones reales y no conecta el
 pack a Topic Contracts, assignments, `record_tags`, serving, readers, pointers,
 bindings o read mode.
+
+## Implementación local 69B.4C-A — aprobación deliberada
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+La aprobación y el rechazo comparten ahora un único writer V2. Cada transición exige
+un motivo cerrado y una justificación NFC de 1–1000 Unicode scalars; la base forma parte
+del input idempotente, del `element_digest` y del `review_graph_digest`. Las entradas V1
+single/bulk son tombstones y el rechazo ya no crea annotations sintéticas para simular
+rationale. Bulk approval se limita a 2–15 hojas pending del mismo kind y exige una
+confirmación explícita de que la base compartida aplica a cada selección visible.
+
+0098 preserva decisiones anteriores con basis NULL, pero impide nuevas decisiones sin
+base tanto por servicio como por trigger. Un draft con una hoja current approved o
+rejected sin esa base recibe `decision_basis_missing` en el preflight gratuito; una
+publicación histórica permanece inmutable. El detalle management-only proyecta el
+motivo, la justificación y el timestamp operator-safe; las decisiones históricas sin
+base se identifican como tales sin exponer el actor privado. Esta implementación local no corrige la
+aprobación histórica del canary, no decide propuestas y no publica el pack.
+
+## Implementación local 69B.4C-B — backstop colectivo DB-owned
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+0098 sella además el input colectivo de cada operación single/bulk en el ledger. Un
+constraint trigger deferred valida al commit que la selección sea exactamente la misma
+que los successors: single produce una hoja; bulk produce 2–15 hojas únicas, approved,
+same-kind y con un único `decision_basis_digest`. También exige predecessors current
+pending, confirmación/action exactas, actor, resultado y cardinalidad de eventos. Una
+cohorte parcial, sustituida, mixta, terminal→terminal o completada manualmente aborta la
+transacción aunque cada fila aislada sea válida.
+
+La regla no cambia decisiones históricas ni añade otra autoridad. El ledger, el grafo
+append-only y los triggers de fila existentes siguen siendo las únicas superficies de
+persistencia; replay y concurrencia convergen sobre el mismo successor current.

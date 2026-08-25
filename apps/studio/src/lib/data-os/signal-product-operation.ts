@@ -44,6 +44,7 @@ export async function beginSignalProductOperationV1<T>(args: {
   action: SignalProductOperationActionV1;
   idempotencyKey: string;
   input: unknown;
+  semanticContextDecisionInput?: { payload: unknown; digest: string };
 }): Promise<{ key: string; operationId: string; replay: T | null;created: boolean }> {
   const key = normalizeIdempotencyKey(args.idempotencyKey);
   const requestDigest = sha256(stableJson({
@@ -66,23 +67,47 @@ export async function beginSignalProductOperationV1<T>(args: {
   if (authority.rows[0]?.allowed !== true || args.actor.userType !== "noisia_internal") {
     throw new Error("Product operation is cross-workspace or unauthorized.");
   }
-  const inserted = await args.queryable.query(`
-    INSERT INTO signal_governance_control_operations (
-      workspace_id,actor_user_id,action,request_digest,idempotency_key,status
-    ) VALUES ($1::uuid,$2::uuid,$3,$4,$5,'in_progress')
-    ON CONFLICT (workspace_id,idempotency_key) DO NOTHING RETURNING id
-  `,[args.workspace.id,args.actor.id,args.action,requestDigest,key]);
+  const decisionAction = args.action === "decide-semantic-context-element"
+    || args.action === "bulk-approve-semantic-context-elements";
+  if (decisionAction !== Boolean(args.semanticContextDecisionInput)) {
+    throw new Error("Semantic Context decisions require one sealed operation input.");
+  }
+  const inserted = args.semanticContextDecisionInput
+    ? await args.queryable.query(`
+      INSERT INTO signal_governance_control_operations (
+        workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+        semantic_context_decision_input,semantic_context_decision_input_digest
+      ) VALUES ($1::uuid,$2::uuid,$3,$4,$5,'in_progress',$6::jsonb,$7)
+      ON CONFLICT (workspace_id,idempotency_key) DO NOTHING RETURNING id
+    `,[args.workspace.id,args.actor.id,args.action,requestDigest,key,
+      JSON.stringify(args.semanticContextDecisionInput.payload),args.semanticContextDecisionInput.digest])
+    : await args.queryable.query(`
+      INSERT INTO signal_governance_control_operations (
+        workspace_id,actor_user_id,action,request_digest,idempotency_key,status
+      ) VALUES ($1::uuid,$2::uuid,$3,$4,$5,'in_progress')
+      ON CONFLICT (workspace_id,idempotency_key) DO NOTHING RETURNING id
+    `,[args.workspace.id,args.actor.id,args.action,requestDigest,key]);
   const selected = await args.queryable.query<{
     id: string; actor_user_id: string; action: string; request_digest: string; status: string; result: T | null;
-  }>(`
-    SELECT id::text,actor_user_id::text,action,request_digest,status,result
+    semantic_context_decision_input_digest: string | null;
+  }>(args.semanticContextDecisionInput ? `
+    SELECT id::text,actor_user_id::text,action,request_digest,status,result,
+      semantic_context_decision_input_digest
+    FROM signal_governance_control_operations
+    WHERE workspace_id=$1::uuid AND idempotency_key=$2
+    FOR UPDATE
+  ` : `
+    SELECT id::text,actor_user_id::text,action,request_digest,status,result,
+      NULL::text AS semantic_context_decision_input_digest
     FROM signal_governance_control_operations
     WHERE workspace_id=$1::uuid AND idempotency_key=$2
     FOR UPDATE
   `,[args.workspace.id,key]);
   const row = selected.rows[0];
   if (!row || row.actor_user_id !== args.actor.id || row.action !== args.action
-      || row.request_digest !== requestDigest) {
+      || row.request_digest !== requestDigest
+      || row.semantic_context_decision_input_digest
+        !== (args.semanticContextDecisionInput?.digest ?? null)) {
     throw new Error("Idempotency-Key was reused with incompatible product input.");
   }
   if (row.status === "completed" && row.result !== null) return {
