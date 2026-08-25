@@ -120,6 +120,12 @@ type ReviewAnnotationProjectionRow = {
   subject_element_key: string;
   reason_code: string;
   rationale: string;
+  resolution_contract_version: string | null;
+  resolution_basis_digest: string | null;
+  resolution_input_digest: string | null;
+  resolution_authority_digest: string | null;
+  resolution_prestate_digest: string | null;
+  resolution_poststate_digest: string | null;
   created_at: string | Date;
   related_elements: Array<{
     element_key: string;
@@ -328,7 +334,10 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
   const annotations = await args.queryable.query<ReviewAnnotationProjectionRow>(`
     SELECT annotation.annotation_key,annotation.annotation_version,annotation.annotation_type,
       annotation.state,annotation.resolution,subject.element_key subject_element_key,
-      annotation.reason_code,annotation.rationale,annotation.created_at,
+      annotation.reason_code,annotation.rationale,annotation.resolution_contract_version,
+      annotation.resolution_basis_digest,annotation.resolution_input_digest,
+      annotation.resolution_authority_digest,annotation.resolution_prestate_digest,
+      annotation.resolution_poststate_digest,annotation.created_at,
       COALESCE((SELECT jsonb_agg(jsonb_build_object(
         'element_key',related_element.element_key,
         'element_kind',related_element.element_kind,
@@ -375,6 +384,24 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
       subject_element_key: annotation.subject_element_key,
       reason: annotation.reason_code,
       rationale: safeLabel(annotation.rationale, "Review rationale", 1_000),
+      resolution_basis: annotation.state === "open" ? {
+        state: "not_applicable" as const,
+        reason: null,
+        rationale: null,
+        reviewer: null
+      } : annotation.resolution_contract_version && annotation.resolution_basis_digest
+          && annotation.resolution_input_digest && annotation.resolution_authority_digest
+          && annotation.resolution_prestate_digest && annotation.resolution_poststate_digest ? {
+          state: "complete" as const,
+          reason: annotation.reason_code,
+          rationale: safeLabel(annotation.rationale, "Resolution rationale", 1_000),
+          reviewer: "authenticated_operator" as const
+        } : {
+          state: "missing_historical" as const,
+          reason: null,
+          rationale: null,
+          reviewer: "authenticated_operator" as const
+        },
       related_elements: annotation.related_elements.map((related) => ({
         element_key: related.element_key,
         element_kind: related.element_kind,

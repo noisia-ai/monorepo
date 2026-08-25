@@ -2734,3 +2734,22 @@ insertar rejected bajo bulk ni completar un single con más de un successor.
 El GET gratuito de publicación puede devolver `decision_basis_missing` cuando una hoja
 current approved/rejected de un draft procede de historia anterior a 0098. El blocker
 no muta esa historia: exige una reparación append-only posterior antes de publicar.
+
+### Resolución deliberada de annotations — 69B.5E-C
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+`POST .../semantic-context/annotations` conserva el comando cerrado de creación y añade
+dos comandos disjuntos. `action=resolve` exige la resolución cerrada, reason, rationale
+NFC y `resolve_semantic_context_annotation_with_deliberate_basis`; `action=repair` exige
+los mismos campos operator-owned y la confirmación distinta
+`repair_semantic_context_annotation_resolution_basis`. El servidor deriva workspace,
+actor, generación, annotation current, subject, snapshots y digests. El navegador no
+puede enviar authority IDs/digests ni reutilizar automáticamente el rationale histórico.
+
+Un repair sólo aplica a una hoja current resolved anterior al contrato y conserva su
+resolución; crea una nueva versión con basis completo. Replay devuelve el mismo resultado
+y concurrencia converge en un único successor. El detalle operator-safe marca el basis
+como `complete`, `missing_historical` o `not_applicable`, y el preflight gratuito añade
+`annotation_resolution_basis_missing` sin escribir. La UI sólo llama al endpoint tras
+reason, rationale y confirmación explícitos; abrir o cancelar el formulario no muta.

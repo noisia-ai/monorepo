@@ -6,6 +6,7 @@ import {
   canonicalJsonV2,
   digestCanonicalJsonV2,
   normalizeSignalSemanticContextDecisionBasisV2,
+  normalizeSignalSemanticContextAnnotationResolutionBasisV1,
   signalSemanticContextDecisionElementDigestV2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
@@ -57,6 +58,24 @@ test("canonical_json_v2 rejects lone surrogates, floats, and normalized-key coll
   assert.throws(() => canonicalJsonV2({ "Café": 1, "Cafe\u0301": 2 }), /canonical_json_v2_key_collision/u);
 });
 
+test("annotation resolution basis is explicit, closed, normalized, and independent of predecessor rationale",()=>{
+  assert.deepEqual(normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:"uncertain",
+    resolution:"not_supported",reason:"insufficient_context",rationale:"  Cafe\u0301 lacks support.  "}),{
+    contract_version:"signal-semantic-context-annotation-resolution-v1",annotation_type:"uncertain",
+    resolution:"not_supported",reason:"insufficient_context",rationale:"Café lacks support."});
+  assert.throws(()=>normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:"uncertain",
+    resolution:"not_supported",reason:"insufficient_context",rationale:"\t\u00a0"}),/rationale/u);
+  assert.throws(()=>normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:"near_duplicate",
+    resolution:"merged",reason:"duplicate_same_concept",rationale:"Use the merge writer."}),
+  /semantic_context_merge_operation_required/u);
+  assert.throws(()=>normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:"uncertain",
+    resolution:"outside_contract" as never,reason:"insufficient_context",rationale:"Reviewed."}),
+  /semantic_context_annotation_resolution_invalid/u);
+  assert.throws(()=>normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:"uncertain",
+    resolution:"not_supported",reason:"outside_contract" as never,rationale:"Reviewed."}),
+  /semantic_context_decision_reason_invalid/u);
+});
+
 test("canonical publish route exposes only V2 confirmation and preflight authority", async () => {
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/semantic-context/publish/route.ts",
     import.meta.url), "utf8");
@@ -68,6 +87,37 @@ test("canonical publish route exposes only V2 confirmation and preflight authori
     "publication_authority_digest", "semantic_context_pack_digest", "element_id", "actor_user_id"]) {
     assert.doesNotMatch(route, new RegExp(browserOwned, "u"));
   }
+});
+
+test("closed OpenAPI publication counts match the runtime preflight including annotation resolution basis",async()=>{
+  const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
+  const schema=openApi.match(/    SignalSemanticContextPublicationPreflightV2:\n([\s\S]*?)\n    SignalSemanticContextProposalStartV1:/u)?.[1];
+  assert.ok(schema,"the publication preflight schema exists in the tracked OpenAPI document");
+  const counts=schema.match(/        counts:\n([\s\S]*?)\n        collisions:/u)?.[1];
+  assert.ok(counts,"the publication preflight exposes one closed counts object");
+  const requiredText=counts.match(/          required: \[([\s\S]*?)\]\n          properties:/u)?.[1];
+  assert.ok(requiredText,"the counts object has an explicit required list");
+  const required=requiredText.split(",").map((value)=>value.trim()).filter(Boolean).sort();
+  const properties=[...counts.matchAll(/^            ([a-z_]+): \{ type: integer, minimum: 0 \}$/gmu)]
+    .map((match)=>match[1]!).sort();
+  const expected=["total_leaves","pending","approved","rejected","merged","open_annotations",
+    "open_uncertainty","open_near_duplicate","unresolved_locale","unresolved_competitive_unit",
+    "merge_edges","canonical_collisions","invalid_evidence_refs","invalid_relation_targets",
+    "decision_basis_missing","annotation_resolution_basis_missing"].sort();
+  assert.deepEqual(required,expected,"all runtime counters are required by the closed response contract");
+  assert.deepEqual(properties,expected,"OpenAPI declares no missing or unowned count property");
+  const assertCounts=(value:Record<string,number>)=>{
+    assert.deepEqual(Object.keys(value).sort(),properties,"additional or missing counters fail closed");
+    for(const entry of Object.values(value))assert.ok(Number.isInteger(entry)&&entry>=0,
+      "publication counters are non-negative integers");
+  };
+  const runtimeShape=Object.fromEntries(expected.map((key)=>[key,key==="annotation_resolution_basis_missing"?1:0]));
+  assertCounts(runtimeShape);
+  assert.throws(()=>assertCounts(Object.fromEntries(Object.entries(runtimeShape)
+    .filter(([key])=>key!=="annotation_resolution_basis_missing"))),/additional or missing/u,
+  "omitting the runtime basis counter violates the closed OpenAPI contract");
+  assert.throws(()=>assertCounts({...runtimeShape,unowned_counter:0}),/additional or missing/u,
+  "an extra runtime counter also violates the closed OpenAPI contract");
 });
 
 test("management routes keep review authority server-owned and private", async () => {
@@ -90,6 +140,12 @@ test("management routes keep review authority server-owned and private", async (
     assert.match(route, /annotation_key must be unique/u,
       "merge and correction reject repeated or contradictory annotation resolutions at Zod");
   }
+  const annotationRoute=routes[2]!;
+  assert.match(annotationRoute,/const command=z\.union\(\[createCommand,resolveCommand,repairCommand\]\)/u);
+  assert.match(annotationRoute,/SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1/u);
+  assert.match(annotationRoute,/SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1/u);
+  assert.doesNotMatch(annotationRoute,/resolution:z\.enum\([^\n]+\)\.optional\(\)/u,
+    "the annotation creation contract cannot silently resolve from the same command");
   const service = await readFile(new URL("./signal-semantic-context-publication-v2.ts", import.meta.url), "utf8");
   assert.match(service, /semantic_context_duplicate_annotation_resolution/u,
     "the server writer independently rejects repeated annotation keys");

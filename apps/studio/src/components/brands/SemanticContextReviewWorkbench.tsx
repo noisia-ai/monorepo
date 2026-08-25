@@ -31,15 +31,17 @@ import {
   signalSemanticContextSelectionWithinVisiblePageV1,
   submitSignalSemanticContextBulkApprovalFormUiV2,
   submitSignalSemanticContextDeliberateApprovalFormUiV2,
+  submitSignalSemanticContextAnnotationResolutionFormUiV1,
   submitSignalSemanticContextGuidedRejectUiV1,
   submitSignalSemanticContextMergeUiV1,
   type SignalSemanticContextAnnotationResolutionUi,
+  type SignalSemanticContextAnnotationResolutionIntentUi,
   type SignalSemanticContextAnnotationTypeUi,
   type SignalSemanticContextReviewReasonUi
 } from "@/lib/data-os/signal-semantic-context-review-ui";
 
 type Disposition = "pending" | "approved" | "rejected" | "merged";
-type DetailMode = "view" | "approve" | "correct" | "reject" | "annotate";
+type DetailMode = "view" | "approve" | "correct" | "reject" | "annotate" | "resolve_annotation";
 
 type ReviewElement = {
   element_key: string;
@@ -109,8 +111,20 @@ type ReviewAnnotation = {
   resolution: SignalSemanticContextAnnotationResolutionUi | null;
   reason: SignalSemanticContextReviewReasonUi;
   rationale: string;
+  resolution_basis: {
+    state: "complete" | "missing_historical" | "not_applicable";
+    reason: SignalSemanticContextReviewReasonUi | null;
+    rationale: string | null;
+    reviewer: "authenticated_operator" | null;
+  };
   related_elements: Array<{ element_key: string; element_kind: string; display_text: string }>;
   created_at: string;
+};
+
+type AnnotationResolutionDraft = {
+  annotation: ReviewAnnotation;
+  resolution: SignalSemanticContextAnnotationResolutionUi;
+  intent: SignalSemanticContextAnnotationResolutionIntentUi;
 };
 
 type ReviewDetail = {
@@ -211,6 +225,8 @@ export function SemanticContextReviewWorkbench({
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>("view");
+  const [annotationResolutionDraft, setAnnotationResolutionDraft] =
+    useState<AnnotationResolutionDraft | null>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filters, setFilters] = useState<Filters>(initialFilters);
@@ -301,6 +317,7 @@ export function SemanticContextReviewWorkbench({
     reviewOpenerRef.current = opener;
     setDetailKey(elementKey);
     setDetailMode("view");
+    setAnnotationResolutionDraft(null);
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
@@ -333,6 +350,7 @@ export function SemanticContextReviewWorkbench({
     setDetail(null);
     setDetailError(null);
     setDetailMode("view");
+    setAnnotationResolutionDraft(null);
   }
 
   async function refreshAfterMutation() {
@@ -462,26 +480,27 @@ export function SemanticContextReviewWorkbench({
     } finally { endMutation(); }
   }
 
-  async function resolveAnnotation(annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) {
-    if (!detail) return;
-    if (!beginMutation(`resolve:${annotation.annotation_key}`)) return;
+  function beginAnnotationResolution(annotation: ReviewAnnotation,
+    resolution: SignalSemanticContextAnnotationResolutionUi,
+    intent: SignalSemanticContextAnnotationResolutionIntentUi) {
+    setAnnotationResolutionDraft({ annotation, resolution, intent });
+    setDetailMode("resolve_annotation");
+  }
+
+  async function resolveAnnotation(form: FormData) {
+    if (!detail || !annotationResolutionDraft) return;
+    const draft=annotationResolutionDraft;
+    if (!beginMutation(`${draft.intent}:${draft.annotation.annotation_key}`)) return;
     try {
-      await requestJson(`${base}/annotations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("resolve-annotation") },
-        body: JSON.stringify({
-          generation_key: generationKey,
-          element_key: detail.element.element_key,
-          annotation_key: annotation.annotation_key,
-          annotation_type: annotation.annotation_type,
-          reason: annotation.reason,
-          rationale: annotation.rationale,
-          related_element_keys: annotation.related_elements.map((element) => element.element_key),
-          resolution
-        })
+      const submitted=await submitSignalSemanticContextAnnotationResolutionFormUiV1({
+        form,intent:draft.intent,request:requestJson,base,generationKey,
+        elementKey:detail.element.element_key,annotationKey:draft.annotation.annotation_key,
+        resolution:draft.resolution,idempotencyKey:idempotencyKey(`${draft.intent}-annotation`)
       });
+      if(!submitted){setError(t("reviewWorkbench.annotations.deliberate.invalid"));return;}
       setDetail(await loadDetail(detail.element.element_key));
       setPreflight(null);
+      setDetailMode("view");setAnnotationResolutionDraft(null);
     } catch (mutationError) {
       setError(mutationError instanceof Error ? mutationError.message : t("reviewWorkbench.errors.annotate"));
     } finally { endMutation(); }
@@ -641,16 +660,18 @@ export function SemanticContextReviewWorkbench({
       onClose={() => !busy && closeDetail()} returnFocusRef={reviewOpenerRef} title={detail?.element.display_text ?? t("reviewWorkbench.loadingDetail")}>
       <div onKeyDown={(event) => {
         if (handleSignalSemanticContextDecisionKeyV1({key:event.key,busy:Boolean(busy),mode:detailMode,
-          cancel:()=>setDetailMode("view")})) { event.preventDefault(); event.stopPropagation(); return; }
+          cancel:()=>{setDetailMode("view");setAnnotationResolutionDraft(null);}})) { event.preventDefault(); event.stopPropagation(); return; }
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s" && activeFormRef.current) { event.preventDefault(); activeFormRef.current.requestSubmit(); }
       }}>
         {error ? <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={16}/><span>{error}</span></div> : null}
         {detailError ? <Feedback message={detailError} onRetry={() => void retryDetail()} retryLabel={t("actions.retry")}/>
           : detailLoading || !detail ? <ReviewSkeleton label={t("reviewWorkbench.loadingDetail")}/>
             : <ElementReviewDetail activeFormRef={activeFormRef} busy={busy} detail={detail} locale={locale} mode={detailMode}
+              annotationResolutionDraft={annotationResolutionDraft}
               onAnnotate={(form) => void annotate(form)} onApprove={(form) => void approve(form)}
               onCorrect={(form) => void correct(form)} onMode={setDetailMode} onReject={(form) => void reject(form)}
-              onResolve={(annotation, resolution) => void resolveAnnotation(annotation, resolution)} reviewWritable={reviewWritable} t={t}/>}
+              onBeginResolution={beginAnnotationResolution} onCancelResolution={()=>{setDetailMode("view");setAnnotationResolutionDraft(null);}}
+              onResolve={(form) => void resolveAnnotation(form)} reviewWritable={reviewWritable} t={t}/>}
       </div>
     </WorkspaceDrawer> : null}
   </div>;
@@ -677,18 +698,24 @@ function DispositionStatus({ disposition, t }: { disposition: Disposition; t: Re
 }
 
 /** @internal Exported for the browser-representative deliberate-decision interaction contract test. */
-export function ElementReviewDetail({ activeFormRef, busy, detail, locale, mode, onAnnotate, onApprove, onCorrect, onMode, onReject, onResolve, reviewWritable, t }: {
+export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, busy, detail, locale, mode,
+  onAnnotate, onApprove, onBeginResolution, onCancelResolution, onCorrect, onMode, onReject, onResolve,
+  reviewWritable, t }: {
   activeFormRef: React.MutableRefObject<HTMLFormElement | null>;
+  annotationResolutionDraft: AnnotationResolutionDraft | null;
   busy: string | null;
   detail: ReviewDetail;
   locale: string;
   mode: DetailMode;
   onAnnotate: (form: FormData) => void;
   onApprove: (form: FormData) => void;
+  onBeginResolution: (annotation: ReviewAnnotation,resolution:SignalSemanticContextAnnotationResolutionUi,
+    intent:SignalSemanticContextAnnotationResolutionIntentUi) => void;
+  onCancelResolution: () => void;
   onCorrect: (form: FormData) => void;
   onMode: (mode: DetailMode) => void;
   onReject: (form: FormData) => void;
-  onResolve: (annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) => void;
+  onResolve: (form: FormData) => void;
   reviewWritable: boolean;
   t: ReturnType<typeof useTranslations>;
 }) {
@@ -706,13 +733,31 @@ export function ElementReviewDetail({ activeFormRef, busy, detail, locale, mode,
     <label className="workspace-field"><span>{t("reviewWorkbench.annotations.type")}</span><select className="workspace-control" name="annotation_type" required>{SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_UI.map((type) => <option key={type} value={type}>{t(`reviewWorkbench.annotations.types.${type}`)}</option>)}</select></label>
     <label className="workspace-field"><span>{t("reviewWorkbench.annotations.related")}</span><input className="workspace-control" name="related_element_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/><small>{t("reviewWorkbench.annotations.relatedHelp")}</small></label><ReasonFields autoFocusRationale t={t}/>
   </MutationForm>;
+  if(mode==="resolve_annotation"&&annotationResolutionDraft){const repair=annotationResolutionDraft.intent==="repair";
+    return <MutationForm busy={busy} danger={repair} formRef={activeFormRef} onCancel={onCancelResolution}
+      onSubmit={onResolve} submitLabel={t(repair?"reviewWorkbench.annotations.deliberate.repairSubmit":
+        "reviewWorkbench.annotations.deliberate.resolveSubmit")} t={t}
+      title={t(repair?"reviewWorkbench.annotations.deliberate.repairTitle":
+        "reviewWorkbench.annotations.deliberate.resolveTitle")}>
+      <p className="admin-drawer-form__intro">{t(repair?"reviewWorkbench.annotations.deliberate.repairBody":
+        "reviewWorkbench.annotations.deliberate.resolveBody")}</p>
+      <dl className="semantic-context-pack__definition"><div><dt>{t("reviewWorkbench.annotations.deliberate.resolution")}</dt>
+        <dd>{t(`reviewWorkbench.annotations.resolutions.${annotationResolutionDraft.resolution}`)}</dd></div></dl>
+      <ReasonFields autoFocusRationale t={t}/>
+      <label className="semantic-context-review__confirmation"><input name="confirmation" required type="checkbox"
+        value={repair?"repair_semantic_context_annotation_resolution_basis":
+          "resolve_semantic_context_annotation_with_deliberate_basis"}/>
+        <span>{t(repair?"reviewWorkbench.annotations.deliberate.repairConfirmation":
+          "reviewWorkbench.annotations.deliberate.resolveConfirmation")}</span></label>
+    </MutationForm>;
+  }
 
   return <div className="semantic-context-pack__review semantic-context-review__detail">
     <div className="semantic-context-pack__review-summary"><DispositionStatus disposition={element.disposition} t={t}/><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
     <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{element.locale ?? t("values.noLocale")}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
     {detail.decision_basis.state !== "not_applicable" ? <DecisionBasisHistory basis={detail.decision_basis}
       locale={locale} t={t}/> : null}
-    <AnnotationsList busy={busy} items={detail.review_annotations} onResolve={onResolve} t={t}/>
+    <AnnotationsList busy={busy} items={detail.review_annotations} onBeginResolution={onBeginResolution} t={t}/>
     {detail.merge_lineage.length ? <section className="semantic-context-review__lineage"><h3>{t("reviewWorkbench.merge.lineage")}</h3>{detail.merge_lineage.map((entry) => <div key={`${entry.source_element_key}:${entry.target_element_key}`}><ArrowsMerge aria-hidden size={14}/><span>{entry.source_element_key} → {entry.target_element_key}</span><small>{entry.rationale}</small></div>)}</section> : null}
     <section className="semantic-context-review__evidence"><div><h3>{t("reviewWorkbench.evidence.title")}</h3><p>{t("reviewWorkbench.evidence.body")}</p></div>{detail.evidence.map((source, index) => <article className="semantic-context-review__source" key={`${source.source_type}-${source.section_label}-${index}`}><header><div><span>{sourceKindLabel(source.source_type, t)}</span><strong>{source.source_title}</strong><small>{source.section_label}</small></div><AdminStatus state={source.current_state === "current" ? "good" : source.current_state === "inactive" ? "warning" : "not_available"}>{t(`reviewWorkbench.evidence.states.${source.current_state}`)}</AdminStatus></header><div className="semantic-context-review__source-meta"><span>{t("reviewWorkbench.evidence.relation", { relation: t(`evidenceRelations.${source.relation}`) })}</span><span>{t("reviewWorkbench.evidence.generationValidated")}</span></div><div className="semantic-context-review__source-context"><strong>{t("reviewWorkbench.evidence.contextLabel")}</strong><p>{source.source_context.preview ?? t("reviewWorkbench.evidence.contextUnavailable")}</p><small>{t("reviewWorkbench.evidence.notCitation")}</small></div></article>)}{!detail.evidence.length ? <p>{t("review.noEvidence")}</p> : null}</section>
     {reviewWritable && element.disposition !== "merged" ? <div className="semantic-context-pack__drawer-actions">{element.disposition === "pending" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("annotate")} type="button"><NotePencil aria-hidden size={14}/>{t("reviewWorkbench.annotations.action")}</button> : null}<button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("correct")} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.edit")}</button>{element.disposition === "pending" ? <><button className="admin-button admin-button--danger" disabled={Boolean(busy)} onClick={() => onMode("reject")} type="button"><X aria-hidden size={14}/>{t("actions.reject")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => onMode("approve")} type="button"><Check aria-hidden size={14}/>{t("actions.approve")}</button></> : null}</div> : null}
@@ -775,9 +820,12 @@ function BulkApprovalPanel({ busy, elements, onCancel, onSubmit, t }: { busy: st
   </form>;
 }
 
-function AnnotationsList({ busy, items, onResolve, t }: { busy: string | null; items: ReviewAnnotation[]; onResolve: (annotation: ReviewAnnotation, resolution: SignalSemanticContextAnnotationResolutionUi) => void; t: ReturnType<typeof useTranslations> }) {
+/** @internal Exported for the deliberate annotation-resolution interaction contract test. */
+export function AnnotationsList({ busy, items, onBeginResolution, t }: { busy: string | null; items: ReviewAnnotation[];
+  onBeginResolution:(annotation:ReviewAnnotation,resolution:SignalSemanticContextAnnotationResolutionUi,
+    intent:SignalSemanticContextAnnotationResolutionIntentUi)=>void;t:ReturnType<typeof useTranslations> }) {
   if (!items.length) return null;
-  return <section className="semantic-context-review__annotations"><h3>{t("reviewWorkbench.annotations.history")}</h3>{items.map((annotation) => <article key={annotation.annotation_key}><div><strong>{t(`reviewWorkbench.annotations.types.${annotation.annotation_type}`)}</strong><AdminStatus state={annotation.state === "resolved" ? "good" : "warning"}>{t(`reviewWorkbench.annotations.states.${annotation.state}`)}</AdminStatus></div><p>{annotation.rationale}</p>{annotation.related_elements.length ? <small>{annotation.related_elements.map((element) => element.display_text).join(", ")}</small> : null}{annotation.state === "open" ? <div>{signalSemanticContextAnnotationResolutionsV1(annotation.annotation_type).map((resolution) => <button className="admin-button admin-button--compact" disabled={Boolean(busy)} key={resolution} onClick={() => onResolve(annotation, resolution)} type="button">{t(`reviewWorkbench.annotations.resolutions.${resolution}`)}</button>)}</div> : <small>{t(`reviewWorkbench.annotations.resolutions.${annotation.resolution}`)}</small>}</article>)}</section>;
+  return <section className="semantic-context-review__annotations"><h3>{t("reviewWorkbench.annotations.history")}</h3>{items.map((annotation) => <article key={annotation.annotation_key}><div><strong>{t(`reviewWorkbench.annotations.types.${annotation.annotation_type}`)}</strong><AdminStatus state={annotation.state === "resolved" ? "good" : "warning"}>{t(`reviewWorkbench.annotations.states.${annotation.state}`)}</AdminStatus></div><p>{annotation.rationale}</p>{annotation.related_elements.length ? <small>{annotation.related_elements.map((element) => element.display_text).join(", ")}</small> : null}{annotation.state === "open" ? <div>{signalSemanticContextAnnotationResolutionsV1(annotation.annotation_type).map((resolution) => <button className="admin-button admin-button--compact" disabled={Boolean(busy)} key={resolution} onClick={() => onBeginResolution(annotation,resolution,"resolve")} type="button">{t(`reviewWorkbench.annotations.resolutions.${resolution}`)}</button>)}</div> : <><small>{t(`reviewWorkbench.annotations.resolutions.${annotation.resolution}`)}</small>{annotation.resolution_basis.state==="missing_historical"&&annotation.resolution?<div className="semantic-context-review__feedback"><Warning aria-hidden size={14}/><span>{t("reviewWorkbench.annotations.deliberate.basisMissing")}</span><button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>onBeginResolution(annotation,annotation.resolution!,"repair")} type="button">{t("reviewWorkbench.annotations.deliberate.repairAction")}</button></div>:annotation.resolution_basis.state==="complete"?<small>{t("reviewWorkbench.annotations.deliberate.basisComplete")}</small>:null}</>}</article>)}</section>;
 }
 
 function MergePanel({ busy, elements, onCancel, onSubmit, sameKind, t }: { busy: string | null; elements: ReviewElement[]; onCancel: () => void; onSubmit: (form: FormData) => void; sameKind: boolean; t: ReturnType<typeof useTranslations> }) {
@@ -806,7 +854,7 @@ function PublicationBoundary({ loading, locale, onLoad, preflight, t }: { loadin
 }
 
 function knownPublicationBlocker(blocker: string) {
-  const known = new Set(["generation_not_effective_draft", "proposal_run_nonterminal", "executable_outbox", "reserved_budget", "pending_elements", "unresolved_correction", "zero_approved_elements", "decision_basis_missing", "open_uncertainty", "open_near_duplicate", "locale_unresolved", "competitive_unit_unresolved", "open_annotation", "canonical_collision", "invalid_current_evidence", "invalid_relation_target", "authority_drift", "provider_lineage_not_current"]);
+  const known = new Set(["generation_not_effective_draft", "proposal_run_nonterminal", "executable_outbox", "reserved_budget", "pending_elements", "unresolved_correction", "zero_approved_elements", "decision_basis_missing", "annotation_resolution_basis_missing", "open_uncertainty", "open_near_duplicate", "locale_unresolved", "competitive_unit_unresolved", "open_annotation", "canonical_collision", "invalid_current_evidence", "invalid_relation_target", "authority_drift", "provider_lineage_not_current"]);
   return known.has(blocker) ? blocker : "unknown";
 }
 

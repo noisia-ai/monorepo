@@ -938,3 +938,23 @@ transacción aunque cada fila aislada sea válida.
 La regla no cambia decisiones históricas ni añade otra autoridad. El ledger, el grafo
 append-only y los triggers de fila existentes siguen siendo las únicas superficies de
 persistencia; replay y concurrencia convergen sobre el mismo successor current.
+
+## 69B.5E-C — autoridad deliberada para resolver annotations
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+Resolver una annotation constituye una decisión nueva y no puede heredar como autoridad
+la explicación observacional de su predecessor. El operador debe aportar reason y
+rationale explícitos, confirmar la transición y producir un successor append-only. El
+ledger sella ese input y actor; PostgreSQL recompone basis, autoridad (incluido el rol
+DB-owned del actor) y pre/post state digests y
+exige un único evento causal antes del commit. Confidence, estado previo o la mera
+selección de una resolución nunca sustituyen esta base.
+
+La historia anterior permanece intacta. Si una hoja current ya estaba resolved sin este
+contrato, `repair-semantic-context-annotation-resolution` crea una nueva versión con la
+misma resolución y una base deliberada nueva; no reinterpreta ni edita el rationale
+anterior. Hasta entonces el preflight de publicación falla cerrado con
+`annotation_resolution_basis_missing`. Esta reparación no aprueba propuestas, no crea
+Topic Contracts o assignments y no afecta `record_tags`, readers, pointers, bindings,
+read mode ni serving.

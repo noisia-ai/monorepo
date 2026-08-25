@@ -3,12 +3,13 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement, ReactNode } from "react";
 
-import { ElementReviewDetail } from "@/components/brands/SemanticContextReviewWorkbench";
+import { AnnotationsList, ElementReviewDetail } from "@/components/brands/SemanticContextReviewWorkbench";
 
 import {
   createSignalSemanticContextMutationLockV1,
   handleSignalSemanticContextDecisionKeyV1,
   parseSignalSemanticContextApprovalFormUiV2,
+  parseSignalSemanticContextAnnotationResolutionFormUiV1,
   signalSemanticContextAnnotationResolutionsV1,
   signalSemanticContextBoundedPendingSelectionV1,
   signalSemanticContextReviewRangeV1,
@@ -16,16 +17,23 @@ import {
   submitSignalSemanticContextBulkApprovalUiV1,
   submitSignalSemanticContextBulkApprovalFormUiV2,
   submitSignalSemanticContextDeliberateApprovalUiV2,
+  submitSignalSemanticContextAnnotationResolutionFormUiV1,
   submitSignalSemanticContextGuidedRejectUiV1,
   submitSignalSemanticContextMergeUiV1
 } from "./signal-semantic-context-review-ui";
 
-function findElement(root: ReactNode, predicate: (element: ReactElement)=>boolean): ReactElement | null {
-  if (!root || typeof root !== "object" || !("props" in root)) return null;
+function findElement(root: ReactNode, predicate: (element: ReactElement)=>boolean,
+  visited=new WeakSet<object>()): ReactElement | null {
+  if(Array.isArray(root)){
+    for(const child of root){const found=findElement(child,predicate,visited);if(found)return found;}
+    return null;
+  }
+  if (!root || typeof root !== "object" || !("props" in root) || visited.has(root)) return null;
+  visited.add(root);
   const element=root as ReactElement<{children?:ReactNode}>;
   if (predicate(element)) return element;
   const children=Array.isArray(element.props.children)?element.props.children:[element.props.children];
-  for (const child of children) { const found=findElement(child,predicate); if(found)return found; }
+  for (const child of children) { const found=findElement(child,predicate,visited); if(found)return found; }
   return null;
 }
 
@@ -103,13 +111,13 @@ test("single approval sends an explicit, normalized decision basis only after fo
 });
 
 test("rendered deliberate approval parses the actual form and only a valid submit writes once", () => {
-  let mode:"view"|"approve"|"correct"|"reject"|"annotate"="view";
+  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"="view";
   let requests=0;
   const t=((key:string)=>key) as never;
   const renderDetail=()=>ElementReviewDetail({activeFormRef:{current:null},busy:null,
-    detail:renderedDecisionDetail,locale:"es-MX",mode,onAnnotate:()=>undefined,
+    annotationResolutionDraft:null,detail:renderedDecisionDetail,locale:"es-MX",mode,onAnnotate:()=>undefined,
     onApprove:(form)=>{if(parseSignalSemanticContextApprovalFormUiV2(form))requests+=1;},
-    onCorrect:()=>undefined,onMode:(next)=>{mode=next;},
+    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,onMode:(next)=>{mode=next;},
     onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
 
   const view=renderDetail();
@@ -151,6 +159,34 @@ test("rendered deliberate approval parses the actual form and only a valid submi
   valid.set("confirmation","approve_selected_semantic_context_element");
   (validForm.props as {onSubmit:(form:FormData)=>void}).onSubmit(valid);
   assert.equal(requests,1,"the explicit valid submit crosses exactly one request boundary");
+});
+
+test("rendered annotation resolution first click only opens a deliberate form", () => {
+  const t=((key:string)=>key) as never;let requests=0;
+  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"="view";
+  let draft:unknown=null;
+  const annotation={annotation_key:"latency-review",annotation_version:1,annotation_type:"uncertain",
+    state:"open",resolution:null,reason:"insufficient_context",rationale:"Earlier annotation rationale.",
+    resolution_basis:{state:"not_applicable",reason:null,rationale:null,reviewer:null},related_elements:[],
+    created_at:new Date(0).toISOString()} as const;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),
+    review_annotations:[annotation]} as never;
+  const renderDetail=()=>ElementReviewDetail({activeFormRef:{current:null},annotationResolutionDraft:draft as never,
+    busy:null,detail,locale:"es-MX",mode,onAnnotate:()=>undefined,onApprove:()=>undefined,
+    onBeginResolution:(selected,resolution,intent)=>{draft={annotation:selected,resolution,intent};mode="resolve_annotation";},
+    onCancelResolution:()=>{draft=null;mode="view";},onCorrect:()=>undefined,onMode:(next)=>{mode=next;},
+    onReject:()=>undefined,onResolve:(form)=>{if(parseSignalSemanticContextAnnotationResolutionFormUiV1(form,"resolve"))requests+=1;},
+    reviewWritable:true,t});
+  const view=AnnotationsList({busy:null,items:[annotation] as never,
+    onBeginResolution:(selected,resolution,intent)=>{draft={annotation:selected,resolution,intent};mode="resolve_annotation";},t});
+  const resolutionButton=findElement(view,(element)=>element.type==="button"
+    &&String(element.props.children??"").includes("context_sufficient"));
+  assert.ok(resolutionButton);(resolutionButton.props as {onClick:()=>void}).onClick();
+  assert.equal(mode,"resolve_annotation");assert.equal(requests,0,"the first resolution click cannot write");
+  const form=renderDetail();assert.match(renderToStaticMarkup(form),/admin-drawer-form/u);
+  assert.match(renderToStaticMarkup(form),/resolve_semantic_context_annotation_with_deliberate_basis/u);
+  const cancel=(form.props as {onCancel:()=>void}).onCancel;cancel();
+  assert.equal(mode,"view");assert.equal(requests,0,"cancel remains non-mutating");
 });
 
 test("bulk approval seals one explicit shared basis and no hidden filter authority", async () => {
@@ -285,4 +321,40 @@ test("annotation resolution choices remain closed by annotation kind", () => {
     ["governed_locale", "global"]);
   assert.deepEqual(signalSemanticContextAnnotationResolutionsV1("competitive_unit_unresolved"),
     ["canonical_unit", "not_applicable"]);
+});
+
+test("annotation resolution requires a deliberate rationale and checked confirmation before network", async () => {
+  let calls=0;
+  const common={request:async()=>{calls+=1;return{};},base:"/semantic-context",
+    generationKey:"generation-v1",elementKey:"friction-latency",annotationKey:"latency-review",
+    resolution:"not_supported" as const,idempotencyKey:"annotation-resolution"};
+  for(const entries of [
+    {},
+    {reason:"not_closed",rationale:"Reviewed.",confirmation:"resolve_semantic_context_annotation_with_deliberate_basis"},
+    {reason:"insufficient_context",rationale:"\t\u00a0",confirmation:"resolve_semantic_context_annotation_with_deliberate_basis"},
+    {reason:"insufficient_context",rationale:"Reviewed.",confirmation:"wrong"}
+  ]){
+    const form=new FormData();for(const[key,value]of Object.entries(entries))form.set(key,value);
+    assert.equal(parseSignalSemanticContextAnnotationResolutionFormUiV1(form,"resolve"),null);
+    assert.equal(await submitSignalSemanticContextAnnotationResolutionFormUiV1({...common,intent:"resolve",form}),false);
+  }
+  assert.equal(calls,0,"invalid or unconfirmed resolution forms make zero requests");
+  const valid=new FormData();valid.set("reason","insufficient_context");
+  valid.set("rationale","  Current evidence does not support this resolution.  ");
+  valid.set("confirmation","resolve_semantic_context_annotation_with_deliberate_basis");
+  assert.equal(await submitSignalSemanticContextAnnotationResolutionFormUiV1({...common,intent:"resolve",form:valid}),true);
+  assert.equal(calls,1,"one valid deliberate submit crosses one request boundary");
+});
+
+test("annotation basis repair uses a distinct explicit confirmation and never inherits predecessor rationale", async () => {
+  const calls:Array<Record<string,unknown>>=[];const form=new FormData();
+  form.set("reason","insufficient_context");form.set("rationale","New explicit operator rationale.");
+  form.set("confirmation","repair_semantic_context_annotation_resolution_basis");
+  assert.equal(await submitSignalSemanticContextAnnotationResolutionFormUiV1({form,intent:"repair",
+    request:async(_path,init)=>{calls.push(JSON.parse(String(init.body)) as Record<string,unknown>);return{};},
+    base:"/semantic-context",generationKey:"generation-v1",elementKey:"friction-latency",
+    annotationKey:"latency-review",resolution:"not_supported",idempotencyKey:"annotation-repair"}),true);
+  assert.deepEqual(calls,[{action:"repair",generation_key:"generation-v1",element_key:"friction-latency",
+    annotation_key:"latency-review",resolution:"not_supported",reason:"insufficient_context",
+    rationale:"New explicit operator rationale.",confirmation:"repair_semantic_context_annotation_resolution_basis"}]);
 });

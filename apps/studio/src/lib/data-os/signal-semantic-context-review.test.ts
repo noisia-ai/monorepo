@@ -206,7 +206,9 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   assert.match(workbench, /setSelected\(new Map\(\)\);\s*setMergeOpen\(false\);/u,
     "page changes clear the exact operator selection");
   assert.match(workbench, /handleSignalSemanticContextDecisionKeyV1/u);
-  assert.match(workbench, /cancel:\(\)=>setDetailMode\("view"\)/u);
+  assert.match(workbench, /cancel:\(\)=>\{setDetailMode\("view"\);setAnnotationResolutionDraft\(null\);\}/u,
+    "Escape cancels both decision and annotation-resolution drafts without writing");
+  assert.match(workbench, /submitSignalSemanticContextAnnotationResolutionFormUiV1/u);
   assert.match(workbench, /DecisionBasisHistory/u);
   assert.match(workbench, /disposition === "merged" \? "not_available"/u,
     "merged is neutral lineage rather than a rejected error state");
@@ -231,6 +233,10 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
     assert.equal(typeof review.pagination.next, "string");
     assert.equal(typeof review.merge.crossKind, "string");
     assert.equal(typeof review.annotations.types.near_duplicate, "string");
+    assert.equal(typeof review.annotations.deliberate.resolveTitle, "string");
+    assert.equal(typeof review.annotations.deliberate.repairAction, "string");
+    assert.equal(typeof review.annotations.deliberate.resolveConfirmation, "string");
+    assert.equal(typeof review.publication.blockers.annotation_resolution_basis_missing, "string");
     assert.equal(typeof review.publication.confirmationBoundary, "string");
     assert.equal(typeof review.decisionBasis.historicalMissing, "string");
   }

@@ -35,9 +35,16 @@ import {
   digestCanonicalJsonV2,
   loadSignalSemanticContextPublicationPreflightV2,
   mergeSignalSemanticContextElementsV2,
+  normalizeSignalSemanticContextAnnotationResolutionBasisV1,
   normalizeSignalSemanticContextDecisionBasisV2,
   publishSignalSemanticContextGenerationV2,
+  repairSignalSemanticContextAnnotationResolutionV1,
   rejectSignalSemanticContextElementV2,
+  resolveSignalSemanticContextAnnotationV1,
+  signalSemanticContextAnnotationStateDigestV1,
+  SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1,
+  SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+  SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1,
   SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2,
   SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
@@ -75,7 +82,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
 },async(t)=>{
   assert.ok(DB_URL);requireLocal(DB_URL);
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
-  let migration0097="";let migration0098="";
+  let migration0097="";let migration0098="";let migration0099="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -83,6 +90,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     for(const file of files){const sql=await readFile(join(directory,file),"utf8");
       if(file.startsWith("0097_"))migration0097=sql;
       else if(file.startsWith("0098_"))migration0098=sql;
+      else if(file.startsWith("0099_"))migration0099=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -102,9 +110,25 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     WHERE workspace_id=$1::uuid AND generation_key=$2) generation`,
   [historicalV1.workspaceId,historicalV1.generationKey]);
   assert.ok(migration0097,"0097 migration is present");assert.ok(migration0098,"0098 migration is present");
+  assert.ok(migration0099,"0099 migration is present");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
+  const historicalAnnotation=await seedHistoricalResolvedAnnotationWithoutBasis(historicalDecision);
+  const historicalAnnotationBefore=await pool.query(`SELECT row_to_json(annotation)::text value FROM (
+    SELECT annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,
+      related_element_ids,reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id,created_at
+    FROM signal_semantic_context_review_annotations WHERE generation_id=$1::uuid ORDER BY annotation_version) annotation`,
+  [historicalDecision.generationId]);
+  const migration0099Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0099Client.connect();
+  try{await migration0099Client.query(migration0099);}finally{await migration0099Client.end();}
+  const historicalAnnotationAfter=await pool.query(`SELECT row_to_json(annotation)::text value FROM (
+    SELECT annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,
+      related_element_ids,reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id,created_at
+    FROM signal_semantic_context_review_annotations WHERE generation_id=$1::uuid ORDER BY annotation_version) annotation`,
+  [historicalDecision.generationId]);
+  assert.deepEqual(historicalAnnotationAfter.rows,historicalAnnotationBefore.rows,
+    "0099 preserves historical annotations byte-for-byte");
   const historicalAfter=await pool.query(`SELECT row_to_json(generation)::text value FROM (
     SELECT status,pack_digest,published_operation_id,published_by_user_id,published_at
     FROM signal_semantic_context_generations
@@ -136,11 +160,68 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     workspace:historicalDecision.workspace,actor:historicalDecision.actor,
     generationKey:historicalDecision.generationKey}));
   assert.ok(historicalBlocked.blockers.includes("decision_basis_missing"));
+  assert.ok(historicalBlocked.blockers.includes("annotation_resolution_basis_missing"));
+  assert.equal(historicalBlocked.counts.annotation_resolution_basis_missing,1);
+  assert.deepEqual(Object.keys(historicalBlocked.counts).sort(),[
+    "annotation_resolution_basis_missing","canonical_collisions","invalid_evidence_refs",
+    "decision_basis_missing","invalid_relation_targets","merge_edges","merged","open_annotations","open_near_duplicate",
+    "open_uncertainty","pending","approved","rejected","total_leaves","unresolved_competitive_unit",
+    "unresolved_locale"].sort(),"the real PostgreSQL preflight has the exact closed OpenAPI count surface");
   const historicalDetail=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
     workspace:historicalDecision.workspace,actor:historicalDecision.actor,
     generationKey:historicalDecision.generationKey,elementKey:"historical-rationaleless"}));
   assert.equal(historicalDetail.decision_basis.state,"missing_historical");
   assert.equal(historicalDetail.decision_basis.rationale,null);
+  assert.equal(historicalDetail.review_annotations[0]?.resolution_basis.state,"missing_historical");
+  const repair=await transaction((queryable)=>repairSignalSemanticContextAnnotationResolutionV1({queryable,
+    workspace:historicalDecision.workspace,actor:historicalDecision.actor,idempotencyKey:"historical-annotation-repair",
+    generationKey:historicalDecision.generationKey,elementKey:"historical-rationaleless",
+    annotationKey:historicalAnnotation.annotationKey,resolution:"not_supported",reason:"insufficient_context",
+    rationale:"The operator explicitly confirms the historical not-supported resolution under current authority.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1}));
+  assert.equal(repair.annotation_version,3);assert.equal(repair.resolution_basis,"complete");
+  assert.deepEqual(await transaction((queryable)=>repairSignalSemanticContextAnnotationResolutionV1({queryable,
+    workspace:historicalDecision.workspace,actor:historicalDecision.actor,idempotencyKey:"historical-annotation-repair",
+    generationKey:historicalDecision.generationKey,elementKey:"historical-rationaleless",
+    annotationKey:historicalAnnotation.annotationKey,resolution:"not_supported",reason:"insufficient_context",
+    rationale:"The operator explicitly confirms the historical not-supported resolution under current authority.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1})),repair,
+  "repair replay returns the same append-only result");
+  const repairedHistory=await pool.query<{annotation_version:number;rationale:string;
+    basis_complete:boolean}>(`SELECT annotation_version,rationale,
+      resolution_basis_digest IS NOT NULL AND resolution_input_digest IS NOT NULL
+        AND resolution_authority_digest IS NOT NULL basis_complete
+    FROM signal_semantic_context_review_annotations WHERE generation_id=$1::uuid
+      AND annotation_key=$2 ORDER BY annotation_version`,
+  [historicalDecision.generationId,historicalAnnotation.annotationKey]);
+  assert.deepEqual(repairedHistory.rows,[
+    {annotation_version:1,rationale:"Historical observation rationale.",basis_complete:false},
+    {annotation_version:2,rationale:"Historical observation rationale.",basis_complete:false},
+    {annotation_version:3,
+      rationale:"The operator explicitly confirms the historical not-supported resolution under current authority.",
+      basis_complete:true}
+  ],"append-only repair preserves both historical rows and never inherits their rationale as the new decision");
+  const repairedAuthority=await pool.query<{actor:unknown}>(`SELECT resolution_authority_snapshot->'actor' actor
+    FROM signal_semantic_context_review_annotations WHERE generation_id=$1::uuid AND annotation_key=$2
+      AND annotation_version=3`,[historicalDecision.generationId,historicalAnnotation.annotationKey]);
+  assert.deepEqual(repairedAuthority.rows,[{actor:{id:historicalDecision.actor.id,
+    user_type:"noisia_internal",primary_role:"noisia_admin"}}],
+  "the resolution snapshot seals the authenticated actor and DB-owned role");
+  await assert.rejects(transaction((queryable)=>repairSignalSemanticContextAnnotationResolutionV1({queryable,
+    workspace:historicalDecision.workspace,actor:historicalDecision.actor,
+    idempotencyKey:"historical-annotation-repair-second-key",generationKey:historicalDecision.generationKey,
+    elementKey:"historical-rationaleless",annotationKey:historicalAnnotation.annotationKey,
+    resolution:"not_supported",reason:"insufficient_context",rationale:"A duplicate repair must fail closed.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1})),
+  /semantic_context_annotation_resolution_basis_complete/u,
+  "a correctly based resolution is explicitly non-repairable under a new request key");
+  const repairedPreflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:historicalDecision.workspace,actor:historicalDecision.actor,
+    generationKey:historicalDecision.generationKey}));
+  assert.ok(!repairedPreflight.blockers.includes("annotation_resolution_basis_missing"),
+    "repair clears only the annotation-resolution basis blocker");
+  assert.ok(repairedPreflight.blockers.includes("decision_basis_missing"),
+    "unrelated historical element basis remains blocked");
   const historicalV2Columns=await pool.query(`SELECT publication_schema_version,candidate_pack_digest,
     evidence_graph_digest,review_graph_digest,publication_authority_digest,semantic_context_pack_digest,
     publish_preflight_digest,publication_counts FROM signal_semantic_context_generations
@@ -582,16 +663,95 @@ async function exerciseReviewPublicationV2(){
     generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"near-a",
     annotationType:"near_duplicate",reason:"duplicate_same_concept",rationale:"Same governed identity.",
     relatedElementKeys:["merge-target"]}));
-  await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+  await assert.rejects(transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-new-annotation-cannot-resolve",
     generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"invalid-resolve",
-    annotationType:"uncertain",reason:"insufficient_context",rationale:"Cannot resolve before opening.",
-    relatedElementKeys:[],resolution:"context_sufficient"})),/semantic_context_annotation_resolution_requires_open/u);
+    reason:"insufficient_context",rationale:"Cannot resolve before opening.",resolution:"context_sufficient",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),
+  /semantic_context_annotation_not_found/u);
   await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-blocker",
     generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
     annotationType:"uncertain",reason:"insufficient_context",rationale:"Needs an explicit review.",
     relatedElementKeys:[]}));
+  await assert.rejects(transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
+    workspace:fixture.otherWorkspace,actor:fixture.actor,idempotencyKey:"v2-cross-workspace-annotation-resolution",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
+    resolution:"context_sufficient",reason:"insufficient_context",
+    rationale:"Cross-workspace resolution authority must fail closed.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),/not_found/u);
+  await assert.rejects(transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-stale-annotation-subject-resolution",
+    generationKey:draft.generation_key,elementKey:"merge-target",annotationKey:"uncertain-a",
+    resolution:"context_sufficient",reason:"insufficient_context",
+    rationale:"A mismatched current subject must fail closed.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),
+  /semantic_context_annotation_cas_conflict/u);
+  const annotationVersionsBeforeMissingBasis=await scalar(`SELECT count(*)::int count
+    FROM signal_semantic_context_review_annotations WHERE workspace_id=$1::uuid
+      AND annotation_key='uncertain-a'`,[fixture.workspace.id]);
+  await assert.rejects(transaction(async(queryable)=>{
+    const predecessor=(await queryable.query<{id:string;generation_id:string;subject_element_id:string}>(
+      `SELECT id::text,generation_id::text,subject_element_id::text
+       FROM signal_semantic_context_review_annotations WHERE workspace_id=$1::uuid
+         AND annotation_key='uncertain-a' AND NOT EXISTS(SELECT 1
+           FROM signal_semantic_context_review_annotations successor
+           WHERE successor.supersedes_annotation_id=signal_semantic_context_review_annotations.id)`,
+      [fixture.workspace.id])).rows[0]!;
+    const operation=(await queryable.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+      VALUES($1::uuid,$2::uuid,'annotate-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+    [fixture.workspace.id,fixture.actor.id,digest("missing-annotation-basis-request"),
+      digest("missing-annotation-basis-key")])).rows[0]!;
+    await queryable.query(`INSERT INTO signal_semantic_context_review_annotations(
+      workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+      subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,
+      operation_id,actor_user_id) VALUES($1::uuid,$2::uuid,'uncertain-a',2,'uncertain','resolved',
+      'context_sufficient',$3::uuid,'{}'::uuid[],'insufficient_context','A direct SQL bypass.',
+      $4::uuid,$5::uuid,$6::uuid)`,[fixture.workspace.id,predecessor.generation_id,
+      predecessor.subject_element_id,predecessor.id,operation.id,fixture.actor.id]);
+  }),hasCode("23514"),"PostgreSQL rejects a resolved annotation without explicit sealed basis");
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_review_annotations
+    WHERE workspace_id=$1::uuid AND annotation_key='uncertain-a'`,[fixture.workspace.id]),
+  annotationVersionsBeforeMissingBasis,"the failed direct SQL bypass appends no partial annotation version");
+  for(const annotationKey of ["direct-resolution-control","direct-resolution-false-element",
+    "direct-resolution-extra-open","direct-resolution-extra-open-source",
+    "direct-resolution-extra-resolved","direct-resolution-extra-resolved-source"]){
+    await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+      workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:`open-${annotationKey}`,
+      generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey,
+      annotationType:"uncertain",reason:"insufficient_context",
+      rationale:"Direct SQL annotation-resolution backstop fixture.",relatedElementKeys:[]}));
+  }
+  assert.deepEqual(await attemptDirectAnnotationResolutionGraph(fixture,draft.generation_key,
+    "direct-resolution-control"),{committed:true},
+  "a completely valid direct-SQL resolution graph commits before adversarial mutations");
+  await assert.rejects(attemptDirectAnnotationResolutionGraph(fixture,draft.generation_key,
+    "direct-resolution-false-element",{inputElementKey:"merge-target"}),
+  /element key does not match its current subject/u,
+  "the deferred DB backstop binds the sealed element_key to the actual current subject");
+  await assert.rejects(attemptDirectAnnotationResolutionGraph(fixture,draft.generation_key,
+    "direct-resolution-extra-open",{extraAnnotationKey:"direct-resolution-extra-open-source",extraState:"open"}),
+  /must own exactly one row/u,
+  "a valid resolved successor plus an extra open annotation row cannot share one resolution operation");
+  await assert.rejects(attemptDirectAnnotationResolutionGraph(fixture,draft.generation_key,
+    "direct-resolution-extra-resolved",{
+      extraAnnotationKey:"direct-resolution-extra-resolved-source",extraState:"resolved"}),
+  hasCode("23514"),
+  "a second resolved annotation row cannot share one direct resolution operation");
+  for(const annotationKey of ["direct-resolution-false-element","direct-resolution-extra-open",
+    "direct-resolution-extra-open-source","direct-resolution-extra-resolved",
+    "direct-resolution-extra-resolved-source"]){
+    assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_review_annotations
+      WHERE workspace_id=$1::uuid AND annotation_key=$2`,[fixture.workspace.id,annotationKey]),1,
+    `${annotationKey} remains on its original open leaf after the rejected direct-SQL transaction`);
+    await transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
+      workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:`resolve-after-direct-rejection-${annotationKey}`,
+      generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey,
+      reason:"insufficient_context",rationale:"The adversarial transaction was rejected; resolve the isolated fixture.",
+      resolution:"context_sufficient",
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1}));
+  }
   await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-b-near-duplicate",
     generationKey:draft.generation_key,elementKey:"merge-source-b",annotationKey:"near-b",
@@ -638,12 +798,12 @@ async function exerciseReviewPublicationV2(){
       {annotation_key:"target-uncertain",resolution:"not_supported"}]})),
   /semantic_context_duplicate_annotation_resolution/u,
   "the service rejects contradictory duplicate annotation resolutions before any write");
-  await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+  await assert.rejects(transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-near-duplicate-merge-requires-merge-operation",
     generationKey:draft.generation_key,elementKey:"merge-source-b",annotationKey:"near-b",
-    annotationType:"near_duplicate",reason:"duplicate_same_concept",
-    rationale:"A merged resolution requires the atomic N-to-1 writer.",relatedElementKeys:["merge-target"],
-    resolution:"merged"})),/semantic_context_merge_operation_required/u);
+    reason:"duplicate_same_concept",rationale:"A merged resolution requires the atomic N-to-1 writer.",
+    resolution:"merged",confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),
+  /semantic_context_merge_operation_required/u);
   const versionsBeforeFailedMerge=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
   await assert.rejects(transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
@@ -655,11 +815,17 @@ async function exerciseReviewPublicationV2(){
       relation_target_key:null}})),/semantic_context_merge_source_annotation_blocked/u);
   assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBeforeFailedMerge,"failed merge is atomic");
-  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+  const resolvedSourceBlocker=await transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-resolve-blocker",
     generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
-    annotationType:"uncertain",reason:"insufficient_context",rationale:"Context is now sufficient.",
-    relatedElementKeys:[],resolution:"context_sufficient"}));
+    reason:"insufficient_context",rationale:"Context is now sufficient.",resolution:"context_sufficient",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1}));
+  assert.deepEqual(await transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-source-a-resolve-blocker",
+    generationKey:draft.generation_key,elementKey:"merge-source-a",annotationKey:"uncertain-a",
+    reason:"insufficient_context",rationale:"Context is now sufficient.",resolution:"context_sufficient",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),resolvedSourceBlocker,
+  "direct resolution replay returns the exact sealed result without another successor or event");
   const merged=await transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-merge-two-into-one",
     generationKey:draft.generation_key,targetElementKey:"merge-target",
@@ -730,10 +896,31 @@ async function exerciseReviewPublicationV2(){
         WHERE successor.supersedes_annotation_id=annotation.id)`,[fixture.workspace.id]);
   assert.deepEqual(carried.rows,[{state:"open",subject_current:true}]);
   await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-concurrent-resolution-open",
+    generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey:"concurrent-resolution",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Resolve once under concurrency.",
+    relatedElementKeys:[]}));
+  const concurrentResolution=await Promise.allSettled(["a","b"].map((suffix)=>transaction((queryable)=>
+    resolveSignalSemanticContextAnnotationV1({queryable,workspace:fixture.workspace,actor:fixture.actor,
+      idempotencyKey:`v2-concurrent-resolution-${suffix}`,generationKey:draft.generation_key,
+      elementKey:"correction-pending",annotationKey:"concurrent-resolution",reason:"insufficient_context",
+      rationale:"The current context is sufficient after deliberate review.",resolution:"context_sufficient",
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1}))));
+  assert.equal(concurrentResolution.filter((entry)=>entry.status==="fulfilled").length,1);
+  assert.equal(concurrentResolution.filter((entry)=>entry.status==="rejected").length,1);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_review_annotations
+    WHERE workspace_id=$1::uuid AND annotation_key='concurrent-resolution'`,[fixture.workspace.id]),2,
+  "two distinct concurrent commands converge on exactly one resolved successor");
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_events event
+    JOIN signal_governance_control_operations operation ON operation.id=event.operation_id
+    WHERE event.workspace_id=$1::uuid AND operation.action='resolve-semantic-context-annotation'
+      AND operation.semantic_context_decision_input->>'annotation_key'='concurrent-resolution'`,
+  [fixture.workspace.id]),1,"concurrent resolution records exactly one authority event");
+  await transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-resolve-correction-context",
     generationKey:draft.generation_key,elementKey:"correction-pending",annotationKey:"correction-context",
-    annotationType:"needs_more_context",reason:"insufficient_context",rationale:"Context is sufficient.",
-    relatedElementKeys:[],resolution:"context_sufficient"}));
+    reason:"insufficient_context",rationale:"Context is sufficient.",resolution:"context_sufficient",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1}));
   await pool.query(`CREATE OR REPLACE FUNCTION signal_semantic_context_decision_fault_fixture_v2()
     RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       IF NEW.event_kind='element_rejected' THEN RAISE EXCEPTION 'fixture decision fault' USING ERRCODE='40001'; END IF;
@@ -1204,6 +1391,11 @@ async function exerciseMutationAuthorityDriftV2(){
       proposal("drift-target","identity_term","drift-target","Drift target",0.5,fixture.profileId),
       proposal("drift-source","identity_term","drift-source","Drift source",0.5,fixture.profileId)
     ]}));
+  await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-open-annotation",
+    generationKey:draft.generation_key,elementKey:"drift-target",annotationKey:"drift-open-annotation",
+    annotationType:"uncertain",reason:"insufficient_context",rationale:"Open before authority drift.",
+    relatedElementKeys:[]}));
   const versionsBefore=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
   const operationsBefore=await scalar(`SELECT count(*)::int count FROM signal_governance_control_operations
@@ -1221,6 +1413,13 @@ async function exerciseMutationAuthorityDriftV2(){
     generationKey:draft.generation_key,elementKey:"drift-target",annotationKey:"drift-annotation",
     annotationType:"uncertain",reason:"insufficient_context",rationale:"Stale authority blocks review.",
     relatedElementKeys:[]})),/semantic_context_authority_drift/u);
+  await assert.rejects(transaction((queryable)=>resolveSignalSemanticContextAnnotationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-resolution-blocked",
+    generationKey:draft.generation_key,elementKey:"drift-target",annotationKey:"drift-open-annotation",
+    resolution:"not_supported",reason:"insufficient_context",
+    rationale:"A stale authority cannot seal a new resolution basis.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})),
+  /semantic_context_authority_drift/u);
   await assert.rejects(transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-merge-blocked",
     generationKey:draft.generation_key,targetElementKey:"drift-target",sourceElementKeys:["drift-source"],
@@ -1452,6 +1651,131 @@ async function seedOpenNearDuplicateAnnotation(fixture:Awaited<ReturnType<typeof
     completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,
   [operation.rows[0]!.id,JSON.stringify({annotation_key:annotationKey,annotation_version:1,state:"open",
     resolution:null})]);
+}
+
+type DirectAnnotationResolutionMutation={inputElementKey?:string;extraAnnotationKey?:string;
+  extraState?:"open"|"resolved"};
+
+async function attemptDirectAnnotationResolutionGraph(
+  fixture:Awaited<ReturnType<typeof seedFixture>>,generationKey:string,annotationKey:string,
+  mutation:DirectAnnotationResolutionMutation={}){
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const current=(await client.query<{id:string;generation_id:string;annotation_version:number;
+      annotation_type:"uncertain";subject_element_id:string;subject_element_key:string;
+      related_element_ids:string[];proposal_provider_lineage:unknown;brand_os_digest:string;
+      knowledge_digest:string;locale_context_digest:string;proposal_provider_lineage_digest:string;
+      actor_user_type:string;actor_primary_role:string}>(`SELECT annotation.id::text,annotation.generation_id::text,
+        annotation.annotation_version,annotation.annotation_type,annotation.subject_element_id::text,
+        subject.element_key subject_element_key,annotation.related_element_ids::text[],
+        generation.proposal_provider_lineage,generation.brand_os_digest,generation.knowledge_digest,
+        generation.locale_context_digest,generation.proposal_provider_lineage_digest,
+        actor.user_type actor_user_type,actor.primary_role actor_primary_role
+      FROM signal_semantic_context_review_annotations annotation
+      JOIN signal_semantic_context_generations generation ON generation.id=annotation.generation_id
+      JOIN signal_semantic_context_element_versions subject ON subject.id=annotation.subject_element_id
+      JOIN users actor ON actor.id=$4::uuid
+      WHERE annotation.workspace_id=$1::uuid AND generation.generation_key=$2
+        AND annotation.annotation_key=$3 AND annotation.state='open'
+        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_review_annotations successor
+          WHERE successor.supersedes_annotation_id=annotation.id)
+        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+          WHERE successor.supersedes_element_id=subject.id)
+      FOR UPDATE OF annotation`,[fixture.workspace.id,generationKey,annotationKey,fixture.actor.id])).rows[0]!;
+    const basis=normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:current.annotation_type,
+      resolution:"context_sufficient",reason:"insufficient_context",
+      rationale:"The direct SQL control seals a complete operator resolution basis."});
+    const input={contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+      generation_key:generationKey,element_key:mutation.inputElementKey??current.subject_element_key,
+      annotation_key:annotationKey,action:"resolve",annotation_type:current.annotation_type,
+      resolution:"context_sufficient",decision_basis:basis,
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1};
+    const authority={brand_os_digest:current.brand_os_digest,knowledge_digest:current.knowledge_digest,
+      locale_context_digest:current.locale_context_digest,
+      proposal_provider_lineage:current.proposal_provider_lineage,
+      proposal_provider_lineage_digest:current.proposal_provider_lineage_digest,
+      actor:{id:fixture.actor.id.toLowerCase(),user_type:current.actor_user_type,
+        primary_role:current.actor_primary_role}};
+    const inputDigest=digestCanonicalJsonV2(input),basisDigest=digestCanonicalJsonV2(basis);
+    const authorityDigest=digestCanonicalJsonV2(authority);
+    const predecessorState=(await client.query<{digest:string}>(`SELECT
+      signal_semantic_context_annotation_state_digest_v1(annotation) digest
+      FROM signal_semantic_context_review_annotations annotation WHERE id=$1::uuid`,[current.id])).rows[0]!.digest;
+    const successorState={annotation_key:annotationKey,annotation_version:current.annotation_version+1,
+      annotation_type:current.annotation_type,state:"resolved" as const,resolution:"context_sufficient" as const,
+      subject_element_id:current.subject_element_id,related_element_ids:current.related_element_ids,
+      reason_code:"insufficient_context" as const,rationale:basis.rationale,
+      resolution_contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+      resolution_basis_digest:basisDigest,resolution_input_digest:inputDigest,
+      resolution_authority_digest:authorityDigest};
+    const poststateDigest=signalSemanticContextAnnotationStateDigestV1(successorState);
+    const operation=(await client.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+      semantic_context_decision_input,semantic_context_decision_input_digest)
+      VALUES($1::uuid,$2::uuid,'resolve-semantic-context-annotation',$3,$4,'in_progress',$5::jsonb,$6)
+      RETURNING id::text`,[fixture.workspace.id,fixture.actor.id,digest(`direct-resolution-request:${randomUUID()}`),
+      digest(`direct-resolution-key:${randomUUID()}`),JSON.stringify(input),inputDigest])).rows[0]!;
+    await client.query(`INSERT INTO signal_semantic_context_review_annotations(
+      workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+      subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,
+      operation_id,actor_user_id,resolution_contract_version,resolution_basis_digest,
+      resolution_input_digest,resolution_authority_snapshot,resolution_authority_digest,
+      resolution_prestate_digest,resolution_poststate_digest)
+      VALUES($1::uuid,$2::uuid,$3,$4,$5,'resolved','context_sufficient',$6::uuid,$7::uuid[],
+        'insufficient_context',$8,$9::uuid,$10::uuid,$11::uuid,$12,$13,$14,$15::jsonb,$16,$17,$18)
+      `,[fixture.workspace.id,current.generation_id,annotationKey,
+      successorState.annotation_version,current.annotation_type,current.subject_element_id,
+      current.related_element_ids,basis.rationale,current.id,operation.id,fixture.actor.id,
+      SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,basisDigest,inputDigest,
+      JSON.stringify(authority),authorityDigest,predecessorState,poststateDigest]);
+    if(mutation.extraAnnotationKey){
+      const extra=(await client.query<{id:string;annotation_version:number;annotation_type:string;
+        subject_element_id:string;related_element_ids:string[];reason_code:string;rationale:string}>(`SELECT
+          annotation.id::text,annotation.annotation_version,annotation.annotation_type,
+          annotation.subject_element_id::text,annotation.related_element_ids::text[],
+          annotation.reason_code,annotation.rationale
+        FROM signal_semantic_context_review_annotations annotation
+        WHERE annotation.workspace_id=$1::uuid AND annotation.generation_id=$2::uuid
+          AND annotation.annotation_key=$3 AND annotation.state='open'
+          AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_review_annotations successor
+            WHERE successor.supersedes_annotation_id=annotation.id) FOR UPDATE`,
+      [fixture.workspace.id,current.generation_id,mutation.extraAnnotationKey])).rows[0]!;
+      if(mutation.extraState==="open"){
+        await client.query(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
+          annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,
+          reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id)
+          VALUES($1::uuid,$2::uuid,$3,$4,$5,'open',NULL,$6::uuid,$7::uuid[],$8,$9,$10::uuid,$11::uuid,$12::uuid)`,
+        [fixture.workspace.id,current.generation_id,mutation.extraAnnotationKey,extra.annotation_version+1,
+          extra.annotation_type,extra.subject_element_id,extra.related_element_ids,extra.reason_code,extra.rationale,
+          extra.id,operation.id,fixture.actor.id]);
+      }else{
+        await client.query(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
+          annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,
+          reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id,resolution_contract_version,
+          resolution_basis_digest,resolution_input_digest,resolution_authority_snapshot,resolution_authority_digest,
+          resolution_prestate_digest,resolution_poststate_digest)
+          SELECT $1::uuid,$2::uuid,$3,$4,$5,'resolved','context_sufficient',$6::uuid,$7::uuid[],$8,$9,$10::uuid,
+            $11::uuid,$12::uuid,$13,$14,$15,$16::jsonb,$17,$18,$19`,[fixture.workspace.id,current.generation_id,
+          mutation.extraAnnotationKey,extra.annotation_version+1,extra.annotation_type,extra.subject_element_id,
+          extra.related_element_ids,extra.reason_code,basis.rationale,extra.id,operation.id,fixture.actor.id,
+          SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,basisDigest,inputDigest,
+          JSON.stringify(authority),authorityDigest,predecessorState,poststateDigest]);
+      }
+    }
+    await client.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,
+      operation_id,event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,0,'review_annotation_resolved',$5,$6,$7::uuid)`,
+    [fixture.workspace.id,current.generation_id,current.subject_element_id,operation.id,predecessorState,
+      poststateDigest,fixture.actor.id]);
+    await client.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+      completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[operation.id,
+      JSON.stringify({annotation_key:annotationKey,annotation_version:successorState.annotation_version,
+        state:"resolved",resolution:"context_sufficient",resolution_basis:"complete"})]);
+    await client.query("COMMIT");
+    return{committed:true as const};
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
 }
 
 type DirectDecisionBasis={contract_version:"signal-semantic-context-decision-v2";reason:string;rationale:string};
@@ -1707,6 +2031,53 @@ async function seedHistoricalRationaleLessDraft(){
     JSON.stringify({element_key:current.element_key,element_version:2,disposition:"approved"})]);
   return{workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
     generationId:current.generation_id};
+}
+
+async function seedHistoricalResolvedAnnotationWithoutBasis(fixture:Awaited<ReturnType<typeof seedHistoricalRationaleLessDraft>>){
+  const annotationKey="historical-resolution-without-basis";
+  const subject=(await pool.query<{id:string}>(`SELECT id::text FROM signal_semantic_context_element_versions element
+    WHERE generation_id=$1::uuid AND element_key='historical-rationaleless' AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=element.id)`,
+  [fixture.generationId])).rows[0]!;
+  const openOperation=(await pool.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'annotate-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+  [fixture.workspace.id,fixture.actor.id,digest("historical-annotation-open-request"),
+    digest("historical-annotation-open-key")])).rows[0]!;
+  const opened=(await pool.query<{id:string}>(`INSERT INTO signal_semantic_context_review_annotations(
+    workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+    subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3,1,'uncertain','open',NULL,$4::uuid,'{}'::uuid[],
+      'insufficient_context','Historical observation rationale.',NULL,$5::uuid,$6::uuid) RETURNING id::text`,
+  [fixture.workspace.id,fixture.generationId,annotationKey,subject.id,openOperation.id,fixture.actor.id])).rows[0]!;
+  await pool.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,operation_id,
+    event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,0,'review_annotation_created',NULL,$5,$6::uuid)`,
+  [fixture.workspace.id,fixture.generationId,subject.id,openOperation.id,digest("historical-annotation-open-state"),
+    fixture.actor.id]);
+  await pool.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[openOperation.id,
+    JSON.stringify({annotation_key:annotationKey,annotation_version:1,state:"open",resolution:null})]);
+  const resolveOperation=(await pool.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+    VALUES($1::uuid,$2::uuid,'annotate-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+  [fixture.workspace.id,fixture.actor.id,digest("historical-annotation-resolve-request"),
+    digest("historical-annotation-resolve-key")])).rows[0]!;
+  const resolved=(await pool.query<{id:string}>(`INSERT INTO signal_semantic_context_review_annotations(
+    workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
+    subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3,2,'uncertain','resolved','not_supported',$4::uuid,'{}'::uuid[],
+      'insufficient_context','Historical observation rationale.',$5::uuid,$6::uuid,$7::uuid) RETURNING id::text`,
+  [fixture.workspace.id,fixture.generationId,annotationKey,subject.id,opened.id,resolveOperation.id,fixture.actor.id])).rows[0]!;
+  await pool.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,operation_id,
+    event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,0,'review_annotation_resolved',$5,$6,$7::uuid)`,
+  [fixture.workspace.id,fixture.generationId,subject.id,resolveOperation.id,
+    digest("historical-annotation-open-state"),digest("historical-annotation-resolved-state"),fixture.actor.id]);
+  await pool.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[resolveOperation.id,
+    JSON.stringify({annotation_key:annotationKey,annotation_version:2,state:"resolved",resolution:"not_supported"})]);
+  return{annotationKey,resolvedId:resolved.id};
 }
 
 function installProviderEnvironment(configuration:SignalSemanticContextProposalRuntimeConfigurationV1,

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { annotateSignalSemanticContextElementProductV2,SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2,
+import { annotateSignalSemanticContextElementProductV2,repairSignalSemanticContextAnnotationResolutionProductV1,
+  resolveSignalSemanticContextAnnotationProductV1,SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1,
+  SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1,SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2,
   SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2,SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2 } from
   "@/lib/data-os/signal-semantic-context-publication-v2";
 import { loadSignalWorkspaceContextForSemanticContextManagement,requireIdempotencyKey,semanticContextError,
@@ -8,10 +10,19 @@ import { loadSignalWorkspaceContextForSemanticContextManagement,requireIdempoten
 
 export const runtime="nodejs";export const dynamic="force-dynamic";
 const key=z.string().regex(/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u).max(200);
-const command=z.object({generation_key:key,element_key:key,annotation_key:key,
+const createCommand=z.object({generation_key:key,element_key:key,annotation_key:key,
   annotation_type:z.enum(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2),
   reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale:z.string().trim().min(1).max(1000),
-  related_element_keys:z.array(key).max(100),resolution:z.enum(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2).optional()}).strict();
+  related_element_keys:z.array(key).max(100)}).strict();
+const resolveCommand=z.object({action:z.literal("resolve"),generation_key:key,element_key:key,annotation_key:key,
+  resolution:z.enum(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2),
+  reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale:z.string().trim().min(1).max(1000),
+  confirmation:z.literal(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1)}).strict();
+const repairCommand=z.object({action:z.literal("repair"),generation_key:key,element_key:key,annotation_key:key,
+  resolution:z.enum(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2),
+  reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale:z.string().trim().min(1).max(1000),
+  confirmation:z.literal(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1)}).strict();
+const command=z.union([createCommand,resolveCommand,repairCommand]);
 export async function POST(request:Request,context:{params:Promise<{workspaceId:string}>}){
   const params=await context.params;const loaded=await loadSignalWorkspaceContextForSemanticContextManagement(params.workspaceId);
   if("response" in loaded)return loaded.response;const idempotencyKey=requireIdempotencyKey(request);
@@ -19,10 +30,20 @@ export async function POST(request:Request,context:{params:Promise<{workspaceId:
   const parsed=command.safeParse(await request.json().catch(()=>null));
   if(!parsed.success)return semanticContextResponse({error:"invalid_semantic_context_annotation",
     message:"The review annotation command is invalid."},422);
-  try{return semanticContextResponse(await annotateSignalSemanticContextElementProductV2({workspace:loaded.workspace,
-    actor:loaded.session.appUser,idempotencyKey,generationKey:parsed.data.generation_key,
-    elementKey:parsed.data.element_key,annotationKey:parsed.data.annotation_key,
-    annotationType:parsed.data.annotation_type,reason:parsed.data.reason,rationale:parsed.data.rationale,
-    relatedElementKeys:parsed.data.related_element_keys,resolution:parsed.data.resolution}));}
+  try{
+    if("action" in parsed.data){const common={workspace:loaded.workspace,actor:loaded.session.appUser,idempotencyKey,
+      generationKey:parsed.data.generation_key,elementKey:parsed.data.element_key,
+      annotationKey:parsed.data.annotation_key,resolution:parsed.data.resolution,
+      reason:parsed.data.reason,rationale:parsed.data.rationale,confirmation:parsed.data.confirmation};
+      return semanticContextResponse(await(parsed.data.action==="resolve"
+        ?resolveSignalSemanticContextAnnotationProductV1({...common,
+          confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1})
+        :repairSignalSemanticContextAnnotationResolutionProductV1({...common,
+          confirmation:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1})));}
+    return semanticContextResponse(await annotateSignalSemanticContextElementProductV2({workspace:loaded.workspace,
+      actor:loaded.session.appUser,idempotencyKey,generationKey:parsed.data.generation_key,
+      elementKey:parsed.data.element_key,annotationKey:parsed.data.annotation_key,
+      annotationType:parsed.data.annotation_type,reason:parsed.data.reason,rationale:parsed.data.rationale,
+      relatedElementKeys:parsed.data.related_element_keys}));}
   catch(error){return semanticContextError(error,"semantic_context_annotation_rejected");}
 }

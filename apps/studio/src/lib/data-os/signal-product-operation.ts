@@ -35,6 +35,8 @@ export type SignalProductOperationActionV1 =
   | "merge-semantic-context-elements"
   | "correct-semantic-context-element"
   | "annotate-semantic-context-element"
+  | "resolve-semantic-context-annotation"
+  | "repair-semantic-context-annotation-resolution"
   | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {
@@ -67,9 +69,15 @@ export async function beginSignalProductOperationV1<T>(args: {
   if (authority.rows[0]?.allowed !== true || args.actor.userType !== "noisia_internal") {
     throw new Error("Product operation is cross-workspace or unauthorized.");
   }
-  const decisionAction = args.action === "decide-semantic-context-element"
-    || args.action === "bulk-approve-semantic-context-elements";
-  if (decisionAction !== Boolean(args.semanticContextDecisionInput)) {
+  const decisionInputRequired = args.action === "decide-semantic-context-element"
+    || args.action === "bulk-approve-semantic-context-elements"
+    || args.action === "resolve-semantic-context-annotation"
+    || args.action === "repair-semantic-context-annotation-resolution";
+  const decisionInputAllowed = decisionInputRequired
+    || args.action === "correct-semantic-context-element"
+    || args.action === "merge-semantic-context-elements";
+  if ((decisionInputRequired && !args.semanticContextDecisionInput)
+      || (!decisionInputAllowed && args.semanticContextDecisionInput)) {
     throw new Error("Semantic Context decisions require one sealed operation input.");
   }
   const inserted = args.semanticContextDecisionInput

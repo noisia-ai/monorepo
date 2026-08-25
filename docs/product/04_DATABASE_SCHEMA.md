@@ -2300,3 +2300,24 @@ los successors y el evento al commit. Para bulk impone 2–15 keys únicas, conj
 same-kind, basis único y disposition approved; para single impone una sola key y
 action/confirmation/disposition exactas. Las operaciones anteriores permanecen NULL y
 no se reescriben.
+
+## 69B.5E-C · Resolution basis de annotations append-only (0099)
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+0099 añade a cada versión resuelta de `signal_semantic_context_review_annotations` un
+contrato de decisión explícito: versión, basis digest, input digest, snapshot/digest de
+autoridad y digests de estado anterior/posterior. Las columnas son nullable sólo para
+historia anterior a 0099; toda resolución nueva debe completar el grupo entero. El
+trigger PostgreSQL deriva y reconcilia estos valores contra generation, operation,
+predecessor y event, y rechaza inserts parciales o un rationale heredado que no haya
+sido sellado como input de la operación actual. El actor vive en el ledger y el snapshot
+de autoridad sella además su `user_type` y `primary_role` DB-owned al decidir.
+
+Las actions `resolve-semantic-context-annotation` y
+`repair-semantic-context-annotation-resolution` son transaccionales e idempotentes. La
+segunda crea un successor resolved únicamente para una hoja histórica resolved sin
+basis; preserva todas las versiones anteriores y no cambia la resolución semántica. El
+snapshot de publicación incorpora el grafo de basis y bloquea un draft current con
+`annotation_resolution_basis_missing` hasta que cada hoja histórica afectada tenga un
+repair append-only explícito.

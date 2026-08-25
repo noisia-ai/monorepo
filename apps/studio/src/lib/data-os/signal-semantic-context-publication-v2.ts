@@ -30,6 +30,12 @@ export const SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2 =
   "approve_selected_semantic_context_element" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2 =
   "apply_shared_decision_basis_to_all_selected_elements" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1 =
+  "signal-semantic-context-annotation-resolution-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1 =
+  "resolve_semantic_context_annotation_with_deliberate_basis" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1 =
+  "repair_semantic_context_annotation_resolution_basis" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2 = [
   "duplicate_same_concept","alias_or_variant","canonicalization","semantic_boundary",
   "locale_resolution","competitive_unit_resolution","insufficient_context","operator_correction"
@@ -49,6 +55,11 @@ export type SignalSemanticContextDecisionBasisV2={
   contract_version:typeof SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2;
   reason:ReasonV2;rationale:string;
 };
+export type SignalSemanticContextAnnotationResolutionBasisV1={
+  contract_version:typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1;
+  annotation_type:AnnotationTypeV2;resolution:AnnotationResolutionV2;
+  reason:ReasonV2;rationale:string;
+};
 type AnnotationTypeV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2[number];
 type AnnotationResolutionV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2[number];
 type DispositionV2="pending"|"approved"|"rejected"|"merged";
@@ -66,7 +77,11 @@ type ElementRow={id:string;artifact_id:string;evidence_group_id:string;element_k
 type SourceRef={source_type:string;source_id:string;relation_type:"supports"|"limits"|"contradicts"};
 type AnnotationRow={id:string;annotation_key:string;annotation_version:number;annotation_type:AnnotationTypeV2;
   state:"open"|"resolved";resolution:AnnotationResolutionV2|null;subject_element_id:string;
-  related_element_ids:string[];reason_code:ReasonV2;rationale:string};
+  related_element_ids:string[];reason_code:ReasonV2;rationale:string;
+  resolution_contract_version:string|null;resolution_basis_digest:string|null;
+  resolution_input_digest:string|null;resolution_authority_snapshot:unknown|null;
+  resolution_authority_digest:string|null;resolution_prestate_digest:string|null;
+  resolution_poststate_digest:string|null};
 type Snapshot={candidate_pack_digest:string;evidence_graph_digest:string;review_graph_digest:string;
   publication_authority_digest:string;semantic_context_pack_digest:string;publish_preflight_digest:string;
   counts:Record<string,number>;collisions:string[][];blockers:string[];publishable:boolean;preflight:unknown};
@@ -103,6 +118,39 @@ export function normalizeSignalSemanticContextDecisionBasisV2(args:{reason:Reaso
     throw new SignalSemanticContextPackError("semantic_context_decision_reason_invalid",422);
   return{contract_version:SIGNAL_SEMANTIC_CONTEXT_DECISION_CONTRACT_V2,
     reason:args.reason,rationale:normalizeRationale(args.rationale)};
+}
+
+export function normalizeSignalSemanticContextAnnotationResolutionBasisV1(args:{
+  annotationType:AnnotationTypeV2;resolution:AnnotationResolutionV2;reason:ReasonV2;rationale:string;
+}):SignalSemanticContextAnnotationResolutionBasisV1{
+  if(!SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2.includes(args.annotationType))
+    throw new SignalSemanticContextPackError("semantic_context_annotation_type_invalid",422);
+  if(!SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2.includes(args.resolution))
+    throw new SignalSemanticContextPackError("semantic_context_annotation_resolution_invalid",422);
+  if(!SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2.includes(args.reason))
+    throw new SignalSemanticContextPackError("semantic_context_decision_reason_invalid",422);
+  validateResolution(args.annotationType,args.resolution,null,[],"annotation");
+  return{contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+    annotation_type:args.annotationType,resolution:args.resolution,reason:args.reason,
+    rationale:normalizeRationale(args.rationale)};
+}
+
+export function signalSemanticContextAnnotationStateDigestV1(args:{annotation_key:string;
+  annotation_version:number;annotation_type:AnnotationTypeV2;state:"open"|"resolved";
+  resolution:AnnotationResolutionV2|null;subject_element_id:string;related_element_ids:string[];
+  reason_code:ReasonV2;rationale:string;resolution_contract_version:string|null;
+  resolution_basis_digest:string|null;resolution_input_digest:string|null;
+  resolution_authority_digest:string|null}){
+  return digestCanonicalJsonV2({contract_version:"signal-semantic-context-annotation-state-v1",
+    annotation_key:args.annotation_key,annotation_version:args.annotation_version,
+    annotation_type:args.annotation_type,state:args.state,resolution:args.resolution,
+    subject_element_id:args.subject_element_id.toLowerCase(),
+    related_element_ids:[...args.related_element_ids].map((value)=>value.toLowerCase()).sort(compareUtf8),
+    reason_code:args.reason_code,rationale:args.rationale,
+    resolution_contract_version:args.resolution_contract_version,
+    resolution_basis_digest:args.resolution_basis_digest,
+    resolution_input_digest:args.resolution_input_digest,
+    resolution_authority_digest:args.resolution_authority_digest});
 }
 
 export function signalSemanticContextDecisionElementDigestV2(args:{
@@ -247,14 +295,19 @@ export async function correctSignalSemanticContextElementV2(args:{queryable:Sign
   assertInternal(args.actor);const rationale=normalizeRationale(args.rationale);
   assertUniqueAnnotationResolutions(args.annotation_resolutions??[]);
   validateCorrection(args.correction);await lockWorkspace(args.queryable,args.workspace.id);
+  const operationInput={generation_key:args.generationKey,element_key:args.elementKey,
+    reason:args.reason,rationale,correction:args.correction,annotation_resolutions:args.annotation_resolutions??[]};
+  const resolutionInput=(args.annotation_resolutions?.length??0)>0
+    ?{payload:operationInput,digest:digestCanonicalJsonV2(operationInput)}:undefined;
   const operation=await beginSignalProductOperationV1<{generation_key:string;element_key:string;
     element_version:number;disposition:"pending";draft_digest_ref:string}>({...args,
-    action:"correct-semantic-context-element",input:{generation_key:args.generationKey,element_key:args.elementKey,
-      reason:args.reason,rationale,correction:args.correction,annotation_resolutions:args.annotation_resolutions??[]}});
+    action:"correct-semantic-context-element",input:operationInput,semanticContextDecisionInput:resolutionInput});
   if(operation.replay)return operation.replay;
   const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
   await assertNoActiveRun(args.queryable,generation.id);
-  await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const resolutionAuthority=await resolveAnnotationResolutionAuthority(args.queryable,
+    currentAuthority.authority,args.actor.id);
   const current=await requireCurrentElement(args.queryable,generation.id,args.elementKey,true);
   if(current.disposition==="merged")throw new SignalSemanticContextPackError("semantic_context_merged_terminal");
   const refs=await loadRefs(args.queryable,current.evidence_group_id);const version=current.element_version+1;
@@ -270,7 +323,8 @@ export async function correctSignalSemanticContextElementV2(args:{queryable:Sign
   for(const annotation of annotations){await createAnnotationSuccessor(args.queryable,{workspaceId:args.workspace.id,
     generationId:generation.id,predecessor:annotation,subjectId:created.id,resolution:resolutions.get(annotation.annotation_key),
     rationale,reason:args.reason,operationId:operation.operationId,actorId:args.actor.id,
-    resolutionContext:"correction",eventIndex});eventIndex++;}
+    resolutionContext:"correction",eventIndex,resolutionAuthority,
+    resolutionInputDigest:resolutionInput?.digest??null});eventIndex++;}
   const draftDigest=await refreshDraftDigestV2(args.queryable,generation.id);
   await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,elementId:created.id,
     operationId:operation.operationId,eventIndex:0,eventKind:"element_corrected",previous:current.element_digest,
@@ -284,7 +338,7 @@ export async function correctSignalSemanticContextElementV2(args:{queryable:Sign
 export async function annotateSignalSemanticContextElementV2(args:{queryable:SignalBrandPolicyQueryable;
   workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
   elementKey:string;annotationKey:string;annotationType:AnnotationTypeV2;reason:ReasonV2;rationale:string;
-  relatedElementKeys:string[];resolution?:AnnotationResolutionV2}){
+  relatedElementKeys:string[]}){
   assertInternal(args.actor);const rationale=normalizeRationale(args.rationale);assertKey(args.annotationKey);
   if(!SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2.includes(args.annotationType))
     throw new SignalSemanticContextPackError("semantic_context_annotation_type_invalid",422);
@@ -293,7 +347,7 @@ export async function annotateSignalSemanticContextElementV2(args:{queryable:Sig
     state:"open"|"resolved";resolution:AnnotationResolutionV2|null}>({...args,
     action:"annotate-semantic-context-element",input:{generation_key:args.generationKey,element_key:args.elementKey,
       annotation_key:args.annotationKey,annotation_type:args.annotationType,reason:args.reason,rationale,
-      related_element_keys:relatedKeys,resolution:args.resolution??null}});
+      related_element_keys:relatedKeys}});
   if(operation.replay)return operation.replay;
   const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
   await assertNoActiveRun(args.queryable,generation.id);
@@ -303,26 +357,110 @@ export async function annotateSignalSemanticContextElementV2(args:{queryable:Sig
   const related:ElementRow[]=[];
   for(const key of relatedKeys)related.push(await requireCurrentElement(args.queryable,generation.id,key,true));
   const current=await loadCurrentAnnotation(args.queryable,generation.id,args.annotationKey,true);
-  if(!current&&args.resolution)throw new SignalSemanticContextPackError("semantic_context_annotation_resolution_requires_open",422);
   if(current&&current.state!=="open")throw new SignalSemanticContextPackError("semantic_context_annotation_closed");
   if(current&&(current.annotation_type!==args.annotationType||current.subject_element_id!==subject.id))
     throw new SignalSemanticContextPackError("semantic_context_annotation_cas_conflict");
-  validateResolution(args.annotationType,args.resolution??null,subject,related,"annotation");
   const inserted=await args.queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_review_annotations(
     workspace_id,generation_id,annotation_key,annotation_version,annotation_type,state,resolution,
     subject_element_id,related_element_ids,reason_code,rationale,supersedes_annotation_id,
     operation_id,actor_user_id) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9::uuid[],$10,$11,
       $12::uuid,$13::uuid,$14::uuid) RETURNING id::text`,[args.workspace.id,generation.id,args.annotationKey,
-    (current?.annotation_version??0)+1,args.annotationType,args.resolution?"resolved":"open",args.resolution??null,
+    (current?.annotation_version??0)+1,args.annotationType,"open",null,
     subject.id,related.map((entry)=>entry.id),args.reason,rationale,current?.id??null,operation.operationId,args.actor.id]);
-  const state=args.resolution?"resolved" as const:"open" as const;
+  const state="open" as const;
   await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
     elementId:subject.id,operationId:operation.operationId,eventIndex:0,eventKind:current
-      ?state==="resolved"?"review_annotation_resolved":"review_annotation_updated"
-      :"review_annotation_created",previous:current?digestCanonicalJsonV2(current):null,
+      ?"review_annotation_updated":"review_annotation_created",previous:current?digestCanonicalJsonV2(current):null,
     next:digestCanonicalJsonV2({id:inserted.rows[0]!.id,state}),actorId:args.actor.id});
   const result={annotation_key:args.annotationKey,annotation_version:(current?.annotation_version??0)+1,
-    state,resolution:args.resolution??null};
+    state,resolution:null};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+export async function resolveSignalSemanticContextAnnotationV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
+  elementKey:string;annotationKey:string;resolution:AnnotationResolutionV2;reason:ReasonV2;rationale:string;
+  confirmation:typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1}){
+  if(args.confirmation!==SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1)
+    throw new SignalSemanticContextPackError("semantic_context_annotation_resolution_confirmation_required",422);
+  return writeSignalSemanticContextAnnotationResolutionV1({...args,intent:"resolve"});
+}
+
+export async function repairSignalSemanticContextAnnotationResolutionV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
+  elementKey:string;annotationKey:string;resolution:AnnotationResolutionV2;reason:ReasonV2;rationale:string;
+  confirmation:typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1}){
+  if(args.confirmation!==SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1)
+    throw new SignalSemanticContextPackError("semantic_context_annotation_repair_confirmation_required",422);
+  return writeSignalSemanticContextAnnotationResolutionV1({...args,intent:"repair"});
+}
+
+async function writeSignalSemanticContextAnnotationResolutionV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
+  elementKey:string;annotationKey:string;resolution:AnnotationResolutionV2;reason:ReasonV2;rationale:string;
+  confirmation:string;intent:"resolve"|"repair"}){
+  assertInternal(args.actor);assertKey(args.annotationKey);assertKey(args.elementKey);
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertNoActiveRun(args.queryable,generation.id);
+  const predecessor=await loadCurrentAnnotation(args.queryable,generation.id,args.annotationKey,true);
+  if(!predecessor)throw new SignalSemanticContextPackError("semantic_context_annotation_not_found",404);
+  const subject=await args.queryable.query<{element_key:string}>(`SELECT element_key FROM
+    signal_semantic_context_element_versions WHERE id=$1::uuid AND generation_id=$2::uuid`,
+  [predecessor.subject_element_id,generation.id]);
+  if(subject.rows[0]?.element_key!==args.elementKey)
+    throw new SignalSemanticContextPackError("semantic_context_annotation_cas_conflict",409);
+  const basis=normalizeSignalSemanticContextAnnotationResolutionBasisV1({annotationType:predecessor.annotation_type,
+    resolution:args.resolution,reason:args.reason,rationale:args.rationale});
+  const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+    generation_key:generation.generation_key,element_key:args.elementKey,annotation_key:args.annotationKey,
+    action:args.intent,annotation_type:predecessor.annotation_type,resolution:args.resolution,
+    decision_basis:basis,confirmation:args.confirmation};
+  const inputDigest=digestCanonicalJsonV2(operationInput);
+  const operation=await beginSignalProductOperationV1<{annotation_key:string;annotation_version:number;
+    state:"resolved";resolution:AnnotationResolutionV2;resolution_basis:"complete"}>({...args,
+    action:args.intent==="resolve"?"resolve-semantic-context-annotation":
+      "repair-semantic-context-annotation-resolution",input:operationInput,
+    semanticContextDecisionInput:{payload:operationInput,digest:inputDigest}});
+  if(operation.replay)return operation.replay;
+  if(args.intent==="resolve"&&predecessor.state!=="open")
+    throw new SignalSemanticContextPackError("semantic_context_annotation_closed",409);
+  if(args.intent==="repair"){
+    if(predecessor.state!=="resolved"||predecessor.resolution!==args.resolution)
+      throw new SignalSemanticContextPackError("semantic_context_annotation_repair_not_eligible",409);
+    if(annotationResolutionBasisComplete(predecessor))
+      throw new SignalSemanticContextPackError("semantic_context_annotation_resolution_basis_complete",409);
+  }
+  const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const authoritySnapshot=await resolveAnnotationResolutionAuthority(args.queryable,
+    currentAuthority.authority,args.actor.id);
+  const authorityDigest=digestCanonicalJsonV2(authoritySnapshot);
+  const basisDigest=digestCanonicalJsonV2(basis);
+  const prestateDigest=signalSemanticContextAnnotationStateDigestV1(predecessor);
+  const successorState={annotation_key:predecessor.annotation_key,
+    annotation_version:predecessor.annotation_version+1,annotation_type:predecessor.annotation_type,
+    state:"resolved" as const,resolution:args.resolution,subject_element_id:predecessor.subject_element_id,
+    related_element_ids:predecessor.related_element_ids,reason_code:basis.reason,rationale:basis.rationale,
+    resolution_contract_version:basis.contract_version,resolution_basis_digest:basisDigest,
+    resolution_input_digest:inputDigest,resolution_authority_digest:authorityDigest};
+  const poststateDigest=signalSemanticContextAnnotationStateDigestV1(successorState);
+  await args.queryable.query(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
+    annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,
+    reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id,resolution_contract_version,
+    resolution_basis_digest,resolution_input_digest,resolution_authority_snapshot,resolution_authority_digest,
+    resolution_prestate_digest,resolution_poststate_digest)
+    VALUES($1::uuid,$2::uuid,$3,$4,$5,'resolved',$6,$7::uuid,$8::uuid[],$9,$10,$11::uuid,$12::uuid,$13::uuid,
+      $14,$15,$16,$17::jsonb,$18,$19,$20)`,[args.workspace.id,generation.id,predecessor.annotation_key,
+    predecessor.annotation_version+1,predecessor.annotation_type,args.resolution,predecessor.subject_element_id,
+    predecessor.related_element_ids,basis.reason,basis.rationale,predecessor.id,operation.operationId,args.actor.id,
+    basis.contract_version,basisDigest,inputDigest,JSON.stringify(authoritySnapshot),authorityDigest,
+    prestateDigest,poststateDigest]);
+  await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
+    elementId:predecessor.subject_element_id,operationId:operation.operationId,eventIndex:0,
+    eventKind:"review_annotation_resolved",previous:prestateDigest,next:poststateDigest,actorId:args.actor.id});
+  const result={annotation_key:predecessor.annotation_key,annotation_version:predecessor.annotation_version+1,
+    state:"resolved" as const,resolution:args.resolution,resolution_basis:"complete" as const};
   await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
     key:operation.key,result});return result;
 }
@@ -338,16 +476,20 @@ export async function mergeSignalSemanticContextElementsV2(args:{queryable:Signa
   const sourceKeys=uniqueKeys(args.sourceElementKeys,100);assertKey(args.targetElementKey);
   if(sourceKeys.includes(args.targetElementKey))throw new SignalSemanticContextPackError("semantic_context_merge_self",422);
   validateCorrection(args.targetCorrection);await lockWorkspace(args.queryable,args.workspace.id);
+  const operationInput={generation_key:args.generationKey,target_element_key:args.targetElementKey,
+    source_element_keys:sourceKeys,reason:args.reason,rationale,target_correction:args.targetCorrection,
+    target_annotation_resolutions:args.targetAnnotationResolutions??[]};
+  const resolutionInput={payload:operationInput,digest:digestCanonicalJsonV2(operationInput)};
   const operation=await beginSignalProductOperationV1<{generation_key:string;target_element_key:string;
     source_element_keys:string[];merged:number;target_disposition:"pending";draft_digest_ref:string;
     annotation_reconciliation:Record<string,number>}>({...args,action:"merge-semantic-context-elements",
-    input:{generation_key:args.generationKey,target_element_key:args.targetElementKey,
-      source_element_keys:sourceKeys,reason:args.reason,rationale,target_correction:args.targetCorrection,
-      target_annotation_resolutions:args.targetAnnotationResolutions??[]}});
+    input:operationInput,semanticContextDecisionInput:resolutionInput});
   if(operation.replay)return operation.replay;
   const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
   await assertNoActiveRun(args.queryable,generation.id);
-  await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const resolutionAuthority=await resolveAnnotationResolutionAuthority(args.queryable,
+    currentAuthority.authority,args.actor.id);
   const target=await requireCurrentElement(args.queryable,generation.id,args.targetElementKey,true);
   const sources:ElementRow[]=[];
   for(const key of sourceKeys)sources.push(await requireCurrentElement(args.queryable,generation.id,key,true));
@@ -393,12 +535,14 @@ export async function mergeSignalSemanticContextElementsV2(args:{queryable:Signa
   for(const annotation of sourceAnnotations){await createAnnotationSuccessor(args.queryable,{workspaceId:args.workspace.id,
     generationId:generation.id,predecessor:annotation,subjectId:annotation.subject_element_id,resolution:"merged",
     rationale,reason:args.reason,operationId:operation.operationId,actorId:args.actor.id,
-    resolutionContext:"merge",eventIndex});sourceResolved++;eventIndex++;}
+    resolutionContext:"merge",eventIndex,resolutionAuthority,
+    resolutionInputDigest:resolutionInput.digest});sourceResolved++;eventIndex++;}
   for(const annotation of targetAnnotations){const resolution=targetResolutions.get(annotation.annotation_key);
     await createAnnotationSuccessor(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
       predecessor:annotation,subjectId:targetSuccessor.id,resolution,rationale,reason:args.reason,
       operationId:operation.operationId,actorId:args.actor.id,
-      resolutionContext:"correction",eventIndex});targetRebound++;if(resolution)targetResolved++;eventIndex++;}
+      resolutionContext:"correction",eventIndex,resolutionAuthority,
+      resolutionInputDigest:resolutionInput.digest});targetRebound++;if(resolution)targetResolved++;eventIndex++;}
   const openOnMerged=await args.queryable.query<{count:number}>(`SELECT count(*)::int count
     FROM signal_semantic_context_review_annotations annotation
     WHERE annotation.subject_element_id=ANY($1::uuid[]) AND annotation.state='open' AND NOT EXISTS(
@@ -505,6 +649,10 @@ export async function correctSignalSemanticContextElementProductV2(args:Omit<Par
   return withSignalAcquisitionTransactionV1((queryable)=>correctSignalSemanticContextElementV2({...args,queryable}));}
 export async function annotateSignalSemanticContextElementProductV2(args:Omit<Parameters<typeof annotateSignalSemanticContextElementV2>[0],"queryable">){
   return withSignalAcquisitionTransactionV1((queryable)=>annotateSignalSemanticContextElementV2({...args,queryable}));}
+export async function resolveSignalSemanticContextAnnotationProductV1(args:Omit<Parameters<typeof resolveSignalSemanticContextAnnotationV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>resolveSignalSemanticContextAnnotationV1({...args,queryable}));}
+export async function repairSignalSemanticContextAnnotationResolutionProductV1(args:Omit<Parameters<typeof repairSignalSemanticContextAnnotationResolutionV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>repairSignalSemanticContextAnnotationResolutionV1({...args,queryable}));}
 export async function publishSignalSemanticContextGenerationProductV2(args:Omit<Parameters<typeof publishSignalSemanticContextGenerationV2>[0],"queryable">){
   return withSignalAcquisitionTransactionV1((queryable)=>publishSignalSemanticContextGenerationV2({...args,queryable}));}
 export async function loadSignalSemanticContextPublicationPreflightProductV2(args:Omit<Parameters<typeof loadSignalSemanticContextPublicationPreflightV2>[0],"queryable">){
@@ -633,7 +781,9 @@ async function createDecisionElementV2(queryable:SignalBrandPolicyQueryable,args
 }
 async function loadOpenAnnotations(queryable:SignalBrandPolicyQueryable,generationId:string,subjectIds:string[],lock:boolean){
   const result=await queryable.query<AnnotationRow>(`SELECT id::text,annotation_key,annotation_version,annotation_type,
-    state,resolution,subject_element_id::text,related_element_ids::text[],reason_code,rationale
+    state,resolution,subject_element_id::text,related_element_ids::text[],reason_code,rationale,
+    resolution_contract_version,resolution_basis_digest,resolution_input_digest,resolution_authority_snapshot,
+    resolution_authority_digest,resolution_prestate_digest,resolution_poststate_digest
     FROM signal_semantic_context_review_annotations annotation WHERE generation_id=$1::uuid
       AND subject_element_id=ANY($2::uuid[]) AND state='open' AND NOT EXISTS(
         SELECT 1 FROM signal_semantic_context_review_annotations successor
@@ -641,28 +791,52 @@ async function loadOpenAnnotations(queryable:SignalBrandPolicyQueryable,generati
     [generationId,subjectIds]);return result.rows;}
 async function loadCurrentAnnotation(queryable:SignalBrandPolicyQueryable,generationId:string,annotationKey:string,lock:boolean){
   const result=await queryable.query<AnnotationRow>(`SELECT id::text,annotation_key,annotation_version,annotation_type,
-    state,resolution,subject_element_id::text,related_element_ids::text[],reason_code,rationale
+    state,resolution,subject_element_id::text,related_element_ids::text[],reason_code,rationale,
+    resolution_contract_version,resolution_basis_digest,resolution_input_digest,resolution_authority_snapshot,
+    resolution_authority_digest,resolution_prestate_digest,resolution_poststate_digest
     FROM signal_semantic_context_review_annotations annotation WHERE generation_id=$1::uuid AND annotation_key=$2
       AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_review_annotations successor
         WHERE successor.supersedes_annotation_id=annotation.id) ${lock?"FOR UPDATE":""}`,[generationId,annotationKey]);
   if(result.rows.length>1)throw new SignalSemanticContextPackError("semantic_context_annotation_fork");return result.rows[0]??null;}
 async function createAnnotationSuccessor(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generationId:string;
   predecessor:AnnotationRow;subjectId:string;resolution?:AnnotationResolutionV2;rationale:string;reason:ReasonV2;
-  operationId:string;actorId:string;resolutionContext:"merge"|"correction";eventIndex:number}){
+  operationId:string;actorId:string;resolutionContext:"merge"|"correction";eventIndex:number;
+  resolutionAuthority:unknown;resolutionInputDigest:string|null}){
   validateResolution(args.predecessor.annotation_type,args.resolution??null,null,[],args.resolutionContext);
+  const basis=args.resolution?{contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+    annotation_type:args.predecessor.annotation_type,resolution:args.resolution,reason:args.reason,
+    rationale:normalizeRationale(args.rationale)} satisfies SignalSemanticContextAnnotationResolutionBasisV1:null;
+  const basisDigest=basis?digestCanonicalJsonV2(basis):null;
+  const authorityDigest=basis?digestCanonicalJsonV2(args.resolutionAuthority):null;
+  if(basis&&!args.resolutionInputDigest)
+    throw new SignalSemanticContextPackError("semantic_context_annotation_resolution_input_missing",422);
+  const prestateDigest=basis?signalSemanticContextAnnotationStateDigestV1(args.predecessor):null;
+  const successorState={annotation_key:args.predecessor.annotation_key,
+    annotation_version:args.predecessor.annotation_version+1,annotation_type:args.predecessor.annotation_type,
+    state:args.resolution?"resolved" as const:"open" as const,resolution:args.resolution??null,
+    subject_element_id:args.subjectId,related_element_ids:args.predecessor.related_element_ids,
+    reason_code:args.reason,rationale:args.rationale,
+    resolution_contract_version:basis?.contract_version??null,resolution_basis_digest:basisDigest,
+    resolution_input_digest:basis?args.resolutionInputDigest:null,resolution_authority_digest:authorityDigest};
+  const poststateDigest=basis?signalSemanticContextAnnotationStateDigestV1(successorState):null;
   const inserted=await queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
     annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,reason_code,
-    rationale,supersedes_annotation_id,operation_id,actor_user_id) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,
-    $9::uuid[],$10,$11,$12::uuid,$13::uuid,$14::uuid) RETURNING id::text`,[args.workspaceId,args.generationId,
+    rationale,supersedes_annotation_id,operation_id,actor_user_id,resolution_contract_version,
+    resolution_basis_digest,resolution_input_digest,resolution_authority_snapshot,resolution_authority_digest,
+    resolution_prestate_digest,resolution_poststate_digest) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,
+    $9::uuid[],$10,$11,$12::uuid,$13::uuid,$14::uuid,$15,$16,$17,$18::jsonb,$19,$20,$21) RETURNING id::text`,[args.workspaceId,args.generationId,
     args.predecessor.annotation_key,args.predecessor.annotation_version+1,args.predecessor.annotation_type,
     args.resolution?"resolved":"open",args.resolution??null,args.subjectId,args.predecessor.related_element_ids,
-    args.reason,args.rationale,args.predecessor.id,args.operationId,args.actorId]);
+    args.reason,args.rationale,args.predecessor.id,args.operationId,args.actorId,basis?.contract_version??null,
+    basisDigest,basis?args.resolutionInputDigest:null,basis?JSON.stringify(args.resolutionAuthority):null,
+    authorityDigest,prestateDigest,poststateDigest]);
   const state=args.resolution?"resolved" as const:"open" as const;
   await insertEventV2(queryable,{workspaceId:args.workspaceId,generationId:args.generationId,
     elementId:args.subjectId,operationId:args.operationId,eventIndex:args.eventIndex,
     eventKind:state==="resolved"?"review_annotation_resolved":"review_annotation_updated",
-    previous:digestCanonicalJsonV2(args.predecessor),next:digestCanonicalJsonV2({
-      id:inserted.rows[0]!.id,state,resolution:args.resolution??null}),actorId:args.actorId});}
+    previous:prestateDigest??digestCanonicalJsonV2(args.predecessor),
+    next:poststateDigest??digestCanonicalJsonV2({id:inserted.rows[0]!.id,state,resolution:args.resolution??null}),
+    actorId:args.actorId});}
 function validateResolution(type:AnnotationTypeV2,resolution:AnnotationResolutionV2|null,
   subject:ElementRow|null,related:ElementRow[],context:"annotation"|"correction"|"merge"){
   if(resolution===null)return;
@@ -721,6 +895,17 @@ async function assertGenerationAuthorityCurrent(queryable:SignalBrandPolicyQuery
     throw new SignalSemanticContextPackError("semantic_context_authority_drift");
   if(current.blockers.includes("provider_lineage_not_current"))
     throw new SignalSemanticContextPackError("semantic_context_provider_lineage_drift");
+  return current;
+}
+async function resolveAnnotationResolutionAuthority(queryable:SignalBrandPolicyQueryable,
+  generationAuthority:unknown,actorId:string){
+  const result=await queryable.query<{user_type:string;primary_role:string}>(`SELECT user_type,primary_role
+    FROM users WHERE id=$1::uuid AND status='active'`,[actorId]);
+  const actor=result.rows[0];
+  if(!actor||actor.user_type!=="noisia_internal"||!actor.primary_role)
+    throw new SignalSemanticContextPackError("semantic_context_forbidden",403);
+  return{...(generationAuthority as Record<string,unknown>),actor:{id:actorId.toLowerCase(),
+    user_type:actor.user_type,primary_role:actor.primary_role}};
 }
 async function refreshDraftDigestV2(queryable:SignalBrandPolicyQueryable,generationId:string){const rows=await queryable.query<{
   element_key:string;element_version:number;element_digest:string;disposition:string}>(`SELECT element_key,element_version,
@@ -755,6 +940,10 @@ function assertUniqueAnnotationResolutions(values:Array<{annotation_key:string}>
   const keys=values.map((entry)=>entry.annotation_key);if(new Set(keys).size!==keys.length)
     throw new SignalSemanticContextPackError("semantic_context_duplicate_annotation_resolution",422);
 }
+function annotationResolutionBasisComplete(annotation:AnnotationRow){return Boolean(
+  annotation.resolution_contract_version&&annotation.resolution_basis_digest&&annotation.resolution_input_digest
+  &&annotation.resolution_authority_snapshot&&annotation.resolution_authority_digest
+  &&annotation.resolution_prestate_digest&&annotation.resolution_poststate_digest);}
 function shortDigest(value:string){return`${value.slice(0,15)}…${value.slice(-8)}`;}
 function assertInternal(actor:SignalWorkspaceUser){if(actor.userType!=="noisia_internal")
   throw new SignalSemanticContextPackError("semantic_context_forbidden",403);}

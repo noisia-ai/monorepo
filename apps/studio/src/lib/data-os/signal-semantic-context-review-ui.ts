@@ -40,6 +40,11 @@ const SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_UI =
   "approve_selected_semantic_context_element" as const;
 const SIGNAL_SEMANTIC_CONTEXT_BULK_CONFIRMATION_UI =
   "apply_shared_decision_basis_to_all_selected_elements" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_UI =
+  "resolve_semantic_context_annotation_with_deliberate_basis" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_UI =
+  "repair_semantic_context_annotation_resolution_basis" as const;
+export type SignalSemanticContextAnnotationResolutionIntentUi = "resolve" | "repair";
 
 function parseDecisionBasisFormUiV2(form: FormData) {
   const reason = String(form.get("reason") ?? "");
@@ -60,6 +65,18 @@ export function parseSignalSemanticContextBulkApprovalFormUiV2(form: FormData) {
   const basis = parseDecisionBasisFormUiV2(form);
   if (!basis || form.get("confirmation") !== SIGNAL_SEMANTIC_CONTEXT_BULK_CONFIRMATION_UI) return null;
   return basis;
+}
+
+export function parseSignalSemanticContextAnnotationResolutionFormUiV1(
+  form: FormData,
+  intent: SignalSemanticContextAnnotationResolutionIntentUi
+) {
+  const basis = parseDecisionBasisFormUiV2(form);
+  const confirmation = intent === "resolve"
+    ? SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_UI
+    : SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_UI;
+  if (!basis || form.get("confirmation") !== confirmation) return null;
+  return { ...basis, confirmation };
 }
 
 export function createSignalSemanticContextMutationLockV1() {
@@ -123,7 +140,7 @@ export function signalSemanticContextSelectionWithinVisiblePageV1(args: {
 export function handleSignalSemanticContextDecisionKeyV1(args: {
   key: string;
   busy: boolean;
-  mode: "view" | "approve" | "correct" | "reject" | "annotate";
+  mode: "view" | "approve" | "correct" | "reject" | "annotate" | "resolve_annotation";
   cancel: () => void;
 }) {
   if (args.key !== "Escape" || args.mode === "view" || args.busy) return false;
@@ -205,6 +222,36 @@ export async function submitSignalSemanticContextDeliberateApprovalFormUiV2(args
   const basis = parseSignalSemanticContextApprovalFormUiV2(args.form);
   if (!basis) return false;
   await submitSignalSemanticContextDeliberateApprovalUiV2({ ...args, ...basis });
+  return true;
+}
+
+export async function submitSignalSemanticContextAnnotationResolutionFormUiV1(args: {
+  form: FormData;
+  intent: SignalSemanticContextAnnotationResolutionIntentUi;
+  request: SignalSemanticContextReviewUiRequest;
+  base: string;
+  generationKey: string;
+  elementKey: string;
+  annotationKey: string;
+  resolution: SignalSemanticContextAnnotationResolutionUi;
+  idempotencyKey: string;
+}) {
+  const basis = parseSignalSemanticContextAnnotationResolutionFormUiV1(args.form, args.intent);
+  if (!basis) return false;
+  await args.request(`${args.base}/annotations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": args.idempotencyKey },
+    body: JSON.stringify({
+      action: args.intent,
+      generation_key: args.generationKey,
+      element_key: args.elementKey,
+      annotation_key: args.annotationKey,
+      resolution: args.resolution,
+      reason: basis.reason,
+      rationale: basis.rationale,
+      confirmation: basis.confirmation
+    })
+  });
   return true;
 }
 

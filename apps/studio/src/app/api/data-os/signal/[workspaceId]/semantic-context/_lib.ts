@@ -68,5 +68,10 @@ function operatorMessage(code:string){return({
   ,semantic_context_merge_source_annotation_blocked:"Resolve the other open source annotations before merging."
   ,semantic_context_merge_cycle:"This merge would create a direct or transitive cycle."
   ,semantic_context_annotation_resolution_stale:"One or more annotation resolutions are stale. Refresh and try again."
+  ,semantic_context_annotation_resolution_confirmation_required:"Confirm the deliberate annotation resolution before continuing."
+  ,semantic_context_annotation_repair_confirmation_required:"Confirm the append-only annotation basis repair before continuing."
+  ,semantic_context_annotation_repair_not_eligible:"This annotation is not an eligible historical resolution repair. Refresh and review its current history."
+  ,semantic_context_annotation_resolution_basis_complete:"This annotation already has a sealed resolution basis and cannot be repaired again."
+  ,semantic_context_annotation_not_found:"This review annotation is no longer current. Refresh and try again."
 } as Record<string,string>)[code]??"The Semantic Context Pack operation was rejected.";}
 function safeError(error:unknown){return error instanceof Error?{name:error.name}:{name:"UnknownError"};}
