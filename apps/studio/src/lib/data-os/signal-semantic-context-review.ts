@@ -14,7 +14,7 @@ import type {
 const PAGE_SIZES = [20, 40] as const;
 const DISPOSITIONS = ["pending", "approved", "rejected", "merged"] as const;
 const EVIDENCE_RELATIONS = ["supports", "limits", "contradicts"] as const;
-const LOCALE_FILTERS = ["all", "explicit", "unassigned", "needs_review"] as const;
+const LOCALE_FILTERS = ["all", "explicit", "unassigned", "global", "needs_review"] as const;
 const EVIDENCE_FILTERS = [
   "all",
   "needs_review",
@@ -79,6 +79,11 @@ type ReviewElementRow = {
   decision_contract_version: string | null;
   decision_reason_code: string | null;
   decision_rationale: string | null;
+  locale_decision_contract_version: string | null;
+  locale_decision_disposition: "global" | "locale_specific" | null;
+  locale_decision_locale: string | null;
+  locale_decision_reason_code: string | null;
+  locale_decision_rationale: string | null;
   source_ref_count: number;
   distinct_source_count: number;
   supports_count: number;
@@ -245,10 +250,17 @@ export async function loadSignalSemanticContextReviewPageV1(args: {
   if (args.filters.element_kind) where.push(`element.element_kind=${bind(args.filters.element_kind)}`);
   if (args.filters.scope) where.push(`element.scope=${bind(args.filters.scope)}`);
   if (args.filters.locale === "explicit") where.push("element.locale IS NOT NULL");
-  if (args.filters.locale === "unassigned") where.push("element.locale IS NULL");
+  if (args.filters.locale === "unassigned") {
+    where.push("element.locale IS NULL AND element.locale_decision_disposition IS NULL");
+  }
+  if (args.filters.locale === "global") {
+    where.push("element.locale IS NULL AND element.locale_decision_disposition='global'");
+  }
   if (args.filters.locale === "needs_review") {
     const variants = bind(generation.locale_variants);
-    where.push(`(element.locale IS NULL OR NOT(element.locale=ANY(${variants}::text[])))`);
+    where.push(`((element.disposition='approved' AND element.locale IS NULL
+      AND element.locale_decision_disposition IS NULL)
+      OR (element.locale IS NOT NULL AND NOT(element.locale=ANY(${variants}::text[]))))`);
   }
   if (args.filters.evidence === "one_source_only") where.push("element.distinct_source_count=1");
   if (args.filters.evidence === "supports_only") {
@@ -689,9 +701,11 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
     contradicts: Number(element.contradicts_count)
   };
   const localeReasons: string[] = [];
-  if (!element.locale) localeReasons.push("locale_unassigned");
-  else if (!generation.locale_variants.includes(element.locale)) localeReasons.push("locale_outside_generation_coverage");
-  localeReasons.push("market_unassigned");
+  if (!element.locale && !element.locale_decision_disposition) {
+    localeReasons.push("locale_unassigned", "market_unassigned");
+  } else if (element.locale && !generation.locale_variants.includes(element.locale)) {
+    localeReasons.push("locale_outside_generation_coverage");
+  }
   const evidenceReasons: string[] = [];
   if (Number(element.distinct_source_count) === 1) evidenceReasons.push("one_source_only");
   if (Number(element.source_ref_count) > 0 && Number(element.supports_count) === Number(element.source_ref_count)) {
@@ -717,11 +731,24 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
       decided_at: element.decided_at ? new Date(element.decided_at).toISOString() : null
     },
     applicability: {
-      locale_state: element.locale ? "explicit" : "global_unassigned",
+      locale_state: element.locale ? "explicit"
+        : element.locale_decision_disposition === "global" ? "global_resolved" : "global_unassigned",
       locale: element.locale,
       market_state: "global_unassigned",
       generation_locales: generation.locale_variants,
       generation_markets: generation.markets
+    },
+    locale_authority: {
+      state: element.locale_decision_disposition ?? (element.locale ? "sealed_existing_locale" : "unresolved"),
+      locale: element.locale_decision_locale ?? element.locale,
+      lifecycle: element.locale_decision_contract_version
+        ? element.disposition === "pending" ? "pending_reapproval" : "reviewed"
+        : "not_decided",
+      basis: element.locale_decision_contract_version ? {
+        reason: element.locale_decision_reason_code,
+        rationale: safeLabel(element.locale_decision_rationale ?? "", "Locale decision rationale", 1_000),
+        reviewer: "authenticated_operator" as const
+      } : null
     },
     evidence_summary: {
       count: Number(element.source_ref_count),
@@ -730,7 +757,7 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
     },
     attention: {
       authoritative: false,
-      needs_locale_review: localeReasons.length > 0,
+      needs_locale_review: element.disposition === "approved" && localeReasons.length > 0,
       locale_reasons: localeReasons,
       needs_evidence_review: evidenceReasons.length > 0,
       evidence_reasons: evidenceReasons,
@@ -898,7 +925,10 @@ const reviewElementsCte = `WITH base_elements AS (
     element.display_text,element.scope,element.entity_type,element.locale,element.relation_kind,
     element.relation_target_key,element.disposition,element.origin_kind,element.proposed_at,
     element.decided_at,element.decision_contract_version,element.decision_reason_code,
-    element.decision_rationale,lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,
+    element.decision_rationale,element.locale_decision_contract_version,
+    element.locale_decision_disposition,element.locale_decision_locale,
+    element.locale_decision_reason_code,element.locale_decision_rationale,
+    lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,
     count(link.id)::int source_ref_count,
     count(DISTINCT (link.source_type,link.source_id))::int distinct_source_count,
     count(link.id) FILTER(WHERE link.relation_type='supports')::int supports_count,

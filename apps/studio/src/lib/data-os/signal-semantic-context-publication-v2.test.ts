@@ -7,6 +7,8 @@ import {
   digestCanonicalJsonV2,
   normalizeSignalSemanticContextDecisionBasisV2,
   normalizeSignalSemanticContextAnnotationResolutionBasisV1,
+  normalizeSignalSemanticContextLocaleDecisionBasisV1,
+  signalSemanticContextLocaleDecisionElementDigestV1,
   signalSemanticContextDecisionElementDigestV2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
@@ -103,7 +105,8 @@ test("closed OpenAPI publication counts match the runtime preflight including an
   const expected=["total_leaves","pending","approved","rejected","merged","open_annotations",
     "open_uncertainty","open_near_duplicate","unresolved_locale","unresolved_competitive_unit",
     "merge_edges","canonical_collisions","invalid_evidence_refs","invalid_relation_targets",
-    "decision_basis_missing","annotation_resolution_basis_missing"].sort();
+    "decision_basis_missing","annotation_resolution_basis_missing",
+    "locale_market_required_unresolved"].sort();
   assert.deepEqual(required,expected,"all runtime counters are required by the closed response contract");
   assert.deepEqual(properties,expected,"OpenAPI declares no missing or unowned count property");
   const assertCounts=(value:Record<string,number>)=>{
@@ -140,6 +143,10 @@ test("management routes keep review authority server-owned and private", async (
     assert.match(route, /annotation_key must be unique/u,
       "merge and correction reject repeated or contradictory annotation resolutions at Zod");
   }
+  assert.doesNotMatch(routes[0]!,/\blocale\s*:/u,
+    "merge cannot accept browser-owned locale in its generic correction payload");
+  assert.doesNotMatch(routes[1]!,/\blocale\s*:/u,
+    "correction cannot accept browser-owned locale");
   const annotationRoute=routes[2]!;
   assert.match(annotationRoute,/const command=z\.union\(\[createCommand,resolveCommand,repairCommand\]\)/u);
   assert.match(annotationRoute,/SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1/u);
@@ -155,6 +162,26 @@ test("management routes keep review authority server-owned and private", async (
   const shared = await readFile(new URL(
     "../../app/api/data-os/signal/[workspaceId]/semantic-context/_lib.ts", import.meta.url), "utf8");
   assert.match(shared, /private, no-store/u);
+  const localeAuthorityRoute=await readFile(new URL(
+    "../../app/api/data-os/signal/[workspaceId]/semantic-context/locale-authority/route.ts",import.meta.url),"utf8");
+  assert.match(localeAuthorityRoute,/loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(localeAuthorityRoute,/requireIdempotencyKey/u);
+  assert.match(localeAuthorityRoute,/z\.discriminatedUnion\("disposition"/u);
+  assert.match(localeAuthorityRoute,/element_keys: z\.array\(key\)\.min\(1\)\.max\(15\)/u);
+  assert.match(localeAuthorityRoute,/SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1/u);
+  assert.doesNotMatch(localeAuthorityRoute,/workspace_id|actor_user_id|authority_digest|brand_os_digest/u);
+});
+
+test("generic correction and merge preserve locale authority outside the dedicated writer", async()=>{
+  const service=await readFile(new URL("./signal-semantic-context-publication-v2.ts",import.meta.url),"utf8");
+  assert.match(service,/entity_id:current\.entity_id,locale:current\.locale/u);
+  assert.match(service,/entity_id:target\.entity_id,locale:target\.locale/u);
+  assert.match(service,/sourceRefs:refs,current\}/u);
+  assert.match(service,/sourceRefs:union,current:target/u);
+  assert.match(service,/locale_decision_contract_version,locale_decision_disposition/u);
+  const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
+  const correction=openApi.match(/    SignalSemanticContextCorrectionFieldsV2:\n([\s\S]*?)\n    SignalSemanticContextAnnotationResolutionV2:/u)?.[1];
+  assert.ok(correction);assert.doesNotMatch(correction,/\n\s+locale:/u);
 });
 
 test("browser decisions retire V1 edit and route guided rejection through the atomic V2 writer", async () => {
@@ -211,6 +238,59 @@ test("decision basis is closed, NFC-normalized, scalar-bounded, and digest-autho
     disposition: "approved", sourceRefsDigest: "sha256:" + "a".repeat(64),
     basis: normalizeSignalSemanticContextDecisionBasisV2({ reason: "semantic_boundary", rationale: "Second basis" }) });
   assert.notEqual(first, second, "rationale participates in the element digest");
+});
+
+test("locale/global decision basis is closed, normalized, and part of the pending successor digest", () => {
+  const global = normalizeSignalSemanticContextLocaleDecisionBasisV1({
+    disposition: "global",
+    locale: null,
+    reason: "locale_resolution",
+    rationale: "  Applies across the sealed MX and US authority.  "
+  });
+  assert.deepEqual(global, {
+    contract_version: "signal-semantic-context-locale-decision-v1",
+    disposition: "global",
+    locale: null,
+    reason: "locale_resolution",
+    rationale: "Applies across the sealed MX and US authority."
+  });
+  const localeSpecific = normalizeSignalSemanticContextLocaleDecisionBasisV1({
+    disposition: "locale_specific",
+    locale: "es-MX",
+    reason: "locale_resolution",
+    rationale: "This reviewed concept is specific to the sealed es-MX locale."
+  });
+  assert.equal(localeSpecific.locale, "es-MX");
+  assert.throws(() => normalizeSignalSemanticContextLocaleDecisionBasisV1({
+    disposition: "global", locale: "es-MX", reason: "locale_resolution", rationale: "Invalid pair."
+  }), /semantic_context_locale_decision_shape_invalid/u);
+  assert.throws(() => normalizeSignalSemanticContextLocaleDecisionBasisV1({
+    disposition: "locale_specific", locale: null, reason: "locale_resolution", rationale: "Invalid pair."
+  }), /semantic_context_locale_decision_shape_invalid/u);
+
+  const definition = { element_key: "need-a", element_kind: "need", canonical_key: "need-a",
+    display_text: "Need A", scope: "primary_brand", entity_type: "brand", entity_id: null,
+    locale: null, relation_kind: null, relation_target_key: null };
+  const first = signalSemanticContextLocaleDecisionElementDigestV1({ definition, elementVersion: 3,
+    sourceRefsDigest: "sha256:" + "a".repeat(64), basis: global });
+  const second = signalSemanticContextLocaleDecisionElementDigestV1({ definition, elementVersion: 3,
+    sourceRefsDigest: "sha256:" + "a".repeat(64), basis: { ...global, rationale: "A different basis." } });
+  assert.notEqual(first, second, "the deliberate locale/global basis is sealed into the pending successor");
+});
+
+test("locale authority management route accepts only server-resolved bounded commands", async () => {
+  const route = await readFile(new URL(
+    "../../app/api/data-os/signal/[workspaceId]/semantic-context/locale-authority/route.ts",
+    import.meta.url), "utf8");
+  assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(route, /requireIdempotencyKey/u);
+  assert.match(route, /element_keys:\s*z\.array\(key\)\.min\(1\)\.max\(15\)/u);
+  assert.match(route, /z\.literal\("global"\)/u);
+  assert.match(route, /z\.literal\("locale_specific"\)/u);
+  assert.match(route, /SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1/u);
+  assert.match(route, /\.strict\(\)/u);
+  assert.doesNotMatch(route,
+    /workspace_id|generation_id|element_id|actor_user_id|authority_digest|locale_context_digest|provider/u);
 });
 
 test("review UI opens deliberate approval forms and never posts from the first click", async () => {

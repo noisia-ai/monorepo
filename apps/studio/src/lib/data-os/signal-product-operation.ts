@@ -37,6 +37,7 @@ export type SignalProductOperationActionV1 =
   | "annotate-semantic-context-element"
   | "resolve-semantic-context-annotation"
   | "repair-semantic-context-annotation-resolution"
+  | "decide-semantic-context-locale-authority"
   | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {
@@ -72,7 +73,8 @@ export async function beginSignalProductOperationV1<T>(args: {
   const decisionInputRequired = args.action === "decide-semantic-context-element"
     || args.action === "bulk-approve-semantic-context-elements"
     || args.action === "resolve-semantic-context-annotation"
-    || args.action === "repair-semantic-context-annotation-resolution";
+    || args.action === "repair-semantic-context-annotation-resolution"
+    || args.action === "decide-semantic-context-locale-authority";
   const decisionInputAllowed = decisionInputRequired
     || args.action === "correct-semantic-context-element"
     || args.action === "merge-semantic-context-elements";

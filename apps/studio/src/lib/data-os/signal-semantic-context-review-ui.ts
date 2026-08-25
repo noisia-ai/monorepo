@@ -44,7 +44,10 @@ export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_UI =
   "resolve_semantic_context_annotation_with_deliberate_basis" as const;
 export const SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_UI =
   "repair_semantic_context_annotation_resolution_basis" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_LOCALE_AUTHORITY_CONFIRMATION_UI =
+  "apply_semantic_context_locale_authority_decision" as const;
 export type SignalSemanticContextAnnotationResolutionIntentUi = "resolve" | "repair";
+export type SignalSemanticContextLocaleAuthorityDispositionUi = "global" | "locale_specific";
 
 function parseDecisionBasisFormUiV2(form: FormData) {
   const reason = String(form.get("reason") ?? "");
@@ -77,6 +80,28 @@ export function parseSignalSemanticContextAnnotationResolutionFormUiV1(
     : SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_UI;
   if (!basis || form.get("confirmation") !== confirmation) return null;
   return { ...basis, confirmation };
+}
+
+export function parseSignalSemanticContextLocaleAuthorityFormUiV1(
+  form: FormData,
+  permittedLocales: string[]
+) {
+  const basis = parseDecisionBasisFormUiV2(form);
+  const disposition = String(form.get("disposition") ?? "");
+  const localeValue = String(form.get("locale") ?? "");
+  const locale = localeValue.length > 0 ? localeValue : null;
+  if (!basis
+      || (disposition !== "global" && disposition !== "locale_specific")
+      || form.get("confirmation") !== SIGNAL_SEMANTIC_CONTEXT_LOCALE_AUTHORITY_CONFIRMATION_UI
+      || (disposition === "global" && locale !== null)
+      || (disposition === "locale_specific"
+        && (locale === null || !new Set(permittedLocales).has(locale)))) return null;
+  return {
+    ...basis,
+    disposition: disposition as SignalSemanticContextLocaleAuthorityDispositionUi,
+    locale,
+    confirmation: SIGNAL_SEMANTIC_CONTEXT_LOCALE_AUTHORITY_CONFIRMATION_UI
+  };
 }
 
 export function createSignalSemanticContextMutationLockV1() {
@@ -140,7 +165,7 @@ export function signalSemanticContextSelectionWithinVisiblePageV1(args: {
 export function handleSignalSemanticContextDecisionKeyV1(args: {
   key: string;
   busy: boolean;
-  mode: "view" | "approve" | "correct" | "reject" | "annotate" | "resolve_annotation";
+  mode: "view" | "approve" | "correct" | "reject" | "annotate" | "resolve_annotation" | "locale_authority";
   cancel: () => void;
 }) {
   if (args.key !== "Escape" || args.mode === "view" || args.busy) return false;
@@ -185,6 +210,40 @@ export async function submitSignalSemanticContextBulkApprovalFormUiV2(args: {
   const basis = parseSignalSemanticContextBulkApprovalFormUiV2(args.form);
   if (!basis) return false;
   await submitSignalSemanticContextBulkApprovalUiV1({ ...args, ...basis });
+  return true;
+}
+
+export async function submitSignalSemanticContextLocaleAuthorityFormUiV1(args: {
+  form: FormData;
+  request: SignalSemanticContextReviewUiRequest;
+  base: string;
+  generationKey: string;
+  elementKeys: string[];
+  permittedLocales: string[];
+  idempotencyKey: string;
+}) {
+  if (new Set(args.elementKeys).size !== args.elementKeys.length) {
+    throw new Error("semantic_context_duplicate_key");
+  }
+  const keys = [...args.elementKeys].sort();
+  if (keys.length < 1 || keys.length > 15) {
+    throw new Error("semantic_context_locale_decision_scope_invalid");
+  }
+  const decision = parseSignalSemanticContextLocaleAuthorityFormUiV1(args.form, args.permittedLocales);
+  if (!decision) return false;
+  await args.request(`${args.base}/locale-authority`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": args.idempotencyKey },
+    body: JSON.stringify({
+      generation_key: args.generationKey,
+      element_keys: keys,
+      disposition: decision.disposition,
+      locale: decision.locale,
+      reason: decision.reason,
+      rationale: decision.rationale,
+      confirmation: decision.confirmation
+    })
+  });
   return true;
 }
 
@@ -291,7 +350,6 @@ export async function submitSignalSemanticContextMergeUiV1(args: {
     canonical_key: string;
     display_text: string;
     scope: string | null;
-    locale: string | null;
     relation_kind: string | null;
     relation_target_key: string | null;
   };

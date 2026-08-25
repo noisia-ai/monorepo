@@ -69,6 +69,23 @@ test("review filters are closed and reject browser authority fields", () => {
   }
 });
 
+test("global locale filter stays closed and aligned across runtime, UI, and OpenAPI", async () => {
+  const parsed = parseSignalSemanticContextReviewFiltersV1(new URLSearchParams("locale=global"));
+  assert.equal(parsed.locale, "global");
+
+  const [workbench, openApi] = await Promise.all([
+    readFile(resolve(process.cwd(), "src/components/brands/SemanticContextReviewWorkbench.tsx"), "utf8"),
+    readFile(resolve(process.cwd(), "../../docs/api/openapi.yaml"), "utf8")
+  ]);
+  assert.match(workbench, /<option value="global">/u);
+  const reviewPath = openApi.match(
+    /  \/api\/data-os\/signal\/\{workspaceId\}\/semantic-context\/review:\n([\s\S]*?)\n  \/api\/data-os\/signal\/\{workspaceId\}\/semantic-context\/review\/summary:/u
+  )?.[1];
+  assert.ok(reviewPath, "the Semantic Context review GET contract exists");
+  assert.match(reviewPath,
+    /name: locale, in: query, schema: \{ type: string, enum: \[all, explicit, unassigned, global, needs_review\], default: all \}/u);
+});
+
 test("server cursor is stable, filter-bound, and contains no digest or private authority", async () => {
   const rows = Array.from({ length: 21 }, (_, index) => element(index));
   const queryable = fakeQueryable(rows);
@@ -99,13 +116,13 @@ test("server cursor is stable, filter-bound, and contains no digest or private a
 });
 
 test("attention flags are deterministic and explicitly non-authoritative", async () => {
-  const page = await loadSignalSemanticContextReviewPageV1({ queryable: fakeQueryable([element(0)]),
+  const page = await loadSignalSemanticContextReviewPageV1({ queryable: fakeQueryable([element(1)]),
     workspace, actor, generationKey: generation.generation_key,
     filters: parseSignalSemanticContextReviewFiltersV1(new URLSearchParams()) });
   const projected = page.elements[0]!;
   assert.equal(projected.attention.authoritative, false);
   assert.deepEqual(projected.attention.evidence_reasons, ["one_source_only", "supports_only_evidence"]);
-  assert.deepEqual(projected.attention.locale_reasons, ["market_unassigned"]);
+  assert.deepEqual(projected.attention.locale_reasons, ["locale_unassigned", "market_unassigned"]);
   assert.equal(projected.attention.duplicates.authoritative, false);
   assert.equal(page.authority.attention_signals_authoritative, false);
 });

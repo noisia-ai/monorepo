@@ -2753,3 +2753,27 @@ y concurrencia converge en un único successor. El detalle operator-safe marca e
 como `complete`, `missing_historical` o `not_applicable`, y el preflight gratuito añade
 `annotation_resolution_basis_missing` sin escribir. La UI sólo llama al endpoint tras
 reason, rationale y confirmación explícitos; abrir o cancelar el formulario no muta.
+
+### Decisión gobernada locale/global — 69B.5H-B
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+`POST .../semantic-context/locale-authority` requiere `Idempotency-Key` y uno de dos
+comandos cerrados: `global` con `locale: null`, o `locale_specific` con un locale de la
+generación. El payload incluye de 1 a 15 `element_keys` explícitas, un reason cerrado,
+rationale NFC y `apply_semantic_context_locale_authority_decision`. Workspace, actor,
+generation current, snapshots, locales permitidos, authority y digests se resuelven en
+el servidor. La respuesta sólo confirma el cohort pending y una referencia abreviada
+del draft; no devuelve IDs privados ni concede aprobación.
+
+El workbench lista, filtra y detalla el estado operator-safe, pero no preselecciona
+disposición, locale, reason ni confirmación. Cada comando reabre sus hojas como pending;
+la aprobación deliberada posterior conserva una operación separada. El GET gratuito de
+publication preflight añade el contador y blocker cerrado
+`locale_market_required_unresolved` sin escribir.
+
+69B.5H-C retira `locale` de `SignalSemanticContextCorrectionFieldsV2`; ni
+`POST .../corrections` ni `POST .../merge` pueden cambiarlo mediante una corrección
+genérica. Ambas operaciones preservan el locale y lineage actuales. El único contrato
+management-only que acepta una decisión locale/global continúa siendo
+`POST .../locale-authority`, con selección, basis y confirmación explícitas.

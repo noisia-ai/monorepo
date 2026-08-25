@@ -3,13 +3,15 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement, ReactNode } from "react";
 
-import { AnnotationsList, ElementReviewDetail } from "@/components/brands/SemanticContextReviewWorkbench";
+import { AnnotationsList, ElementReviewDetail, LocaleAuthorityPanel } from
+  "@/components/brands/SemanticContextReviewWorkbench";
 
 import {
   createSignalSemanticContextMutationLockV1,
   handleSignalSemanticContextDecisionKeyV1,
   parseSignalSemanticContextApprovalFormUiV2,
   parseSignalSemanticContextAnnotationResolutionFormUiV1,
+  parseSignalSemanticContextLocaleAuthorityFormUiV1,
   signalSemanticContextAnnotationResolutionsV1,
   signalSemanticContextBoundedPendingSelectionV1,
   signalSemanticContextReviewRangeV1,
@@ -19,6 +21,7 @@ import {
   submitSignalSemanticContextDeliberateApprovalUiV2,
   submitSignalSemanticContextAnnotationResolutionFormUiV1,
   submitSignalSemanticContextGuidedRejectUiV1,
+  submitSignalSemanticContextLocaleAuthorityFormUiV1,
   submitSignalSemanticContextMergeUiV1
 } from "./signal-semantic-context-review-ui";
 
@@ -39,7 +42,9 @@ function findElement(root: ReactNode, predicate: (element: ReactElement)=>boolea
 
 const renderedDecisionDetail={element:{element_key:"identity-a",element_kind:"identity_term",
   canonical_key:"identity-a",display_text:"Identity A",scope:"primary_brand",locale:"es-MX",
-  relation_kind:null,relation_target_key:null,disposition:"pending",provenance:{proposed_at:new Date(0).toISOString()}},
+  relation_kind:null,relation_target_key:null,disposition:"pending",provenance:{proposed_at:new Date(0).toISOString()},
+  applicability:{generation_locales:["en-US","es-MX"]},
+  locale_authority:{state:"sealed_existing_locale",locale:"es-MX",lifecycle:"not_decided",basis:null}},
   lineage:{element_version:1,origin:"provider_proposal"},decision_basis:{state:"not_applicable"},
   review_annotations:[],merge_lineage:[],evidence:[]} as never;
 
@@ -111,13 +116,14 @@ test("single approval sends an explicit, normalized decision basis only after fo
 });
 
 test("rendered deliberate approval parses the actual form and only a valid submit writes once", () => {
-  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"="view";
+  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"|"locale_authority"="view";
   let requests=0;
   const t=((key:string)=>key) as never;
   const renderDetail=()=>ElementReviewDetail({activeFormRef:{current:null},busy:null,
     annotationResolutionDraft:null,detail:renderedDecisionDetail,locale:"es-MX",mode,onAnnotate:()=>undefined,
     onApprove:(form)=>{if(parseSignalSemanticContextApprovalFormUiV2(form))requests+=1;},
-    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,onMode:(next)=>{mode=next;},
+    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
+    onLocaleAuthority:()=>undefined,onMode:(next)=>{mode=next;},
     onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
 
   const view=renderDetail();
@@ -161,9 +167,42 @@ test("rendered deliberate approval parses the actual form and only a valid submi
   assert.equal(requests,1,"the explicit valid submit crosses exactly one request boundary");
 });
 
+test("rendered locale authority opens deliberately and only a complete explicit basis writes once", () => {
+  const t=((key:string)=>key) as never;let requests=0;
+  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"|"locale_authority"="view";
+  const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{
+    ...baseElement,disposition:"approved",locale:null,
+    locale_authority:{state:"unresolved",locale:null,lifecycle:"not_decided",basis:null}
+  }} as never;
+  const renderDetail=()=>ElementReviewDetail({activeFormRef:{current:null},annotationResolutionDraft:null,
+    busy:null,detail,locale:"es-MX",mode,onAnnotate:()=>undefined,onApprove:()=>undefined,
+    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
+    onLocaleAuthority:(form)=>{if(parseSignalSemanticContextLocaleAuthorityFormUiV1(
+      form,["en-US","es-MX"]))requests+=1;},
+    onMode:(next)=>{mode=next;},onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
+  const view=renderDetail();
+  const opener=findElement(view,(element)=>element.type==="button"
+    &&Array.isArray(element.props.children)
+    &&element.props.children.includes("reviewWorkbench.localeAuthority.action"));
+  assert.ok(opener,"an approved unresolved leaf exposes the governed locale-authority action");
+  (opener.props as {onClick:()=>void}).onClick();
+  assert.equal(mode,"locale_authority");assert.equal(requests,0,"the first click only opens the form");
+  const form=renderDetail();assert.match(renderToStaticMarkup(form),/admin-drawer-form/u);
+  const invalid=new FormData();invalid.set("disposition","global");invalid.set("reason","semantic_boundary");
+  invalid.set("rationale","Explicit global basis.");
+  (form.props as {onSubmit:(form:FormData)=>void}).onSubmit(invalid);
+  assert.equal(requests,0,"missing confirmation writes nothing");
+  const valid=new FormData();valid.set("disposition","locale_specific");valid.set("locale","es-MX");
+  valid.set("reason","locale_resolution");valid.set("rationale","The operator explicitly selects es-MX.");
+  valid.set("confirmation","apply_semantic_context_locale_authority_decision");
+  (form.props as {onSubmit:(form:FormData)=>void}).onSubmit(valid);
+  assert.equal(requests,1,"one complete locale decision crosses exactly one request boundary");
+});
+
 test("rendered annotation resolution first click only opens a deliberate form", () => {
   const t=((key:string)=>key) as never;let requests=0;
-  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"="view";
+  let mode:"view"|"approve"|"correct"|"reject"|"annotate"|"resolve_annotation"|"locale_authority"="view";
   let draft:unknown=null;
   const annotation={annotation_key:"latency-review",annotation_version:1,annotation_type:"uncertain",
     state:"open",resolution:null,reason:"insufficient_context",rationale:"Earlier annotation rationale.",
@@ -174,7 +213,8 @@ test("rendered annotation resolution first click only opens a deliberate form", 
   const renderDetail=()=>ElementReviewDetail({activeFormRef:{current:null},annotationResolutionDraft:draft as never,
     busy:null,detail,locale:"es-MX",mode,onAnnotate:()=>undefined,onApprove:()=>undefined,
     onBeginResolution:(selected,resolution,intent)=>{draft={annotation:selected,resolution,intent};mode="resolve_annotation";},
-    onCancelResolution:()=>{draft=null;mode="view";},onCorrect:()=>undefined,onMode:(next)=>{mode=next;},
+    onCancelResolution:()=>{draft=null;mode="view";},onCorrect:()=>undefined,onLocaleAuthority:()=>undefined,
+    onMode:(next)=>{mode=next;},
     onReject:()=>undefined,onResolve:(form)=>{if(parseSignalSemanticContextAnnotationResolutionFormUiV1(form,"resolve"))requests+=1;},
     reviewWritable:true,t});
   const view=AnnotationsList({busy:null,items:[annotation] as never,
@@ -228,6 +268,76 @@ test("bulk approval rejects one key, duplicate keys, and scopes above fifteen be
     elementKeys: Array.from({ length: 16 }, (_, index) => `item-${index}`) }),
   /semantic_context_bulk_scope_invalid/u);
   assert.equal(calls, 0);
+});
+
+test("locale authority form is deliberate and submits one homogeneous bounded command", async () => {
+  const invalid = new FormData();
+  invalid.set("disposition", "global");
+  invalid.set("reason", "locale_resolution");
+  invalid.set("rationale", "Reviewed global authority.");
+  assert.equal(parseSignalSemanticContextLocaleAuthorityFormUiV1(invalid, ["en-US", "es-MX"]), null,
+    "missing confirmation cannot cross the request boundary");
+
+  const form = new FormData();
+  form.set("disposition", "locale_specific");
+  form.set("locale", "es-MX");
+  form.set("reason", "locale_resolution");
+  form.set("rationale", "  The same reviewed locale basis applies to this visible selection.  ");
+  form.set("confirmation", "apply_semantic_context_locale_authority_decision");
+  const parsed = parseSignalSemanticContextLocaleAuthorityFormUiV1(form, ["en-US", "es-MX"]);
+  assert.deepEqual(parsed, { disposition: "locale_specific", locale: "es-MX", reason: "locale_resolution",
+    rationale: "The same reviewed locale basis applies to this visible selection.",
+    confirmation: "apply_semantic_context_locale_authority_decision" });
+
+  const calls: Array<{path:string;init:RequestInit}> = [];
+  assert.equal(await submitSignalSemanticContextLocaleAuthorityFormUiV1({ form,
+    request: async(path,init)=>{calls.push({path,init});return{};},base:"/semantic-context",
+    generationKey:"generation-v6",elementKeys:["need-b","need-a"],
+    permittedLocales:["en-US","es-MX"],idempotencyKey:"locale-decision-key" }), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.path, "/semantic-context/locale-authority");
+  assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), {
+    generation_key: "generation-v6", element_keys: ["need-a","need-b"],
+    disposition: "locale_specific", locale: "es-MX", reason: "locale_resolution",
+    rationale: "The same reviewed locale basis applies to this visible selection.",
+    confirmation: "apply_semantic_context_locale_authority_decision"
+  });
+  assert.doesNotMatch(String(calls[0]!.init.body), /workspace_id|authority_digest|actor|provider/u);
+});
+
+test("locale authority UI rejects mixed shapes, invalid locales, duplicates, and more than fifteen keys", async () => {
+  const request = async () => { throw new Error("network must not be reached"); };
+  for (const [disposition, locale] of [["global","es-MX"],["locale_specific","fr-FR"]] as const) {
+    const form = new FormData();form.set("disposition",disposition);form.set("locale",locale);
+    form.set("reason","locale_resolution");form.set("rationale","Reviewed authority.");
+    form.set("confirmation","apply_semantic_context_locale_authority_decision");
+    assert.equal(await submitSignalSemanticContextLocaleAuthorityFormUiV1({form,request,
+      base:"/semantic-context",generationKey:"generation-v6",elementKeys:["a"],
+      permittedLocales:["en-US","es-MX"],idempotencyKey:"locale-decision-key"}),false);
+  }
+  const valid = new FormData();valid.set("disposition","global");valid.set("reason","locale_resolution");
+  valid.set("rationale","Reviewed authority.");
+  valid.set("confirmation","apply_semantic_context_locale_authority_decision");
+  await assert.rejects(submitSignalSemanticContextLocaleAuthorityFormUiV1({form:valid,request,
+    base:"/semantic-context",generationKey:"generation-v6",elementKeys:["a","a"],
+    permittedLocales:["en-US","es-MX"],idempotencyKey:"locale-decision-key"}),/duplicate/u);
+  await assert.rejects(submitSignalSemanticContextLocaleAuthorityFormUiV1({form:valid,request,
+    base:"/semantic-context",generationKey:"generation-v6",
+    elementKeys:Array.from({length:16},(_,index)=>`key-${index}`),permittedLocales:["en-US","es-MX"],
+    idempotencyKey:"locale-decision-key"}),/scope/u);
+});
+
+test("locale authority batch Escape closes without submitting", () => {
+  let cancelled=0;let submitted=0;const t=((key:string)=>key) as never;
+  const panel=LocaleAuthorityPanel({busy:null,elements:[(renderedDecisionDetail as unknown as
+    {element:Record<string,unknown>}).element] as never,
+    permittedLocales:["en-US","es-MX"],onCancel:()=>{cancelled+=1;},
+    onSubmit:()=>{submitted+=1;},t});
+  let prevented=0;
+  (panel.props as {onKeyDown:(event:{key:string;preventDefault:()=>void})=>void}).onKeyDown({
+    key:"Escape",preventDefault:()=>{prevented+=1;}
+  });
+  assert.equal(cancelled,1);assert.equal(prevented,1);assert.equal(submitted,0);
 });
 
 test("bulk approval form requires its real shared basis and checked confirmation before network", async () => {
@@ -302,7 +412,6 @@ test("merge creates only missing near-duplicate annotations before exact N-to-1 
       canonical_key: "canonical-target",
       display_text: "Canonical target",
       scope: "primary_brand",
-      locale: "es-MX",
       relation_kind: null,
       relation_target_key: null
     },

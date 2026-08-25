@@ -9,20 +9,21 @@ import { loadSignalWorkspaceContextForSemanticContextManagement,requireIdempoten
 export const runtime="nodejs";export const dynamic="force-dynamic";
 const key=z.string().regex(/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u).max(200);
 const correction=z.object({canonical_key:key,display_text:z.string().trim().min(1).max(500),
-  scope:z.string().trim().max(200).nullable(),locale:z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/u).nullable(),
+  scope:z.string().trim().max(200).nullable(),
   relation_kind:z.enum(SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS).nullable(),relation_target_key:key.nullable()}).strict();
 const annotationResolutions=z.array(z.object({annotation_key:key,
   resolution:z.enum(SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2)}).strict()).max(100)
   .refine((items)=>new Set(items.map((item)=>item.annotation_key)).size===items.length,
     "annotation_key must be unique");
-const command=z.object({generation_key:key,target_element_key:key,source_element_keys:z.array(key).min(1).max(100),
+const signalSemanticContextMergeCommandV2=z.object({generation_key:key,target_element_key:key,
+  source_element_keys:z.array(key).min(1).max(100),
   reason:z.enum(SIGNAL_SEMANTIC_CONTEXT_REVIEW_REASONS_V2),rationale:z.string().trim().min(1).max(1000),
   target_correction:correction,target_annotation_resolutions:annotationResolutions.optional()}).strict();
 export async function POST(request:Request,context:{params:Promise<{workspaceId:string}>}){
   const params=await context.params;const loaded=await loadSignalWorkspaceContextForSemanticContextManagement(params.workspaceId);
   if("response" in loaded)return loaded.response;const idempotencyKey=requireIdempotencyKey(request);
   if(!idempotencyKey)return semanticContextResponse({error:"idempotency_key_required",message:"Idempotency-Key is required."},400);
-  const parsed=command.safeParse(await request.json().catch(()=>null));
+  const parsed=signalSemanticContextMergeCommandV2.safeParse(await request.json().catch(()=>null));
   if(!parsed.success)return semanticContextResponse({error:"invalid_semantic_context_merge",
     message:"The merge command is invalid."},422);
   try{return semanticContextResponse(await mergeSignalSemanticContextElementsProductV2({workspace:loaded.workspace,

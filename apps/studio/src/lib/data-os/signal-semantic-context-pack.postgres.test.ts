@@ -31,6 +31,7 @@ import {
   annotateSignalSemanticContextElementV2,
   bulkApproveSignalSemanticContextElementsV2,
   correctSignalSemanticContextElementV2,
+  decideSignalSemanticContextLocaleAuthorityV1,
   decideSignalSemanticContextElementV2,
   digestCanonicalJsonV2,
   loadSignalSemanticContextPublicationPreflightV2,
@@ -42,11 +43,13 @@ import {
   rejectSignalSemanticContextElementV2,
   resolveSignalSemanticContextAnnotationV1,
   signalSemanticContextAnnotationStateDigestV1,
+  signalSemanticContextLocaleDecisionElementDigestV1,
   SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_REPAIR_CONFIRMATION_V1,
   SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
   SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONFIRMATION_V1,
   SIGNAL_SEMANTIC_CONTEXT_APPROVAL_CONFIRMATION_V2,
   SIGNAL_SEMANTIC_CONTEXT_BULK_APPROVAL_CONFIRMATION_V2,
+  SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
 import {
@@ -82,7 +85,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
 },async(t)=>{
   assert.ok(DB_URL);requireLocal(DB_URL);
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
-  let migration0097="";let migration0098="";let migration0099="";
+  let migration0097="";let migration0098="";let migration0099="";let migration0100="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -91,6 +94,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       if(file.startsWith("0097_"))migration0097=sql;
       else if(file.startsWith("0098_"))migration0098=sql;
       else if(file.startsWith("0099_"))migration0099=sql;
+      else if(file.startsWith("0100_"))migration0100=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -110,7 +114,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     WHERE workspace_id=$1::uuid AND generation_key=$2) generation`,
   [historicalV1.workspaceId,historicalV1.generationKey]);
   assert.ok(migration0097,"0097 migration is present");assert.ok(migration0098,"0098 migration is present");
-  assert.ok(migration0099,"0099 migration is present");
+  assert.ok(migration0099,"0099 migration is present");assert.ok(migration0100,"0100 migration is present");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -122,6 +126,8 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   [historicalDecision.generationId]);
   const migration0099Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0099Client.connect();
   try{await migration0099Client.query(migration0099);}finally{await migration0099Client.end();}
+  const migration0100Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0100Client.connect();
+  try{await migration0100Client.query(migration0100);}finally{await migration0100Client.end();}
   const historicalAnnotationAfter=await pool.query(`SELECT row_to_json(annotation)::text value FROM (
     SELECT annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,
       related_element_ids,reason_code,rationale,supersedes_annotation_id,operation_id,actor_user_id,created_at
@@ -166,6 +172,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     "annotation_resolution_basis_missing","canonical_collisions","invalid_evidence_refs",
     "decision_basis_missing","invalid_relation_targets","merge_edges","merged","open_annotations","open_near_duplicate",
     "open_uncertainty","pending","approved","rejected","total_leaves","unresolved_competitive_unit",
+    "locale_market_required_unresolved",
     "unresolved_locale"].sort(),"the real PostgreSQL preflight has the exact closed OpenAPI count surface");
   const historicalDetail=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
     workspace:historicalDecision.workspace,actor:historicalDecision.actor,
@@ -305,7 +312,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"edit-product-idempotent",
     generationKey:draft.generation_key,elementKey:"product-main",reason:"operator_correction",
     rationale:"Create the reviewed operator wording.",correction:{canonical_key:"smart-speaker-current",
-      display_text:"Current smart speaker",scope:"primary_brand",locale:"es-MX",
+      display_text:"Current smart speaker",scope:"primary_brand",
       relation_kind:null,relation_target_key:null}}));
   assert.equal(edited.disposition,"pending","an operator edit remains pending");
   await approveElement(fixture,draft.generation_key,"product-main","approve-product-idempotent");
@@ -603,6 +610,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await exerciseProviderAuthorityDriftV2();
   await exercisePublicationPreflightScaleV2();
   await exerciseDeliberateApprovalV2();
+  await exerciseLocaleAuthorityV1();
+  await exerciseDirectLocaleAuthorityMatrixV1();
+  await exerciseLocalePublicationLineageGuardV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -792,7 +802,7 @@ async function exerciseReviewPublicationV2(){
     generationKey:draft.generation_key,targetElementKey:"merge-target",
     sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
     rationale:"Duplicate resolution fixture.",targetCorrection:{canonical_key:"amazon-alexa",
-      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Alexa",scope:"primary_brand",relation_kind:null,
       relation_target_key:null},targetAnnotationResolutions:[
       {annotation_key:"target-uncertain",resolution:"context_sufficient"},
       {annotation_key:"target-uncertain",resolution:"not_supported"}]})),
@@ -811,7 +821,7 @@ async function exerciseReviewPublicationV2(){
     generationKey:draft.generation_key,targetElementKey:"merge-target",
     sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
     rationale:"Merge duplicate identity variants.",targetCorrection:{canonical_key:"amazon-alexa",
-      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Alexa",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}})),/semantic_context_merge_source_annotation_blocked/u);
   assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBeforeFailedMerge,"failed merge is atomic");
@@ -831,7 +841,7 @@ async function exerciseReviewPublicationV2(){
     generationKey:draft.generation_key,targetElementKey:"merge-target",
     sourceElementKeys:["merge-source-a","merge-source-b"],reason:"duplicate_same_concept",
     rationale:"Merge duplicate identity variants.",targetCorrection:{canonical_key:"amazon-alexa",
-      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Alexa",scope:"primary_brand",relation_kind:null,
       relation_target_key:null},targetAnnotationResolutions:[{annotation_key:"target-uncertain",
       resolution:"context_sufficient"}]}));
   assert.equal(merged.merged,2);
@@ -872,7 +882,7 @@ async function exerciseReviewPublicationV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-merged-is-terminal",
     generationKey:draft.generation_key,elementKey:"merge-source-a",reason:"operator_correction",
     rationale:"A merged leaf cannot reopen.",correction:{canonical_key:"alexa-plus",display_text:"Alexa Plus",
-      scope:"primary_brand",locale:"es-MX",relation_kind:null,relation_target_key:null}})),
+      scope:"primary_brand",relation_kind:null,relation_target_key:null}})),
   /semantic_context_merged_terminal/u);
   await transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correction-open-annotation",
@@ -883,7 +893,7 @@ async function exerciseReviewPublicationV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correct-pending",
     generationKey:draft.generation_key,elementKey:"correction-pending",reason:"operator_correction",
     rationale:"Apply the governed canonical wording.",correction:{canonical_key:"amazon-echo",
-      display_text:"Amazon Echo",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Echo",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   const carried=await pool.query<{subject_current:boolean;state:string}>(`SELECT annotation.state,
     annotation.subject_element_id=(SELECT id FROM signal_semantic_context_element_versions element
@@ -952,7 +962,7 @@ async function exerciseReviewPublicationV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-correct-rejected",
     generationKey:draft.generation_key,elementKey:"correction-rejected",reason:"operator_correction",
     rationale:"Reopen a rejected candidate with governed wording.",correction:{canonical_key:"amazon-echo-dot",
-      display_text:"Amazon Echo Dot",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Echo Dot",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   for(const key of ["merge-target","correction-pending","correction-rejected"]){
     await approveElement(fixture,draft.generation_key,key,`v2-approve-${key}`);
@@ -969,7 +979,7 @@ async function exerciseReviewPublicationV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-stale-review-correction",
     generationKey:draft.generation_key,elementKey:"merge-target",reason:"operator_correction",
     rationale:"Reconfirm the reviewed target wording.",correction:{canonical_key:"amazon-alexa",
-      display_text:"Amazon Alexa",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Amazon Alexa",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   await approveElement(fixture,draft.generation_key,"merge-target","v2-stale-review-reapprove");
   await assert.rejects(transaction((queryable)=>publishSignalSemanticContextGenerationV2({queryable,
@@ -1343,6 +1353,374 @@ async function exerciseDeliberateApprovalV2(){
         WHERE successor.supersedes_element_id=element.id)`,[fixture.workspace.id]),hasCode("23514"));
 }
 
+async function exerciseLocaleAuthorityV1(){
+  const fixture=await seedFixture();
+  const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  const localeKeys=Array.from({length:6},(_,index)=>`locale-authority-${index}`);
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"fixture-locale-proposals",
+    generationKey:draft.generation_key,proposals:localeKeys.map((key,index)=>({
+      ...proposal(key,"alias",key,`Locale authority ${index}`,0.5,fixture.profileId),locale:null
+    }))}));
+  for(const [index,key] of localeKeys.entries())await approveElement(
+    fixture,draft.generation_key,key,`locale-authority-initial-approval-${index}`);
+
+  let preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.counts.locale_market_required_unresolved,6);
+  assert.ok(preflight.blockers.includes("locale_market_required_unresolved"));
+
+  const versionsBeforeInvalid=await scalar(`SELECT count(*)::int count
+    FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid AND generation_id=(
+      SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2)`,
+  [fixture.workspace.id,draft.generation_key]);
+  await assert.rejects(transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-invalid-locale",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[0]!],disposition:"locale_specific",
+    locale:"fr-FR",reason:"semantic_boundary",rationale:"A locale outside the sealed generation must fail.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1})),
+  /semantic_context_locale_outside_generation/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid AND generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2)`,[fixture.workspace.id,draft.generation_key]),
+  versionsBeforeInvalid,"invalid locale writes no successor");
+
+  const globalResult=await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-global-one",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[0]!],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"This operator decision explicitly keeps the candidate workspace-global.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}));
+  assert.deepEqual(await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-global-one",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[0]!],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"This operator decision explicitly keeps the candidate workspace-global.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1})),globalResult,
+  "same idempotency key replays the exact locale-authority result");
+
+  const afterGlobalVersions=await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid AND generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2)`,[fixture.workspace.id,draft.generation_key]);
+  await assert.rejects(transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-atomic-stale",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[0]!,localeKeys[1]!],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"Every selected leaf must still be eligible at the same locked boundary.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1})),
+  /semantic_context_locale_decision_not_eligible/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid AND generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2)`,[fixture.workspace.id,draft.generation_key]),
+  afterGlobalVersions,"a stale member rolls the homogeneous batch back atomically");
+
+  await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-es-mx",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[1]!],disposition:"locale_specific",locale:"es-MX",
+    reason:"locale_resolution",rationale:"The operator explicitly scopes this candidate to the sealed es-MX locale.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}));
+  await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-en-us",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[2]!],disposition:"locale_specific",locale:"en-US",
+    reason:"locale_resolution",rationale:"The operator explicitly scopes this candidate to the sealed en-US locale.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}));
+  await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-global-batch",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[3]!,localeKeys[4]!],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"One shared explicit basis governs this bounded homogeneous batch.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}));
+
+  const concurrent=await Promise.allSettled(["a","b"].map((suffix)=>transaction((queryable)=>
+    decideSignalSemanticContextLocaleAuthorityV1({queryable,workspace:fixture.workspace,actor:fixture.actor,
+      idempotencyKey:`locale-authority-concurrent-${suffix}`,generationKey:draft.generation_key,
+      elementKeys:[localeKeys[5]!],disposition:"locale_specific",locale:"es-MX",
+      reason:"locale_resolution",rationale:"Concurrent requests must converge on one current successor.",
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}))));
+  assert.equal(concurrent.filter((entry)=>entry.status==="fulfilled").length,1);
+  assert.equal(concurrent.filter((entry)=>entry.status==="rejected").length,1);
+
+  const reopened=await pool.query<{element_key:string;disposition:string;origin_kind:string;locale:string|null;
+    locale_decision_disposition:string|null;locale_decision_locale:string|null;decided_by_user_id:string|null}>(
+    `SELECT element_key,disposition,origin_kind,locale,locale_decision_disposition,
+      locale_decision_locale,decided_by_user_id::text FROM signal_semantic_context_element_versions element
+     WHERE workspace_id=$1::uuid AND generation_id=(SELECT id FROM signal_semantic_context_generations
+       WHERE workspace_id=$1::uuid AND generation_key=$2)
+       AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+         WHERE successor.supersedes_element_id=element.id)
+     ORDER BY convert_to(element_key,'UTF8')`,[fixture.workspace.id,draft.generation_key]);
+  assert.equal(reopened.rows.length,6);assert.ok(reopened.rows.every((row)=>row.disposition==="pending"));
+  assert.ok(reopened.rows.every((row)=>row.origin_kind==="operator_correction"));
+  assert.ok(reopened.rows.every((row)=>row.decided_by_user_id===null),
+    "locale authority never auto-approves a reopened leaf");
+  assert.equal(reopened.rows.find((row)=>row.element_key===localeKeys[0])?.locale,null);
+  assert.equal(reopened.rows.find((row)=>row.element_key===localeKeys[1])?.locale,"es-MX");
+  assert.equal(reopened.rows.find((row)=>row.element_key===localeKeys[2])?.locale,"en-US");
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_review_annotations
+    WHERE generation_id=(SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid
+      AND generation_key=$2) AND annotation_type='locale_unresolved' AND state='resolved'
+      AND resolution='global'`,[fixture.workspace.id,draft.generation_key]),3);
+
+  await assert.rejects(transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.otherWorkspace,actor:fixture.actor,idempotencyKey:"locale-authority-cross-workspace",
+    generationKey:draft.generation_key,elementKeys:[localeKeys[0]!],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"Cross-workspace authority must fail closed.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1})),/not_found/u);
+
+  for(const [index,key] of localeKeys.entries())await approveElement(
+    fixture,draft.generation_key,key,`locale-authority-deliberate-reapproval-${index}`);
+  preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.counts.locale_market_required_unresolved,0);
+  assert.equal(preflight.blockers.includes("locale_market_required_unresolved"),false);
+  const approved=await pool.query<{disposition:string;locale_decision_contract_version:string|null;
+    decision_contract_version:string|null}>(`SELECT disposition,locale_decision_contract_version,
+      decision_contract_version FROM signal_semantic_context_element_versions element
+    WHERE workspace_id=$1::uuid AND generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2)
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)`,[fixture.workspace.id,draft.generation_key]);
+  assert.equal(approved.rows.length,6);assert.ok(approved.rows.every((row)=>row.disposition==="approved"));
+  assert.ok(approved.rows.every((row)=>row.locale_decision_contract_version!==null));
+  assert.ok(approved.rows.every((row)=>row.decision_contract_version!==null));
+
+  const lineageBeforeGeneric=await pool.query(`SELECT locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions element
+    WHERE workspace_id=$1::uuid AND element_key=$2 AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions child WHERE child.supersedes_element_id=element.id)`,
+  [fixture.workspace.id,localeKeys[1]]);
+  await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-generic-correction",
+    generationKey:draft.generation_key,elementKey:localeKeys[1]!,reason:"operator_correction",
+    rationale:"A generic wording correction must preserve the sealed locale authority.",
+    correction:{canonical_key:"locale-authority-one-corrected",display_text:"Locale authority one corrected",
+      scope:"primary_brand",relation_kind:null,relation_target_key:null}}));
+  const lineageAfterGeneric=await pool.query(`SELECT locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions element
+    WHERE workspace_id=$1::uuid AND element_key=$2 AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions child WHERE child.supersedes_element_id=element.id)`,
+  [fixture.workspace.id,localeKeys[1]]);
+  assert.deepEqual(lineageAfterGeneric.rows,lineageBeforeGeneric.rows,
+    "generic correction preserves locale and all eleven locale-decision columns byte-for-byte");
+  await approveElement(fixture,draft.generation_key,localeKeys[1]!,"locale-authority-generic-reapproval");
+  preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.counts.locale_market_required_unresolved,0,
+    "preserved dedicated lineage remains publication-valid after generic correction and reapproval");
+
+  const versionsBeforeBypass=await scalar(`SELECT count(*)::int count
+    FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid`,[fixture.workspace.id]);
+  const bypassInsert=`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,canonical_key,
+    display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,confidence,disposition,origin_kind,
+    supersedes_element_id,original_proposal_element_id,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+    locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest)
+    SELECT workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version+1,element_kind,
+      canonical_key,display_text,scope,entity_type,entity_id,$3,relation_kind,relation_target_key,confidence,
+      'pending','operator_correction',id,COALESCE(original_proposal_element_id,id),source_refs_digest,element_digest,
+      $5::uuid,proposed_by_user_id,locale_decision_contract_version,locale_decision_disposition,
+      locale_decision_locale,$4,locale_decision_rationale,locale_decision_basis_digest,
+      locale_decision_input_digest,locale_decision_authority_snapshot,locale_decision_authority_digest,
+      locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions element WHERE workspace_id=$1::uuid AND element_key=$2
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions child
+        WHERE child.supersedes_element_id=element.id)`;
+  const attemptGenericLocaleBypass=async(locale:string,reason:string|null)=>transaction(async(queryable)=>{
+    const operation=await queryable.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+      VALUES($1::uuid,$2::uuid,'correct-semantic-context-element',$3,$4,'in_progress') RETURNING id::text`,
+    [fixture.workspace.id,fixture.actor.id,digest(`generic-locale-bypass-request:${locale}:${reason}`),
+      digest(`generic-locale-bypass-key:${locale}:${reason}`)]);
+    await queryable.query(bypassInsert,[fixture.workspace.id,localeKeys[1],locale,reason,operation.rows[0]!.id]);
+  });
+  await assert.rejects(attemptGenericLocaleBypass("fr-FR",
+    lineageAfterGeneric.rows[0]!.locale_decision_reason_code),
+  hasCodeAndMessage("23514",/preserve locale authority byte-for-byte/u),
+  "direct SQL cannot mutate locale outside the dedicated authority operation");
+  await assert.rejects(attemptGenericLocaleBypass("es-MX","operator_correction"),
+  hasCodeAndMessage("23514",/preserve locale authority byte-for-byte/u),
+  "direct SQL cannot mutate one locale-lineage field under a generic successor");
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBeforeBypass,
+  "causal direct-SQL negatives roll back without graph drift");
+
+  await seedOpenNearDuplicateAnnotation(fixture,draft.generation_key,localeKeys[2]!,localeKeys[1]!,
+    "locale-authority-merge-lineage");
+  const mergeLineageBefore=await pool.query(`SELECT element_key,locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions element
+    WHERE workspace_id=$1::uuid AND element_key=ANY($2::text[]) AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions child WHERE child.supersedes_element_id=element.id)
+    ORDER BY element_key`,[fixture.workspace.id,[localeKeys[1],localeKeys[2]]]);
+  await transaction((queryable)=>mergeSignalSemanticContextElementsV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-authority-generic-merge",
+    generationKey:draft.generation_key,targetElementKey:localeKeys[1]!,sourceElementKeys:[localeKeys[2]!],
+    reason:"duplicate_same_concept",rationale:"Merge while preserving each predecessor locale lineage.",
+    targetCorrection:{canonical_key:"locale-authority-one-merged",display_text:"Locale authority one merged",
+      scope:"primary_brand",relation_kind:null,relation_target_key:null}}));
+  const mergeLineageAfter=await pool.query(`SELECT element_key,locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions element
+    WHERE workspace_id=$1::uuid AND element_key=ANY($2::text[]) AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions child WHERE child.supersedes_element_id=element.id)
+    ORDER BY element_key`,[fixture.workspace.id,[localeKeys[1],localeKeys[2]]]);
+  assert.deepEqual(mergeLineageAfter.rows,mergeLineageBefore.rows,
+    "generic N-to-1 merge preserves target and source locale lineage byte-for-byte");
+
+  const directInput={contract_version:"signal-semantic-context-locale-decision-v1",
+    generation_key:draft.generation_key,element_keys:[localeKeys[0]],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"A completed operation without its exact graph must fail at commit.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1};
+  await assert.rejects(transaction(async(queryable)=>{
+    const operation=await queryable.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+      semantic_context_decision_input,semantic_context_decision_input_digest)
+      VALUES($1::uuid,$2::uuid,'decide-semantic-context-locale-authority',$3,$4,'in_progress',$5::jsonb,$6)
+      RETURNING id::text`,[fixture.workspace.id,fixture.actor.id,digest("locale-direct-request"),
+      digest("locale-direct-key"),JSON.stringify(directInput),digestCanonicalJsonV2(directInput)]);
+    await queryable.query(`UPDATE signal_governance_control_operations SET status='completed',completed_at=clock_timestamp(),
+      result=$2::jsonb WHERE id=$1::uuid`,[operation.rows[0]!.id,JSON.stringify({generation_key:draft.generation_key,
+      decided:1,disposition:"global",locale:null,pending:1,draft_digest_ref:"sha256:forged"})]);
+  }),/Locale authority successor cohort is incomplete or heterogeneous/u,
+  "the deferred PostgreSQL backstop rejects a completed writer operation without its exact graph");
+  const immutableTarget=(await pool.query<{id:string}>(`SELECT id::text FROM signal_semantic_context_element_versions
+    WHERE workspace_id=$1::uuid AND locale_decision_contract_version IS NOT NULL LIMIT 1`,[fixture.workspace.id])).rows[0]!.id;
+  await assert.rejects(pool.query(`UPDATE signal_semantic_context_element_versions
+    SET locale_decision_rationale='tampered' WHERE id=$1::uuid`,[immutableTarget]),hasCode("55000"));
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
+
+  const staleFixture=await seedFixture();
+  const staleInitial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:staleFixture.workspace,actor:staleFixture.actor,idempotencyKey:"locale-stale-initial"}));
+  const staleLineage=await fullLineageForDraft(staleFixture,staleInitial.generation_key,terminalPreflightConfiguration);
+  const staleDraft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:staleFixture.workspace,actor:staleFixture.actor,idempotencyKey:"locale-stale-lineage",
+    reason:"provider_lineage_missing",proposalLineage:staleLineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:staleFixture.workspace,actor:staleFixture.actor,idempotencyKey:"locale-stale-proposal",
+    generationKey:staleDraft.generation_key,proposals:[{
+      ...proposal("locale-stale","alias","locale-stale","Locale stale",0.5,staleFixture.profileId),locale:null}]}));
+  await approveElement(staleFixture,staleDraft.generation_key,"locale-stale","locale-stale-approval");
+  await pool.query(`UPDATE brand_os_profiles SET metadata=jsonb_set(metadata,'{snapshot_hash}',to_jsonb($2::text),true)
+    WHERE id=$1::uuid`,[staleFixture.profileId,digest("locale-authority-brand-os-drift")]);
+  await assert.rejects(transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:staleFixture.workspace,actor:staleFixture.actor,idempotencyKey:"locale-stale-blocked",
+    generationKey:staleDraft.generation_key,elementKeys:["locale-stale"],disposition:"global",locale:null,
+    reason:"semantic_boundary",rationale:"A stale generation cannot receive locale authority.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1})),
+  /semantic_context_authority_drift/u);
+}
+
+async function exerciseDirectLocaleAuthorityMatrixV1(){
+  const fixture=await seedFixture();
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"direct-locale-matrix-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"direct-locale-matrix-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  const keys=["direct-locale-a","direct-locale-b","direct-locale-c","direct-locale-control"];
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"direct-locale-matrix-proposals",
+    generationKey:draft.generation_key,proposals:keys.map((key)=>({
+      ...proposal(key,"alias",key,key,0.5,fixture.profileId),locale:null}))}));
+  for(const [index,key] of keys.entries())await approveElement(fixture,draft.generation_key,key,
+    `direct-locale-matrix-approval-${index}`);
+  const before=await directDecisionState(fixture.workspace.id,draft.generation_key);
+  const cases:Array<{label:string;inputKeys:string[];successorKeys:string[];disposition:"global"|"locale_specific";
+    locale:string|null;mutation?:DirectLocaleGraphMutation;message:RegExp}>=[
+    {label:"partial successor",inputKeys:[keys[0]!,keys[1]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",message:/successor cohort is incomplete/u},
+    {label:"substituted successor",inputKeys:[keys[0]!,keys[1]!],successorKeys:[keys[0]!,keys[2]!],
+      disposition:"locale_specific",locale:"es-MX",message:/successor cohort is incomplete/u},
+    {label:"extra successor",inputKeys:[keys[0]!],successorKeys:[keys[0]!,keys[1]!],
+      disposition:"locale_specific",locale:"es-MX",message:/successor cohort is incomplete/u},
+    {label:"missing global annotation",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"global",locale:null,mutation:{omitAnnotation:true},message:/global-resolution cohort is incomplete/u},
+    {label:"extra annotation",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{extraAnnotation:true},message:/locale authority|annotation/iu},
+    {label:"missing event",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{omitEvent:true},message:/event cohort is incomplete/u},
+    {label:"extra event",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{extraEvent:true},message:/event cohort is incomplete/u},
+    {label:"wrong event digest",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{wrongEventPrevious:true},message:/event cohort is incomplete/u},
+    {label:"wrong result",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{wrongResultCount:true},message:/result or draft seal is incomplete/u},
+    {label:"wrong draft digest",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{wrongStoredDraft:true},message:/result or draft seal is incomplete/u}
+  ];
+  for(const testCase of cases){
+    await assert.rejects(attemptDirectLocaleAuthorityGraph(fixture,draft.generation_key,testCase),
+      hasCodeAndMessage("23514",testCase.message),testCase.label);
+    assert.deepEqual(await directDecisionState(fixture.workspace.id,draft.generation_key),before,
+      `${testCase.label} rolls back without graph drift`);
+  }
+  assert.deepEqual(await attemptDirectLocaleAuthorityGraph(fixture,draft.generation_key,{
+    inputKeys:[keys[3]!],successorKeys:[keys[3]!],disposition:"locale_specific",locale:"en-US"}),
+  {committed:true},"the causally complete direct-SQL control commits");
+}
+
+async function exerciseLocalePublicationLineageGuardV1(){
+  const fixture=await seedFixture();
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-lineage-guard-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-lineage-guard-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  await transaction((queryable)=>appendSignalSemanticContextProposalsV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"locale-lineage-guard-proposals",
+    generationKey:draft.generation_key,proposals:[
+      {...proposal("locale-historical-bypass","alias","locale-historical-bypass","Historical bypass",0.5,
+        fixture.profileId),locale:null},
+      {...proposal("locale-variant-en","locale_variant","locale-variant-en","English variant",0.5,
+        fixture.profileId),locale:"en-US"},
+      {...proposal("locale-variant-es","locale_variant","locale-variant-es","Spanish variant",0.5,
+        fixture.profileId),locale:"es-MX"}
+    ]}));
+  for(const [index,key] of ["locale-historical-bypass","locale-variant-en","locale-variant-es"].entries())
+    await approveElement(fixture,draft.generation_key,key,`locale-lineage-guard-approval-${index}`);
+  let preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.counts.locale_market_required_unresolved,1,
+    "the two legitimate provider-origin locale variants pass while the null-locale leaf remains blocked");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");await client.query("SET LOCAL session_replication_role='replica'");
+    await client.query(`UPDATE signal_semantic_context_element_versions SET locale='es-MX'
+      WHERE workspace_id=$1::uuid AND element_key='locale-historical-bypass' AND disposition='approved'
+        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions child
+          WHERE child.supersedes_element_id=signal_semantic_context_element_versions.id)`,[fixture.workspace.id]);
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
+  preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.counts.locale_market_required_unresolved,1,
+    "a historical operator-derived es-MX value remains blocked without dedicated lineage");
+  assert.ok(preflight.blockers.includes("locale_market_required_unresolved"));
+}
+
 async function exercisePublicationPreflightScaleV2(){
   const fixture=await seedFixture();
   const protectedBefore=await protectedCounts(fixture.workspace.id);
@@ -1406,7 +1784,7 @@ async function exerciseMutationAuthorityDriftV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-correction-blocked",
     generationKey:draft.generation_key,elementKey:"drift-target",reason:"operator_correction",
     rationale:"A stale authority must block correction.",correction:{canonical_key:"drift-target",
-      display_text:"Drift target",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Drift target",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}})),/semantic_context_authority_drift/u);
   await assert.rejects(transaction((queryable)=>annotateSignalSemanticContextElementV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-annotation-blocked",
@@ -1424,7 +1802,7 @@ async function exerciseMutationAuthorityDriftV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-drift-merge-blocked",
     generationKey:draft.generation_key,targetElementKey:"drift-target",sourceElementKeys:["drift-source"],
     reason:"duplicate_same_concept",rationale:"Stale authority blocks merge.",targetCorrection:{
-      canonical_key:"drift-target",display_text:"Drift target",scope:"primary_brand",locale:"es-MX",
+      canonical_key:"drift-target",display_text:"Drift target",scope:"primary_brand",
       relation_kind:null,relation_target_key:null}})),/semantic_context_authority_drift/u);
   assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
     WHERE workspace_id=$1::uuid`,[fixture.workspace.id]),versionsBefore);
@@ -1513,13 +1891,13 @@ async function exerciseRelationTargetAuthorityV2(){
     generationKey:draft.generation_key,targetElementKey:"relation-merge-target",
     sourceElementKeys:["relation-target-merged"],reason:"duplicate_same_concept",
     rationale:"Merge relation target fixture.",targetCorrection:{canonical_key:"merge-target",
-      display_text:"Merge target",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Merge target",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   await transaction((queryable)=>correctSignalSemanticContextElementV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-correct-successor",
     generationKey:draft.generation_key,elementKey:"relation-target-superseded",reason:"operator_correction",
     rationale:"Create a current successor for target resolution.",correction:{canonical_key:"target-superseded-current",
-      display_text:"Target superseded current",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Target superseded current",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   await approveElement(fixture,draft.generation_key,"relation-target-superseded",
     "v2-relation-approve-successor");
@@ -1533,7 +1911,7 @@ async function exerciseRelationTargetAuthorityV2(){
     workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"v2-relation-target-change",
     generationKey:draft.generation_key,elementKey:"relation-target-approved",reason:"operator_correction",
     rationale:"Changing target authority invalidates the prior preflight.",correction:{canonical_key:"target-approved-v2",
-      display_text:"Target approved v2",scope:"primary_brand",locale:"es-MX",relation_kind:null,
+      display_text:"Target approved v2",scope:"primary_brand",relation_kind:null,
       relation_target_key:null}}));
   const changed=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
     workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
@@ -1576,7 +1954,7 @@ async function exerciseMixedStateMergeV2(){
     generationKey:draft.generation_key,targetElementKey:"mixed-target",
     sourceElementKeys:["mixed-approved","mixed-rejected"],reason:"duplicate_same_concept",
     rationale:"Resolve reviewed same-kind variants into one pending target.",targetCorrection:{
-      canonical_key:"mixed-target",display_text:"Mixed target",scope:"primary_brand",locale:"es-MX",
+      canonical_key:"mixed-target",display_text:"Mixed target",scope:"primary_brand",
       relation_kind:null,relation_target_key:null}}));
   assert.deepEqual(await counts(),[{disposition:"merged",count:2},{disposition:"pending",count:1}],
   "mixed approved/rejected sources reconcile to merged while total leaves remain constant");
@@ -1824,6 +2202,146 @@ async function directDecisionState(workspaceId:string,generationKey:string){
 }
 
 const shortDirectDigest=(value:string)=>`${value.slice(0,15)}…${value.slice(-8)}`;
+
+type DirectLocaleGraphMutation={omitEvent?:boolean;extraEvent?:boolean;omitAnnotation?:boolean;
+  extraAnnotation?:boolean;wrongEventPrevious?:boolean;wrongResultCount?:boolean;wrongStoredDraft?:boolean};
+
+async function attemptDirectLocaleAuthorityGraph(fixture:Awaited<ReturnType<typeof seedFixture>>,
+  generationKey:string,args:{inputKeys:string[];successorKeys:string[];disposition:"global"|"locale_specific";
+    locale:string|null;mutation?:DirectLocaleGraphMutation}){
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const generation=(await client.query<{id:string;generation_key:string;brand_os_digest:string;
+      knowledge_digest:string;locale_context_digest:string;proposal_provider_lineage:unknown;
+      proposal_provider_lineage_digest:string}>(`SELECT id::text,generation_key,brand_os_digest,knowledge_digest,
+      locale_context_digest,proposal_provider_lineage,proposal_provider_lineage_digest
+      FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2`,
+    [fixture.workspace.id,generationKey])).rows[0]!;
+    const keys=[...args.inputKeys].sort();const basis={contract_version:"signal-semantic-context-locale-decision-v1" as const,
+      disposition:args.disposition,locale:args.locale,reason:"locale_resolution" as const,
+      rationale:"Direct SQL control seals one explicit locale authority basis."};
+    const input={...basis,generation_key:generationKey,element_keys:keys,
+      confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1};
+    const inputDigest=digestCanonicalJsonV2(input);
+    const operation=(await client.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+      semantic_context_decision_input,semantic_context_decision_input_digest)
+      VALUES($1::uuid,$2::uuid,'decide-semantic-context-locale-authority',$3,$4,'in_progress',$5::jsonb,$6)
+      RETURNING id::text`,[fixture.workspace.id,fixture.actor.id,digest(`direct-locale-request:${randomUUID()}`),
+      digest(`direct-locale-key:${randomUUID()}`),JSON.stringify(input),inputDigest])).rows[0]!;
+    const authority={brand_os_digest:generation.brand_os_digest,knowledge_digest:generation.knowledge_digest,
+      locale_context_digest:generation.locale_context_digest,
+      proposal_provider_lineage:generation.proposal_provider_lineage,
+      proposal_provider_lineage_digest:generation.proposal_provider_lineage_digest,
+      actor:{id:fixture.actor.id.toLowerCase(),user_type:fixture.actor.userType,
+        primary_role:fixture.actor.primaryRole}};
+    const authorityDigest=digestCanonicalJsonV2(authority);const basisDigest=digestCanonicalJsonV2(basis);
+    const created:Array<{id:string;key:string;previous:string;next:string}>=[];
+    for(const key of args.successorKeys){
+      const current=(await client.query<{id:string;artifact_id:string;evidence_group_id:string;element_key:string;
+        element_version:number;element_kind:string;canonical_key:string;display_text:string;scope:string|null;
+        entity_type:string|null;entity_id:string|null;relation_kind:string|null;relation_target_key:string|null;
+        confidence:string|null;original_proposal_element_id:string|null;source_refs_digest:string;element_digest:string}>(
+        `SELECT id::text,artifact_id::text,evidence_group_id::text,element_key,element_version,element_kind,
+        canonical_key,display_text,scope,entity_type,entity_id::text,relation_kind,relation_target_key,confidence::text,
+        original_proposal_element_id::text,source_refs_digest,element_digest
+        FROM signal_semantic_context_element_versions element WHERE generation_id=$1::uuid AND element_key=$2
+          AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+            WHERE successor.supersedes_element_id=element.id) FOR UPDATE`,[generation.id,key])).rows[0]!;
+      const definition={element_key:current.element_key,element_kind:current.element_kind,
+        canonical_key:current.canonical_key,display_text:current.display_text,scope:current.scope,
+        entity_type:current.entity_type,entity_id:current.entity_id,locale:args.locale,
+        relation_kind:current.relation_kind,relation_target_key:current.relation_target_key};
+      const elementDigest=signalSemanticContextLocaleDecisionElementDigestV1({definition,
+        elementVersion:current.element_version+1,sourceRefsDigest:current.source_refs_digest,basis});
+      const artifact=(await client.query<{id:string}>(`INSERT INTO analysis_artifacts(workspace_id,
+        workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,content,confidence,
+        review_status,revision,metadata) VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',
+        $4::jsonb,$5,'needs_review',$6,$7::jsonb) RETURNING id::text`,[fixture.workspace.id,elementDigest,
+        `direct-locale-${operation.id}-${key}`,JSON.stringify(definition),current.confidence,current.element_version+1,
+        JSON.stringify({authority_only:true,confidence_authoritative:false,locale_decision_basis_digest:basisDigest})])).rows[0]!;
+      const group=(await client.query<{id:string}>(`INSERT INTO analysis_evidence_groups(artifact_id,group_key,role,
+        label,summary,position,metadata) VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,
+        jsonb_build_object('source_refs_digest',$2::text)) RETURNING id::text`,
+      [artifact.id,current.source_refs_digest])).rows[0]!;
+      await client.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,relation_type,
+        evidence_role,quote,locator,position,metadata) SELECT $1::uuid,source_type,source_id,relation_type,
+        evidence_role,quote,locator,position,metadata FROM analysis_evidence_links WHERE evidence_group_id=$2::uuid`,
+      [group.id,current.evidence_group_id]);
+      const successor=(await client.query<{id:string}>(`INSERT INTO signal_semantic_context_element_versions(
+        workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,canonical_key,
+        display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,confidence,disposition,origin_kind,
+        supersedes_element_id,original_proposal_element_id,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+        locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+        locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+        locale_decision_authority_snapshot,locale_decision_authority_digest,
+        locale_decision_prestate_digest,locale_decision_poststate_digest)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$15,$16,
+        'pending','operator_correction',$17::uuid,$18::uuid,$19,$20,$21::uuid,$22::uuid,$23,$24,$25,$26,$27,$28,
+        $29,$30::jsonb,$31,$32,$33) RETURNING id::text`,[fixture.workspace.id,generation.id,artifact.id,group.id,
+        current.element_key,current.element_version+1,current.element_kind,current.canonical_key,current.display_text,
+        current.scope,current.entity_type,current.entity_id,args.locale,current.relation_kind,current.relation_target_key,
+        current.confidence,current.id,current.original_proposal_element_id??current.id,current.source_refs_digest,
+        elementDigest,operation.id,fixture.actor.id,basis.contract_version,basis.disposition,basis.locale,basis.reason,
+        basis.rationale,basisDigest,inputDigest,JSON.stringify(authority),authorityDigest,current.element_digest,
+        elementDigest])).rows[0]!;
+      created.push({id:successor.id,key,previous:current.element_digest,next:elementDigest});
+      if(args.disposition==="global"&&!args.mutation?.omitAnnotation){
+        const annotationKey=`locale-authority.${createHash("sha256").update(key).digest("hex")}`;
+        const resolutionBasis={contract_version:SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTION_CONTRACT_V1,
+          annotation_type:"locale_unresolved" as const,resolution:"global" as const,
+          reason:basis.reason,rationale:basis.rationale};
+        const annotationState={annotation_key:annotationKey,annotation_version:1,
+          annotation_type:"locale_unresolved" as const,state:"resolved" as const,resolution:"global" as const,
+          subject_element_id:successor.id,related_element_ids:[],reason_code:basis.reason,rationale:basis.rationale,
+          resolution_contract_version:resolutionBasis.contract_version,
+          resolution_basis_digest:digestCanonicalJsonV2(resolutionBasis),resolution_input_digest:inputDigest,
+          resolution_authority_digest:authorityDigest};
+        await client.query(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
+          annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,
+          reason_code,rationale,operation_id,actor_user_id,resolution_contract_version,resolution_basis_digest,
+          resolution_input_digest,resolution_authority_snapshot,resolution_authority_digest,
+          resolution_prestate_digest,resolution_poststate_digest)
+          VALUES($1::uuid,$2::uuid,$3,1,'locale_unresolved','resolved','global',$4::uuid,'{}'::uuid[],$5,$6,
+          $7::uuid,$8::uuid,$9,$10,$11,$12::jsonb,$13,$14,$15)`,[fixture.workspace.id,generation.id,annotationKey,
+          successor.id,basis.reason,basis.rationale,operation.id,fixture.actor.id,resolutionBasis.contract_version,
+          digestCanonicalJsonV2(resolutionBasis),inputDigest,JSON.stringify(authority),authorityDigest,
+          digestCanonicalJsonV2({contract_version:"signal-semantic-context-annotation-absent-v1",annotation_key:annotationKey}),
+          signalSemanticContextAnnotationStateDigestV1(annotationState)]);
+      }
+    }
+    if(args.mutation?.extraAnnotation&&created[0]){
+      await client.query(`INSERT INTO signal_semantic_context_review_annotations(workspace_id,generation_id,
+        annotation_key,annotation_version,annotation_type,state,resolution,subject_element_id,related_element_ids,
+        reason_code,rationale,operation_id,actor_user_id) VALUES($1::uuid,$2::uuid,'locale-authority.extra',1,
+        'locale_unresolved','open',NULL,$3::uuid,'{}'::uuid[],'locale_resolution','Extra annotation.',$4::uuid,$5::uuid)`,
+      [fixture.workspace.id,generation.id,created[0].id,operation.id,fixture.actor.id]);
+    }
+    for(const [index,entry] of created.entries())if(!args.mutation?.omitEvent){
+      await client.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,operation_id,
+        event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'locale_authority_decided',$6,$7,$8::uuid)`,
+      [fixture.workspace.id,generation.id,entry.id,operation.id,index,
+        args.mutation?.wrongEventPrevious?digest("wrong-locale-prestate"):entry.previous,entry.next,fixture.actor.id]);
+    }
+    if(args.mutation?.extraEvent&&created[0])await client.query(`INSERT INTO signal_semantic_context_events(
+      workspace_id,generation_id,element_id,operation_id,event_index,event_kind,previous_state_digest,
+      next_state_digest,actor_user_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,99,
+      'locale_authority_decided',$5,$6,$7::uuid)`,[fixture.workspace.id,generation.id,created[0].id,operation.id,
+      created[0].previous,created[0].next,fixture.actor.id]);
+    const postDigest=await directDraftDigest(client,generation.id);
+    const storedDigest=args.mutation?.wrongStoredDraft?digest("wrong-locale-draft"):postDigest;
+    await client.query(`UPDATE signal_semantic_context_generations SET draft_digest=$2 WHERE id=$1::uuid`,
+    [generation.id,storedDigest]);
+    const result={generation_key:generationKey,decided:args.mutation?.wrongResultCount?created.length+1:created.length,
+      disposition:args.disposition,locale:args.locale,pending:created.length,draft_digest_ref:shortDirectDigest(postDigest)};
+    await client.query(`UPDATE signal_governance_control_operations SET status='completed',result=$2::jsonb,
+      completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[operation.id,JSON.stringify(result)]);
+    await client.query("COMMIT");return{committed:true as const};
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
+}
 
 async function attemptDirectDecisionGraph(
   fixture:Awaited<ReturnType<typeof seedFixture>>,generationKey:string,spec:DirectDecisionGraphSpec){
@@ -2122,9 +2640,9 @@ async function fullLineageForDraft(fixture:Awaited<ReturnType<typeof seedFixture
   return buildSignalSemanticContextProposalRuntimeLineageV1(configuration,prepared.capacity);
 }
 
-function proposal(elementKey:string,kind:"identity_term"|"alias"|"product"|"need"|"friction",
+function proposal(elementKey:string,kind:"identity_term"|"alias"|"product"|"need"|"friction"|"locale_variant",
   canonicalKey:string,displayText:string,confidence:number,sourceId:string){
-  const sourceType=kind==="identity_term"||kind==="alias"?"brand_os_profile":kind==="product"?"brand_os_product":
+  const sourceType=kind==="identity_term"||kind==="alias"||kind==="locale_variant"?"brand_os_profile":kind==="product"?"brand_os_product":
     kind==="need"?"knowledge_chunk":"knowledge_source";
   return{element_key:elementKey,element_kind:kind,canonical_key:canonicalKey,display_text:displayText,
     scope:"primary_brand",entity_type:null,entity_id:null,locale:"es-MX",relation_kind:null,
@@ -2245,7 +2763,7 @@ async function seedFixture(){const suffix=randomUUID().slice(0,8);const orgId=ra
   const planId=randomUUID(),planDigest=digest("plan"),identityDigest=digest("identity");
   const planOperationKey=digest("plan-operation-key");
   const brief={contract_version:"signal-acquisition-brief-v1",objective:"Understand governed context",
-    purpose:"Local integration",market:"MX",countries:["MX"],languages:["es-MX"],
+    purpose:"Local integration",market:"MX",countries:["MX","US"],languages:["es-MX","en-US"],
     timezone:"America/Mexico_City",default_capture_period:null,target_window_months:null,
     construction_mode:"exploratory",brand_os_profile_version:1,brand_os_digest:brandOsDigest,
     identity_catalog_digest:identityDigest,knowledge_context_digest:digest("brief-knowledge"),

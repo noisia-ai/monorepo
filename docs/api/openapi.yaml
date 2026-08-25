@@ -1930,7 +1930,7 @@ paths:
         - { name: disposition, in: query, schema: { type: string, enum: [pending, approved, rejected, merged] } }
         - { name: element_kind, in: query, schema: { type: string } }
         - { name: scope, in: query, schema: { type: string } }
-        - { name: locale, in: query, schema: { type: string, enum: [all, explicit, unassigned, needs_review], default: all } }
+        - { name: locale, in: query, schema: { type: string, enum: [all, explicit, unassigned, global, needs_review], default: all } }
         - { name: evidence, in: query, schema: { type: string, enum: [all, needs_review, one_source_only, supports_only, has_limits, has_contradictions], default: all } }
         - { name: duplicate, in: query, schema: { type: string, enum: [all, exact, display], default: all } }
         - { name: evidence_relation, in: query, schema: { type: string, enum: [supports, limits, contradicts] } }
@@ -2150,6 +2150,25 @@ paths:
         "410": { description: The legacy browser edit command is retired; use the append-only correction endpoint. }
         "409": { description: "Draft, state, drift or replay conflict." }
         "422": { description: Closed command rejected. }
+  /api/data-os/signal/{workspaceId}/semantic-context/locale-authority:
+    post:
+      tags: [Semantic Context Pack]
+      operationId: decideSemanticContextLocaleAuthorityV1
+      summary: Reopen one to 15 approved leaves with one explicit governed global or locale-specific basis.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalSemanticContextLocaleAuthorityDecisionV1" }
+      responses:
+        "200": { description: Exact append-only pending successor cohort; no leaf is approved automatically. }
+        "403": { description: Management authority or workspace access denied. }
+        "409": { description: Draft, current leaf, drift, concurrency or replay precondition rejected. }
+        "422": { description: Closed disposition, locale, basis, confirmation or bounded cohort rejected. }
   /api/data-os/signal/{workspaceId}/semantic-context/publish/preflight:
     get:
       tags: [Semantic Context Pack]
@@ -2662,15 +2681,38 @@ components:
             reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
             rationale: { type: string, minLength: 1, maxLength: 1000 }
             confirmation: { const: apply_shared_decision_basis_to_all_selected_elements }
+    SignalSemanticContextLocaleAuthorityDecisionV1:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [generation_key, element_keys, disposition, locale, reason, rationale, confirmation]
+          properties:
+            generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+            element_keys: { type: array, minItems: 1, maxItems: 15, uniqueItems: true, items: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 } }
+            disposition: { const: global }
+            locale: { type: "null" }
+            reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+            rationale: { type: string, minLength: 1, maxLength: 1000 }
+            confirmation: { const: apply_semantic_context_locale_authority_decision }
+        - type: object
+          additionalProperties: false
+          required: [generation_key, element_keys, disposition, locale, reason, rationale, confirmation]
+          properties:
+            generation_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
+            element_keys: { type: array, minItems: 1, maxItems: 15, uniqueItems: true, items: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 } }
+            disposition: { const: locale_specific }
+            locale: { type: string, pattern: '^[a-z]{2,3}(?:-[A-Z]{2})?$' }
+            reason: { type: string, enum: [duplicate_same_concept, alias_or_variant, canonicalization, semantic_boundary, locale_resolution, competitive_unit_resolution, insufficient_context, operator_correction] }
+            rationale: { type: string, minLength: 1, maxLength: 1000 }
+            confirmation: { const: apply_semantic_context_locale_authority_decision }
     SignalSemanticContextCorrectionFieldsV2:
       type: object
       additionalProperties: false
-      required: [canonical_key, display_text, scope, locale, relation_kind, relation_target_key]
+      required: [canonical_key, display_text, scope, relation_kind, relation_target_key]
       properties:
         canonical_key: { type: string, pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
         display_text: { type: string, minLength: 1, maxLength: 500 }
         scope: { type: [string, "null"], maxLength: 200 }
-        locale: { type: [string, "null"], pattern: '^[a-z]{2,3}(?:-[A-Z]{2})?$' }
         relation_kind: { type: [string, "null"], enum: [is_a, part_of, surface_of, competes_with, associated_with, null] }
         relation_target_key: { type: [string, "null"], pattern: '^[a-z0-9]+(?:[._:-][a-z0-9]+)*$', maxLength: 200 }
     SignalSemanticContextAnnotationResolutionV2:
@@ -2832,7 +2874,8 @@ components:
           required: [total_leaves, pending, approved, rejected, merged, open_annotations,
             open_uncertainty, open_near_duplicate, unresolved_locale,
             unresolved_competitive_unit, merge_edges, canonical_collisions, invalid_evidence_refs,
-            invalid_relation_targets, decision_basis_missing, annotation_resolution_basis_missing]
+            invalid_relation_targets, decision_basis_missing, annotation_resolution_basis_missing,
+            locale_market_required_unresolved]
           properties:
             total_leaves: { type: integer, minimum: 0 }
             pending: { type: integer, minimum: 0 }
@@ -2850,6 +2893,7 @@ components:
             invalid_relation_targets: { type: integer, minimum: 0 }
             decision_basis_missing: { type: integer, minimum: 0 }
             annotation_resolution_basis_missing: { type: integer, minimum: 0 }
+            locale_market_required_unresolved: { type: integer, minimum: 0 }
         collisions:
           type: array
           items:

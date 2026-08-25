@@ -2321,3 +2321,30 @@ basis; preserva todas las versiones anteriores y no cambia la resolución semán
 snapshot de publicación incorpora el grafo de basis y bloquea un draft current con
 `annotation_resolution_basis_missing` hasta que cada hoja histórica afectada tenga un
 repair append-only explícito.
+
+## 69B.5H-B · Autoridad locale/global append-only (0100)
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+0100 añade a cada versión de elemento un snapshot nullable de decisión locale/global:
+contrato, disposición, locale sellado, reason/rationale, input, autoridad y digests de
+pre/post estado. Las columnas permanecen NULL para la historia anterior. Una decisión
+nueva sólo parte de una hoja current `approved` con `locale IS NULL`; crea un successor
+`operator_correction/pending` y nunca una aprobación. La disposición `global` crea
+además una versión current `locale_unresolved/resolved/global` con basis completo; la
+disposición `locale_specific` sólo admite un locale incluido en la generación sellada.
+
+El ledger admite `decide-semantic-context-locale-authority` y su constraint trigger
+deferred reconcilia al commit el conjunto exacto de 1–15 keys, un único payload
+homogéneo, predecessors approved/current, successors pending, annotations globales,
+eventos, actor, resultado y `draft_digest` recompuesto por PostgreSQL. Los snapshots de
+publicación incorporan un grafo locale-authority separado y bloquean drafts con hojas
+approved `locale IS NULL` sin resolución explícita mediante
+`locale_market_required_unresolved`. Topic Contracts, assignments, tags y serving no
+participan en este writer.
+
+69B.5H-C endurece 0100 sin una migración adicional. El trigger compara `locale` y las
+once columnas `locale_decision_*` con el predecessor de todo successor ajeno a la
+operación dedicada. El snapshot de publicación usa
+`signal_semantic_context_locale_authority_valid_v1`: acepta lineage dedicado completo o
+un locale de propuesta original, preservado y contenido en `generation.locale_variants`.

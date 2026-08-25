@@ -958,3 +958,38 @@ anterior. Hasta entonces el preflight de publicación falla cerrado con
 `annotation_resolution_basis_missing`. Esta reparación no aprueba propuestas, no crea
 Topic Contracts o assignments y no afecta `record_tags`, readers, pointers, bindings,
 read mode ni serving.
+
+## Implementación local 69B.5H-B — decisión gobernada locale/global
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+El diagnóstico 69B.5H-A probó una autoridad mixta: las variantes locale explícitas se
+conservan, mientras cada hoja approved con `locale=null` necesita una decisión humana
+entre workspace-global y uno de los locales sellados por la generación. 0100 implementa
+esa decisión como lineage append-only. El navegador sólo aporta keys explícitas,
+disposición, locale, reason, rationale y confirmación; el servidor deriva workspace,
+actor, current leaf, snapshots y digests. Una decisión siempre crea un successor
+`pending`, de modo que su revisión semántica debe repetirse y `AUTO_APPROVALS=0`.
+
+La operación admite cohorts atómicos de 1–15 hojas con una sola disposición, locale y
+basis. PostgreSQL exige el conjunto exacto y bloquea grafos parciales, replay divergente,
+cross-workspace, locale fuera de la generación, authority drift o un predecessor que ya
+no sea approved/current. `global` queda representado por locale NULL y una resolución
+`locale_unresolved/global` con basis; `locale_specific` conserva un locale sellado.
+Publication preflight sólo elimina `locale_market_required_unresolved` cuando todas las
+hojas approved sin locale cuentan con autoridad global explícita. Este gate permanece
+local: no toma decisiones sobre el corpus real, no publica y no abre 10C.3B.
+
+## Corrección local 69B.5H-C — cierre del bypass genérico de locale
+
+**Registrado:** 2026-08-25 (`America/Mexico_City`).
+
+Correction y merge ya no aceptan `locale` del navegador: un successor genérico conserva
+el locale current y las once columnas `locale_decision_*` byte-for-byte. PostgreSQL
+impone la misma regla a inserts directos; sólo
+`decide-semantic-context-locale-authority` puede originar o cambiar ese lineage.
+
+El preflight no confía en `locale IS NOT NULL`. Revalida la cadena dedicada completa o,
+para locales presentes en la propuesta original, exige que el locale siga idéntico,
+pertenezca a la generación y conserve el origen server-owned. Así permanecen válidas
+las variantes legítimas `en-US`/`es-MX` sin permitir una resolución fabricada.
