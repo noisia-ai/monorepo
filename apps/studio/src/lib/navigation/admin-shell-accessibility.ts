@@ -16,6 +16,17 @@ export function getAdminShellRailAccessibilityStateV1({
   };
 }
 
+export function setAdminShellRailInertV1(
+  element: HTMLElement | null,
+  inert: boolean
+) {
+  if (!element) return false;
+  element.inert = inert;
+  if (inert) element.setAttribute("inert", "");
+  else element.removeAttribute("inert");
+  return true;
+}
+
 export function trapAdminShellMobileNavigationFocusV1(
   event: Pick<KeyboardEvent, "key" | "preventDefault" | "shiftKey">,
   panel: HTMLElement,

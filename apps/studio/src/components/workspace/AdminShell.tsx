@@ -39,6 +39,7 @@ import { WorkspaceSelect } from "@/components/admin/WorkspaceSelect";
 import { AdminRouteSkeleton } from "@/components/admin/AdminRouteSkeleton";
 import {
   getAdminShellRailAccessibilityStateV1,
+  setAdminShellRailInertV1,
   trapAdminShellMobileNavigationFocusV1
 } from "@/lib/navigation/admin-shell-accessibility";
 import {
@@ -105,6 +106,7 @@ export function AdminShell({
     if (corpusId) return buildCorpusContextNavigation(corpusId);
     return [];
   }, [brandId, corpusId]);
+  const hasContext = contextNavigation.length > 0;
   const contextNamespace = corpusId ? "studyContext" : "context";
 
   useEffect(() => {
@@ -122,6 +124,17 @@ export function AdminShell({
     const timer = window.setTimeout(() => setShowPendingSkeleton(true), 220);
     return () => window.clearTimeout(timer);
   }, [pendingHref]);
+
+  useEffect(() => {
+    setAdminShellRailInertV1(
+      document.getElementById("admin-global-navigation"),
+      railState.globalHidden
+    );
+    setAdminShellRailInertV1(
+      document.getElementById("admin-context-navigation"),
+      railState.contextHidden
+    );
+  }, [hasContext, railState.contextHidden, railState.globalHidden]);
 
   useEffect(() => {
     if (!railState.trapGlobalFocus) return;
@@ -175,7 +188,6 @@ export function AdminShell({
     router.push(href);
   };
   const contextActive = contextNavigation.find((item) => isContextActive(pathname, item.href, item.key));
-  const hasContext = contextNavigation.length > 0;
 
   return (
     <WorkspaceShell
@@ -223,7 +235,6 @@ export function AdminShell({
         aria-modal={railState.trapGlobalFocus || undefined}
         className="admin-shell__global-sidebar"
         id="admin-global-navigation"
-        inert={railState.globalHidden || undefined}
         role={railState.trapGlobalFocus ? "dialog" : undefined}
       >
         <div className="admin-shell__mobile-nav-head">
@@ -265,7 +276,7 @@ export function AdminShell({
           aria-hidden={railState.contextHidden || undefined}
           aria-label={t(`${contextNamespace}.label`)}
           className="admin-shell__context-sidebar"
-          inert={railState.contextHidden || undefined}
+          id="admin-context-navigation"
         >
           <div className="admin-shell__context-head">
             <small>{t(`${contextNamespace}.eyebrow`)}</small>

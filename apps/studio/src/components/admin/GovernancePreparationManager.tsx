@@ -9,7 +9,7 @@ import {
   AdminResourceSection,
   AdminSettingsRow,
   AdminStatus,
-  formatAdminDate
+  formatAdminInstant
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import type {
@@ -115,6 +115,7 @@ export function GovernancePreparationManager({
             onActivate={(version) => void submit({ action: "activate-policy", policy_kind: "quality-policy", policy_version: version })}
             onCreate={() => setDrawer({ kind: "quality" })}
             busy={busy}
+            timezone={initial.workspace.timezone}
           />
           <PolicyRows
             kind="retention"
@@ -122,6 +123,7 @@ export function GovernancePreparationManager({
             onActivate={(version) => void submit({ action: "activate-policy", policy_kind: "retention-policy", policy_version: version })}
             onCreate={() => setDrawer({ kind: "retention" })}
             busy={busy}
+            timezone={initial.workspace.timezone}
           />
           <PolicyRows
             kind="licensing"
@@ -129,6 +131,7 @@ export function GovernancePreparationManager({
             onActivate={(version) => void submit({ action: "activate-policy", policy_kind: "licensing-policy", policy_version: version })}
             onCreate={() => setDrawer({ kind: "licensing" })}
             busy={busy}
+            timezone={initial.workspace.timezone}
           />
         </div>
       </AdminResourceSection>
@@ -188,7 +191,7 @@ export function GovernancePreparationManager({
           {drawer.kind === "licensing" ? <LicensingForm busy={busy} error={error} submit={submit} /> : null}
           {drawer.kind === "identity" ? <IdentityForm busy={busy} error={error} submit={submit} /> : null}
           {drawer.kind === "timezone" ? <TimezoneForm busy={busy} error={error} initial={initial.workspace.timezone} submit={submit} /> : null}
-          {drawer.kind === "provenance" && source ? <ProvenanceForm busy={busy} error={error} source={source} submit={submit} locale={locale} /> : null}
+          {drawer.kind === "provenance" && source ? <ProvenanceForm busy={busy} error={error} source={source} submit={submit} locale={locale} timezone={initial.workspace.timezone} /> : null}
         </WorkspaceDrawer>
       ) : null}
     </>
@@ -200,13 +203,15 @@ function PolicyRows({
   kind,
   onActivate,
   onCreate,
-  rows
+  rows,
+  timezone
 }: {
   busy: boolean;
   kind: "quality" | "retention" | "licensing";
   onActivate: (version: number) => void;
   onCreate: () => void;
   rows: Array<{ policy_version: number; status: string; effective_from: string; effective_to: string | null; approved_by: string | null; approved_at: string | null }>;
+  timezone: string;
 }) {
   const t = useTranslations("AdminWorkspace.data.preparation");
   const locale = useLocale();
@@ -218,7 +223,7 @@ function PolicyRows({
       title={t(`authorities.${kind}`)}
       description={current ? t("authorities.approval", {
         actor: current.approved_by ?? t("authorities.serverActor"),
-        date: formatAdminDate(current.approved_at ?? current.effective_from, locale)
+        date: formatAdminInstant(current.approved_at ?? current.effective_from, locale, timezone)
       }) : t("authorities.missing")}
       value={current ? <span className="admin-status-stack">v{current.policy_version}<AdminStatus state={current.status === "active" ? "good" : "warning"}>{t(`states.${current.status}`)}</AdminStatus></span> : <AdminStatus state="warning">{t("states.not_available")}</AdminStatus>}
       action={<div className="admin-workspace-actions">
@@ -285,9 +290,10 @@ function LicensingForm({ busy, error, submit }: FormProps) {
   </DecisionForm>;
 }
 
-function ProvenanceForm({ busy, error, locale, source, submit }: FormProps & {
+function ProvenanceForm({ busy, error, locale, source, submit, timezone }: FormProps & {
   locale: string;
   source: SignalGovernancePreparationV1["sources"][number];
+  timezone: string;
 }) {
   const t = useTranslations("AdminWorkspace.data.preparation");
   return <DecisionForm busy={busy} error={error} onSubmit={(form) => submit({
@@ -298,7 +304,7 @@ function ProvenanceForm({ busy, error, locale, source, submit }: FormProps & {
     effective_to: dateTime(form.get("effective_to"))
   })}>
     <p className="admin-table__muted">{t("provenance.body", { source: source.name })}</p>
-    <label className="workspace-field"><span>{t("provenance.scope")}</span><select className="workspace-control" defaultValue="" name="import_batch_id"><option value="">{t("provenance.sourceLevel")}</option>{source.completed_imports.map((item) => <option key={item.import_batch_id} value={item.import_batch_id}>{item.label} · {formatAdminDate(item.created_at, locale)}</option>)}</select><small>{t("provenance.scopeHelp")}</small></label>
+    <label className="workspace-field"><span>{t("provenance.scope")}</span><select className="workspace-control" defaultValue="" name="import_batch_id"><option value="">{t("provenance.sourceLevel")}</option>{source.completed_imports.map((item) => <option key={item.import_batch_id} value={item.import_batch_id}>{item.label} · {formatAdminInstant(item.created_at, locale, timezone)}</option>)}</select><small>{t("provenance.scopeHelp")}</small></label>
     <EffectiveWindowFields />
   </DecisionForm>;
 }

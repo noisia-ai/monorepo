@@ -77,20 +77,69 @@ export function AdminSummaryStrip({
   );
 }
 
+type AdminCalendarDateFormatOptions = Omit<
+  Intl.DateTimeFormatOptions,
+  "timeStyle" | "timeZone"
+>;
+
+type AdminInstantFormatOptions = Omit<Intl.DateTimeFormatOptions, "timeZone">;
+
+const ADMIN_CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/u;
+
+export function formatAdminCalendarDate(
+  value: string | null | undefined,
+  locale: string,
+  options: AdminCalendarDateFormatOptions = { dateStyle: "medium" }
+) {
+  if (!value) return "—";
+  const match = ADMIN_CALENDAR_DATE_PATTERN.exec(value);
+  if (!match) return value;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) return value;
+  return new Intl.DateTimeFormat(locale, {
+    ...options,
+    timeZone: "UTC"
+  }).format(date);
+}
+
+export function formatAdminInstant(
+  value: string | null | undefined,
+  locale: string,
+  timeZone: string,
+  options: AdminInstantFormatOptions = { dateStyle: "medium" }
+) {
+  if (!value) return "—";
+  if (!timeZone.trim()) {
+    throw new Error("Admin instant formatting requires an explicit product timezone.");
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, {
+    ...options,
+    timeZone: timeZone.trim()
+  }).format(date);
+}
+
+/** @deprecated New code must choose the calendar-date or explicit instant contract. */
 export function formatAdminDate(
   value: string | null | undefined,
   locale: string,
   options: Intl.DateTimeFormatOptions = { dateStyle: "medium" }
 ) {
   if (!value) return "—";
-  const date = /^\d{4}-\d{2}-\d{2}$/u.test(value)
-    ? new Date(`${value}T12:00:00Z`)
-    : new Date(value);
+  if (ADMIN_CALENDAR_DATE_PATTERN.test(value)) {
+    return formatAdminCalendarDate(value, locale, options);
+  }
+  const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    ...options,
-    timeZone: options.timeZone ?? "UTC"
-  }).format(date);
+  return new Intl.DateTimeFormat(locale, options).format(date);
 }
 
 export function formatAdminNumber(value: number, locale: string) {
