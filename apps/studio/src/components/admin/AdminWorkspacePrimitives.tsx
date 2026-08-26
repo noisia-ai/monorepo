@@ -84,10 +84,13 @@ export function formatAdminDate(
 ) {
   if (!value) return "—";
   const date = /^\d{4}-\d{2}-\d{2}$/u.test(value)
-    ? new Date(`${value}T12:00:00`)
+    ? new Date(`${value}T12:00:00Z`)
     : new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, options).format(date);
+  return new Intl.DateTimeFormat(locale, {
+    ...options,
+    timeZone: options.timeZone ?? "UTC"
+  }).format(date);
 }
 
 export function formatAdminNumber(value: number, locale: string) {
