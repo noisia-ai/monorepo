@@ -7,7 +7,7 @@ import {
   AdminResourceSection,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate
+  formatAdminInstant
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { listThemesForUser } from "@/lib/data/themes";
@@ -114,7 +114,9 @@ export default async function ThemesPage({ searchParams }: { searchParams?: Stud
                       {theme.industryFocus?.length ? theme.industryFocus.join(", ") : t("noFocus")}
                     </td>
                     <td><AdminStatus state={themeState(theme.status)}>{t(`statuses.${theme.status}`)}</AdminStatus></td>
-                    <td className="admin-table__muted">{formatAdminDate(theme.createdAt?.toISOString(), locale)}</td>
+                    <td className="admin-table__muted">{theme.timezone
+                      ? formatAdminInstant(theme.createdAt?.toISOString(), locale, theme.timezone)
+                      : "—"}</td>
                     <td>
                       <Link className="admin-button admin-button--icon" href={`/studio/themes/${theme.id}`} prefetch={false} title={t("open")}>
                         <ArrowRight aria-hidden size={15} />

@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { AdminSettingsRow, AdminStatus, formatAdminDate, formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminSettingsRow, AdminStatus, formatAdminInstant, formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { buildAdminWorkspacePrimarySourceInput } from "@/lib/data-os/admin-workspace-source-contract";
 import type { AdminWorkspaceImport, AdminWorkspaceSource } from "@/lib/data/admin-workspace";
@@ -19,10 +19,12 @@ type DrawerState =
 export function WorkspaceSourcesManager({
   imports,
   sources,
+  timezone,
   workspaceId
 }: {
   imports: AdminWorkspaceImport[];
   sources: AdminWorkspaceSource[];
+  timezone: string;
   workspaceId: string;
 }) {
   const t = useTranslations("AdminWorkspace");
@@ -294,7 +296,7 @@ export function WorkspaceSourcesManager({
                   <td><AdminStatus state={source.scopeReviewStatus === "approved" ? "good" : "warning"}>{source.scope ?? t("states.not_available")}</AdminStatus></td>
                   <td><AdminStatus state={source.status === "active" ? "good" : "warning"}>{t(`states.${source.status}`)}</AdminStatus></td>
                   <td><AdminStatus state={freshnessTone(source.freshnessState)}>{t(`states.${source.freshnessState}`)}</AdminStatus></td>
-                  <td className="admin-table__muted">{formatAdminDate(source.latestImport?.createdAt, locale)}</td>
+                  <td className="admin-table__muted">{formatAdminInstant(source.latestImport?.createdAt, locale, timezone)}</td>
                   <td>{source.latestImport ? t("data.resultSummary", {
                     included: source.latestImport.included,
                     duplicates: source.latestImport.duplicates
@@ -396,7 +398,7 @@ export function WorkspaceSourcesManager({
               <thead><tr><th>{t("data.history.file")}</th><th>{t("data.columns.results")}</th></tr></thead>
               <tbody>{history.map((item) => (
                 <tr key={item.id}>
-                  <td><div className="admin-table__primary"><strong>{item.sourceFileName ?? t("data.history.unnamed")}</strong><small>{formatAdminDate(item.createdAt, locale)} · {t(`data.import.status.${item.status}`)}</small></div></td>
+                  <td><div className="admin-table__primary"><strong>{item.sourceFileName ?? t("data.history.unnamed")}</strong><small>{formatAdminInstant(item.createdAt, locale, timezone)} · {t(`data.import.status.${item.status}`)}</small></div></td>
                   <td>{item.status==="completed"
                     ? <span>{t("data.history.counts", { records: item.records, included: item.included, excluded: item.excluded, duplicates: item.duplicates })}</span>
                     : <div className="admin-table__primary"><span>{item.status==="failed" && item.totalBytes && (item.progressBytes ?? 0)>=item.totalBytes ? t("data.import.finalValidationFailed") : t("data.import.recordsProcessed",{ count: item.progressRecords ?? 0 })}</span>{item.status==="failed" ? <button className="admin-button admin-button--plain" disabled={busy} onClick={() => void retryFromStorage(drawer.source,item)} type="button">{t("data.import.retryFromStorage")}</button> : null}{item.status==="queued" && item.phase==="uploading" ? <button className="admin-button admin-button--plain" disabled={busy} onClick={() => void cancelIncompleteUpload(drawer.source,item)} type="button">{t("data.import.cancelUpload")}</button> : null}</div>}</td>

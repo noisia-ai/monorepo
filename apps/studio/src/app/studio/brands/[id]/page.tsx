@@ -8,7 +8,8 @@ import {
   AdminSettingsRow,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
+  formatAdminCalendarDate,
+  formatAdminInstant,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -71,7 +72,7 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
         <div>
           <dt>{t("brand.summary.coverage")}</dt>
           <dd>{summary.coverageFrom && summary.coverageThrough
-            ? `${formatAdminDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}`
+            ? `${formatAdminCalendarDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminCalendarDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}`
             : "—"}</dd>
           <small>{t(`coverage.${summary.coverageState}`)}</small>
         </div>
@@ -129,7 +130,9 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
                   <td><div className="admin-table__primary"><strong>{source.name}</strong><small>{source.provider} · {source.connectionMethod}</small></div></td>
                   <td><AdminStatus state={source.scopeReviewStatus === "approved" ? "good" : "warning"}>{source.scope ?? t("states.not_available")}</AdminStatus></td>
                   <td><AdminStatus state={freshnessTone(source.freshnessState)}>{t(`states.${source.freshnessState}`)}</AdminStatus></td>
-                  <td className="admin-table__muted">{formatAdminDate(source.latestImport?.createdAt, locale)}</td>
+                  <td className="admin-table__muted">{summary.timezone
+                    ? formatAdminInstant(source.latestImport?.createdAt, locale, summary.timezone)
+                    : "—"}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -159,7 +162,9 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
               <span className="admin-resource-row__secondary">{t("brand.reports.summary", {
                 revision: currentReport?.currentRevision ? `r${currentReport.currentRevision}` : t("reports.states.not_available"),
                 review: currentReport?.runsNeedingReview ?? 0,
-                published: formatAdminDate(currentReport?.currentReleasePublishedAt, locale)
+                published: summary.timezone
+                  ? formatAdminInstant(currentReport?.currentReleasePublishedAt, locale, summary.timezone)
+                  : "—"
               })}</span>
             </div>
             <div className="admin-resource-row__actions">

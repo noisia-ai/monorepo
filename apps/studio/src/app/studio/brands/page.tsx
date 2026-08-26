@@ -6,7 +6,8 @@ import {
   AdminResourceSection,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
+  formatAdminCalendarDate,
+  formatAdminInstant,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { AdminBrandFilters } from "@/components/admin/AdminBrandFilters";
@@ -115,7 +116,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
                     <td>
                       <AdminStatus state={brand.coverageState}>
                         {brand.coverageFrom && brand.coverageThrough
-                          ? `${formatAdminDate(brand.coverageFrom, locale)} – ${formatAdminDate(brand.coverageThrough, locale)}`
+                          ? `${formatAdminCalendarDate(brand.coverageFrom, locale)} – ${formatAdminCalendarDate(brand.coverageThrough, locale)}`
                           : t("coverage.notAvailable")}
                       </AdminStatus>
                     </td>
@@ -126,7 +127,9 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
                       </div>
                     </td>
                     <td><AdminStatus state={reportTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
-                    <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
+                    <td className="admin-table__muted">{brand.timezone
+                      ? formatAdminInstant(brand.latestActivityAt, locale, brand.timezone)
+                      : "—"}</td>
                     <td>
                       {brand.brandStatus === "archived" && !brand.workspaceId ? (
                         <PermanentDeleteBrandButton brandId={brand.brandId} brandName={brand.brandName} />

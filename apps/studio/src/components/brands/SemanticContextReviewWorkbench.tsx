@@ -17,7 +17,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AdminStatus, formatAdminDate, formatAdminNumber } from
+import { AdminStatus, formatAdminInstant, formatAdminNumber } from
   "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import {
@@ -218,11 +218,13 @@ export function SemanticContextReviewWorkbench({
   generationKey,
   onMutation,
   reviewWritable,
+  timezone,
   workspaceId
 }: {
   generationKey: string;
   onMutation: () => Promise<void>;
   reviewWritable: boolean;
+  timezone: string;
   workspaceId: string;
 }) {
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
@@ -704,7 +706,10 @@ export function SemanticContextReviewWorkbench({
               onBeginResolution={beginAnnotationResolution} onCancelResolution={()=>{setDetailMode("view");setAnnotationResolutionDraft(null);}}
               onLocaleAuthority={(form) => void decideLocaleAuthority(form,[detail.element.element_key],
                 detail.element.applicability.generation_locales)}
-              onResolve={(form) => void resolveAnnotation(form)} reviewWritable={reviewWritable} t={t}/>}
+              onResolve={(form) => void resolveAnnotation(form)}
+              reviewWritable={reviewWritable}
+              t={t}
+              timezone={timezone}/>}
       </div>
     </WorkspaceDrawer> : null}
   </div>;
@@ -733,7 +738,7 @@ function DispositionStatus({ disposition, t }: { disposition: Disposition; t: Re
 /** @internal Exported for the browser-representative deliberate-decision interaction contract test. */
 export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, busy, detail, locale, mode,
   onAnnotate, onApprove, onBeginResolution, onCancelResolution, onCorrect, onLocaleAuthority, onMode, onReject, onResolve,
-  reviewWritable, t }: {
+  reviewWritable, t, timezone }: {
   activeFormRef: React.MutableRefObject<HTMLFormElement | null>;
   annotationResolutionDraft: AnnotationResolutionDraft | null;
   busy: string | null;
@@ -752,6 +757,7 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
   onResolve: (form: FormData) => void;
   reviewWritable: boolean;
   t: ReturnType<typeof useTranslations>;
+  timezone: string;
 }) {
   const element = detail.element;
   if (mode === "approve") return <MutationForm busy={busy} formRef={activeFormRef}
@@ -793,10 +799,10 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
   </MutationForm>;
 
   return <div className="semantic-context-pack__review semantic-context-review__detail">
-    <div className="semantic-context-pack__review-summary"><DispositionStatus disposition={element.disposition} t={t}/><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
+    <div className="semantic-context-pack__review-summary"><DispositionStatus disposition={element.disposition} t={t}/><p>{t("review.proposedAt", { date: formatAdminInstant(element.provenance.proposed_at, locale, timezone, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
     <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{element.locale ?? t("values.noLocale")}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
     {detail.decision_basis.state !== "not_applicable" ? <DecisionBasisHistory basis={detail.decision_basis}
-      locale={locale} t={t}/> : null}
+      locale={locale} t={t} timezone={timezone}/> : null}
     {element.locale_authority.basis ? <section className="semantic-context-review__lineage">
       <h3>{t("reviewWorkbench.localeAuthority.history")}</h3><div><ShieldCheck aria-hidden size={14}/>
         <span>{t(`reviewWorkbench.localeAuthority.dispositions.${element.locale_authority.state}`)}</span>
@@ -808,13 +814,13 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
   </div>;
 }
 
-function DecisionBasisHistory({ basis, locale, t }: { basis: ReviewDetail["decision_basis"]; locale: string;
-  t: ReturnType<typeof useTranslations> }) {
+function DecisionBasisHistory({ basis, locale, t, timezone }: { basis: ReviewDetail["decision_basis"]; locale: string;
+  t: ReturnType<typeof useTranslations>; timezone: string }) {
   return <section className="semantic-context-review__lineage"><h3>{t("reviewWorkbench.decisionBasis.title")}</h3>
     {basis.state === "complete" ? <div><ShieldCheck aria-hidden size={14}/><span>
       {basis.reason ? t(`reviewWorkbench.reasons.${basis.reason}`) : t("reviewWorkbench.decisionBasis.unavailable")}
     </span><small>{basis.rationale}</small>{basis.decided_at ? <small>
-      {t("reviewWorkbench.decisionBasis.decidedAt", { date: formatAdminDate(basis.decided_at, locale) })}
+      {t("reviewWorkbench.decisionBasis.decidedAt", { date: formatAdminInstant(basis.decided_at, locale, timezone) })}
     </small> : null}</div> : <div><Warning aria-hidden size={14}/><span>
       {t("reviewWorkbench.decisionBasis.historicalMissing")}</span></div>}
   </section>;

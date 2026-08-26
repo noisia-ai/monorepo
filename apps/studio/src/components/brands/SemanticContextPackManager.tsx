@@ -16,7 +16,7 @@ import {
   AdminResourceSection,
   AdminStatus,
   AdminSummaryStrip,
-  formatAdminDate,
+  formatAdminInstant,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceConfirmDialog, WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
@@ -350,8 +350,9 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
           {elementCount > 0 ? <div className="semantic-context-pack__workspace">
             <SemanticContextReviewWorkbench generationKey={generation.generation_key} key={generation.generation_key}
               onMutation={load} reviewWritable={generation.lifecycle_state === "draft"}
+              timezone={generation.timezone}
               workspaceId={workspaceId}/>
-          {generation.lifecycle_state === "published" ? <div className="semantic-context-pack__footer"><p>{t("publish.publishedAt", { date: formatAdminDate(generation.published_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><AdminStatus state="good">{t("states.published")}</AdminStatus></div> : null}
+          {generation.lifecycle_state === "published" ? <div className="semantic-context-pack__footer"><p>{t("publish.publishedAt", { date: formatAdminInstant(generation.published_at, locale, generation.timezone, { dateStyle: "medium", timeStyle: "short" }) })}</p><AdminStatus state="good">{t("states.published")}</AdminStatus></div> : null}
         </div> : null}
       </> : null}
     </AdminResourceSection>

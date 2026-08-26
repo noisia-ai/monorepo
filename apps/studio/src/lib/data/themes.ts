@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
-import { methodologies, organizations, studyCorpora, themes } from "@noisia/db";
+import { methodologies, organizations, signalWorkspaces, studyCorpora, themes } from "@noisia/db";
 import { db } from "@/lib/db";
 
 type AppUser = {
@@ -30,10 +30,15 @@ export async function listThemesForUser(appUser: AppUser, filters: ThemeFilters 
       organizationId: themes.organizationId,
       organizationSlug: organizations.slug,
       organizationName: organizations.displayName,
+      timezone: signalWorkspaces.timezone,
       createdAt: themes.createdAt
     })
     .from(themes)
-    .leftJoin(organizations, eq(organizations.id, themes.organizationId));
+    .leftJoin(organizations, eq(organizations.id, themes.organizationId))
+    .leftJoin(signalWorkspaces, and(
+      eq(signalWorkspaces.themeId, themes.id),
+      eq(signalWorkspaces.organizationId, themes.organizationId)
+    ));
 
   const visible = rows.filter((row) => {
     if (appUser.userType === "noisia_internal") {

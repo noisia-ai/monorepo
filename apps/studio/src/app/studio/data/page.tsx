@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Database, MagnifyingGlass } from "@phosphor-icons/react/dist/ssr";
 import { getLocale, getTranslations } from "next-intl/server";
 
-import { AdminStatus, AdminSummaryStrip, AdminWorkspaceHeader, formatAdminDate, formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminStatus, AdminSummaryStrip, AdminWorkspaceHeader, formatAdminInstant, formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { listAdminBrandWorkspaces } from "@/lib/data/admin-workspace";
 import { getSearchParam, resolveSearchParams, type StudioSearchParams } from "@/lib/url/search";
@@ -72,7 +72,9 @@ export default async function AdminDataPage({ searchParams }: { searchParams?: S
               <td>{brand.activeSources}</td>
               <td>{formatAdminNumber(brand.governedMentions, locale)}</td>
               <td><AdminStatus state={brand.freshnessState}>{t(`states.${brand.freshnessLabel}`)}</AdminStatus></td>
-              <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
+              <td className="admin-table__muted">{brand.timezone
+                ? formatAdminInstant(brand.latestActivityAt, locale, brand.timezone)
+                : "—"}</td>
               <td><Link className="admin-button" href={`/studio/brands/${brand.brandId}/data`} prefetch={false}>{t("globalData.actions.open")}<ArrowRight aria-hidden size={14} /></Link></td>
             </tr>
           ))}</tbody>

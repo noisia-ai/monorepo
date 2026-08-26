@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -66,3 +68,43 @@ test("Governance preparation passes its declared workspace timezone to every gov
   assert.match(source, /formatAdminInstant\(current\.approved_at \?\? current\.effective_from, locale, timezone\)/u);
   assert.match(source, /formatAdminInstant\(item\.created_at, locale, timezone\)/u);
 });
+
+test("Semantic Context passes the generation workspace timezone through hydrated date consumers", async () => {
+  const [manager, workbench] = await Promise.all([
+    readFile(new URL("../brands/SemanticContextPackManager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../brands/SemanticContextReviewWorkbench.tsx", import.meta.url), "utf8")
+  ]);
+  assert.match(manager, /timezone=\{generation\.timezone\}/u);
+  assert.match(manager,
+    /formatAdminInstant\(generation\.published_at, locale, generation\.timezone,/u);
+  assert.match(workbench,
+    /formatAdminInstant\(element\.provenance\.proposed_at, locale, timezone,/u);
+  assert.match(workbench,
+    /formatAdminInstant\(basis\.decided_at, locale, timezone\)/u);
+});
+
+test("Admin source cannot reintroduce the ambiguous formatAdminDate contract", async () => {
+  const sourceRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const matches: string[] = [];
+
+  for (const file of await sourceFiles(sourceRoot)) {
+    const source = await readFile(file, "utf8");
+    if (/\bformatAdminDate\b/u.test(source)) {
+      matches.push(relative(sourceRoot, file));
+    }
+  }
+
+  assert.deepEqual(matches, []);
+});
+
+async function sourceFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    if (!entry.isFile() || !/\.(?:ts|tsx)$/u.test(entry.name)
+      || /\.(?:test|spec)\.(?:ts|tsx)$/u.test(entry.name)) return [];
+    return [path];
+  }));
+  return files.flat();
+}

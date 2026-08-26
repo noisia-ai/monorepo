@@ -127,21 +127,6 @@ export function formatAdminInstant(
   }).format(date);
 }
 
-/** @deprecated New code must choose the calendar-date or explicit instant contract. */
-export function formatAdminDate(
-  value: string | null | undefined,
-  locale: string,
-  options: Intl.DateTimeFormatOptions = { dateStyle: "medium" }
-) {
-  if (!value) return "—";
-  if (ADMIN_CALENDAR_DATE_PATTERN.test(value)) {
-    return formatAdminCalendarDate(value, locale, options);
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, options).format(date);
-}
-
 export function formatAdminNumber(value: number, locale: string) {
   return new Intl.NumberFormat(locale).format(value);
 }

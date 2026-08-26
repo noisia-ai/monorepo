@@ -8,7 +8,7 @@ import {
   AdminSettingsRow,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate
+  formatAdminInstant
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { StrategicReportLauncher } from "@/components/admin/StrategicReportLauncher";
 import { StrategicAuthorityManager } from "@/components/admin/StrategicAuthorityManager";
@@ -72,7 +72,7 @@ export default async function BrandReportsPage({ params }: { params: Promise<{ i
           <dd>{strategicAuthority?.population?.denominator_count ?? "—"}</dd>
           <small>triggers-barriers / strategic</small>
         </div>
-        <div><dt>{t("reports.summary.lastRun")}</dt><dd><AdminStatus state={runTone(report?.latestRunStatus)}>{report?.latestRunStatus ? t(`reports.states.${report.latestRunStatus}`) : t("reports.states.not_available")}</AdminStatus></dd><small>{formatAdminDate(report?.latestRunAt, locale)}</small></div>
+        <div><dt>{t("reports.summary.lastRun")}</dt><dd><AdminStatus state={runTone(report?.latestRunStatus)}>{report?.latestRunStatus ? t(`reports.states.${report.latestRunStatus}`) : t("reports.states.not_available")}</AdminStatus></dd><small>{summary.timezone ? formatAdminInstant(report?.latestRunAt, locale, summary.timezone) : "—"}</small></div>
       </dl>
 
       <section className="admin-two-column">
@@ -85,7 +85,7 @@ export default async function BrandReportsPage({ params }: { params: Promise<{ i
             <AdminSettingsRow title={t("reports.registry.identity")} value="triggers-barriers" />
             <AdminSettingsRow title={t("reports.registry.status")} value={<AdminStatus state={report?.status === "active" ? "good" : "warning"}>{report?.status ? t(`states.${report.status}`) : t("states.not_available")}</AdminStatus>} />
             <AdminSettingsRow title={t("reports.registry.current")} value={report?.currentRevision ? `r${report.currentRevision}` : t("reports.states.not_available")} />
-            <AdminSettingsRow title={t("reports.registry.published")} value={formatAdminDate(report?.currentReleasePublishedAt, locale)} />
+            <AdminSettingsRow title={t("reports.registry.published")} value={summary.timezone ? formatAdminInstant(report?.currentReleasePublishedAt, locale, summary.timezone) : "—"} />
           </div>
         </AdminResourceSection>
         <AdminResourceSection subtitle={t("reports.preflight.subtitle")} title={t("reports.preflight.title")}>
@@ -105,9 +105,10 @@ export default async function BrandReportsPage({ params }: { params: Promise<{ i
         <StrategicAuthorityManager initial={strategicAuthority} workspaceId={summary.workspaceId} />
       ) : null}
 
-      {releases && summary.workspaceId && summary.workspaceSlug ? (
+      {releases && resolvedWorkspace && summary.workspaceId && summary.workspaceSlug ? (
         <StrategicReleaseManager
           history={releases.history}
+          timezone={resolvedWorkspace.timezone}
           workspaceId={summary.workspaceId}
           workspaceSlug={summary.workspaceSlug}
         />

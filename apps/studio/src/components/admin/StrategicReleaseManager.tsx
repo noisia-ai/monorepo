@@ -9,16 +9,18 @@ import { useRef, useState } from "react";
 import {
   AdminResourceSection,
   AdminStatus,
-  formatAdminDate
+  formatAdminInstant
 } from "@/components/admin/AdminWorkspacePrimitives";
 import type { SignalStrategicReleaseSummary } from "@/lib/data-os/signal-strategic-releases";
 
 export function StrategicReleaseManager({
   history,
+  timezone,
   workspaceId,
   workspaceSlug
 }: {
   history: SignalStrategicReleaseSummary[];
+  timezone: string;
   workspaceId: string;
   workspaceSlug: string;
 }) {
@@ -57,7 +59,7 @@ export function StrategicReleaseManager({
         <td><div className="admin-table__primary"><strong>r{release.report_revision} · {release.title}</strong><small>{release.artifact_count} {t("artifacts")}</small></div></td>
         <td>{release.period_start} – {release.period_end}</td>
         <td><AdminStatus state={release.is_current ? "good" : release.status==="draft" ? "warning" : "not_available"}>{release.is_current ? t("current") : release.status}</AdminStatus></td>
-        <td>{formatAdminDate(release.approved_at,locale)}</td>
+        <td>{formatAdminInstant(release.approved_at,locale,timezone)}</td>
         <td>{release.status==="draft" ? <button className="admin-button admin-button--compact admin-button--primary" disabled={busy!==null} onClick={() => void promote(release.release_id)} type="button"><CheckCircle aria-hidden size={14} />{t("promote")}</button> : <ClockCounterClockwise aria-label={t("history")} size={17} />}</td>
       </tr>)}
     </tbody></table></div>}

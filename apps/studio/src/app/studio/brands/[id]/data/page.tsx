@@ -10,7 +10,7 @@ import {
   AdminSettingsRow,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
+  formatAdminCalendarDate,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { AcquisitionPlanManager } from "@/components/admin/AcquisitionPlanManager";
@@ -57,16 +57,18 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
       <dl className="admin-summary-strip">
         <div><dt>{t("data.summary.sources")}</dt><dd>{summary.activeSources}</dd><small>{t("data.summary.sourcesHint")}</small></div>
         <div><dt>{t("data.summary.mentions")}</dt><dd>{formatAdminNumber(summary.governedMentions, locale)}</dd><small>{t("data.summary.mentionsHint")}</small></div>
-        <div><dt>{t("data.summary.coverage")}</dt><dd>{summary.coverageFrom && summary.coverageThrough ? `${formatAdminDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}` : "—"}</dd><small>{t(`coverage.${summary.coverageState}`)}</small></div>
+        <div><dt>{t("data.summary.coverage")}</dt><dd>{summary.coverageFrom && summary.coverageThrough ? `${formatAdminCalendarDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminCalendarDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}` : "—"}</dd><small>{t(`coverage.${summary.coverageState}`)}</small></div>
         <div><dt>{t("data.summary.freshness")}</dt><dd><AdminStatus state={summary.freshnessState}>{t(`states.${summary.freshnessLabel}`)}</AdminStatus></dd><small>{t("data.summary.freshnessHint")}</small></div>
       </dl>
 
       {summary.workspaceId ? (
         <>
-          <AcquisitionPlanManager
-            timezone={summary.timezone ?? "America/Mexico_City"}
-            workspaceId={summary.workspaceId}
-          />
+          {summary.timezone ? (
+            <AcquisitionPlanManager
+              timezone={summary.timezone}
+              workspaceId={summary.workspaceId}
+            />
+          ) : null}
           {governance ? (
             <GovernancePreparationManager
               initial={governance}

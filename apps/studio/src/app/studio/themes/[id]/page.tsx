@@ -8,7 +8,7 @@ import {
   AdminSettingsRow,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate
+  formatAdminInstant
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { DeleteThemeButton } from "@/components/brands/AdminEntityActions";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -57,7 +57,9 @@ export default async function ThemeDetailPage({ params }: { params: Promise<{ id
               title={t("detail.metadata.organization")}
             />
             <AdminSettingsRow
-              description={formatAdminDate(theme.createdAt?.toISOString(), locale)}
+              description={theme.timezone
+                ? formatAdminInstant(theme.createdAt?.toISOString(), locale, theme.timezone)
+                : "—"}
               title={t("detail.metadata.created")}
             />
           </div>
@@ -86,7 +88,9 @@ export default async function ThemeDetailPage({ params }: { params: Promise<{ id
                     <td><div className="admin-table__primary"><strong>{corpus.name ?? t("detail.studies.unnamed")}</strong><small>{corpus.businessQuestion ?? t("detail.studies.window", { months: corpus.targetWindowMonths ?? 0 })}</small></div></td>
                     <td>{corpus.methodologyName}</td>
                     <td><AdminStatus state={corpus.status === "corpus_approved" ? "good" : "warning"}>{corpus.status}</AdminStatus></td>
-                    <td className="admin-table__muted">{formatAdminDate(corpus.updatedAt?.toISOString(), locale)}</td>
+                    <td className="admin-table__muted">{theme.timezone
+                      ? formatAdminInstant(corpus.updatedAt?.toISOString(), locale, theme.timezone)
+                      : "—"}</td>
                     <td><Link className="admin-button admin-button--icon" href={`/studio/corpora/${corpus.id}/engine`} prefetch={false} title={t("detail.studies.open")}><ArrowRight aria-hidden size={15} /></Link></td>
                   </tr>
                 ))}

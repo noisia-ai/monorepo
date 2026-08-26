@@ -237,7 +237,8 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   assert.match(workbench, /\/publish\/preflight/u);
   assert.doesNotMatch(workbench, /provider_response|raw_prompt|brand_os_digest|knowledge_digest|preflight_digest/u);
   assert.match(workbench, /next_cursor/u);
-  assert.match(workbench, /formatAdminDate\(element\.provenance\.proposed_at, locale/u);
+  assert.match(workbench,
+    /formatAdminInstant\(element\.provenance\.proposed_at, locale, timezone,/u);
   assert.match(workbench, /context_supplied_to_model/u);
   assert.match(styles, /\.semantic-context-review__row-button:focus-visible/u);
   assert.match(styles, /@media \(max-width: 700px\)/u);

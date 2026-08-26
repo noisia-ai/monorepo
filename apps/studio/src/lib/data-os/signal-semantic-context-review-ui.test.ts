@@ -124,7 +124,7 @@ test("rendered deliberate approval parses the actual form and only a valid submi
     onApprove:(form)=>{if(parseSignalSemanticContextApprovalFormUiV2(form))requests+=1;},
     onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
     onLocaleAuthority:()=>undefined,onMode:(next)=>{mode=next;},
-    onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
+    onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t,timezone:"America/Mexico_City"});
 
   const view=renderDetail();
   const approveButton=findElement(view,(element)=>element.type==="button"
@@ -180,7 +180,8 @@ test("rendered locale authority opens deliberately and only a complete explicit 
     onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
     onLocaleAuthority:(form)=>{if(parseSignalSemanticContextLocaleAuthorityFormUiV1(
       form,["en-US","es-MX"]))requests+=1;},
-    onMode:(next)=>{mode=next;},onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
+    onMode:(next)=>{mode=next;},onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t,
+    timezone:"America/Mexico_City"});
   const view=renderDetail();
   const opener=findElement(view,(element)=>element.type==="button"
     &&Array.isArray(element.props.children)
@@ -216,7 +217,7 @@ test("rendered annotation resolution first click only opens a deliberate form", 
     onCancelResolution:()=>{draft=null;mode="view";},onCorrect:()=>undefined,onLocaleAuthority:()=>undefined,
     onMode:(next)=>{mode=next;},
     onReject:()=>undefined,onResolve:(form)=>{if(parseSignalSemanticContextAnnotationResolutionFormUiV1(form,"resolve"))requests+=1;},
-    reviewWritable:true,t});
+    reviewWritable:true,t,timezone:"America/Mexico_City"});
   const view=AnnotationsList({busy:null,items:[annotation] as never,
     onBeginResolution:(selected,resolution,intent)=>{draft={annotation:selected,resolution,intent};mode="resolve_annotation";},t});
   const resolutionButton=findElement(view,(element)=>element.type==="button"

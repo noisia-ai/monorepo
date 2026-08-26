@@ -6,7 +6,7 @@ import {
   AdminResourceSection,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
+  formatAdminInstant,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -161,7 +161,9 @@ export default async function StudioHomePage() {
                     <td><AdminStatus state={brand.freshnessState}>{t(`states.${brand.freshnessLabel}`)}</AdminStatus></td>
                     <td><AdminStatus state={brand.qualityState}>{t(`quality.${brand.qualityState}`)}</AdminStatus></td>
                     <td><AdminStatus state={reportStateTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
-                    <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
+                    <td className="admin-table__muted">{brand.timezone
+                      ? formatAdminInstant(brand.latestActivityAt, locale, brand.timezone)
+                      : "—"}</td>
                   </tr>
                 ))}
               </tbody>
