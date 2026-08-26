@@ -791,6 +791,10 @@
   display: none;
 }
 
+.admin-shell__mobile-nav-head {
+  display: none;
+}
+
 .admin-shell__search {
   display: flex;
   align-items: center;
@@ -3798,6 +3802,20 @@
     border-radius: 0 12px 12px 0;
     transform: translateX(-100%);
     transition: transform 170ms ease;
+  }
+
+  .admin-shell__mobile-nav-head {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 6px 16px;
+    border-bottom: 1px solid var(--workspace-border);
+  }
+
+  .admin-shell__mobile-nav-head > strong {
+    font-size: 13px;
+    font-weight: 650;
   }
 
   .admin-shell--nav-open .admin-shell__global-sidebar {

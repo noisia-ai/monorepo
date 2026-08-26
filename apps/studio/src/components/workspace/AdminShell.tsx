@@ -31,10 +31,16 @@ import {
   WorkspaceShell,
   WorkspaceSkipLink,
   WorkspaceTopbar,
-  WorkspaceTopbarActions
+  WorkspaceTopbarActions,
+  cycleWorkspaceDrawerFocusV1,
+  restoreWorkspaceDrawerFocusV1
 } from "@/components/workspace/WorkspaceShell";
 import { WorkspaceSelect } from "@/components/admin/WorkspaceSelect";
 import { AdminRouteSkeleton } from "@/components/admin/AdminRouteSkeleton";
+import {
+  getAdminShellRailAccessibilityStateV1,
+  trapAdminShellMobileNavigationFocusV1
+} from "@/lib/navigation/admin-shell-accessibility";
 import {
   brandIdFromStudioPath,
   buildAdminNavigation,
@@ -83,6 +89,14 @@ export function AdminShell({
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [showPendingSkeleton, setShowPendingSkeleton] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const navigationOpenerRef = useRef<HTMLButtonElement>(null);
+  const globalNavigationCollapsed = useAdminShellMediaQuery("(max-width: 899px)");
+  const contextNavigationCollapsed = useAdminShellMediaQuery("(max-width: 1120px)");
+  const railState = getAdminShellRailAccessibilityStateV1({
+    contextNavigationCollapsed,
+    globalNavigationCollapsed,
+    navigationOpen
+  });
   const brandId = brandIdFromStudioPath(pathname);
   const corpusId = corpusIdFromStudioPath(pathname);
   const navigation = useMemo(() => buildAdminNavigation(user.primaryRole), [user.primaryRole]);
@@ -110,9 +124,34 @@ export function AdminShell({
   }, [pendingHref]);
 
   useEffect(() => {
+    if (!railState.trapGlobalFocus) return;
+    const panel = document.getElementById("admin-global-navigation");
+    if (!panel) return;
+    const returnFocusTo = navigationOpenerRef.current;
+    const focusFrame = window.requestAnimationFrame(() => {
+      cycleWorkspaceDrawerFocusV1(panel, document.activeElement, false);
+    });
+    const containFocus = (event: KeyboardEvent) => {
+      trapAdminShellMobileNavigationFocusV1(
+        event,
+        panel,
+        document.activeElement,
+        () => setNavigationOpen(false)
+      );
+    };
+    document.addEventListener("keydown", containFocus);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", containFocus);
+      restoreWorkspaceDrawerFocusV1(returnFocusTo);
+    };
+  }, [railState.trapGlobalFocus]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setNavigationOpen(false);
         setSearchOpen(true);
       }
       if (event.key === "Escape") {
@@ -151,6 +190,7 @@ export function AdminShell({
           aria-label={t("navigation.open")}
           className="admin-shell__mobile-menu"
           onClick={() => setNavigationOpen((open) => !open)}
+          ref={navigationOpenerRef}
           type="button"
         >
           <List aria-hidden size={19} weight="bold" />
@@ -178,10 +218,25 @@ export function AdminShell({
       </WorkspaceTopbar>
 
       <WorkspaceGlobalSidebar
+        aria-hidden={railState.globalHidden || undefined}
         aria-label={t("navigation.label")}
+        aria-modal={railState.trapGlobalFocus || undefined}
         className="admin-shell__global-sidebar"
         id="admin-global-navigation"
+        inert={railState.globalHidden || undefined}
+        role={railState.trapGlobalFocus ? "dialog" : undefined}
       >
+        <div className="admin-shell__mobile-nav-head">
+          <strong>{t("navigation.label")}</strong>
+          <button
+            aria-label={t("navigation.close")}
+            className="admin-shell__icon-button"
+            onClick={() => setNavigationOpen(false)}
+            type="button"
+          >
+            <X aria-hidden size={17} />
+          </button>
+        </div>
         <WorkspaceNavigation>
           {navigation.map((item, index) => (
             <div className={item.section === "advanced" ? "admin-shell__nav-section" : undefined} key={item.key}>
@@ -207,8 +262,10 @@ export function AdminShell({
 
       {hasContext ? (
         <WorkspaceContextSidebar
+          aria-hidden={railState.contextHidden || undefined}
           aria-label={t(`${contextNamespace}.label`)}
           className="admin-shell__context-sidebar"
+          inert={railState.contextHidden || undefined}
         >
           <div className="admin-shell__context-head">
             <small>{t(`${contextNamespace}.eyebrow`)}</small>
@@ -355,4 +412,18 @@ function initials(value: string) {
 
 function roleKey(role: string) {
   return role === "noisia_admin" ? "admin" : "analyst";
+}
+
+function useAdminShellMediaQuery(query: string) {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
 }
