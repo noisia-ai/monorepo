@@ -12,6 +12,7 @@ import {
   inspectSignalSemanticReviewInvariantsV1,
   listSignalSemanticAssertionHistoryV1,
   loadSignalSemanticReviewQueueV1,
+  reconcileSignalSemanticReviewProjectionV1,
   reviewSignalSemanticAssertionV1,
   SignalSemanticReviewContractError,
   supersedeSignalSemanticAssertionV1
@@ -73,7 +74,10 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
     await setup.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
     await applyMigrationsThrough(setup, 63);
     const fixture = await seedFixture(setup);
-    await applyMigration(setup, "0064_signal_semantic_scope_hardening.sql");
+    await applyMigrationsBetween(setup, 64, 67);
+    await applyMigration(setup, "0067_signal_canonical_mention_governance.sql");
+    await applyMigrationsFrom(setup, 68);
+    await assertCurrentSemanticReviewSchemaAuthority(setup);
 
     const before = await inspectSignalSemanticReviewInvariantsV1(setup, fixture.workspaceId);
     assert.equal(before.v2_definition_count, 1);
@@ -113,6 +117,7 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
     assert.equal(retried.existing_count, applied.candidate_assertion_count);
     assert.equal(retried.candidate_digest, applied.candidate_digest);
 
+    await refreshSemanticReviewProjection(setup, fixture.workspaceId);
     let firstPageQueryCount = 0;
     const firstPage = await loadSignalSemanticReviewQueueV1({
       query: async (text, values) => {
@@ -123,7 +128,7 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
       workspace_id: fixture.workspaceId,
       limit: 100
     });
-    assert.equal(firstPageQueryCount, 2, "queue identity context and included roots stay bounded to two reads");
+    assert.equal(firstPageQueryCount, 5, "projected queue reads stay bounded to five queries");
     assert.equal(firstPage.records.length, 100);
     assert.ok(firstPage.page.next_cursor);
     const secondPage = await loadSignalSemanticReviewQueueV1(setup, {
@@ -208,18 +213,23 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
       rationale: "The governed identity cannot be resolved from current context.",
       idempotency_key: "manual-unattributed-001"
     });
-    await assert.rejects(
-      reviewSignalSemanticAssertionV1(setup, {
-        workspace_id: fixture.workspaceId,
-        attribution_id: unattributed.assertion_id,
-        reviewer_user_id: IDS.user,
-        decision: "approve",
-        rationale: "This must remain ineligible.",
-        idempotency_key: "approve-unattributed-001"
-      }),
-      (error: unknown) => error instanceof Error && "code" in error
-        && String((error as Error & { code: string }).code) === "23514"
-    );
+    await reviewSignalSemanticAssertionV1(setup, {
+      workspace_id: fixture.workspaceId,
+      attribution_id: unattributed.assertion_id,
+      reviewer_user_id: IDS.user,
+      decision: "approve",
+      rationale: "The reviewed assertion must remain outside operational serving.",
+      idempotency_key: "review-001"
+    });
+    assert.deepEqual(await row(setup, `
+      SELECT review_status, eligibility_status
+      FROM signal_mention_attributions
+      WHERE id = $1::uuid
+    `, [unattributed.assertion_id]), {
+      review_status: "approved",
+      eligibility_status: "not_eligible"
+    });
+    assert.equal(await activeV2Memberships(setup, fixture.workspaceId, IDS.unresolvedMention), 0);
 
     await assert.rejects(
       createManualSignalSemanticAssertionV1(setup, {
@@ -343,11 +353,6 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
       await Promise.all([concurrentA.end(), concurrentB.end()]);
     }
 
-    await applyMigration(setup, "0065_signal_semantic_resolution.sql");
-    await applyMigration(setup, "0066_signal_semantic_resolution_message_batches.sql");
-    await applyMigration(setup, "0067_signal_canonical_mention_governance.sql");
-    await applyMigration(setup, "0067_signal_canonical_mention_governance.sql");
-
     const v1PointerBeforeGovernance = await row(setup, `
       SELECT pointer.population_id::text,
         definition.membership_digest,
@@ -426,6 +431,7 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
     });
     assert.equal(reviewRequest.canonical_mention_id, IDS.primaryFromCompetitor);
     assert.equal(reviewRequest.changed, false);
+    await refreshSemanticReviewProjection(setup, fixture.workspaceId);
     const requestedReviewQueue = await loadSignalSemanticReviewQueueV1(setup, {
       workspace_id: fixture.workspaceId,
       filters: { state: "needs_context" },
@@ -566,6 +572,7 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
     await setup.query("COMMIT");
     assert.deepEqual(primaryResolution, { reconciled: false });
     assert.equal(await activeV2Memberships(setup, fixture.workspaceId, IDS.concurrentMention), 0);
+    await refreshSemanticReviewProjection(setup, fixture.workspaceId);
     const modelApprovedQueue = await loadSignalSemanticReviewQueueV1(setup, {
       workspace_id: fixture.workspaceId,
       filters: { state: "candidate_pending" },
@@ -642,6 +649,7 @@ test("Semantic Review backend reconciles candidates, decisions, canonical roots 
     assert.deepEqual(modelHistory.events.map((event) => event.action), ["superseded"]);
     assert.equal(correctedModelAssertion.review_status, "pending");
     assert.equal(await activeV2Memberships(setup, fixture.workspaceId, IDS.concurrentMention), 0);
+    await refreshSemanticReviewProjection(setup, fixture.workspaceId);
     const correctedQueue = await loadSignalSemanticReviewQueueV1(setup, {
       workspace_id: fixture.workspaceId,
       filters: { state: "candidate_pending" },
@@ -997,10 +1005,48 @@ function requireDisposableLocalDatabase(databaseUrl: string) {
 }
 
 async function applyMigrationsThrough(client: pg.Client, maximum: number) {
+  await applyMigrationsBetween(client, Number.NEGATIVE_INFINITY, maximum);
+}
+
+async function applyMigrationsFrom(client: pg.Client, minimum: number) {
+  await applyMigrationsBetween(client, minimum, Number.POSITIVE_INFINITY);
+}
+
+async function applyMigrationsBetween(client: pg.Client, minimum: number, maximum: number) {
   const files = (await readdir(migrationDir))
-    .filter((file) => /^\d{4}_.+\.sql$/u.test(file) && Number(file.slice(0, 4)) <= maximum)
+    .filter((file) => {
+      if (!/^\d{4}_.+\.sql$/u.test(file)) return false;
+      const ordinal = Number(file.slice(0, 4));
+      return ordinal >= minimum && ordinal <= maximum;
+    })
     .sort();
   for (const file of files) await applyMigration(client, file);
+}
+
+async function assertCurrentSemanticReviewSchemaAuthority(client: pg.Client) {
+  assert.equal(await scalar<boolean>(client, `
+    SELECT to_regprocedure(
+      'signal_mention_has_only_incomplete_imports_v1(uuid,uuid)'
+    ) IS NOT NULL
+  `), true, "current Semantic Review schema must include incomplete-import authority");
+}
+
+async function refreshSemanticReviewProjection(client: pg.Client, workspaceId: string) {
+  await client.query(`
+    SELECT queue_signal_semantic_review_projection_refresh_v1(
+      $1::uuid, NULL, 'semantic_review_fixture_refresh', true
+    )
+  `, [workspaceId]);
+  const claims = await client.query<{ workspace_id: string; lease_token: string }>(`
+    SELECT workspace_id::text, lease_token::text
+    FROM claim_signal_semantic_review_projection_v1(100, 900)
+  `);
+  const claim = claims.rows.find((row) => row.workspace_id === workspaceId);
+  assert.ok(claim?.lease_token);
+  await reconcileSignalSemanticReviewProjectionV1(client, {
+    workspace_id: workspaceId,
+    lease_token: claim.lease_token
+  });
 }
 
 async function applyMigration(client: pg.Client, file: string) {
