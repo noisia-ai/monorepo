@@ -993,3 +993,51 @@ El preflight no confía en `locale IS NOT NULL`. Revalida la cadena dedicada com
 para locales presentes en la propuesta original, exige que el locale siga idéntico,
 pertenezca a la generación y conserve el origen server-owned. Así permanecen válidas
 las variantes legítimas `en-US`/`es-MX` sin permitir una resolución fabricada.
+
+## 69B.5I-A — aplicabilidad heredada del sobre de generación
+
+**Registrado:** 2026-08-27 (`America/Mexico_City`).
+
+La ausencia de locale por leaf no equivale por defecto a ausencia de aplicabilidad. Para
+un elemento ordinario ya aprobado, `locale=null` y sin decisión explícita, el resolver
+server-owned usa el snapshot inmutable de la generación y devuelve
+`workspace_inherited`. El envelope conserva su fuente, versión y digest, junto con los
+mercados y locales sellados; no convierte el leaf al primary locale ni añade mercados
+live. Una variante realmente locale-specific (`locale_variant`) con locale nulo falla
+cerrada.
+
+Los estados efectivos son `workspace_inherited`, `explicit_global` y
+`explicit_locale`; `unresolved` sólo es una proyección operator-safe de un fallo de
+autoridad. El candidate pack V3 conserva el payload semántico y `locale=null`, añade la
+aplicabilidad efectiva y sella un grafo de aplicabilidad separado. Preflight y
+serialización comparten exactamente el mismo resolver PostgreSQL. Correction y merge
+no aceptan autoridad desde el cliente y continúan preservando locale y lineage
+byte-for-byte bajo los backstops de 0100.
+
+`locale_variant` es el único tipo cerrado que exige locale; no existe otro flag
+locale-specific. Una decisión dedicada `explicit_locale` conserva como fuente
+`operator_locale_authority`, distinta de `sealed_element_locale` para una variante
+sellada en la propuesta. Los contratos internos candidate-pack/publication-graph avanzan
+a V3, pero la transición atómica continúa bajo `publication_schema_version` V2; una
+publicación V2 histórica permanece inmutable.
+
+## Ordinary editing command (69B.5I-B, local)
+
+Guardar, deshacer una versión, archivar y restaurar son un único comando management-only
+append-only. La ceremonia de reason/rationale/confirmation permanece reservada a decisiones
+semánticas deliberadas, bulk y publicación; una edición individual explícita genera su base
+de auditoría server-side y termina aprobada. Archivar no equivale a rechazar y es reversible.
+
+## Simple operator creation (69B.5I-C, local)
+
+`Agregar elemento` incorpora conocimiento escrito por un operador autenticado mediante
+un solo Guardar, sin simular procedencia de Brand OS, Knowledge o provider. El source
+cerrado `semantic_context_operator_input` enlaza exactamente la operación de creación y
+se proyecta como input manual, nunca como contexto suministrado al modelo. La creación
+nace aprobada y activa; su reversión usa archive/restore append-only.
+
+La aplicabilidad por defecto hereda el envelope inmutable de la generación con locale
+crudo nulo. Global explícito conserva la misma identidad de colisión nullable y un locale
+sellado participa en la key server-owned, de acuerdo con el collision contract de
+publicación. Guidance de duplicados es acotado y read-only: una colisión canónica exacta
+no escribe, mientras una coincidencia de display sólo sugiere abrir el elemento existente.

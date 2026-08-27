@@ -38,6 +38,8 @@ export type SignalProductOperationActionV1 =
   | "resolve-semantic-context-annotation"
   | "repair-semantic-context-annotation-resolution"
   | "decide-semantic-context-locale-authority"
+  | "edit-semantic-context-element-v1"
+  | "create-semantic-context-element-v1"
   | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {
@@ -74,7 +76,9 @@ export async function beginSignalProductOperationV1<T>(args: {
     || args.action === "bulk-approve-semantic-context-elements"
     || args.action === "resolve-semantic-context-annotation"
     || args.action === "repair-semantic-context-annotation-resolution"
-    || args.action === "decide-semantic-context-locale-authority";
+    || args.action === "decide-semantic-context-locale-authority"
+    || args.action === "edit-semantic-context-element-v1"
+    || args.action === "create-semantic-context-element-v1";
   const decisionInputAllowed = decisionInputRequired
     || args.action === "correct-semantic-context-element"
     || args.action === "merge-semantic-context-elements";
@@ -125,6 +129,28 @@ export async function beginSignalProductOperationV1<T>(args: {
   };
   if (row.status !== "in_progress") throw new Error("Product operation has an invalid state.");
   return { key,operationId: row.id,replay: null,created: inserted.rowCount===1 };
+}
+
+export async function loadSignalProductOperationReplayV1<T>(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  action:SignalProductOperationActionV1;idempotencyKey:string;input:unknown;
+  semanticContextDecisionInput?:{payload:unknown;digest:string};
+}):Promise<T|null>{
+  const key=normalizeIdempotencyKey(args.idempotencyKey);
+  const requestDigest=sha256(stableJson({contract_version:"signal-product-operation-v1",
+    workspace_id:args.workspace.id,action:args.action,input:args.input}));
+  const selected=await args.queryable.query<{actor_user_id:string;action:string;request_digest:string;
+    status:string;result:T|null;semantic_context_decision_input_digest:string|null}>(`SELECT actor_user_id::text,
+      action,request_digest,status,result,semantic_context_decision_input_digest
+    FROM signal_governance_control_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2`,
+  [args.workspace.id,key]);
+  const row=selected.rows[0];if(!row)return null;
+  if(row.actor_user_id!==args.actor.id||row.action!==args.action||row.request_digest!==requestDigest
+      ||row.semantic_context_decision_input_digest!==(args.semanticContextDecisionInput?.digest??null))
+    throw new Error("Idempotency-Key was reused with incompatible product input.");
+  if(row.status!=="completed"||row.result===null)
+    throw new Error("Product operation has an invalid state.");
+  return row.result;
 }
 
 export async function completeSignalProductOperationV1(args: {

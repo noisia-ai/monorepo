@@ -11,12 +11,15 @@ import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-b
 import { withSignalAcquisitionTransactionV1 } from "@/lib/data-os/signal-acquisition-plan";
 import {
   SignalSemanticContextPackError,
+  SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
   SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS,
-  resolveLiveSignalSemanticContextAuthorityV1
+  resolveLiveSignalSemanticContextAuthorityV1,
+  type SignalSemanticContextElementKindV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
   beginSignalProductOperationV1,
-  completeSignalProductOperationV1
+  completeSignalProductOperationV1,
+  loadSignalProductOperationReplayV1
 } from "@/lib/data-os/signal-product-operation";
 import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
 
@@ -70,7 +73,7 @@ export type SignalSemanticContextLocaleDecisionBasisV1={
 };
 type AnnotationTypeV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_TYPES_V2[number];
 type AnnotationResolutionV2=typeof SIGNAL_SEMANTIC_CONTEXT_ANNOTATION_RESOLUTIONS_V2[number];
-type DispositionV2="pending"|"approved"|"rejected"|"merged";
+type DispositionV2="pending"|"approved"|"rejected"|"merged"|"archived";
 type GenerationRow={id:string;generation_key:string;generation_version:number;status:"draft"|"published";
   brand_os_digest:string;knowledge_digest:string;locale_context_digest:string;
   proposal_model:string|null;proposal_model_version:string|null;proposal_prompt_digest:string|null;
@@ -87,7 +90,11 @@ type ElementRow={id:string;artifact_id:string;evidence_group_id:string;element_k
   locale_decision_rationale:string|null;locale_decision_basis_digest:string|null;
   locale_decision_input_digest:string|null;locale_decision_authority_snapshot:unknown|null;
   locale_decision_authority_digest:string|null;locale_decision_prestate_digest:string|null;
-  locale_decision_poststate_digest:string|null};
+  locale_decision_poststate_digest:string|null;lifecycle_state:"active"|"archived";
+  ordinary_command_contract_version:string|null;ordinary_command_action:string|null;
+  ordinary_command_basis:unknown|null;ordinary_command_basis_digest:string|null;
+  ordinary_command_input_digest:string|null;ordinary_command_prestate_digest:string|null;
+  ordinary_command_poststate_digest:string|null};
 type SourceRef={source_type:string;source_id:string;relation_type:"supports"|"limits"|"contradicts"};
 type AnnotationRow={id:string;annotation_key:string;annotation_version:number;annotation_type:AnnotationTypeV2;
   state:"open"|"resolved";resolution:AnnotationResolutionV2|null;subject_element_id:string;
@@ -98,7 +105,9 @@ type AnnotationRow={id:string;annotation_key:string;annotation_version:number;an
   resolution_poststate_digest:string|null};
 type Snapshot={candidate_pack_digest:string;evidence_graph_digest:string;review_graph_digest:string;
   publication_authority_digest:string;semantic_context_pack_digest:string;publish_preflight_digest:string;
-  counts:Record<string,number>;collisions:string[][];blockers:string[];publishable:boolean;preflight:unknown};
+  counts:Record<string,number>;collisions:string[][];blockers:string[];publishable:boolean;preflight:unknown;
+  applicability_contract_version?:string;parent_applicability?:{source?:string;primary_locale?:string;
+    locales?:string[];markets?:string[]}};
 
 export function canonicalJsonV2(value:unknown):string{
   if(value===null)return"null";
@@ -124,6 +133,28 @@ export function canonicalJsonV2(value:unknown):string{
 
 export function digestCanonicalJsonV2(value:unknown){
   return`sha256:${createHash("sha256").update(canonicalJsonV2(value),"utf8").digest("hex")}`;
+}
+
+export const SIGNAL_SEMANTIC_CONTEXT_ORDINARY_COMMAND_V1="edit-semantic-context-element-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1="create-semantic-context-element-v1" as const;
+export type SignalSemanticContextOrdinaryCommandActionV1="save"|"undo"|"archive"|"restore";
+export type SignalSemanticContextOrdinaryApplicabilityV1=
+  |{state:"preserve"|"workspace_inherited"|"explicit_global";locale:null}
+  |{state:"explicit_locale";locale:string};
+export type SignalSemanticContextOrdinaryValuesV1={display_text:string;canonical_key:string;scope:string|null;
+  relation_kind:typeof SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS[number]|null;relation_target_key:string|null;
+  applicability:SignalSemanticContextOrdinaryApplicabilityV1};
+export type SignalSemanticContextCreateValuesV1={element_kind:SignalSemanticContextElementKindV1;
+  display_text:string;canonical_key:string;scope:string|null;
+  relation_kind:typeof SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS[number]|null;relation_target_key:string|null;
+  applicability:Exclude<SignalSemanticContextOrdinaryApplicabilityV1,{state:"preserve"}>};
+
+export function signalSemanticContextOperatorElementKeyV1(elementKind:string,canonicalKey:string,rawLocale:string|null){
+  const localeSuffix=rawLocale===null?"":`.${rawLocale.toLowerCase()}`;
+  const prefix=`operator.${elementKind}.`;const readable=`${prefix}${canonicalKey}${localeSuffix}`;
+  if(readable.length<=200)return readable;
+  const suffix=createHash("sha256").update(`${elementKind}\u001f${canonicalKey}\u001f${rawLocale??""}`,"utf8").digest("hex").slice(0,16);
+  return`${readable.slice(0,200-suffix.length-1)}.${suffix}`;
 }
 
 export function normalizeSignalSemanticContextDecisionBasisV2(args:{reason:ReasonV2;rationale:string}):
@@ -434,6 +465,228 @@ export async function correctSignalSemanticContextElementV2(args:{queryable:Sign
     key:operation.key,result});return result;
 }
 
+export function signalSemanticContextOrdinaryStateTokenV1(element:{element_key:string;element_version:number;
+  element_digest:string;lifecycle_state:"active"|"archived"}){
+  return digestCanonicalJsonV2({contract_version:"signal-semantic-context-ordinary-state-token-v1",
+    element_key:element.element_key,element_version:element.element_version,element_digest:element.element_digest,
+    lifecycle_state:element.lifecycle_state});
+}
+
+export async function editSignalSemanticContextElementV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
+  elementKey:string;expectedVersion:number;stateToken:string;action:SignalSemanticContextOrdinaryCommandActionV1;
+  values?:SignalSemanticContextOrdinaryValuesV1;targetVersion?:number}){
+  assertInternal(args.actor);assertKey(args.elementKey);
+  if(!(["save","undo","archive","restore"] as const).includes(args.action))
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_action_invalid",422);
+  if(!Number.isInteger(args.expectedVersion)||args.expectedVersion<1||!args.stateToken)
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_state_invalid",422);
+  const values=args.action==="save"?normalizeOrdinaryValues(args.values):undefined;
+  if(args.action==="undo"&&(!Number.isInteger(args.targetVersion)||Number(args.targetVersion)<1))
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_target_invalid",422);
+  const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_ORDINARY_COMMAND_V1,action:args.action,
+    generation_key:args.generationKey,element_key:args.elementKey,expected_version:args.expectedVersion,
+    state_token:args.stateToken,...(values?{values}:{}),
+    ...(args.action==="undo"?{target_version:args.targetVersion}: {})};
+  const inputDigest=digestCanonicalJsonV2(operationInput);
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const operation=await beginSignalProductOperationV1<{generation_key:string;element_key:string;
+    element_version:number;disposition:"approved"|"archived";lifecycle_state:"active"|"archived";
+    changed:boolean;state_token:string;draft_digest_ref:string}>({...args,
+    action:"edit-semantic-context-element-v1",input:operationInput,
+    semanticContextDecisionInput:{payload:operationInput,digest:inputDigest}});
+  if(operation.replay)return operation.replay;
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertNoActiveRun(args.queryable,generation.id);
+  const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const current=await requireCurrentElement(args.queryable,generation.id,args.elementKey,true);
+  if(current.element_version!==args.expectedVersion
+      ||signalSemanticContextOrdinaryStateTokenV1(current)!==args.stateToken)
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_stale",409);
+  if((args.action==="restore"&&current.lifecycle_state!=="archived")
+      ||(args.action!=="restore"&&(current.lifecycle_state!=="active"||current.disposition!=="approved")))
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_lifecycle_invalid",409);
+  const refs=await loadRefs(args.queryable,current.evidence_group_id);
+  if(digestCanonicalJsonV2(refs)!==current.source_refs_digest)
+    throw new SignalSemanticContextPackError("semantic_context_evidence_invalid",409);
+  let proposal=definition(current);let lifecycle:"active"|"archived"=current.lifecycle_state;
+  let disposition:"approved"|"archived"=current.disposition==="archived"?"archived":"approved";
+  let localeFields=ordinaryLocaleFieldsFromCurrent(current);
+  if(args.action==="save"){
+    proposal={...proposal,canonical_key:values!.canonical_key,display_text:values!.display_text,
+      scope:values!.scope,relation_kind:values!.relation_kind,relation_target_key:values!.relation_target_key};
+    ({proposal,localeFields}=await resolveOrdinaryApplicability({queryable:args.queryable,generation,current,
+      proposal,selection:values!.applicability,inputDigest,currentAuthority:currentAuthority.authority,
+      actorId:args.actor.id}));
+  }else if(args.action==="undo"){
+    const target=await loadOrdinaryUndoTarget(args.queryable,generation.id,current,args.targetVersion!);
+    if(target.lifecycle_state!=="active"||target.disposition==="archived")
+      throw new SignalSemanticContextPackError("semantic_context_ordinary_target_stale",409);
+    proposal={...proposal,canonical_key:target.canonical_key,display_text:target.display_text,scope:target.scope,
+      relation_kind:target.relation_kind,relation_target_key:target.relation_target_key,locale:target.locale};
+    localeFields=ordinaryLocaleFieldsFromCurrent(target);
+  }else if(args.action==="archive"){
+    await assertNotRelationTarget(args.queryable,generation.id,current.element_key);
+    lifecycle="archived";disposition="archived";
+  }else{lifecycle="active";disposition="approved";}
+  await assertOrdinaryRelation(args.queryable,generation.id,current.element_key,proposal.relation_kind,
+    proposal.relation_target_key);
+  const changed=args.action!=="save"||!ordinarySemanticEqual(current,proposal,localeFields);
+  if(!changed){const result={generation_key:generation.generation_key,element_key:current.element_key,
+    element_version:current.element_version,disposition:"approved" as const,lifecycle_state:"active" as const,
+    changed:false,state_token:signalSemanticContextOrdinaryStateTokenV1(current),
+    draft_digest_ref:shortDigest(generation.draft_digest)};
+    await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+      key:operation.key,result});return result;}
+  const parent=await args.queryable.query<{value:unknown}>(`SELECT signal_semantic_context_parent_applicability_v1(
+    $1::uuid,$2::jsonb) value`,[generation.id,JSON.stringify(currentAuthority.authority)]);
+  const parentValue=parent.rows[0]?.value as {valid?:boolean;parent_authority_digest?:string}|undefined;
+  if(!parentValue?.valid||!parentValue.parent_authority_digest)
+    throw new SignalSemanticContextPackError("semantic_context_parent_applicability_invalid",409);
+  const commandClock=await args.queryable.query<{value:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') value`);
+  const actorAuthority=await resolveAnnotationResolutionAuthority(args.queryable,currentAuthority.authority,args.actor.id);
+  const version=current.element_version+1;
+  const basis=ordinaryAuditBasis({action:args.action,actor:(actorAuthority as {actor:unknown}).actor,
+    at:commandClock.rows[0]!.value,before:current,after:{...proposal,lifecycle_state:lifecycle,disposition},
+    afterLocaleFields:localeFields,parentDigest:parentValue.parent_authority_digest});
+  const basisDigest=digestCanonicalJsonV2(basis);
+  const created=await createOrdinaryElementV1(args.queryable,{workspaceId:args.workspace.id,generation,current,
+    proposal,version,disposition,lifecycle,sourceRefs:refs,operationId:operation.operationId,actorId:args.actor.id,
+    commandAt:commandClock.rows[0]!.value,inputDigest,basis,basisDigest,localeFields});
+  const draftDigest=await refreshDraftDigestV2(args.queryable,generation.id);
+  await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,
+    elementId:created.id,operationId:operation.operationId,eventIndex:0,eventKind:`ordinary_element_${args.action}`,
+    previous:current.element_digest,next:created.elementDigest,actorId:args.actor.id});
+  const stateToken=signalSemanticContextOrdinaryStateTokenV1({element_key:current.element_key,
+    element_version:version,element_digest:created.elementDigest,lifecycle_state:lifecycle});
+  const result={generation_key:generation.generation_key,element_key:current.element_key,element_version:version,
+    disposition,lifecycle_state:lifecycle,changed:true,state_token:stateToken,draft_digest_ref:shortDigest(draftDigest)};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+export async function editSignalSemanticContextElementProductV1(args:Omit<
+  Parameters<typeof editSignalSemanticContextElementV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>editSignalSemanticContextElementV1({...args,queryable}));
+}
+
+export async function loadSignalSemanticContextCreationGuidanceV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;generationKey:string;
+  elementKind:SignalSemanticContextElementKindV1;canonicalKey:string;displayText:string;locale:string|null}){
+  assertInternal(args.actor);assertKey(args.canonicalKey);
+  if(!SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS.includes(args.elementKind))
+    throw new SignalSemanticContextPackError("semantic_context_element_kind_invalid",422);
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const normalizedDisplay=normalizeDisplayForDuplicate(args.displayText);
+  const result=await args.queryable.query<{element_key:string;display_text:string;element_kind:string;scope:string|null;
+    locale:string|null;applicability_state:string;exact_canonical:boolean}>(`WITH leaves AS (
+      SELECT element.* FROM signal_semantic_context_element_versions element
+      WHERE element.generation_id=$1::uuid AND element.lifecycle_state='active'
+        AND element.disposition='approved' AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+          WHERE successor.supersedes_element_id=element.id)
+    ) SELECT element_key,display_text,element_kind,scope,locale,CASE
+      WHEN locale_decision_disposition='global' THEN 'explicit_global'
+      WHEN locale_decision_disposition='locale_specific' THEN 'explicit_locale'
+      WHEN locale IS NOT NULL THEN 'explicit_locale' ELSE 'workspace_inherited' END applicability_state,
+      (element_kind=$2 AND canonical_key=$3 AND locale IS NOT DISTINCT FROM $4) exact_canonical
+    FROM leaves WHERE (element_kind=$2 AND canonical_key=$3 AND locale IS NOT DISTINCT FROM $4)
+      OR lower(regexp_replace(btrim(display_text),'\\s+',' ','g'))=$5
+    ORDER BY (element_kind=$2 AND canonical_key=$3 AND locale IS NOT DISTINCT FROM $4) DESC,
+      convert_to(element_key,'UTF8') LIMIT 5`,[generation.id,args.elementKind,args.canonicalKey,args.locale,normalizedDisplay]);
+  return{generation_key:generation.generation_key,exact_collision:result.rows.find((row)=>row.exact_canonical)??null,
+    suggestions:result.rows.filter((row)=>!row.exact_canonical).map((row)=>({element_key:row.element_key,
+      display_text:row.display_text,element_kind:row.element_kind,scope:row.scope,locale:row.locale,
+      applicability_state:row.applicability_state})),
+    writes_performed:false as const,provider_calls:0 as const};
+}
+
+export async function createSignalSemanticContextElementV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
+  values:SignalSemanticContextCreateValuesV1}){
+  assertInternal(args.actor);const values=normalizeCreationValues(args.values);
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  await assertNoActiveRun(args.queryable,generation.id);
+  const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
+  const rawLocale=values.applicability.state==="explicit_locale"?values.applicability.locale:null;
+  const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1,generation_key:generation.generation_key,
+    values};const inputDigest=digestCanonicalJsonV2(operationInput);
+  const replay=await loadSignalProductOperationReplayV1<{generation_key:string;element_key:string;element_version:number;
+    disposition:"approved";lifecycle_state:"active";collision:boolean;draft_digest_ref:string}>({...args,
+    action:"create-semantic-context-element-v1",input:operationInput,
+    semanticContextDecisionInput:{payload:operationInput,digest:inputDigest}});
+  if(replay)return replay;
+  const collision=await args.queryable.query<{element_key:string;display_text:string;element_kind:string;element_version:number}>(`SELECT
+    element_key,display_text,element_kind,element_version FROM signal_semantic_context_element_versions element
+    WHERE generation_id=$1::uuid AND lifecycle_state='active' AND disposition='approved' AND element_kind=$2
+      AND canonical_key=$3 AND locale IS NOT DISTINCT FROM $4 AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=element.id)
+    ORDER BY convert_to(element_key,'UTF8') LIMIT 1`,[generation.id,values.element_kind,values.canonical_key,rawLocale]);
+  if(collision.rows[0]){const existing=collision.rows[0];const result={generation_key:generation.generation_key,
+    element_key:existing.element_key,element_version:existing.element_version,disposition:"approved" as const,lifecycle_state:"active" as const,
+    collision:true,existing,draft_digest_ref:shortDigest(generation.draft_digest)};
+    return result;}
+  const operation=await beginSignalProductOperationV1<{generation_key:string;element_key:string;element_version:number;
+    disposition:"approved";lifecycle_state:"active";collision:boolean;draft_digest_ref:string}>({...args,
+    action:"create-semantic-context-element-v1",input:operationInput,
+    semanticContextDecisionInput:{payload:operationInput,digest:inputDigest}});
+  if(operation.replay)return operation.replay;
+  const elementKey=signalSemanticContextOperatorElementKeyV1(values.element_kind,values.canonical_key,rawLocale);
+  const keyConflict=await args.queryable.query<{exists:boolean}>(`SELECT EXISTS(SELECT 1 FROM
+    signal_semantic_context_element_versions WHERE generation_id=$1::uuid AND element_key=$2) exists`,
+    [generation.id,elementKey]);
+  if(keyConflict.rows[0]?.exists)throw new SignalSemanticContextPackError("semantic_context_element_key_collision",409);
+  await assertOrdinaryRelation(args.queryable,generation.id,elementKey,values.relation_kind,values.relation_target_key);
+  const parent=await args.queryable.query<{value:unknown}>(`SELECT signal_semantic_context_parent_applicability_v1(
+    $1::uuid,$2::jsonb) value`,[generation.id,JSON.stringify(currentAuthority.authority)]);
+  const parentValue=parent.rows[0]?.value as {valid?:boolean;parent_authority_digest?:string}|undefined;
+  if(!parentValue?.valid||!parentValue.parent_authority_digest)
+    throw new SignalSemanticContextPackError("semantic_context_parent_applicability_invalid",409);
+  const clock=await args.queryable.query<{value:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') value`);
+  const createdAt=clock.rows[0]!.value;
+  const actorAuthority=await resolveAnnotationResolutionAuthority(args.queryable,currentAuthority.authority,args.actor.id);
+  const applicability=creationLocaleFields({values,inputDigest,actorAuthority,
+    parentDigest:parentValue.parent_authority_digest,elementKey});
+  const basis={contract_version:"signal-semantic-context-operator-create-audit-v1",
+    command_version:SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1,action:"create",actor:(actorAuthority as {actor:unknown}).actor,
+    created_at:createdAt,parent_applicability_digest:parentValue.parent_authority_digest,
+    diff:[{field:"element",before:null,after:{element_kind:values.element_kind,canonical_key:values.canonical_key,
+      display_text:values.display_text,scope:values.scope,relation_kind:values.relation_kind,
+      relation_target_key:values.relation_target_key,applicability:values.applicability}}],
+    provenance:{source_type:"semantic_context_operator_input",relation_type:"supports"}};
+  const basisDigest=digestCanonicalJsonV2(basis);
+  const proposal={element_key:elementKey,element_kind:values.element_kind,canonical_key:values.canonical_key,
+    display_text:values.display_text,scope:values.scope,entity_type:null,entity_id:null,locale:rawLocale,
+    relation_kind:values.relation_kind,relation_target_key:values.relation_target_key,confidence:null};
+  const created=await createOperatorElementV1(args.queryable,{workspaceId:args.workspace.id,generation,proposal,
+    operationId:operation.operationId,actorId:args.actor.id,createdAt,inputDigest,basis,basisDigest,
+    parentDigest:parentValue.parent_authority_digest,localeFields:applicability});
+  const draftDigest=await refreshDraftDigestV2(args.queryable,generation.id);
+  await insertEventV2(args.queryable,{workspaceId:args.workspace.id,generationId:generation.id,elementId:created.id,
+    operationId:operation.operationId,eventIndex:0,eventKind:"operator_element_created",previous:null,
+    next:created.elementDigest,actorId:args.actor.id});
+  const result={generation_key:generation.generation_key,element_key:elementKey,element_version:1,
+    disposition:"approved" as const,lifecycle_state:"active" as const,collision:false,
+    draft_digest_ref:shortDigest(draftDigest)};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,key:operation.key,result});
+  return result;
+}
+
+export async function createSignalSemanticContextElementProductV1(args:Omit<
+  Parameters<typeof createSignalSemanticContextElementV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>createSignalSemanticContextElementV1({...args,queryable}));
+}
+export async function loadSignalSemanticContextCreationGuidanceProductV1(args:Omit<
+  Parameters<typeof loadSignalSemanticContextCreationGuidanceV1>[0],"queryable">){
+  const{pool}=await import("@/lib/db");const client=await pool.connect();
+  try{await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const result=await loadSignalSemanticContextCreationGuidanceV1({...args,queryable:client});
+    await client.query("COMMIT");return result;}
+  catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}}
+
 export async function annotateSignalSemanticContextElementV2(args:{queryable:SignalBrandPolicyQueryable;
   workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;generationKey:string;
   elementKey:string;annotationKey:string;annotationType:AnnotationTypeV2;reason:ReasonV2;rationale:string;
@@ -680,6 +933,11 @@ export async function loadSignalSemanticContextPublicationPreflightV2(args:{quer
     generation_key:generation.generation_key,generation_version:generation.generation_version,
     counts:snapshot.counts,collisions:snapshot.collisions,blockers:snapshot.blockers,
     publishable:snapshot.publishable,
+    applicability:snapshot.applicability_contract_version&&snapshot.parent_applicability?{
+      contract_version:snapshot.applicability_contract_version,
+      state:"sealed_parent" as const,source:snapshot.parent_applicability.source??"sealed_generation_locale_context",
+      primary_locale:snapshot.parent_applicability.primary_locale??null,
+      locales:snapshot.parent_applicability.locales??[],markets:snapshot.parent_applicability.markets??[]}:null,
     digest_refs:{candidate:shortDigest(snapshot.candidate_pack_digest),evidence:shortDigest(snapshot.evidence_graph_digest),
       review:shortDigest(snapshot.review_graph_digest),authority:shortDigest(snapshot.publication_authority_digest),
       pack:shortDigest(snapshot.semantic_context_pack_digest)},preflight_digest:snapshot.publish_preflight_digest,
@@ -787,7 +1045,15 @@ async function requireCurrentElement(queryable:SignalBrandPolicyQueryable,genera
     locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,
     locale_decision_reason_code,locale_decision_rationale,locale_decision_basis_digest,
     locale_decision_input_digest,locale_decision_authority_snapshot,
-    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
+    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest,
+    COALESCE(to_jsonb(element)->>'lifecycle_state','active') lifecycle_state,
+    to_jsonb(element)->>'ordinary_command_contract_version' ordinary_command_contract_version,
+    to_jsonb(element)->>'ordinary_command_action' ordinary_command_action,
+    to_jsonb(element)->'ordinary_command_basis' ordinary_command_basis,
+    to_jsonb(element)->>'ordinary_command_basis_digest' ordinary_command_basis_digest,
+    to_jsonb(element)->>'ordinary_command_input_digest' ordinary_command_input_digest,
+    to_jsonb(element)->>'ordinary_command_prestate_digest' ordinary_command_prestate_digest,
+    to_jsonb(element)->>'ordinary_command_poststate_digest' ordinary_command_poststate_digest
     FROM signal_semantic_context_element_versions element WHERE generation_id=$1::uuid AND element_key=$2
       AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
         WHERE successor.supersedes_element_id=element.id) ${lock?"FOR UPDATE":""}`,[generationId,elementKey]);
@@ -801,6 +1067,48 @@ async function loadRefs(queryable:SignalBrandPolicyQueryable,evidenceGroupId:str
 function sortAndDedupeRefs(refs:SourceRef[]){const map=new Map<string,SourceRef>();for(const ref of refs){const normalized={...ref,source_id:ref.source_id.toLowerCase()};
   map.set(`${ref.source_type}\u001f${normalized.source_id}\u001f${ref.relation_type}`,normalized);}return[...map.values()].sort((a,b)=>
     compareUtf8(a.source_type,b.source_type)||compareUtf8(a.source_id,b.source_id)||compareUtf8(a.relation_type,b.relation_type));}
+function normalizeDisplayForDuplicate(value:string){const normalized=value.trim().normalize("NFC");
+  if(!normalized||[...normalized].length>500)throw new SignalSemanticContextPackError("semantic_context_display_invalid",422);
+  return normalized.replace(/\s+/gu," ").toLocaleLowerCase("und");}
+function normalizeCreationValues(value:SignalSemanticContextCreateValuesV1){
+  if(!value||!SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS.includes(value.element_kind))
+    throw new SignalSemanticContextPackError("semantic_context_element_kind_invalid",422);
+  const display_text=value.display_text.trim().normalize("NFC");const canonical_key=value.canonical_key.trim();
+  const scope=value.scope?.trim().normalize("NFC")||null;
+  validateCorrection({canonical_key,display_text,scope,relation_kind:value.relation_kind,
+    relation_target_key:value.relation_target_key});
+  if(scope!==null&&[...scope].length>200)throw new SignalSemanticContextPackError("semantic_context_scope_invalid",422);
+  if(!value.applicability||!["workspace_inherited","explicit_global","explicit_locale"].includes(value.applicability.state))
+    throw new SignalSemanticContextPackError("semantic_context_creation_applicability_invalid",422);
+  if(value.applicability.state==="explicit_locale"){
+    if(!value.applicability.locale||!/^[a-z]{2,3}(?:-[A-Z]{2})?$/u.test(value.applicability.locale))
+      throw new SignalSemanticContextPackError("semantic_context_locale_invalid",422);
+  }else if(value.applicability.locale!==null)throw new SignalSemanticContextPackError("semantic_context_locale_invalid",422);
+  if(value.element_kind==="locale_variant"&&value.applicability.state!=="explicit_locale")
+    throw new SignalSemanticContextPackError("semantic_context_locale_variant_requires_locale",422);
+  return{...value,display_text,canonical_key,scope};
+}
+function creationLocaleFields(args:{values:ReturnType<typeof normalizeCreationValues>;inputDigest:string;
+  actorAuthority:unknown;parentDigest:string;elementKey:string}):OrdinaryLocaleFields{
+  if(args.values.applicability.state==="workspace_inherited")return{locale:null,
+    locale_decision_contract_version:null,locale_decision_disposition:null,locale_decision_locale:null,
+    locale_decision_reason_code:null,locale_decision_rationale:null,locale_decision_basis_digest:null,
+    locale_decision_input_digest:null,locale_decision_authority_snapshot:null,locale_decision_authority_digest:null,
+    locale_decision_prestate_digest:null,locale_decision_poststate_digest:null};
+  const disposition=args.values.applicability.state==="explicit_global"?"global":"locale_specific";
+  const locale=args.values.applicability.state==="explicit_locale"?args.values.applicability.locale:null;
+  const rationale="Applicability selected by the authenticated operator during element creation.";
+  const basis={contract_version:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONTRACT_V1,disposition,locale,
+    reason:"locale_resolution",rationale};
+  return{locale,locale_decision_contract_version:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONTRACT_V1,
+    locale_decision_disposition:disposition,locale_decision_locale:locale,
+    locale_decision_reason_code:"locale_resolution",locale_decision_rationale:rationale,
+    locale_decision_basis_digest:digestCanonicalJsonV2(basis),locale_decision_input_digest:args.inputDigest,
+    locale_decision_authority_snapshot:args.actorAuthority,
+    locale_decision_authority_digest:digestCanonicalJsonV2(args.actorAuthority),
+    locale_decision_prestate_digest:digestCanonicalJsonV2({contract_version:"signal-semantic-context-create-prestate-v1",
+      element_key:args.elementKey,parent_applicability_digest:args.parentDigest}),locale_decision_poststate_digest:null};
+}
 function definition(element:ElementRow){return{element_key:element.element_key,element_kind:element.element_kind,
   canonical_key:element.canonical_key,display_text:element.display_text,scope:element.scope,
   entity_type:element.entity_type,entity_id:element.entity_id,locale:element.locale,
@@ -808,6 +1116,243 @@ function definition(element:ElementRow){return{element_key:element.element_key,e
   confidence:element.confidence===null?null:Number(element.confidence)};}
 function withoutConfidence<T extends{confidence:unknown}>(value:T):Omit<T,"confidence">{
   const result={...value} as T&{confidence?:unknown};delete result.confidence;return result;}
+type OrdinaryLocaleFields={locale:string|null;locale_decision_contract_version:string|null;
+  locale_decision_disposition:"global"|"locale_specific"|null;locale_decision_locale:string|null;
+  locale_decision_reason_code:ReasonV2|null;locale_decision_rationale:string|null;
+  locale_decision_basis_digest:string|null;locale_decision_input_digest:string|null;
+  locale_decision_authority_snapshot:unknown|null;locale_decision_authority_digest:string|null;
+  locale_decision_prestate_digest:string|null;locale_decision_poststate_digest:string|null};
+function ordinaryLocaleFieldsFromCurrent(current:ElementRow):OrdinaryLocaleFields{return{
+  locale:current.locale,locale_decision_contract_version:current.locale_decision_contract_version,
+  locale_decision_disposition:current.locale_decision_disposition,locale_decision_locale:current.locale_decision_locale,
+  locale_decision_reason_code:current.locale_decision_reason_code,locale_decision_rationale:current.locale_decision_rationale,
+  locale_decision_basis_digest:current.locale_decision_basis_digest,
+  locale_decision_input_digest:current.locale_decision_input_digest,
+  locale_decision_authority_snapshot:current.locale_decision_authority_snapshot,
+  locale_decision_authority_digest:current.locale_decision_authority_digest,
+  locale_decision_prestate_digest:current.locale_decision_prestate_digest,
+  locale_decision_poststate_digest:current.locale_decision_poststate_digest};}
+function normalizeOrdinaryValues(value:SignalSemanticContextOrdinaryValuesV1|undefined){
+  if(!value)throw new SignalSemanticContextPackError("semantic_context_ordinary_values_required",422);
+  const display_text=value.display_text.trim().normalize("NFC");const canonical_key=value.canonical_key.trim();
+  const scope=value.scope?.trim().normalize("NFC")||null;
+  validateCorrection({canonical_key,display_text,scope,relation_kind:value.relation_kind,
+    relation_target_key:value.relation_target_key});
+  if((value.relation_target_key&&(!/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u.test(value.relation_target_key)
+      ||value.relation_target_key.length>200)))throw new SignalSemanticContextPackError("semantic_context_relation_invalid",422);
+  if(!(["preserve","workspace_inherited","explicit_global","explicit_locale"] as const)
+      .includes(value.applicability.state))throw new SignalSemanticContextPackError("semantic_context_applicability_invalid",422);
+  if((value.applicability.state==="explicit_locale")!==Boolean(value.applicability.locale))
+    throw new SignalSemanticContextPackError("semantic_context_applicability_invalid",422);
+  return{display_text,canonical_key,scope,relation_kind:value.relation_kind,relation_target_key:value.relation_target_key,
+    applicability:value.applicability};
+}
+async function resolveOrdinaryApplicability(args:{queryable:SignalBrandPolicyQueryable;generation:GenerationRow;
+  current:ElementRow;proposal:ReturnType<typeof definition>;selection:SignalSemanticContextOrdinaryApplicabilityV1;
+  inputDigest:string;currentAuthority:unknown;actorId:string}){
+  if(args.selection.state==="preserve")return{proposal:{...args.proposal,locale:args.current.locale},
+    localeFields:ordinaryLocaleFieldsFromCurrent(args.current)};
+  if(args.current.element_kind==="locale_variant"&&args.selection.state==="workspace_inherited")
+    throw new SignalSemanticContextPackError("semantic_context_locale_specific_required",422);
+  if(args.selection.state==="workspace_inherited")return{proposal:{...args.proposal,locale:null},localeFields:{
+    locale:null,locale_decision_contract_version:null,locale_decision_disposition:null,locale_decision_locale:null,
+    locale_decision_reason_code:null,locale_decision_rationale:null,locale_decision_basis_digest:null,
+    locale_decision_input_digest:null,locale_decision_authority_snapshot:null,locale_decision_authority_digest:null,
+    locale_decision_prestate_digest:null,locale_decision_poststate_digest:null} satisfies OrdinaryLocaleFields};
+  const locale=args.selection.state==="explicit_locale"?args.selection.locale:null;
+  const allowed=new Set([args.generation.primary_locale,...args.generation.locale_variants]);
+  if(locale!==null&&!allowed.has(locale))throw new SignalSemanticContextPackError("semantic_context_locale_invalid",422);
+  const actorAuthority=await resolveAnnotationResolutionAuthority(args.queryable,args.currentAuthority,args.actorId);
+  const basis={contract_version:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONTRACT_V1,
+    disposition:locale===null?"global" as const:"locale_specific" as const,locale,
+    reason:"operator_correction" as const,
+    rationale:"Applicability changed through the ordinary Semantic Context editor."};
+  return{proposal:{...args.proposal,locale},localeFields:{locale,
+    locale_decision_contract_version:basis.contract_version,locale_decision_disposition:basis.disposition,
+    locale_decision_locale:locale,locale_decision_reason_code:basis.reason,
+    locale_decision_rationale:basis.rationale,locale_decision_basis_digest:digestCanonicalJsonV2(basis),
+    locale_decision_input_digest:args.inputDigest,locale_decision_authority_snapshot:actorAuthority,
+    locale_decision_authority_digest:digestCanonicalJsonV2(actorAuthority),
+    locale_decision_prestate_digest:args.current.element_digest,locale_decision_poststate_digest:null}};
+}
+async function loadOrdinaryUndoTarget(queryable:SignalBrandPolicyQueryable,generationId:string,current:ElementRow,targetVersion:number){
+  const result=await queryable.query<ElementRow>(`SELECT id::text,artifact_id::text,evidence_group_id::text,element_key,
+    element_version,element_kind,canonical_key,display_text,scope,entity_type,entity_id::text,locale,relation_kind,
+    relation_target_key,confidence::text,disposition,origin_kind,supersedes_element_id::text,
+    original_proposal_element_id::text,source_refs_digest,element_digest,
+    locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,
+    locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,locale_decision_prestate_digest,
+    locale_decision_poststate_digest,lifecycle_state,ordinary_command_contract_version,ordinary_command_action,
+    ordinary_command_basis,ordinary_command_basis_digest,ordinary_command_input_digest,
+    ordinary_command_prestate_digest,ordinary_command_poststate_digest
+    FROM signal_semantic_context_element_versions candidate WHERE generation_id=$1::uuid AND element_key=$2
+      AND element_version<$3 AND lifecycle_state='active' AND disposition='approved'
+      AND COALESCE(original_proposal_element_id,id)=COALESCE($4::uuid,id)
+      AND ROW(display_text,canonical_key,scope,relation_kind,relation_target_key,locale,
+        locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,locale_decision_authority_digest)
+        IS DISTINCT FROM ROW($5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      ORDER BY element_version DESC LIMIT 1`,[generationId,current.element_key,current.element_version,
+      current.original_proposal_element_id??current.id,current.display_text,current.canonical_key,current.scope,
+      current.relation_kind,current.relation_target_key,current.locale,current.locale_decision_contract_version,
+      current.locale_decision_disposition,current.locale_decision_locale,current.locale_decision_authority_digest]);
+  if(result.rows.length!==1)throw new SignalSemanticContextPackError("semantic_context_ordinary_target_stale",409);
+  const target=result.rows[0]!;if(target.element_version!==targetVersion
+      ||(target.original_proposal_element_id??target.id)!==(current.original_proposal_element_id??current.id))
+    throw new SignalSemanticContextPackError("semantic_context_ordinary_target_stale",409);
+  return target;
+}
+async function assertOrdinaryRelation(queryable:SignalBrandPolicyQueryable,generationId:string,elementKey:string,
+  relationKind:string|null,targetKey:string|null){
+  if(Boolean(relationKind)!==Boolean(targetKey)||relationKind&&!SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS.includes(relationKind as never))
+    throw new SignalSemanticContextPackError("semantic_context_relation_invalid",422);
+  if(!targetKey)return;if(targetKey===elementKey)throw new SignalSemanticContextPackError("semantic_context_relation_invalid",422);
+  const target=await requireCurrentElement(queryable,generationId,targetKey,false);
+  if(target.disposition!=="approved"||target.lifecycle_state!=="active")
+    throw new SignalSemanticContextPackError("semantic_context_relation_target_invalid",409);
+}
+async function assertNotRelationTarget(queryable:SignalBrandPolicyQueryable,generationId:string,elementKey:string){
+  const result=await queryable.query<{blocked:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions element
+    WHERE element.generation_id=$1::uuid AND element.relation_target_key=$2 AND element.disposition='approved'
+      AND element.lifecycle_state='active' AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)) blocked`,[generationId,elementKey]);
+  if(result.rows[0]?.blocked)throw new SignalSemanticContextPackError("semantic_context_archive_relation_target",409);
+}
+function ordinarySemanticEqual(current:ElementRow,proposal:ReturnType<typeof definition>,localeFields:OrdinaryLocaleFields){
+  return current.canonical_key===proposal.canonical_key&&current.display_text===proposal.display_text
+    &&current.scope===proposal.scope&&current.relation_kind===proposal.relation_kind
+    &&current.relation_target_key===proposal.relation_target_key&&current.locale===proposal.locale
+    &&current.locale_decision_basis_digest===localeFields.locale_decision_basis_digest;
+}
+function ordinaryAuditBasis(args:{action:SignalSemanticContextOrdinaryCommandActionV1;actor:unknown;at:string;
+  before:ElementRow;after:ReturnType<typeof definition>&{lifecycle_state:string;disposition:string};
+  afterLocaleFields:OrdinaryLocaleFields;parentDigest:string}){
+  const fields=["display_text","canonical_key","scope","relation_kind","relation_target_key","locale","lifecycle_state"] as const;
+  const before={...definition(args.before),lifecycle_state:args.before.lifecycle_state,disposition:args.before.disposition};
+  const applicability=(value:typeof before|typeof args.after,source?:ElementRow)=>({
+    state:source?.locale_decision_disposition==="global"?"explicit_global"
+      :source?.locale_decision_disposition==="locale_specific"?"explicit_locale"
+        :value.locale!==null?"sealed_existing_locale"
+          :source?.locale_decision_contract_version==null?"workspace_inherited":"unresolved",
+    locale:value.locale,contract_version:source?.locale_decision_contract_version??null,
+    authority_digest:source?.locale_decision_authority_digest??null});
+  const beforeApplicability=applicability(before,args.before);
+  const afterSource={...args.before,locale:args.after.locale,
+    locale_decision_contract_version:args.afterLocaleFields.locale_decision_contract_version,
+    locale_decision_disposition:args.afterLocaleFields.locale_decision_disposition,
+    locale_decision_authority_digest:args.afterLocaleFields.locale_decision_authority_digest} as ElementRow;
+  const afterApplicability=applicability(args.after,afterSource);
+  const diff=[...fields.filter((field)=>before[field]!==args.after[field])
+    .map((field)=>({field,before:before[field],after:args.after[field]})),
+    ...(JSON.stringify(beforeApplicability)!==JSON.stringify(afterApplicability)
+      ?[{field:"applicability",before:beforeApplicability,after:afterApplicability}]:[])];
+  return{contract_version:"signal-semantic-context-ordinary-audit-v1",command_version:SIGNAL_SEMANTIC_CONTEXT_ORDINARY_COMMAND_V1,
+    action:args.action,actor:args.actor,changed_at:args.at,parent_applicability_digest:args.parentDigest,
+    diff};
+}
+async function createOrdinaryElementV1(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generation:GenerationRow;
+  current:ElementRow;proposal:ReturnType<typeof definition>;version:number;disposition:"approved"|"archived";
+  lifecycle:"active"|"archived";sourceRefs:SourceRef[];operationId:string;actorId:string;commandAt:string;
+  inputDigest:string;basis:unknown;basisDigest:string;localeFields:OrdinaryLocaleFields}){
+  const refs=sortAndDedupeRefs(args.sourceRefs);const sourceRefsDigest=digestCanonicalJsonV2(refs);
+  const elementDigest=digestCanonicalJsonV2({contract_version:"signal-semantic-context-ordinary-element-v1",
+    ...withoutConfidence(args.proposal),element_version:args.version,disposition:args.disposition,
+    lifecycle_state:args.lifecycle,source_refs_digest:sourceRefsDigest,ordinary_command_basis_digest:args.basisDigest});
+  const locale={...args.localeFields,locale_decision_poststate_digest:
+    args.localeFields.locale_decision_contract_version&&args.localeFields.locale_decision_input_digest===args.inputDigest
+      ?elementDigest:args.localeFields.locale_decision_poststate_digest};
+  const artifact=await queryable.query<{id:string}>(`INSERT INTO analysis_artifacts(workspace_id,workspace_artifact_kind,
+    workspace_authority_digest,artifact_key,artifact_type,content,confidence,review_status,revision,metadata)
+    VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,$5,'accepted',$6,$7::jsonb) RETURNING id::text`,
+    [args.workspaceId,elementDigest,args.proposal.element_key,JSON.stringify({element_kind:args.proposal.element_kind,
+      canonical_key:args.proposal.canonical_key,display_text:args.proposal.display_text,scope:args.proposal.scope,
+      locale:args.proposal.locale,relation_kind:args.proposal.relation_kind,relation_target_key:args.proposal.relation_target_key}),
+      args.proposal.confidence===null?null:String(args.proposal.confidence),args.version,
+      JSON.stringify({authority_only:true,confidence_authoritative:false,lifecycle_state:args.lifecycle,
+        ordinary_command_basis_digest:args.basisDigest})]);
+  const group=await queryable.query<{id:string}>(`INSERT INTO analysis_evidence_groups(artifact_id,group_key,role,label,
+    summary,position,metadata) VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,$2::jsonb) RETURNING id::text`,
+    [artifact.rows[0]!.id,JSON.stringify({source_refs_digest:sourceRefsDigest})]);
+  await queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,relation_type,evidence_role,
+    quote,locator,position,metadata) SELECT $1::uuid,input.source_type,input.source_id,input.relation_type,'supporting',NULL,
+    '{}'::jsonb,input.position,'{}'::jsonb FROM unnest($2::text[],$3::uuid[],$4::text[],$5::int[])
+    input(source_type,source_id,relation_type,position)`,[group.rows[0]!.id,refs.map((ref)=>ref.source_type),
+    refs.map((ref)=>ref.source_id),refs.map((ref)=>ref.relation_type),refs.map((_,index)=>index)]);
+  const inserted=await queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,canonical_key,
+    display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,confidence,disposition,origin_kind,
+    supersedes_element_id,original_proposal_element_id,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+    decided_by_user_id,decided_at,lifecycle_state,ordinary_command_contract_version,ordinary_command_action,
+    ordinary_command_basis,ordinary_command_basis_digest,ordinary_command_input_digest,ordinary_command_prestate_digest,
+    ordinary_command_poststate_digest,locale_decision_contract_version,locale_decision_disposition,locale_decision_locale,
+    locale_decision_reason_code,locale_decision_rationale,locale_decision_basis_digest,locale_decision_input_digest,
+    locale_decision_authority_snapshot,locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$15,$16,$17,
+      'operator_ordinary',$18::uuid,$19::uuid,$20,$21,$22::uuid,$23::uuid,$23::uuid,$24::timestamptz,$25,$26,$27,$28::jsonb,
+      $29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40::jsonb,$41,$42,$43) RETURNING id::text`,[
+    args.workspaceId,args.generation.id,artifact.rows[0]!.id,group.rows[0]!.id,args.proposal.element_key,args.version,
+    args.proposal.element_kind,args.proposal.canonical_key,args.proposal.display_text,args.proposal.scope,args.proposal.entity_type,
+    args.proposal.entity_id,args.proposal.locale,args.proposal.relation_kind,args.proposal.relation_target_key,args.proposal.confidence,
+    args.disposition,args.current.id,args.current.original_proposal_element_id??args.current.id,sourceRefsDigest,elementDigest,
+    args.operationId,args.actorId,args.commandAt,args.lifecycle,SIGNAL_SEMANTIC_CONTEXT_ORDINARY_COMMAND_V1,
+    args.basis&&typeof args.basis==="object"?(args.basis as {action?:string}).action:null,JSON.stringify(args.basis),args.basisDigest,
+    args.inputDigest,args.current.element_digest,elementDigest,locale.locale_decision_contract_version,
+    locale.locale_decision_disposition,locale.locale_decision_locale,locale.locale_decision_reason_code,
+    locale.locale_decision_rationale,locale.locale_decision_basis_digest,locale.locale_decision_input_digest,
+    locale.locale_decision_authority_snapshot===null?null:JSON.stringify(locale.locale_decision_authority_snapshot),
+    locale.locale_decision_authority_digest,locale.locale_decision_prestate_digest,locale.locale_decision_poststate_digest]);
+  return{...inserted.rows[0]!,elementDigest};
+}
+async function createOperatorElementV1(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;
+  generation:GenerationRow;proposal:ReturnType<typeof definition>;operationId:string;actorId:string;createdAt:string;
+  inputDigest:string;basis:unknown;basisDigest:string;parentDigest:string;localeFields:OrdinaryLocaleFields}){
+  const sourceRefs=[{source_type:"semantic_context_operator_input",source_id:args.operationId.toLowerCase(),
+    relation_type:"supports" as const}];const sourceRefsDigest=digestCanonicalJsonV2(sourceRefs);
+  const elementDigest=digestCanonicalJsonV2({contract_version:"signal-semantic-context-operator-element-v1",
+    ...withoutConfidence(args.proposal),element_version:1,disposition:"approved",lifecycle_state:"active",
+    source_refs_digest:sourceRefsDigest,creation_basis_digest:args.basisDigest});
+  const locale={...args.localeFields,locale_decision_poststate_digest:
+    args.localeFields.locale_decision_contract_version?elementDigest:null};
+  const artifact=await queryable.query<{id:string}>(`INSERT INTO analysis_artifacts(workspace_id,
+    workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,content,confidence,review_status,
+    revision,metadata) VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,NULL,'accepted',1,
+    $5::jsonb) RETURNING id::text`,[args.workspaceId,elementDigest,args.proposal.element_key,
+    JSON.stringify({element_kind:args.proposal.element_kind,canonical_key:args.proposal.canonical_key,
+      display_text:args.proposal.display_text,scope:args.proposal.scope,locale:args.proposal.locale,
+      relation_kind:args.proposal.relation_kind,relation_target_key:args.proposal.relation_target_key}),
+    JSON.stringify({authority_only:true,confidence_authoritative:false,operator_authored:true,
+      creation_basis_digest:args.basisDigest})]);
+  const group=await queryable.query<{id:string}>(`INSERT INTO analysis_evidence_groups(artifact_id,group_key,role,label,
+    summary,position,metadata) VALUES($1::uuid,'operator-input','supporting','Operator input',
+    'Semantic value entered by an authenticated operator.',0,$2::jsonb) RETURNING id::text`,
+    [artifact.rows[0]!.id,JSON.stringify({source_refs_digest:sourceRefsDigest})]);
+  await queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,relation_type,
+    evidence_role,quote,locator,position,metadata) VALUES($1::uuid,'semantic_context_operator_input',$2::uuid,
+    'supports','supporting',NULL,'{}'::jsonb,0,'{"operator_authored":true}'::jsonb)`,
+    [group.rows[0]!.id,args.operationId]);
+  const inserted=await queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,canonical_key,
+    display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,confidence,disposition,origin_kind,
+    supersedes_element_id,original_proposal_element_id,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+    decided_by_user_id,decided_at,lifecycle_state,creation_contract_version,creation_basis,creation_basis_digest,
+    creation_input_digest,creation_poststate_digest,locale_decision_contract_version,locale_decision_disposition,
+    locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,locale_decision_basis_digest,
+    locale_decision_input_digest,locale_decision_authority_snapshot,locale_decision_authority_digest,
+    locale_decision_prestate_digest,locale_decision_poststate_digest)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,1,$6,$7,$8,$9,NULL,NULL,$10,$11,$12,NULL,'approved',
+      'operator_created',NULL,NULL,$13,$14,$15::uuid,$16::uuid,$16::uuid,$17::timestamptz,'active',
+      $18,$19::jsonb,$20,$21,$14,$22,$23,$24,$25,$26,$27,$28,$29::jsonb,$30,$31,$32)
+    RETURNING id::text`,[args.workspaceId,args.generation.id,artifact.rows[0]!.id,group.rows[0]!.id,
+    args.proposal.element_key,args.proposal.element_kind,args.proposal.canonical_key,args.proposal.display_text,
+    args.proposal.scope,args.proposal.locale,args.proposal.relation_kind,args.proposal.relation_target_key,
+    sourceRefsDigest,elementDigest,args.operationId,args.actorId,args.createdAt,SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1,
+    JSON.stringify(args.basis),args.basisDigest,args.inputDigest,locale.locale_decision_contract_version,
+    locale.locale_decision_disposition,locale.locale_decision_locale,locale.locale_decision_reason_code,
+    locale.locale_decision_rationale,locale.locale_decision_basis_digest,locale.locale_decision_input_digest,
+    locale.locale_decision_authority_snapshot===null?null:JSON.stringify(locale.locale_decision_authority_snapshot),
+    locale.locale_decision_authority_digest,locale.locale_decision_prestate_digest,locale.locale_decision_poststate_digest]);
+  return{...inserted.rows[0]!,elementDigest};
+}
 async function createElement(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generation:GenerationRow;
   proposal:ReturnType<typeof definition>;version:number;disposition:DispositionV2;originKind:"operator_correction"|"operator_merge";
   supersedes:string;originalProposal:string;operationId:string;actorId:string;sourceRefs:SourceRef[];current:ElementRow}){

@@ -5215,9 +5215,15 @@ export const signalGovernanceControlOperations = pgTable(
       'seal-acquisition-brief','generate-acquisition-queries','authorize-acquisition-benchmark',
       'register-topic-discovery-review','save-topic-discovery-review-draft',
       'save-topic-discovery-outlier-draft','finalize-topic-discovery-review',
-      'supersede-topic-discovery-review','create-semantic-context-draft',
+      'supersede-topic-discovery-review','create-semantic-context-draft','reconcile-semantic-context-generation',
       'append-semantic-context-proposals','decide-semantic-context-element',
-      'bulk-approve-semantic-context-elements','publish-semantic-context-generation'
+      'bulk-approve-semantic-context-elements','publish-semantic-context-generation',
+      'start-semantic-context-proposal-run','retry-semantic-context-proposal-run',
+      'revalidate-semantic-context-proposal-run','merge-semantic-context-elements',
+      'correct-semantic-context-element','annotate-semantic-context-element',
+      'resolve-semantic-context-annotation','repair-semantic-context-annotation-resolution',
+      'decide-semantic-context-locale-authority','edit-semantic-context-element-v1',
+      'create-semantic-context-element-v1'
     )`),
     check("signal_governance_control_hashes",sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
     check("signal_governance_control_status",sql`${table.status} IN ('in_progress','completed')`),
@@ -5524,6 +5530,19 @@ export const signalSemanticContextElementVersions = pgTable(
     localeDecisionAuthorityDigest: text("locale_decision_authority_digest"),
     localeDecisionPrestateDigest: text("locale_decision_prestate_digest"),
     localeDecisionPoststateDigest: text("locale_decision_poststate_digest"),
+    lifecycleState: text("lifecycle_state").notNull().default("active"),
+    ordinaryCommandContractVersion: text("ordinary_command_contract_version"),
+    ordinaryCommandAction: text("ordinary_command_action"),
+    ordinaryCommandBasis: jsonb("ordinary_command_basis"),
+    ordinaryCommandBasisDigest: text("ordinary_command_basis_digest"),
+    ordinaryCommandInputDigest: text("ordinary_command_input_digest"),
+    ordinaryCommandPrestateDigest: text("ordinary_command_prestate_digest"),
+    ordinaryCommandPoststateDigest: text("ordinary_command_poststate_digest"),
+    creationContractVersion: text("creation_contract_version"),
+    creationBasis: jsonb("creation_basis"),
+    creationBasisDigest: text("creation_basis_digest"),
+    creationInputDigest: text("creation_input_digest"),
+    creationPoststateDigest: text("creation_poststate_digest"),
     proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     createdAt: now()
@@ -5538,12 +5557,21 @@ export const signalSemanticContextElementVersions = pgTable(
     index("idx_signal_semantic_context_element_current").on(table.generationId, table.elementKey, table.elementVersion),
     index("idx_signal_semantic_context_element_disposition").on(table.generationId, table.disposition, table.elementKind),
     check("signal_semantic_context_element_version_positive", sql`${table.elementVersion}>0`),
-    check("signal_semantic_context_element_disposition", sql`${table.disposition} IN ('pending','approved','rejected')`),
-    check("signal_semantic_context_element_origin", sql`${table.originKind} IN ('server_projection','provider_proposal','operator_decision','operator_correction')`),
+    check("signal_semantic_context_element_disposition", sql`${table.disposition} IN ('pending','approved','rejected','merged','archived')`),
+    check("signal_semantic_context_element_origin", sql`${table.originKind} IN ('server_projection','provider_proposal','operator_decision','operator_correction','operator_merge','operator_ordinary','operator_created')`),
     check("signal_semantic_context_element_confidence", sql`${table.confidence} IS NULL OR (${table.confidence}>=0 AND ${table.confidence}<=1)`),
     check("signal_semantic_context_element_digests", sql`
       ${table.sourceRefsDigest} ~ '^sha256:[0-9a-f]{64}$'
-      AND ${table.elementDigest} ~ '^sha256:[0-9a-f]{64}$'`)
+      AND ${table.elementDigest} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("signal_semantic_context_creation_all_or_none", sql`
+      (${table.creationContractVersion} IS NULL AND ${table.creationBasis} IS NULL
+        AND ${table.creationBasisDigest} IS NULL AND ${table.creationInputDigest} IS NULL
+        AND ${table.creationPoststateDigest} IS NULL)
+      OR (${table.creationContractVersion}='create-semantic-context-element-v1'
+        AND jsonb_typeof(${table.creationBasis})='object'
+        AND ${table.creationBasisDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.creationInputDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.creationPoststateDigest} ~ '^sha256:[0-9a-f]{64}$')`)
   ]
 );
 

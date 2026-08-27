@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ReactElement, ReactNode } from "react";
+import { createElement, type ReactElement, type ReactNode } from "react";
 
-import { AnnotationsList, ElementReviewDetail, LocaleAuthorityPanel } from
+import { AnnotationsList, CreateElementForm, ElementReviewDetail, LocaleAuthorityPanel } from
   "@/components/brands/SemanticContextReviewWorkbench";
 
 import {
   createSignalSemanticContextMutationLockV1,
+  handleSignalSemanticContextCreationKeyV1,
   handleSignalSemanticContextDecisionKeyV1,
   parseSignalSemanticContextApprovalFormUiV2,
   parseSignalSemanticContextAnnotationResolutionFormUiV1,
   parseSignalSemanticContextLocaleAuthorityFormUiV1,
+  parseSignalSemanticContextOrdinaryEditFormV1,
+  parseSignalSemanticContextCreateFormV1,
+  signalSemanticContextCreationGuidanceUrlV1,
   signalSemanticContextAnnotationResolutionsV1,
   signalSemanticContextBoundedPendingSelectionV1,
   signalSemanticContextReviewRangeV1,
@@ -22,8 +26,121 @@ import {
   submitSignalSemanticContextAnnotationResolutionFormUiV1,
   submitSignalSemanticContextGuidedRejectUiV1,
   submitSignalSemanticContextLocaleAuthorityFormUiV1,
+  submitSignalSemanticContextOrdinaryCommandUiV1,
+  submitSignalSemanticContextCreateUiV1,
   submitSignalSemanticContextMergeUiV1
 } from "./signal-semantic-context-review-ui";
+
+test("simple creation sends one semantic-only command and keeps locale identity explicit",async()=>{
+  const inheritedForm=new FormData();
+  for(const[key,value]of Object.entries({element_kind:"benefit",display_text:"Hands-free help",
+    canonical_key:"hands-free-help",scope:"workspace",relation_kind:"",relation_target_key:"",
+    applicability:"workspace_inherited"}))inheritedForm.set(key,value);
+  const inherited=parseSignalSemanticContextCreateFormV1(inheritedForm,["en-US","es-MX"]);
+  assert.deepEqual(inherited,{element_kind:"benefit",display_text:"Hands-free help",canonical_key:"hands-free-help",
+    scope:"workspace",relation_kind:null,relation_target_key:null,
+    applicability:{state:"workspace_inherited",locale:null}});
+  const calls:Array<{path:string;body:Record<string,unknown>}>=[];
+  await submitSignalSemanticContextCreateUiV1({request:async(path,init)=>{calls.push({path,
+    body:JSON.parse(String(init.body)) as Record<string,unknown>});return{};},base:"/semantic-context",
+    generationKey:"generation-v6",values:inherited!,idempotencyKey:"create-benefit"});
+  assert.equal(calls.length,1);assert.equal(calls[0]!.path,"/semantic-context/elements");
+  assert.doesNotMatch(JSON.stringify(calls[0]!.body),/reason|rationale|confirmation|actor|evidence|disposition/u);
+  assert.deepEqual(calls[0]!.body,{contract_version:"create-semantic-context-element-v1",
+    generation_key:"generation-v6",values:inherited});
+
+  const localized=new FormData();for(const[key,value]of inheritedForm.entries())localized.set(key,value);
+  localized.set("element_kind","locale_variant");
+  localized.set("applicability","locale:es-MX");
+  const localeValue=parseSignalSemanticContextCreateFormV1(localized,["en-US","es-MX"]);
+  assert.equal(localeValue?.applicability.locale,"es-MX");
+  assert.match(signalSemanticContextCreationGuidanceUrlV1({base:"/semantic-context",generationKey:"generation-v6",
+    values:localeValue!}),/locale=es-MX/u);
+  localized.set("applicability","workspace_inherited");
+  assert.equal(parseSignalSemanticContextCreateFormV1(localized,["en-US","es-MX"]),null);
+});
+
+test("simple creation drawer is short, non-ceremonial, and duplicate guidance is operator-readable",()=>{
+  let cancels=0;let submits=0;const t=((key:string)=>key) as never;
+  const markup=renderToStaticMarkup(createElement(CreateElementForm,{busy:null,generationLocales:["en-US","es-MX"],
+    generationMarkets:["MX","US"],guidance:{exact_collision:{element_key:"benefit.existing",
+      display_text:"Existing benefit",element_kind:"benefit",scope:"workspace",locale:null,
+      applicability_state:"workspace_inherited"},suggestions:[{element_key:"benefit.suggestion",
+      display_text:"Suggested benefit",element_kind:"benefit",scope:"workspace",locale:"es-MX",
+      applicability_state:"explicit_locale"}],writes_performed:false,provider_calls:0},guidanceLoading:false,
+    onCancel:()=>{cancels++;},onOpenExisting:()=>undefined,onPreview:()=>undefined,
+    onSubmit:()=>{submits++;},t}));
+  assert.match(markup,/Existing benefit/u);assert.match(markup,/Suggested benefit/u);
+  assert.match(markup,/reviewWorkbench\.creation\.openExisting/u);
+  assert.doesNotMatch(markup,/name="(?:reason|rationale|confirmation|actor|evidence|disposition)"/u);
+  assert.equal(handleSignalSemanticContextCreationKeyV1({key:"Escape",busy:false,cancel:()=>{cancels++;}}),true);
+  assert.equal(cancels,1);assert.equal(submits,0,"Escape and cancellation never submit a creation request");
+  assert.equal(handleSignalSemanticContextCreationKeyV1({key:"Escape",busy:true,cancel:()=>{cancels++;}}),false);
+});
+
+test("ordinary editing sends one bounded save without decision ceremony", async () => {
+  const form = new FormData();
+  form.set("display_text", "  Alexa routines  ");
+  form.set("canonical_key", "feature.alexa-routines");
+  form.set("scope", "workspace");
+  form.set("relation_kind", "associated_with");
+  form.set("relation_target_key", "identity.amazon-alexa");
+  form.set("applicability", "workspace_inherited");
+  const parsed = parseSignalSemanticContextOrdinaryEditFormV1(form, ["en-US", "es-MX"]);
+  assert.deepEqual(parsed, {
+    display_text: "Alexa routines",
+    canonical_key: "feature.alexa-routines",
+    scope: "workspace",
+    relation_kind: "associated_with",
+    relation_target_key: "identity.amazon-alexa",
+    applicability: { state: "workspace_inherited", locale: null }
+  });
+  const calls: Array<{path:string;body:Record<string,unknown>}> = [];
+  await submitSignalSemanticContextOrdinaryCommandUiV1({
+    request: async (path, init) => {
+      calls.push({ path, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return {};
+    },
+    base: "/semantic-context",
+    generationKey: "generation-v6",
+    elementKey: "feature.alexa-routines",
+    elementVersion: 4,
+    stateToken: "state-token-v4",
+    action: "save",
+    values: parsed!,
+    idempotencyKey: "ordinary-save-key"
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.path, "/semantic-context/elements/feature.alexa-routines/commands");
+  assert.deepEqual(calls[0]!.body, {
+    contract_version: "edit-semantic-context-element-v1",
+    action: "save",
+    generation_key: "generation-v6",
+    expected_version: 4,
+    state_token: "state-token-v4",
+    values: parsed
+  });
+  assert.doesNotMatch(JSON.stringify(calls[0]!.body),
+    /reason|rationale|confirmation|actor|reviewer|disposition|evidence|digest/u);
+});
+
+test("ordinary editing rejects invalid applicability before network and closes lifecycle commands", async () => {
+  const form = new FormData();
+  form.set("display_text", "Alexa");form.set("canonical_key", "identity.amazon-alexa");
+  form.set("applicability", "locale:fr-FR");
+  assert.equal(parseSignalSemanticContextOrdinaryEditFormV1(form, ["en-US", "es-MX"]), null);
+  let calls=0;
+  const base={request:async()=>{calls++;return{};},base:"/semantic-context",generationKey:"generation-v6",
+    elementKey:"identity.amazon-alexa",elementVersion:3,stateToken:"state-token-v3",
+    idempotencyKey:"ordinary-command-key"};
+  await submitSignalSemanticContextOrdinaryCommandUiV1({...base,action:"archive"});
+  await submitSignalSemanticContextOrdinaryCommandUiV1({...base,action:"restore"});
+  await submitSignalSemanticContextOrdinaryCommandUiV1({...base,action:"undo",targetVersion:1});
+  assert.equal(calls,3);
+  await assert.rejects(submitSignalSemanticContextOrdinaryCommandUiV1({...base,
+    action:"delete" as never}),/semantic_context_ordinary_action_invalid/u);
+  assert.equal(calls,3);
+});
 
 function findElement(root: ReactNode, predicate: (element: ReactElement)=>boolean,
   visited=new WeakSet<object>()): ReactElement | null {
@@ -198,6 +315,29 @@ test("rendered locale authority opens deliberately and only a complete explicit 
   valid.set("confirmation","apply_semantic_context_locale_authority_decision");
   (form.props as {onSubmit:(form:FormData)=>void}).onSubmit(valid);
   assert.equal(requests,1,"one complete locale decision crosses exactly one request boundary");
+});
+
+test("workspace-inherited applicability renders its sealed markets and exposes no locale decision form",()=>{
+  const t=((key:string,values?:Record<string,unknown>)=>values?.markets?`${key}:${values.markets}`:key) as never;
+  const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{...baseElement,
+    disposition:"approved",locale:null,applicability:{contract_version:
+      "signal-semantic-context-effective-applicability-v1",effective_state:"workspace_inherited",
+      locale_state:"workspace_inherited",locale:null,market_state:"sealed",
+      generation_locales:["en-US","es-MX"],generation_markets:["MX","US"],
+      source:"sealed_generation_locale_context"},locale_authority:{state:"workspace_inherited",locale:null,
+      lifecycle:"not_decided",basis:null}}} as never;
+  const view=ElementReviewDetail({activeFormRef:{current:null},annotationResolutionDraft:null,busy:null,
+    detail,locale:"es-MX",mode:"view",onAnnotate:()=>undefined,onApprove:()=>undefined,
+    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
+    onLocaleAuthority:()=>{throw new Error("inherited applicability must not open the old form");},
+    onMode:()=>undefined,onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
+  assert.ok(findElement(view,(element)=>element.type==="dd"
+    &&element.props.children==="values.inheritedWorkspace:MX + US"));
+  assert.ok(findElement(view,(element)=>element.type==="span"
+    &&element.props.children==="reviewWorkbench.localeAuthority.dispositions.workspace_inherited"));
+  assert.equal(findElement(view,(element)=>element.type==="button"
+    &&String(element.props.children??"").includes("localeAuthority.action")),null);
 });
 
 test("rendered annotation resolution first click only opens a deliberate form", () => {

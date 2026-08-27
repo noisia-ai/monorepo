@@ -48,6 +48,105 @@ export const SIGNAL_SEMANTIC_CONTEXT_LOCALE_AUTHORITY_CONFIRMATION_UI =
   "apply_semantic_context_locale_authority_decision" as const;
 export type SignalSemanticContextAnnotationResolutionIntentUi = "resolve" | "repair";
 export type SignalSemanticContextLocaleAuthorityDispositionUi = "global" | "locale_specific";
+export type SignalSemanticContextOrdinaryCommandActionUi = "save" | "undo" | "archive" | "restore";
+export type SignalSemanticContextOrdinaryApplicabilityUi =
+  | { state: "preserve" | "workspace_inherited" | "explicit_global"; locale: null }
+  | { state: "explicit_locale"; locale: string };
+export type SignalSemanticContextOrdinaryEditValuesUi = {
+  display_text: string;
+  canonical_key: string;
+  scope: string | null;
+  relation_kind: "is_a" | "part_of" | "surface_of" | "competes_with" | "associated_with" | null;
+  relation_target_key: string | null;
+  applicability: SignalSemanticContextOrdinaryApplicabilityUi;
+};
+export type SignalSemanticContextCreateValuesUi=SignalSemanticContextOrdinaryEditValuesUi&{
+  element_kind:string;applicability:Exclude<SignalSemanticContextOrdinaryApplicabilityUi,{state:"preserve"}>};
+
+const ORDINARY_RELATIONS = ["is_a","part_of","surface_of","competes_with","associated_with"] as const;
+const ORDINARY_KEY = /^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;
+
+export function parseSignalSemanticContextOrdinaryEditFormV1(
+  form: FormData,
+  permittedLocales: string[]
+): SignalSemanticContextOrdinaryEditValuesUi | null {
+  const displayText=String(form.get("display_text")??"").trim().normalize("NFC");
+  const canonicalKey=String(form.get("canonical_key")??"").trim();
+  const scope=String(form.get("scope")??"").trim()||null;
+  const relationValue=String(form.get("relation_kind")??"").trim();
+  const relationTarget=String(form.get("relation_target_key")??"").trim()||null;
+  const applicabilityValue=String(form.get("applicability")??"preserve").trim();
+  const relationKind=relationValue||null;
+  if(!displayText||[...displayText].length>500||!ORDINARY_KEY.test(canonicalKey)
+      ||canonicalKey.length>200||(scope!==null&&[...scope].length>200)
+      ||(relationKind!==null&&!ORDINARY_RELATIONS.includes(relationKind as never))
+      ||Boolean(relationKind)!==Boolean(relationTarget)
+      ||(relationTarget!==null&&(!ORDINARY_KEY.test(relationTarget)||relationTarget.length>200)))return null;
+  let applicability:SignalSemanticContextOrdinaryApplicabilityUi;
+  if(applicabilityValue==="preserve"||applicabilityValue==="workspace_inherited"
+      ||applicabilityValue==="explicit_global")applicability={state:applicabilityValue,locale:null};
+  else if(applicabilityValue.startsWith("locale:")){
+    const locale=applicabilityValue.slice("locale:".length);
+    if(!permittedLocales.includes(locale))return null;
+    applicability={state:"explicit_locale",locale};
+  }else return null;
+  return{display_text:displayText,canonical_key:canonicalKey,scope,
+    relation_kind:relationKind as SignalSemanticContextOrdinaryEditValuesUi["relation_kind"],
+    relation_target_key:relationTarget,applicability};
+}
+
+export function parseSignalSemanticContextCreateFormV1(form:FormData,permittedLocales:string[]):
+  SignalSemanticContextCreateValuesUi|null{
+  const ordinary=parseSignalSemanticContextOrdinaryEditFormV1(form,permittedLocales);
+  const elementKind=String(form.get("element_kind")??"");
+  const allowedKinds=new Set(["identity_term","alias","product","feature","surface","category","need","benefit",
+    "friction","usage_occasion","competitor_term","locale_variant","exclusion","homonym","ambiguous_term",
+    "abstention_rule","positive_anchor","negative_anchor","boundary_anchor","typed_relation"]);
+  if(!ordinary||ordinary.applicability.state==="preserve"||!allowedKinds.has(elementKind)
+      ||(elementKind==="locale_variant"&&ordinary.applicability.state!=="explicit_locale"))return null;
+  return{...ordinary,element_kind:elementKind,
+    applicability:ordinary.applicability as SignalSemanticContextCreateValuesUi["applicability"]};
+}
+
+export async function submitSignalSemanticContextCreateUiV1(args:{request:SignalSemanticContextReviewUiRequest;
+  base:string;generationKey:string;values:SignalSemanticContextCreateValuesUi;idempotencyKey:string}){
+  return args.request(`${args.base}/elements`,{method:"POST",headers:{"Content-Type":"application/json",
+    "Idempotency-Key":args.idempotencyKey},body:JSON.stringify({contract_version:"create-semantic-context-element-v1",
+    generation_key:args.generationKey,values:args.values})});
+}
+
+export function signalSemanticContextCreationGuidanceUrlV1(args:{base:string;generationKey:string;
+  values:SignalSemanticContextCreateValuesUi}){
+  const params=new URLSearchParams({generation_key:args.generationKey,element_kind:args.values.element_kind,
+    canonical_key:args.values.canonical_key,display_text:args.values.display_text});
+  if(args.values.applicability.state==="explicit_locale")params.set("locale",args.values.applicability.locale);
+  return`${args.base}/elements?${params.toString()}`;
+}
+
+export function handleSignalSemanticContextCreationKeyV1(args:{key:string;busy:boolean;cancel:()=>void}){
+  if(args.key!=="Escape"||args.busy)return false;
+  args.cancel();return true;
+}
+
+export async function submitSignalSemanticContextOrdinaryCommandUiV1(args:{
+  request:SignalSemanticContextReviewUiRequest;base:string;generationKey:string;elementKey:string;
+  elementVersion:number;stateToken:string;action:SignalSemanticContextOrdinaryCommandActionUi;
+  values?:SignalSemanticContextOrdinaryEditValuesUi;targetVersion?:number;idempotencyKey:string;
+}){
+  if(!(["save","undo","archive","restore"] as const).includes(args.action))
+    throw new Error("semantic_context_ordinary_action_invalid");
+  if(args.action==="save"&&!args.values)throw new Error("semantic_context_ordinary_values_required");
+  if(args.action==="undo"&&(!Number.isInteger(args.targetVersion)||Number(args.targetVersion)<1))
+    throw new Error("semantic_context_ordinary_target_invalid");
+  const body:Record<string,unknown>={contract_version:"edit-semantic-context-element-v1",
+    action:args.action,generation_key:args.generationKey,expected_version:args.elementVersion,
+    state_token:args.stateToken};
+  if(args.action==="save")body.values=args.values;
+  if(args.action==="undo")body.target_version=args.targetVersion;
+  return args.request(`${args.base}/elements/${encodeURIComponent(args.elementKey)}/commands`,{
+    method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":args.idempotencyKey},
+    body:JSON.stringify(body)});
+}
 
 function parseDecisionBasisFormUiV2(form: FormData) {
   const reason = String(form.get("reason") ?? "");

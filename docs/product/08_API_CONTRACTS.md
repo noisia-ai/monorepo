@@ -2777,3 +2777,49 @@ publication preflight añade el contador y blocker cerrado
 genérica. Ambas operaciones preservan el locale y lineage actuales. El único contrato
 management-only que acepta una decisión locale/global continúa siendo
 `POST .../locale-authority`, con selección, basis y confirmación explícitas.
+
+### Aplicabilidad efectiva heredada — 69B.5I-A
+
+**Registrado:** 2026-08-27 (`America/Mexico_City`).
+
+Los GET management-only de Review y publication preflight proyectan el contrato cerrado
+`signal-semantic-context-effective-applicability-v1`. Sus estados son
+`workspace_inherited`, `explicit_global`, `explicit_locale` y `unresolved`. El estado
+heredado muestra sólo el sobre operator-safe de locales/mercados sellado en la
+generación; nunca expone IDs, digests completos ni permite que el navegador envíe esa
+autoridad. El `locale` crudo del elemento permanece nullable.
+
+El preflight y la serialización privada del pack llaman al mismo resolver PostgreSQL.
+Por ello `locale_market_required_unresolved` sólo cuenta elementos cuya aplicabilidad
+no puede probarse con el padre sellado o con lineage explícito válido; el GET continúa
+siendo `private, no-store`, `writes_performed=false` y `provider_calls=0`.
+Review valida el mismo padre server-owned antes de proyectar `workspace_inherited`: un
+digest inválido o drift devuelve `unresolved`. Para `explicit_locale`, `source` distingue
+`operator_locale_authority` de `sealed_element_locale`; el navegador no selecciona esa
+procedencia.
+
+### Semantic Context ordinary element commands (69B.5I-B, local)
+
+`POST /api/data-os/signal/{workspaceId}/semantic-context/elements/{elementKey}/commands`
+acepta sólo `edit-semantic-context-element-v1` con `save`, `undo`, `archive` o `restore`,
+`generation_key`, versión esperada, token público de estado e `Idempotency-Key`. `save`
+añade únicamente el payload semántico editable y una selección cerrada de aplicabilidad;
+el cliente nunca envía actor, motivo, rationale, evidencia, disposition ni autoridad.
+El servidor anexa un successor, genera actor/fecha/diff/basis y deja un resultado aprobado
+coherente, o un estado `archived` reversible. Un no-op semántico no crea versión/evento.
+
+### Semantic Context simple element creation (69B.5I-C, local)
+
+`GET /api/data-os/signal/{workspaceId}/semantic-context/elements` devuelve guidance
+read-only determinístico: una colisión canónica active exacta y hasta cinco coincidencias
+de display normalizado. La identidad de colisión incluye tipo, canonical key y locale
+crudo. La respuesta muestra sólo key/título/tipo/scope/locale/aplicabilidad operator-safe;
+no escribe ni fusiona.
+
+`POST` sobre la misma ruta exige `Idempotency-Key` y
+`create-semantic-context-element-v1`. El navegador envía únicamente generation key,
+tipo, display, canonical key, scope/relación opcionales y aplicabilidad heredada, Global
+o locale sellado. El servidor deriva key, actor, timestamps, disposition aprobada,
+auditoría, evidencia operator-input y digests. Una colisión exacta devuelve la versión
+current real sin crear operación, elemento o evento; un replay exacto de una creación sí
+devuelve su resultado original.

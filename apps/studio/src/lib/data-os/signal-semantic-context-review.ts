@@ -1,4 +1,6 @@
 import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
+import { signalSemanticContextOrdinaryStateTokenV1 as ordinaryStateToken }
+  from "@/lib/data-os/signal-semantic-context-publication-v2";
 import {
   SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
   SignalSemanticContextPackError,
@@ -12,7 +14,7 @@ import type {
 } from "@/lib/data-os/signal-workspace";
 
 const PAGE_SIZES = [20, 40] as const;
-const DISPOSITIONS = ["pending", "approved", "rejected", "merged"] as const;
+const DISPOSITIONS = ["pending", "approved", "rejected", "merged", "archived"] as const;
 const EVIDENCE_RELATIONS = ["supports", "limits", "contradicts"] as const;
 const LOCALE_FILTERS = ["all", "explicit", "unassigned", "global", "needs_review"] as const;
 const EVIDENCE_FILTERS = [
@@ -58,6 +60,7 @@ type GenerationRow = {
   locale_variants: string[];
   markets: string[];
   timezone: string;
+  parent_applicability_valid: boolean;
 };
 
 type ReviewElementRow = {
@@ -84,6 +87,9 @@ type ReviewElementRow = {
   locale_decision_locale: string | null;
   locale_decision_reason_code: string | null;
   locale_decision_rationale: string | null;
+  element_digest?: string;
+  lifecycle_state?: "active" | "archived";
+  undo_target_version?: number | null;
   source_ref_count: number;
   distinct_source_count: number;
   supports_count: number;
@@ -155,7 +161,7 @@ export type SignalSemanticContextEvidenceProjectionV1 = {
   source_title: string;
   section_label: string;
   source_context: {
-    label: "context_supplied_to_model";
+    label: "context_supplied_to_model" | "operator_authored_input";
     preview: string | null;
     truncated: boolean;
     redacted: boolean;
@@ -228,9 +234,11 @@ export async function loadSignalSemanticContextReviewPageV1(args: {
   actor: SignalWorkspaceUser;
   generationKey: string;
   filters: SignalSemanticContextReviewFiltersV1;
+  parentApplicabilityValid?: boolean;
 }) {
   assertReviewAuthority(args.workspace, args.actor);
-  const generation = await loadReviewGeneration(args.queryable, args.workspace.id, args.generationKey);
+  const generation = await loadReviewGeneration(args.queryable, args.workspace.id, args.generationKey,
+    args.parentApplicabilityValid ?? true);
   const cursorScope = reviewCursorScope(generation.generation_key, args.filters);
   const after = decodeCursor(args.filters.cursor, cursorScope);
   const params: unknown[] = [generation.id];
@@ -251,16 +259,16 @@ export async function loadSignalSemanticContextReviewPageV1(args: {
   if (args.filters.scope) where.push(`element.scope=${bind(args.filters.scope)}`);
   if (args.filters.locale === "explicit") where.push("element.locale IS NOT NULL");
   if (args.filters.locale === "unassigned") {
-    where.push("element.locale IS NULL AND element.locale_decision_disposition IS NULL");
+    where.push("element.disposition='approved' AND element.element_kind='locale_variant' AND element.locale IS NULL");
   }
   if (args.filters.locale === "global") {
     where.push("element.locale IS NULL AND element.locale_decision_disposition='global'");
   }
   if (args.filters.locale === "needs_review") {
     const variants = bind(generation.locale_variants);
-    where.push(`((element.disposition='approved' AND element.locale IS NULL
-      AND element.locale_decision_disposition IS NULL)
-      OR (element.locale IS NOT NULL AND NOT(element.locale=ANY(${variants}::text[]))))`);
+    where.push(`element.disposition='approved' AND ((element.element_kind='locale_variant'
+      AND element.locale IS NULL) OR (element.locale IS NOT NULL
+      AND NOT(element.locale=ANY(${variants}::text[]))))`);
   }
   if (args.filters.evidence === "one_source_only") where.push("element.distinct_source_count=1");
   if (args.filters.evidence === "supports_only") {
@@ -323,12 +331,14 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
   actor: SignalWorkspaceUser;
   generationKey: string;
   elementKey: string;
+  parentApplicabilityValid?: boolean;
 }) {
   assertReviewAuthority(args.workspace, args.actor);
   if (!KEY_PATTERN.test(args.elementKey) || args.elementKey.length > 160) {
     throw new SignalSemanticContextPackError("semantic_context_review_element_not_found", 404);
   }
-  const generation = await loadReviewGeneration(args.queryable, args.workspace.id, args.generationKey);
+  const generation = await loadReviewGeneration(args.queryable, args.workspace.id, args.generationKey,
+    args.parentApplicabilityValid ?? true);
   const elementResult = await args.queryable.query<ReviewElementRow>(`${reviewElementsCte}
     SELECT * FROM review_elements element WHERE element.element_key=$2 LIMIT 1`, [
       generation.id,
@@ -341,7 +351,8 @@ export async function loadSignalSemanticContextReviewDetailV1(args: {
     element.element_key,
     args.workspace.organizationId,
     args.workspace.subject.id,
-    generation.brand_os_profile_id
+    generation.brand_os_profile_id,
+    args.workspace.id
   ]);
   const annotations = await args.queryable.query<ReviewAnnotationProjectionRow>(`
     SELECT annotation.annotation_key,annotation.annotation_version,annotation.annotation_type,
@@ -517,7 +528,9 @@ export function projectSignalSemanticContextEvidenceSourceV1(
     source_title: title,
     section_label: section,
     source_context: {
-      label: "context_supplied_to_model",
+      label: row.source_type === "semantic_context_operator_input"
+        ? "operator_authored_input"
+        : "context_supplied_to_model",
       preview: preview.value,
       truncated: preview.truncated,
       redacted: preview.redacted,
@@ -531,23 +544,23 @@ export function projectSignalSemanticContextEvidenceSourceV1(
 }
 
 export async function loadSignalSemanticContextReviewPageProductV1(
-  args: Omit<Parameters<typeof loadSignalSemanticContextReviewPageV1>[0], "queryable" | "generationKey">
+  args: Omit<Parameters<typeof loadSignalSemanticContextReviewPageV1>[0], "queryable" | "generationKey" | "parentApplicabilityValid">
 ) {
-  return withReviewReadTransaction(async (queryable) => loadSignalSemanticContextReviewPageV1({
-    ...args,
-    queryable,
-    generationKey: await loadEffectiveReviewGenerationKey(queryable, args.workspace, args.actor)
-  }));
+  return withReviewReadTransaction(async (queryable) => {
+    const effective=await loadEffectiveReviewGenerationKey(queryable,args.workspace,args.actor);
+    return loadSignalSemanticContextReviewPageV1({...args,queryable,
+      generationKey:effective.generationKey,parentApplicabilityValid:effective.parentApplicabilityValid});
+  });
 }
 
 export async function loadSignalSemanticContextReviewDetailProductV1(
-  args: Omit<Parameters<typeof loadSignalSemanticContextReviewDetailV1>[0], "queryable" | "generationKey">
+  args: Omit<Parameters<typeof loadSignalSemanticContextReviewDetailV1>[0], "queryable" | "generationKey" | "parentApplicabilityValid">
 ) {
-  return withReviewReadTransaction(async (queryable) => loadSignalSemanticContextReviewDetailV1({
-    ...args,
-    queryable,
-    generationKey: await loadEffectiveReviewGenerationKey(queryable, args.workspace, args.actor)
-  }));
+  return withReviewReadTransaction(async (queryable) => {
+    const effective=await loadEffectiveReviewGenerationKey(queryable,args.workspace,args.actor);
+    return loadSignalSemanticContextReviewDetailV1({...args,queryable,
+      generationKey:effective.generationKey,parentApplicabilityValid:effective.parentApplicabilityValid});
+  });
 }
 
 export async function loadSignalSemanticContextReviewSummaryProductV1(
@@ -583,18 +596,19 @@ async function loadEffectiveReviewGenerationKey(
   const readiness = await loadSignalSemanticContextReadinessV1({ queryable, workspace, actor });
   const generationKey = readiness.open_draft?.generation_key ?? readiness.generation?.generation_key;
   if (!generationKey) throw new SignalSemanticContextPackError("semantic_context_generation_not_found", 404);
-  return generationKey;
+  return {generationKey,parentApplicabilityValid:readiness.drift_state==="current"};
 }
 
 async function loadReviewGeneration(
   queryable: SignalBrandPolicyQueryable,
   workspaceId: string,
-  generationKey: string
+  generationKey: string,
+  parentApplicabilityValid: boolean
 ) {
   if (!KEY_PATTERN.test(generationKey) || generationKey.length > 160) {
     throw new SignalSemanticContextPackError("semantic_context_generation_not_found", 404);
   }
-  const result = await queryable.query<GenerationRow>(`SELECT generation.id::text,
+  const result = await queryable.query<Omit<GenerationRow,"parent_applicability_valid">>(`SELECT generation.id::text,
     generation.generation_key,generation.generation_version,generation.brand_os_profile_id::text,
     generation.primary_locale,generation.locale_variants,generation.markets,generation.timezone
     FROM signal_semantic_context_generations generation
@@ -602,7 +616,7 @@ async function loadReviewGeneration(
     LIMIT 1`, [workspaceId, generationKey]);
   const generation = result.rows[0];
   if (!generation) throw new SignalSemanticContextPackError("semantic_context_generation_not_found", 404);
-  return generation;
+  return {...generation,parent_applicability_valid:parentApplicabilityValid};
 }
 
 function publicReviewGeneration(generation: GenerationRow) {
@@ -700,10 +714,12 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
     limits: Number(element.limits_count),
     contradicts: Number(element.contradicts_count)
   };
+  const resolvedApplicability = effectiveApplicability(element,generation);
   const localeReasons: string[] = [];
-  if (!element.locale && !element.locale_decision_disposition) {
+  if (!resolvedApplicability && !element.locale && !element.locale_decision_disposition) {
     localeReasons.push("locale_unassigned", "market_unassigned");
-  } else if (element.locale && !generation.locale_variants.includes(element.locale)) {
+  } else if (element.disposition === "approved" && element.locale
+      && !generation.locale_variants.includes(element.locale)) {
     localeReasons.push("locale_outside_generation_coverage");
   }
   const evidenceReasons: string[] = [];
@@ -716,6 +732,10 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
   return {
     element_key: element.element_key,
     element_version: Number(element.element_version),
+    state_token: ordinaryStateToken({element_key:element.element_key,element_version:Number(element.element_version),
+      element_digest:element.element_digest??`sha256:${"0".repeat(64)}`,lifecycle_state:element.lifecycle_state??"active"}),
+    lifecycle_state: element.lifecycle_state??"active",
+    undo_target_version: element.undo_target_version==null?null:Number(element.undo_target_version),
     element_kind: element.element_kind,
     canonical_key: element.canonical_key,
     display_text: element.display_text,
@@ -731,15 +751,20 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
       decided_at: element.decided_at ? new Date(element.decided_at).toISOString() : null
     },
     applicability: {
-      locale_state: element.locale ? "explicit"
-        : element.locale_decision_disposition === "global" ? "global_resolved" : "global_unassigned",
+      contract_version: "signal-semantic-context-effective-applicability-v1" as const,
+      effective_state: resolvedApplicability?.state ?? "unresolved",
+      locale_state: resolvedApplicability?.state === "explicit_locale" ? "explicit"
+        : resolvedApplicability?.state === "explicit_global" ? "global_resolved"
+          : resolvedApplicability?.state === "workspace_inherited" ? "workspace_inherited" : "global_unassigned",
       locale: element.locale,
-      market_state: "global_unassigned",
-      generation_locales: generation.locale_variants,
-      generation_markets: generation.markets
+      market_state: resolvedApplicability ? "sealed" : "global_unassigned",
+      generation_locales: resolvedApplicability?.locales ?? generation.locale_variants,
+      generation_markets: resolvedApplicability?.markets ?? generation.markets,
+      source: resolvedApplicability?.source ?? null
     },
     locale_authority: {
-      state: element.locale_decision_disposition ?? (element.locale ? "sealed_existing_locale" : "unresolved"),
+      state: resolvedApplicability?.state === "workspace_inherited" ? "workspace_inherited"
+        : element.locale_decision_disposition ?? (element.locale ? "sealed_existing_locale" : "unresolved"),
       locale: element.locale_decision_locale ?? element.locale,
       lifecycle: element.locale_decision_contract_version
         ? element.disposition === "pending" ? "pending_reapproval" : "reviewed"
@@ -757,7 +782,7 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
     },
     attention: {
       authoritative: false,
-      needs_locale_review: element.disposition === "approved" && localeReasons.length > 0,
+      needs_locale_review: element.disposition === "approved" && !resolvedApplicability,
       locale_reasons: localeReasons,
       needs_evidence_review: evidenceReasons.length > 0,
       evidence_reasons: evidenceReasons,
@@ -770,6 +795,21 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
       }
     }
   };
+}
+
+function effectiveApplicability(element:ReviewElementRow,generation:GenerationRow) {
+  if(element.disposition!=="approved"||!generation.parent_applicability_valid)return null;
+  if(element.locale_decision_disposition==="global")return{state:"explicit_global" as const,
+    locales:generation.locale_variants,markets:generation.markets,source:"operator_locale_authority"};
+  if(element.locale_decision_disposition==="locale_specific"&&element.locale
+      &&generation.locale_variants.includes(element.locale))return{state:"explicit_locale" as const,
+    locales:[element.locale],markets:generation.markets,source:"operator_locale_authority"};
+  if(element.locale&&generation.locale_variants.includes(element.locale))return{state:"explicit_locale" as const,
+    locales:[element.locale],markets:generation.markets,source:"sealed_element_locale"};
+  if(element.locale===null&&element.locale_decision_contract_version===null
+      &&element.element_kind!=="locale_variant")return{state:"workspace_inherited" as const,
+    locales:generation.locale_variants,markets:generation.markets,source:"sealed_generation_locale_context"};
+  return null;
 }
 
 function reviewCursorScope(generationKey: string, filters: SignalSemanticContextReviewFiltersV1) {
@@ -879,7 +919,8 @@ function fallbackSourceTitle(sourceType: string) {
     brand_os_seed_term: "Brand OS governed term",
     knowledge_source: "Knowledge source",
     knowledge_chunk: "Knowledge block",
-    knowledge_assertion: "Knowledge assertion"
+    knowledge_assertion: "Knowledge assertion",
+    semantic_context_operator_input: "Operator input"
   } as Record<string, string>)[sourceType] ?? "Governed source";
 }
 
@@ -891,7 +932,8 @@ function fallbackSection(sourceType: string) {
     brand_os_seed_term: "Governed vocabulary",
     knowledge_source: "Knowledge source",
     knowledge_chunk: "Knowledge block",
-    knowledge_assertion: "Knowledge assertion"
+    knowledge_assertion: "Knowledge assertion",
+    semantic_context_operator_input: "Manual addition"
   } as Record<string, string>)[sourceType] ?? "Governed context";
 }
 
@@ -924,6 +966,20 @@ const reviewElementsCte = `WITH base_elements AS (
   SELECT element.id::text,element.element_key,element.element_version,element.element_kind,element.canonical_key,
     element.display_text,element.scope,element.entity_type,element.locale,element.relation_kind,
     element.relation_target_key,element.disposition,element.origin_kind,element.proposed_at,
+    element.element_digest,COALESCE(to_jsonb(element)->>'lifecycle_state','active') lifecycle_state,
+    (SELECT candidate.element_version FROM signal_semantic_context_element_versions candidate
+      WHERE candidate.generation_id=element.generation_id AND candidate.element_key=element.element_key
+        AND candidate.element_version<element.element_version
+        AND COALESCE(to_jsonb(candidate)->>'lifecycle_state','active')='active'
+        AND candidate.disposition='approved'
+        AND COALESCE(candidate.original_proposal_element_id,candidate.id)=COALESCE(element.original_proposal_element_id,element.id)
+        AND ROW(candidate.display_text,candidate.canonical_key,candidate.scope,candidate.relation_kind,
+          candidate.relation_target_key,candidate.locale,candidate.locale_decision_contract_version,
+          candidate.locale_decision_disposition,candidate.locale_decision_locale,candidate.locale_decision_authority_digest)
+          IS DISTINCT FROM ROW(element.display_text,element.canonical_key,element.scope,element.relation_kind,
+          element.relation_target_key,element.locale,element.locale_decision_contract_version,
+          element.locale_decision_disposition,element.locale_decision_locale,element.locale_decision_authority_digest)
+      ORDER BY candidate.element_version DESC LIMIT 1) undo_target_version,
     element.decided_at,element.decision_contract_version,element.decision_reason_code,
     element.decision_rationale,element.locale_decision_contract_version,
     element.locale_decision_disposition,element.locale_decision_locale,
@@ -960,6 +1016,7 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.title
       WHEN 'knowledge_chunk' THEN chunk_source.title
       WHEN 'knowledge_assertion' THEN assertion_source.title
+      WHEN 'semantic_context_operator_input' THEN 'Operator input'
     END source_title,
     CASE link.source_type
       WHEN 'brand_os_profile' THEN 'identity'
@@ -969,6 +1026,7 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.source_kind
       WHEN 'knowledge_chunk' THEN chunk_source.source_kind
       WHEN 'knowledge_assertion' THEN assertion.assertion_type
+      WHEN 'semantic_context_operator_input' THEN 'operator_input'
     END source_kind,
     CASE link.source_type
       WHEN 'brand_os_profile' THEN 'Brand identity'
@@ -978,6 +1036,7 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.source_kind
       WHEN 'knowledge_chunk' THEN 'Knowledge block '||(knowledge_chunk.chunk_index+1)::text
       WHEN 'knowledge_assertion' THEN assertion.assertion_type
+      WHEN 'semantic_context_operator_input' THEN 'Manual addition'
     END section_label,
     CASE link.source_type
       WHEN 'brand_os_profile' THEN concat_ws(' · ',COALESCE(brand.display_name,brand.name),
@@ -991,6 +1050,8 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.raw_text
       WHEN 'knowledge_chunk' THEN knowledge_chunk.chunk_text
       WHEN 'knowledge_assertion' THEN assertion.assertion_text
+      WHEN 'semantic_context_operator_input' THEN concat_ws(' · ','Authenticated operator input',
+        operator_input.semantic_context_decision_input->'values'->>'display_text')
     END source_context,
     CASE link.source_type
       WHEN 'brand_os_profile' THEN profile.metadata
@@ -1000,6 +1061,7 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.extracted_payload
       WHEN 'knowledge_chunk' THEN chunk_source.extracted_payload
       WHEN 'knowledge_assertion' THEN assertion_source.extracted_payload
+      WHEN 'semantic_context_operator_input' THEN '{}'::jsonb
       ELSE '{}'::jsonb
     END source_metadata,
     CASE link.source_type
@@ -1010,6 +1072,7 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_source' THEN knowledge_source.id IS NOT NULL
       WHEN 'knowledge_chunk' THEN knowledge_chunk.id IS NOT NULL
       WHEN 'knowledge_assertion' THEN assertion.id IS NOT NULL
+      WHEN 'semantic_context_operator_input' THEN operator_input.id IS NOT NULL
       ELSE false
     END resolved,
     CASE link.source_type
@@ -1021,6 +1084,8 @@ const evidenceProjectionSql = `${reviewElementsCte}
       WHEN 'knowledge_chunk' THEN chunk_source.status IN ('processed','profiled','active')
       WHEN 'knowledge_assertion' THEN assertion_source.status IN ('processed','profiled','active')
         AND assertion.status IN ('accepted','approved','active')
+      WHEN 'semantic_context_operator_input' THEN operator_input.status='completed'
+        AND operator_input.action='create-semantic-context-element-v1'
       ELSE false
     END current
   FROM review_elements element
@@ -1070,5 +1135,8 @@ const evidenceProjectionSql = `${reviewElementsCte}
   LEFT JOIN brand_knowledge_sources assertion_source ON assertion_source.id=assertion.knowledge_source_id
     AND assertion_source.organization_id=$3::uuid AND assertion_source.brand_id=$4::uuid
     AND assertion_source.study_corpus_id IS NULL
+  LEFT JOIN signal_governance_control_operations operator_input
+    ON link.source_type='semantic_context_operator_input' AND operator_input.id=link.source_id
+    AND operator_input.workspace_id=$6::uuid AND operator_input.action='create-semantic-context-element-v1'
   WHERE element.element_key=$2
   ORDER BY link.position,link.id`;

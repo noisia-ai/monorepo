@@ -8,10 +8,22 @@ import {
   normalizeSignalSemanticContextDecisionBasisV2,
   normalizeSignalSemanticContextAnnotationResolutionBasisV1,
   normalizeSignalSemanticContextLocaleDecisionBasisV1,
+  signalSemanticContextOperatorElementKeyV1,
   signalSemanticContextLocaleDecisionElementDigestV1,
   signalSemanticContextDecisionElementDigestV2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
+
+test("operator-created element keys preserve publication collision identity across raw locales",()=>{
+  const inherited=signalSemanticContextOperatorElementKeyV1("alias","alexa-name",null);
+  const explicitGlobal=signalSemanticContextOperatorElementKeyV1("alias","alexa-name",null);
+  const en=signalSemanticContextOperatorElementKeyV1("alias","alexa-name","en-US");
+  const es=signalSemanticContextOperatorElementKeyV1("alias","alexa-name","es-MX");
+  assert.equal(inherited,explicitGlobal,"inherited and explicit global share the raw-locale collision identity");
+  assert.notEqual(en,es,"the same kind/canonical pair remains distinct across sealed locales");
+  assert.notEqual(inherited,en);
+  assert.match(en,/\.en-us$/u);
+});
 
 const vectors: Array<{ name: string; value: unknown; canonical: string; digest: string }> = [
   {
@@ -102,7 +114,7 @@ test("closed OpenAPI publication counts match the runtime preflight including an
   const required=requiredText.split(",").map((value)=>value.trim()).filter(Boolean).sort();
   const properties=[...counts.matchAll(/^            ([a-z_]+): \{ type: integer, minimum: 0 \}$/gmu)]
     .map((match)=>match[1]!).sort();
-  const expected=["total_leaves","pending","approved","rejected","merged","open_annotations",
+  const expected=["total_leaves","pending","approved","rejected","merged","archived","open_annotations",
     "open_uncertainty","open_near_duplicate","unresolved_locale","unresolved_competitive_unit",
     "merge_edges","canonical_collisions","invalid_evidence_refs","invalid_relation_targets",
     "decision_basis_missing","annotation_resolution_basis_missing",
@@ -172,6 +184,57 @@ test("management routes keep review authority server-owned and private", async (
   assert.doesNotMatch(localeAuthorityRoute,/workspace_id|actor_user_id|authority_digest|brand_os_digest/u);
 });
 
+test("simple creation route is closed, idempotent, and excludes browser authority",async()=>{
+  const route=await readFile(new URL(
+    "../../app/api/data-os/signal/[workspaceId]/semantic-context/elements/route.ts",import.meta.url),"utf8");
+  const service=await readFile(new URL("./signal-semantic-context-publication-v2.ts",import.meta.url),"utf8");
+  const migration=await readFile(new URL(
+    "../../../../../infrastructure/db/migrations/0103_signal_semantic_context_simple_creation.sql",
+    import.meta.url),"utf8");
+  assert.match(route,/loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(route,/requireIdempotencyKey/u);assert.match(route,/\.strict\(\)/u);
+  assert.doesNotMatch(route,/actor_user_id|element_key:z\.|evidence_(?:id|group_id)|disposition:z\.|creation_basis/u);
+  assert.match(service,/semantic_context_operator_input/u);
+  assert.match(service,/collision:true/u);assert.doesNotMatch(service,/auto.?merge/iu);
+  assert.match(migration,/signal_semantic_context_creation_authority_valid_v1/u);
+  assert.match(migration,/signal_semantic_context_operator_element_key_v1\(kind text,canonical_key text,raw_locale text\)/u);
+  assert.match(migration,/DEFERRABLE INITIALLY DEFERRED/u);
+  assert.match(migration,/operator_element_created/u);
+});
+
+test("ordinary edit authority is a closed command with a PostgreSQL backstop", async () => {
+  const route = await readFile(new URL(
+    "../../app/api/data-os/signal/[workspaceId]/semantic-context/elements/[elementKey]/commands/route.ts",
+    import.meta.url), "utf8");
+  const service = await readFile(new URL("./signal-semantic-context-publication-v2.ts", import.meta.url), "utf8");
+  const migration = await readFile(new URL(
+    "../../../../../infrastructure/db/migrations/0102_signal_semantic_context_ordinary_editing.sql",
+    import.meta.url), "utf8");
+  assert.match(route,/loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(route,/requireIdempotencyKey/u);
+  assert.match(route,/edit-semantic-context-element-v1/u);
+  assert.doesNotMatch(route,/reason|rationale|confirmation|actor_user_id|evidence_group_id|authority_digest/u);
+  assert.match(service,/save|undo|archive|restore/u);
+  assert.match(service,/signal-semantic-context-ordinary-audit-v1/u);
+  assert.match(migration,/validate_signal_semantic_context_ordinary_command_v1/u);
+  assert.match(migration,/DEFERRABLE INITIALLY DEFERRED/u);
+  assert.match(migration,/lifecycle_state IN \('active','archived'\)/u);
+  assert.match(migration,/edit-semantic-context-element-v1/u);
+  assert.match(migration,/signal_semantic_context_safe_positive_int_v1/u,
+    "malformed browser versions fail closed without unsafe casts in publication checks");
+  assert.match(migration,/target\.locale_decision_poststate_digest/u,
+    "undo binds the successor payload and locale lineage to the selected target version");
+  assert.match(migration,/predecessor\.disposition='archived'[\s\S]*element\.disposition='approved'/u,
+    "restore is valid only from the archived lifecycle");
+  assert.match(service,/afterLocaleFields:localeFields/u);
+  assert.match(service,/field:"applicability"/u,
+    "applicability-only edits remain present in the exact audit diff");
+  const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
+  const review=openApi.match(/    SignalSemanticContextReviewElementV1:\n([\s\S]*?)\n    SignalSemanticContextReviewPageV1:/u)?.[1];
+  assert.ok(review);assert.match(review,/required: \[element_key, element_version, state_token, lifecycle_state, undo_target_version,/u);
+  assert.match(review,/enum: \[pending, approved, rejected, merged, archived\]/u);
+});
+
 test("generic correction and merge preserve locale authority outside the dedicated writer", async()=>{
   const service=await readFile(new URL("./signal-semantic-context-publication-v2.ts",import.meta.url),"utf8");
   assert.match(service,/entity_id:current\.entity_id,locale:current\.locale/u);
@@ -182,6 +245,30 @@ test("generic correction and merge preserve locale authority outside the dedicat
   const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
   const correction=openApi.match(/    SignalSemanticContextCorrectionFieldsV2:\n([\s\S]*?)\n    SignalSemanticContextAnnotationResolutionV2:/u)?.[1];
   assert.ok(correction);assert.doesNotMatch(correction,/\n\s+locale:/u);
+});
+
+test("0101 keeps applicability sources and publication versions causally distinct",async()=>{
+  const migration=await readFile(new URL(
+    "../../../../../infrastructure/db/migrations/0101_signal_semantic_context_inherited_applicability.sql",
+    import.meta.url),"utf8");
+  const proposalContract=await readFile(new URL(
+    "../../../../../packages/query-engine/src/signal-semantic-context-proposal-v1.ts",import.meta.url),"utf8");
+  assert.match(migration,/element\.locale_decision_contract_version IS NOT NULL[\s\S]*operator_locale_authority/u,
+    "a dedicated explicit-locale decision projects operator authority");
+  assert.match(migration,/ELSE 'sealed_element_locale' END/u,
+    "a provider-origin locale retains its distinct sealed-element source");
+  assert.match(migration,/element\.element_kind='locale_variant'[\s\S]*locale_specific_locale_required/u,
+    "the sole closed locale-specific element kind fails closed without a locale");
+  const kindBlock=proposalContract.match(/SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ELEMENT_KINDS = \[([\s\S]*?)\] as const/u)?.[1];
+  assert.ok(kindBlock);assert.equal((kindBlock.match(/"locale_variant"/gu)??[]).length,1);
+  assert.doesNotMatch(proposalContract,/requires_locale|locale_required|market_specific/u,
+    "the closed provider contract exposes no second locale-specific discriminator or browser flag");
+  assert.match(migration,/signal-semantic-context-candidate-pack-v3/u);
+  assert.match(migration,/signal-semantic-context-publication-graph-v3/u);
+  const service=await readFile(new URL("./signal-semantic-context-publication-v2.ts",import.meta.url),"utf8");
+  assert.match(service,/SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_SCHEMA_V2/u);
+  assert.match(service,/signal-semantic-context-publication-v2/u,
+    "the atomic writer envelope remains publication V2 while inner content graphs advance forward-only");
 });
 
 test("browser decisions retire V1 edit and route guided rejection through the atomic V2 writer", async () => {

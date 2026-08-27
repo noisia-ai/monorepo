@@ -2348,3 +2348,51 @@ once columnas `locale_decision_*` con el predecessor de todo successor ajeno a l
 operación dedicada. El snapshot de publicación usa
 `signal_semantic_context_locale_authority_valid_v1`: acepta lineage dedicado completo o
 un locale de propuesta original, preservado y contenido en `generation.locale_variants`.
+
+## 69B.5I-A · Aplicabilidad heredada del workspace (0101)
+
+**Registrado:** 2026-08-27 (`America/Mexico_City`).
+
+0101 no añade columnas ni reescribe generaciones o elementos. Incorpora un resolver
+DB-owned que valida el sobre inmutable ya sellado en la generación (`primary_locale`,
+`locale_variants`, `markets`, `timezone` y `locale_context_digest`) contra la autoridad
+live exacta. Un leaf approved ordinario con `locale IS NULL` y sin lineage explícito se
+serializa como `workspace_inherited`; conserva `locale=null` y hereda únicamente los
+locales/mercados del padre. `locale_variant` continúa exigiendo locale explícito y los
+lineages `global`/`locale_specific` de 0100 conservan su significado. En el vocabulario
+cerrado actual, `locale_variant` es el único discriminator que exige locale por tipo; no
+existe un flag alterno controlado por navegador. Un `explicit_locale` con lineage de
+0100 se atribuye a `operator_locale_authority`, mientras un locale ya sellado en la
+propuesta se atribuye a `sealed_element_locale`.
+
+`signal_semantic_context_publication_snapshot_v2` usa el mismo resolver para contar
+blockers y construir `signal-semantic-context-candidate-pack-v3`. Ausencia, digest
+malformado o drift del padre fallan cerrados. Los triggers de 0100 siguen impidiendo que
+correction o merge cambien locale o sus once columnas de autoridad.
+`candidate-pack-v3` y `publication-graph-v3` versionan hacia adelante el contenido;
+el writer, la transición atómica y `publication_schema_version` continúan siendo
+`signal-semantic-context-publication-v2`. Una fila V2 ya publicada no se reinterpreta ni
+se rehashea.
+
+### 0102 — Semantic Context ordinary editing (local)
+
+`signal_semantic_context_element_versions` añade `lifecycle_state` y lineage
+`ordinary_command_*`. `operator_ordinary` sólo puede nacer de
+`edit-semantic-context-element-v1`; PostgreSQL sella actor, tiempo, diff, parent
+applicability, input, pre/post state y evidencia. `archived` es un current leaf reversible
+y queda fuera del candidate pack sin reinterpretar los 11 `rejected` gobernados.
+
+### 0103 — Semantic Context simple operator creation (local)
+
+0103 añade lineage `creation_*` y el origen cerrado `operator_created`. Una creación
+válida nace de exactamente una operación `create-semantic-context-element-v1`, un evento
+`operator_element_created` y una referencia de evidencia
+`semantic_context_operator_input` ligada a esa operación. PostgreSQL recomputa la key,
+el input, actor/tiempo/diff, parent applicability, source refs y digest del elemento; un
+cohort parcial, source ajeno o segundo evento falla al commit.
+
+La key es server-owned y deriva de `(element_kind, canonical_key, raw locale)`. Por ello
+`workspace_inherited` y `explicit_global` comparten identidad de locale nulo, mientras
+`en-US` y `es-MX` pueden representar identidades que el collision contract de
+publicación distingue. El elemento nace `active/approved`; archive/restore permanece en
+0102 y nunca borra el origen o su evidencia.

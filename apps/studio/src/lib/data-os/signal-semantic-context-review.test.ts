@@ -86,6 +86,23 @@ test("global locale filter stays closed and aligned across runtime, UI, and Open
     /name: locale, in: query, schema: \{ type: string, enum: \[all, explicit, unassigned, global, needs_review\], default: all \}/u);
 });
 
+test("effective applicability is a closed server-owned review contract",async()=>{
+  const[service,workbench,openApi,esMx,enUs]=await Promise.all([
+    readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-review.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"src/components/brands/SemanticContextReviewWorkbench.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"../../docs/api/openapi.yaml"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")]);
+  assert.match(service,/signal-semantic-context-effective-applicability-v1/u);
+  assert.match(service,/workspace_inherited/u);
+  assert.match(workbench,/values\.inheritedWorkspace/u);
+  assert.match(workbench,/locale_authority\.state === "unresolved"/u,
+    "only truly unresolved approved leaves retain the dedicated decision action");
+  assert.match(openApi,/signal-semantic-context-effective-applicability-v1/u);
+  assert.match(openApi,/workspace_inherited, explicit_global, explicit_locale, unresolved/u);
+  assert.match(esMx,/Hereda \{markets\}/u);assert.match(enUs,/Inherits \{markets\}/u);
+});
+
 test("server cursor is stable, filter-bound, and contains no digest or private authority", async () => {
   const rows = Array.from({ length: 21 }, (_, index) => element(index));
   const queryable = fakeQueryable(rows);
@@ -188,6 +205,17 @@ test("evidence relation and unavailable/current states remain exact and operator
   assert.equal(inactive.current_state, "inactive");
   assert.equal(inactive.unavailable_reason, null);
   assert.deepEqual(inactive.applicability, { locales: ["en-US"], markets: ["US"], state: "explicit" });
+});
+
+test("operator-authored provenance is never mislabeled as model context or Brand OS evidence",()=>{
+  const projected=projectSignalSemanticContextEvidenceSourceV1({source_type:"semantic_context_operator_input",
+    relation_type:"supports",position:0,source_title:"Operator input",source_kind:"operator_input",
+    section_label:"Manual addition",source_context:"Authenticated operator input · Alexa routine boundary",
+    source_metadata:{},resolved:true,current:true});
+  assert.equal(projected.source_context.label,"operator_authored_input");
+  assert.equal(projected.source_title,"Operator input");
+  assert.equal(projected.current_state,"current");
+  assert.doesNotMatch(projected.source_context.preview??"",/Brand OS|Knowledge|model/u);
 });
 
 test("review routes and guided UI preserve management AuthZ, privacy, explicit scope, and paging", async () => {
