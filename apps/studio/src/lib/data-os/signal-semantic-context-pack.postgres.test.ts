@@ -90,7 +90,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(DB_URL);requireLocal(DB_URL);
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
-  let migration0102="";let migration0103="";
+  let migration0102="";let migration0103="";let migration0104="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -103,6 +103,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0101_"))migration0101=sql;
       else if(file.startsWith("0102_"))migration0102=sql;
       else if(file.startsWith("0103_"))migration0103=sql;
+      else if(file.startsWith("0104_"))migration0104=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -126,6 +127,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0101,"0101 migration is present");
   assert.ok(migration0102,"0102 migration is present and must be applied after 0101");
   assert.ok(migration0103,"0103 migration is present and must be applied after 0102");
+  assert.ok(migration0104,"0104 migration is present and must be applied after 0103");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -631,10 +633,13 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await exerciseInheritedApplicabilityPassingAfterV1(inheritedApplicability,historicalPublishedV2);
   const migration0102Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0102Client.connect();
   try{await migration0102Client.query(migration0102);}finally{await migration0102Client.end();}
-  await exerciseOrdinaryEditingV1();
   const migration0103Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0103Client.connect();
   try{await migration0103Client.query(migration0103);}finally{await migration0103Client.end();}
+  const migration0104Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0104Client.connect();
+  try{await migration0104Client.query(migration0104);}finally{await migration0104Client.end();}
+  await exerciseOrdinaryEditingV1();
   await exerciseSimpleCreationV1();
+  await exerciseArchivedAccountingAdversarialV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -1900,6 +1905,8 @@ async function exerciseOrdinaryEditingV1(){
   assert.equal(archivedPreflight.counts.archived,1);
   assert.equal(archivedPreflight.blockers.includes("archived_elements"),false,
     "archived leaves are counted and excluded, never misrepresented as an unresolved review blocker");
+  assert.equal(archivedPreflight.blockers.includes("graph_count_inconsistent"),false,
+    "a terminal archived leaf balances the publication graph equation");
   const archivedSnapshot=(await pool.query<{snapshot:{counts:Record<string,number>;blockers:string[];publishable:boolean;
     preflight:Record<string,unknown>;publish_preflight_digest:string}}>(`SELECT signal_semantic_context_publication_snapshot_v2(
       generation.id,jsonb_build_object('brand_os_digest',generation.brand_os_digest,
@@ -2227,6 +2234,8 @@ async function exerciseSimpleCreationV1(){
     workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
   assert.equal(archivedPreflight.counts.archived,1);assert.equal(archivedPreflight.counts.approved,
     11,"archived operator creation is excluded from active approved candidates");
+  assert.equal(archivedPreflight.blockers.includes("graph_count_inconsistent"),false,
+    "an archived operator-created leaf is excluded without corrupting graph accounting");
   const archivedSnapshot=(await pool.query<{snapshot:{counts:Record<string,number>;blockers:string[];
     publishable:boolean;preflight:Record<string,unknown>;publish_preflight_digest:string}}>(`SELECT
       signal_semantic_context_publication_snapshot_v2(generation.id,jsonb_build_object(
@@ -2268,6 +2277,66 @@ async function exerciseSimpleCreationV1(){
   "creation fails closed when the sealed generation authority drifts");
   assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore,
     "simple creation and reversal do not change protected downstream state");
+}
+
+async function exerciseArchivedAccountingAdversarialV1(){
+  const snapshot=async(client:pg.PoolClient,generationId:string)=>
+    (await client.query<{blockers:string[]}>(`SELECT snapshot->'blockers' blockers FROM (
+      SELECT signal_semantic_context_publication_snapshot_v2(generation.id,jsonb_build_object(
+        'brand_os_digest',generation.brand_os_digest,'knowledge_digest',generation.knowledge_digest,
+        'locale_context_digest',generation.locale_context_digest,
+        'proposal_provider_lineage',generation.proposal_provider_lineage,
+        'proposal_provider_lineage_digest',generation.proposal_provider_lineage_digest)) snapshot
+      FROM signal_semantic_context_generations generation WHERE generation.id=$1::uuid
+    ) publication`,[generationId])).rows[0]!.blockers;
+  const inRollback=async(run:(client:pg.PoolClient)=>Promise<void>)=>{
+    const client=await pool.connect();
+    try{await client.query("BEGIN");await run(client);await client.query("ROLLBACK");}
+    catch(error){await client.query("ROLLBACK");throw error;}
+    finally{client.release();}
+  };
+
+  await inRollback(async(client)=>{
+    await client.query(`ALTER TABLE signal_semantic_context_merge_edges DISABLE TRIGGER USER`);
+    const cycle=(await client.query<{generation_id:string}>(`WITH edge AS (
+      SELECT * FROM signal_semantic_context_merge_edges ORDER BY created_at LIMIT 1
+    ), inserted AS (
+      INSERT INTO signal_semantic_context_merge_edges(
+        workspace_id,generation_id,operation_id,source_predecessor_id,source_element_key,source_element_version,
+        source_merged_successor_id,target_predecessor_id,target_element_key,target_element_version,
+        target_pending_successor_id,reason_code,rationale,actor_user_id
+      ) SELECT workspace_id,generation_id,operation_id,target_predecessor_id,target_element_key,target_element_version,
+        target_pending_successor_id,source_predecessor_id,source_element_key,source_element_version,
+        source_merged_successor_id,reason_code,'Adversarial reverse edge for local preflight verification.',actor_user_id
+      FROM edge RETURNING generation_id
+    ) SELECT generation_id FROM inserted`)).rows[0]!;
+    await client.query(`ALTER TABLE signal_semantic_context_merge_edges ENABLE TRIGGER USER`);
+    const blockers=await snapshot(client,cycle.generation_id);
+    assert.ok(blockers.includes("graph_count_inconsistent"),"a merge cycle remains graph-inconsistent");
+    assert.ok(blockers.includes("merge_cycle"),"a merge cycle remains independently fail-closed");
+  });
+
+  await inRollback(async(client)=>{
+    await client.query(`DROP INDEX uq_signal_semantic_context_element_successor`);
+    await client.query(`ALTER TABLE signal_semantic_context_element_versions DISABLE TRIGGER USER`);
+    const fork=(await client.query<{generation_id:string}>(`WITH target_generation AS (
+      SELECT generation_id FROM signal_semantic_context_element_versions
+      GROUP BY generation_id HAVING count(*) FILTER(WHERE supersedes_element_id IS NOT NULL)>=2 LIMIT 1
+    ), ranked AS (
+      SELECT id,generation_id,supersedes_element_id,row_number() OVER(ORDER BY created_at,id) position
+      FROM signal_semantic_context_element_versions
+      WHERE generation_id=(SELECT generation_id FROM target_generation) AND supersedes_element_id IS NOT NULL
+    ), chosen AS (
+      SELECT parent.supersedes_element_id parent_id,child.id child_id,child.generation_id
+      FROM ranked parent CROSS JOIN ranked child WHERE parent.position=1 AND child.position=2
+    ), updated AS (
+      UPDATE signal_semantic_context_element_versions element SET supersedes_element_id=chosen.parent_id
+      FROM chosen WHERE element.id=chosen.child_id RETURNING element.generation_id
+    ) SELECT generation_id FROM updated`)).rows[0]!;
+    await client.query(`ALTER TABLE signal_semantic_context_element_versions ENABLE TRIGGER USER`);
+    const blockers=await snapshot(client,fork.generation_id);
+    assert.ok(blockers.includes("graph_count_inconsistent"),"a successor fork remains fail-closed");
+  });
 }
 
 async function seedHistoricalV2PublicationBefore0101(){

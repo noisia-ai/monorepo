@@ -235,6 +235,22 @@ test("ordinary edit authority is a closed command with a PostgreSQL backstop", a
   assert.match(review,/enum: \[pending, approved, rejected, merged, archived\]/u);
 });
 
+test("0104 counts archived leaves without weakening fork or merge-cycle publication guards",async()=>{
+  const migration=await readFile(new URL(
+    "../../../../../infrastructure/db/migrations/0104_signal_semantic_context_archived_publication_accounting.sql",
+    import.meta.url),"utf8");
+  assert.match(migration,/RENAME TO signal_semantic_context_publication_snapshot_pre_0104/u);
+  assert.match(migration,/disposition='archived' AND lifecycle_state='archived'/u);
+  assert.match(migration,/total_leaves<>pending_count\+approved_count\+rejected_count\+merged_count\+archived_count/u);
+  assert.match(migration,/fork_count>0 OR cycle_count>0/u,
+    "the archived equation cannot suppress structural graph corruption");
+  assert.match(migration,/WHERE value<>'graph_count_inconsistent'/u);
+  assert.match(migration,/signal_semantic_context_digest_json_v2\(preflight\)/u,
+    "the exact nested preflight remains the sole digest source");
+  assert.doesNotMatch(migration,/UPDATE |INSERT INTO |DELETE FROM /u,
+    "the publication snapshot correction is read-only");
+});
+
 test("generic correction and merge preserve locale authority outside the dedicated writer", async()=>{
   const service=await readFile(new URL("./signal-semantic-context-publication-v2.ts",import.meta.url),"utf8");
   assert.match(service,/entity_id:current\.entity_id,locale:current\.locale/u);
