@@ -3,7 +3,8 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement, type ReactElement, type ReactNode } from "react";
 
-import { AnnotationsList, CreateElementForm, ElementReviewDetail, LocaleAuthorityPanel } from
+import { AnnotationsList, CreateElementForm, ElementReviewDetail, LocaleAuthorityPanel,
+  signalSemanticContextElementStateKeyV1 } from
   "@/components/brands/SemanticContextReviewWorkbench";
 
 import {
@@ -338,6 +339,28 @@ test("workspace-inherited applicability renders its sealed markets and exposes n
     &&element.props.children==="reviewWorkbench.localeAuthority.dispositions.workspace_inherited"));
   assert.equal(findElement(view,(element)=>element.type==="button"
     &&String(element.props.children??"").includes("localeAuthority.action")),null);
+});
+
+test("explicit-global applicability and archived lifecycle render their operator-facing states",()=>{
+  const t=((key:string)=>key) as never;
+  const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{...baseElement,
+    lifecycle_state:"archived",disposition:"approved",locale:null,applicability:{contract_version:
+      "signal-semantic-context-effective-applicability-v1",effective_state:"explicit_global",
+      locale_state:"global_resolved",locale:null,market_state:"sealed",
+      generation_locales:["en-US","es-MX"],generation_markets:["MX","US"],
+      source:"semantic_context_locale_authority"},locale_authority:{state:"global",locale:null,
+      lifecycle:"reviewed",basis:{reason:"locale_resolution",rationale:"Explicitly global.",
+        reviewer:"authenticated_operator"}}}} as never;
+  const view=ElementReviewDetail({activeFormRef:{current:null},annotationResolutionDraft:null,busy:null,
+    detail,locale:"es-MX",mode:"view",onAnnotate:()=>undefined,onApprove:()=>undefined,
+    onBeginResolution:()=>undefined,onCancelResolution:()=>undefined,onCorrect:()=>undefined,
+    onLocaleAuthority:()=>undefined,onMode:()=>undefined,onReject:()=>undefined,onResolve:()=>undefined,
+    reviewWritable:true,t});
+  assert.ok(findElement(view,(element)=>element.type==="dd"
+    &&element.props.children==="reviewWorkbench.localeAuthority.dispositions.global"));
+  assert.equal(signalSemanticContextElementStateKeyV1((detail as unknown as {element:never}).element),
+    "states.archived");
 });
 
 test("rendered annotation resolution first click only opens a deliberate form", () => {

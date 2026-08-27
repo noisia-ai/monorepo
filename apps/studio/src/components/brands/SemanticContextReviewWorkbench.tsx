@@ -714,8 +714,8 @@ export function SemanticContextReviewWorkbench({
           }} type="checkbox"/></label>
           <button className="semantic-context-review__row-button" onClick={(event) => void openDetail(element.element_key, event.currentTarget)} type="button">
             <span className="semantic-context-review__row-main"><strong>{element.display_text}</strong><small>{element.canonical_key}</small></span>
-            <span className="semantic-context-review__row-meta"><span>{kindLabel(element.element_kind, t)}</span><span>{element.scope ?? t("values.workspaceScope")}</span><span>{element.applicability.effective_state === "workspace_inherited" ? t("values.inheritedWorkspace", { markets: element.applicability.generation_markets.join(" + ") }) : element.locale ?? t("values.noLocale")}</span></span>
-            <span className="semantic-context-review__row-signals"><DispositionStatus disposition={element.disposition} t={t}/><span>{t("values.evidenceCount", { count: element.evidence_summary.count })}</span>{element.attention.needs_locale_review ? <AttentionChip>{t("reviewWorkbench.attention.locale")}</AttentionChip> : null}{element.attention.needs_evidence_review ? <AttentionChip>{t("reviewWorkbench.attention.evidence")}</AttentionChip> : null}</span>
+            <span className="semantic-context-review__row-meta"><span>{kindLabel(element.element_kind, t)}</span><span>{element.scope ?? t("values.workspaceScope")}</span><span>{applicabilityLabel(element, t)}</span></span>
+            <span className="semantic-context-review__row-signals"><DispositionStatus element={element} t={t}/><span>{t("values.evidenceCount", { count: element.evidence_summary.count })}</span>{element.attention.needs_locale_review ? <AttentionChip>{t("reviewWorkbench.attention.locale")}</AttentionChip> : null}{element.attention.needs_evidence_review ? <AttentionChip>{t("reviewWorkbench.attention.evidence")}</AttentionChip> : null}</span>
           </button>
         </article>)}
         {!page.elements.length ? <div className="admin-empty"><strong>{t("filters.emptyTitle")}</strong><p>{t("reviewWorkbench.emptyBody")}</p></div> : null}
@@ -740,7 +740,7 @@ export function SemanticContextReviewWorkbench({
     </WorkspaceDrawer>:null}
 
     {detailKey ? <WorkspaceDrawer ariaLabel={t("review.aria", { name: detail?.element.display_text ?? t("reviewWorkbench.loadingDetail") })}
-      closeLabel={t("actions.close")} eyebrow={detail ? `${kindLabel(detail.element.element_kind, t)} · ${t(`states.${detail.element.disposition}`)}` : t("reviewWorkbench.loadingDetail")}
+      closeLabel={t("actions.close")} eyebrow={detail ? `${kindLabel(detail.element.element_kind, t)} · ${t(signalSemanticContextElementStateKeyV1(detail.element))}` : t("reviewWorkbench.loadingDetail")}
       onClose={() => !busy && closeDetail()} returnFocusRef={reviewOpenerRef} title={detail?.element.display_text ?? t("reviewWorkbench.loadingDetail")}>
       <div onKeyDown={(event) => {
         if (handleSignalSemanticContextDecisionKeyV1({key:event.key,busy:Boolean(busy),mode:detailMode,
@@ -780,8 +780,26 @@ function AttentionChip({ children }: { children: React.ReactNode }) {
   return <span className="semantic-context-review__attention"><Warning aria-hidden size={13}/>{children}</span>;
 }
 
-function DispositionStatus({ disposition, t }: { disposition: Disposition; t: ReturnType<typeof useTranslations> }) {
-  return <AdminStatus state={disposition === "approved" ? "good" : disposition === "rejected" ? "danger" : disposition === "merged" ? "not_available" : "warning"}>{t(`states.${disposition}`)}</AdminStatus>;
+function applicabilityLabel(element: ReviewElement, t: ReturnType<typeof useTranslations>) {
+  if (element.applicability.effective_state === "workspace_inherited") {
+    return t("values.inheritedWorkspace", { markets: element.applicability.generation_markets.join(" + ") });
+  }
+  if (element.applicability.effective_state === "explicit_global") {
+    return t("reviewWorkbench.localeAuthority.dispositions.global");
+  }
+  return element.applicability.locale ?? element.locale ?? t("values.noLocale");
+}
+
+/** @internal Keeps lifecycle state authoritative over the semantic disposition in UI labels. */
+export function signalSemanticContextElementStateKeyV1(
+  element: Pick<ReviewElement, "disposition" | "lifecycle_state">
+) {
+  return element.lifecycle_state === "archived" ? "states.archived" : `states.${element.disposition}`;
+}
+
+function DispositionStatus({ element, t }: { element: ReviewElement; t: ReturnType<typeof useTranslations> }) {
+  const disposition = element.disposition;
+  return <AdminStatus state={element.lifecycle_state === "archived" ? "not_available" : disposition === "approved" ? "good" : disposition === "rejected" ? "danger" : disposition === "merged" ? "not_available" : "warning"}>{t(signalSemanticContextElementStateKeyV1(element))}</AdminStatus>;
 }
 
 /** @internal Exported for the browser-representative deliberate-decision interaction contract test. */
@@ -849,8 +867,8 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
   </MutationForm>;
 
   return <div className="semantic-context-pack__review semantic-context-review__detail">
-    <div className="semantic-context-pack__review-summary"><DispositionStatus disposition={element.disposition} t={t}/><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
-    <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{element.applicability.effective_state === "workspace_inherited" ? t("values.inheritedWorkspace", { markets: element.applicability.generation_markets.join(" + ") }) : element.locale ?? t("values.noLocale")}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
+    <div className="semantic-context-pack__review-summary"><DispositionStatus element={element} t={t}/><p>{t("review.proposedAt", { date: formatAdminDate(element.provenance.proposed_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><small>{t("reviewWorkbench.lineage", { version: detail.lineage.element_version, origin: originLabel(detail.lineage.origin, t) })}</small></div>
+    <dl className="semantic-context-pack__definition"><div><dt>{t("fields.canonicalKey")}</dt><dd>{element.canonical_key}</dd></div><div><dt>{t("fields.locale")}</dt><dd>{applicabilityLabel(element, t)}</dd></div><div><dt>{t("fields.scope")}</dt><dd>{element.scope ?? t("values.workspaceScope")}</dd></div><div><dt>{t("fields.relation")}</dt><dd>{element.relation_kind ? `${t(`relations.${element.relation_kind}`)}${element.relation_target_key ? ` → ${element.relation_target_key}` : ""}` : t("values.noRelation")}</dd></div></dl>
     {detail.decision_basis.state !== "not_applicable" ? <DecisionBasisHistory basis={detail.decision_basis}
       locale={locale} t={t}/> : null}
     {element.locale_authority.basis || element.locale_authority.state === "workspace_inherited" ? <section className="semantic-context-review__lineage">
