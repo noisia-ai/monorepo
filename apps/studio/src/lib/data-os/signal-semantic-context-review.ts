@@ -87,6 +87,9 @@ type ReviewElementRow = {
   locale_decision_locale: string | null;
   locale_decision_reason_code: string | null;
   locale_decision_rationale: string | null;
+  automatic_policy_contract_version: string | null;
+  automatic_policy_outcome: "ready" | "exception" | null;
+  automatic_policy_basis: Record<string, unknown> | null;
   element_digest?: string;
   lifecycle_state?: "active" | "archived";
   undo_target_version?: number | null;
@@ -105,7 +108,10 @@ type PageQueryRow = {
   kind_counts: Record<string, number>;
   scope_counts: Record<string, number>;
   disposition_counts: Record<string, number>;
+  automatic_counts: Record<string, number>;
 };
+
+type ClosedReviewStateCounts = { ready: number; exception: number; resolved: number };
 
 type EvidenceProjectionRow = {
   source_type: string;
@@ -305,8 +311,14 @@ export async function loadSignalSemanticContextReviewPageV1(args: {
       ) value),'{}'::jsonb) scope_counts,
       COALESCE((SELECT jsonb_object_agg(disposition,count) FROM (
         SELECT disposition,count(*)::int count FROM review_elements GROUP BY disposition
-        ORDER BY disposition) value),'{}'::jsonb) disposition_counts`, params);
-  const row = result.rows[0] ?? { total: 0, items: [], kind_counts: {}, scope_counts: {}, disposition_counts: {} };
+        ORDER BY disposition) value),'{}'::jsonb) disposition_counts,
+      jsonb_build_object(
+        'ready',(SELECT count(*)::int FROM review_elements WHERE review_state='ready'),
+        'exception',(SELECT count(*)::int FROM review_elements WHERE review_state='exception'),
+        'resolved',(SELECT count(*)::int FROM review_elements WHERE review_state='resolved')
+      ) automatic_counts`, params);
+  const row = result.rows[0] ?? { total: 0, items: [], kind_counts: {}, scope_counts: {},
+    disposition_counts: {}, automatic_counts: {} };
   const pageRows = row.items.slice(0, args.filters.page_size);
   const nextRow = row.items.length > args.filters.page_size ? pageRows.at(-1) : null;
   return {
@@ -319,7 +331,8 @@ export async function loadSignalSemanticContextReviewPageV1(args: {
     facets: {
       element_kinds: numericRecord(row.kind_counts),
       scopes: numericRecord(row.scope_counts),
-      dispositions: numericRecord(row.disposition_counts)
+      dispositions: numericRecord(row.disposition_counts),
+      review_states: closedReviewStateCounts(row.automatic_counts)
     },
     authority: { source: "server_owned", attention_signals_authoritative: false }
   };
@@ -661,6 +674,7 @@ function publicOperatorRun(value: Record<string, unknown>) {
   const budget = objectValue(value.budget);
   const error = optionalObject(value.error);
   const revalidation = optionalObject(value.paid_response_revalidation);
+  const automaticDisposition = optionalObject(value.automatic_disposition);
   return {
     run_key: stringValue(value.run_key),
     status: stringValue(value.status),
@@ -678,6 +692,12 @@ function publicOperatorRun(value: Record<string, unknown>) {
     },
     provider_call_count: numberValue(value.provider_call_count),
     proposal_count: numberValue(value.proposal_count),
+    automatic_disposition: automaticDisposition ? {
+      policy_version: stringValue(automaticDisposition.policy_version),
+      ready: numberValue(automaticDisposition.ready),
+      exceptions: numberValue(automaticDisposition.exceptions),
+      provider_prose_used_as_evidence: false as const
+    } : null,
     error: error ? { code: stringValue(error.code), message: stringValue(error.message) } : null,
     paid_response_revalidation: revalidation ? {
       status: stringValue(revalidation.status),
@@ -745,11 +765,21 @@ function publicReviewElement(element: ReviewElementRow, generation: GenerationRo
     relation_kind: element.relation_kind,
     relation_target_key: element.relation_target_key,
     disposition: element.disposition,
-    origin: element.origin_kind,
+    origin: element.automatic_policy_outcome === "ready" ? "automatic_policy" : element.origin_kind,
     provenance: {
       proposed_at: new Date(element.proposed_at).toISOString(),
       decided_at: element.decided_at ? new Date(element.decided_at).toISOString() : null
     },
+    review_state: element.lifecycle_state === "active" && element.disposition === "approved" ? "ready"
+      : element.lifecycle_state === "active" && element.disposition === "pending" ? "exception" : "resolved",
+    automatic_policy: element.automatic_policy_contract_version ? {
+      contract_version: element.automatic_policy_contract_version,
+      outcome: element.automatic_policy_outcome,
+      reasons: Array.isArray(element.automatic_policy_basis?.reasons)
+        ? element.automatic_policy_basis.reasons.filter((reason): reason is string => typeof reason === "string") : [],
+      authority: "server_owned" as const,
+      provider_prose_used_as_evidence: false as const
+    } : null,
     applicability: {
       contract_version: "signal-semantic-context-effective-applicability-v1" as const,
       effective_state: resolvedApplicability?.state ?? "unresolved",
@@ -958,8 +988,14 @@ function escapeLike(value: string) {
   return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
 }
 
-function numericRecord(value: Record<string, number>) {
+function numericRecord(value: Record<string, number> | null | undefined) {
+  if (!value) return {};
   return Object.fromEntries(Object.entries(value).map(([key, count]) => [key, Number(count)]));
+}
+
+function closedReviewStateCounts(value:Record<string,number>|null|undefined):ClosedReviewStateCounts{
+  const counts=numericRecord(value);
+  return {ready:counts.ready??0,exception:counts.exception??0,resolved:counts.resolved??0};
 }
 
 const reviewElementsCte = `WITH base_elements AS (
@@ -984,6 +1020,14 @@ const reviewElementsCte = `WITH base_elements AS (
     element.decision_rationale,element.locale_decision_contract_version,
     element.locale_decision_disposition,element.locale_decision_locale,
     element.locale_decision_reason_code,element.locale_decision_rationale,
+    to_jsonb(element)->>'automatic_policy_contract_version' automatic_policy_contract_version,
+    to_jsonb(element)->>'automatic_policy_outcome' automatic_policy_outcome,
+    CASE WHEN jsonb_typeof(to_jsonb(element)->'automatic_policy_basis')='object'
+      THEN to_jsonb(element)->'automatic_policy_basis' ELSE NULL END automatic_policy_basis,
+    CASE WHEN COALESCE(to_jsonb(element)->>'lifecycle_state','active')='active'
+        AND element.disposition='approved' THEN 'ready'
+      WHEN COALESCE(to_jsonb(element)->>'lifecycle_state','active')='active'
+        AND element.disposition='pending' THEN 'exception' ELSE 'resolved' END review_state,
     lower(regexp_replace(btrim(element.display_text),'\\s+',' ','g')) normalized_display,
     count(link.id)::int source_ref_count,
     count(DISTINCT (link.source_type,link.source_id))::int distinct_source_count,

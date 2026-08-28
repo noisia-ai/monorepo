@@ -118,7 +118,7 @@ test("closed OpenAPI publication counts match the runtime preflight including an
     "open_uncertainty","open_near_duplicate","unresolved_locale","unresolved_competitive_unit",
     "merge_edges","canonical_collisions","invalid_evidence_refs","invalid_relation_targets",
     "decision_basis_missing","annotation_resolution_basis_missing",
-    "locale_market_required_unresolved"].sort();
+    "locale_market_required_unresolved","automatic_ready","automatic_exceptions"].sort();
   assert.deepEqual(required,expected,"all runtime counters are required by the closed response contract");
   assert.deepEqual(properties,expected,"OpenAPI declares no missing or unowned count property");
   const assertCounts=(value:Record<string,number>)=>{

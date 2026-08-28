@@ -889,7 +889,7 @@ export function adaptSignalSemanticContextProposalResponseV1ToV2(
 
 export function normalizeSignalSemanticContextProviderOutputV2(
   output: SignalSemanticContextProviderOutputV2,
-  args: { input_contract_version: string }
+  args: { input_contract_version: string; allow_unresolved_relation_targets?: boolean }
 ): { output: SignalSemanticContextProviderOutputV2;
   normalization: SignalSemanticContextProposalNormalizationV1 } {
   const elementKeys = new Set<string>();
@@ -902,7 +902,8 @@ export function normalizeSignalSemanticContextProviderOutputV2(
     elementKeys.add(proposal.element_key);
   }
   for (const proposal of output.proposals) {
-    if (proposal.relation_target_key && !elementKeys.has(proposal.relation_target_key)) {
+    if (!args.allow_unresolved_relation_targets && proposal.relation_target_key
+        && !elementKeys.has(proposal.relation_target_key)) {
       throw new SignalSemanticContextProposalValidationError(
         "semantic_context_provider_relation_target_unknown"
       );
@@ -980,7 +981,7 @@ export function normalizeSignalSemanticContextProviderOutputV3(
   const normalizedV2 = normalizeSignalSemanticContextProviderOutputV2({
     contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V2,
     proposals: output.proposals
-  }, args);
+  }, { ...args, allow_unresolved_relation_targets: true });
   const withoutDigest = {
     ...normalizedV2.normalization,
     output_contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3

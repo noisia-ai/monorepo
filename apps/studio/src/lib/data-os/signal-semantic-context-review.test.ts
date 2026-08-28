@@ -103,6 +103,47 @@ test("effective applicability is a closed server-owned review contract",async()=
   assert.match(esMx,/Hereda \{markets\}/u);assert.match(enUs,/Inherits \{markets\}/u);
 });
 
+test("automatic exceptions stay closed and localized while ready excludes terminal leaves",async()=>{
+  const[service,workbench,openApi,esMxRaw,enUsRaw,migration]=await Promise.all([
+    readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-review.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"src/components/brands/SemanticContextReviewWorkbench.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"../../docs/api/openapi.yaml"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8"),
+    readFile(resolve(process.cwd(),"../../infrastructure/db/migrations/0105_signal_semantic_context_automatic_disposition.sql"),"utf8")]);
+  const reasons=["evidence_missing","evidence_invalid","evidence_limited","evidence_contradictory",
+    "semantic_collision","relation_target_unresolved","locale_required","locale_not_in_parent_envelope",
+    "locale_specific_requires_operator_review"];
+  const esMx=JSON.parse(esMxRaw).AdminWorkspace.brandOs.semanticContext.reviewWorkbench.automaticReasons;
+  const enUs=JSON.parse(enUsRaw).AdminWorkspace.brandOs.semanticContext.reviewWorkbench.automaticReasons;
+  for(const reason of reasons){assert.equal(typeof esMx[reason],"string");assert.equal(typeof enUs[reason],"string");
+    assert.match(openApi,new RegExp(reason,"u"));assert.match(migration,new RegExp(reason,"u"));}
+  assert.doesNotMatch(openApi,/automatic_policy:[\s\S]{0,900}(?:schema_invalid|parent_authority_invalid)/u);
+  assert.match(service,/element\.lifecycle_state === "active" && element\.disposition === "approved" \? "ready"/u);
+  assert.match(service,/element\.disposition='approved' THEN 'ready'/u);
+  assert.match(workbench,/reviewWorkbench\.resolvedCount/u);
+  assert.match(service,/'ready',\(SELECT count\(\*\)::int FROM review_elements WHERE review_state='ready'\)/u);
+  assert.match(workbench,/reviewStateCounts=page\?page\.facets\.review_states:EMPTY_REVIEW_STATE_COUNTS/u);
+  assert.doesNotMatch(workbench,/page\?\.facets\.review_states/u,
+    "the client does not repair a sparse review-state API response");
+});
+
+test("review-state facets are a closed three-key object even when SQL counts are sparse",async()=>{
+  const empty=await loadSignalSemanticContextReviewPageV1({queryable:fakeQueryable([],{}),workspace,actor,
+    generationKey:generation.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())});
+  assert.deepEqual(empty.facets.review_states,{ready:0,exception:0,resolved:0});
+  const sparse=await loadSignalSemanticContextReviewPageV1({
+    queryable:fakeQueryable([element(1)],{ready:1}),workspace,actor,generationKey:generation.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())});
+  assert.deepEqual(sparse.facets.review_states,{ready:1,exception:0,resolved:0});
+  const mixed=await loadSignalSemanticContextReviewPageV1({
+    queryable:fakeQueryable([element(1)],{ready:2,exception:3,resolved:4}),workspace,actor,
+    generationKey:generation.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams())});
+  assert.deepEqual(mixed.facets.review_states,{ready:2,exception:3,resolved:4});
+});
+
 test("server cursor is stable, filter-bound, and contains no digest or private authority", async () => {
   const rows = Array.from({ length: 21 }, (_, index) => element(index));
   const queryable = fakeQueryable(rows);
@@ -287,7 +328,7 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   }
 });
 
-function fakeQueryable(items: ReturnType<typeof element>[]) {
+function fakeQueryable(items: ReturnType<typeof element>[],automaticCounts:Record<string,number>={}) {
   return {
     query: async (sql: string, params: unknown[] = []) => {
       if (sql.includes("FROM signal_semantic_context_generations generation")) {
@@ -304,7 +345,8 @@ function fakeQueryable(items: ReturnType<typeof element>[]) {
           need: items.filter((item) => item.element_kind === "need").length },
         scope_counts: { category: items.filter((item) => item.scope === "category").length,
           primary_brand: items.filter((item) => item.scope === "primary_brand").length },
-        disposition_counts: { pending: items.length }
+        disposition_counts: { pending: items.length },
+        automatic_counts: automaticCounts
       }], rowCount: 1 };
     }
   } as unknown as SignalBrandPolicyQueryable;

@@ -2540,7 +2540,7 @@ components:
       required: [element_key, element_version, state_token, lifecycle_state, undo_target_version,
         element_kind, canonical_key, display_text, scope,
         entity_type, locale, relation_kind, relation_target_key, disposition, origin, provenance,
-        applicability, evidence_summary, attention]
+        review_state, automatic_policy, applicability, evidence_summary, attention]
       properties:
         element_key: { type: string }
         element_version: { type: integer, minimum: 1 }
@@ -2557,6 +2557,27 @@ components:
         relation_target_key: { type: [string, "null"] }
         disposition: { type: string, enum: [pending, approved, rejected, merged, archived] }
         origin: { type: string }
+        review_state: { type: string, enum: [ready, exception, resolved] }
+        automatic_policy:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [contract_version, outcome, reasons, authority, provider_prose_used_as_evidence]
+              properties:
+                contract_version: { const: signal-semantic-context-automatic-disposition-v1 }
+                outcome: { type: string, enum: [ready, exception] }
+                reasons:
+                  type: array
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum: [evidence_missing, evidence_invalid, evidence_limited,
+                      evidence_contradictory, semantic_collision,
+                      relation_target_unresolved, locale_required, locale_not_in_parent_envelope,
+                      locale_specific_requires_operator_review]
+                authority: { const: server_owned }
+                provider_prose_used_as_evidence: { const: false }
+            - { type: "null" }
         provenance: { type: object, additionalProperties: false, required: [proposed_at, decided_at], properties: { proposed_at: { type: string, format: date-time }, decided_at: { type: [string, "null"], format: date-time } } }
         applicability:
           type: object
@@ -2590,7 +2611,22 @@ components:
         page_size: { type: integer, enum: [20, 40] }
         next_cursor: { type: [string, "null"] }
         elements: { type: array, items: { $ref: "#/components/schemas/SignalSemanticContextReviewElementV1" } }
-        facets: { type: object, additionalProperties: true }
+        facets:
+          type: object
+          additionalProperties: false
+          required: [element_kinds, scopes, dispositions, review_states]
+          properties:
+            element_kinds: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+            scopes: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+            dispositions: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+            review_states:
+              type: object
+              additionalProperties: false
+              required: [ready, exception, resolved]
+              properties:
+                ready: { type: integer, minimum: 0 }
+                exception: { type: integer, minimum: 0 }
+                resolved: { type: integer, minimum: 0 }
         authority:
           type: object
           additionalProperties: false
@@ -3116,7 +3152,7 @@ components:
             open_uncertainty, open_near_duplicate, unresolved_locale,
             unresolved_competitive_unit, merge_edges, canonical_collisions, invalid_evidence_refs,
             invalid_relation_targets, decision_basis_missing, annotation_resolution_basis_missing,
-            locale_market_required_unresolved]
+            locale_market_required_unresolved, automatic_ready, automatic_exceptions]
           properties:
             total_leaves: { type: integer, minimum: 0 }
             pending: { type: integer, minimum: 0 }
@@ -3136,6 +3172,8 @@ components:
             decision_basis_missing: { type: integer, minimum: 0 }
             annotation_resolution_basis_missing: { type: integer, minimum: 0 }
             locale_market_required_unresolved: { type: integer, minimum: 0 }
+            automatic_ready: { type: integer, minimum: 0 }
+            automatic_exceptions: { type: integer, minimum: 0 }
         collisions:
           type: array
           items:
@@ -3316,7 +3354,7 @@ components:
       type: object
       additionalProperties: false
       required: [contract_version, run_key, status, progress, generation_ref, provider, budget,
-        provider_call_count, proposal_count, result_digest, error, queued_at, started_at, completed_at,
+        provider_call_count, proposal_count, automatic_disposition, result_digest, error, queued_at, started_at, completed_at,
         paid_response_revalidation]
       properties:
         contract_version: { const: signal-semantic-context-proposal-run-v1 }
@@ -3343,6 +3381,15 @@ components:
             settled_micro_usd: { type: [string, "null"], pattern: '^[0-9]+$' }
         provider_call_count: { type: integer, minimum: 0, maximum: 1 }
         proposal_count: { type: [integer, "null"], minimum: 1, maximum: 250 }
+        automatic_disposition:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [policy_version, ready, exceptions, provider_prose_used_as_evidence]
+          properties:
+            policy_version: { const: signal-semantic-context-automatic-disposition-v1 }
+            ready: { type: integer, minimum: 0, maximum: 250 }
+            exceptions: { type: integer, minimum: 0, maximum: 250 }
+            provider_prose_used_as_evidence: { const: false }
         result_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
         error:
           type: [object, "null"]

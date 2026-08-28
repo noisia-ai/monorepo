@@ -172,9 +172,10 @@ test("management routes keep authority fields and provider proposal writes off t
 });
 
 test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{
-  const [page,manager,service,dbWriter,esMx,enUs]=await Promise.all([
+  const [page,manager,workbench,service,dbWriter,esMx,enUs]=await Promise.all([
     readFile(resolve(process.cwd(),"src/app/studio/brands/[id]/brand-os/page.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"src/components/brands/SemanticContextReviewWorkbench.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
     readFile(resolve(process.cwd(),"../../infrastructure/db/signal-semantic-context-proposal.ts"),"utf8"),
     readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
@@ -185,6 +186,12 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/WorkspaceConfirmDialog/u);
   assert.match(manager,/GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS/u);
   assert.match(manager,/SemanticContextReviewWorkbench/u);
+  assert.match(manager,/automatic_disposition/u,
+    "the generation result consumes the server-owned automatic disposition summary");
+  assert.match(manager,/run\.ready/u);
+  assert.match(manager,/run\.exceptions/u);
+  assert.match(workbench,/reviewWorkbench\.readyCount/u);
+  assert.match(workbench,/reviewWorkbench\.exceptionCount/u);
   assert.doesNotMatch(manager,/publish_reviewed_semantic_context/u);
   assert.match(manager,/Idempotency-Key/u);
   assert.match(manager,/\/reconcile/u);
@@ -237,6 +244,10 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "the operator UI must not present confidence or private source references as authority");
   const esMessages=JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext;
   const enMessages=JSON.parse(enUs).AdminWorkspace.brandOs.semanticContext;
+  assert.doesNotMatch(JSON.stringify(esMessages),/Claude|Anthropic/u,
+    "Semantic Context product copy does not name the provider");
+  assert.doesNotMatch(JSON.stringify(enMessages),/Claude|Anthropic/u,
+    "Semantic Context product copy does not name the provider");
   const arbitraryCounts = signalSemanticContextRejectedRevalidationCountValuesV1({
     proposal_count_before: 41, normalized_proposal_count: 2, proposals_appended: 1
   });

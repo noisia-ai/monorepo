@@ -5543,6 +5543,14 @@ export const signalSemanticContextElementVersions = pgTable(
     creationBasisDigest: text("creation_basis_digest"),
     creationInputDigest: text("creation_input_digest"),
     creationPoststateDigest: text("creation_poststate_digest"),
+    automaticPolicyContractVersion: text("automatic_policy_contract_version"),
+    automaticPolicyOutcome: text("automatic_policy_outcome"),
+    automaticPolicyBasis: jsonb("automatic_policy_basis"),
+    automaticPolicyBasisDigest: text("automatic_policy_basis_digest"),
+    automaticPolicyInputDigest: text("automatic_policy_input_digest"),
+    automaticPolicyPrestateDigest: text("automatic_policy_prestate_digest"),
+    automaticPolicyPoststateDigest: text("automatic_policy_poststate_digest"),
+    automaticPolicyDecidedAt: timestamp("automatic_policy_decided_at", { withTimezone: true }),
     proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     createdAt: now()
@@ -5572,6 +5580,19 @@ export const signalSemanticContextElementVersions = pgTable(
         AND ${table.creationBasisDigest} ~ '^sha256:[0-9a-f]{64}$'
         AND ${table.creationInputDigest} ~ '^sha256:[0-9a-f]{64}$'
         AND ${table.creationPoststateDigest} ~ '^sha256:[0-9a-f]{64}$')`)
+    ,check("signal_semantic_context_automatic_policy_all_or_none", sql`
+      (${table.automaticPolicyContractVersion} IS NULL AND ${table.automaticPolicyOutcome} IS NULL
+        AND ${table.automaticPolicyBasis} IS NULL AND ${table.automaticPolicyBasisDigest} IS NULL
+        AND ${table.automaticPolicyInputDigest} IS NULL AND ${table.automaticPolicyPrestateDigest} IS NULL
+        AND ${table.automaticPolicyPoststateDigest} IS NULL AND ${table.automaticPolicyDecidedAt} IS NULL)
+      OR (${table.automaticPolicyContractVersion}='signal-semantic-context-automatic-disposition-v1'
+        AND ${table.automaticPolicyOutcome} IN ('ready','exception')
+        AND jsonb_typeof(${table.automaticPolicyBasis})='object'
+        AND ${table.automaticPolicyBasisDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.automaticPolicyInputDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.automaticPolicyPrestateDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.automaticPolicyPoststateDigest} ~ '^sha256:[0-9a-f]{64}$'
+        AND ${table.automaticPolicyDecidedAt} IS NOT NULL)`)
   ]
 );
 
@@ -5626,6 +5647,9 @@ export const signalSemanticContextProposalRuns = pgTable(
     settledMicroUsd: bigint("settled_micro_usd", { mode: "bigint" }), validatedOutputDigest: text("validated_output_digest"),
     appendedOperationId: uuid("appended_operation_id").references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
     proposalCount: integer("proposal_count"), resultDigest: text("result_digest"),
+    automaticPolicyContractVersion: text("automatic_policy_contract_version"),
+    automaticReadyCount: integer("automatic_ready_count"),
+    automaticExceptionCount: integer("automatic_exception_count"),
     attemptCount: integer("attempt_count").notNull().default(0), leaseToken: uuid("lease_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }), errorCode: text("error_code"),
     errorSummary: text("error_summary"), createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
@@ -5637,6 +5661,13 @@ export const signalSemanticContextProposalRuns = pgTable(
   },
   (table) => [unique("uq_signal_semantic_context_proposal_run_generation").on(table.generationId),
     unique("uq_signal_semantic_context_proposal_run_key").on(table.workspaceId, table.runKey),
+    check("signal_semantic_context_run_automatic_counts_valid_v1", sql`
+      (${table.automaticPolicyContractVersion} IS NULL
+        AND ${table.automaticReadyCount} IS NULL AND ${table.automaticExceptionCount} IS NULL)
+      OR (${table.automaticPolicyContractVersion} = 'signal-semantic-context-automatic-disposition-v1'
+        AND ${table.automaticReadyCount} BETWEEN 0 AND 250
+        AND ${table.automaticExceptionCount} BETWEEN 0 AND 250
+        AND ${table.automaticReadyCount} + ${table.automaticExceptionCount} = ${table.proposalCount})`),
     index("idx_signal_semantic_context_proposal_run_status").on(table.status, table.updatedAt, table.id),
     index("idx_signal_semantic_context_proposal_run_recovery").on(table.leaseExpiresAt, table.status)
       .where(sql`${table.status} IN ('processing','validating')`)]

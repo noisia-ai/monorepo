@@ -6,12 +6,17 @@ import test from "node:test";
 
 import pg from "pg";
 
-import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+  SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  signalSemanticContextProposalDigestV1,
   type SignalSemanticContextProviderLineageV1 } from "@noisia/query-engine";
 import {
   buildSignalSemanticContextProposalRuntimeLineageV1,
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   prepareSignalSemanticContextProposalInputV1,
+  processSignalSemanticContextProposalRunV1,
+  startSignalSemanticContextProposalRunV1,
   type SignalSemanticContextProposalRuntimeConfigurationV1
 } from "@noisia/db";
 
@@ -90,7 +95,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(DB_URL);requireLocal(DB_URL);
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
-  let migration0102="";let migration0103="";let migration0104="";
+  let migration0102="";let migration0103="";let migration0104="";let migration0105="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -104,6 +109,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0102_"))migration0102=sql;
       else if(file.startsWith("0103_"))migration0103=sql;
       else if(file.startsWith("0104_"))migration0104=sql;
+      else if(file.startsWith("0105_"))migration0105=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -128,6 +134,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0102,"0102 migration is present and must be applied after 0101");
   assert.ok(migration0103,"0103 migration is present and must be applied after 0102");
   assert.ok(migration0104,"0104 migration is present and must be applied after 0103");
+  assert.ok(migration0105,"0105 migration is present and must be applied after 0104");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -640,6 +647,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await exerciseOrdinaryEditingV1();
   await exerciseSimpleCreationV1();
   await exerciseArchivedAccountingAdversarialV1();
+  const migration0105Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0105Client.connect();
+  try{await migration0105Client.query(migration0105);}finally{await migration0105Client.end();}
+  await exerciseAutomaticDispositionV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -2277,6 +2287,293 @@ async function exerciseSimpleCreationV1(){
   "creation fails closed when the sealed generation authority drifts");
   assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore,
     "simple creation and reversal do not change protected downstream state");
+}
+
+async function exerciseAutomaticDispositionV1(){
+  const fixture=await seedFixture();const protectedBefore=await protectedCounts(fixture.workspace.id);
+  const initial=await transaction((queryable)=>createSignalSemanticContextDraftV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"automatic-policy-initial"}));
+  const lineage=await fullLineageForDraft(fixture,initial.generation_key,terminalPreflightConfiguration);
+  const draft=await transaction((queryable)=>reconcileSignalSemanticContextGenerationV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"automatic-policy-lineage",
+    reason:"provider_lineage_missing",proposalLineage:lineage}));
+  const dbWorkspace={id:fixture.workspace.id,organization_id:fixture.workspace.organizationId,
+    brand_id:fixture.workspace.subject.id};
+  const dbActor={id:fixture.actor.id,user_type:"noisia_internal" as const};
+  const emptyPage=await transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams("page_size=20"))}));
+  assert.deepEqual(emptyPage.facets.review_states,{ready:0,exception:0,resolved:0},
+    "an empty generation still returns the closed review-state facet contract");
+  const existingTarget=await transaction((queryable)=>createSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"automatic-policy-existing-target",
+    generationKey:draft.generation_key,values:{element_kind:"benefit",display_text:"Existing target",
+      canonical_key:"automatic-existing-target",scope:"workspace",relation_kind:null,relation_target_key:null,
+      applicability:{state:"workspace_inherited",locale:null}}}));
+  await transaction((queryable)=>createSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
+    actor:fixture.actor,idempotencyKey:"automatic-policy-existing-collision",generationKey:draft.generation_key,
+    values:{element_kind:"typed_relation",display_text:"Existing governed relation",
+      canonical_key:"automatic-unresolved-relation",scope:"workspace",relation_kind:"associated_with",
+      relation_target_key:existingTarget.element_key,applicability:{state:"workspace_inherited",locale:null}}}));
+  const prepared=await prepareSignalSemanticContextProposalInputV1({queryable:pool,workspace:dbWorkspace,
+    generation_key:draft.generation_key});
+  const sourceAlias=prepared.input.knowledge_blocks[0]!.source_alias;
+  const base=(element_key:string,element_kind:string,canonical_key:string,display_text:string,locale:string|null)=>({
+    element_key,element_kind,canonical_key,display_text,scope:"primary_brand",entity_ref:null,locale,
+    relation_kind:null,relation_target_key:null,confidence:1,
+    evidence:[{source_alias:sourceAlias,relation_type:"supports"}]});
+  const providerProposals=[
+    base("automatic-benefit","benefit","automatic-benefit","Automatic benefit",null),
+    base("automatic-locale-es","locale_variant","automatic-locale-es","Variante de México","es-MX"),
+    base("automatic-needs-locale-review","feature","automatic-needs-locale-review",
+      "Feature with unsupported provider locale","es-MX"),
+    {...base("automatic-relation","typed_relation","automatic-relation","Associated benefit",null),
+      relation_kind:"associated_with",relation_target_key:"automatic-benefit"},
+    {...base("automatic-unresolved-relation","typed_relation","automatic-unresolved-relation",
+      "Unresolved relation",null),relation_kind:"associated_with",relation_target_key:"missing-target"},
+    {...base("automatic-self-relation","typed_relation","automatic-self-relation",
+      "Self relation",null),relation_kind:"associated_with",relation_target_key:"automatic-self-relation"},
+    {...base("automatic-cycle-a","typed_relation","automatic-cycle-a","Cycle A",null),
+      relation_kind:"associated_with",relation_target_key:"automatic-cycle-b"},
+    {...base("automatic-cycle-b","typed_relation","automatic-cycle-b","Cycle B",null),
+      relation_kind:"associated_with",relation_target_key:"automatic-cycle-a"},
+    {...base("automatic-invalid-chain","typed_relation","automatic-invalid-chain",
+      "Invalid transitive chain",null),relation_kind:"associated_with",
+      relation_target_key:"automatic-unresolved-relation"}
+  ];
+  const runtimePreflight=await loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
+    workspace:dbWorkspace,actor:dbActor,generation_key:draft.generation_key,
+    configuration:terminalPreflightConfiguration,
+    runtime:{queue_configured:true,worker_alive:true,recovery_alive:true}});
+  assert.equal(runtimePreflight.readiness,"ready");
+  const started=await startSignalSemanticContextProposalRunV1({pool,workspace:dbWorkspace,actor:dbActor,
+    idempotency_key:"automatic-policy-run",generation_key:draft.generation_key,
+    preflight_digest:runtimePreflight.preflight_digest,confirmation:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+    hard_cap_micro_usd:terminalPreflightConfiguration.platform_hard_cap_micro_usd,
+    configuration:terminalPreflightConfiguration,runtime:{queue_configured:true,worker_alive:true,recovery_alive:true}});
+  let calls=0;
+  const completed=await processSignalSemanticContextProposalRunV1({pool,
+    run_id:(await pool.query<{id:string}>(`SELECT id::text FROM signal_semantic_context_proposal_runs
+      WHERE workspace_id=$1::uuid AND run_key=$2`,[fixture.workspace.id,started.run_key])).rows[0]!.id,
+    provider:{async generate(){calls+=1;return{text:JSON.stringify({
+      contract_version:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
+      proposals:providerProposals}),provider_request_id:"automatic-policy-fixture",
+      usage:{input_tokens:1_000,output_tokens:500}};}}});
+  assert.deepEqual({status:completed.status,ready:completed.ready_count,exceptions:completed.exception_count},
+    {status:"completed",ready:3,exceptions:6});
+  assert.equal(calls,1);
+
+  const rows=await pool.query<{element_key:string;element_version:number;disposition:string;
+    origin_kind:string;locale:string|null;automatic_policy_outcome:string|null;
+    automatic_policy_basis:{reasons:string[]}|null;element_digest:string;source_refs_digest:string;valid:boolean}>(`SELECT
+      element.element_key,element.element_version,element.disposition,element.origin_kind,element.locale,
+      element.automatic_policy_outcome,element.automatic_policy_basis,element.element_digest,
+      element.source_refs_digest,
+      signal_semantic_context_automatic_policy_valid_v1(element.id) valid
+    FROM signal_semantic_context_element_versions element
+    WHERE element.generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element.operation_id=(SELECT appended_operation_id
+        FROM signal_semantic_context_proposal_runs WHERE workspace_id=$1::uuid AND run_key=$3)
+    ORDER BY element.element_key,element.element_version`,[fixture.workspace.id,draft.generation_key,started.run_key]);
+  assert.equal(rows.rows.length,12,"nine immutable provider rows plus three ready successors");
+  assert.equal(rows.rows.filter((row)=>row.element_version===1&&row.origin_kind==="provider_proposal").length,9);
+  assert.equal(rows.rows.filter((row)=>row.automatic_policy_outcome&&row.valid).length,9);
+  assert.equal(rows.rows.filter((row)=>row.automatic_policy_outcome==="ready"
+    &&row.disposition==="approved"&&row.element_version===2).length,3);
+  assert.equal(rows.rows.filter((row)=>row.automatic_policy_outcome==="exception"
+    &&row.disposition==="pending"&&row.element_version===1).length,6);
+  const exceptionReasons=Object.fromEntries(rows.rows.filter((row)=>row.automatic_policy_outcome==="exception")
+    .map((row)=>[row.element_key,row.automatic_policy_basis?.reasons]));
+  assert.deepEqual(exceptionReasons["automatic-needs-locale-review"],
+    ["locale_specific_requires_operator_review"]);
+  assert.deepEqual(exceptionReasons["automatic-unresolved-relation"],
+    ["relation_target_unresolved","semantic_collision"],"mixed reasons use canonical UTF-8 order");
+  for(const key of ["automatic-self-relation","automatic-cycle-a",
+    "automatic-cycle-b","automatic-invalid-chain"]){
+    assert.deepEqual(exceptionReasons[key],["relation_target_unresolved"],`${key} is a closed exception`);
+  }
+  const localeReady=rows.rows.find((row)=>row.element_key==="automatic-locale-es"&&row.element_version===2)!;
+  assert.equal(localeReady.locale,"es-MX","a real locale_variant preserves its sealed explicit locale");
+  const inheritedReady=rows.rows.find((row)=>row.element_key==="automatic-benefit"&&row.element_version===2)!;
+  assert.equal(inheritedReady.locale,null,"ordinary outputs do not copy the primary UI locale");
+  const legacyInitial=rows.rows.find((row)=>row.element_key==="automatic-benefit"&&row.element_version===1)!;
+  assert.equal(legacyInitial.element_digest,signalSemanticContextProposalDigestV1({
+    contract_version:"signal-semantic-context-element-v1",element_key:"automatic-benefit",
+    element_kind:"benefit",canonical_key:"automatic-benefit",display_text:"Automatic benefit",
+    scope:"primary_brand",entity_type:null,entity_id:null,locale:null,relation_kind:null,
+    relation_target_key:null,confidence:1,element_version:1,disposition:"pending",
+    source_refs_digest:legacyInitial.source_refs_digest,confidence_authoritative:false
+  }),"legacy numeric confidence remains a JSON number in the frozen element digest");
+
+  const page=await transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams("page_size=20"))}));
+  assert.deepEqual(page.facets.review_states,{ready:5,exception:6,resolved:0});
+  assert.deepEqual(page.facets.dispositions,{approved:5,pending:6});
+  assert.equal(page.elements.find((element)=>element.element_key==="automatic-benefit")!
+    .applicability.effective_state,"workspace_inherited");
+  assert.equal(page.elements.find((element)=>element.element_key==="automatic-locale-es")!
+    .applicability.effective_state,"explicit_locale");
+  assert.ok(page.elements.filter((element)=>element.automatic_policy!==null)
+    .every((element)=>element.automatic_policy?.provider_prose_used_as_evidence===false));
+
+  const preflight=await transaction((queryable)=>loadSignalSemanticContextPublicationPreflightV2({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key}));
+  assert.equal(preflight.publishable,false);assert.equal(preflight.counts.automatic_ready,3);
+  assert.equal(preflight.counts.automatic_exceptions,6);
+  assert.ok(preflight.blockers.includes("pending_elements"));
+  assert.ok(!preflight.blockers.includes("decision_basis_missing"),
+    "valid automatic ready authority needs no per-element operator ceremony");
+
+  const automaticAuthority=await pool.query<{operation_id:string;run_id:string;generation_id:string;
+    actor_user_id:string;input_count:number;outcome_count:number;proposal_events:number;ready_events:number;
+    operation_valid:boolean}>(`SELECT operation.id::text operation_id,run.id::text run_id,
+      generation.id::text generation_id,operation.actor_user_id::text actor_user_id,
+      jsonb_array_length(operation.semantic_context_decision_input->'proposal_keys') input_count,
+      jsonb_array_length(operation.semantic_context_decision_input->'outcomes') outcome_count,
+      count(*) FILTER(WHERE event.event_kind='proposals_appended')::int proposal_events,
+      count(*) FILTER(WHERE event.event_kind='automatic_policy_ready')::int ready_events,
+      signal_semantic_context_automatic_operation_run_valid_v1(operation.id) operation_valid
+    FROM signal_semantic_context_proposal_runs run
+    JOIN signal_governance_control_operations operation ON operation.id=run.appended_operation_id
+    JOIN signal_semantic_context_generations generation ON generation.id=run.generation_id
+    JOIN signal_semantic_context_events event ON event.operation_id=operation.id
+    WHERE run.workspace_id=$1::uuid AND run.run_key=$2
+    GROUP BY operation.id,run.id,generation.id`,[fixture.workspace.id,started.run_key]);
+  assert.deepEqual({...automaticAuthority.rows[0],operation_id:"sealed",run_id:"sealed",generation_id:"sealed",
+    actor_user_id:"sealed"},{operation_id:"sealed",run_id:"sealed",generation_id:"sealed",
+    actor_user_id:"sealed",input_count:9,outcome_count:9,proposal_events:9,ready_events:3,
+    operation_valid:true});
+  const authority=automaticAuthority.rows[0]!;
+  const genericClient=await pool.connect();
+  try{await genericClient.query("BEGIN");
+    const genericOperation=await beginSignalProductOperationV1({queryable:genericClient,
+      workspace:fixture.workspace,actor:fixture.actor,action:"append-semantic-context-proposals",
+      idempotencyKey:"automatic-policy-generic-bypass",input:{generation_key:draft.generation_key}});
+    assert.equal((await genericClient.query<{valid:boolean}>(
+      `SELECT signal_semantic_context_automatic_operation_run_valid_v1($1::uuid) valid`,
+      [genericOperation.operationId])).rows[0]?.valid,false,
+    "a generic append operation cannot mint automatic authority");
+  }finally{await genericClient.query("ROLLBACK");genericClient.release();}
+  const readyElement=await pool.query<{id:string;element_digest:string}>(`SELECT id::text,element_digest
+    FROM signal_semantic_context_element_versions WHERE operation_id=$1::uuid
+      AND automatic_policy_outcome='ready' ORDER BY element_key LIMIT 1`,[authority.operation_id]);
+  const attack=async(sql:string,params:unknown[],pattern:RegExp)=>{
+    const client=await pool.connect();
+    try{await client.query("BEGIN");await assert.rejects(async()=>{
+      await client.query(sql,params);await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+    },pattern);}
+    finally{await client.query("ROLLBACK").catch(()=>undefined);client.release();}
+  };
+  await attack(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,operation_id,
+      event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+      (SELECT max(event_index)+1 FROM signal_semantic_context_events WHERE operation_id=$4::uuid),
+      'automatic_policy_ready',$5,$5,$6::uuid)`,[fixture.workspace.id,authority.generation_id,
+    readyElement.rows[0]!.id,authority.operation_id,readyElement.rows[0]!.element_digest,authority.actor_user_id],
+  /automatic policy cohort is incomplete|authority is invalid/u);
+  await attack(`DELETE FROM signal_semantic_context_events WHERE id=(SELECT id
+      FROM signal_semantic_context_events WHERE operation_id=$1::uuid ORDER BY event_index LIMIT 1)`,
+    [authority.operation_id],/append-only/u);
+  await attack(`UPDATE signal_semantic_context_proposal_runs SET automatic_ready_count=automatic_ready_count+1
+    WHERE id=$1::uuid`,[authority.run_id],/append-only|immutable/u);
+  const probe=async(mutation:string,params:unknown[],assertion:(client:pg.PoolClient)=>Promise<void>)=>{
+    const client=await pool.connect();
+    try{await client.query("BEGIN");await client.query("SET LOCAL session_replication_role=replica");
+      await client.query(mutation,params);await client.query("SET LOCAL session_replication_role=origin");
+      await assertion(client);
+    }finally{await client.query("ROLLBACK");client.release();}
+  };
+  await probe(`UPDATE signal_semantic_context_element_versions SET display_text=''
+    WHERE operation_id=$1::uuid AND element_key='automatic-benefit' AND element_version=1`,
+  [authority.operation_id],async(client)=>{
+    const result=(await client.query<{reasons:string[];valid:boolean}>(`SELECT
+      signal_semantic_context_automatic_base_reasons_v1(initial.id) reasons,
+      signal_semantic_context_automatic_policy_valid_v1(ready.id) valid
+      FROM signal_semantic_context_element_versions initial
+      JOIN signal_semantic_context_element_versions ready ON ready.supersedes_element_id=initial.id
+      WHERE initial.operation_id=$1::uuid AND initial.element_key='automatic-benefit'`,
+    [authority.operation_id])).rows[0]!;
+    assert.equal(result.valid,false);assert.deepEqual(result.reasons,["__invalid_schema_or_authority__"]);
+  });
+  await probe(`UPDATE signal_semantic_context_element_versions SET canonical_key='automatic-cycle-b'
+    WHERE operation_id=$1::uuid AND element_key='automatic-cycle-a' AND element_version=1`,
+  [authority.operation_id],async(client)=>{
+    const reasons=(await client.query<{reasons:string[]}>(`SELECT
+      signal_semantic_context_automatic_base_reasons_v1(id) reasons
+      FROM signal_semantic_context_element_versions WHERE operation_id=$1::uuid
+        AND element_key='automatic-cycle-a' AND element_version=1`,[authority.operation_id])).rows[0]!.reasons;
+    assert.ok(reasons.includes("semantic_collision"));
+  });
+  await probe(`UPDATE analysis_evidence_links SET source_id=gen_random_uuid()
+    WHERE evidence_group_id=(SELECT evidence_group_id FROM signal_semantic_context_element_versions
+      WHERE operation_id=$1::uuid AND element_key='automatic-benefit' AND element_version=1)`,
+  [authority.operation_id],async(client)=>{
+    const result=(await client.query<{reasons:string[];valid:boolean}>(`SELECT
+      signal_semantic_context_automatic_base_reasons_v1(initial.id) reasons,
+      signal_semantic_context_automatic_policy_valid_v1(ready.id) valid
+      FROM signal_semantic_context_element_versions initial
+      JOIN signal_semantic_context_element_versions ready ON ready.supersedes_element_id=initial.id
+      WHERE initial.operation_id=$1::uuid AND initial.element_key='automatic-benefit'`,
+    [authority.operation_id])).rows[0]!;
+    assert.equal(result.valid,false);assert.ok(result.reasons.includes("evidence_invalid"));
+  });
+  await probe(`UPDATE signal_semantic_context_generations SET locale_context_digest=$2
+    WHERE id=$1::uuid`,[authority.generation_id,digest("forged-parent-authority")],async(client)=>{
+    const result=(await client.query<{operation_valid:boolean;policy_valid:boolean}>(`SELECT
+      signal_semantic_context_automatic_operation_run_valid_v1($1::uuid) operation_valid,
+      signal_semantic_context_automatic_policy_valid_v1($2::uuid) policy_valid`,
+    [authority.operation_id,readyElement.rows[0]!.id])).rows[0]!;
+    assert.deepEqual(result,{operation_valid:false,policy_valid:false});
+  });
+
+  const beforeEdit=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-benefit"}));
+  const values:SignalSemanticContextOrdinaryValuesV1={display_text:"Edited automatic benefit",
+    canonical_key:beforeEdit.element.canonical_key,scope:beforeEdit.element.scope,relation_kind:null,
+    relation_target_key:null,applicability:{state:"preserve",locale:null}};
+  await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
+    actor:fixture.actor,idempotencyKey:"automatic-policy-edit",generationKey:draft.generation_key,
+    elementKey:"automatic-benefit",expectedVersion:beforeEdit.element.element_version,
+    stateToken:beforeEdit.element.state_token,action:"save",values}));
+  const edited=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-benefit"}));
+  assert.equal(edited.element.disposition,"approved");assert.equal(edited.element.undo_target_version,2);
+  await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
+    actor:fixture.actor,idempotencyKey:"automatic-policy-undo",generationKey:draft.generation_key,
+    elementKey:"automatic-benefit",expectedVersion:edited.element.element_version,
+    stateToken:edited.element.state_token,action:"undo",targetVersion:edited.element.undo_target_version!}));
+  const reverted=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-benefit"}));
+  assert.equal(reverted.element.display_text,"Automatic benefit");
+  assert.equal(reverted.element.applicability.effective_state,"workspace_inherited");
+  const archiveCandidate=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-locale-es"}));
+  await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
+    actor:fixture.actor,idempotencyKey:"automatic-policy-archive",generationKey:draft.generation_key,
+    elementKey:"automatic-locale-es",expectedVersion:archiveCandidate.element.element_version,
+    stateToken:archiveCandidate.element.state_token,action:"archive"}));
+  const archivedPage=await transaction((queryable)=>loadSignalSemanticContextReviewPageV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    filters:parseSignalSemanticContextReviewFiltersV1(new URLSearchParams("page_size=20&disposition=archived"))}));
+  assert.equal(archivedPage.elements[0]?.review_state,"resolved");
+  assert.equal(archivedPage.elements[0]?.disposition,"archived");
+  const archived=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-locale-es"}));
+  await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
+    actor:fixture.actor,idempotencyKey:"automatic-policy-restore",generationKey:draft.generation_key,
+    elementKey:"automatic-locale-es",expectedVersion:archived.element.element_version,
+    stateToken:archived.element.state_token,action:"restore"}));
+  const restored=await transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,
+    elementKey:"automatic-locale-es"}));
+  assert.equal(restored.element.review_state,"ready");assert.equal(restored.element.disposition,"approved");
+  assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore);
 }
 
 async function exerciseArchivedAccountingAdversarialV1(){

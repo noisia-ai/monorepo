@@ -69,6 +69,14 @@ type ReviewElement = {
   relation_kind: string | null;
   relation_target_key: string | null;
   disposition: Disposition;
+  review_state: "ready" | "exception" | "resolved";
+  automatic_policy: {
+    contract_version: string;
+    outcome: "ready" | "exception";
+    reasons: string[];
+    authority: "server_owned";
+    provider_prose_used_as_evidence: false;
+  } | null;
   origin: string;
   provenance: { proposed_at: string; decided_at: string | null };
   applicability: {
@@ -182,8 +190,11 @@ type ReviewPage = {
     element_kinds: Record<string, number>;
     scopes: Record<string, number>;
     dispositions: Record<string, number>;
+    review_states: { ready: number; exception: number; resolved: number };
   };
 };
+
+const EMPTY_REVIEW_STATE_COUNTS:ReviewPage["facets"]["review_states"]={ready:0,exception:0,resolved:0};
 
 type PublicationPreflight = {
   generation_key: string;
@@ -646,11 +657,17 @@ export function SemanticContextReviewWorkbench({
     && selectedElements.every((element) => element.disposition === "approved"
       && element.locale === null && element.locale_authority.state === "unresolved");
   const selectedPermittedLocales = selectedElements[0]?.applicability.generation_locales ?? [];
+  const reviewStateCounts=page?page.facets.review_states:EMPTY_REVIEW_STATE_COUNTS;
 
   return <div className="semantic-context-review" data-loading={loading || undefined}>
     <div className="semantic-context-review__header">
       <div><strong>{t("reviewWorkbench.title")}</strong><p>{t("reviewWorkbench.body")}</p></div>
-      <div className="semantic-context-pack__drawer-actions"><AdminStatus state="warning">{t("reviewWorkbench.nonAuthoritative")}</AdminStatus>
+      <div className="semantic-context-pack__drawer-actions"><AdminStatus state="good">
+        {t("reviewWorkbench.readyCount", { count: reviewStateCounts.ready })}</AdminStatus>
+        <AdminStatus state={reviewStateCounts.exception > 0 ? "warning" : "good"}>
+          {t("reviewWorkbench.exceptionCount", { count: reviewStateCounts.exception })}</AdminStatus>
+        <AdminStatus state="not_available">
+          {t("reviewWorkbench.resolvedCount", { count: reviewStateCounts.resolved })}</AdminStatus>
         {reviewWritable?<button className="admin-button admin-button--primary" disabled={Boolean(busy)}
           onClick={(event)=>openCreation(event.currentTarget)} type="button"><Plus aria-hidden size={14}/>
           {t("reviewWorkbench.creation.action")}</button>:null}</div>
@@ -662,7 +679,7 @@ export function SemanticContextReviewWorkbench({
           onChange={(event) => setQuery(event.target.value)} placeholder={t("reviewWorkbench.searchPlaceholder")}
           type="search" value={query}/></label>
       <FilterSelect label={t("filters.status")} onChange={(value) => setFilters((current) => ({ ...current, disposition: value as Filters["disposition"] }))} value={filters.disposition}>
-        <option value="all">{t("filters.allStatuses")}</option>{["pending", "approved", "rejected", "merged"].map((state) => <option key={state} value={state}>{t(`states.${state}`)}</option>)}
+        <option value="all">{t("filters.allStatuses")}</option>{["pending", "approved", "rejected", "merged", "archived"].map((state) => <option key={state} value={state}>{t(`states.${state}`)}</option>)}
       </FilterSelect>
       <FilterSelect label={t("filters.type")} onChange={(value) => setFilters((current) => ({ ...current, kind: value }))} value={filters.kind}>
         <option value="all">{t("filters.allTypes")}</option>{filterOptions.kinds.map((kind) => <option key={kind} value={kind}>{kindLabel(kind, t)}</option>)}
@@ -799,6 +816,12 @@ export function signalSemanticContextElementStateKeyV1(
 
 function DispositionStatus({ element, t }: { element: ReviewElement; t: ReturnType<typeof useTranslations> }) {
   const disposition = element.disposition;
+  if (element.lifecycle_state !== "archived" && element.automatic_policy?.outcome === "exception") {
+    return <AdminStatus state="warning">{t("states.exception")}</AdminStatus>;
+  }
+  if (element.lifecycle_state !== "archived" && element.automatic_policy?.outcome === "ready") {
+    return <AdminStatus state="good">{t("states.ready")}</AdminStatus>;
+  }
   return <AdminStatus state={element.lifecycle_state === "archived" ? "not_available" : disposition === "approved" ? "good" : disposition === "rejected" ? "danger" : disposition === "merged" ? "not_available" : "warning"}>{t(signalSemanticContextElementStateKeyV1(element))}</AdminStatus>;
 }
 
@@ -876,6 +899,10 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
         <span>{t(`reviewWorkbench.localeAuthority.dispositions.${element.locale_authority.state}`)}</span>
         {element.locale_authority.basis ? <small>{element.locale_authority.basis.rationale}</small>
           : <small>{t("reviewWorkbench.localeAuthority.inheritedBody", { markets: element.applicability.generation_markets.join(" + ") })}</small>}</div></section> : null}
+    {element.automatic_policy?.outcome === "exception" ? <section className="semantic-context-review__lineage">
+      <h3>{t("reviewWorkbench.automaticReasons.title")}</h3>{element.automatic_policy.reasons.map((reason) =>
+        <div key={reason}><Warning aria-hidden size={14}/><span>
+          {t(`reviewWorkbench.automaticReasons.${knownAutomaticReason(reason)}`)}</span></div>)}</section> : null}
     <AnnotationsList busy={busy} items={detail.review_annotations} onBeginResolution={onBeginResolution} t={t}/>
     {detail.merge_lineage.length ? <section className="semantic-context-review__lineage"><h3>{t("reviewWorkbench.merge.lineage")}</h3>{detail.merge_lineage.map((entry) => <div key={`${entry.source_element_key}:${entry.target_element_key}`}><ArrowsMerge aria-hidden size={14}/><span>{entry.source_element_key} → {entry.target_element_key}</span><small>{entry.rationale}</small></div>)}</section> : null}
     <section className="semantic-context-review__evidence"><div><h3>{t("reviewWorkbench.evidence.title")}</h3><p>{t("reviewWorkbench.evidence.body")}</p></div>{detail.evidence.map((source, index) => <article className="semantic-context-review__source" key={`${source.source_type}-${source.section_label}-${index}`}><header><div><span>{sourceKindLabel(source.source_type, t)}</span><strong>{source.source_title}</strong><small>{source.section_label}</small></div><AdminStatus state={source.current_state === "current" ? "good" : source.current_state === "inactive" ? "warning" : "not_available"}>{t(`reviewWorkbench.evidence.states.${source.current_state}`)}</AdminStatus></header><div className="semantic-context-review__source-meta"><span>{t("reviewWorkbench.evidence.relation", { relation: t(`evidenceRelations.${source.relation}`) })}</span><span>{t("reviewWorkbench.evidence.generationValidated")}</span></div><div className="semantic-context-review__source-context"><strong>{t(source.source_context.label === "operator_authored_input" ? "reviewWorkbench.evidence.operatorContextLabel" : "reviewWorkbench.evidence.contextLabel")}</strong><p>{source.source_context.preview ?? t("reviewWorkbench.evidence.contextUnavailable")}</p><small>{t(source.source_context.label === "operator_authored_input" ? "reviewWorkbench.evidence.operatorNotCitation" : "reviewWorkbench.evidence.notCitation")}</small></div></article>)}{!detail.evidence.length ? <p>{t("review.noEvidence")}</p> : null}</section>
@@ -1078,6 +1105,13 @@ function knownPublicationBlocker(blocker: string) {
   return known.has(blocker) ? blocker : "unknown";
 }
 
+function knownAutomaticReason(reason: string) {
+  const known = new Set(["evidence_missing", "evidence_invalid", "evidence_limited",
+    "evidence_contradictory", "semantic_collision", "relation_target_unresolved",
+    "locale_required", "locale_not_in_parent_envelope", "locale_specific_requires_operator_review"]);
+  return known.has(reason) ? reason : "unknown";
+}
+
 function kindLabel(kind: string, t: ReturnType<typeof useTranslations>) {
   const known = new Set(["identity_term", "alias", "product", "feature", "surface", "category", "need", "benefit", "friction", "usage_occasion", "competitor_term", "locale_variant", "exclusion", "homonym", "ambiguous_term", "abstention_rule", "positive_anchor", "negative_anchor", "boundary_anchor", "typed_relation"]);
   return known.has(kind) ? t(`kinds.${kind}`) : t("kinds.other");
@@ -1089,6 +1123,6 @@ function sourceKindLabel(kind: string, t: ReturnType<typeof useTranslations>) {
 }
 
 function originLabel(origin: string, t: ReturnType<typeof useTranslations>) {
-  const known = new Set(["provider_proposal", "operator_correction", "operator_decision", "operator_merge", "operator_created"]);
+  const known = new Set(["provider_proposal", "automatic_policy", "operator_correction", "operator_decision", "operator_merge", "operator_created"]);
   return known.has(origin) ? t(`origins.${origin}`) : t("origins.other");
 }

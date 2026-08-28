@@ -44,7 +44,7 @@ const configuration: SignalSemanticContextProposalRuntimeConfigurationV1 = {
   platform_hard_cap_micro_usd: 1_000_000n
 };
 
-test("0092 runs one bounded call, appends pending proposals atomically, and recovers fail-closed", {
+test("0092/0105 runs one bounded call, creates a ready editable draft, and recovers fail-closed", {
   skip: !DB_URL || !APPROVED, timeout: 240_000
 }, async () => {
   assert.ok(DB_URL); requireLocal(DB_URL);
@@ -147,9 +147,13 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       workspace: fixture.workspace, actor: fixture.actor, run_key: started.run_key });
     assert.equal(state.status, "completed"); assert.equal(state.provider_call_count, 1);
     assert.equal(state.proposal_count, 1); assert.equal(state.budget.settled_micro_usd, "10500");
+    assert.deepEqual(state.automatic_disposition, {
+      policy_version: "signal-semantic-context-automatic-disposition-v1",
+      ready: 1, exceptions: 0, provider_prose_used_as_evidence: false
+    });
     assert.equal((await row(pool, `SELECT status FROM signal_semantic_context_proposal_outbox
       WHERE run_id=$1::uuid`, [await runId(pool, started.run_key)])).status, "completed");
-    assert.deepEqual(await elementCounts(pool, fixture.workspace.id), { pending: 1, approved: 0, rejected: 0 });
+    assert.deepEqual(await elementCounts(pool, fixture.workspace.id), { pending: 0, approved: 1, rejected: 0 });
     assert.deepEqual(await protectedCounts(pool, fixture.workspace.id), before);
     assert.equal((await processSignalSemanticContextProposalRunV1({ pool,
       run_id: await runId(pool, started.run_key), provider: { async generate() {
@@ -179,7 +183,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
         usage: { input_tokens: 1_000, output_tokens: 8_000 }
       }; } } });
     assert.deepEqual(await elementCounts(pool, capacityFixture.workspace.id),
-      { pending: 50, approved: 0, rejected: 0 });
+      { pending: 0, approved: 50, rejected: 0 });
 
     const invalid = await seedFixture(pool, "invalid");
     const invalidRun = await startFor(pool, invalid, "invalid-start");
@@ -409,7 +413,7 @@ test("0092 runs one bounded call, appends pending proposals atomically, and reco
       provider: { async generate() { return { text: validResponse(
         retryPrepared.input.knowledge_blocks[0]!.source_alias, retryPrepared.input.identity.primary.entity_ref),
         provider_request_id: null, usage: { input_tokens: 10, output_tokens: 10 } }; } } });
-    assert.equal((await elementCounts(pool, retry.workspace.id)).pending, 1);
+    assert.deepEqual(await elementCounts(pool, retry.workspace.id), { pending: 0, approved: 1, rejected: 0 });
 
     const crash = await seedFixture(pool, "crash"); const crashRun = await startFor(pool, crash, "crash-start");
     let crashCalls = 0;
@@ -653,7 +657,7 @@ async function seedFixture(pool: pg.Pool, label: string,
     VALUES($1::uuid,'A governed assertion','positioning','approved')`, [source]);
   const knowledgeDigest = await currentKnowledgeDigest(pool, org, brand);
   const localeDigest = signalSemanticContextProposalDigestV1({ primary_locale: "es-MX",
-    locale_variants: ["es-MX", "en-US"], markets: ["MX", "US"], timezone: "America/Mexico_City" });
+    locale_variants: ["en-US", "es-MX"], markets: ["MX", "US"], timezone: "America/Mexico_City" });
   const canonicalProviderLineage = buildSignalSemanticContextProposalRuntimeLineageV1(configuration,
     planSignalSemanticContextCapacityV1({authority:{brand_os_digest:brandDigest,
       knowledge_digest:knowledgeDigest,locale_context_digest:localeDigest},counts:{
@@ -686,7 +690,7 @@ async function seedFixture(pool: pg.Pool, label: string,
     markets,timezone,proposal_model,proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
     proposal_provider_lineage,proposal_provider_lineage_digest,
     draft_digest,created_operation_id,created_by_user_id) VALUES($1::uuid,$2::uuid,$3,1,'draft',
-      $4::uuid,1,$5,$6,$7,$8,'es-MX',ARRAY['es-MX','en-US']::text[],ARRAY['MX','US']::text[],
+      $4::uuid,1,$5,$6,$7,$8,'es-MX',ARRAY['en-US','es-MX']::text[],ARRAY['MX','US']::text[],
       'America/Mexico_City',$9,$10,$11,$12,$13::jsonb,$14,$15,$16::uuid,$17::uuid)`, [workspace.id, artifact.id,
     generationKey, profile, brandDigest, `knowledge-${knowledgeDigest.slice(7, 23)}`, knowledgeDigest,
     localeDigest, options.providerLineage === false ? null : configuration.model,
@@ -729,7 +733,7 @@ function validResponse(sourceAlias: string, entityRef: string) { return JSON.str
   contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
   proposals: [{ element_key: "identity.fixture", element_kind: "identity_term",
     canonical_key: "fixture", display_text: "Fixture identity", scope: "primary_brand",
-    entity_ref: entityRef, locale: "es-MX", relation_kind: null,
+    entity_ref: entityRef, locale: null, relation_kind: null,
     relation_target_key: null, confidence: 1,
     evidence: [{ source_alias: sourceAlias, relation_type: "supports" }] }]
 }); }
@@ -743,7 +747,7 @@ function validResponseCount(sourceAlias: string, entityRef: string, count: numbe
       display_text: `Fixture feature ${index + 1}`,
       scope: "primary_brand",
       entity_ref: entityRef,
-      locale: "es-MX",
+      locale: null,
       relation_kind: null,
       relation_target_key: null,
       confidence: 1,
@@ -806,7 +810,9 @@ async function elementCounts(pool: pg.Pool, workspaceId: string) { return row(po
   count(*) FILTER(WHERE disposition='pending')::int pending,
   count(*) FILTER(WHERE disposition='approved')::int approved,
   count(*) FILTER(WHERE disposition='rejected')::int rejected
-  FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid`, [workspaceId]); }
+  FROM signal_semantic_context_element_versions element WHERE workspace_id=$1::uuid
+    AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+      WHERE successor.supersedes_element_id=element.id)`, [workspaceId]); }
 async function protectedCounts(pool: pg.Pool, workspaceId: string) { return {
   assignments: await scalar(pool, `SELECT count(*)::int count FROM signal_classification_assignments WHERE workspace_id=$1::uuid`, [workspaceId]),
   tags: await scalar(pool, `SELECT count(*)::int count FROM record_tags`, []),

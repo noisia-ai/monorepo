@@ -3,6 +3,14 @@ import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 
 import {
+  SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_AUDIT_VERSION,
+  SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION,
+  evaluateSignalSemanticContextAutomaticPolicyV1,
+  type SignalSemanticContextAutomaticPolicyDecisionV1,
+  type SignalSemanticContextAutomaticPolicyProposalV1
+} from "./signal-semantic-context-automatic-policy";
+
+import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
   SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_INPUT_CONTRACT_VERSION,
@@ -107,6 +115,8 @@ type RunRow = {
   provider_response_digest: string | null; input_tokens: string | null; output_tokens: string | null;
   settled_micro_usd: string | null; appended_operation_id: string | null;
   proposal_count: number | null; result_digest: string | null;
+  automatic_policy_contract_version: string | null;
+  automatic_ready_count: number | null; automatic_exception_count: number | null;
   attempt_count: number; lease_token: string | null; lease_expires_at: Date | string | null;
   error_code: string | null; error_summary: string | null; created_by_user_id: string;
   queued_at: Date | string; started_at: Date | string | null; validating_at: Date | string | null;
@@ -1049,10 +1059,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
         relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key,
         confidence: proposal.confidence, origin_kind: "provider_proposal" as const, source_refs: refs };
     });
-    const appended = await appendSignalSemanticContextProposalsV1({ queryable: finish,
-      workspace: lease.workspace, actor: { id: current.created_by_user_id, user_type: "noisia_internal" },
-      idempotency_key: `semantic-context-run-append:${current.id}`,
-      generation_key: lease.generation_key, proposals });
+    const validatedOutputDigest = signalSemanticContextProposalDigestV1({
+      output, normalization: parsed.normalization
+    });
     const inputTokens = Number(current.input_tokens ?? 0);
     const outputTokens = Number(current.output_tokens ?? 0);
     const actual = signalSemanticContextProposalCostMicroUsdV1({ input_tokens: inputTokens,
@@ -1061,21 +1070,40 @@ export async function processSignalSemanticContextProposalRunV1(args: {
     if (actual > BigInt(current.reservation_micro_usd)) {
       throw new SignalSemanticContextProposalExecutionError("semantic_context_budget_settlement_exceeded", 500);
     }
+    const appended = await appendSignalSemanticContextProposalsInternalV1({ queryable: finish,
+      workspace: lease.workspace, actor: { id: current.created_by_user_id, user_type: "noisia_internal" },
+      idempotency_key: `semantic-context-run-append:${current.id}`,
+      generation_key: lease.generation_key, proposals,
+      automatic_run_authority: {
+        run_id: current.id, run_key: current.run_key,
+        response_digest: current.provider_response_digest!,
+        validated_output_digest: validatedOutputDigest,
+        provider_lineage_digest: current.provider_lineage_digest!,
+        provider_request_identity: current.provider_request_identity,
+        brand_os_digest: current.brand_os_digest, knowledge_digest: current.knowledge_digest,
+        locale_context_digest: current.locale_context_digest, prompt_digest: current.prompt_digest,
+        context_input_digest: current.context_input_digest,
+        settled_micro_usd: actual.toString()
+      } });
     await finish.query(`UPDATE signal_semantic_context_budget_reservations SET status='settled',
       input_tokens=$2,output_tokens=$3,actual_micro_usd=$4,settled_at=clock_timestamp()
       WHERE run_id=$1::uuid AND status='reserved'`, [current.id, inputTokens, outputTokens, actual.toString()]);
     const resultDigest = signalSemanticContextProposalDigestV1({ run_key: current.run_key,
       generation_key: lease.generation_key, output_digest: current.provider_response_digest,
-      proposal_count: proposals.length, draft_digest: appended.draft_digest, settled_micro_usd: actual.toString() });
+      proposal_count: proposals.length, ready_count: appended.ready,
+      exception_count: appended.exceptions, automatic_policy: SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION,
+      draft_digest: appended.draft_digest, settled_micro_usd: actual.toString() });
     const updated = await finish.query(`UPDATE signal_semantic_context_proposal_runs SET
       status='completed',provider_call_state='settled',settled_micro_usd=$3,
       validated_output_digest=$4,appended_operation_id=$5::uuid,proposal_count=$6,result_digest=$7,
+      automatic_policy_contract_version=$8,automatic_ready_count=$9,automatic_exception_count=$10,
       lease_token=NULL,lease_expires_at=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp()
       WHERE id=$1::uuid AND lease_token=$2::uuid AND provider_call_state='response_persisted'`, [
       current.id, lease.token, actual.toString(), signalSemanticContextProposalDigestV1({
         output, normalization: parsed.normalization
       }),
-      appended.operation_id, proposals.length, resultDigest
+      appended.operation_id, proposals.length, resultDigest, SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION,
+      appended.ready, appended.exceptions
     ]);
     if (updated.rowCount !== 1) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_completion_conflict");
     await finish.query(`UPDATE signal_semantic_context_proposal_outbox SET status='completed',
@@ -1083,10 +1111,12 @@ export async function processSignalSemanticContextProposalRunV1(args: {
     await insertRunEvent(finish, current, "budget-settled", "budget_settled",
       { settled_micro_usd: actual.toString() });
     await insertRunEvent(finish, current, "completed", "completed",
-      { proposal_count: proposals.length, result_digest: resultDigest });
+      { proposal_count: proposals.length, ready_count: appended.ready,
+        exception_count: appended.exceptions, result_digest: resultDigest });
     await finish.query("COMMIT");
     return { status: "completed" as const, run_key: current.run_key,
-      proposal_count: proposals.length, result_digest: resultDigest };
+      proposal_count: proposals.length, ready_count: appended.ready,
+      exception_count: appended.exceptions, result_digest: resultDigest };
   } catch (error) {
     await finish.query("ROLLBACK").catch(() => undefined);
     const marked = await markRunValidationFailed(args.pool, run.id, lease.token, error)
@@ -1096,20 +1126,33 @@ export async function processSignalSemanticContextProposalRunV1(args: {
   } finally { finish.release(); }
 }
 
-/** The sole server-owned append boundary used by both Studio and Workers. */
 export async function appendSignalSemanticContextProposalsV1(args: {
   queryable: SignalSemanticContextQueryable;
   workspace: SignalSemanticContextProposalWorkspaceV1;
   actor: SignalSemanticContextProposalActorV1;
   idempotency_key: string;
   generation_key: string;
-  proposals: Array<{
-    element_key: string; element_kind: string; canonical_key: string; display_text: string;
-    scope: string | null; entity_type: string | null; entity_id: string | null; locale: string | null;
-    relation_kind: string | null; relation_target_key: string | null; confidence: number | null;
-    origin_kind: "provider_proposal" | "server_projection";
-    source_refs: Array<{ source_type: string; source_id: string; relation_type: string }>;
-  }>;
+  proposals: SignalSemanticContextAutomaticPolicyProposalV1[];
+}) {
+  return appendSignalSemanticContextProposalsInternalV1(args);
+}
+
+type AutomaticRunAuthorityV1 = {
+  run_id: string; run_key: string; response_digest: string; validated_output_digest: string;
+  provider_lineage_digest: string; provider_request_identity: string;
+  brand_os_digest: string; knowledge_digest: string; locale_context_digest: string;
+  prompt_digest: string; context_input_digest: string; settled_micro_usd: string;
+};
+
+/** Internal append core. Automatic disposition is deliberately unavailable to callers. */
+async function appendSignalSemanticContextProposalsInternalV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  actor: SignalSemanticContextProposalActorV1;
+  idempotency_key: string;
+  generation_key: string;
+  proposals: SignalSemanticContextAutomaticPolicyProposalV1[];
+  automatic_run_authority?: AutomaticRunAuthorityV1;
 }) {
   assertActor(args.actor);
   if (args.proposals.length < 1 || args.proposals.length > 250) {
@@ -1117,11 +1160,7 @@ export async function appendSignalSemanticContextProposalsV1(args: {
   }
   await args.queryable.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
     [`signal-semantic-context:${args.workspace.id}`]);
-  const operation = await beginOperation(args.queryable, { workspace: args.workspace, actor: args.actor,
-    action: "append-semantic-context-proposals", idempotency_key: args.idempotency_key,
-    input: { generation_key: args.generation_key, proposals: args.proposals } });
-  if (operation.replay) return operation.replay as { generation_key: string; created: number;
-    draft_digest: string; operation_id: string };
+  const operationInput = { generation_key: args.generation_key, proposals: args.proposals };
   const generation = await loadGeneration(args.queryable, args.workspace.id, args.generation_key);
   if (!generation || generation.status !== "draft") {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_draft_not_found", 404);
@@ -1145,7 +1184,34 @@ export async function appendSignalSemanticContextProposalsV1(args: {
     }
   }
   await validateSourceRefs(args.queryable, args.workspace, generation, args.proposals.flatMap((p) => p.source_refs));
+  const automaticPolicy = args.automatic_run_authority
+    ? await loadAutomaticPolicyV1(args.queryable, generation, args.proposals) : null;
+  const authorityInput = args.automatic_run_authority && automaticPolicy ? {
+      contract_version: "signal-semantic-context-automatic-run-operation-v2",
+      generation_key: generation.generation_key,
+      run: args.automatic_run_authority,
+      proposal_count: args.proposals.length,
+      proposal_keys: [...args.proposals.map((proposal) => proposal.element_key)].sort(),
+      parent_authority_digest: automaticPolicy.parent_authority_digest,
+      outcomes: automaticPolicy.decisions.map((decision) => ({ element_key: decision.element_key,
+        outcome: decision.outcome, reasons: decision.reasons, decision_digest: decision.decision_digest })),
+      policy_digest: automaticPolicy.policy_digest
+    } : undefined;
+  if (args.automatic_run_authority && !authorityInput) {
+    throw new SignalSemanticContextProposalExecutionError("semantic_context_automatic_policy_unavailable", 409);
+  }
+  const operation = await beginOperation(args.queryable, { workspace: args.workspace, actor: args.actor,
+    action: "append-semantic-context-proposals", idempotency_key: args.idempotency_key,
+    input: operationInput, authority_input: authorityInput });
+  if (operation.replay) return operation.replay as { generation_key: string; created: number;
+    ready: number; exceptions: number; draft_digest: string; operation_id: string };
+  const policyTimestamp = automaticPolicy ? (await args.queryable.query<{ value: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') value`
+  )).rows[0]!.value : null;
+  const policyByKey = new Map(automaticPolicy?.decisions.map((decision) => [decision.element_key, decision]) ?? []);
   let eventIndex = 0;
+  const initialElements = new Map<string, { id: string; artifact_id: string; evidence_group_id: string;
+    element_digest: string; source_refs_digest: string }>();
   for (const proposal of [...args.proposals].sort((a, b) => a.element_key.localeCompare(b.element_key))) {
     const exists = await args.queryable.query(`SELECT 1 FROM signal_semantic_context_element_versions element
       WHERE element.generation_id=$1::uuid AND element.element_key=$2 AND NOT EXISTS(
@@ -1154,8 +1220,16 @@ export async function appendSignalSemanticContextProposalsV1(args: {
     if (exists.rowCount) throw new SignalSemanticContextProposalExecutionError("semantic_context_element_exists", 409);
     const refs = canonicalRefs(proposal.source_refs);
     const sourceRefsDigest = signalSemanticContextProposalDigestV1(refs);
+    const automaticDecision = policyByKey.get(proposal.element_key);
+    const exceptionBasis = automaticDecision?.outcome === "exception" && policyTimestamp
+      ? automaticPolicyBasisV1({ decision: automaticDecision, actorId: args.actor.id,
+          decidedAt: policyTimestamp, before: null,
+          after: { element_version: 1, disposition: "pending" } }) : null;
+    const exceptionBasisDigest = exceptionBasis ? signalSemanticContextProposalDigestV1(exceptionBasis) : null;
     const elementDigest = signalSemanticContextProposalDigestV1({
-      contract_version: "signal-semantic-context-element-v1",
+      contract_version: exceptionBasis
+        ? "signal-semantic-context-automatic-exception-element-v1"
+        : "signal-semantic-context-element-v1",
       element_key: proposal.element_key,
       element_kind: proposal.element_kind,
       canonical_key: proposal.canonical_key,
@@ -1169,7 +1243,8 @@ export async function appendSignalSemanticContextProposalsV1(args: {
       confidence: proposal.confidence,
       element_version: 1,
       disposition: "pending", source_refs_digest: sourceRefsDigest,
-      confidence_authoritative: false
+      confidence_authoritative: false,
+      ...(exceptionBasis ? { automatic_policy_basis_digest: exceptionBasisDigest } : {})
     });
     const artifact = await args.queryable.query<{ id: string }>(`INSERT INTO analysis_artifacts(
       workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
@@ -1192,24 +1267,106 @@ export async function appendSignalSemanticContextProposalsV1(args: {
       AS input(source_type,source_id,relation_type,position)`, [group.rows[0]!.id,
       refs.map((ref) => ref.source_type), refs.map((ref) => ref.source_id),
       refs.map((ref) => ref.relation_type), refs.map((_, index) => index)]);
-    const element = await args.queryable.query<{ id: string }>(`INSERT INTO signal_semantic_context_element_versions(
-      workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
-      canonical_key,display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,
-      confidence,disposition,origin_kind,source_refs_digest,element_digest,operation_id,proposed_by_user_id)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,1,$6,$7,$8,$9,$10,$11::uuid,$12,$13,$14,
-        $15,'pending',$16,$17,$18,$19::uuid,$20::uuid) RETURNING id::text`, [
+    const baseElementParams: unknown[] = [
       args.workspace.id, generation.id, artifact.rows[0]!.id, group.rows[0]!.id, proposal.element_key,
       proposal.element_kind, proposal.canonical_key, proposal.display_text, proposal.scope,
       proposal.entity_type, proposal.entity_id, proposal.locale, proposal.relation_kind,
       proposal.relation_target_key, proposal.confidence, proposal.origin_kind, sourceRefsDigest,
       elementDigest, operation.operation_id, args.actor.id
-    ]);
+    ];
+    const element = exceptionBasis ? await args.queryable.query<{ id: string }>(`INSERT INTO signal_semantic_context_element_versions(
+      workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
+      canonical_key,display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,
+      confidence,disposition,origin_kind,source_refs_digest,element_digest,operation_id,proposed_by_user_id,
+      automatic_policy_contract_version,automatic_policy_outcome,automatic_policy_basis,
+      automatic_policy_basis_digest,automatic_policy_input_digest,automatic_policy_prestate_digest,
+      automatic_policy_poststate_digest,automatic_policy_decided_at)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,1,$6,$7,$8,$9,$10,$11::uuid,$12,$13,$14,
+        $15,'pending',$16,$17,$18,$19::uuid,$20::uuid,$21,'exception',$22::jsonb,$23,$24,$18,$18,$25::timestamptz)
+      RETURNING id::text`, [...baseElementParams, SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION,
+      JSON.stringify(exceptionBasis), exceptionBasisDigest, automaticDecision!.decision_digest, policyTimestamp])
+      : await args.queryable.query<{ id: string }>(`INSERT INTO signal_semantic_context_element_versions(
+      workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
+      canonical_key,display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,
+      confidence,disposition,origin_kind,source_refs_digest,element_digest,operation_id,proposed_by_user_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,1,$6,$7,$8,$9,$10,$11::uuid,$12,$13,$14,
+        $15,'pending',$16,$17,$18,$19::uuid,$20::uuid) RETURNING id::text`, baseElementParams);
+    initialElements.set(proposal.element_key, { id: element.rows[0]!.id,
+      artifact_id: artifact.rows[0]!.id, evidence_group_id: group.rows[0]!.id,
+      element_digest: elementDigest, source_refs_digest: sourceRefsDigest });
     await args.queryable.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,
       element_id,operation_id,event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'proposals_appended',$6,$7,$8::uuid)`, [
       args.workspace.id, generation.id, element.rows[0]!.id, operation.operation_id, eventIndex++,
       null, elementDigest, args.actor.id
     ]);
+  }
+  if (automaticPolicy && policyTimestamp) {
+    for (const proposal of [...args.proposals].sort((a, b) => a.element_key.localeCompare(b.element_key))) {
+      const decision = policyByKey.get(proposal.element_key)!;
+      if (decision.outcome !== "ready") continue;
+      const predecessor = initialElements.get(proposal.element_key)!;
+      const basis = automaticPolicyBasisV1({ decision, actorId: args.actor.id, decidedAt: policyTimestamp,
+        before: { element_version: 1, disposition: "pending" },
+        after: { element_version: 2, disposition: "approved" } });
+      const basisDigest = signalSemanticContextProposalDigestV1(basis);
+      const elementDigest = signalSemanticContextProposalDigestV1({
+        contract_version: "signal-semantic-context-automatic-ready-element-v1",
+        element_key: proposal.element_key, element_kind: proposal.element_kind,
+        canonical_key: proposal.canonical_key, display_text: proposal.display_text, scope: proposal.scope,
+        entity_type: proposal.entity_type, entity_id: proposal.entity_id, locale: proposal.locale,
+        relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key,
+        confidence: proposal.confidence,
+        element_version: 2, disposition: "approved",
+        source_refs_digest: predecessor.source_refs_digest, confidence_authoritative: false,
+        automatic_policy_basis_digest: basisDigest
+      });
+      const artifact = await args.queryable.query<{ id: string }>(`INSERT INTO analysis_artifacts(
+        workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
+        content,confidence,review_status,revision,metadata)
+        VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,$5,'needs_review',2,$6::jsonb)
+        RETURNING id::text`, [args.workspace.id, elementDigest, proposal.element_key,
+        JSON.stringify({ element_kind: proposal.element_kind, canonical_key: proposal.canonical_key,
+          display_text: proposal.display_text, scope: proposal.scope, locale: proposal.locale,
+          relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key }),
+        proposal.confidence === null ? null : String(proposal.confidence),
+        JSON.stringify({ authority_only: true, confidence_authoritative: false,
+          automatic_policy: SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION })]);
+      const group = await args.queryable.query<{ id: string }>(`INSERT INTO analysis_evidence_groups(
+        artifact_id,group_key,role,label,summary,position,metadata)
+        VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,$2::jsonb) RETURNING id::text`,
+      [artifact.rows[0]!.id, JSON.stringify({ source_refs_digest: predecessor.source_refs_digest })]);
+      await args.queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,
+        relation_type,evidence_role,quote,locator,position,metadata)
+        SELECT $1::uuid,source_type,source_id,relation_type,evidence_role,quote,locator,position,metadata
+        FROM analysis_evidence_links WHERE evidence_group_id=$2::uuid ORDER BY position`,
+      [group.rows[0]!.id, predecessor.evidence_group_id]);
+      const ready = await args.queryable.query<{ id: string }>(`INSERT INTO signal_semantic_context_element_versions(
+        workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
+        canonical_key,display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,
+        confidence,disposition,origin_kind,supersedes_element_id,original_proposal_element_id,
+        source_refs_digest,element_digest,operation_id,proposed_by_user_id,decided_by_user_id,decided_at,
+        automatic_policy_contract_version,automatic_policy_outcome,automatic_policy_basis,
+        automatic_policy_basis_digest,automatic_policy_input_digest,automatic_policy_prestate_digest,
+        automatic_policy_poststate_digest,automatic_policy_decided_at)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,2,$6,$7,$8,$9,$10,$11::uuid,$12,$13,$14,$15,
+          'approved','server_projection',$16::uuid,$16::uuid,$17,$18,$19::uuid,$20::uuid,$20::uuid,$21::timestamptz,
+          $22,'ready',$23::jsonb,$24,$25,$26,$18,$21::timestamptz) RETURNING id::text`, [
+        args.workspace.id, generation.id, artifact.rows[0]!.id, group.rows[0]!.id, proposal.element_key,
+        proposal.element_kind, proposal.canonical_key, proposal.display_text, proposal.scope,
+        proposal.entity_type, proposal.entity_id, proposal.locale, proposal.relation_kind,
+        proposal.relation_target_key, proposal.confidence, predecessor.id, predecessor.source_refs_digest,
+        elementDigest, operation.operation_id, args.actor.id, policyTimestamp,
+        SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION, JSON.stringify(basis), basisDigest,
+        decision.decision_digest, predecessor.element_digest
+      ]);
+      await args.queryable.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,
+        element_id,operation_id,event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'automatic_policy_ready',$6,$7,$8::uuid)`, [
+        args.workspace.id, generation.id, ready.rows[0]!.id, operation.operation_id, eventIndex++,
+        predecessor.element_digest, elementDigest, args.actor.id
+      ]);
+    }
   }
   const elements = await args.queryable.query<{ element_key: string; element_version: number;
     element_digest: string; disposition: string }>(`SELECT element.element_key,element.element_version,
@@ -1227,6 +1384,8 @@ export async function appendSignalSemanticContextProposalsV1(args: {
     SET draft_digest=$2 WHERE id=$1::uuid AND status='draft'`, [generation.id, draftDigest]);
   if (updated.rowCount !== 1) throw new SignalSemanticContextProposalExecutionError("semantic_context_draft_conflict");
   const result = { generation_key: generation.generation_key, created: args.proposals.length,
+    ready: automaticPolicy?.ready_count ?? 0,
+    exceptions: automaticPolicy?.exception_count ?? 0,
     draft_digest: draftDigest, operation_id: operation.operation_id };
   await completeOperation(args.queryable, args.workspace.id, operation.key, result);
   return result;
@@ -1558,7 +1717,7 @@ async function beginOperation(queryable: SignalSemanticContextQueryable, args: {
   workspace: SignalSemanticContextProposalWorkspaceV1; actor: SignalSemanticContextProposalActorV1;
   action: "start-semantic-context-proposal-run" | "retry-semantic-context-proposal-run"
     | "append-semantic-context-proposals" | "revalidate-semantic-context-proposal-run";
-  idempotency_key: string; input: unknown;
+  idempotency_key: string; input: unknown; authority_input?: Record<string, unknown>;
 }) {
   const normalized = args.idempotency_key.trim();
   if (normalized.length < 8 || normalized.length > 500) {
@@ -1577,11 +1736,21 @@ async function beginOperation(queryable: SignalSemanticContextQueryable, args: {
     FROM signal_workspaces workspace WHERE workspace.id=$1::uuid`, [args.workspace.id,
     args.workspace.organization_id, args.workspace.brand_id, args.actor.id]);
   if (!authority.rows[0]?.allowed) throw new SignalSemanticContextProposalExecutionError("semantic_context_forbidden", 403);
-  await queryable.query(`INSERT INTO signal_governance_control_operations(
-    workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
-    VALUES($1::uuid,$2::uuid,$3,$4,$5,'in_progress')
-    ON CONFLICT(workspace_id,idempotency_key) DO NOTHING`, [args.workspace.id, args.actor.id,
-    args.action, requestDigest, key]);
+  if (args.authority_input) {
+    await queryable.query(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+      semantic_context_decision_input,semantic_context_decision_input_digest)
+      VALUES($1::uuid,$2::uuid,$3,$4,$5,'in_progress',$6::jsonb,$7)
+      ON CONFLICT(workspace_id,idempotency_key) DO NOTHING`, [args.workspace.id, args.actor.id,
+      args.action, requestDigest, key, JSON.stringify(args.authority_input),
+      signalSemanticContextProposalDigestV1(args.authority_input)]);
+  } else {
+    await queryable.query(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status)
+      VALUES($1::uuid,$2::uuid,$3,$4,$5,'in_progress')
+      ON CONFLICT(workspace_id,idempotency_key) DO NOTHING`, [args.workspace.id, args.actor.id,
+      args.action, requestDigest, key]);
+  }
   const selected = await queryable.query<{ id: string; actor_user_id: string; action: string;
     request_digest: string; status: string; result: unknown }>(`SELECT id::text,actor_user_id::text,
     action,request_digest,status,result FROM signal_governance_control_operations
@@ -1631,6 +1800,11 @@ function publicRun(run: RunRow) {
     budget: { hard_cap_micro_usd: run.hard_cap_micro_usd,
       reservation_micro_usd: run.reservation_micro_usd, settled_micro_usd: run.settled_micro_usd },
     provider_call_count: run.provider_call_count, proposal_count: run.proposal_count,
+    automatic_disposition: run.automatic_policy_contract_version ? {
+      policy_version: run.automatic_policy_contract_version,
+      ready: run.automatic_ready_count ?? 0, exceptions: run.automatic_exception_count ?? 0,
+      provider_prose_used_as_evidence: false
+    } : null,
     result_digest: run.result_digest, error: run.error_code ? { code: run.error_code,
       message: operatorSafeRunError(run.error_code) } : null,
     queued_at: new Date(run.queued_at).toISOString(),
@@ -1651,12 +1825,88 @@ function canonicalRefs(refs: Array<{ source_type: string; source_id: string; rel
       || a.source_id.localeCompare(b.source_id) || a.relation_type.localeCompare(b.relation_type));
 }
 
+async function loadAutomaticPolicyV1(queryable: SignalSemanticContextQueryable,
+  generation: GenerationRow, proposals: SignalSemanticContextAutomaticPolicyProposalV1[]) {
+  const support = await queryable.query<{ available: boolean }>(`SELECT
+    to_regprocedure('signal_semantic_context_automatic_policy_valid_v1(uuid)') IS NOT NULL
+    AND EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name='signal_semantic_context_element_versions'
+        AND column_name='automatic_policy_contract_version') available`);
+  if (!support.rows[0]?.available || !proposals.some((proposal) => proposal.origin_kind === "provider_proposal")) {
+    return null;
+  }
+  const expectedAuthority = {
+    brand_os_digest: generation.brand_os_digest,
+    knowledge_digest: generation.knowledge_digest,
+    locale_context_digest: generation.locale_context_digest,
+    proposal_provider_lineage: generation.proposal_provider_lineage,
+    proposal_provider_lineage_digest: generation.proposal_provider_lineage_digest
+  };
+  const parent = await queryable.query<{ value: Record<string, unknown> }>(
+    `SELECT signal_semantic_context_parent_applicability_v1($1::uuid,$2::jsonb) value`,
+    [generation.id, JSON.stringify(expectedAuthority)]
+  );
+  const parentValue = parent.rows[0]?.value ?? {};
+  const parentAuthority = parentValue.parent_authority && typeof parentValue.parent_authority === "object"
+    ? parentValue.parent_authority as Record<string, unknown> : {};
+  const leaves = await queryable.query<{ element_key: string; element_kind: string; canonical_key: string;
+    locale: string | null; disposition: string; lifecycle_state: string }>(`SELECT element.element_key,
+      element.element_kind,element.canonical_key,element.locale,element.disposition,
+      COALESCE(to_jsonb(element)->>'lifecycle_state','active') lifecycle_state
+    FROM signal_semantic_context_element_versions element WHERE element.generation_id=$1::uuid
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)`, [generation.id]);
+  return evaluateSignalSemanticContextAutomaticPolicyV1({
+    generation_key: generation.generation_key,
+    parent_authority: {
+      valid: parentValue.valid === true,
+      parent_authority_digest: typeof parentValue.parent_authority_digest === "string"
+        ? parentValue.parent_authority_digest : "invalid",
+      locales: Array.isArray(parentAuthority.locales)
+        ? parentAuthority.locales.filter((value): value is string => typeof value === "string") : [],
+      markets: Array.isArray(parentAuthority.markets)
+        ? parentAuthority.markets.filter((value): value is string => typeof value === "string") : []
+    },
+    proposals,
+    current_leaves: leaves.rows
+  });
+}
+
+function automaticPolicyBasisV1(args: {
+  decision: SignalSemanticContextAutomaticPolicyDecisionV1;
+  actorId: string;
+  decidedAt: string;
+  before: { element_version: number; disposition: string } | null;
+  after: { element_version: number; disposition: string };
+}) {
+  return {
+    contract_version: SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_AUDIT_VERSION,
+    policy_version: SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_POLICY_VERSION,
+    system_authority: "server_owned_deterministic_policy",
+    actor: { authority: "authenticated_operation_actor", id: args.actorId },
+    decided_at: args.decidedAt,
+    outcome: args.decision.outcome,
+    reasons: args.decision.reasons,
+    transition: { before: args.before, after: args.after },
+    evidence_digest: args.decision.evidence_digest,
+    parent_authority_digest: args.decision.parent_authority_digest,
+    applicability: args.decision.applicability
+  };
+}
+
 function shortHash(value: string) { return createHash("sha256").update(value).digest("hex").slice(0, 16); }
 function sha256(value: string) { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
 function safeError(error: unknown, run: RunRow) {
-  const parserCode = error instanceof SignalSemanticContextProposalValidationError ? error.code
+  const databaseMessage = error instanceof Error ? error.message : "";
+  const databaseCode = databaseMessage.includes("not bound to one settled run")
+    ? "semantic_context_automatic_run_authority_invalid"
+    : databaseMessage.includes("automatic policy cohort is incomplete")
+      ? "semantic_context_automatic_cohort_invalid"
+      : databaseMessage.includes("automatic policy authority is invalid")
+        ? "semantic_context_automatic_outcome_invalid" : null;
+  const parserCode = databaseCode ?? (error instanceof SignalSemanticContextProposalValidationError ? error.code
     : error instanceof SignalSemanticContextProposalExecutionError ? error.code
-      : "semantic_context_proposal_validation_failed";
+      : "semantic_context_proposal_validation_failed");
   const atOutputLimit = Number(run.output_tokens ?? -1) >= run.max_output_tokens;
   const code = atOutputLimit && ["semantic_context_provider_response_not_closed_json",
     "semantic_context_provider_response_invalid_json"].includes(parserCode)
@@ -1694,7 +1944,11 @@ const runSelect = `SELECT run.id::text,run.workspace_id::text,run.generation_id:
   run.provider_request_id,
   run.provider_call_state,run.provider_call_count,run.provider_response_private,
   run.provider_response_digest,run.input_tokens::text,run.output_tokens::text,run.settled_micro_usd::text,
-  run.appended_operation_id::text,run.proposal_count,run.result_digest,run.attempt_count,
+  run.appended_operation_id::text,run.proposal_count,run.result_digest,
+  to_jsonb(run)->>'automatic_policy_contract_version' automatic_policy_contract_version,
+  NULLIF(to_jsonb(run)->>'automatic_ready_count','')::int automatic_ready_count,
+  NULLIF(to_jsonb(run)->>'automatic_exception_count','')::int automatic_exception_count,
+  run.attempt_count,
   run.lease_token::text,run.lease_expires_at,
   run.error_code,run.error_summary,run.created_by_user_id::text,run.queued_at,run.started_at,
   run.validating_at,run.completed_at,run.failed_at,run.stale_at,run.dead_lettered_at`;
