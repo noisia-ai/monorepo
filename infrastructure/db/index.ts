@@ -7,4 +7,5 @@ export * from "./signal-semantic-review";
 export * from "./signal-taxonomy-profile";
 export * from "./signal-semantic-context-proposal";
 export * from "./signal-semantic-context-automatic-policy";
+export * from "./signal-topic-evaluation";
 export * from "./sentione-csv-ingest";

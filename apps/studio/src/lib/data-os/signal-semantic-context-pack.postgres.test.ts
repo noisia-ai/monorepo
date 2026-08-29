@@ -16,6 +16,10 @@ import {
   loadSignalSemanticContextProposalPreflightRuntimeV1,
   prepareSignalSemanticContextProposalInputV1,
   processSignalSemanticContextProposalRunV1,
+  createSignalTopicEvaluationRunV1,
+  prepareSignalTopicEvaluationDryRunV1,
+  processSignalTopicEvaluationRunV1,
+  recoverSignalTopicEvaluationRunV1,
   startSignalSemanticContextProposalRunV1,
   type SignalSemanticContextProposalRuntimeConfigurationV1
 } from "@noisia/db";
@@ -96,6 +100,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
+  let migration0107="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -111,6 +116,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0104_"))migration0104=sql;
       else if(file.startsWith("0105_"))migration0105=sql;
       else if(file.startsWith("0106_"))migration0106=sql;
+      else if(file.startsWith("0107_"))migration0107=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -137,6 +143,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0104,"0104 migration is present and must be applied after 0103");
   assert.ok(migration0105,"0105 migration is present and must be applied after 0104");
   assert.ok(migration0106,"0106 migration is present and must be applied after 0105");
+  assert.ok(migration0107,"0107 migration is present and must be applied after 0106");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -653,7 +660,14 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await exerciseAutomaticDispositionV1();
   const migration0106Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0106Client.connect();
   try{await migration0106Client.query(migration0106);}finally{await migration0106Client.end();}
+  const migration0107Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0107Client.connect();
+  try{await migration0107Client.query(migration0107);}finally{await migration0107Client.end();}
+  assert.equal((await pool.query<{count:number}>(`SELECT count(*)::int count
+    FROM information_schema.tables WHERE table_schema='public'
+      AND table_name LIKE 'signal_topic_evaluation_%'`)).rows[0]!.count,7,
+  "0107 creates only the seven non-serving control-plane tables");
   await exerciseOrdinaryEditingV1();
+  await exerciseTopicEvaluationControlPlaneV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -2340,6 +2354,179 @@ async function exerciseSimpleCreationV1(){
   "creation fails closed when the sealed generation authority drifts");
   assert.deepEqual(await protectedCounts(fixture.workspace.id),protectedBefore,
     "simple creation and reversal do not change protected downstream state");
+}
+
+async function exerciseTopicEvaluationControlPlaneV1(){
+  const fixture=(await pool.query<{workspace_id:string;actor_id:string;generation_id:string}>(`SELECT
+    generation.workspace_id::text,operation.actor_user_id::text actor_id,generation.id::text generation_id
+    FROM signal_semantic_context_generations generation
+    JOIN signal_governance_control_operations operation ON operation.id=generation.created_operation_id
+    WHERE generation.status='draft' AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
+      WHERE successor.supersedes_generation_id=generation.id)
+      AND EXISTS(SELECT 1 FROM signal_semantic_context_element_versions element
+        WHERE element.generation_id=generation.id AND element.disposition='approved')
+    ORDER BY generation.created_at DESC LIMIT 1`)).rows[0]!;
+  assert.ok(fixture,"topic evaluation has one local current Semantic Context fixture");
+  const protectedBefore=await protectedCounts(fixture.workspace_id);
+  const packetArtifactId=randomUUID();const discoveryDigest=digest("topic-eval-discovery");
+  const packetDigest=digest("topic-eval-packet");const sourceManifestDigest=digest("topic-eval-source-manifest");
+  const rightsDigest=digest("topic-eval-rights");
+  await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+    workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+    review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+      'topic-evaluation-fixture','topic_discovery_review_packet','Topic evaluation fixture','{}'::jsonb,
+      'needs_review',1,0,'{}'::jsonb)`,[packetArtifactId,fixture.workspace_id,discoveryDigest]);
+  for(let index=0;index<115;index++){
+    const proposalId=randomUUID();const groupId=randomUUID();const mentionId=randomUUID();
+    await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+      workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+      review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+      $4,'topic_discovery_proposal',$5,$6::jsonb,'needs_review',1,$7,'{}'::jsonb)`,
+    [proposalId,fixture.workspace_id,discoveryDigest,`topic-eval-proposal-${String(index).padStart(3,"0")}`,
+      `Diagnostic proposal ${index}`,JSON.stringify({local_terms:[`term-${index}`]}),index+1]);
+    await pool.query(`INSERT INTO analysis_artifact_relations(source_artifact_id,target_artifact_id,
+      relation_type,position,metadata) VALUES($1::uuid,$2::uuid,'contains_proposal',$3,'{}'::jsonb)`,
+    [packetArtifactId,proposalId,index]);
+    await pool.query(`INSERT INTO analysis_evidence_groups(id,artifact_id,group_key,role,position,metadata)
+      VALUES($1::uuid,$2::uuid,'representatives','supporting',0,'{}'::jsonb)`,[groupId,proposalId]);
+    await pool.query(`INSERT INTO analysis_evidence_links(id,evidence_group_id,source_type,source_id,
+      relation_type,evidence_role,locator,position,metadata) VALUES(gen_random_uuid(),$1::uuid,
+      'signal_canonical_root',$2::uuid,'supports','medoid',$3::jsonb,0,'{}'::jsonb)`,
+    [groupId,mentionId,JSON.stringify({evidence_ref:digest(`topic-eval-evidence-${index}`)})]);
+  }
+  await pool.query(`INSERT INTO signal_topic_discovery_review_packets(artifact_id,workspace_id,
+    discovery_run_digest,candidate_artifact_digest,packet_digest,packet_file_digest,source_manifest_digest,
+    packet_policy_version,packet_policy_digest,reference_seed,rights_digest,modeling_denominator,
+    proposal_count,evidence_count,outlier_evidence_count,review_scope,source_holdout_state,registered_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,'fixture-v1',$8,17,$9,21195,115,115,0,
+      'complete_cluster_census','sealed',$10::uuid)`,[packetArtifactId,fixture.workspace_id,
+    discoveryDigest,digest("candidate-artifact"),packetDigest,digest("packet-file"),sourceManifestDigest,
+    digest("packet-policy"),rightsDigest,fixture.actor_id]);
+  const config={enabled:false,credential_configured:false,pricing_configured:true,
+    execution_configuration_complete:true,provider:"anthropic" as const,model:"fixture",
+    pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+    input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+    hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000};
+  const dryRun=await prepareSignalTopicEvaluationDryRunV1({queryable:pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},configuration:config});
+  assert.equal(dryRun.execution_enabled,false);assert.equal(dryRun.proposal_count,115);
+  const incompleteDryRun=await prepareSignalTopicEvaluationDryRunV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"},
+    configuration:{...config,pricing_configured:false,execution_configuration_complete:false,
+      model:"",pricing_version:"",max_input_tokens:0,max_output_tokens:0,
+      input_usd_per_million_tokens:"",output_usd_per_million_tokens:"",hard_cap_micro_usd:0n,
+      estimated_input_tokens:0}});
+  assert.equal(incompleteDryRun.execution_configuration_complete,false);
+  assert.deepEqual([incompleteDryRun.model,incompleteDryRun.pricing_version,
+    incompleteDryRun.max_input_tokens,incompleteDryRun.max_output_tokens,
+    incompleteDryRun.hard_cap_micro_usd,incompleteDryRun.estimated_input_tokens,
+    incompleteDryRun.estimated_max_cost_micro_usd],[null,null,null,null,null,null,null],
+  "incomplete configuration never projects fallback flight-card values");
+  assert.equal((await pool.query(`SELECT 1 FROM signal_topic_evaluation_runs`)).rowCount,0,
+    "dry run creates no durable run or provider call");
+  await assert.rejects(createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:"topic-eval-disabled",
+    expected_envelope_digest:dryRun.envelope_digest,confirmation:"RUN_ONE_TOPIC_EVALUATION",
+    hard_cap_micro_usd:1_000_000n,configuration:config}),/topic_evaluation_disabled/u);
+  const enabled={...config,enabled:true,credential_configured:true};
+  await assert.rejects(createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:"topic-eval-drift",
+    expected_envelope_digest:digest("wrong-envelope"),confirmation:"RUN_ONE_TOPIC_EVALUATION",
+    hard_cap_micro_usd:1_000_000n,configuration:enabled}),/topic_evaluation_envelope_drift/u);
+  const started=await createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:"topic-eval-one-call",
+    expected_envelope_digest:dryRun.envelope_digest,confirmation:"RUN_ONE_TOPIC_EVALUATION",
+    hard_cap_micro_usd:1_000_000n,configuration:enabled});
+  await assert.rejects(createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:"topic-eval-one-call",
+    expected_envelope_digest:dryRun.envelope_digest,confirmation:"RUN_ONE_TOPIC_EVALUATION",
+    hard_cap_micro_usd:1_000_000n,configuration:enabled}),/topic_evaluation_idempotency_already_used/u);
+  let calls=0;const first=dryRun.envelope.diagnostic_packet.proposals[0]!;
+  const completed=await processSignalTopicEvaluationRunV1({pool,run_id:started.run_id,
+    execution_enabled:true,provider:{generate:async()=>{
+    calls+=1;return{text:JSON.stringify({contract_version:"signal-topic-evaluation-output-v1",
+      candidates:Array.from({length:10},(_,index)=>({candidate_key:`candidate.${index}`,title:`Candidate ${index}`,
+        description:"Evidence-backed editable candidate",inclusion:["in"],exclusion:[],
+        evidence_refs:[first.evidence[0]!.evidence_ref_digest],source_proposal_keys:[first.proposal_key]}))}),
+      provider_request_id:"fixture-request",usage:{input_tokens:1000,output_tokens:2000}};}}});
+  assert.equal(calls,1);assert.equal(completed.candidate_count,10);assert.equal(completed.rubric_met,true);
+  assert.deepEqual((await pool.query<{calls:number;candidates:number;links:number;dispatches:number}>(`SELECT
+    run.provider_call_count calls,(SELECT count(*)::int FROM signal_topic_evaluation_candidates) candidates,
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidate_evidence) links,
+    outbox.dispatch_count dispatches FROM signal_topic_evaluation_runs run
+    JOIN signal_topic_evaluation_outbox outbox ON outbox.run_id=run.id WHERE run.id=$1::uuid`,
+  [started.run_id])).rows,[{calls:1,candidates:10,links:10,dispatches:1}]);
+  assert.equal((await recoverSignalTopicEvaluationRunV1({pool,run_id:started.run_id})).provider_call_count,1,
+    "terminal recovery never calls the provider");
+  await assert.rejects(pool.query(`UPDATE signal_topic_evaluation_runs SET provider_call_count=2
+    WHERE id=$1::uuid`,[started.run_id]),/check constraint|one_call/u);
+  const duplicatePacketArtifactId=randomUUID();const duplicateDiscoveryDigest=digest("topic-eval-duplicate-discovery");
+  await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+    workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+    review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+      'topic-evaluation-duplicate-fixture','topic_discovery_review_packet',
+      'Topic evaluation duplicate fixture','{}'::jsonb,'needs_review',1,0,'{}'::jsonb)`,
+  [duplicatePacketArtifactId,fixture.workspace_id,duplicateDiscoveryDigest]);
+  for(let index=0;index<115;index++){
+    const proposalId=randomUUID();const groupId=randomUUID();const mentionId=randomUUID();
+    await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+      workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+      review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+      $4,'topic_discovery_proposal',$5,$6::jsonb,'needs_review',1,$7,'{}'::jsonb)`,
+    [proposalId,fixture.workspace_id,duplicateDiscoveryDigest,
+      `topic-eval-duplicate-proposal-${String(index).padStart(3,"0")}`,
+      `Duplicate diagnostic proposal ${index}`,JSON.stringify({local_terms:[`duplicate-term-${index}`]}),index+1]);
+    await pool.query(`INSERT INTO analysis_artifact_relations(source_artifact_id,target_artifact_id,
+      relation_type,position,metadata) VALUES($1::uuid,$2::uuid,'contains_proposal',$3,'{}'::jsonb)`,
+    [duplicatePacketArtifactId,proposalId,index]);
+    await pool.query(`INSERT INTO analysis_evidence_groups(id,artifact_id,group_key,role,position,metadata)
+      VALUES($1::uuid,$2::uuid,'representatives','supporting',0,'{}'::jsonb)`,[groupId,proposalId]);
+    await pool.query(`INSERT INTO analysis_evidence_links(id,evidence_group_id,source_type,source_id,
+      relation_type,evidence_role,locator,position,metadata) VALUES(gen_random_uuid(),$1::uuid,
+      'signal_canonical_root',$2::uuid,'supports','medoid',$3::jsonb,0,'{}'::jsonb)`,
+    [groupId,mentionId,JSON.stringify({evidence_ref:digest(`topic-eval-duplicate-evidence-${index}`)})]);
+  }
+  await pool.query(`INSERT INTO signal_topic_discovery_review_packets(artifact_id,workspace_id,
+    discovery_run_digest,candidate_artifact_digest,packet_digest,packet_file_digest,source_manifest_digest,
+    packet_policy_version,packet_policy_digest,reference_seed,rights_digest,modeling_denominator,
+    proposal_count,evidence_count,outlier_evidence_count,review_scope,source_holdout_state,
+    registered_by_user_id,registered_at)
+    VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,'fixture-v1',$8,17,$9,21195,115,115,0,
+      'complete_cluster_census','sealed',$10::uuid,clock_timestamp()+interval '1 second')`,
+  [duplicatePacketArtifactId,fixture.workspace_id,duplicateDiscoveryDigest,digest("duplicate-candidate-artifact"),
+    digest("duplicate-packet"),digest("duplicate-packet-file"),digest("duplicate-source-manifest"),
+    digest("duplicate-packet-policy"),digest("duplicate-rights"),fixture.actor_id]);
+  const duplicateDryRun=await prepareSignalTopicEvaluationDryRunV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"},
+    configuration:enabled});
+  const duplicateRun=await createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+    actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:"topic-eval-duplicate-evidence",
+    expected_envelope_digest:duplicateDryRun.envelope_digest,confirmation:"RUN_ONE_TOPIC_EVALUATION",
+    hard_cap_micro_usd:1_000_000n,configuration:enabled});
+  const duplicateFirst=duplicateDryRun.envelope.diagnostic_packet.proposals[0]!;
+  const duplicateEvidence=duplicateFirst.evidence[0]!.evidence_ref_digest;let duplicateProviderCalls=0;
+  await assert.rejects(processSignalTopicEvaluationRunV1({pool,run_id:duplicateRun.run_id,
+    execution_enabled:true,provider:{generate:async()=>{duplicateProviderCalls+=1;return{
+      text:JSON.stringify({contract_version:"signal-topic-evaluation-output-v1",candidates:[{
+        candidate_key:"candidate.duplicate-evidence",title:"Duplicate evidence candidate",
+        description:"Must fail before relational persistence",inclusion:["in"],exclusion:[],
+        evidence_refs:[duplicateEvidence,duplicateEvidence],source_proposal_keys:[duplicateFirst.proposal_key]}]}),
+      provider_request_id:"fixture-duplicate-request",usage:{input_tokens:1000,output_tokens:200}};}}}),
+  /topic_evaluation_provider_output_invalid/u);
+  assert.equal(duplicateProviderCalls,1);
+  assert.deepEqual((await pool.query<{status:string;calls:number;candidates:number;evidence_links:number}>(`SELECT
+    run.status,run.provider_call_count calls,
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidates candidate
+      WHERE candidate.run_id=run.id) candidates,
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidate_evidence candidate_evidence
+      WHERE candidate_evidence.run_id=run.id) evidence_links
+    FROM signal_topic_evaluation_runs run WHERE run.id=$1::uuid`,[duplicateRun.run_id])).rows,
+  [{status:"failed",calls:1,candidates:0,evidence_links:0}]);
+  assert.deepEqual(await recoverSignalTopicEvaluationRunV1({pool,run_id:duplicateRun.run_id}),
+    {status:"failed",provider_call_count:1});
+  assert.equal(duplicateProviderCalls,1,"terminal failed recovery issues no second provider call");
+  assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
+    "Topic Evaluation does not adopt Topics, publish or mutate serving state");
 }
 
 async function exerciseAutomaticDispositionV1(){

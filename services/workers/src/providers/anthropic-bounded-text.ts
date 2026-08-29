@@ -3,7 +3,10 @@ import { generateText, NoObjectGeneratedError, Output } from "ai";
 import type { ZodTypeAny } from "zod";
 
 import { buildSignalSemanticContextProviderOutputSchemaV3,
+  signalTopicEvaluationProviderOutputSchemaV1,
+  stableSignalTopicEvaluationJsonV1,
   stableSignalSemanticContextJsonV1,
+  type SignalTopicEvaluationProviderV1,
   type SignalSemanticContextProposalProviderV1 } from "@noisia/query-engine";
 
 /** Canonical Worker transport. Domain adapters own prompts, schemas and authority. */
@@ -38,6 +41,19 @@ export async function generateAnthropicBoundedTextV1(request: {
     }
     throw error;
   }
+}
+
+export function createAnthropicTopicEvaluationProviderV1(
+  transport: typeof generateAnthropicBoundedTextV1 = generateAnthropicBoundedTextV1
+): SignalTopicEvaluationProviderV1 {
+  return { generate: async (request) => {
+    const result = await transport({ model: request.model, prompt: request.prompt,
+      max_output_tokens: request.max_output_tokens, temperature: 0,
+      structured_output: { schema: signalTopicEvaluationProviderOutputSchemaV1,
+        name: "signal_topic_evaluation_candidates",
+        description: "Editable evidence-linked topic evaluation candidates; never Topic adoption." } });
+    return { ...result, text: stableSignalTopicEvaluationJsonV1(JSON.parse(result.text)) };
+  } };
 }
 
 export function createAnthropicSemanticContextProposalProviderV1(

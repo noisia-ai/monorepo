@@ -6792,6 +6792,137 @@ export const signalOperationalShadowRequests = pgTable(
   ]
 );
 
+export const signalTopicEvaluationRuns = pgTable(
+  "signal_topic_evaluation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    runKey: text("run_key").notNull(),
+    status: text("status").notNull().default("queued"),
+    inputContractVersion: text("input_contract_version").notNull(),
+    outputContractVersion: text("output_contract_version").notNull(),
+    corpusIdentity: text("corpus_identity").notNull(),
+    discoveryRunDigest: text("discovery_run_digest").notNull(),
+    sourceManifestDigest: text("source_manifest_digest").notNull(),
+    rightsDigest: text("rights_digest").notNull(),
+    modelingCount: integer("modeling_count").notNull(),
+    packetDigest: text("packet_digest").notNull(),
+    packetProposalCount: integer("packet_proposal_count").notNull(),
+    packetEvidenceCount: integer("packet_evidence_count").notNull(),
+    semanticContextGenerationId: uuid("semantic_context_generation_id").notNull()
+      .references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+    semanticContextGenerationKey: text("semantic_context_generation_key").notNull(),
+    semanticContextAuthorityDigest: text("semantic_context_authority_digest").notNull(),
+    brandOsDigest: text("brand_os_digest").notNull(),
+    knowledgeDigest: text("knowledge_digest").notNull(),
+    localeContextDigest: text("locale_context_digest").notNull(),
+    candidatePackDigest: text("candidate_pack_digest").notNull(),
+    approvedContextCount: integer("approved_context_count").notNull(),
+    envelopeDigest: text("envelope_digest").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    pricingVersion: text("pricing_version").notNull(),
+    maxInputTokens: integer("max_input_tokens").notNull(),
+    maxOutputTokens: integer("max_output_tokens").notNull(),
+    inputUsdPerMillionTokens: numeric("input_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    outputUsdPerMillionTokens: numeric("output_usd_per_million_tokens", { precision: 14, scale: 6 }).notNull(),
+    hardCapMicroUsd: bigint("hard_cap_micro_usd", { mode: "bigint" }).notNull(),
+    reservationMicroUsd: bigint("reservation_micro_usd", { mode: "bigint" }).notNull(),
+    providerRequestIdentity: text("provider_request_identity").notNull(),
+    providerRequestId: text("provider_request_id"),
+    providerCallState: text("provider_call_state").notNull().default("not_started"),
+    providerCallCount: integer("provider_call_count").notNull().default(0),
+    providerResponsePrivate: text("provider_response_private"),
+    providerResponseDigest: text("provider_response_digest"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    settledMicroUsd: bigint("settled_micro_usd", { mode: "bigint" }),
+    outputDigest: text("output_digest"),
+    candidateCount: integer("candidate_count"),
+    rubricMet: boolean("rubric_met"),
+    errorCode: text("error_code"),
+    queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    updatedAt: updatedAt()
+  },
+  (table) => [
+    unique("uq_signal_topic_evaluation_idempotency").on(table.workspaceId, table.idempotencyKey),
+    unique("uq_signal_topic_evaluation_run_key").on(table.workspaceId, table.runKey),
+    unique("uq_signal_topic_evaluation_envelope").on(table.workspaceId, table.envelopeDigest),
+    index("idx_signal_topic_evaluation_runs_status").on(table.status, table.updatedAt, table.id)
+  ]
+);
+
+export const signalTopicEvaluationReservations = pgTable("signal_topic_evaluation_reservations", {
+  runId: uuid("run_id").primaryKey().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  status: text("status").notNull().default("reserved"),
+  reservedMicroUsd: bigint("reserved_micro_usd", { mode: "bigint" }).notNull(),
+  actualMicroUsd: bigint("actual_micro_usd", { mode: "bigint" }),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  reservationDigest: text("reservation_digest").notNull(),
+  reservedAt: timestamp("reserved_at", { withTimezone: true }).notNull().defaultNow(),
+  settledAt: timestamp("settled_at", { withTimezone: true })
+});
+
+export const signalTopicEvaluationOutbox = pgTable("signal_topic_evaluation_outbox", {
+  runId: uuid("run_id").primaryKey().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  status: text("status").notNull().default("pending"),
+  workerJobId: text("worker_job_id").notNull().unique(),
+  dispatchCount: integer("dispatch_count").notNull().default(0),
+  errorCode: text("error_code"),
+  createdAt: now(),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true })
+});
+
+export const signalTopicEvaluationInputEvidence = pgTable("signal_topic_evaluation_input_evidence", {
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  evidenceRefDigest: text("evidence_ref_digest").notNull(),
+  mentionRefDigest: text("mention_ref_digest").notNull(),
+  relation: text("relation").notNull()
+}, (table) => [primaryKey({ columns: [table.runId, table.evidenceRefDigest] })]);
+
+export const signalTopicEvaluationCandidates = pgTable("signal_topic_evaluation_candidates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  candidateKey: text("candidate_key").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  inclusion: jsonb("inclusion").notNull(),
+  exclusion: jsonb("exclusion").notNull(),
+  sourceProposalKeys: text("source_proposal_keys").array().notNull(),
+  candidateDigest: text("candidate_digest").notNull(),
+  reviewState: text("review_state").notNull().default("pending"),
+  createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_candidate").on(table.runId, table.candidateKey)]);
+
+export const signalTopicEvaluationCandidateEvidence = pgTable("signal_topic_evaluation_candidate_evidence", {
+  candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationCandidates.id, { onDelete: "restrict" }),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  evidenceRefDigest: text("evidence_ref_digest").notNull()
+}, (table) => [primaryKey({ columns: [table.candidateId, table.evidenceRefDigest] })]);
+
+export const signalTopicEvaluationEvents = pgTable("signal_topic_evaluation_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  eventIndex: integer("event_index").notNull(),
+  eventKind: text("event_kind").notNull(),
+  stateDigest: text("state_digest").notNull(),
+  createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_event").on(table.runId, table.eventIndex)]);
+
 export const dashboardDataRefs = pgTable(
   "dashboard_data_refs",
   {

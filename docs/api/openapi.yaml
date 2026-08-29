@@ -2057,6 +2057,39 @@ paths:
               schema: { $ref: "#/components/schemas/SignalSemanticContextProposalRunV1" }
         "409": { description: Preflight, draft authority, lineage or idempotency drift. }
         "422": { description: Closed command, confirmation or hard cap rejected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation:
+    get:
+      tags: [Signal Topic Evaluation]
+      operationId: getSignalTopicEvaluationDryRun
+      summary: Build the frozen one-call Topic Evaluation envelope without a provider call or write.
+      security: [{ kindeSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      responses:
+        "200":
+          description: Read-only flight card; candidates remain non-adopting and non-serving.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicEvaluationPreflightV1" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Frozen corpus, packet, Semantic Context or evidence authority is unavailable or drifted. }
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: startSignalTopicEvaluation
+      summary: Queue one explicitly enabled evaluation request; no retry, adoption, publication or serving.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicEvaluationStartV1" }
+      responses:
+        "202": { description: One durable queued run with provider_call_count=0. }
+        "403": { description: Management authority denied or execution disabled by default. }
+        "409": { description: Duplicate idempotency, frozen authority drift or unavailable product provider lane. }
+        "422": { description: Closed confirmation, token ceiling or hard cap rejected. }
   /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}:
     get:
       tags: [Semantic Context Pack]
@@ -3394,6 +3427,86 @@ components:
         writes_performed: { const: false }
         provider_calls: { const: 0 }
         preflight_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+    SignalTopicEvaluationStartV1:
+      type: object
+      additionalProperties: false
+      required: [expected_envelope_digest, confirmation, hard_cap_micro_usd]
+      properties:
+        expected_envelope_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        confirmation: { const: RUN_ONE_TOPIC_EVALUATION }
+        hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
+    SignalTopicEvaluationPreflightV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, execution_enabled, execution_configuration_complete,
+        credential_configured, product_provider_key_name, provider, model, pricing_version,
+        input_usd_per_million_tokens, output_usd_per_million_tokens, input_authority,
+        envelope_digest, proposal_count,
+        historical_bertopic_proposals, one_call_max, retry_allowed, max_input_tokens,
+        max_output_tokens, hard_cap_micro_usd, estimated_input_tokens, estimated_max_cost_micro_usd,
+        success_minimum_candidates, topic_adoption, publication, serving]
+      properties:
+        contract_version: { const: signal-topic-evaluation-preflight-v1 }
+        execution_enabled: { type: boolean, default: false }
+        execution_configuration_complete: { type: boolean }
+        credential_configured: { type: boolean }
+        product_provider_key_name: { const: ANTHROPIC_API_KEY }
+        provider: { const: anthropic }
+        model: { type: [string, "null"] }
+        pricing_version: { type: [string, "null"] }
+        input_usd_per_million_tokens: { type: [string, "null"], pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
+        output_usd_per_million_tokens: { type: [string, "null"], pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
+        input_authority:
+          type: object
+          description: Server-owned frozen identifiers and digests only; bounded proposal/context payloads remain server-private.
+          additionalProperties: false
+          required: [corpus, semantic_context, diagnostic_packet]
+          properties:
+            corpus:
+              type: object
+              additionalProperties: false
+              required: [identity, discovery_run_digest, source_manifest_digest, rights_digest, modeling_count]
+              properties:
+                identity: { type: string }
+                discovery_run_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                source_manifest_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                rights_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                modeling_count: { type: integer, minimum: 1 }
+            semantic_context:
+              type: object
+              additionalProperties: false
+              required: [generation_key, generation_authority_digest, brand_os_digest,
+                knowledge_digest, locale_context_digest, candidate_pack_digest, approved_count]
+              properties:
+                generation_key: { type: string }
+                generation_authority_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                brand_os_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                knowledge_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                locale_context_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                candidate_pack_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                approved_count: { type: integer, minimum: 1 }
+            diagnostic_packet:
+              type: object
+              additionalProperties: false
+              required: [packet_digest, proposal_count, evidence_count]
+              properties:
+                packet_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+                proposal_count: { const: 115 }
+                evidence_count: { type: integer, minimum: 115 }
+        envelope_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        proposal_count: { const: 115 }
+        historical_bertopic_proposals: { const: 115 }
+        one_call_max: { const: 1 }
+        retry_allowed: { const: false }
+        max_input_tokens: { type: [integer, "null"], minimum: 1 }
+        max_output_tokens: { type: [integer, "null"], minimum: 1 }
+        hard_cap_micro_usd: { type: [string, "null"], pattern: '^[1-9][0-9]*$' }
+        estimated_input_tokens: { type: [integer, "null"], minimum: 1 }
+        estimated_max_cost_micro_usd: { type: [string, "null"], pattern: '^[0-9]+$' }
+        success_minimum_candidates: { const: 10 }
+        topic_adoption: { const: false }
+        publication: { const: false }
+        serving: { const: false }
     SignalSemanticContextProposalRunV1:
       type: object
       additionalProperties: false
