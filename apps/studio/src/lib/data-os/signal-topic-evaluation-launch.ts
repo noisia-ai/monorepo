@@ -1,3 +1,5 @@
+import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION } from "@noisia/query-engine";
+
 export const SIGNAL_TOPIC_EVALUATION_LAUNCH_CONFIRMATION =
   "RUN_ONE_TOPIC_EVALUATION" as const;
 
@@ -28,11 +30,13 @@ export type SignalTopicEvaluationCandidateV1={candidateKey:string;title:string;d
   evidence:{count:number;supports:number;limits:number;contradicts:number};
   reviewState:"pending"|"rejected";revision:number;stateToken:string;
   undoTargetRevision:number|null;updatedAt:string};
+export type SignalTopicEvaluationSuccessorAuthorityV1={eligible:boolean;predecessorRunKey:string|null};
 export type SignalTopicEvaluationManagementV1={card:SignalTopicEvaluationFlightCardV1;run:null|{
   runKey:string;status:"queued"|"in_flight"|"response_persisted"|"completed"|"failed"|"outcome_unknown";
   providerCallCount:number;providerOutcomeClass:"definitely_not_sent"|"known_response_invalid"|
     "ambiguous_after_send"|null;candidateCount:number|null;rubricMet:boolean|null;errorCode:string|null;
   settledMicroUsd:string|null;queuedAt:string;completedAt:string|null;failedAt:string|null;updatedAt:string};
+  successor:SignalTopicEvaluationSuccessorAuthorityV1;
   results:{runKey:string|null;items:SignalTopicEvaluationCandidateV1[];total:number;pending:number;rejected:number;
     limit:number;nextCursor:string|null}};
 
@@ -127,6 +131,11 @@ export function projectSignalTopicEvaluationManagementV1(value:unknown):SignalTo
       queuedAt:value.run.queued_at,completedAt:value.run.completed_at as string|null,
       failedAt:value.run.failed_at as string|null,updatedAt:value.run.updated_at};
   }
+  if(!isObject(value.successor)||typeof value.successor.eligible!=="boolean"
+    ||!nullableStringValue(value.successor.predecessor_run_key)
+    ||(value.successor.eligible!==Boolean(value.successor.predecessor_run_key))) {
+    throw new Error("topic_evaluation_management_invalid");
+  }
   if(!isObject(value.results)||value.results.contract_version!=="signal-topic-evaluation-candidate-page-v1"
     ||!nullableStringValue(value.results.run_key)
     ||!Array.isArray(value.results.items)||!nonnegativeInteger(value.results.total)
@@ -134,7 +143,8 @@ export function projectSignalTopicEvaluationManagementV1(value:unknown):SignalTo
     ||!Number.isInteger(value.results.limit)||(value.results.limit as number)<1||(value.results.limit as number)>50
     ||!nullableStringValue(value.results.next_cursor))throw new Error("topic_evaluation_management_invalid");
   const items=value.results.items.map(projectCandidate);
-  return{card,run,results:{runKey:value.results.run_key as string|null,items,
+  return{card,run,successor:{eligible:value.successor.eligible,
+    predecessorRunKey:value.successor.predecessor_run_key as string|null},results:{runKey:value.results.run_key as string|null,items,
     total:value.results.total as number,pending:value.results.pending as number,
     rejected:value.results.rejected as number,limit:value.results.limit as number,
     nextCursor:value.results.next_cursor as string|null}};
@@ -202,10 +212,24 @@ export function canLaunchSignalTopicEvaluationV1(card: SignalTopicEvaluationFlig
     && card.serving === false;
 }
 
+export function selectSignalTopicEvaluationLaunchModeV1(
+  management:SignalTopicEvaluationManagementV1|null
+):"root"|"successor"|null {
+  if(!management)return null;
+  if(management.successor.eligible)return "successor";
+  return management.run===null&&canLaunchSignalTopicEvaluationV1(management.card)?"root":null;
+}
+
 export function createSignalTopicEvaluationIdempotencyKeyV1(
   randomUuid: () => string = () => crypto.randomUUID()
 ) {
   return `topic-evaluation:start:${randomUuid()}`;
+}
+
+export function createSignalTopicEvaluationSuccessorIdempotencyKeyV1(
+  randomUuid: () => string = () => crypto.randomUUID()
+) {
+  return `topic-evaluation:successor:${randomUuid()}`;
 }
 
 export function buildSignalTopicEvaluationLaunchRequestV1(args: {
@@ -230,6 +254,31 @@ export function buildSignalTopicEvaluationLaunchRequestV1(args: {
       confirmation: SIGNAL_TOPIC_EVALUATION_LAUNCH_CONFIRMATION,
       hard_cap_micro_usd: args.card.hardCapMicroUsd!
     }
+  } as const;
+}
+
+export function buildSignalTopicEvaluationSuccessorRequestV1(args: {
+  acknowledged:boolean;
+  card:SignalTopicEvaluationFlightCardV1;
+  successor:SignalTopicEvaluationSuccessorAuthorityV1;
+  idempotencyKey:string;
+}) {
+  if (!args.acknowledged) throw new Error("topic_evaluation_cost_acknowledgement_required");
+  if (!canLaunchSignalTopicEvaluationV1(args.card)) {
+    throw new Error("topic_evaluation_preflight_not_ready");
+  }
+  if (!args.successor.eligible || !args.successor.predecessorRunKey) {
+    throw new Error("topic_evaluation_successor_not_available");
+  }
+  if (!args.idempotencyKey.startsWith("topic-evaluation:successor:")) {
+    throw new Error("topic_evaluation_idempotency_key_invalid");
+  }
+  return {
+    headers:{"Content-Type":"application/json","Idempotency-Key":args.idempotencyKey},
+    body:{predecessor_run_key:args.successor.predecessorRunKey,
+      expected_envelope_digest:args.card.envelopeDigest!,
+      confirmation:SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION,
+      hard_cap_micro_usd:args.card.hardCapMicroUsd!}
   } as const;
 }
 

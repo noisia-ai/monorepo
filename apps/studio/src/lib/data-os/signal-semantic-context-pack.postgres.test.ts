@@ -2660,9 +2660,12 @@ async function exerciseTopicEvaluationProviderBoundaryV1(){
   assert.deepEqual(await recoverSignalTopicEvaluationRunV1({pool,run_id:ambiguousRun.run_id}),
     {status:"blocked",provider_call_count:1,reason:"topic_evaluation_provider_ambiguous_after_send"});
   assert.equal(ambiguousCalls,1,"ambiguous recovery issues no second provider call");
-  assert.equal((await loadSignalTopicEvaluationManagementV1({queryable:pool,
-    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"}}))
-    .run?.provider_outcome_class,"ambiguous_after_send");
+  const ambiguousManagement=await loadSignalTopicEvaluationManagementV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"}});
+  assert.equal(ambiguousManagement.run?.provider_outcome_class,"ambiguous_after_send");
+  assert.deepEqual(ambiguousManagement.successor,{eligible:true,
+    predecessor_run_key:ambiguousRun.run_key},
+  "the management projection may expose only the current eligible predecessor key; the successor writer remains authoritative");
   assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
     "provider boundary classification does not adopt Topics, publish or mutate serving state");
 }

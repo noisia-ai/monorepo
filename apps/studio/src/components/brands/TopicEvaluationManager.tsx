@@ -7,9 +7,10 @@ import { useCallback,useEffect,useRef,useState,type MouseEvent } from "react";
 import { AdminFeedbackState,AdminResourceSection,AdminStatus,AdminSummaryStrip,formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { acquireSignalTopicEvaluationSubmissionLockV1,buildSignalTopicEvaluationLaunchRequestV1,
-  canLaunchSignalTopicEvaluationV1,createSignalTopicEvaluationIdempotencyKeyV1,
+  buildSignalTopicEvaluationSuccessorRequestV1,canLaunchSignalTopicEvaluationV1,
+  createSignalTopicEvaluationIdempotencyKeyV1,createSignalTopicEvaluationSuccessorIdempotencyKeyV1,
   createSignalTopicEvaluationReviewIdempotencyKeyV1,projectSignalTopicEvaluationManagementV1,
-  readSignalTopicEvaluationRunStatusV1,type SignalTopicEvaluationCandidateV1,
+  readSignalTopicEvaluationRunStatusV1,selectSignalTopicEvaluationLaunchModeV1,type SignalTopicEvaluationCandidateV1,
   type SignalTopicEvaluationManagementV1 } from "@/lib/data-os/signal-topic-evaluation-launch";
 
 async function requestJson(url:string,init?:RequestInit){const response=await fetch(url,{cache:"no-store",...init});
@@ -19,15 +20,17 @@ async function requestJson(url:string,init?:RequestInit){const response=await fe
 function microUsd(value:string|null,locale:string){if(!value||!/^\d+$/u.test(value))return"USD —";
   return new Intl.NumberFormat(locale,{style:"currency",currency:"USD",currencyDisplay:"code",
     minimumFractionDigits:2,maximumFractionDigits:6}).format(Number(BigInt(value))/1_000_000);}
+type LaunchMode="root"|"successor";
 type StoredAttempt={idempotencyKey:string;status:"queued"|null};
-function readStoredAttempt(value:string|null):StoredAttempt|null{if(!value)return null;try{const parsed=JSON.parse(value) as Partial<StoredAttempt>;
-  if(typeof parsed.idempotencyKey!=="string"||!parsed.idempotencyKey.startsWith("topic-evaluation:start:")
+function readStoredAttempt(value:string|null,mode:LaunchMode):StoredAttempt|null{if(!value)return null;try{const parsed=JSON.parse(value) as Partial<StoredAttempt>;
+  const prefix=mode==="successor"?"topic-evaluation:successor:":"topic-evaluation:start:";
+  if(typeof parsed.idempotencyKey!=="string"||!parsed.idempotencyKey.startsWith(prefix)
     ||(parsed.status!==null&&parsed.status!=="queued"))return null;
   return{idempotencyKey:parsed.idempotencyKey,status:parsed.status};}catch{return null;}}
 
 export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
   const t=useTranslations("AdminWorkspace.brandOs.topicEvaluation"),locale=useLocale();
-  const endpoint=`/api/data-os/signal/${workspaceId}/topic-evaluation`,storageKey=`noisia:topic-evaluation-launch:${workspaceId}`;
+  const endpoint=`/api/data-os/signal/${workspaceId}/topic-evaluation`,storagePrefix=`noisia:topic-evaluation-launch:${workspaceId}`;
   const[management,setManagement]=useState<SignalTopicEvaluationManagementV1|null>(null);
   const[loading,setLoading]=useState(true),[loadingMore,setLoadingMore]=useState(false);
   const[drawer,setDrawer]=useState<"launch"|"candidate"|null>(null);
@@ -47,22 +50,29 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
     }catch(loadError){setError(loadError instanceof Error?loadError.message:t("errors.load"));}
     finally{setLoading(false);setLoadingMore(false);}},[endpoint,t]);
   useEffect(()=>{void load();},[load]);
-  useEffect(()=>{const stored=readStoredAttempt(window.sessionStorage.getItem(storageKey));
-    setAttemptRecorded(stored!==null);setRunStatus(stored?.status??null);submitLockRef.current=stored!==null;
-    setSessionChecked(true);},[storageKey]);
   const durableStatus=management?.run?.status??null;
   useEffect(()=>{if(!durableStatus||!["queued","in_flight","response_persisted"].includes(durableStatus))return;
     const timer=window.setTimeout(()=>void load(),5000);return()=>window.clearTimeout(timer);},[durableStatus,load]);
 
   const card=management?.card??null,ready=card?canLaunchSignalTopicEvaluationV1(card):false;
-  const commandDisabled=!sessionChecked||!ready||!acknowledged||attemptRecorded||submitting;
+  const launchMode:LaunchMode|null=selectSignalTopicEvaluationLaunchModeV1(management);
+  const storageKey=launchMode?`${storagePrefix}:${launchMode}`:null;
+  useEffect(()=>{submitLockRef.current=false;
+    if(!storageKey||!launchMode){setAttemptRecorded(false);setRunStatus(null);setSessionChecked(true);return;}
+    const stored=readStoredAttempt(window.sessionStorage.getItem(storageKey),launchMode);
+    setAttemptRecorded(stored!==null);setRunStatus(stored?.status??null);submitLockRef.current=stored!==null;
+    setSessionChecked(true);},[launchMode,storageKey]);
+  const commandDisabled=!sessionChecked||launchMode===null||!ready||!acknowledged||attemptRecorded||submitting;
   function openCandidate(candidate:SignalTopicEvaluationCandidateV1,event:MouseEvent<HTMLButtonElement>){
     openerRef.current=event.currentTarget;setSelected(candidate);setTitle(candidate.title);setDescription(candidate.description);
     setInclusion(candidate.inclusion.join("\n"));setExclusion(candidate.exclusion.join("\n"));setDrawer("candidate");setError(null);}
-  async function submitLaunch(){if(!card||commandDisabled||!acquireSignalTopicEvaluationSubmissionLockV1(submitLockRef))return;
-    const idempotencyKey=createSignalTopicEvaluationIdempotencyKeyV1();const command=buildSignalTopicEvaluationLaunchRequestV1({acknowledged,card,idempotencyKey});
+  async function submitLaunch(){if(!card||!launchMode||!storageKey||commandDisabled||!acquireSignalTopicEvaluationSubmissionLockV1(submitLockRef))return;
+    const idempotencyKey=launchMode==="successor"?createSignalTopicEvaluationSuccessorIdempotencyKeyV1():createSignalTopicEvaluationIdempotencyKeyV1();
+    const command=launchMode==="successor"?buildSignalTopicEvaluationSuccessorRequestV1({acknowledged,card,
+      successor:management!.successor,idempotencyKey}):buildSignalTopicEvaluationLaunchRequestV1({acknowledged,card,idempotencyKey});
+    const launchEndpoint=launchMode==="successor"?`${endpoint}/successor`:endpoint;
     setSubmitting(true);setAttemptRecorded(true);setError(null);window.sessionStorage.setItem(storageKey,JSON.stringify({idempotencyKey,status:null}));
-    try{const payload=await requestJson(endpoint,{method:"POST",headers:command.headers,body:JSON.stringify(command.body)});
+    try{const payload=await requestJson(launchEndpoint,{method:"POST",headers:command.headers,body:JSON.stringify(command.body)});
       const status=readSignalTopicEvaluationRunStatusV1(payload);setRunStatus(status);
       window.sessionStorage.setItem(storageKey,JSON.stringify({idempotencyKey,status}));setDrawer(null);setAcknowledged(false);await load();
     }catch(submitError){setError(submitError instanceof Error?submitError.message:t("errors.start"));}
@@ -79,9 +89,9 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
     finally{setSubmitting(false);}}
   const actions=<><button className="admin-button" disabled={loading||submitting} onClick={()=>void load()} type="button">
     {loading?<CircleNotch aria-hidden className="icon--spin" size={14}/>:null}{t("actions.refresh")}</button>
-    <button className="admin-button admin-button--primary" disabled={!ready||attemptRecorded||loading}
+    <button className="admin-button admin-button--primary" disabled={launchMode===null||attemptRecorded||loading}
       onClick={(event)=>{openerRef.current=event.currentTarget;setAcknowledged(false);setDrawer("launch");}} type="button">
-      <Play aria-hidden size={15}/>{t("actions.open")}</button></>;
+      <Play aria-hidden size={15}/>{launchMode==="successor"?t("actions.openSuccessor"):t("actions.open")}</button></>;
   return<><AdminResourceSection actions={actions} className="topic-evaluation-manager" subtitle={t("subtitle")} title={t("title")}>
     {loading&&!management?<div aria-busy="true" aria-live="polite" className="semantic-context-pack__preflight-loading" role="status">
       <CircleNotch aria-hidden className="icon--spin" size={18}/><span>{t("loading")}</span></div>:null}
@@ -114,17 +124,18 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
         <strong>{t("attempt.title")}</strong><p>{t("attempt.body")}</p></div></div>:null}
       {error?<p className="workspace-form__error" role="alert">{error}</p>:null}</>:null}
   </AdminResourceSection>
-  {drawer==="launch"&&card?<WorkspaceDrawer ariaLabel={t("drawer.title")} closeLabel={t("actions.close")} eyebrow={t("eyebrow")}
-    onClose={()=>{if(!submitting){setDrawer(null);setAcknowledged(false);}}} returnFocusRef={openerRef} title={t("drawer.title")}>
-    <div className="admin-drawer-form"><p className="admin-drawer-form__intro">{t("drawer.body")}</p><div className="semantic-context-pack__preflight">
+  {drawer==="launch"&&card&&launchMode?<WorkspaceDrawer ariaLabel={launchMode==="successor"?t("drawer.successorTitle"):t("drawer.title")} closeLabel={t("actions.close")} eyebrow={t("eyebrow")}
+    onClose={()=>{if(!submitting){setDrawer(null);setAcknowledged(false);}}} returnFocusRef={openerRef} title={launchMode==="successor"?t("drawer.successorTitle"):t("drawer.title")}>
+    <div className="admin-drawer-form"><p className="admin-drawer-form__intro">{launchMode==="successor"?t("drawer.successorBody"):t("drawer.body")}</p><div className="semantic-context-pack__preflight">
       <FlightRow label={t("summary.proposals")} value={card.proposalCount===null?"—":formatAdminNumber(card.proposalCount,locale)}/><FlightRow label={t("summary.model")} value={card.model??"—"}/>
       <FlightRow label={t("summary.estimate")} value={microUsd(card.estimatedMaxCostMicroUsd,locale)}/><FlightRow label={t("summary.hardCap")} value={microUsd(card.hardCapMicroUsd,locale)}/>
       <FlightRow label={t("drawer.calls")} value={String(card.oneCallMax)}/><FlightRow label={t("drawer.output")} value={t("drawer.pendingCandidates")}/></div>
-      <p className="admin-drawer-form__hint">{t("drawer.boundary")}</p><label className="semantic-context-pack__confirmation"><input checked={acknowledged}
-        disabled={attemptRecorded||submitting} onChange={(event)=>setAcknowledged(event.target.checked)} type="checkbox"/><span>{t("drawer.acknowledgement",{
+      <p className="admin-drawer-form__hint">{launchMode==="successor"?t("drawer.successorBoundary"):t("drawer.boundary")}</p><label className="semantic-context-pack__confirmation"><input checked={acknowledged}
+        disabled={attemptRecorded||submitting} onChange={(event)=>setAcknowledged(event.target.checked)} type="checkbox"/><span>{launchMode==="successor"?t("drawer.successorAcknowledgement",{
+          estimate:microUsd(card.estimatedMaxCostMicroUsd,locale),hardCap:microUsd(card.hardCapMicroUsd,locale)}):t("drawer.acknowledgement",{
           estimate:microUsd(card.estimatedMaxCostMicroUsd,locale),hardCap:microUsd(card.hardCapMicroUsd,locale)})}</span></label>
       <button className="admin-button admin-button--primary" disabled={commandDisabled} onClick={()=>void submitLaunch()} type="button">
-        {submitting?<CircleNotch aria-hidden className="icon--spin" size={15}/>:<Play aria-hidden size={15}/>} {submitting?t("actions.starting"):t("actions.start")}</button></div>
+        {submitting?<CircleNotch aria-hidden className="icon--spin" size={15}/>:<Play aria-hidden size={15}/>} {submitting?t("actions.starting"):launchMode==="successor"?t("actions.startSuccessor"):t("actions.start")}</button></div>
   </WorkspaceDrawer>:null}
   {drawer==="candidate"&&selected?<WorkspaceDrawer ariaLabel={t("candidate.drawerTitle")} closeLabel={t("actions.close")} eyebrow={t("candidate.eyebrow")}
     onClose={()=>{if(!submitting){setDrawer(null);setSelected(null);}}} returnFocusRef={openerRef} title={selected.title}>

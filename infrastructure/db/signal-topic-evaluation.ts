@@ -177,11 +177,28 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
         THEN 'ambiguous_after_send'
       ELSE NULL END provider_outcome_class,
     candidate_count,rubric_met,error_code,settled_micro_usd::text,
+    (status='outcome_unknown' AND provider_call_count=1 AND provider_call_state='in_flight'
+      AND error_code='topic_evaluation_provider_ambiguous_after_send'
+      AND provider_response_private IS NULL AND provider_response_digest IS NULL
+      AND settled_micro_usd IS NULL AND candidate_count IS NULL
+      AND EXISTS(SELECT 1 FROM signal_topic_evaluation_reservations reservation
+        WHERE reservation.run_id=signal_topic_evaluation_runs.id
+          AND reservation.workspace_id=signal_topic_evaluation_runs.workspace_id
+          AND reservation.status='ambiguous' AND reservation.actual_micro_usd IS NULL
+          AND reservation.settled_at IS NULL)
+      AND EXISTS(SELECT 1 FROM signal_topic_evaluation_outbox outbox
+        WHERE outbox.run_id=signal_topic_evaluation_runs.id
+          AND outbox.workspace_id=signal_topic_evaluation_runs.workspace_id
+          AND outbox.status='dead_letter' AND outbox.dispatch_count=1)
+      AND NOT EXISTS(SELECT 1 FROM signal_topic_evaluation_candidates candidate
+        WHERE candidate.run_id=signal_topic_evaluation_runs.id)
+      AND NOT EXISTS(SELECT 1 FROM signal_topic_evaluation_successor_operations operation
+        WHERE operation.predecessor_run_id=signal_topic_evaluation_runs.id)) successor_eligible,
     queued_at::text,started_at::text,completed_at::text,failed_at::text,updated_at::text
     FROM signal_topic_evaluation_runs WHERE workspace_id=$1::uuid
     ORDER BY queued_at DESC,id DESC LIMIT 1`,[args.workspace_id]);
   const run=runResult.rows[0];
-  if(!run)return{run:null,results:emptyResults(limit)};
+  if(!run)return{run:null,successor:emptySuccessorAuthority(),results:emptyResults(limit)};
   const resultRun=await args.queryable.query<{run_key:string}>(`SELECT run_key FROM signal_topic_evaluation_runs
     WHERE workspace_id=$1::uuid AND status='completed' AND candidate_count>0
       AND ($2::text IS NULL OR run_key=$2) ORDER BY completed_at DESC,id DESC LIMIT 1`,
@@ -191,7 +208,8 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
     provider_outcome_class:run.provider_outcome_class,
     candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
     settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
-    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:emptyResults(limit)};
+    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},
+    successor:projectSuccessorAuthority(run),results:emptyResults(limit)};
   const rows=await args.queryable.query<ManagementCandidateRow>(`WITH current_revision AS(
       SELECT DISTINCT ON(revision.candidate_id) revision.*
       FROM signal_topic_evaluation_candidate_revisions revision
@@ -241,7 +259,8 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
     provider_outcome_class:run.provider_outcome_class,
     candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
     settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
-    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:{
+    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},
+    successor:projectSuccessorAuthority(run),results:{
     contract_version:"signal-topic-evaluation-candidate-page-v1" as const,run_key:resultRunKey,
     items:visible.map(projectManagementCandidate),total:totals.rows[0]?.total??0,
     pending:totals.rows[0]?.pending??0,rejected:totals.rows[0]?.rejected??0,limit,
@@ -347,7 +366,7 @@ export async function reviewSignalTopicEvaluationCandidateV1(args:{
 type ManagementRunRow={run_key:string;status:string;provider_call_count:number;
   provider_outcome_class:"definitely_not_sent"|"known_response_invalid"|"ambiguous_after_send"|null;
   candidate_count:number|null;
-  rubric_met:boolean|null;error_code:string|null;settled_micro_usd:string|null;queued_at:string;
+  rubric_met:boolean|null;error_code:string|null;settled_micro_usd:string|null;successor_eligible:boolean;queued_at:string;
   started_at:string|null;completed_at:string|null;failed_at:string|null;updated_at:string};
 type ManagementCandidateRow={candidate_key:string;title:string;description:string;inclusion:unknown;
   exclusion:unknown;source_proposal_keys:string[];source_proposal_count:number;evidence_count:number;
@@ -359,6 +378,9 @@ type LockedCandidateRow={id:string;run_id:string;workspace_id:string;candidate_k
 
 function emptyResults(limit:number){return{contract_version:"signal-topic-evaluation-candidate-page-v1" as const,
   run_key:null,items:[],total:0,pending:0,rejected:0,limit,next_cursor:null};}
+function emptySuccessorAuthority(){return{eligible:false as const,predecessor_run_key:null};}
+function projectSuccessorAuthority(run:ManagementRunRow){return run.successor_eligible
+  ?{eligible:true as const,predecessor_run_key:run.run_key}:emptySuccessorAuthority();}
 function projectManagementCandidate(row:ManagementCandidateRow){return{
   candidate_key:row.candidate_key,title:row.title,description:row.description,
   inclusion:row.inclusion,exclusion:row.exclusion,

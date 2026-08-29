@@ -3501,7 +3501,7 @@ components:
         envelope_digest, proposal_count,
         historical_bertopic_proposals, one_call_max, retry_allowed, max_input_tokens,
         max_output_tokens, hard_cap_micro_usd, estimated_input_tokens, estimated_max_cost_micro_usd,
-        success_minimum_candidates, topic_adoption, publication, serving, run, results]
+        success_minimum_candidates, topic_adoption, publication, serving, run, successor, results]
       properties:
         contract_version: { const: signal-topic-evaluation-preflight-v1 }
         preflight_status: { type: string, enum: [ready, blocked] }
@@ -3590,6 +3590,14 @@ components:
             completed_at: { type: [string, "null"], format: date-time }
             failed_at: { type: [string, "null"], format: date-time }
             updated_at: { type: string, format: date-time }
+        successor:
+          type: object
+          additionalProperties: false
+          description: Sanitized, read-only indication that one direct successor may be explicitly authorized. The POST route remains the final authority.
+          required: [eligible, predecessor_run_key]
+          properties:
+            eligible: { type: boolean }
+            predecessor_run_key: { type: [string, "null"], minLength: 1, maxLength: 200 }
         results:
           $ref: "#/components/schemas/SignalTopicEvaluationCandidatePageV1"
     SignalTopicEvaluationCandidatePageV1:

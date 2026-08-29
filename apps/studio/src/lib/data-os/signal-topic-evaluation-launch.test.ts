@@ -5,12 +5,15 @@ import test from "node:test";
 import {
   acquireSignalTopicEvaluationSubmissionLockV1,
   buildSignalTopicEvaluationLaunchRequestV1,
+  buildSignalTopicEvaluationSuccessorRequestV1,
   canLaunchSignalTopicEvaluationV1,
   createSignalTopicEvaluationIdempotencyKeyV1,
+  createSignalTopicEvaluationSuccessorIdempotencyKeyV1,
   createSignalTopicEvaluationReviewIdempotencyKeyV1,
   projectSignalTopicEvaluationManagementV1,
   projectSignalTopicEvaluationFlightCardV1,
-  readSignalTopicEvaluationRunStatusV1
+  readSignalTopicEvaluationRunStatusV1,
+  selectSignalTopicEvaluationLaunchModeV1
 } from "./signal-topic-evaluation-launch";
 
 function preflight() {
@@ -51,6 +54,7 @@ function management(){return{...preflight(),run:{run_key:"topic-evaluation-safe"
   provider_call_count:1,provider_outcome_class:null,candidate_count:10,rubric_met:true,error_code:null,settled_micro_usd:"120000",
   queued_at:"2026-08-29T00:00:00.000Z",started_at:"2026-08-29T00:00:01.000Z",
   completed_at:"2026-08-29T00:00:02.000Z",failed_at:null,updated_at:"2026-08-29T00:00:02.000Z"},
+  successor:{eligible:false,predecessor_run_key:null},
   results:{contract_version:"signal-topic-evaluation-candidate-page-v1",run_key:"topic-evaluation-safe",total:10,pending:10,rejected:0,
     limit:20,next_cursor:null,items:[{candidate_key:"candidate.one",title:"Candidate one",
       description:"Bounded description",inclusion:["in"],exclusion:[],source_proposal_keys:["proposal.one"],
@@ -124,6 +128,38 @@ test("Topic Evaluation creates one fresh idempotency key and rejects a second lo
   assert.equal(acquireSignalTopicEvaluationSubmissionLockV1(lock), false);
 });
 
+test("Topic Evaluation builds one closed successor command only for the server-projected ambiguous predecessor",()=>{
+  const card=projectSignalTopicEvaluationFlightCardV1(preflight());
+  const successor={eligible:true as const,predecessorRunKey:"topic-evaluation-ambiguous"};
+  const command=buildSignalTopicEvaluationSuccessorRequestV1({acknowledged:true,card,successor,
+    idempotencyKey:"topic-evaluation:successor:one"});
+  assert.deepEqual(command,{headers:{"Content-Type":"application/json",
+    "Idempotency-Key":"topic-evaluation:successor:one"},body:{
+      predecessor_run_key:"topic-evaluation-ambiguous",expected_envelope_digest:`sha256:${"1".repeat(64)}`,
+      confirmation:"AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR",hard_cap_micro_usd:"380000"}});
+  assert.equal(createSignalTopicEvaluationSuccessorIdempotencyKeyV1(()=>"two"),
+    "topic-evaluation:successor:two");
+  assert.throws(()=>buildSignalTopicEvaluationSuccessorRequestV1({acknowledged:true,card,
+    successor:{eligible:false,predecessorRunKey:null},idempotencyKey:"topic-evaluation:successor:three"}),
+  /topic_evaluation_successor_not_available/u);
+  assert.throws(()=>buildSignalTopicEvaluationSuccessorRequestV1({acknowledged:true,card,successor,
+    idempotencyKey:"topic-evaluation:start:three"}),/topic_evaluation_idempotency_key_invalid/u);
+});
+
+test("Topic Evaluation never presents the root launch while a successor authority exists",()=>{
+  const root=projectSignalTopicEvaluationManagementV1({...management(),run:null,
+    results:{...management().results,run_key:null,items:[],total:0,pending:0,rejected:0}});
+  assert.equal(selectSignalTopicEvaluationLaunchModeV1(root),"root");
+  const successor=projectSignalTopicEvaluationManagementV1({...management(),run:{...management().run,
+    status:"outcome_unknown",provider_outcome_class:"ambiguous_after_send",candidate_count:null,
+    rubric_met:null,error_code:"topic_evaluation_provider_ambiguous_after_send",settled_micro_usd:null,
+    completed_at:null,failed_at:"2026-08-29T00:00:02.000Z"},
+    successor:{eligible:true,predecessor_run_key:"topic-evaluation-safe"}});
+  assert.equal(selectSignalTopicEvaluationLaunchModeV1(successor),"successor");
+  assert.equal(selectSignalTopicEvaluationLaunchModeV1(projectSignalTopicEvaluationManagementV1(management())),null,
+    "a completed historical run cannot reopen the ordinary root launch");
+});
+
 test("Topic Evaluation displays only the returned run status", () => {
   assert.equal(readSignalTopicEvaluationRunStatusV1({
     run_id: "private",
@@ -158,6 +194,18 @@ test("Topic Evaluation projects closed provider-boundary classes without private
   }
 });
 
+test("Topic Evaluation accepts successor authority only when its predecessor key is present",()=>{
+  const fixture=management();const value={...fixture,run:{...fixture.run,status:"outcome_unknown",
+    provider_outcome_class:"ambiguous_after_send" as const,candidate_count:null,rubric_met:null,
+    error_code:"topic_evaluation_provider_ambiguous_after_send",settled_micro_usd:null,
+    completed_at:null,failed_at:"2026-08-29T00:00:02.000Z"},
+    successor:{eligible:true,predecessor_run_key:"topic-evaluation-safe"}};
+  const projected=projectSignalTopicEvaluationManagementV1(value);
+  assert.deepEqual(projected.successor,{eligible:true,predecessorRunKey:"topic-evaluation-safe"});
+  assert.throws(()=>projectSignalTopicEvaluationManagementV1({...value,
+    successor:{eligible:true,predecessor_run_key:null}}),/topic_evaluation_management_invalid/u);
+});
+
 test("Brand OS mounts the normal launch and reversible review surface without touching Discovery Review", async () => {
   const [component, page, drawer, css, es, en, openapi] = await Promise.all([
     readFile(new URL("../../components/brands/TopicEvaluationManager.tsx", import.meta.url), "utf8"),
@@ -172,6 +220,10 @@ test("Brand OS mounts the normal launch and reversible review surface without to
   assert.match(component, /AdminSummaryStrip/u);
   assert.match(component, /WorkspaceDrawer/u);
   assert.match(component, /projectSignalTopicEvaluationManagementV1/u);
+  assert.match(component,/selectSignalTopicEvaluationLaunchModeV1/u);
+  assert.match(component,/buildSignalTopicEvaluationSuccessorRequestV1/u);
+  assert.match(component,/topic-evaluation:successor:/u);
+  assert.match(component,/\$\{endpoint\}\/successor/u);
   assert.match(component,/preflightErrorCode==="topic_evaluation_launch_authority_unavailable"/u);
   assert.match(component, /candidate\.reviewState/u);
   assert.match(component, /candidate\.evidence\.count/u);
@@ -208,5 +260,6 @@ test("Brand OS mounts the normal launch and reversible review surface without to
   assert.match(openapi, /confirmation: \{ const: RUN_ONE_TOPIC_EVALUATION \}/u);
   assert.match(openapi, /IdempotencyKey/u);
   assert.match(openapi, /SignalTopicEvaluationCandidateCommandV1/u);
+  assert.match(openapi,/predecessor_run_key/u);
   assert.doesNotMatch(component,/TopicDiscoveryReviewWorkbench/u);
 });
