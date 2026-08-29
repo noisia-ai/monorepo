@@ -1,7 +1,10 @@
-import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION } from "@noisia/query-engine";
-
 export const SIGNAL_TOPIC_EVALUATION_LAUNCH_CONFIRMATION =
   "RUN_ONE_TOPIC_EVALUATION" as const;
+
+// This module is imported by client components. Keep the literal public contract here
+// rather than importing the query-engine barrel, which also exposes Node-only code.
+export const SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION =
+  "AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR" as const;
 
 export type SignalTopicEvaluationFlightCardV1 = {
   contractVersion: "signal-topic-evaluation-preflight-v1";
