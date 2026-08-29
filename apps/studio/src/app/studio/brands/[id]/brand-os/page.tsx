@@ -11,6 +11,7 @@ import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
 import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
+import { TopicEvaluationManager } from "@/components/brands/TopicEvaluationManager";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
 import { getBrandDetailForUser } from "@/lib/data/brands";
@@ -56,7 +57,10 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       <CompetitorManager brandId={brand.id} competitors={brand.competitors} />
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
-        <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
+        <>
+          <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
+          <TopicEvaluationManager workspaceId={workspace.summary.workspaceId} />
+        </>
       ) : null}
 
       <section className="admin-section workspace-resource-section">
