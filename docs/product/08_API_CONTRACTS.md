@@ -2823,3 +2823,22 @@ o locale sellado. El servidor deriva key, actor, timestamps, disposition aprobad
 auditoría, evidencia operator-input y digests. Una colisión exacta devuelve la versión
 current real sin crear operación, elemento o evento; un replay exacto de una creación sí
 devuelve su resultado original.
+
+### Semantic Context automatic result policy (69B.5I-E-A, local)
+
+Una generación completada devuelve `automatic_disposition` con policy version y conteos
+`ready`/`exceptions`. Es una proyección del único run terminal liquidado: el navegador no
+puede solicitar disposición automática y el append genérico no ofrece ese control.
+Review proyecta `review_state=ready|exception|resolved` y un bloque
+`automatic_policy` operator-safe; nunca devuelve prompt, response privada, prose del
+servicio, evidence UUIDs ni hashes internos. Los filtros y totales continúan siendo
+server-owned y cursor-stable.
+
+`ready` no es publicación: es exclusivamente un current leaf active, aprobado y editable
+dentro del draft. `exception` es pending y requiere revisión focal; rejected, merged y
+archived son `resolved` y nunca cuentan como ready. Las razones persistibles forman una
+taxonomía cerrada y localizada; fallos estructurales o de parent authority invalidan el
+run completo en vez de persistirse como excepciones. El navegador no suministra
+la policy, actor, disposition, evidencia ni aplicabilidad heredada. Publication preflight
+permanece GET/no-store/non-writing y expone conteos `automatic_ready` y
+`automatic_exceptions`; cualquier excepción pending sigue bloqueando publicación.

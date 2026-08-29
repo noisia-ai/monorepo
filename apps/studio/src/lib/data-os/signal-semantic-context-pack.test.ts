@@ -6,7 +6,10 @@ import { createTranslator } from "next-intl";
 
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query-engine";
 
-import { formatSignalSemanticContextUsdPerMillionTokensV1 } from "@/components/brands/SemanticContextPackManager";
+import {
+  formatSignalSemanticContextUsdPerMillionTokensV1,
+  signalSemanticContextPackEmptyStateV1
+} from "@/components/brands/SemanticContextPackManager";
 import {
   cycleWorkspaceDrawerFocusV1,
   restoreWorkspaceDrawerFocusV1
@@ -44,6 +47,17 @@ test("proposal generation entry is gated by the server-discovered generation run
   assert.equal(canStartSignalSemanticContextProposalGenerationV1({
     lifecycleState: null, elementCount: 0, hasServerDiscoveredRun: false
   }), false, "missing generation state fails closed");
+});
+
+test("Brand OS distinguishes the uninitialized normal state from preparation and errors", () => {
+  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false, error: null,
+    hasGeneration: false, unavailableReason: "acquisition_brief_required" }), "uninitialized");
+  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false, error: null,
+    hasGeneration: false, unavailableReason: null }), "ready_to_prepare");
+  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false,
+    error: "unexpected_summary_failure", hasGeneration: false,
+    unavailableReason: "acquisition_brief_required" }), "error",
+  "an actual request failure always wins over an empty-state reason");
 });
 
 test("terminal successor preparation is non-paid and restricted to consumed empty drafts", () => {
@@ -283,6 +297,16 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   }
   assert.equal(typeof esMessages.title,"string");
   assert.equal(typeof enMessages.title,"string");
+  assert.match(manager,/emptyState === "uninitialized"/u);
+  assert.match(manager,/uninitialized\.body/u);
+  assert.doesNotMatch(manager,/acquisition_brief_required[^\n]+AdminFeedbackState/u,
+    "the component renders the closed server state rather than matching an error string");
+  for (const messages of [esMessages, enMessages]) {
+    assert.equal(typeof messages.uninitialized.title, "string");
+    assert.equal(typeof messages.uninitialized.body, "string");
+    assert.doesNotMatch(`${messages.uninitialized.title} ${messages.uninitialized.body}`,
+      /acquisition_brief_required|Claude|Anthropic|provider/u);
+  }
 });
 
 test("Semantic Context flight card exposes server pricing and remains keyboard-safe before consent",async()=>{

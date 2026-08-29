@@ -2396,3 +2396,42 @@ La key es server-owned y deriva de `(element_kind, canonical_key, raw locale)`. 
 `en-US` y `es-MX` pueden representar identidades que el collision contract de
 publicación distingue. El elemento nace `active/approved`; archive/restore permanece en
 0102 y nunca borra el origen o su evidencia.
+
+### 0105 — Semantic Context automatic trust-and-revert disposition (local)
+
+0105 conserva cada output estructurado como `provider_proposal` v1 inmutable y añade
+autoridad `automatic_policy_*`. Esa autoridad sólo puede nacer del cierre terminal de un
+`signal_semantic_context_proposal_run` exacto: response privada persistida, liquidación,
+provider lineage, snapshots de generación, operation input y cohort quedan ligados entre
+sí. El append genérico no acepta un opt-in automático. Una política determinística,
+versionada y DB-owned crea
+un successor v2 `approved` sólo cuando schema, evidencia, relaciones, colisiones,
+autoridad y aplicabilidad pasan completas. Los demás outputs permanecen `pending` con
+razones cerradas de excepción. La transacción exige cardinalidad exacta entre successors
+ready, outcomes y eventos `automatic_policy_ready`, incluidos sus conjuntos de keys;
+cualquier omitido, extra, marker nulo o run-count divergente revierte todo el append.
+
+Los elementos ordinarios con `locale=null` heredan el envelope de generación validado
+por 0101. Sólo `locale_variant` con locale sellado dentro del parent puede quedar como
+`explicit_locale`; confidence y prose del servicio son no autoritativos. El run sella
+policy version y conteos ready/exceptions. Publication preflight reconoce únicamente
+ready rows cuyo basis, actor, timestamp, evidence digest, parent authority y pre/post
+state PostgreSQL puede recomputar; el resto falla cerrado. PostgreSQL revalida además
+schema, evidencia vigente, colisiones y el grafo relacional sin confiar en digests de la
+aplicación. Self-links, ciclos y dependencias transitivas que no alcanzan un current
+approved válido quedan como `relation_target_unresolved`, no abortan el cohort.
+
+`ready` significa exclusivamente current + active + approved. Pending es `exception` y
+rejected/merged/archived se proyectan como `resolved`; ninguno de estos últimos vuelve a
+contar como ready. La representación numérica histórica de `confidence` en el digest del
+elemento V1 permanece estable; 0105 versiona sólo la nueva autoridad automática.
+
+### 0106 — Paridad de allowlist para autoridad locale/global dedicada (local)
+
+0106 es una corrección forward-only de la función final sustituida por 0105. Conserva
+byte-for-byte sus validaciones de generación, actor, operación, artifact, evidence,
+supersession, disposición, creación y autoridad automática; la única diferencia es
+restaurar `decide-semantic-context-locale-authority` en la allowlist cerrada de successors
+`operator_correction`. Esto permite que el writer deliberado de 0100 vuelva a crear un
+successor `pending` con lineage sellada, sin permitir que create/save ordinarios originen
+autoridad Global ni admitir una acción genérica.

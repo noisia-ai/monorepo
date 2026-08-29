@@ -17,6 +17,7 @@ import {
   parseSignalSemanticContextOrdinaryEditFormV1,
   parseSignalSemanticContextCreateFormV1,
   signalSemanticContextCreationGuidanceUrlV1,
+  signalSemanticContextOrdinaryApplicabilityOptionsV1,
   signalSemanticContextAnnotationResolutionsV1,
   signalSemanticContextBoundedPendingSelectionV1,
   signalSemanticContextReviewRangeV1,
@@ -61,6 +62,23 @@ test("simple creation sends one semantic-only command and keeps locale identity 
   assert.equal(parseSignalSemanticContextCreateFormV1(localized,["en-US","es-MX"]),null);
 });
 
+test("ordinary applicability defaults to the parent envelope and exposes only supported locale overrides",()=>{
+  assert.deepEqual(signalSemanticContextOrdinaryApplicabilityOptionsV1({mode:"create",
+    permittedLocales:["en-US","es-MX","en-US"]}),["workspace_inherited","locale:en-US","locale:es-MX"]);
+  assert.deepEqual(signalSemanticContextOrdinaryApplicabilityOptionsV1({mode:"edit",
+    permittedLocales:["en-US","es-MX"]}),["preserve","workspace_inherited","locale:en-US","locale:es-MX"]);
+  assert.equal(signalSemanticContextOrdinaryApplicabilityOptionsV1({mode:"create",
+    permittedLocales:["en-US","es-MX"]}).includes("explicit_global" as never),false,
+  "ordinary UI does not turn explicit-global authority into routine operator homework");
+  const crafted=new FormData();crafted.set("display_text","Crafted global");
+  crafted.set("canonical_key","crafted-global");crafted.set("applicability","explicit_global");
+  assert.equal(parseSignalSemanticContextOrdinaryEditFormV1(crafted,["en-US","es-MX"]),null,
+    "the ordinary parser rejects a crafted hidden Global value before transport");
+  crafted.set("element_kind","benefit");
+  assert.equal(parseSignalSemanticContextCreateFormV1(crafted,["en-US","es-MX"]),null,
+    "ordinary creation cannot regain Global authority through the shared parser");
+});
+
 test("simple creation drawer is short, non-ceremonial, and duplicate guidance is operator-readable",()=>{
   let cancels=0;let submits=0;const t=((key:string)=>key) as never;
   const markup=renderToStaticMarkup(createElement(CreateElementForm,{busy:null,generationLocales:["en-US","es-MX"],
@@ -73,6 +91,9 @@ test("simple creation drawer is short, non-ceremonial, and duplicate guidance is
     onSubmit:()=>{submits++;},t}));
   assert.match(markup,/Existing benefit/u);assert.match(markup,/Suggested benefit/u);
   assert.match(markup,/reviewWorkbench\.creation\.openExisting/u);
+  assert.match(markup,/value="workspace_inherited" selected=""/u);
+  assert.match(markup,/value="locale:en-US"/u);assert.match(markup,/value="locale:es-MX"/u);
+  assert.doesNotMatch(markup,/value="explicit_global"/u);
   assert.doesNotMatch(markup,/name="(?:reason|rationale|confirmation|actor|evidence|disposition)"/u);
   assert.equal(handleSignalSemanticContextCreationKeyV1({key:"Escape",busy:false,cancel:()=>{cancels++;}}),true);
   assert.equal(cancels,1);assert.equal(submits,0,"Escape and cancellation never submit a creation request");
@@ -318,8 +339,9 @@ test("rendered locale authority opens deliberately and only a complete explicit 
   assert.equal(requests,1,"one complete locale decision crosses exactly one request boundary");
 });
 
-test("workspace-inherited applicability renders its sealed markets and exposes no locale decision form",()=>{
-  const t=((key:string,values?:Record<string,unknown>)=>values?.markets?`${key}:${values.markets}`:key) as never;
+test("workspace-inherited applicability renders its sealed markets and locales and exposes no locale decision form",()=>{
+  const t=((key:string,values?:Record<string,unknown>)=>values?.markets
+    ?`${key}:${values.markets}:${values.locales??""}`:key) as never;
   const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
   const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{...baseElement,
     disposition:"approved",locale:null,applicability:{contract_version:
@@ -334,11 +356,32 @@ test("workspace-inherited applicability renders its sealed markets and exposes n
     onLocaleAuthority:()=>{throw new Error("inherited applicability must not open the old form");},
     onMode:()=>undefined,onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t});
   assert.ok(findElement(view,(element)=>element.type==="dd"
-    &&element.props.children==="values.inheritedWorkspace:MX + US"));
+    &&element.props.children==="values.inheritedWorkspaceCoverage:MX + US:en-US + es-MX"));
   assert.ok(findElement(view,(element)=>element.type==="span"
     &&element.props.children==="reviewWorkbench.localeAuthority.dispositions.workspace_inherited"));
   assert.equal(findElement(view,(element)=>element.type==="button"
     &&String(element.props.children??"").includes("localeAuthority.action")),null);
+});
+
+test("ordinary edit form keeps current authority, offers parent or supported locale, and has no decision ceremony",()=>{
+  const t=((key:string)=>key) as never;
+  const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{...baseElement,
+    disposition:"approved",locale:null,applicability:{contract_version:
+      "signal-semantic-context-effective-applicability-v1",effective_state:"workspace_inherited",
+      locale_state:"workspace_inherited",locale:null,market_state:"sealed",
+      generation_locales:["en-US","es-MX"],generation_markets:["MX","US"],
+      source:"sealed_generation_locale_context"},locale_authority:{state:"workspace_inherited",locale:null,
+      lifecycle:"not_decided",basis:null}}} as never;
+  const markup=renderToStaticMarkup(ElementReviewDetail({activeFormRef:{current:null},
+    annotationResolutionDraft:null,busy:null,detail,locale:"es-MX",mode:"correct",
+    onAnnotate:()=>undefined,onApprove:()=>undefined,onBeginResolution:()=>undefined,
+    onCancelResolution:()=>undefined,onCorrect:()=>undefined,onLocaleAuthority:()=>undefined,
+    onMode:()=>undefined,onReject:()=>undefined,onResolve:()=>undefined,reviewWritable:true,t}));
+  assert.match(markup,/name="applicability"/u);assert.match(markup,/value="preserve" selected=""/u);
+  assert.match(markup,/value="workspace_inherited"/u);assert.match(markup,/value="locale:en-US"/u);
+  assert.match(markup,/value="locale:es-MX"/u);assert.doesNotMatch(markup,/value="explicit_global"/u);
+  assert.doesNotMatch(markup,/name="(?:reason|rationale|confirmation)"/u);
 });
 
 test("explicit-global applicability and archived lifecycle render their operator-facing states",()=>{

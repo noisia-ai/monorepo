@@ -5,6 +5,7 @@ import test from "node:test";
 
 import type { SignalBrandPolicyQueryable } from "./signal-governed-brand-policy";
 import {
+  loadSignalSemanticContextReviewSummaryV1,
   loadSignalSemanticContextReviewPageV1,
   parseSignalSemanticContextReviewFiltersV1,
   projectSignalSemanticContextEvidenceSourceV1
@@ -67,6 +68,63 @@ test("review filters are closed and reject browser authority fields", () => {
     "element_kind=open_kind", "evidence=approved", "duplicate=semantic"]) {
     assert.throws(() => parseSignalSemanticContextReviewFiltersV1(new URLSearchParams(hostile)));
   }
+});
+
+test("review summary represents only a zero-generation missing-brief workspace as uninitialized", async () => {
+  const summary = await loadSignalSemanticContextReviewSummaryV1({
+    queryable: summaryQueryable({ brief: false, generationCount: 0 }), workspace, actor
+  });
+  assert.equal(summary.generation, null);
+  assert.equal(summary.latest_proposal_run, null);
+  assert.deepEqual(summary.readiness, {
+    lifecycle_state: "missing",
+    unavailable_reason: "acquisition_brief_required",
+    generation: null,
+    open_draft: null,
+    counts: { pending: 0, approved: 0, rejected: 0, merged: 0 },
+    locale_coverage: { primary_locale: null, locale_variants: [], markets: [] },
+    drift_state: "missing",
+    drift_reasons: [],
+    ready_for_context_aware_discovery: false,
+    limitations: ["acquisition_brief_required"]
+  });
+
+  const prepared = await loadSignalSemanticContextReviewSummaryV1({
+    queryable: summaryQueryable({ brief: true, generationCount: 0 }), workspace, actor
+  });
+  assert.equal(prepared.readiness.lifecycle_state, "missing");
+  assert.equal(prepared.readiness.unavailable_reason, null,
+    "a valid brief with no generation keeps the ordinary prepare-draft state");
+});
+
+test("review summary never reclassifies unknown errors or an existing generation", async () => {
+  await assert.rejects(loadSignalSemanticContextReviewSummaryV1({
+    queryable: summaryQueryable({ brief: false, generationCount: 0, unknownError: true }),
+    workspace, actor
+  }), /unexpected_summary_failure/u);
+  await assert.rejects(loadSignalSemanticContextReviewSummaryV1({
+    queryable: summaryQueryable({ brief: false, generationCount: 1 }), workspace, actor
+  }), (error: unknown) => (error as { code?: string }).code === "acquisition_brief_required");
+});
+
+test("review summary route and OpenAPI expose one closed uninitialized reason", async () => {
+  const [route, service, openApi] = await Promise.all([
+    readFile(resolve(process.cwd(),
+      "src/app/api/data-os/signal/[workspaceId]/semantic-context/review/summary/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "src/lib/data-os/signal-semantic-context-review.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../docs/api/openapi.yaml"), "utf8")
+  ]);
+  assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(route, /semanticContextError\(error, "semantic_context_review_summary_unavailable"\)/u,
+    "unknown and authorization failures retain the existing fail-closed route boundary");
+  assert.match(service, /error\.code !== "acquisition_brief_required"\) throw error/u);
+  assert.match(service, /count\(\*\)::int generation_count[\s\S]+generation_count \?\? -1\) !== 0\) throw error/u,
+    "the exception requires exact zero-generation authority");
+  const schema = openApi.match(/    SignalSemanticContextReviewSummaryV1:\n([\s\S]*?)\n    SignalSemanticContextReviewElementV1:/u)?.[1];
+  assert.ok(schema);
+  assert.match(schema, /readiness:\n\s+type: object\n\s+additionalProperties: false/u);
+  assert.match(schema, /required: \[lifecycle_state, unavailable_reason/u);
+  assert.match(schema, /const: acquisition_brief_required/u);
 });
 
 test("global locale filter stays closed and aligned across runtime, UI, and OpenAPI", async () => {
@@ -150,6 +208,10 @@ test("server cursor is stable, filter-bound, and contains no digest or private a
   const filters = parseSignalSemanticContextReviewFiltersV1(new URLSearchParams());
   const page = await loadSignalSemanticContextReviewPageV1({ queryable, workspace, actor,
     generationKey: generation.generation_key, filters });
+  assert.deepEqual(page.generation,{
+    generation_key:"semantic-context-v6",generation_version:6,primary_locale:"es-MX",
+    locale_variants:["en-US","es-MX"],markets:["MX","US"],timezone:"America/Mexico_City"
+  },"the page exposes the sealed parent envelope independently of visible element rows");
   assert.equal(page.total, 21);
   assert.equal(page.elements.length, 20);
   assert.ok(page.next_cursor);
@@ -348,6 +410,31 @@ function fakeQueryable(items: ReturnType<typeof element>[],automaticCounts:Recor
         disposition_counts: { pending: items.length },
         automatic_counts: automaticCounts
       }], rowCount: 1 };
+    }
+  } as unknown as SignalBrandPolicyQueryable;
+}
+
+function summaryQueryable(args: { brief: boolean; generationCount: number; unknownError?: boolean }) {
+  return {
+    query: async (sql: string) => {
+      if (sql.includes("FROM brand_os_profiles")) {
+        if (args.unknownError) throw new Error("unexpected_summary_failure");
+        return { rows: [{ id: "00000000-0000-4000-8000-000000000006", version: 1,
+          digest: `sha256:${"a".repeat(64)}` }], rowCount: 1 };
+      }
+      if (sql.includes("count(*)::int generation_count")) {
+        return { rows: [{ generation_count: args.generationCount }], rowCount: 1 };
+      }
+      if (sql.includes("FROM signal_semantic_context_generations generation")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM signal_acquisition_plans")) {
+        return { rows: args.brief ? [{ brief: { languages: ["en-US"], countries: ["US"],
+          primary_locale: "en-US", timezone: "UTC" } }] : [], rowCount: args.brief ? 1 : 0 };
+      }
+      if (sql.includes("FROM knowledge_chunks")) return { rows: [], rowCount: 0 };
+      if (sql.includes("FROM brand_knowledge_sources source")) return { rows: [], rowCount: 0 };
+      throw new Error(`Unexpected summary query: ${sql.slice(0, 80)}`);
     }
   } as unknown as SignalBrandPolicyQueryable;
 }

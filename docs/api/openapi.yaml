@@ -2519,7 +2519,40 @@ components:
       required: [contract_version, readiness, generation, latest_proposal_run, authority]
       properties:
         contract_version: { const: signal-semantic-context-review-summary-v1 }
-        readiness: { type: object, additionalProperties: true }
+        readiness:
+          type: object
+          additionalProperties: false
+          required: [lifecycle_state, unavailable_reason, generation, open_draft, counts,
+            locale_coverage, drift_state, drift_reasons, ready_for_context_aware_discovery, limitations]
+          properties:
+            lifecycle_state: { type: string, enum: [missing, draft, published] }
+            unavailable_reason:
+              oneOf:
+                - { const: acquisition_brief_required }
+                - { type: "null" }
+            generation: { type: [object, "null"], additionalProperties: true }
+            open_draft: { type: [object, "null"], additionalProperties: true }
+            counts:
+              type: object
+              additionalProperties: false
+              required: [pending, approved, rejected, merged]
+              properties:
+                pending: { type: integer, minimum: 0 }
+                approved: { type: integer, minimum: 0 }
+                rejected: { type: integer, minimum: 0 }
+                merged: { type: integer, minimum: 0 }
+            locale_coverage:
+              type: object
+              additionalProperties: false
+              required: [primary_locale, locale_variants, markets]
+              properties:
+                primary_locale: { type: [string, "null"] }
+                locale_variants: { type: array, items: { type: string } }
+                markets: { type: array, items: { type: string } }
+            drift_state: { type: string, enum: [missing, current, stale] }
+            drift_reasons: { type: array, items: { type: string } }
+            ready_for_context_aware_discovery: { type: boolean }
+            limitations: { type: array, items: { type: string } }
         generation: { type: [object, "null"], additionalProperties: true }
         latest_proposal_run:
           oneOf:
@@ -2606,7 +2639,17 @@ components:
       required: [contract_version, generation, total, page_size, next_cursor, elements, facets, authority]
       properties:
         contract_version: { const: signal-semantic-context-review-page-v1 }
-        generation: { type: object, additionalProperties: true }
+        generation:
+          type: object
+          additionalProperties: false
+          required: [generation_key, generation_version, primary_locale, locale_variants, markets, timezone]
+          properties:
+            generation_key: { type: string }
+            generation_version: { type: integer, minimum: 1 }
+            primary_locale: { type: string }
+            locale_variants: { type: array, minItems: 1, uniqueItems: true, items: { type: string } }
+            markets: { type: array, minItems: 1, uniqueItems: true, items: { type: string } }
+            timezone: { type: string }
         total: { type: integer, minimum: 0 }
         page_size: { type: integer, enum: [20, 40] }
         next_cursor: { type: [string, "null"] }
@@ -2898,12 +2941,6 @@ components:
                   additionalProperties: false
                   required: [state, locale]
                   properties:
-                    state: { const: explicit_global }
-                    locale: { type: "null" }
-                - type: object
-                  additionalProperties: false
-                  required: [state, locale]
-                  properties:
                     state: { const: explicit_locale }
                     locale: { type: string, pattern: '^[a-z]{2,3}(?:-[A-Z]{2})?$' }
     SignalSemanticContextCreationGuidanceItemV1:
@@ -2985,12 +3022,19 @@ components:
             relation_kind: { type: [string, "null"], enum: [is_a, part_of, surface_of, competes_with, associated_with, null] }
             relation_target_key: { type: [string, "null"] }
             applicability:
-              type: object
-              additionalProperties: false
-              required: [state, locale]
-              properties:
-                state: { type: string, enum: [preserve, workspace_inherited, explicit_global, explicit_locale] }
-                locale: { type: [string, "null"] }
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [state, locale]
+                  properties:
+                    state: { type: string, enum: [preserve, workspace_inherited] }
+                    locale: { type: "null" }
+                - type: object
+                  additionalProperties: false
+                  required: [state, locale]
+                  properties:
+                    state: { const: explicit_locale }
+                    locale: { type: string, pattern: '^[a-z]{2,3}(?:-[A-Z]{2})?$' }
     SignalSemanticContextOrdinaryUndoV1:
       type: object
       additionalProperties: false

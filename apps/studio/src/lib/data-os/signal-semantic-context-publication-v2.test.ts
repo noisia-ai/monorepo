@@ -4,7 +4,9 @@ import test from "node:test";
 
 import {
   canonicalJsonV2,
+  createSignalSemanticContextElementV1,
   digestCanonicalJsonV2,
+  editSignalSemanticContextElementV1,
   normalizeSignalSemanticContextDecisionBasisV2,
   normalizeSignalSemanticContextAnnotationResolutionBasisV1,
   normalizeSignalSemanticContextLocaleDecisionBasisV1,
@@ -13,6 +15,59 @@ import {
   signalSemanticContextDecisionElementDigestV2,
   SIGNAL_SEMANTIC_CONTEXT_PUBLICATION_CONFIRMATION_V2
 } from "@/lib/data-os/signal-semantic-context-publication-v2";
+import {
+  signalSemanticContextCreateCommandSchemaV1,
+  signalSemanticContextOrdinaryCommandSchemaV1
+} from "@/lib/data-os/signal-semantic-context-ordinary-api-contract";
+import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
+import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
+
+test("ordinary API schemas and core writers reject crafted Global authority before database access",async()=>{
+  const stateToken=`sha256:${"1".repeat(64)}`;
+  const sharedValues={display_text:"Crafted Global",canonical_key:"crafted-global",scope:"workspace",
+    relation_kind:null,relation_target_key:null,applicability:{state:"explicit_global",locale:null}};
+  assert.equal(signalSemanticContextCreateCommandSchemaV1.safeParse({
+    contract_version:"create-semantic-context-element-v1",generation_key:"generation-v6",
+    values:{...sharedValues,element_kind:"benefit"}}).success,false);
+  assert.equal(signalSemanticContextOrdinaryCommandSchemaV1.safeParse({
+    contract_version:"edit-semantic-context-element-v1",action:"save",generation_key:"generation-v6",
+    expected_version:1,state_token:stateToken,values:sharedValues}).success,false);
+  assert.equal(signalSemanticContextCreateCommandSchemaV1.safeParse({
+    contract_version:"create-semantic-context-element-v1",generation_key:"generation-v6",
+    values:{...sharedValues,element_kind:"locale_variant",
+      applicability:{state:"explicit_locale",locale:"es-MX"}}}).success,true,
+  "the direct API retains supported explicit-locale input");
+  assert.equal(signalSemanticContextOrdinaryCommandSchemaV1.safeParse({
+    contract_version:"edit-semantic-context-element-v1",action:"save",generation_key:"generation-v6",
+    expected_version:1,state_token:stateToken,
+    values:{...sharedValues,applicability:{state:"preserve",locale:null}}}).success,true,
+  "preserve remains the only ordinary way to carry an existing Global lineage");
+
+  let queries=0;
+  const queryable:SignalBrandPolicyQueryable={
+    query:async()=>{queries++;throw new Error("unexpected database access");}
+  } as unknown as SignalBrandPolicyQueryable;
+  const workspace={id:"00000000-0000-4000-8000-000000000001"} as ResolvedSignalWorkspace;
+  const actor:SignalWorkspaceUser={
+    id:"00000000-0000-4000-8000-000000000002",userType:"noisia_internal"
+  } as SignalWorkspaceUser;
+  await assert.rejects(createSignalSemanticContextElementV1({queryable,workspace,actor,
+    idempotencyKey:"crafted-global-create",generationKey:"generation-v6",
+    values:{...sharedValues,element_kind:"benefit"} as never}),
+  /semantic_context_creation_applicability_invalid/u);
+  await assert.rejects(editSignalSemanticContextElementV1({queryable,workspace,actor,
+    idempotencyKey:"crafted-global-save",generationKey:"generation-v6",elementKey:"benefit.example",
+    expectedVersion:1,stateToken,action:"save",values:sharedValues as never}),
+  /semantic_context_applicability_invalid/u);
+  assert.equal(queries,0,"both core trust boundaries reject crafted Global authority before any DB call");
+  const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
+  const createContract=openApi.match(/    SignalSemanticContextCreateCommandV1:\n([\s\S]*?)\n    SignalSemanticContextCreationGuidanceItemV1:/u)?.[1];
+  const saveContract=openApi.match(/    SignalSemanticContextOrdinarySaveV1:\n([\s\S]*?)\n    SignalSemanticContextOrdinaryUndoV1:/u)?.[1];
+  assert.ok(createContract);assert.ok(saveContract);
+  assert.doesNotMatch(createContract,/explicit_global/u);
+  assert.doesNotMatch(saveContract,/explicit_global/u,
+    "the published direct-API contracts close the same ordinary Global boundary");
+});
 
 test("operator-created element keys preserve publication collision identity across raw locales",()=>{
   const inherited=signalSemanticContextOperatorElementKeyV1("alias","alexa-name",null);
@@ -193,6 +248,8 @@ test("simple creation route is closed, idempotent, and excludes browser authorit
     import.meta.url),"utf8");
   assert.match(route,/loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(route,/requireIdempotencyKey/u);assert.match(route,/\.strict\(\)/u);
+  assert.doesNotMatch(route,/explicit_global/u,
+    "the create route cannot reintroduce Global authority outside the shared closed schema");
   assert.doesNotMatch(route,/actor_user_id|element_key:z\.|evidence_(?:id|group_id)|disposition:z\.|creation_basis/u);
   assert.match(service,/semantic_context_operator_input/u);
   assert.match(service,/collision:true/u);assert.doesNotMatch(service,/auto.?merge/iu);
@@ -206,13 +263,16 @@ test("ordinary edit authority is a closed command with a PostgreSQL backstop", a
   const route = await readFile(new URL(
     "../../app/api/data-os/signal/[workspaceId]/semantic-context/elements/[elementKey]/commands/route.ts",
     import.meta.url), "utf8");
+  const apiContract=await readFile(new URL("./signal-semantic-context-ordinary-api-contract.ts",import.meta.url),"utf8");
   const service = await readFile(new URL("./signal-semantic-context-publication-v2.ts", import.meta.url), "utf8");
   const migration = await readFile(new URL(
     "../../../../../infrastructure/db/migrations/0102_signal_semantic_context_ordinary_editing.sql",
     import.meta.url), "utf8");
   assert.match(route,/loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(route,/requireIdempotencyKey/u);
-  assert.match(route,/edit-semantic-context-element-v1/u);
+  assert.match(apiContract,/edit-semantic-context-element-v1/u);
+  assert.doesNotMatch(route,/explicit_global/u,
+    "the command route cannot reintroduce Global authority outside the shared closed schema");
   assert.doesNotMatch(route,/reason|rationale|confirmation|actor_user_id|evidence_group_id|authority_digest/u);
   assert.match(service,/save|undo|archive|restore/u);
   assert.match(service,/signal-semantic-context-ordinary-audit-v1/u);
@@ -227,6 +287,9 @@ test("ordinary edit authority is a closed command with a PostgreSQL backstop", a
   assert.match(migration,/predecessor\.disposition='archived'[\s\S]*element\.disposition='approved'/u,
     "restore is valid only from the archived lifecycle");
   assert.match(service,/afterLocaleFields:localeFields/u);
+  assert.match(service,/\["preserve","workspace_inherited","explicit_locale"\]/u);
+  assert.match(service,/disposition:"global"\|"locale_specific"/u,
+    "the deliberate locale-authority writer retains its explicit Global command");
   assert.match(service,/field:"applicability"/u,
     "applicability-only edits remain present in the exact audit diff");
   const openApi=await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8");
@@ -249,6 +312,30 @@ test("0104 counts archived leaves without weakening fork or merge-cycle publicat
     "the exact nested preflight remains the sole digest source");
   assert.doesNotMatch(migration,/UPDATE |INSERT INTO |DELETE FROM /u,
     "the publication snapshot correction is read-only");
+});
+
+test("0106 restores only the dedicated locale-authority action omitted by 0105",async()=>{
+  const [migration0105,migration0106]=await Promise.all([
+    readFile(new URL(
+      "../../../../../infrastructure/db/migrations/0105_signal_semantic_context_automatic_disposition.sql",
+      import.meta.url),"utf8"),
+    readFile(new URL(
+      "../../../../../infrastructure/db/migrations/0106_signal_semantic_context_locale_authority_allowlist_parity.sql",
+      import.meta.url),"utf8")
+  ]);
+  const functionPattern=/CREATE OR REPLACE FUNCTION validate_signal_semantic_context_element_operation_v2\(\)\n[\s\S]*?END; \$\$;/u;
+  const function0105=migration0105.match(functionPattern)?.[0];
+  const function0106=migration0106.match(functionPattern)?.[0];
+  assert.ok(function0105);assert.ok(function0106);
+  assert.doesNotMatch(function0105,/decide-semantic-context-locale-authority/u,
+    "the applied 0105 body reproduces the causal omission");
+  assert.equal((function0106.match(/decide-semantic-context-locale-authority/gu)??[]).length,1,
+    "0106 admits exactly one closed dedicated action");
+  assert.equal(function0106.replace(
+    ",\n      'decide-semantic-context-locale-authority'",""),function0105,
+  "after removing the one allowlist literal, the complete 0106 validator is byte-identical to 0105");
+  assert.doesNotMatch(migration0106,/DROP |ALTER TABLE|UPDATE |INSERT INTO |DELETE FROM /u,
+    "the forward-only parity migration does not mutate data or weaken schema");
 });
 
 test("generic correction and merge preserve locale authority outside the dedicated writer", async()=>{

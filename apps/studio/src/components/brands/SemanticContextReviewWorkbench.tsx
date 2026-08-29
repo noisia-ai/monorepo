@@ -40,6 +40,7 @@ import {
   parseSignalSemanticContextOrdinaryEditFormV1,
   parseSignalSemanticContextCreateFormV1,
   signalSemanticContextCreationGuidanceUrlV1,
+  signalSemanticContextOrdinaryApplicabilityOptionsV1,
   submitSignalSemanticContextCreateUiV1,
   submitSignalSemanticContextOrdinaryCommandUiV1,
   type SignalSemanticContextAnnotationResolutionUi,
@@ -182,6 +183,14 @@ type ReviewDetail = {
 };
 
 type ReviewPage = {
+  generation: {
+    generation_key: string;
+    generation_version: number;
+    primary_locale: string;
+    locale_variants: string[];
+    markets: string[];
+    timezone: string;
+  };
   total: number;
   page_size: 20 | 40;
   next_cursor: string | null;
@@ -399,7 +408,7 @@ export function SemanticContextReviewWorkbench({
     setCreationGuidance(null);setCreationOpen(true);setError(null);}
   function closeCreation(){setCreationOpen(false);setCreationGuidance(null);}
   async function previewCreation(form:FormData){
-    const locales=page?.elements[0]?.applicability.generation_locales??[];
+    const locales=page?.generation.locale_variants??[];
     const values=parseSignalSemanticContextCreateFormV1(form,locales);if(!values){setCreationGuidance(null);return;}
     setCreationGuidanceLoading(true);try{setCreationGuidance(await requestJson<CreationGuidance>(
       signalSemanticContextCreationGuidanceUrlV1({base,generationKey,values})));}
@@ -407,7 +416,7 @@ export function SemanticContextReviewWorkbench({
     finally{setCreationGuidanceLoading(false);}
   }
   async function createElement(form:FormData){
-    const locales=page?.elements[0]?.applicability.generation_locales??[];
+    const locales=page?.generation.locale_variants??[];
     const values=parseSignalSemanticContextCreateFormV1(form,locales);if(!values){setError(t("reviewWorkbench.creation.invalid"));return;}
     if(!beginMutation("create"))return;
     try{const result=await submitSignalSemanticContextCreateUiV1({request:requestJson,base,generationKey,values,
@@ -656,7 +665,7 @@ export function SemanticContextReviewWorkbench({
   const selectedLocaleEligible = selectedElements.length >= 1 && selectedElements.length <= 15
     && selectedElements.every((element) => element.disposition === "approved"
       && element.locale === null && element.locale_authority.state === "unresolved");
-  const selectedPermittedLocales = selectedElements[0]?.applicability.generation_locales ?? [];
+  const selectedPermittedLocales = page?.generation.locale_variants ?? [];
   const reviewStateCounts=page?page.facets.review_states:EMPTY_REVIEW_STATE_COUNTS;
 
   return <div className="semantic-context-review" data-loading={loading || undefined}>
@@ -749,8 +758,8 @@ export function SemanticContextReviewWorkbench({
     {creationOpen?<WorkspaceDrawer ariaLabel={t("reviewWorkbench.creation.title")} closeLabel={t("actions.close")}
       eyebrow={t("reviewWorkbench.creation.eyebrow")} onClose={()=>!busy&&closeCreation()}
       returnFocusRef={creationOpenerRef} title={t("reviewWorkbench.creation.title")}>
-      <CreateElementForm busy={busy} generationLocales={page?.elements[0]?.applicability.generation_locales??[]}
-        generationMarkets={page?.elements[0]?.applicability.generation_markets??[]} guidance={creationGuidance}
+      <CreateElementForm busy={busy} generationLocales={page?.generation.locale_variants??[]}
+        generationMarkets={page?.generation.markets??[]} guidance={creationGuidance}
         guidanceLoading={creationGuidanceLoading} onCancel={closeCreation} onOpenExisting={(key)=>{
           const opener=creationOpenerRef.current;closeCreation();if(opener)void openDetail(key,opener);}}
         onPreview={(form)=>void previewCreation(form)} onSubmit={(form)=>void createElement(form)} t={t}/>
@@ -799,7 +808,8 @@ function AttentionChip({ children }: { children: React.ReactNode }) {
 
 function applicabilityLabel(element: ReviewElement, t: ReturnType<typeof useTranslations>) {
   if (element.applicability.effective_state === "workspace_inherited") {
-    return t("values.inheritedWorkspace", { markets: element.applicability.generation_markets.join(" + ") });
+    return t("values.inheritedWorkspaceCoverage", {markets:element.applicability.generation_markets.join(" + "),
+      locales:element.applicability.generation_locales.join(" + ")});
   }
   if (element.applicability.effective_state === "explicit_global") {
     return t("reviewWorkbench.localeAuthority.dispositions.global");
@@ -857,6 +867,7 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
       {t("reviewWorkbench.approve.body")}</p><input name="confirmation" type="hidden"
         value="approve_selected_semantic_context_element"/><ReasonFields autoFocusRationale t={t}/></MutationForm>;
   if (mode === "correct") return <MutationForm busy={busy} formRef={activeFormRef} onCancel={() => onMode("view")} onSubmit={onCorrect} submitLabel={t("actions.saveCorrection")} t={t} title={t("reviewWorkbench.correction.title")}>
+    <p className="admin-drawer-form__intro">{t("reviewWorkbench.ordinaryEditing.body")}</p>
     <CorrectionFields element={element} t={t}/>
   </MutationForm>;
   if (mode === "reject") return <MutationForm busy={busy} danger formRef={activeFormRef} onCancel={() => onMode("view")} onSubmit={onReject} submitLabel={t("actions.reject")} t={t} title={t("reviewWorkbench.reject.title")}><p className="admin-drawer-form__intro">{t("reviewWorkbench.reject.body")}</p><ReasonFields autoFocusRationale t={t}/></MutationForm>;
@@ -898,7 +909,9 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
       <h3>{t("reviewWorkbench.localeAuthority.history")}</h3><div><ShieldCheck aria-hidden size={14}/>
         <span>{t(`reviewWorkbench.localeAuthority.dispositions.${element.locale_authority.state}`)}</span>
         {element.locale_authority.basis ? <small>{element.locale_authority.basis.rationale}</small>
-          : <small>{t("reviewWorkbench.localeAuthority.inheritedBody", { markets: element.applicability.generation_markets.join(" + ") })}</small>}</div></section> : null}
+          : <small>{t("reviewWorkbench.localeAuthority.inheritedBody",{
+            markets:element.applicability.generation_markets.join(" + "),
+            locales:element.applicability.generation_locales.join(" + ")})}</small>}</div></section> : null}
     {element.automatic_policy?.outcome === "exception" ? <section className="semantic-context-review__lineage">
       <h3>{t("reviewWorkbench.automaticReasons.title")}</h3>{element.automatic_policy.reasons.map((reason) =>
         <div key={reason}><Warning aria-hidden size={14}/><span>
@@ -955,24 +968,22 @@ export function CreateElementForm({busy,generationLocales,generationMarkets,guid
         value={kind}>{t(`relations.${kind}`)}</option>)}</select></label>
     <label className="workspace-field"><span>{t("fields.relationTarget")}</span><input className="workspace-control"
       name="relation_target_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/></label>
-    <label className="workspace-field"><span>{t("reviewWorkbench.localeAuthority.disposition")}</span>
-      <select className="workspace-control" defaultValue="workspace_inherited" name="applicability">
-        <option value="workspace_inherited">{t("actions.inheritedApplicability",{markets:generationMarkets.join(" + ")})}</option>
-        <option value="explicit_global">{t("actions.explicitGlobal")}</option>
-        {generationLocales.map((locale)=><option key={locale} value={`locale:${locale}`}>{locale}</option>)}</select></label>
+    <OrdinaryApplicabilityField generationLocales={generationLocales} generationMarkets={generationMarkets}
+      mode="create" t={t}/>
     {guidanceLoading?<div aria-live="polite" role="status"><CircleNotch aria-hidden className="icon--spin" size={14}/>
       {t("reviewWorkbench.creation.checking")}</div>:null}
     {exact?<div className="semantic-context-review__feedback" role="status"><Warning aria-hidden size={16}/><div>
       <strong>{t("reviewWorkbench.creation.exactTitle")}</strong><span>{exact.display_text} · {kindLabel(exact.element_kind,t)} · {
         exact.applicability_state==="explicit_global"?t("reviewWorkbench.localeAuthority.dispositions.global"):
-          exact.locale??t("values.inheritedWorkspace",{markets:generationMarkets.join(" + ")})}</span>
+          exact.locale??t("values.inheritedWorkspaceCoverage",{markets:generationMarkets.join(" + "),
+            locales:generationLocales.join(" + ")})}</span>
       <button className="admin-button admin-button--compact" onClick={()=>onOpenExisting(exact.element_key)} type="button">
         {t("reviewWorkbench.creation.openExisting")}</button></div></div>:null}
     {guidance?.suggestions.length?<section className="semantic-context-review__lineage"><h3>
       {t("reviewWorkbench.creation.suggestionsTitle")}</h3>{guidance.suggestions.map((item)=><div key={item.element_key}>
         <span>{item.display_text} · {kindLabel(item.element_kind,t)} · {item.applicability_state==="explicit_global"
-          ?t("reviewWorkbench.localeAuthority.dispositions.global"):item.locale??t("values.inheritedWorkspace",
-            {markets:generationMarkets.join(" + ")})}</span><button className="admin-button admin-button--compact"
+          ?t("reviewWorkbench.localeAuthority.dispositions.global"):item.locale??t("values.inheritedWorkspaceCoverage",
+            {markets:generationMarkets.join(" + "),locales:generationLocales.join(" + ")})}</span><button className="admin-button admin-button--compact"
           onClick={()=>onOpenExisting(item.element_key)} type="button">{t("reviewWorkbench.creation.openExisting")}</button></div>)}</section>:null}
     <div className="semantic-context-pack__drawer-actions"><button className="admin-button" disabled={Boolean(busy)}
       onClick={onCancel} type="button">{t("actions.cancel")}</button><button className="admin-button admin-button--primary"
@@ -997,7 +1008,24 @@ function MutationForm({ busy, children, danger, formRef, onCancel, onSubmit, sub
 }
 
 function CorrectionFields({ element, t }: { element: ReviewElement; t: ReturnType<typeof useTranslations> }) {
-  return <><label className="workspace-field"><span>{t("fields.displayText")}</span><input autoFocus className="workspace-control" defaultValue={element.display_text} maxLength={500} name="display_text" required/></label><label className="workspace-field"><span>{t("fields.canonicalKey")}</span><input className="workspace-control" defaultValue={element.canonical_key} maxLength={200} name="canonical_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*" required/></label><label className="workspace-field"><span>{t("fields.scope")}</span><input className="workspace-control" defaultValue={element.scope ?? ""} maxLength={200} name="scope"/></label><label className="workspace-field"><span>{t("fields.relation")}</span><select className="workspace-control" defaultValue={element.relation_kind ?? ""} name="relation_kind"><option value="">{t("values.noRelation")}</option>{["is_a", "part_of", "surface_of", "competes_with", "associated_with"].map((kind) => <option key={kind} value={kind}>{t(`relations.${kind}`)}</option>)}</select></label><label className="workspace-field"><span>{t("fields.relationTarget")}</span><input className="workspace-control" defaultValue={element.relation_target_key ?? ""} name="relation_target_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/></label><label className="workspace-field"><span>{t("reviewWorkbench.localeAuthority.disposition")}</span><select className="workspace-control" defaultValue="preserve" name="applicability"><option value="preserve">{t("actions.preserveApplicability")}</option><option value="workspace_inherited">{t("actions.inheritedApplicability",{markets:element.applicability.generation_markets.join(" + ")})}</option><option value="explicit_global">{t("actions.explicitGlobal")}</option>{element.applicability.generation_locales.map((locale)=><option key={locale} value={`locale:${locale}`}>{locale}</option>)}</select></label></>;
+  return <><label className="workspace-field"><span>{t("fields.displayText")}</span><input autoFocus className="workspace-control" defaultValue={element.display_text} maxLength={500} name="display_text" required/></label><label className="workspace-field"><span>{t("fields.canonicalKey")}</span><input className="workspace-control" defaultValue={element.canonical_key} maxLength={200} name="canonical_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*" required/></label><label className="workspace-field"><span>{t("fields.scope")}</span><input className="workspace-control" defaultValue={element.scope ?? ""} maxLength={200} name="scope"/></label><label className="workspace-field"><span>{t("fields.relation")}</span><select className="workspace-control" defaultValue={element.relation_kind ?? ""} name="relation_kind"><option value="">{t("values.noRelation")}</option>{["is_a", "part_of", "surface_of", "competes_with", "associated_with"].map((kind) => <option key={kind} value={kind}>{t(`relations.${kind}`)}</option>)}</select></label><label className="workspace-field"><span>{t("fields.relationTarget")}</span><input className="workspace-control" defaultValue={element.relation_target_key ?? ""} name="relation_target_key" pattern="[a-z0-9]+(?:[._:-][a-z0-9]+)*"/></label><OrdinaryApplicabilityField currentLabel={applicabilityLabel(element,t)}
+    generationLocales={element.applicability.generation_locales}
+    generationMarkets={element.applicability.generation_markets} mode="edit" t={t}/></>;
+}
+
+function OrdinaryApplicabilityField({currentLabel,generationLocales,generationMarkets,mode,t}:{
+  currentLabel?:string;generationLocales:string[];generationMarkets:string[];mode:"create"|"edit";
+  t:ReturnType<typeof useTranslations>}){
+  const options=signalSemanticContextOrdinaryApplicabilityOptionsV1({mode,permittedLocales:generationLocales});
+  return <label className="workspace-field"><span>{t("reviewWorkbench.ordinaryEditing.coverage")}</span>
+    <select className="workspace-control" defaultValue={mode==="edit"?"preserve":"workspace_inherited"}
+      name="applicability">{options.map((value)=><option key={value} value={value}>{value==="preserve"
+        ?t("reviewWorkbench.ordinaryEditing.keepCurrent",{coverage:currentLabel??""})
+        :value==="workspace_inherited"
+          ?t("reviewWorkbench.ordinaryEditing.inheritParent")
+          :t("reviewWorkbench.ordinaryEditing.onlyLocale",{locale:value.slice("locale:".length)})}</option>)}</select>
+    <small>{t("reviewWorkbench.ordinaryEditing.coverageHelp",{
+      markets:generationMarkets.join(" + "),locales:generationLocales.join(" + ")})}</small></label>;
 }
 
 function ReasonFields({ autoFocusRationale=false, t }: { autoFocusRationale?: boolean; t: ReturnType<typeof useTranslations> }) {

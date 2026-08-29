@@ -1037,7 +1037,75 @@ se proyecta como input manual, nunca como contexto suministrado al modelo. La cr
 nace aprobada y activa; su reversión usa archive/restore append-only.
 
 La aplicabilidad por defecto hereda el envelope inmutable de la generación con locale
-crudo nulo. Global explícito conserva la misma identidad de colisión nullable y un locale
-sellado participa en la key server-owned, de acuerdo con el collision contract de
-publicación. Guidance de duplicados es acotado y read-only: una colisión canónica exacta
-no escribe, mientras una coincidencia de display sólo sugiere abrir el elemento existente.
+crudo nulo. La creación ordinaria y su API cerrada sólo admiten esa herencia o un locale
+contenido en el parent sellado; no pueden originar `explicit_global`. Un locale sellado
+participa en la key server-owned, de acuerdo con el collision contract de publicación.
+Guidance de duplicados es acotado y read-only: una colisión canónica exacta no escribe,
+mientras una coincidencia de display sólo sugiere abrir el elemento existente.
+
+La edición ordinaria aplica la misma frontera: `save` sólo acepta `preserve`, herencia o
+un locale soportado. Una autoridad Global histórica válida continúa visible y se propaga
+byte-for-byte mediante `preserve`, undo, archive y restore, pero sólo el writer deliberado
+`decide-semantic-context-locale-authority` puede crear una nueva decisión Global con sus
+inputs explícitos de autoridad. Ocultar una opción en la interfaz no sustituye esta
+restricción en parser, contrato HTTP y writer.
+
+La migración forward-only 0106 restaura esa acción dedicada en la allowlist final que
+0105 reemplazó accidentalmente. No cambia el contrato ordinario: create/save continúan
+rechazando `explicit_global` antes de escribir, mientras preserve/undo/archive/restore
+conservan una autoridad Global histórica válida byte-for-byte.
+
+## Automatic trust-and-revert policy (69B.5I-E-A, local)
+
+Una corrida futura de Vocabulario y límites termina en un draft útil y poblado. El
+provider sólo propone estructura; no decide evidencia, autoridad, aprobación ni locale.
+El servidor evalúa cada candidato con
+`signal-semantic-context-automatic-disposition-v1`: contrato cerrado, evidence refs
+resueltas, sólo evidencia `supports`, relación tipada resoluble, ausencia de colisión y
+aplicabilidad válida. Si todo pasa, anexa un successor ready/approved. Si una regla
+falla, conserva el candidato como excepción pending con razones cerradas; nunca guarda
+un resultado parcial fuera de la misma transacción.
+
+Los ready ordinarios heredan el envelope inmutable de locales/mercados del padre con
+`locale=null`; no se copia el locale primario de la interfaz. Sólo una `locale_variant`
+sellada y contenida en el padre conserva locale explícito. El audit basis server-owned
+registra policy, actor autenticado, timestamp, transición, evidence digest y parent
+applicability digest. Confidence y prose del provider quedan explícitamente fuera de la
+autoridad. Ready sigue siendo draft editable: Guardar, Undo versionado, Archivar,
+Restaurar y Agregar elemento mantienen sus lineages append-only; publicar permanece una
+operación separada y fail-closed.
+
+### Cierre de trust boundary 69B.5I-E-A1
+
+La política automática no es una opción del append genérico. Sólo
+`processSignalSemanticContextProposalRunV1` puede activarla al cerrar el run exacto cuya
+respuesta privada ya está persistida y cuya reserva ya fue liquidada. PostgreSQL liga el
+run, request identity, response/validation digests, provider lineage, snapshots,
+operación, cohort, outcomes y eventos; exige un outcome por proposal y rechaza omitidos,
+extras o conteos manipulados.
+
+El backstop DB-owned recalcula schema, evidencia vigente, colisiones, parent
+applicability y grafo. Relaciones self, cíclicas o transitivamente inválidas se conservan
+como excepciones `relation_target_unresolved`; no convierten el append atómico en un
+resultado parcial. La taxonomía persistible es cerrada y operator-safe. Un fallo de
+schema o de autoridad padre invalida el run completo y no se disfraza como excepción.
+
+`ready` se reserva para current + active + approved. Pending es `exception`; rejected,
+merged y archived son `resolved`. Confidence conserva la representación numérica del
+digest V1 y sigue siendo no autoritativa; sólo la autoridad automática usa lineage nuevo.
+
+## Experiencia ordinaria trust-and-revert (69B.5I-E-D, local)
+
+`Vocabulario y límites` toma mercados e idiomas del envelope sellado del Brand OS y del
+plan de adquisición. Crear un elemento ordinario hereda esa cobertura por defecto con
+`locale=null`; un override simple sólo permite elegir uno de los locales soportados por
+el padre. Editar conserva la aplicabilidad vigente salvo cambio explícito. Las variantes
+de locale ya selladas y la autoridad Global explícita histórica permanecen intactas.
+
+Crear, Guardar, Deshacer, Archivar y Restaurar no solicitan al operador motivo cerrado,
+justificación en prosa ni una segunda confirmación. El servidor conserva AuthZ,
+Idempotency-Key, control optimista de versión, actor/tiempo, diff y sucesión append-only;
+Archive es reversible y nunca borra evidencia o historia. Esta simplificación no alcanza
+la corrida con provider, su flight card, la revisión de excepciones, la publicación ni
+serving. Tampoco rediseña `Revisión de descubrimiento`, que recibe contexto sólo después
+de un handoff gobernado y separado.

@@ -139,7 +139,7 @@ export const SIGNAL_SEMANTIC_CONTEXT_ORDINARY_COMMAND_V1="edit-semantic-context-
 export const SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1="create-semantic-context-element-v1" as const;
 export type SignalSemanticContextOrdinaryCommandActionV1="save"|"undo"|"archive"|"restore";
 export type SignalSemanticContextOrdinaryApplicabilityV1=
-  |{state:"preserve"|"workspace_inherited"|"explicit_global";locale:null}
+  |{state:"preserve"|"workspace_inherited";locale:null}
   |{state:"explicit_locale";locale:string};
 export type SignalSemanticContextOrdinaryValuesV1={display_text:string;canonical_key:string;scope:string|null;
   relation_kind:typeof SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS[number]|null;relation_target_key:string|null;
@@ -611,6 +611,8 @@ export async function createSignalSemanticContextElementV1(args:{queryable:Signa
   await assertNoActiveRun(args.queryable,generation.id);
   const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
   const rawLocale=values.applicability.state==="explicit_locale"?values.applicability.locale:null;
+  if(rawLocale!==null&&!new Set([generation.primary_locale,...generation.locale_variants]).has(rawLocale))
+    throw new SignalSemanticContextPackError("semantic_context_locale_invalid",422);
   const operationInput={contract_version:SIGNAL_SEMANTIC_CONTEXT_CREATE_COMMAND_V1,generation_key:generation.generation_key,
     values};const inputDigest=digestCanonicalJsonV2(operationInput);
   const replay=await loadSignalProductOperationReplayV1<{generation_key:string;element_key:string;element_version:number;
@@ -1078,7 +1080,7 @@ function normalizeCreationValues(value:SignalSemanticContextCreateValuesV1){
   validateCorrection({canonical_key,display_text,scope,relation_kind:value.relation_kind,
     relation_target_key:value.relation_target_key});
   if(scope!==null&&[...scope].length>200)throw new SignalSemanticContextPackError("semantic_context_scope_invalid",422);
-  if(!value.applicability||!["workspace_inherited","explicit_global","explicit_locale"].includes(value.applicability.state))
+  if(!value.applicability||!["workspace_inherited","explicit_locale"].includes(value.applicability.state))
     throw new SignalSemanticContextPackError("semantic_context_creation_applicability_invalid",422);
   if(value.applicability.state==="explicit_locale"){
     if(!value.applicability.locale||!/^[a-z]{2,3}(?:-[A-Z]{2})?$/u.test(value.applicability.locale))
@@ -1095,8 +1097,8 @@ function creationLocaleFields(args:{values:ReturnType<typeof normalizeCreationVa
     locale_decision_reason_code:null,locale_decision_rationale:null,locale_decision_basis_digest:null,
     locale_decision_input_digest:null,locale_decision_authority_snapshot:null,locale_decision_authority_digest:null,
     locale_decision_prestate_digest:null,locale_decision_poststate_digest:null};
-  const disposition=args.values.applicability.state==="explicit_global"?"global":"locale_specific";
-  const locale=args.values.applicability.state==="explicit_locale"?args.values.applicability.locale:null;
+  const disposition="locale_specific" as const;
+  const locale=args.values.applicability.locale;
   const rationale="Applicability selected by the authenticated operator during element creation.";
   const basis={contract_version:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONTRACT_V1,disposition,locale,
     reason:"locale_resolution",rationale};
@@ -1140,7 +1142,7 @@ function normalizeOrdinaryValues(value:SignalSemanticContextOrdinaryValuesV1|und
     relation_target_key:value.relation_target_key});
   if((value.relation_target_key&&(!/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u.test(value.relation_target_key)
       ||value.relation_target_key.length>200)))throw new SignalSemanticContextPackError("semantic_context_relation_invalid",422);
-  if(!(["preserve","workspace_inherited","explicit_global","explicit_locale"] as const)
+  if(!(["preserve","workspace_inherited","explicit_locale"] as const)
       .includes(value.applicability.state))throw new SignalSemanticContextPackError("semantic_context_applicability_invalid",422);
   if((value.applicability.state==="explicit_locale")!==Boolean(value.applicability.locale))
     throw new SignalSemanticContextPackError("semantic_context_applicability_invalid",422);
@@ -1159,12 +1161,12 @@ async function resolveOrdinaryApplicability(args:{queryable:SignalBrandPolicyQue
     locale_decision_reason_code:null,locale_decision_rationale:null,locale_decision_basis_digest:null,
     locale_decision_input_digest:null,locale_decision_authority_snapshot:null,locale_decision_authority_digest:null,
     locale_decision_prestate_digest:null,locale_decision_poststate_digest:null} satisfies OrdinaryLocaleFields};
-  const locale=args.selection.state==="explicit_locale"?args.selection.locale:null;
+  const locale=args.selection.locale;
   const allowed=new Set([args.generation.primary_locale,...args.generation.locale_variants]);
   if(locale!==null&&!allowed.has(locale))throw new SignalSemanticContextPackError("semantic_context_locale_invalid",422);
   const actorAuthority=await resolveAnnotationResolutionAuthority(args.queryable,args.currentAuthority,args.actorId);
   const basis={contract_version:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONTRACT_V1,
-    disposition:locale===null?"global" as const:"locale_specific" as const,locale,
+    disposition:"locale_specific" as const,locale,
     reason:"operator_correction" as const,
     rationale:"Applicability changed through the ordinary Semantic Context editor."};
   return{proposal:{...args.proposal,locale},localeFields:{locale,

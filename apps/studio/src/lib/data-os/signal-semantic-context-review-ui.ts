@@ -50,7 +50,7 @@ export type SignalSemanticContextAnnotationResolutionIntentUi = "resolve" | "rep
 export type SignalSemanticContextLocaleAuthorityDispositionUi = "global" | "locale_specific";
 export type SignalSemanticContextOrdinaryCommandActionUi = "save" | "undo" | "archive" | "restore";
 export type SignalSemanticContextOrdinaryApplicabilityUi =
-  | { state: "preserve" | "workspace_inherited" | "explicit_global"; locale: null }
+  | { state: "preserve" | "workspace_inherited"; locale: null }
   | { state: "explicit_locale"; locale: string };
 export type SignalSemanticContextOrdinaryEditValuesUi = {
   display_text: string;
@@ -62,6 +62,17 @@ export type SignalSemanticContextOrdinaryEditValuesUi = {
 };
 export type SignalSemanticContextCreateValuesUi=SignalSemanticContextOrdinaryEditValuesUi&{
   element_kind:string;applicability:Exclude<SignalSemanticContextOrdinaryApplicabilityUi,{state:"preserve"}>};
+
+export function signalSemanticContextOrdinaryApplicabilityOptionsV1(args:{
+  mode:"create"|"edit";permittedLocales:string[]
+}){
+  const locales=[...new Set(args.permittedLocales.map((locale)=>locale.trim()).filter(Boolean))];
+  return [
+    ...(args.mode==="edit"?["preserve" as const]:[]),
+    "workspace_inherited" as const,
+    ...locales.map((locale)=>`locale:${locale}` as const)
+  ];
+}
 
 const ORDINARY_RELATIONS = ["is_a","part_of","surface_of","competes_with","associated_with"] as const;
 const ORDINARY_KEY = /^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;
@@ -83,8 +94,8 @@ export function parseSignalSemanticContextOrdinaryEditFormV1(
       ||Boolean(relationKind)!==Boolean(relationTarget)
       ||(relationTarget!==null&&(!ORDINARY_KEY.test(relationTarget)||relationTarget.length>200)))return null;
   let applicability:SignalSemanticContextOrdinaryApplicabilityUi;
-  if(applicabilityValue==="preserve"||applicabilityValue==="workspace_inherited"
-      ||applicabilityValue==="explicit_global")applicability={state:applicabilityValue,locale:null};
+  if(applicabilityValue==="preserve"||applicabilityValue==="workspace_inherited")
+    applicability={state:applicabilityValue,locale:null};
   else if(applicabilityValue.startsWith("locale:")){
     const locale=applicabilityValue.slice("locale:".length);
     if(!permittedLocales.includes(locale))return null;

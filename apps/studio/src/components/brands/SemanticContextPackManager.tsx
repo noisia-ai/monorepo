@@ -48,6 +48,7 @@ type Generation = {
 
 type Readiness = {
   lifecycle_state: Lifecycle | "missing";
+  unavailable_reason: "acquisition_brief_required" | null;
   generation: Generation | null;
   open_draft: { generation_key: string; generation_version: number; counts: Counts } | null;
   counts: Counts;
@@ -143,6 +144,19 @@ type GenerationBoundRun = {
 
 type DrawerState = { mode: "generate" } | null;
 
+export function signalSemanticContextPackEmptyStateV1(args: {
+  initialLoading: boolean;
+  error: string | null;
+  hasGeneration: boolean;
+  unavailableReason: Readiness["unavailable_reason"] | null;
+}) {
+  if (args.initialLoading || args.hasGeneration) return null;
+  if (args.error) return "error" as const;
+  return args.unavailableReason === "acquisition_brief_required"
+    ? "uninitialized" as const
+    : "ready_to_prepare" as const;
+}
+
 const terminalRunStates = new Set<ProposalRun["status"]>(["completed", "failed", "stale", "dead_letter"]);
 
 function idempotencyKey(action: string) {
@@ -194,6 +208,12 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const preflightOpenerRef = useRef<HTMLButtonElement | null>(null);
   const activeGenerationKey = generation?.generation_key ?? null;
   const run = boundRun?.generationKey === activeGenerationKey ? boundRun.value : null;
+  const emptyState = signalSemanticContextPackEmptyStateV1({
+    initialLoading,
+    error,
+    hasGeneration: generation !== null,
+    unavailableReason: readiness?.unavailable_reason ?? null
+  });
 
   const load = useCallback(async () => {
     setError(null);
@@ -340,8 +360,9 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     <AdminResourceSection actions={sectionActions} className="semantic-context-pack" subtitle={t("subtitle")} title={t("title")}>
       {initialLoading ? <ContextSkeleton/> : null}
       {busy === "preflight" ? <div aria-busy="true" aria-live="polite" className="semantic-context-pack__preflight-loading" role="status"><CircleNotch aria-hidden className="icon--spin" size={18}/><span>{t("generation.loadingPreflight")}</span></div> : null}
-      {!initialLoading && error && !generation ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.retry")}</button>} body={error} icon={<Warning size={20}/>} title={t("errors.title")} tone="danger"/> : null}
-      {!initialLoading && !error && !generation ? <AdminFeedbackState actions={<button className="admin-button admin-button--primary" disabled={busy === "draft"} onClick={() => void createDraft()} type="button">{busy === "draft" ? t("actions.preparing") : t("actions.prepare")}</button>} body={t("empty.body")} icon={<TreeStructure size={21}/>} title={t("empty.title")}/> : null}
+      {emptyState === "error" ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.retry")}</button>} body={error!} icon={<Warning size={20}/>} title={t("errors.title")} tone="danger"/> : null}
+      {emptyState === "uninitialized" ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.refresh")}</button>} body={t("uninitialized.body")} icon={<TreeStructure size={21}/>} title={t("uninitialized.title")}/> : null}
+      {emptyState === "ready_to_prepare" ? <AdminFeedbackState actions={<button className="admin-button admin-button--primary" disabled={busy === "draft"} onClick={() => void createDraft()} type="button">{busy === "draft" ? t("actions.preparing") : t("actions.prepare")}</button>} body={t("empty.body")} icon={<TreeStructure size={21}/>} title={t("empty.title")}/> : null}
       {!initialLoading && generation ? <>
         <AdminSummaryStrip density="compact" items={[
           { label: t("summary.state"), value: t(`states.${generation.lifecycle_state}`), hint: t("summary.version", { version: generation.generation_version }) },

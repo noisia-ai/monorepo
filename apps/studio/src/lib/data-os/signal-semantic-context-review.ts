@@ -489,7 +489,36 @@ export async function loadSignalSemanticContextReviewSummaryV1(args: {
   actor: SignalWorkspaceUser;
 }) {
   assertReviewAuthority(args.workspace, args.actor);
-  const readiness = await loadSignalSemanticContextReadinessV1(args);
+  let readiness;
+  try {
+    readiness = await loadSignalSemanticContextReadinessV1(args);
+  } catch (error) {
+    if (!(error instanceof SignalSemanticContextPackError)
+      || error.code !== "acquisition_brief_required") throw error;
+    const history = await args.queryable.query<{ generation_count: number }>(`
+      SELECT count(*)::int generation_count
+      FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid`, [args.workspace.id]);
+    if (Number(history.rows[0]?.generation_count ?? -1) !== 0) throw error;
+    return {
+      contract_version: "signal-semantic-context-review-summary-v1" as const,
+      readiness: {
+        lifecycle_state: "missing" as const,
+        unavailable_reason: "acquisition_brief_required" as const,
+        generation: null,
+        open_draft: null,
+        counts: { pending: 0, approved: 0, rejected: 0, merged: 0 },
+        locale_coverage: { primary_locale: null, locale_variants: [], markets: [] },
+        drift_state: "missing" as const,
+        drift_reasons: [],
+        ready_for_context_aware_discovery: false,
+        limitations: ["acquisition_brief_required"]
+      },
+      generation: null,
+      latest_proposal_run: null,
+      authority: { source: "server_owned" as const, private_fields_withheld: true as const }
+    };
+  }
   const generationKey = readiness.open_draft?.generation_key ?? readiness.generation?.generation_key ?? null;
   const detail = generationKey ? await loadSignalSemanticContextGenerationV1({
     ...args,
@@ -499,7 +528,8 @@ export async function loadSignalSemanticContextReviewSummaryV1(args: {
   return {
     contract_version: "signal-semantic-context-review-summary-v1" as const,
     readiness: {
-      lifecycle_state: readiness.lifecycle_state,
+      lifecycle_state: readiness.lifecycle_state === "not_available" ? "missing" as const : readiness.lifecycle_state,
+      unavailable_reason: null,
       generation: readiness.generation ? publicOperatorGeneration(readiness.generation) : null,
       open_draft: readiness.open_draft,
       counts: readiness.counts,

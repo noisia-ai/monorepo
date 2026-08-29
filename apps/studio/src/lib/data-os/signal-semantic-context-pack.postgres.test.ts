@@ -95,7 +95,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(DB_URL);requireLocal(DB_URL);
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
-  let migration0102="";let migration0103="";let migration0104="";let migration0105="";
+  let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -110,6 +110,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0103_"))migration0103=sql;
       else if(file.startsWith("0104_"))migration0104=sql;
       else if(file.startsWith("0105_"))migration0105=sql;
+      else if(file.startsWith("0106_"))migration0106=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -135,6 +136,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0103,"0103 migration is present and must be applied after 0102");
   assert.ok(migration0104,"0104 migration is present and must be applied after 0103");
   assert.ok(migration0105,"0105 migration is present and must be applied after 0104");
+  assert.ok(migration0106,"0106 migration is present and must be applied after 0105");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -644,12 +646,14 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   try{await migration0103Client.query(migration0103);}finally{await migration0103Client.end();}
   const migration0104Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0104Client.connect();
   try{await migration0104Client.query(migration0104);}finally{await migration0104Client.end();}
-  await exerciseOrdinaryEditingV1();
   await exerciseSimpleCreationV1();
   await exerciseArchivedAccountingAdversarialV1();
   const migration0105Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0105Client.connect();
   try{await migration0105Client.query(migration0105);}finally{await migration0105Client.end();}
   await exerciseAutomaticDispositionV1();
+  const migration0106Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0106Client.connect();
+  try{await migration0106Client.query(migration0106);}finally{await migration0106Client.end();}
+  await exerciseOrdinaryEditingV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -1704,7 +1708,9 @@ async function exerciseDirectLocaleAuthorityMatrixV1(){
     {label:"wrong result",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
       disposition:"locale_specific",locale:"es-MX",mutation:{wrongResultCount:true},message:/result or draft seal is incomplete/u},
     {label:"wrong draft digest",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
-      disposition:"locale_specific",locale:"es-MX",mutation:{wrongStoredDraft:true},message:/result or draft seal is incomplete/u}
+      disposition:"locale_specific",locale:"es-MX",mutation:{wrongStoredDraft:true},message:/result or draft seal is incomplete/u},
+    {label:"malformed dedicated confirmation",inputKeys:[keys[0]!],successorKeys:[keys[0]!],
+      disposition:"locale_specific",locale:"es-MX",mutation:{wrongConfirmation:true},message:/operation input is invalid/u}
   ];
   for(const testCase of cases){
     await assert.rejects(attemptDirectLocaleAuthorityGraph(fixture,draft.generation_key,testCase),
@@ -1777,6 +1783,51 @@ async function exerciseOrdinaryEditingV1(){
     ]}));
   for(const key of ["ordinary-target","ordinary-archive","ordinary-relation"])
     await approveElement(fixture,draft.generation_key,key,`ordinary-edit-approve-${key}`);
+  await transaction((queryable)=>decideSignalSemanticContextLocaleAuthorityV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"ordinary-deliberate-global",
+    generationKey:draft.generation_key,elementKeys:["ordinary-archive"],disposition:"global",locale:null,
+    reason:"locale_resolution",rationale:"A deliberate locale-authority decision establishes Global scope.",
+    confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1}));
+  const deliberateGlobal=(await pool.query<{disposition:string;origin_kind:string;locale:string|null;
+    locale_decision_contract_version:string|null;locale_decision_disposition:string|null;
+    locale_decision_reason_code:string|null;locale_decision_rationale:string|null;
+    locale_decision_basis_digest:string|null;locale_decision_input_digest:string|null;
+    locale_decision_authority_digest:string|null;locale_decision_prestate_digest:string|null;
+    locale_decision_poststate_digest:string|null;action:string;operation_status:string;
+    confirmation:string|null;annotation_count:number;event_count:number}>(`SELECT element.disposition,
+      element.origin_kind,element.locale,element.locale_decision_contract_version,
+      element.locale_decision_disposition,element.locale_decision_reason_code,
+      element.locale_decision_rationale,element.locale_decision_basis_digest,
+      element.locale_decision_input_digest,element.locale_decision_authority_digest,
+      element.locale_decision_prestate_digest,element.locale_decision_poststate_digest,
+      operation.action,operation.status operation_status,
+      operation.semantic_context_decision_input->>'confirmation' confirmation,
+      (SELECT count(*)::int FROM signal_semantic_context_review_annotations annotation
+        WHERE annotation.operation_id=operation.id AND annotation.subject_element_id=element.id
+          AND annotation.state='resolved' AND annotation.resolution='global') annotation_count,
+      (SELECT count(*)::int FROM signal_semantic_context_events event WHERE event.operation_id=operation.id
+        AND event.element_id=element.id AND event.event_kind='locale_authority_decided') event_count
+    FROM signal_semantic_context_element_versions element
+    JOIN signal_governance_control_operations operation ON operation.id=element.operation_id
+    WHERE element.workspace_id=$1::uuid AND element.generation_id=(SELECT id
+      FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2)
+      AND element.element_key='ordinary-archive' AND NOT EXISTS(SELECT 1
+        FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=element.id)`,
+  [fixture.workspace.id,draft.generation_key])).rows[0]!;
+  assert.equal(deliberateGlobal.disposition,"pending");assert.equal(deliberateGlobal.origin_kind,"operator_correction");
+  assert.equal(deliberateGlobal.locale,null);assert.equal(deliberateGlobal.locale_decision_disposition,"global");
+  assert.equal(deliberateGlobal.locale_decision_contract_version,"signal-semantic-context-locale-decision-v1");
+  assert.equal(deliberateGlobal.locale_decision_reason_code,"locale_resolution");
+  assert.equal(deliberateGlobal.locale_decision_rationale,
+    "A deliberate locale-authority decision establishes Global scope.");
+  for(const field of ["locale_decision_basis_digest","locale_decision_input_digest",
+    "locale_decision_authority_digest","locale_decision_prestate_digest","locale_decision_poststate_digest"] as const)
+    assert.match(deliberateGlobal[field]??"",/^sha256:[0-9a-f]{64}$/u,`${field} is sealed`);
+  assert.equal(deliberateGlobal.action,"decide-semantic-context-locale-authority");
+  assert.equal(deliberateGlobal.operation_status,"completed");
+  assert.equal(deliberateGlobal.confirmation,SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1);
+  assert.equal(deliberateGlobal.annotation_count,1);assert.equal(deliberateGlobal.event_count,1);
+  await approveElement(fixture,draft.generation_key,"ordinary-archive","ordinary-deliberate-global-approval");
   const immutableHistoryBefore=await fingerprint(`SELECT element.element_key,element.element_version,
     element.element_digest,element.source_refs_digest,link.source_type,link.source_id,link.relation_type
     FROM signal_semantic_context_element_versions element
@@ -1787,7 +1838,7 @@ async function exerciseOrdinaryEditingV1(){
   const detail=async(key:string)=>transaction((queryable)=>loadSignalSemanticContextReviewDetailV1({queryable,
     workspace:fixture.workspace,actor:fixture.actor,generationKey:draft.generation_key,elementKey:key}));
   const values=(element:Awaited<ReturnType<typeof detail>>["element"],display=element.display_text,
-    applicability:{state:"preserve"|"workspace_inherited"|"explicit_global"|"explicit_locale";locale:string|null}
+    applicability:{state:"preserve"|"workspace_inherited"|"explicit_locale";locale:string|null}
       ={state:"preserve",locale:null}):SignalSemanticContextOrdinaryValuesV1=>({display_text:display,canonical_key:element.canonical_key,scope:element.scope,
         relation_kind:element.relation_kind as "is_a"|"part_of"|"surface_of"|"competes_with"|"associated_with"|null,
         relation_target_key:element.relation_target_key,applicability:applicability.state==="explicit_locale"
@@ -1818,57 +1869,20 @@ async function exerciseOrdinaryEditingV1(){
     elementKey:"ordinary-target",expectedVersion:original.element.element_version,stateToken:original.element.state_token,
     action:"save",values:values(original.element,"Stale edit")})),/semantic_context_ordinary_stale/u);
   const afterSave=await detail("ordinary-target");
-  const global=await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
-    actor:fixture.actor,idempotencyKey:"ordinary-save-global",generationKey:draft.generation_key,
-    elementKey:"ordinary-target",expectedVersion:afterSave.element.element_version,stateToken:afterSave.element.state_token,
-    action:"save",values:values(afterSave.element,afterSave.element.display_text,{state:"explicit_global",locale:null})}));
-  assert.equal(global.changed,true);
-  const globalRow=(await pool.query<{ordinary_command_basis:{diff:Array<{field:string}>}}>(`SELECT ordinary_command_basis
-    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
-      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-target'
-      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,global.element_version])).rows[0]!;
-  assert.ok(globalRow.ordinary_command_basis.diff.some((entry)=>entry.field==="applicability"),
-    "inherited to explicit-global is sealed in the exact TypeScript/PostgreSQL audit diff");
-  const globalDetail=await detail("ordinary-target");
-  assert.ok(globalDetail.element.undo_target_version);
-  const globalLineageBefore=await fingerprint(`SELECT locale,locale_decision_contract_version,
-    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,
-    locale_decision_basis_digest,locale_decision_input_digest,locale_decision_authority_snapshot,
-    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
-    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
-      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-target'
-      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,globalDetail.element.element_version]);
-  await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
-    actor:fixture.actor,idempotencyKey:"ordinary-global-preserve",generationKey:draft.generation_key,
-    elementKey:"ordinary-target",expectedVersion:globalDetail.element.element_version,stateToken:globalDetail.element.state_token,
-    action:"save",values:values(globalDetail.element,"Global authority preserved")}));
-  const preservedGlobal=await detail("ordinary-target");
-  const globalLineageAfter=await fingerprint(`SELECT locale,locale_decision_contract_version,
-    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,
-    locale_decision_basis_digest,locale_decision_input_digest,locale_decision_authority_snapshot,
-    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
-    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
-      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-target'
-      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,preservedGlobal.element.element_version]);
-  assert.equal(globalLineageAfter,globalLineageBefore,"preserve copies all explicit-global locale authority byte-for-byte");
-  const undoGlobal=await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
-    actor:fixture.actor,idempotencyKey:"ordinary-undo-global-content",generationKey:draft.generation_key,
-    elementKey:"ordinary-target",expectedVersion:preservedGlobal.element.element_version,
-    stateToken:preservedGlobal.element.state_token,action:"undo",targetVersion:preservedGlobal.element.undo_target_version!}));
-  const globalRestored=await detail("ordinary-target");
-  assert.equal(globalRestored.element.applicability.effective_state,"explicit_global");
-  await assert.rejects(transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
-    actor:fixture.actor,idempotencyKey:"ordinary-undo-arbitrary-old",generationKey:draft.generation_key,
-    elementKey:"ordinary-target",expectedVersion:globalRestored.element.element_version,
-    stateToken:globalRestored.element.state_token,action:"undo",targetVersion:afterSave.element.element_version})),
-  /semantic_context_ordinary_target_stale/u,"browser cannot select an arbitrary older lineage version");
-  const inheritedCommand=await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,
-    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"ordinary-save-inherited",
-    generationKey:draft.generation_key,elementKey:"ordinary-target",expectedVersion:globalRestored.element.element_version,
-    stateToken:globalRestored.element.state_token,action:"save",
-    values:values(globalRestored.element,globalRestored.element.display_text,{state:"workspace_inherited",locale:null})}));
-  assert.equal(undoGlobal.disposition,"approved");assert.equal(inheritedCommand.disposition,"approved");
-  const inheritedAgain=await detail("ordinary-target");
+  const versionsBeforeCraftedGlobal=await scalar(`SELECT count(*)::int count FROM
+    signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2)`,[fixture.workspace.id,draft.generation_key]);
+  await assert.rejects(transaction((queryable)=>editSignalSemanticContextElementV1({queryable,
+    workspace:fixture.workspace,actor:fixture.actor,idempotencyKey:"ordinary-save-global-forged",
+    generationKey:draft.generation_key,elementKey:"ordinary-target",
+    expectedVersion:afterSave.element.element_version,stateToken:afterSave.element.state_token,action:"save",
+    values:{...values(afterSave.element),applicability:{state:"explicit_global",locale:null}} as never})),
+  /semantic_context_applicability_invalid/u);
+  assert.equal(await scalar(`SELECT count(*)::int count FROM signal_semantic_context_element_versions
+    WHERE generation_id=(SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid
+      AND generation_key=$2)`,[fixture.workspace.id,draft.generation_key]),versionsBeforeCraftedGlobal,
+  "a crafted ordinary Global save writes no successor");
+  const inheritedAgain=afterSave;
   assert.equal(inheritedAgain.element.applicability.effective_state,"workspace_inherited");
   await assert.rejects(transaction((queryable)=>editSignalSemanticContextElementV1({queryable,
     workspace:fixture.otherWorkspace,actor:fixture.actor,idempotencyKey:"ordinary-cross-workspace",
@@ -1900,11 +1914,27 @@ async function exerciseOrdinaryEditingV1(){
     elementKey:"ordinary-target",expectedVersion:relationTargetCurrent.element.element_version,
     stateToken:relationTargetCurrent.element.state_token,action:"archive"})),/semantic_context_archive_relation_target/u);
   const archiveOriginal=await detail("ordinary-archive");
+  assert.equal(archiveOriginal.element.applicability.effective_state,"explicit_global");
+  const globalAuthorityBefore=await fingerprint(`SELECT locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,
+    locale_decision_basis_digest,locale_decision_input_digest,locale_decision_authority_snapshot,
+    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-archive'
+      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,archiveOriginal.element.element_version]);
   await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
     actor:fixture.actor,idempotencyKey:"ordinary-archive-save",generationKey:draft.generation_key,
     elementKey:"ordinary-archive",expectedVersion:archiveOriginal.element.element_version,
     stateToken:archiveOriginal.element.state_token,action:"save",values:values(archiveOriginal.element,"Edited archive")}));
   const archiveEdited=await detail("ordinary-archive");
+  assert.equal(await fingerprint(`SELECT locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,
+    locale_decision_basis_digest,locale_decision_input_digest,locale_decision_authority_snapshot,
+    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-archive'
+      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,archiveEdited.element.element_version]),
+  globalAuthorityBefore,"ordinary preserve copies deliberate Global lineage byte-for-byte");
   await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
     actor:fixture.actor,idempotencyKey:"ordinary-archive-command",generationKey:draft.generation_key,
     elementKey:"ordinary-archive",expectedVersion:archiveEdited.element.element_version,
@@ -1935,20 +1965,32 @@ async function exerciseOrdinaryEditingV1(){
     elementKey:"ordinary-archive",expectedVersion:archived.element.element_version,
     stateToken:archived.element.state_token,action:"restore"}));
   const restored=await detail("ordinary-archive");assert.equal(restored.element.lifecycle_state,"active");
+  assert.equal(restored.element.applicability.effective_state,"explicit_global");
+  assert.equal(await fingerprint(`SELECT locale,locale_decision_contract_version,
+    locale_decision_disposition,locale_decision_locale,locale_decision_reason_code,locale_decision_rationale,
+    locale_decision_basis_digest,locale_decision_input_digest,locale_decision_authority_snapshot,
+    locale_decision_authority_digest,locale_decision_prestate_digest,locale_decision_poststate_digest
+    FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid AND generation_key=$2) AND element_key='ordinary-archive'
+      AND element_version=$3`,[fixture.workspace.id,draft.generation_key,restored.element.element_version]),
+  globalAuthorityBefore,"archive and restore propagate deliberate Global lineage byte-for-byte");
   assert.equal(restored.element.undo_target_version,archiveOriginal.element.element_version,
     "archive to restore exposes the last active approved semantically distinct target, not version minus one");
   await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
     actor:fixture.actor,idempotencyKey:"ordinary-restore-undo",generationKey:draft.generation_key,
     elementKey:"ordinary-archive",expectedVersion:restored.element.element_version,
     stateToken:restored.element.state_token,action:"undo",targetVersion:restored.element.undo_target_version!}));
-  assert.equal((await detail("ordinary-archive")).element.display_text,"Original archive");
+  const undoneArchive=await detail("ordinary-archive");
+  assert.equal(undoneArchive.element.display_text,"Original archive");
+  assert.equal(undoneArchive.element.applicability.effective_state,"explicit_global",
+    "undo restores the exact historical Global authority rather than minting a new decision");
   const targetForAdversarial=await detail("ordinary-target");
   await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
-    actor:fixture.actor,idempotencyKey:"ordinary-adversarial-global",generationKey:draft.generation_key,
+    actor:fixture.actor,idempotencyKey:"ordinary-adversarial-locale",generationKey:draft.generation_key,
     elementKey:"ordinary-target",expectedVersion:targetForAdversarial.element.element_version,
     stateToken:targetForAdversarial.element.state_token,action:"save",
     values:values(targetForAdversarial.element,targetForAdversarial.element.display_text,
-      {state:"explicit_global",locale:null})}));
+      {state:"explicit_locale",locale:"es-MX"})}));
   const safeIntegers=await pool.query<{missing:number|null;word:number|null;huge:number|null}>(`SELECT
     signal_semantic_context_safe_positive_int_v1('null'::jsonb) missing,
     signal_semantic_context_safe_positive_int_v1('"word"'::jsonb) word,
@@ -2084,8 +2126,17 @@ async function exerciseSimpleCreationV1(){
     (SELECT count(*)::int FROM signal_governance_control_operations WHERE workspace_id=$1::uuid) operations,
     (SELECT count(*)::int FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid) elements,
     (SELECT count(*)::int FROM signal_semantic_context_events WHERE workspace_id=$1::uuid) events`,[fixture.workspace.id]);
-  const collision=await create("simple-create-collision",values({display_text:"Collision is not written",
-    applicability:{state:"explicit_global",locale:null}}));
+  await assert.rejects(create("simple-create-global-forged",{
+    ...values({display_text:"Crafted Global is rejected"}),
+    applicability:{state:"explicit_global",locale:null}} as never),
+  /semantic_context_creation_applicability_invalid/u);
+  assert.deepEqual((await pool.query<{operations:number;elements:number;events:number}>(`SELECT
+    (SELECT count(*)::int FROM signal_governance_control_operations WHERE workspace_id=$1::uuid) operations,
+    (SELECT count(*)::int FROM signal_semantic_context_element_versions WHERE workspace_id=$1::uuid) elements,
+    (SELECT count(*)::int FROM signal_semantic_context_events WHERE workspace_id=$1::uuid) events`,
+  [fixture.workspace.id])).rows,semanticWritesBeforeCollision.rows,
+  "crafted ordinary Global creation is rejected before any durable write");
+  const collision=await create("simple-create-collision",values({display_text:"Collision is not written"}));
   assert.equal(collision.collision,true);assert.equal(collision.element_key,inherited.element_key);
   assert.equal(collision.element_version,2,"collision points to the current real version");
   assert.deepEqual((await pool.query<{operations:number;elements:number;events:number}>(`SELECT
@@ -2094,15 +2145,15 @@ async function exerciseSimpleCreationV1(){
     (SELECT count(*)::int FROM signal_semantic_context_events WHERE workspace_id=$1::uuid) events`,
   [fixture.workspace.id])).rows,semanticWritesBeforeCollision.rows,"exact active canonical collision writes nothing");
 
-  const global=await create("simple-create-global",values({canonical_key:"operator-global",
-    display_text:"Explicit global operator value",applicability:{state:"explicit_global",locale:null}}));
+  const global=await create("simple-create-archivable",values({canonical_key:"operator-archivable",
+    display_text:"Inherited operator value used for reversible lifecycle checks"}));
   const es=await create("simple-create-es",values({canonical_key:"operator-locale-shared",
     display_text:"Localized operator value",applicability:{state:"explicit_locale",locale:"es-MX"}}));
   const en=await create("simple-create-en",values({canonical_key:"operator-locale-shared",
     display_text:"Localized operator value",applicability:{state:"explicit_locale",locale:"en-US"}}));
   assert.notEqual(es.element_key,en.element_key,"raw locale participates in deterministic key identity");
   assert.match(es.element_key,/\.es-mx$/u);assert.match(en.element_key,/\.en-us$/u);
-  assert.equal((await detail(global.element_key)).element.applicability.effective_state,"explicit_global");
+  assert.equal((await detail(global.element_key)).element.applicability.effective_state,"workspace_inherited");
   assert.equal((await detail(es.element_key)).element.applicability.effective_state,"explicit_locale");
   const variant=await create("simple-create-variant",values({element_kind:"locale_variant",
     canonical_key:"operator-variant",display_text:"Qué onda Alexa",
@@ -2221,12 +2272,14 @@ async function exerciseSimpleCreationV1(){
     generationKey:draft.generation_key,elementKey:inherited.element_key,
     expectedVersion:relationTargetDetail.element.element_version,stateToken:relationTargetDetail.element.state_token,
     action:"archive"})),/semantic_context_archive_relation_target/u);
+  const globalBeforeArchive=await detail(global.element_key);
   const historyBefore=await fingerprint(`SELECT element_version,element_digest,source_refs_digest,
     link.source_type,link.source_id,link.relation_type FROM signal_semantic_context_element_versions element
     JOIN analysis_evidence_links link ON link.evidence_group_id=element.evidence_group_id
     WHERE element.generation_id=(SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid
-      AND generation_key=$2) AND element.element_key=$3 ORDER BY element_version,link.position`,
-  [fixture.workspace.id,draft.generation_key,global.element_key]);
+      AND generation_key=$2) AND element.element_key=$3 AND element_version<=$4
+    ORDER BY element_version,link.position`,
+  [fixture.workspace.id,draft.generation_key,global.element_key,globalBeforeArchive.element.element_version]);
   const globalOperationId=(await pool.query<{operation_id:string}>(
     `SELECT operation_id::text FROM signal_semantic_context_element_versions WHERE generation_id=(SELECT id
       FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid AND generation_key=$2)
@@ -2234,7 +2287,7 @@ async function exerciseSimpleCreationV1(){
   const operationBefore=await fingerprint(`SELECT action,request_digest,idempotency_key,status,result,
     semantic_context_decision_input,semantic_context_decision_input_digest,actor_user_id,completed_at
     FROM signal_governance_control_operations WHERE id=$1::uuid`,[globalOperationId]);
-  const current=await detail(global.element_key);
+  const current=globalBeforeArchive;
   await transaction((queryable)=>editSignalSemanticContextElementV1({queryable,workspace:fixture.workspace,
     actor:fixture.actor,idempotencyKey:"simple-create-archive",generationKey:draft.generation_key,
     elementKey:global.element_key,expectedVersion:current.element.element_version,stateToken:current.element.state_token,
@@ -2265,13 +2318,13 @@ async function exerciseSimpleCreationV1(){
     elementKey:global.element_key,expectedVersion:archived.element.element_version,stateToken:archived.element.state_token,
     action:"restore"}));
   const restored=await detail(global.element_key);assert.equal(restored.element.lifecycle_state,"active");
-  assert.equal(restored.element.applicability.effective_state,"explicit_global");
+  assert.equal(restored.element.applicability.effective_state,"workspace_inherited");
   assert.equal(await fingerprint(`SELECT element_version,element_digest,source_refs_digest,
     link.source_type,link.source_id,link.relation_type FROM signal_semantic_context_element_versions element
     JOIN analysis_evidence_links link ON link.evidence_group_id=element.evidence_group_id
     WHERE element.generation_id=(SELECT id FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid
-      AND generation_key=$2) AND element.element_key=$3 AND element_version<=2 ORDER BY element_version,link.position`,
-  [fixture.workspace.id,draft.generation_key,global.element_key]),historyBefore,
+      AND generation_key=$2) AND element.element_key=$3 AND element_version<=$4 ORDER BY element_version,link.position`,
+  [fixture.workspace.id,draft.generation_key,global.element_key,globalBeforeArchive.element.element_version]),historyBefore,
   "archive/restore preserves created history and operator evidence byte-for-byte");
   assert.equal(await fingerprint(`SELECT action,request_digest,idempotency_key,status,result,
     semantic_context_decision_input,semantic_context_decision_input_digest,actor_user_id,completed_at
@@ -3470,7 +3523,8 @@ async function directDecisionState(workspaceId:string,generationKey:string){
 const shortDirectDigest=(value:string)=>`${value.slice(0,15)}…${value.slice(-8)}`;
 
 type DirectLocaleGraphMutation={omitEvent?:boolean;extraEvent?:boolean;omitAnnotation?:boolean;
-  extraAnnotation?:boolean;wrongEventPrevious?:boolean;wrongResultCount?:boolean;wrongStoredDraft?:boolean};
+  extraAnnotation?:boolean;wrongEventPrevious?:boolean;wrongResultCount?:boolean;wrongStoredDraft?:boolean;
+  wrongConfirmation?:boolean};
 
 async function attemptDirectLocaleAuthorityGraph(fixture:Awaited<ReturnType<typeof seedFixture>>,
   generationKey:string,args:{inputKeys:string[];successorKeys:string[];disposition:"global"|"locale_specific";
@@ -3488,7 +3542,8 @@ async function attemptDirectLocaleAuthorityGraph(fixture:Awaited<ReturnType<type
       disposition:args.disposition,locale:args.locale,reason:"locale_resolution" as const,
       rationale:"Direct SQL control seals one explicit locale authority basis."};
     const input={...basis,generation_key:generationKey,element_keys:keys,
-      confirmation:SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1};
+      confirmation:args.mutation?.wrongConfirmation?"invalid-confirmation":
+        SIGNAL_SEMANTIC_CONTEXT_LOCALE_DECISION_CONFIRMATION_V1};
     const inputDigest=digestCanonicalJsonV2(input);
     const operation=(await client.query<{id:string}>(`INSERT INTO signal_governance_control_operations(
       workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
