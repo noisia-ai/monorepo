@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION } from "@noisia/query-engine";
 
 const startSchema=z.object({
   expected_envelope_digest:z.string().regex(/^sha256:[0-9a-f]{64}$/u),
@@ -8,6 +9,18 @@ const startSchema=z.object({
 
 export function parseSignalTopicEvaluationStartRequestV1(value:unknown){
   const parsed=startSchema.parse(value);
+  return{...parsed,hard_cap_micro_usd:BigInt(parsed.hard_cap_micro_usd)};
+}
+
+const successorStartSchema=z.object({
+  predecessor_run_key:z.string().trim().min(1).max(200),
+  expected_envelope_digest:z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+  confirmation:z.literal(SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION),
+  hard_cap_micro_usd:z.string().regex(/^[1-9][0-9]*$/u).max(18)
+}).strict();
+
+export function parseSignalTopicEvaluationSuccessorStartRequestV1(value:unknown){
+  const parsed=successorStartSchema.parse(value);
   return{...parsed,hard_cap_micro_usd:BigInt(parsed.hard_cap_micro_usd)};
 }
 

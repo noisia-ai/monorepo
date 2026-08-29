@@ -18,6 +18,7 @@ import {
   prepareSignalSemanticContextProposalInputV1,
   processSignalSemanticContextProposalRunV1,
   createSignalTopicEvaluationRunV1,
+  createSignalTopicEvaluationSuccessorRunV1,
   loadSignalTopicEvaluationManagementPreflightV1,
   loadSignalTopicEvaluationManagementV1,
   prepareSignalTopicEvaluationDryRunV1,
@@ -104,7 +105,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
-  let migration0107="";let migration0108="";let migration0109="";
+  let migration0107="";let migration0108="";let migration0109="";let migration0110="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -123,6 +124,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0107_"))migration0107=sql;
       else if(file.startsWith("0108_"))migration0108=sql;
       else if(file.startsWith("0109_"))migration0109=sql;
+      else if(file.startsWith("0110_"))migration0110=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -152,6 +154,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0107,"0107 migration is present and must be applied after 0106");
   assert.ok(migration0108,"0108 migration is present and must be applied after 0107");
   assert.ok(migration0109,"0109 migration is present and must be applied after 0108");
+  assert.ok(migration0110,"0110 migration is present and must be applied after 0109");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -682,6 +685,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   try{await migration0109Client.query(migration0109);}finally{await migration0109Client.end();}
   await exerciseTopicEvaluationProviderBoundaryV1();
   await exerciseTopicEvaluationCandidateReviewV1();
+  const migration0110Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0110Client.connect();
+  try{await migration0110Client.query(migration0110);}finally{await migration0110Client.end();}
+  await exerciseTopicEvaluationSuccessorAuthorityV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -2659,6 +2665,206 @@ async function exerciseTopicEvaluationProviderBoundaryV1(){
     .run?.provider_outcome_class,"ambiguous_after_send");
   assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
     "provider boundary classification does not adopt Topics, publish or mutate serving state");
+}
+
+async function exerciseTopicEvaluationSuccessorAuthorityV1(){
+  const predecessor=(await pool.query<{id:string;workspace_id:string;actor_id:string;run_key:string;
+    envelope_digest:string;provider_request_identity:string}>(`SELECT run.id::text,run.workspace_id::text,
+    run.requested_by_user_id::text actor_id,run.run_key,run.envelope_digest,run.provider_request_identity
+    FROM signal_topic_evaluation_runs run WHERE run.status='outcome_unknown'
+      AND run.error_code='topic_evaluation_provider_ambiguous_after_send'
+    ORDER BY run.queued_at DESC LIMIT 1`)).rows[0]!;
+  assert.ok(predecessor,"0110 has one immutable ambiguous-after-send predecessor");
+  const configuration={enabled:true,credential_configured:true,pricing_configured:true,
+    execution_configuration_complete:true,provider:"anthropic" as const,model:"fixture",
+    pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+    input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+    hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000};
+  const actor={id:predecessor.actor_id,user_type:"noisia_internal" as const};
+  const historicalBefore=(await pool.query<{value:string}>(`SELECT row_to_json(snapshot)::text value FROM(
+    SELECT run.*,reservation.status reservation_status,reservation.actual_micro_usd,
+      reservation.settled_at,outbox.status outbox_status,outbox.dispatch_count,outbox.error_code outbox_error,
+      (SELECT jsonb_agg(row_to_json(evidence) ORDER BY evidence.evidence_ref_digest)::text
+        FROM signal_topic_evaluation_input_evidence evidence WHERE evidence.run_id=run.id) evidence,
+      (SELECT jsonb_agg(row_to_json(event) ORDER BY event.event_index)::text
+        FROM signal_topic_evaluation_events event WHERE event.run_id=run.id) events
+    FROM signal_topic_evaluation_runs run
+    JOIN signal_topic_evaluation_reservations reservation ON reservation.run_id=run.id
+    JOIN signal_topic_evaluation_outbox outbox ON outbox.run_id=run.id
+    WHERE run.id=$1::uuid) snapshot`,[predecessor.id])).rows[0]!.value;
+  const counts=async()=> (await pool.query<{runs:number;operations:number;reservations:number;outboxes:number;
+    events:number;dispatches:number;provider_calls:number}>(`SELECT
+      count(*)::int runs,
+      (SELECT count(*)::int FROM signal_topic_evaluation_successor_operations) operations,
+      (SELECT count(*)::int FROM signal_topic_evaluation_reservations) reservations,
+      (SELECT count(*)::int FROM signal_topic_evaluation_outbox) outboxes,
+      (SELECT count(*)::int FROM signal_topic_evaluation_events) events,
+      (SELECT COALESCE(sum(dispatch_count),0)::int FROM signal_topic_evaluation_outbox) dispatches,
+      COALESCE(sum(provider_call_count),0)::int provider_calls FROM signal_topic_evaluation_runs`)).rows[0]!;
+  const before=await counts();
+
+  await assert.rejects(createSignalTopicEvaluationRunV1({pool,workspace_id:predecessor.workspace_id,actor,
+    idempotency_key:"topic-eval-generic-duplicate",expected_envelope_digest:predecessor.envelope_digest,
+    confirmation:"RUN_ONE_TOPIC_EVALUATION",hard_cap_micro_usd:1_000_000n,configuration}),
+  /topic_evaluation_duplicate_envelope/u,"ordinary root start returns a typed duplicate-envelope error");
+  assert.deepEqual(await counts(),before,"ordinary duplicate writes no run, operation, reservation, outbox or event");
+  const successorCommand={pool,workspace_id:predecessor.workspace_id,actor,
+    predecessor_run_key:predecessor.run_key,expected_envelope_digest:predecessor.envelope_digest,
+    confirmation:"AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR",hard_cap_micro_usd:1_000_000n,configuration};
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    idempotency_key:"topic-eval-successor-unconfirmed",confirmation:"RUN_ONE_TOPIC_EVALUATION"}),
+  /topic_evaluation_successor_confirmation_required/u);
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    idempotency_key:"topic-eval-successor-stale",expected_envelope_digest:digest("stale-envelope")}),
+  /topic_evaluation_envelope_drift/u);
+  const nonAmbiguous=(await pool.query<{run_key:string}>(`SELECT run_key FROM signal_topic_evaluation_runs
+    WHERE workspace_id=$1::uuid AND status='completed' ORDER BY queued_at LIMIT 1`,
+  [predecessor.workspace_id])).rows[0]!;
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    idempotency_key:"topic-eval-successor-non-ambiguous",predecessor_run_key:nonAmbiguous.run_key}),
+  /topic_evaluation_successor_predecessor_ineligible/u);
+  const otherWorkspace=(await pool.query<{id:string}>(`SELECT id::text FROM signal_workspaces
+    WHERE id<>$1::uuid ORDER BY id LIMIT 1`,[predecessor.workspace_id])).rows[0]!;
+  assert.ok(otherWorkspace);
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    workspace_id:otherWorkspace.id,idempotency_key:"topic-eval-successor-cross-workspace"}),
+  /topic_evaluation_successor_predecessor_ineligible/u);
+  assert.deepEqual(await counts(),before,"all pre-authority adverse paths roll back with zero dispatch");
+
+  await assert.rejects((async()=>{
+    const direct=await pool.connect();
+    const operationId=randomUUID(),runId=randomUUID(),idempotencyKey="topic-eval-successor-incomplete";
+    const input={contract_version:"signal-topic-evaluation-successor-input-v1",
+      predecessor_run_key:predecessor.run_key,expected_envelope_digest:predecessor.envelope_digest,
+      confirmation:"AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR",hard_cap_micro_usd:"1000000"};
+    const inputDigest=digestCanonicalJsonV2(input);
+    const authorityDigest=digestCanonicalJsonV2({
+      contract_version:"signal-topic-evaluation-successor-authority-v1",
+      workspace_id:predecessor.workspace_id,actor_user_id:predecessor.actor_id,idempotency_key:idempotencyKey,
+      predecessor_run_key:predecessor.run_key,
+      predecessor_request_identity:predecessor.provider_request_identity,input_digest:inputDigest});
+    const requestDigest=digestCanonicalJsonV2({
+      contract_version:"signal-topic-evaluation-successor-request-v1",
+      predecessor_run_key:predecessor.run_key,
+      predecessor_request_identity:predecessor.provider_request_identity,
+      envelope_digest:predecessor.envelope_digest,operation_authority_digest:authorityDigest,
+      provider:"anthropic",model:"fixture",pricing_version:"fixture-pricing",
+      max_input_tokens:20_000,max_output_tokens:4_096,hard_cap_micro_usd:"1000000"});
+    const requestIdentity=digestCanonicalJsonV2({
+      contract_version:"signal-topic-evaluation-provider-request-v2",request_digest:requestDigest});
+    const runKey=`topic-evaluation-${requestIdentity.slice(7,23)}`;
+    const result={contract_version:"signal-topic-evaluation-successor-result-v1",
+      predecessor_run_key:predecessor.run_key,run_key:runKey,attempt_ordinal:2,
+      status:"queued",provider_call_count:0};
+    try{
+      await direct.query("BEGIN");
+      await direct.query(`INSERT INTO signal_topic_evaluation_successor_operations(
+        id,workspace_id,predecessor_run_id,actor_user_id,idempotency_key,action,confirmation,
+        expected_envelope_digest,hard_cap_micro_usd,input,input_digest,authority_digest,
+        result_run_id,result_run_key,attempt_ordinal,result,result_digest)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'authorize-topic-evaluation-successor-v1',
+          'AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR',$6,1000000,$7::jsonb,$8,$9,$10::uuid,$11,2,$12::jsonb,$13)`,
+      [operationId,predecessor.workspace_id,predecessor.id,predecessor.actor_id,idempotencyKey,
+        predecessor.envelope_digest,JSON.stringify(input),inputDigest,authorityDigest,runId,runKey,
+        JSON.stringify(result),digestCanonicalJsonV2(result)]);
+      await direct.query(`INSERT INTO signal_topic_evaluation_runs(
+        id,workspace_id,requested_by_user_id,idempotency_key,run_key,input_contract_version,
+        output_contract_version,corpus_identity,discovery_run_digest,source_manifest_digest,rights_digest,
+        modeling_count,packet_digest,packet_proposal_count,packet_evidence_count,
+        semantic_context_generation_id,semantic_context_generation_key,semantic_context_authority_digest,
+        brand_os_digest,knowledge_digest,locale_context_digest,candidate_pack_digest,approved_context_count,
+        envelope_digest,request_digest,provider,model,pricing_version,max_input_tokens,max_output_tokens,
+        input_usd_per_million_tokens,output_usd_per_million_tokens,hard_cap_micro_usd,
+        reservation_micro_usd,provider_request_identity,predecessor_run_id,successor_operation_id,attempt_ordinal)
+        SELECT $1::uuid,workspace_id,$2::uuid,$3,$4,input_contract_version,output_contract_version,
+          corpus_identity,discovery_run_digest,source_manifest_digest,rights_digest,modeling_count,
+          packet_digest,packet_proposal_count,packet_evidence_count,semantic_context_generation_id,
+          semantic_context_generation_key,semantic_context_authority_digest,brand_os_digest,knowledge_digest,
+          locale_context_digest,candidate_pack_digest,approved_context_count,envelope_digest,$5,provider,model,
+          pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
+          output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,$6,id,$7::uuid,2
+        FROM signal_topic_evaluation_runs WHERE id=$8::uuid`,
+      [runId,predecessor.actor_id,idempotencyKey,runKey,requestDigest,requestIdentity,operationId,predecessor.id]);
+      await direct.query("SET CONSTRAINTS ALL IMMEDIATE");
+      await direct.query("COMMIT");
+    }catch(error){await direct.query("ROLLBACK").catch(()=>undefined);throw error;}
+    finally{direct.release();}
+  })(),/successor cohort is incomplete or inconsistent/u,
+  "direct SQL cannot commit an operation/run without reservation, outbox, evidence and queued event");
+  assert.deepEqual(await counts(),before,"incomplete direct-SQL cohort rolls back without dispatch");
+
+  const concurrent=await Promise.allSettled([
+    createSignalTopicEvaluationSuccessorRunV1({...successorCommand,idempotency_key:"topic-eval-successor-race-a"}),
+    createSignalTopicEvaluationSuccessorRunV1({...successorCommand,idempotency_key:"topic-eval-successor-race-b"})
+  ]);
+  const fulfilled=concurrent.filter((item):item is PromiseFulfilledResult<Awaited<ReturnType<
+    typeof createSignalTopicEvaluationSuccessorRunV1>>>=>(item.status==="fulfilled"));
+  const rejected=concurrent.filter((item):item is PromiseRejectedResult=>item.status==="rejected");
+  assert.equal(fulfilled.length,1);assert.equal(rejected.length,1);
+  assert.match(String(rejected[0]!.reason),/topic_evaluation_successor_already_exists/u);
+  const successor=fulfilled[0]!.value;
+  assert.equal(successor.attempt_ordinal,2);assert.notEqual(successor.run_key,predecessor.run_key);
+  const after=(await pool.query<{predecessor_run_key:string;attempt_ordinal:number;provider_calls:number;
+    outbox_status:string;dispatch_count:number;operation_count:number;evidence_equal:boolean;
+    authority_digest:string;operation_result_run_key:string}>(`SELECT predecessor.run_key predecessor_run_key,
+      successor.attempt_ordinal,successor.provider_call_count provider_calls,outbox.status outbox_status,
+      outbox.dispatch_count,(SELECT count(*)::int FROM signal_topic_evaluation_successor_operations
+        WHERE result_run_id=successor.id) operation_count,
+      (SELECT array_agg(evidence_ref_digest ORDER BY evidence_ref_digest)
+        FROM signal_topic_evaluation_input_evidence WHERE run_id=predecessor.id)=
+      (SELECT array_agg(evidence_ref_digest ORDER BY evidence_ref_digest)
+        FROM signal_topic_evaluation_input_evidence WHERE run_id=successor.id) evidence_equal,
+      operation.authority_digest,operation.result_run_key operation_result_run_key
+    FROM signal_topic_evaluation_runs successor
+    JOIN signal_topic_evaluation_runs predecessor ON predecessor.id=successor.predecessor_run_id
+    JOIN signal_topic_evaluation_successor_operations operation ON operation.id=successor.successor_operation_id
+    JOIN signal_topic_evaluation_outbox outbox ON outbox.run_id=successor.id
+    WHERE successor.id=$1::uuid`,[successor.run_id])).rows[0]!;
+  assert.deepEqual(after,{predecessor_run_key:predecessor.run_key,attempt_ordinal:2,provider_calls:0,
+    outbox_status:"pending",dispatch_count:0,operation_count:1,evidence_equal:true,
+    authority_digest:successor.successor_authority_digest,operation_result_run_key:successor.run_key});
+  assert.equal((await pool.query<{value:string}>(`SELECT row_to_json(snapshot)::text value FROM(
+    SELECT run.*,reservation.status reservation_status,reservation.actual_micro_usd,
+      reservation.settled_at,outbox.status outbox_status,outbox.dispatch_count,outbox.error_code outbox_error,
+      (SELECT jsonb_agg(row_to_json(evidence) ORDER BY evidence.evidence_ref_digest)::text
+        FROM signal_topic_evaluation_input_evidence evidence WHERE evidence.run_id=run.id) evidence,
+      (SELECT jsonb_agg(row_to_json(event) ORDER BY event.event_index)::text
+        FROM signal_topic_evaluation_events event WHERE event.run_id=run.id) events
+    FROM signal_topic_evaluation_runs run
+    JOIN signal_topic_evaluation_reservations reservation ON reservation.run_id=run.id
+    JOIN signal_topic_evaluation_outbox outbox ON outbox.run_id=run.id
+    WHERE run.id=$1::uuid) snapshot`,[predecessor.id])).rows[0]!.value,historicalBefore,
+  "successor authority preserves historical run, evidence, reservation, cost and events byte-for-byte");
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    idempotency_key:"topic-eval-successor-race-a"}),/topic_evaluation_idempotency_already_used/u);
+  await assert.rejects(createSignalTopicEvaluationSuccessorRunV1({...successorCommand,
+    idempotency_key:"topic-eval-successor-second"}),/topic_evaluation_successor_already_exists/u);
+
+  await assert.rejects(pool.query(`INSERT INTO signal_topic_evaluation_successor_operations(
+    id,workspace_id,predecessor_run_id,actor_user_id,idempotency_key,action,confirmation,
+    expected_envelope_digest,hard_cap_micro_usd,input,input_digest,authority_digest,result_run_id,
+    result_run_key,attempt_ordinal,result,result_digest)
+    SELECT gen_random_uuid(),workspace_id,predecessor_run_id,actor_user_id,'forged-successor-input',
+      action,confirmation,expected_envelope_digest,hard_cap_micro_usd,
+      input||'{"unexpected":true}'::jsonb,input_digest,authority_digest,gen_random_uuid(),
+      result_run_key,attempt_ordinal,result,result_digest
+    FROM signal_topic_evaluation_successor_operations WHERE result_run_id=$1::uuid`,[successor.run_id]),
+  /operation authority is invalid|predecessor/u,"direct SQL cannot forge successor input/authority");
+  await assert.rejects(pool.query(`UPDATE signal_topic_evaluation_runs SET successor_operation_id=NULL
+    WHERE id=$1::uuid`,[successor.run_id]),/immutable|attempt_lineage/u,
+  "successor cannot lose its operation lineage");
+  await assert.rejects(pool.query(`DELETE FROM signal_topic_evaluation_successor_operations
+    WHERE result_run_id=$1::uuid`,[successor.run_id]),/append-only/u);
+  await assert.rejects(pool.query(`UPDATE signal_topic_evaluation_runs SET updated_at=clock_timestamp()
+    WHERE id=$1::uuid`,[predecessor.id]),/successor predecessor is immutable/u);
+  await assert.rejects(pool.query(`UPDATE signal_topic_evaluation_reservations SET status='reserved'
+    WHERE run_id=$1::uuid`,[predecessor.id]),/predecessor accounting is immutable/u);
+  await assert.rejects(pool.query(`UPDATE signal_topic_evaluation_outbox SET error_code='forged'
+    WHERE run_id=$1::uuid`,[predecessor.id]),/predecessor accounting is immutable/u);
+  const terminalCounts=await counts();
+  assert.equal(terminalCounts.runs,before.runs+1);assert.equal(terminalCounts.operations,1);
+  assert.equal(terminalCounts.provider_calls,before.provider_calls);
+  assert.equal(terminalCounts.dispatches,before.dispatches,"successor authority does not dispatch provider work");
 }
 
 async function exerciseTopicEvaluationCandidateReviewV1(){

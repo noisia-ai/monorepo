@@ -6844,6 +6844,9 @@ export const signalTopicEvaluationRuns = pgTable(
     candidateCount: integer("candidate_count"),
     rubricMet: boolean("rubric_met"),
     errorCode: text("error_code"),
+    predecessorRunId: uuid("predecessor_run_id"),
+    successorOperationId: uuid("successor_operation_id"),
+    attemptOrdinal: integer("attempt_ordinal").notNull().default(1),
     queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -6853,8 +6856,42 @@ export const signalTopicEvaluationRuns = pgTable(
   (table) => [
     unique("uq_signal_topic_evaluation_idempotency").on(table.workspaceId, table.idempotencyKey),
     unique("uq_signal_topic_evaluation_run_key").on(table.workspaceId, table.runKey),
-    unique("uq_signal_topic_evaluation_envelope").on(table.workspaceId, table.envelopeDigest),
+    uniqueIndex("uq_signal_topic_evaluation_root_envelope").on(table.workspaceId, table.envelopeDigest)
+      .where(sql`${table.predecessorRunId} is null`),
+    unique("uq_signal_topic_evaluation_direct_successor").on(table.predecessorRunId),
+    unique("uq_signal_topic_evaluation_successor_operation").on(table.successorOperationId),
     index("idx_signal_topic_evaluation_runs_status").on(table.status, table.updatedAt, table.id)
+  ]
+);
+
+export const signalTopicEvaluationSuccessorOperations = pgTable(
+  "signal_topic_evaluation_successor_operations",
+  {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    predecessorRunId: uuid("predecessor_run_id").notNull()
+      .references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    action: text("action").notNull(),
+    confirmation: text("confirmation").notNull(),
+    expectedEnvelopeDigest: text("expected_envelope_digest").notNull(),
+    hardCapMicroUsd: bigint("hard_cap_micro_usd", { mode: "bigint" }).notNull(),
+    input: jsonb("input").notNull(),
+    inputDigest: text("input_digest").notNull(),
+    authorityDigest: text("authority_digest").notNull(),
+    resultRunId: uuid("result_run_id").notNull()
+      .references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+    resultRunKey: text("result_run_key").notNull(),
+    attemptOrdinal: integer("attempt_ordinal").notNull(),
+    result: jsonb("result").notNull(),
+    resultDigest: text("result_digest").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    unique("uq_signal_topic_evaluation_successor_idempotency").on(table.workspaceId, table.idempotencyKey),
+    unique("uq_signal_topic_evaluation_successor_predecessor").on(table.predecessorRunId),
+    unique("uq_signal_topic_evaluation_successor_result").on(table.resultRunId)
   ]
 );
 

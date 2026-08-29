@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";import { readFile } from "node:fs/promises";import test from "node:test";
-import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1 } from "./signal-topic-evaluation-api";
+import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
+  parseSignalTopicEvaluationSuccessorStartRequestV1 } from "./signal-topic-evaluation-api";
 
 test("topic evaluation start request is closed and explicitly confirmed",()=>{
   const digest=`sha256:${"1".repeat(64)}`;
@@ -8,6 +9,25 @@ test("topic evaluation start request is closed and explicitly confirmed",()=>{
   assert.equal(parsed.hard_cap_micro_usd,1_000_000n);
   assert.throws(()=>parseSignalTopicEvaluationStartRequestV1({expected_envelope_digest:digest,
     confirmation:"RUN_ONE_TOPIC_EVALUATION",hard_cap_micro_usd:"1000000",retry:true}));
+});
+
+test("topic evaluation successor start is a distinct closed acknowledgement contract",()=>{
+  const digest=`sha256:${"1".repeat(64)}`;
+  const parsed=parseSignalTopicEvaluationSuccessorStartRequestV1({
+    predecessor_run_key:"topic-evaluation-prior",expected_envelope_digest:digest,
+    confirmation:"AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR",hard_cap_micro_usd:"380000"});
+  assert.equal(parsed.predecessor_run_key,"topic-evaluation-prior");
+  assert.equal(parsed.hard_cap_micro_usd,380_000n);
+  assert.throws(()=>parseSignalTopicEvaluationSuccessorStartRequestV1({
+    predecessor_run_key:"topic-evaluation-prior",expected_envelope_digest:digest,
+    confirmation:"RUN_ONE_TOPIC_EVALUATION",hard_cap_micro_usd:"380000"}));
+  assert.throws(()=>parseSignalTopicEvaluationSuccessorStartRequestV1({
+    predecessor_run_key:"topic-evaluation-prior",expected_envelope_digest:digest,
+    confirmation:"AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR",hard_cap_micro_usd:"380000",retry:true}));
+  assert.throws(()=>parseSignalTopicEvaluationStartRequestV1({
+    predecessor_run_key:"topic-evaluation-prior",expected_envelope_digest:digest,
+    confirmation:"RUN_ONE_TOPIC_EVALUATION",hard_cap_micro_usd:"380000"}),
+  "generic start cannot smuggle predecessor authority");
 });
 
 test("topic evaluation candidate commands are closed and need no semantic rationale",()=>{
@@ -45,12 +65,13 @@ test("public preflight strips the private envelope and contracts sealed flight-c
 });
 
 test("management routes retain workspace AuthZ, pagination and idempotent closed review",async()=>{
-  const[managementRoute,commandRoute,errorBoundary,openapi]=await Promise.all([
+  const[managementRoute,successorRoute,commandRoute,errorBoundary,openapi]=await Promise.all([
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/route.ts",import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/successor/route.ts",import.meta.url),"utf8"),
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/candidates/[candidateKey]/commands/route.ts",import.meta.url),"utf8"),
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/semantic-context/_lib.ts",import.meta.url),"utf8"),
     readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8")]);
-  for(const source of[managementRoute,commandRoute])assert.match(source,
+  for(const source of[managementRoute,successorRoute,commandRoute])assert.match(source,
     /loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(managementRoute,/searchParams\.get\("cursor"\)/u);
   assert.match(managementRoute,/semanticContextError\(error,"topic_evaluation_preflight_rejected"\)/u);
@@ -58,8 +79,13 @@ test("management routes retain workspace AuthZ, pagination and idempotent closed
     "unexpected GET failures preserve the explicit fallback error");
   assert.ok(errorBoundary.includes('},409);'),"unexpected GET failures remain visible as non-200 responses");
   assert.match(commandRoute,/requireIdempotencyKey/u);assert.match(commandRoute,/candidate_key!==candidateKey/u);
+  assert.match(successorRoute,/parseSignalTopicEvaluationSuccessorStartRequestV1/u);
+  assert.match(successorRoute,/startSignalTopicEvaluationSuccessorProductV1/u);
+  assert.doesNotMatch(managementRoute,/Successor/u,"generic start route cannot create successor authority");
   assert.match(commandRoute,/parseSignalTopicEvaluationCandidateCommandV1/u);
   assert.match(openapi,/reviewSignalTopicEvaluationCandidate/u);
   assert.match(openapi,/Append one reversible pending\/rejected candidate revision/u);
   assert.match(openapi,/provider_outcome_class:[\s\S]*enum: \[definitely_not_sent, known_response_invalid, ambiguous_after_send, null\]/u);
+  assert.match(openapi,/startSignalTopicEvaluationSuccessor/u);
+  assert.match(openapi,/AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR/u);
 });

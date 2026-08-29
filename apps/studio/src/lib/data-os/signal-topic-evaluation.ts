@@ -1,5 +1,6 @@
 import {
   createSignalTopicEvaluationRunV1,
+  createSignalTopicEvaluationSuccessorRunV1,
   loadSignalTopicEvaluationManagementPreflightV1,
   reviewSignalTopicEvaluationCandidateV1,
   signalTopicEvaluationConfigurationFromEnvV1
@@ -11,6 +12,17 @@ function actor(value:SignalWorkspaceUser){
   if(value.userType!=="noisia_internal")throw Object.assign(new Error("topic_evaluation_forbidden"),
     {code:"topic_evaluation_forbidden",status:403});
   return{id:value.id,user_type:"noisia_internal" as const};
+}
+
+export async function startSignalTopicEvaluationSuccessorProductV1(args:{workspace:ResolvedSignalWorkspace;
+  actor:SignalWorkspaceUser;idempotencyKey:string;predecessorRunKey:string;
+  expectedEnvelopeDigest:string;confirmation:string;hardCapMicroUsd:bigint}){
+  const{pool}=await import("@/lib/db");
+  return createSignalTopicEvaluationSuccessorRunV1({pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),idempotency_key:args.idempotencyKey,
+    predecessor_run_key:args.predecessorRunKey,expected_envelope_digest:args.expectedEnvelopeDigest,
+    confirmation:args.confirmation,hard_cap_micro_usd:args.hardCapMicroUsd,
+    configuration:signalTopicEvaluationConfigurationFromEnvV1()});
 }
 
 export async function loadSignalTopicEvaluationDryRunProductV1(args:{

@@ -2091,8 +2091,28 @@ paths:
       responses:
         "202": { description: One durable queued run with provider_call_count=0. }
         "403": { description: Management authority denied or execution disabled by default. }
-        "409": { description: Duplicate idempotency, frozen authority drift or unavailable product provider lane. }
+        "409": { description: Typed duplicate envelope/idempotency, frozen authority drift or unavailable product provider lane. Ordinary start never creates a successor flight. }
         "422": { description: Closed confirmation, token ceiling or hard cap rejected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/successor:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: startSignalTopicEvaluationSuccessor
+      summary: Authorize one explicit successor of a terminal ambiguous-after-send evaluation flight.
+      description: Management-only append-only authority. It preserves the historical run and permits at most one direct successor with a fresh idempotency key. It is not an automatic retry and never weakens the ordinary duplicate-envelope guard.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicEvaluationSuccessorStartV1" }
+      responses:
+        "202": { description: One queued successor run with provider_call_count=0 and sealed predecessor lineage. }
+        "403": { description: Management authority denied or execution disabled. }
+        "409": { description: Ineligible/non-ambiguous predecessor, prior successor, idempotency conflict, or authority/flight-card drift. }
+        "422": { description: Closed successor acknowledgement, token ceiling or hard cap rejected. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/candidates/{candidateKey}/commands:
     post:
       tags: [Signal Topic Evaluation]
@@ -3461,6 +3481,15 @@ components:
       properties:
         expected_envelope_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
         confirmation: { const: RUN_ONE_TOPIC_EVALUATION }
+        hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
+    SignalTopicEvaluationSuccessorStartV1:
+      type: object
+      additionalProperties: false
+      required: [predecessor_run_key, expected_envelope_digest, confirmation, hard_cap_micro_usd]
+      properties:
+        predecessor_run_key: { type: string, minLength: 1, maxLength: 200 }
+        expected_envelope_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        confirmation: { const: AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR }
         hard_cap_micro_usd: { type: string, pattern: '^[1-9][0-9]*$' }
     SignalTopicEvaluationPreflightV1:
       type: object

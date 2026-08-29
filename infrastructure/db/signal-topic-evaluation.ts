@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { randomUUID } from "node:crypto";
 
 import {
   buildSignalTopicEvaluationEnvelopeV1,
@@ -10,6 +11,7 @@ import {
   SIGNAL_TOPIC_EVALUATION_CONFIRMATION,
   SIGNAL_TOPIC_EVALUATION_CONTRACT_VERSION,
   SIGNAL_TOPIC_EVALUATION_OUTPUT_CONTRACT_VERSION,
+  SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION,
   type SignalTopicEvaluationEnvelopeV1,
   type SignalTopicEvaluationProviderV1
 } from "@noisia/query-engine";
@@ -429,6 +431,11 @@ export async function createSignalTopicEvaluationRunV1(args: {
     if (envelopeDigest !== args.expected_envelope_digest) {
       throw new SignalTopicEvaluationError("topic_evaluation_envelope_drift", 409);
     }
+    const existingEnvelope=await client.query(`SELECT 1 FROM signal_topic_evaluation_runs
+      WHERE workspace_id=$1::uuid AND envelope_digest=$2 LIMIT 1`,[args.workspace_id,envelopeDigest]);
+    if((existingEnvelope.rowCount??0)>0){
+      throw new SignalTopicEvaluationError("topic_evaluation_duplicate_envelope",409);
+    }
     const requestDigest = signalTopicEvaluationDigestV1({ envelope_digest: envelopeDigest,
       provider: args.configuration.provider, model: args.configuration.model,
       max_input_tokens: args.configuration.max_input_tokens,
@@ -486,8 +493,164 @@ export async function createSignalTopicEvaluationRunV1(args: {
     await client.query("COMMIT");
     return { run_id: runId, run_key: runKey, status: "queued" as const,
       envelope_digest: envelopeDigest, provider_call_count: 0 as const };
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined);
+    throw mapTopicEvaluationStartConflict(error,"root"); }
   finally { client.release(); }
+}
+
+type SuccessorPredecessorRow={id:string;run_key:string;attempt_ordinal:number;envelope_digest:string;
+  provider_request_identity:string;hard_cap_micro_usd:string;reservation_micro_usd:string;
+  provider:string;model:string;pricing_version:string;max_input_tokens:number;max_output_tokens:number;
+  input_usd_per_million_tokens:string;output_usd_per_million_tokens:string};
+
+export async function createSignalTopicEvaluationSuccessorRunV1(args:{
+  pool:Pick<Pool,"connect">;workspace_id:string;actor:SignalTopicEvaluationActorV1;
+  idempotency_key:string;predecessor_run_key:string;expected_envelope_digest:string;
+  confirmation:string;hard_cap_micro_usd:bigint;configuration:SignalTopicEvaluationConfigurationV1;
+}){
+  assertActor(args.actor);
+  assertRunnableConfiguration(args.configuration);
+  if(args.confirmation!==SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION){
+    throw new SignalTopicEvaluationError("topic_evaluation_successor_confirmation_required",422);
+  }
+  if(args.hard_cap_micro_usd<=0n||args.hard_cap_micro_usd>args.configuration.hard_cap_micro_usd){
+    throw new SignalTopicEvaluationError("topic_evaluation_hard_cap_invalid",422);
+  }
+  if(args.configuration.estimated_input_tokens>args.configuration.max_input_tokens){
+    throw new SignalTopicEvaluationError("topic_evaluation_input_token_ceiling_exceeded",422);
+  }
+  const reservation=costMicroUsd(args.configuration.estimated_input_tokens,
+    args.configuration.max_output_tokens,args.configuration);
+  if(reservation>args.hard_cap_micro_usd){
+    throw new SignalTopicEvaluationError("topic_evaluation_hard_cap_insufficient",422);
+  }
+  const client=await args.pool.connect();
+  try{
+    // The workspace advisory lock is the serialization boundary. READ COMMITTED lets a
+    // concurrent loser observe the committed successor and return the closed domain error
+    // instead of leaking PostgreSQL's serialization failure to the operator.
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`signal-topic-evaluation:${args.workspace_id}`]);
+    const duplicate=await client.query(`SELECT 1 FROM signal_topic_evaluation_runs
+      WHERE workspace_id=$1::uuid AND idempotency_key=$2 UNION ALL
+      SELECT 1 FROM signal_topic_evaluation_successor_operations
+      WHERE workspace_id=$1::uuid AND idempotency_key=$2 LIMIT 1`,[args.workspace_id,args.idempotency_key]);
+    if((duplicate.rowCount??0)>0){
+      throw new SignalTopicEvaluationError("topic_evaluation_idempotency_already_used",409);
+    }
+    const predecessorResult=await client.query<SuccessorPredecessorRow>(`SELECT run.id::text,run.run_key,
+      run.attempt_ordinal,run.envelope_digest,run.provider_request_identity,
+      run.hard_cap_micro_usd::text,run.reservation_micro_usd::text,run.provider,run.model,
+      run.pricing_version,run.max_input_tokens,run.max_output_tokens,
+      run.input_usd_per_million_tokens::text,run.output_usd_per_million_tokens::text
+      FROM signal_topic_evaluation_runs run
+      JOIN signal_topic_evaluation_reservations reservation ON reservation.run_id=run.id
+      JOIN signal_topic_evaluation_outbox outbox ON outbox.run_id=run.id
+      WHERE run.workspace_id=$1::uuid AND run.run_key=$2
+        AND run.status='outcome_unknown' AND run.provider_call_count=1
+        AND run.provider_call_state='in_flight'
+        AND run.error_code='topic_evaluation_provider_ambiguous_after_send'
+        AND run.provider_response_private IS NULL AND run.provider_response_digest IS NULL
+        AND run.settled_micro_usd IS NULL AND run.candidate_count IS NULL
+        AND reservation.status='ambiguous' AND reservation.actual_micro_usd IS NULL
+        AND reservation.settled_at IS NULL
+        AND outbox.status='dead_letter' AND outbox.dispatch_count=1
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_evaluation_candidates candidate WHERE candidate.run_id=run.id)
+      FOR UPDATE OF run`,[args.workspace_id,args.predecessor_run_key]);
+    const predecessor=predecessorResult.rows[0];
+    if(!predecessor)throw new SignalTopicEvaluationError("topic_evaluation_successor_predecessor_ineligible",409);
+    if(predecessor.envelope_digest!==args.expected_envelope_digest){
+      throw new SignalTopicEvaluationError("topic_evaluation_envelope_drift",409);
+    }
+    if(BigInt(predecessor.hard_cap_micro_usd)!==args.hard_cap_micro_usd
+      ||BigInt(predecessor.reservation_micro_usd)!==reservation
+      ||predecessor.provider!==args.configuration.provider||predecessor.model!==args.configuration.model
+      ||predecessor.pricing_version!==args.configuration.pricing_version
+      ||predecessor.max_input_tokens!==args.configuration.max_input_tokens
+      ||predecessor.max_output_tokens!==args.configuration.max_output_tokens
+      ||Number(predecessor.input_usd_per_million_tokens)!==Number(args.configuration.input_usd_per_million_tokens)
+      ||Number(predecessor.output_usd_per_million_tokens)!==Number(args.configuration.output_usd_per_million_tokens)){
+      throw new SignalTopicEvaluationError("topic_evaluation_successor_flight_card_drift",409);
+    }
+    const envelope=await loadEnvelope(client,args.workspace_id,args.actor.id);
+    const envelopeDigest=signalTopicEvaluationDigestV1(envelope);
+    if(envelopeDigest!==predecessor.envelope_digest){
+      throw new SignalTopicEvaluationError("topic_evaluation_envelope_drift",409);
+    }
+    const input={contract_version:"signal-topic-evaluation-successor-input-v1",
+      predecessor_run_key:predecessor.run_key,expected_envelope_digest:envelopeDigest,
+      confirmation:args.confirmation,hard_cap_micro_usd:args.hard_cap_micro_usd.toString()};
+    const inputDigest=signalTopicEvaluationDigestV1(input);
+    const authorityDigest=signalTopicEvaluationDigestV1({
+      contract_version:"signal-topic-evaluation-successor-authority-v1",workspace_id:args.workspace_id,
+      actor_user_id:args.actor.id,idempotency_key:args.idempotency_key,
+      predecessor_run_key:predecessor.run_key,
+      predecessor_request_identity:predecessor.provider_request_identity,input_digest:inputDigest});
+    const requestDigest=signalTopicEvaluationDigestV1({
+      contract_version:"signal-topic-evaluation-successor-request-v1",
+      predecessor_run_key:predecessor.run_key,
+      predecessor_request_identity:predecessor.provider_request_identity,envelope_digest:envelopeDigest,
+      operation_authority_digest:authorityDigest,provider:predecessor.provider,model:predecessor.model,
+      pricing_version:predecessor.pricing_version,max_input_tokens:predecessor.max_input_tokens,
+      max_output_tokens:predecessor.max_output_tokens,hard_cap_micro_usd:args.hard_cap_micro_usd.toString()});
+    const requestIdentity=signalTopicEvaluationDigestV1({
+      contract_version:"signal-topic-evaluation-provider-request-v2",request_digest:requestDigest});
+    const runKey=`topic-evaluation-${requestIdentity.slice(7,23)}`;
+    const attemptOrdinal=predecessor.attempt_ordinal+1;
+    const result={contract_version:"signal-topic-evaluation-successor-result-v1",
+      predecessor_run_key:predecessor.run_key,run_key:runKey,attempt_ordinal:attemptOrdinal,
+      status:"queued",provider_call_count:0};
+    const resultDigest=signalTopicEvaluationDigestV1(result);
+    const operationId=randomUUID(),runId=randomUUID();
+    await client.query(`INSERT INTO signal_topic_evaluation_successor_operations(
+      id,workspace_id,predecessor_run_id,actor_user_id,idempotency_key,action,confirmation,
+      expected_envelope_digest,hard_cap_micro_usd,input,input_digest,authority_digest,
+      result_run_id,result_run_key,attempt_ordinal,result,result_digest)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'authorize-topic-evaluation-successor-v1',$6,
+        $7,$8,$9::jsonb,$10,$11,$12::uuid,$13,$14,$15::jsonb,$16)`,
+    [operationId,args.workspace_id,predecessor.id,args.actor.id,args.idempotency_key,args.confirmation,
+      envelopeDigest,args.hard_cap_micro_usd.toString(),JSON.stringify(input),inputDigest,authorityDigest,
+      runId,runKey,attemptOrdinal,JSON.stringify(result),resultDigest]);
+    await client.query(`INSERT INTO signal_topic_evaluation_runs(
+      id,workspace_id,requested_by_user_id,idempotency_key,run_key,input_contract_version,
+      output_contract_version,corpus_identity,discovery_run_digest,source_manifest_digest,rights_digest,
+      modeling_count,packet_digest,packet_proposal_count,packet_evidence_count,
+      semantic_context_generation_id,semantic_context_generation_key,semantic_context_authority_digest,
+      brand_os_digest,knowledge_digest,locale_context_digest,candidate_pack_digest,approved_context_count,
+      envelope_digest,request_digest,provider,model,pricing_version,max_input_tokens,max_output_tokens,
+      input_usd_per_million_tokens,output_usd_per_million_tokens,hard_cap_micro_usd,
+      reservation_micro_usd,provider_request_identity,predecessor_run_id,successor_operation_id,attempt_ordinal)
+      SELECT $1::uuid,workspace_id,$2::uuid,$3,$4,input_contract_version,output_contract_version,
+        corpus_identity,discovery_run_digest,source_manifest_digest,rights_digest,modeling_count,
+        packet_digest,packet_proposal_count,packet_evidence_count,semantic_context_generation_id,
+        semantic_context_generation_key,semantic_context_authority_digest,brand_os_digest,knowledge_digest,
+        locale_context_digest,candidate_pack_digest,approved_context_count,envelope_digest,$5,provider,model,
+        pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
+        output_usd_per_million_tokens,$6,reservation_micro_usd,$7,id,$8::uuid,$9
+      FROM signal_topic_evaluation_runs WHERE id=$10::uuid`,[runId,args.actor.id,args.idempotency_key,
+      runKey,requestDigest,args.hard_cap_micro_usd.toString(),requestIdentity,operationId,attemptOrdinal,
+      predecessor.id]);
+    await client.query(`INSERT INTO signal_topic_evaluation_input_evidence(
+      run_id,workspace_id,evidence_ref_digest,mention_ref_digest,relation)
+      SELECT $1::uuid,workspace_id,evidence_ref_digest,mention_ref_digest,relation
+      FROM signal_topic_evaluation_input_evidence WHERE run_id=$2::uuid`,[runId,predecessor.id]);
+    const reservationDigest=signalTopicEvaluationDigestV1({run_id:runId,
+      reservation_micro_usd:reservation.toString()});
+    await client.query(`INSERT INTO signal_topic_evaluation_reservations(
+      run_id,workspace_id,reserved_micro_usd,reservation_digest) VALUES($1::uuid,$2::uuid,$3,$4)`,
+    [runId,args.workspace_id,reservation.toString(),reservationDigest]);
+    await client.query(`INSERT INTO signal_topic_evaluation_outbox(run_id,workspace_id,worker_job_id)
+      VALUES($1::uuid,$2::uuid,$3)`,[runId,args.workspace_id,`topic-evaluation-${runId}`]);
+    await insertEvent(client,runId,args.workspace_id,0,"queued",{provider_calls:0,
+      predecessor_run_key:predecessor.run_key,successor_authority_digest:authorityDigest});
+    await client.query("COMMIT");
+    return{run_id:runId,run_key:runKey,status:"queued" as const,envelope_digest:envelopeDigest,
+      provider_call_count:0 as const,predecessor_run_key:predecessor.run_key,
+      successor_authority_digest:authorityDigest,attempt_ordinal:attemptOrdinal};
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);
+    throw mapTopicEvaluationStartConflict(error,"successor");
+  }finally{client.release();}
 }
 
 export async function processSignalTopicEvaluationRunV1(args: {
@@ -789,6 +952,31 @@ async function settleFailure(client:PoolClient,run:RunRow,actual:bigint,errorCod
   [run.id,actual.toString(),errorCode]);
   await client.query(`UPDATE signal_topic_evaluation_outbox SET status='dead_letter',error_code=$2 WHERE run_id=$1::uuid`,[run.id,errorCode]);
   await insertEvent(client,run.id,run.workspace_id,3,"failed",{error_code:errorCode});
+}
+
+function assertRunnableConfiguration(configuration:SignalTopicEvaluationConfigurationV1){
+  if(!configuration.enabled)throw new SignalTopicEvaluationError("topic_evaluation_disabled",403);
+  if(!configuration.pricing_configured){
+    throw new SignalTopicEvaluationError("topic_evaluation_pricing_unconfigured",409);
+  }
+  if(!configuration.execution_configuration_complete){
+    throw new SignalTopicEvaluationError("topic_evaluation_execution_configuration_incomplete",409);
+  }
+  if(!configuration.credential_configured){
+    throw new SignalTopicEvaluationError("topic_evaluation_product_provider_unavailable",409);
+  }
+}
+
+function mapTopicEvaluationStartConflict(error:unknown,mode:"root"|"successor"){
+  if(error instanceof SignalTopicEvaluationError)return error;
+  const pgError=error as {code?:unknown;constraint?:unknown};
+  if(pgError.code!=="23505")return error;
+  const constraint=typeof pgError.constraint==="string"?pgError.constraint:"";
+  if(constraint.includes("idempotency")){
+    return new SignalTopicEvaluationError("topic_evaluation_idempotency_already_used",409);
+  }
+  return new SignalTopicEvaluationError(mode==="root"
+    ?"topic_evaluation_duplicate_envelope":"topic_evaluation_successor_already_exists",409);
 }
 
 function costMicroUsd(inputTokens:number,outputTokens:number,config:{input_usd_per_million_tokens:string;output_usd_per_million_tokens:string}){
