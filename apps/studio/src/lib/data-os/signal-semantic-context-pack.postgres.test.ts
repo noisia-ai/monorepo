@@ -17,9 +17,12 @@ import {
   prepareSignalSemanticContextProposalInputV1,
   processSignalSemanticContextProposalRunV1,
   createSignalTopicEvaluationRunV1,
+  loadSignalTopicEvaluationManagementPreflightV1,
+  loadSignalTopicEvaluationManagementV1,
   prepareSignalTopicEvaluationDryRunV1,
   processSignalTopicEvaluationRunV1,
   recoverSignalTopicEvaluationRunV1,
+  reviewSignalTopicEvaluationCandidateV1,
   startSignalSemanticContextProposalRunV1,
   type SignalSemanticContextProposalRuntimeConfigurationV1
 } from "@noisia/db";
@@ -100,7 +103,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
-  let migration0107="";
+  let migration0107="";let migration0108="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -117,6 +120,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0105_"))migration0105=sql;
       else if(file.startsWith("0106_"))migration0106=sql;
       else if(file.startsWith("0107_"))migration0107=sql;
+      else if(file.startsWith("0108_"))migration0108=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -144,6 +148,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0105,"0105 migration is present and must be applied after 0104");
   assert.ok(migration0106,"0106 migration is present and must be applied after 0105");
   assert.ok(migration0107,"0107 migration is present and must be applied after 0106");
+  assert.ok(migration0108,"0108 migration is present and must be applied after 0107");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -668,6 +673,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   "0107 creates only the seven non-serving control-plane tables");
   await exerciseOrdinaryEditingV1();
   await exerciseTopicEvaluationControlPlaneV1();
+  const migration0108Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0108Client.connect();
+  try{await migration0108Client.query(migration0108);}finally{await migration0108Client.end();}
+  await exerciseTopicEvaluationCandidateReviewV1();
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -2527,6 +2535,227 @@ async function exerciseTopicEvaluationControlPlaneV1(){
   assert.equal(duplicateProviderCalls,1,"terminal failed recovery issues no second provider call");
   assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
     "Topic Evaluation does not adopt Topics, publish or mutate serving state");
+}
+
+async function exerciseTopicEvaluationCandidateReviewV1(){
+  const fixture=(await pool.query<{workspace_id:string;organization_id:string;actor_id:string}>(`SELECT run.workspace_id::text,
+    workspace.organization_id::text,run.requested_by_user_id::text actor_id FROM signal_topic_evaluation_runs run
+    JOIN signal_workspaces workspace ON workspace.id=run.workspace_id
+    WHERE run.status='completed' ORDER BY run.completed_at ASC LIMIT 1`)).rows[0]!;
+  assert.ok(fixture,"candidate review has one completed evaluation run");
+  const actor={id:fixture.actor_id,user_type:"noisia_internal" as const};
+  const clientActorId=randomUUID();
+  await pool.query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
+    VALUES($1::uuid,$2,'Topic review client','client','brand_manager',$3::uuid,'active')`,
+  [clientActorId,`topic-review-client-${clientActorId.slice(0,8)}@example.test`,fixture.organization_id]);
+  const protectedBefore=await protectedCounts(fixture.workspace_id);
+  const immutableBefore=await pool.query<{candidate_digest:string;evidence_digest:string}>(`SELECT
+    encode(digest(string_agg(candidate.candidate_digest,',' ORDER BY candidate.candidate_key),'sha256'),'hex') candidate_digest,
+    encode(digest(string_agg(link.evidence_ref_digest,',' ORDER BY candidate.candidate_key,link.evidence_ref_digest),'sha256'),'hex') evidence_digest
+    FROM signal_topic_evaluation_candidates candidate
+    JOIN signal_topic_evaluation_candidate_evidence link ON link.candidate_id=candidate.id
+    JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+    WHERE run.workspace_id=$1::uuid AND run.status='completed'`,[fixture.workspace_id]);
+  const firstPage=await loadSignalTopicEvaluationManagementV1({queryable:pool,workspace_id:fixture.workspace_id,
+    actor,limit:1});
+  assert.equal(firstPage.run?.status,"failed","latest terminal failure remains visible");
+  assert.equal(firstPage.results.items.length,1,"latest completed result stays inspectable");
+  assert.ok(firstPage.results.run_key,"result page identifies its completed run without private ids");
+  assert.ok(firstPage.results.next_cursor,"stable pagination returns an opaque next cursor");
+  const secondPage=await loadSignalTopicEvaluationManagementV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor,limit:1,cursor:firstPage.results.next_cursor});
+  assert.notEqual(secondPage.results.items[0]!.candidate_key,firstPage.results.items[0]!.candidate_key);
+  assert.equal("provider_response_private" in firstPage.run!,false,"management projection excludes private response");
+  let managementReadBeforeAuthority=false;
+  const unavailableAuthorityQueryable={query:async<T=Record<string,unknown>>(sql:string,values?:unknown[])=>{
+    if(sql.includes("FROM signal_topic_evaluation_runs WHERE workspace_id"))managementReadBeforeAuthority=true;
+    if(sql.includes("WITH packet AS(")){
+      assert.equal(managementReadBeforeAuthority,true,"durable run/results load before fresh launch authority");
+      return{rows:[] as T[],rowCount:0};
+    }
+    const result=await pool.query(sql,values);return{rows:result.rows as T[],rowCount:result.rowCount};
+  }};
+  const unavailable=await loadSignalTopicEvaluationManagementPreflightV1({
+    queryable:unavailableAuthorityQueryable,workspace_id:fixture.workspace_id,actor,limit:1,
+    configuration:{enabled:true,credential_configured:true,pricing_configured:true,
+      execution_configuration_complete:true,provider:"anthropic",model:"fixture",
+      pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+      input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+      hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000}});
+  assert.equal(unavailable.preflight.preflight_status,"blocked");
+  assert.equal(unavailable.preflight.preflight_error_code,"topic_evaluation_launch_authority_unavailable");
+  assert.equal(unavailable.preflight.execution_enabled,false,"unsealed launch authority is never executable");
+  assert.equal(unavailable.management.results.items.length,1,
+    "completed candidate remains visible when current draft authority is unavailable");
+  const unexpectedAuthorityQueryable={query:async<T=Record<string,unknown>>(sql:string,values?:unknown[])=>{
+    if(sql.includes("WITH packet AS("))throw new Error("topic_evaluation_unexpected_fixture");
+    const result=await pool.query(sql,values);return{rows:result.rows as T[],rowCount:result.rowCount};
+  }};
+  await assert.rejects(loadSignalTopicEvaluationManagementPreflightV1({
+    queryable:unexpectedAuthorityQueryable,workspace_id:fixture.workspace_id,actor,limit:1,
+    configuration:{enabled:true,credential_configured:true,pricing_configured:true,
+      execution_configuration_complete:true,provider:"anthropic",model:"fixture",
+      pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+      input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+      hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000}}),
+  /topic_evaluation_unexpected_fixture/u,
+  "an unexpected launch-preflight failure remains visible instead of becoming a blocked authority card");
+  await assert.rejects(loadSignalTopicEvaluationManagementPreflightV1({queryable:pool,
+    workspace_id:randomUUID(),actor,limit:1,configuration:{enabled:true,credential_configured:true,
+      pricing_configured:true,execution_configuration_complete:true,provider:"anthropic",model:"fixture",
+      pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+      input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+      hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000}}),
+  /topic_evaluation_input_authority_unavailable/u,"pre-run GET remains fail-closed without durable history");
+  const candidate=firstPage.results.items[0]!;
+  assert.deepEqual(candidate.evidence,{count:1,supports:1,limits:0,contradicts:0});
+  const saved=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-save",command:{action:"save",candidate_key:candidate.candidate_key,
+      expected_revision:candidate.revision,state_token:candidate.state_token,values:{title:`${candidate.title} edited`,
+        description:candidate.description,inclusion:candidate.inclusion as string[],exclusion:candidate.exclusion as string[]}}});
+  assert.equal(saved.revision,2);assert.equal(saved.review_state,"pending");
+  await assert.rejects(reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-stale",command:{action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:candidate.revision,state_token:candidate.state_token}}),/topic_evaluation_candidate_stale/u);
+  const replay=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-save",command:{action:"save",candidate_key:candidate.candidate_key,
+      expected_revision:candidate.revision,state_token:candidate.state_token,values:{title:`${candidate.title} edited`,
+        description:candidate.description,inclusion:candidate.inclusion as string[],exclusion:candidate.exclusion as string[]}}});
+  assert.equal(replay.idempotent_replay,true);assert.equal(replay.revision,2);
+  await assert.rejects(reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-save",command:{action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:saved.revision,state_token:saved.state_token}}),/topic_evaluation_candidate_idempotency_conflict/u);
+  await assert.rejects(reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:randomUUID(),actor,
+    idempotency_key:"topic-review-cross-workspace",command:{action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:saved.revision,state_token:saved.state_token}}),/topic_evaluation_candidate_not_found/u);
+  const rejected=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-reject",command:{action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:saved.revision,state_token:saved.state_token}});
+  assert.equal(rejected.review_state,"rejected");
+  const restored=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-restore",command:{action:"restore",candidate_key:candidate.candidate_key,
+      expected_revision:rejected.revision,state_token:rejected.state_token}});
+  assert.equal(restored.review_state,"pending");
+  const undone=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-undo",command:{action:"undo",candidate_key:candidate.candidate_key,
+      expected_revision:restored.revision,state_token:restored.state_token,target_revision:rejected.revision}});
+  assert.equal(undone.review_state,"rejected","undo restores the exact immediate predecessor state");
+  const finalRestore=await reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:fixture.workspace_id,actor,
+    idempotency_key:"topic-review-final-restore",command:{action:"restore",candidate_key:candidate.candidate_key,
+      expected_revision:undone.revision,state_token:undone.state_token}});
+  assert.equal(finalRestore.review_state,"pending");
+  await assert.rejects(pool.query(`INSERT INTO signal_topic_evaluation_candidate_review_operations(
+    id,workspace_id,run_id,candidate_id,actor_user_id,idempotency_key,action,expected_revision,
+    expected_state_token,target_revision,input,input_digest,result_revision_id,result_revision,result_version_digest)
+    SELECT gen_random_uuid(),workspace_id,run_id,candidate_id,actor_user_id,idempotency_key,action,
+      expected_revision,expected_state_token,target_revision,input,input_digest,gen_random_uuid(),
+      result_revision,result_version_digest FROM signal_topic_evaluation_candidate_review_operations
+    WHERE idempotency_key='topic-review-save'`),/unique|idempotency/u,
+  "direct SQL duplicate idempotency is rejected");
+  await assert.rejects(pool.query(`INSERT INTO signal_topic_evaluation_candidate_review_operations(
+    id,workspace_id,run_id,candidate_id,actor_user_id,idempotency_key,action,expected_revision,
+    expected_state_token,target_revision,input,input_digest,result_revision_id,result_revision,result_version_digest)
+    SELECT gen_random_uuid(),gen_random_uuid(),run_id,candidate_id,actor_user_id,'topic-review-cross-workspace-sql',
+      action,expected_revision,expected_state_token,target_revision,input,input_digest,gen_random_uuid(),
+      result_revision,result_version_digest FROM signal_topic_evaluation_candidate_review_operations
+    WHERE idempotency_key='topic-review-save'`),/foreign key/u,
+  "direct SQL cannot attach review authority to another workspace");
+  const currentRaw=(await pool.query<{candidate_id:string;run_id:string;revision_id:string;revision:number;
+    state_token:string;version_digest:string;title:string;description:string;inclusion:unknown;exclusion:unknown}>(
+    `SELECT candidate.id::text candidate_id,candidate.run_id::text,revision.id::text revision_id,
+      revision.revision,revision.version_digest,revision.title,revision.description,revision.inclusion,
+      revision.exclusion,signal_topic_evaluation_candidate_state_token_v1(candidate.id,revision.revision,
+        revision.version_digest) state_token FROM signal_topic_evaluation_candidates candidate
+    JOIN LATERAL(SELECT * FROM signal_topic_evaluation_candidate_revisions item
+      WHERE item.candidate_id=candidate.id ORDER BY revision DESC LIMIT 1) revision ON true
+    WHERE candidate.candidate_key=$1`,[candidate.candidate_key])).rows[0]!;
+  const forgedClient=await pool.connect();
+  try{await forgedClient.query("BEGIN");const operationId=randomUUID(),revisionId=randomUUID();
+    const input={action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:currentRaw.revision,state_token:currentRaw.state_token};
+    const inserted=await forgedClient.query<{digest:string}>(`WITH value AS(SELECT
+      signal_topic_evaluation_candidate_version_digest_v1($1::uuid,$2,$3::uuid,'reject','rejected',
+        $4,$5,$6::jsonb,$7::jsonb) digest)
+      INSERT INTO signal_topic_evaluation_candidate_review_operations(id,workspace_id,run_id,candidate_id,
+        actor_user_id,idempotency_key,action,expected_revision,expected_state_token,input,input_digest,
+        result_revision_id,result_revision,result_version_digest)
+      SELECT $8::uuid,$9::uuid,$10::uuid,$1::uuid,$11::uuid,'topic-review-forged-payload','reject',$12,$13,
+        $14::jsonb,'sha256:'||encode(digest(($14::jsonb)::text,'sha256'),'hex'),$15::uuid,$2,value.digest FROM value
+      RETURNING result_version_digest digest`,[currentRaw.candidate_id,currentRaw.revision+1,
+      currentRaw.revision_id,`${currentRaw.title} forged`,currentRaw.description,
+      JSON.stringify(currentRaw.inclusion),JSON.stringify(currentRaw.exclusion),operationId,
+      fixture.workspace_id,currentRaw.run_id,fixture.actor_id,currentRaw.revision,currentRaw.state_token,
+      JSON.stringify(input),revisionId]);
+    await assert.rejects(forgedClient.query(`INSERT INTO signal_topic_evaluation_candidate_revisions(
+      id,candidate_id,run_id,workspace_id,revision,predecessor_revision_id,operation_id,action,
+      review_state,title,description,inclusion,exclusion,version_digest)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,'reject','rejected',$8,$9,
+        $10::jsonb,$11::jsonb,$12)`,[revisionId,currentRaw.candidate_id,currentRaw.run_id,fixture.workspace_id,
+      currentRaw.revision+1,currentRaw.revision_id,operationId,`${currentRaw.title} forged`,
+      currentRaw.description,JSON.stringify(currentRaw.inclusion),JSON.stringify(currentRaw.exclusion),
+      inserted.rows[0]!.digest]),/reject input is invalid/u,"direct SQL forged payload fails DB authority");
+  }finally{await forgedClient.query("ROLLBACK").catch(()=>undefined);forgedClient.release();}
+  const unauthorizedClient=await pool.connect();
+  try{await unauthorizedClient.query("BEGIN");const operationId=randomUUID(),revisionId=randomUUID();
+    const input={action:"reject",candidate_key:candidate.candidate_key,
+      expected_revision:currentRaw.revision,state_token:currentRaw.state_token};
+    const inserted=await unauthorizedClient.query<{digest:string}>(`WITH value AS(SELECT
+      signal_topic_evaluation_candidate_version_digest_v1($1::uuid,$2,$3::uuid,'reject','rejected',
+        $4,$5,$6::jsonb,$7::jsonb) digest)
+      INSERT INTO signal_topic_evaluation_candidate_review_operations(id,workspace_id,run_id,candidate_id,
+        actor_user_id,idempotency_key,action,expected_revision,expected_state_token,input,input_digest,
+        result_revision_id,result_revision,result_version_digest)
+      SELECT $8::uuid,$9::uuid,$10::uuid,$1::uuid,$11::uuid,'topic-review-client-authority','reject',$12,$13,
+        $14::jsonb,'sha256:'||encode(digest(($14::jsonb)::text,'sha256'),'hex'),$15::uuid,$2,value.digest FROM value
+      RETURNING result_version_digest digest`,[currentRaw.candidate_id,currentRaw.revision+1,
+      currentRaw.revision_id,currentRaw.title,currentRaw.description,JSON.stringify(currentRaw.inclusion),
+      JSON.stringify(currentRaw.exclusion),operationId,fixture.workspace_id,currentRaw.run_id,clientActorId,
+      currentRaw.revision,currentRaw.state_token,JSON.stringify(input),revisionId]);
+    await assert.rejects(unauthorizedClient.query(`INSERT INTO signal_topic_evaluation_candidate_revisions(
+      id,candidate_id,run_id,workspace_id,revision,predecessor_revision_id,operation_id,action,
+      review_state,title,description,inclusion,exclusion,version_digest)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,'reject','rejected',$8,$9,
+        $10::jsonb,$11::jsonb,$12)`,[revisionId,currentRaw.candidate_id,currentRaw.run_id,fixture.workspace_id,
+      currentRaw.revision+1,currentRaw.revision_id,operationId,currentRaw.title,currentRaw.description,
+      JSON.stringify(currentRaw.inclusion),JSON.stringify(currentRaw.exclusion),inserted.rows[0]!.digest]),
+    /review authority is invalid/u,"direct SQL client actor cannot create a management review revision");
+  }finally{await unauthorizedClient.query("ROLLBACK").catch(()=>undefined);unauthorizedClient.release();}
+  assert.deepEqual((await pool.query<{operations:number;events:number;revisions:number}>(`SELECT
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidate_review_operations) operations,
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidate_review_events) events,
+    (SELECT count(*)::int FROM signal_topic_evaluation_candidate_revisions revision
+      WHERE revision.candidate_id=candidate.id) revisions
+    FROM signal_topic_evaluation_candidates candidate WHERE candidate.candidate_key=$1 LIMIT 1`,
+  [candidate.candidate_key])).rows,[{operations:5,events:5,revisions:6}],
+  "one append event and successor exist per successful command; stale/replay create none");
+  const directClient=await pool.connect();
+  try{await directClient.query("BEGIN");
+    await directClient.query(`INSERT INTO signal_topic_evaluation_candidate_review_operations(
+    id,workspace_id,run_id,candidate_id,actor_user_id,idempotency_key,action,expected_revision,
+    expected_state_token,input,input_digest,result_revision_id,result_revision,result_version_digest)
+    SELECT gen_random_uuid(),candidate.workspace_id,candidate.run_id,candidate.id,run.requested_by_user_id,
+      'topic-review-forged-missing-event','reject',revision.revision,
+      signal_topic_evaluation_candidate_state_token_v1(candidate.id,revision.revision,revision.version_digest),
+      jsonb_build_object('action','reject','candidate_key',candidate.candidate_key,'expected_revision',revision.revision,
+        'state_token',signal_topic_evaluation_candidate_state_token_v1(candidate.id,revision.revision,revision.version_digest)),
+      $2,gen_random_uuid(),revision.revision+1,$2 FROM signal_topic_evaluation_candidates candidate
+    JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+    JOIN LATERAL(SELECT * FROM signal_topic_evaluation_candidate_revisions item
+      WHERE item.candidate_id=candidate.id ORDER BY revision DESC LIMIT 1) revision ON true
+    WHERE candidate.candidate_key=$1 LIMIT 1`,[candidate.candidate_key,digest("forged")]);
+    await assert.rejects(directClient.query("COMMIT"),/operation is incomplete|violates foreign key/u,
+      "direct SQL cannot commit an operation without successor/event");
+  }finally{await directClient.query("ROLLBACK").catch(()=>undefined);directClient.release();}
+  const immutableAfter=await pool.query<{candidate_digest:string;evidence_digest:string}>(`SELECT
+    encode(digest(string_agg(candidate.candidate_digest,',' ORDER BY candidate.candidate_key),'sha256'),'hex') candidate_digest,
+    encode(digest(string_agg(link.evidence_ref_digest,',' ORDER BY candidate.candidate_key,link.evidence_ref_digest),'sha256'),'hex') evidence_digest
+    FROM signal_topic_evaluation_candidates candidate
+    JOIN signal_topic_evaluation_candidate_evidence link ON link.candidate_id=candidate.id
+    JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+    WHERE run.workspace_id=$1::uuid AND run.status='completed'`,[fixture.workspace_id]);
+  assert.deepEqual(immutableAfter.rows,immutableBefore.rows,"review preserves original provider output and evidence byte-for-byte");
+  assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
+    "candidate review creates no Topic adoption, publication, serving, pointer or binding effect");
 }
 
 async function exerciseAutomaticDispositionV1(){

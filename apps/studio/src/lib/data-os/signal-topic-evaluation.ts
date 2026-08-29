@@ -1,6 +1,7 @@
 import {
   createSignalTopicEvaluationRunV1,
-  prepareSignalTopicEvaluationDryRunV1,
+  loadSignalTopicEvaluationManagementPreflightV1,
+  reviewSignalTopicEvaluationCandidateV1,
   signalTopicEvaluationConfigurationFromEnvV1
 } from "@noisia/db";
 
@@ -13,11 +14,13 @@ function actor(value:SignalWorkspaceUser){
 }
 
 export async function loadSignalTopicEvaluationDryRunProductV1(args:{
-  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser}){
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;cursor?:string|null;limit?:number}){
   const{pool}=await import("@/lib/db");
-  const prepared=await prepareSignalTopicEvaluationDryRunV1({queryable:pool,workspace_id:args.workspace.id,
-    actor:actor(args.actor),configuration:signalTopicEvaluationConfigurationFromEnvV1()});
-  const{envelope,...flightCard}=prepared;
+  const{preflight,management}=await loadSignalTopicEvaluationManagementPreflightV1({queryable:pool,
+    workspace_id:args.workspace.id,actor:actor(args.actor),cursor:args.cursor,limit:args.limit,
+    configuration:signalTopicEvaluationConfigurationFromEnvV1()});
+  if(!("envelope" in preflight))return{...preflight,input_authority:null,...management};
+  const{envelope,...flightCard}=preflight;
   return{...flightCard,input_authority:{corpus:envelope.corpus,
     semantic_context:{generation_key:envelope.semantic_context.generation_key,
       generation_authority_digest:envelope.semantic_context.generation_authority_digest,
@@ -28,7 +31,7 @@ export async function loadSignalTopicEvaluationDryRunProductV1(args:{
       approved_count:envelope.semantic_context.approved_count},
     diagnostic_packet:{packet_digest:envelope.diagnostic_packet.packet_digest,
       proposal_count:envelope.diagnostic_packet.proposal_count,
-      evidence_count:envelope.diagnostic_packet.evidence_count}}};
+      evidence_count:envelope.diagnostic_packet.evidence_count}},...management};
 }
 
 export async function startSignalTopicEvaluationProductV1(args:{workspace:ResolvedSignalWorkspace;
@@ -39,4 +42,12 @@ export async function startSignalTopicEvaluationProductV1(args:{workspace:Resolv
     idempotency_key:args.idempotencyKey,expected_envelope_digest:args.expectedEnvelopeDigest,
     confirmation:args.confirmation,hard_cap_micro_usd:args.hardCapMicroUsd,
     configuration:signalTopicEvaluationConfigurationFromEnvV1()});
+}
+
+export async function reviewSignalTopicEvaluationCandidateProductV1(args:{workspace:ResolvedSignalWorkspace;
+  actor:SignalWorkspaceUser;idempotencyKey:string;command:Parameters<
+    typeof reviewSignalTopicEvaluationCandidateV1>[0]["command"]}){
+  const{pool}=await import("@/lib/db");
+  return reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),idempotency_key:args.idempotencyKey,command:args.command});
 }

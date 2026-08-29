@@ -2060,10 +2060,13 @@ paths:
   /api/data-os/signal/{workspaceId}/topic-evaluation:
     get:
       tags: [Signal Topic Evaluation]
-      operationId: getSignalTopicEvaluationDryRun
-      summary: Build the frozen one-call Topic Evaluation envelope without a provider call or write.
+      operationId: getSignalTopicEvaluationManagement
+      summary: Read the frozen flight card and sanitized current candidate review projection without a provider call or write.
       security: [{ kindeSession: [] }]
-      parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque stable candidate cursor. }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         "200":
           description: Read-only flight card; candidates remain non-adopting and non-serving.
@@ -2090,6 +2093,30 @@ paths:
         "403": { description: Management authority denied or execution disabled by default. }
         "409": { description: Duplicate idempotency, frozen authority drift or unavailable product provider lane. }
         "422": { description: Closed confirmation, token ceiling or hard cap rejected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/candidates/{candidateKey}/commands:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: reviewSignalTopicEvaluationCandidate
+      summary: Append one reversible pending/rejected candidate revision; never adopt, publish or serve a Topic.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - name: candidateKey
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 160 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicEvaluationCandidateCommandV1" }
+      responses:
+        "200": { description: Idempotent append-only candidate revision; adoption/publication/serving are false. }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Candidate not found in this workspace. }
+        "409": { description: Stale state, invalid lifecycle, undo target or idempotency conflict. }
+        "422": { description: Closed command rejected before write. }
   /api/data-os/signal/{workspaceId}/semantic-context/proposals/{runKey}:
     get:
       tags: [Semantic Context Pack]
@@ -3438,15 +3465,20 @@ components:
     SignalTopicEvaluationPreflightV1:
       type: object
       additionalProperties: false
-      required: [contract_version, execution_enabled, execution_configuration_complete,
+      required: [contract_version, preflight_status, preflight_error_code,
+        execution_enabled, execution_configuration_complete,
         credential_configured, product_provider_key_name, provider, model, pricing_version,
         input_usd_per_million_tokens, output_usd_per_million_tokens, input_authority,
         envelope_digest, proposal_count,
         historical_bertopic_proposals, one_call_max, retry_allowed, max_input_tokens,
         max_output_tokens, hard_cap_micro_usd, estimated_input_tokens, estimated_max_cost_micro_usd,
-        success_minimum_candidates, topic_adoption, publication, serving]
+        success_minimum_candidates, topic_adoption, publication, serving, run, results]
       properties:
         contract_version: { const: signal-topic-evaluation-preflight-v1 }
+        preflight_status: { type: string, enum: [ready, blocked] }
+        preflight_error_code:
+          type: [string, "null"]
+          enum: [topic_evaluation_launch_authority_unavailable, null]
         execution_enabled: { type: boolean, default: false }
         execution_configuration_complete: { type: boolean }
         credential_configured: { type: boolean }
@@ -3457,8 +3489,8 @@ components:
         input_usd_per_million_tokens: { type: [string, "null"], pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
         output_usd_per_million_tokens: { type: [string, "null"], pattern: '^(0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$' }
         input_authority:
-          type: object
-          description: Server-owned frozen identifiers and digests only; bounded proposal/context payloads remain server-private.
+          type: [object, "null"]
+          description: Server-owned frozen identifiers and digests only; null when a fresh launch authority cannot be sealed. Completed result rows remain readable.
           additionalProperties: false
           required: [corpus, semantic_context, diagnostic_packet]
           properties:
@@ -3493,8 +3525,8 @@ components:
                 packet_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
                 proposal_count: { const: 115 }
                 evidence_count: { type: integer, minimum: 115 }
-        envelope_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
-        proposal_count: { const: 115 }
+        envelope_digest: { type: [string, "null"], pattern: '^sha256:[0-9a-f]{64}$' }
+        proposal_count: { type: [integer, "null"], enum: [115, null] }
         historical_bertopic_proposals: { const: 115 }
         one_call_max: { const: 1 }
         retry_allowed: { const: false }
@@ -3507,6 +3539,102 @@ components:
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+        run:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [run_key, status, provider_call_count, candidate_count, rubric_met, error_code,
+            settled_micro_usd, queued_at, started_at, completed_at, failed_at, updated_at]
+          properties:
+            run_key: { type: string }
+            status: { type: string, enum: [queued, in_flight, response_persisted, completed, failed, outcome_unknown] }
+            provider_call_count: { type: integer, minimum: 0, maximum: 1 }
+            candidate_count: { type: [integer, "null"], minimum: 0, maximum: 80 }
+            rubric_met: { type: [boolean, "null"] }
+            error_code: { type: [string, "null"] }
+            settled_micro_usd: { type: [string, "null"], pattern: '^[0-9]+$' }
+            queued_at: { type: string, format: date-time }
+            started_at: { type: [string, "null"], format: date-time }
+            completed_at: { type: [string, "null"], format: date-time }
+            failed_at: { type: [string, "null"], format: date-time }
+            updated_at: { type: string, format: date-time }
+        results:
+          $ref: "#/components/schemas/SignalTopicEvaluationCandidatePageV1"
+    SignalTopicEvaluationCandidatePageV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, run_key, items, total, pending, rejected, limit, next_cursor]
+      properties:
+        contract_version: { const: signal-topic-evaluation-candidate-page-v1 }
+        run_key: { type: [string, "null"] }
+        items: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/SignalTopicEvaluationCandidateV1" } }
+        total: { type: integer, minimum: 0, maximum: 80 }
+        pending: { type: integer, minimum: 0, maximum: 80 }
+        rejected: { type: integer, minimum: 0, maximum: 80 }
+        limit: { type: integer, minimum: 1, maximum: 50 }
+        next_cursor: { type: [string, "null"] }
+    SignalTopicEvaluationCandidateV1:
+      type: object
+      additionalProperties: false
+      required: [candidate_key, title, description, inclusion, exclusion, source_proposal_keys,
+        source_proposal_count, evidence, review_state, revision, state_token, undo_target_revision, updated_at]
+      properties:
+        candidate_key: { type: string, minLength: 1, maxLength: 160 }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, minLength: 1, maxLength: 2000 }
+        inclusion: { type: array, minItems: 1, maxItems: 12, items: { type: string, minLength: 1, maxLength: 240 } }
+        exclusion: { type: array, maxItems: 12, items: { type: string, minLength: 1, maxLength: 240 } }
+        source_proposal_keys: { type: array, minItems: 1, maxItems: 12, items: { type: string } }
+        source_proposal_count: { type: integer, minimum: 1 }
+        evidence:
+          type: object
+          additionalProperties: false
+          required: [count, supports, limits, contradicts]
+          properties:
+            count: { type: integer, minimum: 0 }
+            supports: { type: integer, minimum: 0 }
+            limits: { type: integer, minimum: 0 }
+            contradicts: { type: integer, minimum: 0 }
+        review_state: { type: string, enum: [pending, rejected] }
+        revision: { type: integer, minimum: 1 }
+        state_token: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        undo_target_revision: { type: [integer, "null"], minimum: 1 }
+        updated_at: { type: string, format: date-time }
+    SignalTopicEvaluationCandidateCommandV1:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [action, candidate_key, expected_revision, state_token, values]
+          properties:
+            action: { const: save }
+            candidate_key: { type: string, minLength: 1, maxLength: 160 }
+            expected_revision: { type: integer, minimum: 1 }
+            state_token: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            values:
+              type: object
+              additionalProperties: false
+              required: [title, description, inclusion, exclusion]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 160 }
+                description: { type: string, minLength: 1, maxLength: 2000 }
+                inclusion: { type: array, minItems: 1, maxItems: 12, items: { type: string, minLength: 1, maxLength: 240 } }
+                exclusion: { type: array, maxItems: 12, items: { type: string, minLength: 1, maxLength: 240 } }
+        - type: object
+          additionalProperties: false
+          required: [action, candidate_key, expected_revision, state_token]
+          properties:
+            action: { type: string, enum: [reject, restore] }
+            candidate_key: { type: string, minLength: 1, maxLength: 160 }
+            expected_revision: { type: integer, minimum: 1 }
+            state_token: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        - type: object
+          additionalProperties: false
+          required: [action, candidate_key, expected_revision, state_token, target_revision]
+          properties:
+            action: { const: undo }
+            candidate_key: { type: string, minLength: 1, maxLength: 160 }
+            expected_revision: { type: integer, minimum: 1 }
+            state_token: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            target_revision: { type: integer, minimum: 1 }
     SignalSemanticContextProposalRunV1:
       type: object
       additionalProperties: false

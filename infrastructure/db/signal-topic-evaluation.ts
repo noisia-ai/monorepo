@@ -80,6 +80,8 @@ export async function prepareSignalTopicEvaluationDryRunV1(args: {
     args.configuration.max_output_tokens, args.configuration):null;
   return {
     contract_version: "signal-topic-evaluation-preflight-v1" as const,
+    preflight_status: "ready" as const,
+    preflight_error_code: null,
     execution_enabled: args.configuration.enabled,
     execution_configuration_complete: complete,
     credential_configured: args.configuration.credential_configured,
@@ -105,6 +107,268 @@ export async function prepareSignalTopicEvaluationDryRunV1(args: {
     publication: false as const,
     serving: false as const
   };
+}
+
+export async function loadSignalTopicEvaluationManagementPreflightV1(args:{
+  queryable:Queryable;workspace_id:string;actor:SignalTopicEvaluationActorV1;
+  configuration:SignalTopicEvaluationConfigurationV1;cursor?:string|null;limit?:number;
+}){
+  const management=await loadSignalTopicEvaluationManagementV1(args);
+  try{return{preflight:await prepareSignalTopicEvaluationDryRunV1(args),management};}
+  catch(error){
+    if(!management.run||!isExpectedTopicEvaluationLaunchAuthorityErrorV1(error))throw error;
+    return{preflight:blockedSignalTopicEvaluationPreflightV1(args.configuration),management};
+  }
+}
+
+function isExpectedTopicEvaluationLaunchAuthorityErrorV1(error:unknown){
+  return error instanceof SignalTopicEvaluationError&&(
+    error.code==="topic_evaluation_input_authority_unavailable"
+    ||error.code==="topic_evaluation_packet_incomplete"
+    ||error.code==="topic_evaluation_context_incomplete");
+}
+
+function blockedSignalTopicEvaluationPreflightV1(configuration:SignalTopicEvaluationConfigurationV1){
+  const complete=configuration.execution_configuration_complete;
+  const estimated=complete?costMicroUsd(configuration.estimated_input_tokens,
+    configuration.max_output_tokens,configuration):null;
+  return{contract_version:"signal-topic-evaluation-preflight-v1" as const,
+    preflight_status:"blocked" as const,
+    preflight_error_code:"topic_evaluation_launch_authority_unavailable" as const,
+    execution_enabled:false,execution_configuration_complete:complete,
+    credential_configured:configuration.credential_configured,
+    product_provider_key_name:"ANTHROPIC_API_KEY" as const,provider:configuration.provider,
+    model:complete?configuration.model:null,pricing_version:complete?configuration.pricing_version:null,
+    input_usd_per_million_tokens:complete?configuration.input_usd_per_million_tokens:null,
+    output_usd_per_million_tokens:complete?configuration.output_usd_per_million_tokens:null,
+    envelope_digest:null,proposal_count:null,historical_bertopic_proposals:115 as const,
+    one_call_max:1 as const,retry_allowed:false as const,
+    max_input_tokens:complete?configuration.max_input_tokens:null,
+    max_output_tokens:complete?configuration.max_output_tokens:null,
+    hard_cap_micro_usd:complete?configuration.hard_cap_micro_usd.toString():null,
+    estimated_input_tokens:complete?configuration.estimated_input_tokens:null,
+    estimated_max_cost_micro_usd:estimated?.toString()??null,
+    success_minimum_candidates:10 as const,topic_adoption:false as const,
+    publication:false as const,serving:false as const};
+}
+
+export type SignalTopicEvaluationCandidateCommandV1 =
+  | { action:"save";candidate_key:string;expected_revision:number;state_token:string;values:{
+      title:string;description:string;inclusion:string[];exclusion:string[]}}
+  | { action:"reject"|"restore";candidate_key:string;expected_revision:number;state_token:string}
+  | { action:"undo";candidate_key:string;expected_revision:number;state_token:string;target_revision:number };
+
+export async function loadSignalTopicEvaluationManagementV1(args:{
+  queryable:Queryable;workspace_id:string;actor:SignalTopicEvaluationActorV1;
+  cursor?:string|null;limit?:number;
+}){
+  assertActor(args.actor);
+  const limit=Math.min(Math.max(args.limit??20,1),50);
+  const cursor=decodeCandidateCursor(args.cursor??null);
+  const runResult=await args.queryable.query<ManagementRunRow>(`SELECT run_key,status,provider_call_count,
+    candidate_count,rubric_met,error_code,settled_micro_usd::text,
+    queued_at::text,started_at::text,completed_at::text,failed_at::text,updated_at::text
+    FROM signal_topic_evaluation_runs WHERE workspace_id=$1::uuid
+    ORDER BY queued_at DESC,id DESC LIMIT 1`,[args.workspace_id]);
+  const run=runResult.rows[0];
+  if(!run)return{run:null,results:emptyResults(limit)};
+  const resultRun=await args.queryable.query<{run_key:string}>(`SELECT run_key FROM signal_topic_evaluation_runs
+    WHERE workspace_id=$1::uuid AND status='completed' AND candidate_count>0
+      AND ($2::text IS NULL OR run_key=$2) ORDER BY completed_at DESC,id DESC LIMIT 1`,
+  [args.workspace_id,cursor?.run_key??null]);
+  const resultRunKey=resultRun.rows[0]?.run_key;
+  if(!resultRunKey)return{run:{run_key:run.run_key,status:run.status,provider_call_count:run.provider_call_count,
+    candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
+    settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
+    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:emptyResults(limit)};
+  const rows=await args.queryable.query<ManagementCandidateRow>(`WITH current_revision AS(
+      SELECT DISTINCT ON(revision.candidate_id) revision.*
+      FROM signal_topic_evaluation_candidate_revisions revision
+      JOIN signal_topic_evaluation_candidates candidate ON candidate.id=revision.candidate_id
+      JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+      WHERE run.workspace_id=$1::uuid AND run.run_key=$2
+      ORDER BY revision.candidate_id,revision.revision DESC
+    ),evidence AS(
+      SELECT link.candidate_id,count(*)::int evidence_count,
+        count(*) FILTER(WHERE input.relation='supports')::int supports,
+        count(*) FILTER(WHERE input.relation='limits')::int limits,
+        count(*) FILTER(WHERE input.relation='contradicts')::int contradicts
+      FROM signal_topic_evaluation_candidate_evidence link
+      JOIN signal_topic_evaluation_input_evidence input
+        ON input.run_id=link.run_id AND input.evidence_ref_digest=link.evidence_ref_digest
+      GROUP BY link.candidate_id
+    )
+    SELECT candidate.candidate_key,current_revision.title,current_revision.description,
+      current_revision.inclusion,current_revision.exclusion,candidate.source_proposal_keys,
+      cardinality(candidate.source_proposal_keys)::int source_proposal_count,
+      coalesce(evidence.evidence_count,0)::int evidence_count,coalesce(evidence.supports,0)::int supports,
+      coalesce(evidence.limits,0)::int limits,coalesce(evidence.contradicts,0)::int contradicts,
+      current_revision.review_state,current_revision.revision,
+      signal_topic_evaluation_candidate_state_token_v1(candidate.id,current_revision.revision,
+        current_revision.version_digest) state_token,
+      predecessor.revision undo_target_revision,current_revision.created_at::text updated_at
+    FROM signal_topic_evaluation_candidates candidate
+    JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+    JOIN current_revision ON current_revision.candidate_id=candidate.id
+    LEFT JOIN signal_topic_evaluation_candidate_revisions predecessor
+      ON predecessor.id=current_revision.predecessor_revision_id
+    LEFT JOIN evidence ON evidence.candidate_id=candidate.id
+    WHERE run.workspace_id=$1::uuid AND run.run_key=$2 AND ($3::text IS NULL OR candidate.candidate_key>$3)
+    ORDER BY candidate.candidate_key ASC LIMIT $4`,[args.workspace_id,resultRunKey,cursor?.candidate_key??null,limit+1]);
+  const hasMore=rows.rows.length>limit;const visible=rows.rows.slice(0,limit);
+  const totals=await args.queryable.query<{total:number;pending:number;rejected:number}>(`WITH current_revision AS(
+      SELECT DISTINCT ON(revision.candidate_id) revision.candidate_id,revision.review_state
+      FROM signal_topic_evaluation_candidate_revisions revision
+      JOIN signal_topic_evaluation_candidates candidate ON candidate.id=revision.candidate_id
+      JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+      WHERE run.workspace_id=$1::uuid AND run.run_key=$2
+      ORDER BY revision.candidate_id,revision.revision DESC)
+    SELECT count(*)::int total,count(*) FILTER(WHERE review_state='pending')::int pending,
+      count(*) FILTER(WHERE review_state='rejected')::int rejected FROM current_revision`,
+  [args.workspace_id,resultRunKey]);
+  return{run:{run_key:run.run_key,status:run.status,provider_call_count:run.provider_call_count,
+    candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
+    settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
+    completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:{
+    contract_version:"signal-topic-evaluation-candidate-page-v1" as const,run_key:resultRunKey,
+    items:visible.map(projectManagementCandidate),total:totals.rows[0]?.total??0,
+    pending:totals.rows[0]?.pending??0,rejected:totals.rows[0]?.rejected??0,limit,
+    next_cursor:hasMore&&visible.length?encodeCandidateCursor(resultRunKey,visible.at(-1)!.candidate_key):null}};
+}
+
+export async function reviewSignalTopicEvaluationCandidateV1(args:{
+  pool:Pick<Pool,"connect">;workspace_id:string;actor:SignalTopicEvaluationActorV1;
+  idempotency_key:string;command:SignalTopicEvaluationCandidateCommandV1;
+}){
+  assertActor(args.actor);
+  const client=await args.pool.connect();
+  try{
+    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    const existing=await client.query<{input:unknown;candidate_id:string;result_revision_id:string}>(
+      `SELECT input,candidate_id::text,result_revision_id::text
+       FROM signal_topic_evaluation_candidate_review_operations
+       WHERE workspace_id=$1::uuid AND idempotency_key=$2`,[args.workspace_id,args.idempotency_key]);
+    if(existing.rows[0]){
+      if(stableSignalTopicEvaluationJsonV1(existing.rows[0].input)!==stableSignalTopicEvaluationJsonV1(args.command))
+        throw new SignalTopicEvaluationError("topic_evaluation_candidate_idempotency_conflict",409);
+      const replay=await loadCandidateRevision(client,existing.rows[0].candidate_id,
+        existing.rows[0].result_revision_id);
+      await client.query("COMMIT");return{...replay,idempotent_replay:true};
+    }
+    const locked=await client.query<LockedCandidateRow>(`SELECT candidate.id::text,candidate.run_id::text,
+      candidate.workspace_id::text,candidate.candidate_key,current_revision.id::text revision_id,
+      current_revision.revision,current_revision.review_state,current_revision.title,
+      current_revision.description,current_revision.inclusion,current_revision.exclusion,
+      current_revision.version_digest,current_revision.predecessor_revision_id::text,
+      signal_topic_evaluation_candidate_state_token_v1(candidate.id,current_revision.revision,
+        current_revision.version_digest) state_token
+      FROM signal_topic_evaluation_candidates candidate
+      JOIN signal_topic_evaluation_runs run ON run.id=candidate.run_id
+      JOIN LATERAL(SELECT revision.* FROM signal_topic_evaluation_candidate_revisions revision
+        WHERE revision.candidate_id=candidate.id ORDER BY revision.revision DESC LIMIT 1) current_revision ON true
+      WHERE candidate.workspace_id=$1::uuid AND candidate.candidate_key=$2 AND run.status='completed'
+      FOR UPDATE OF candidate`,[args.workspace_id,args.command.candidate_key]);
+    const current=locked.rows[0];
+    if(!current)throw new SignalTopicEvaluationError("topic_evaluation_candidate_not_found",404);
+    if(current.revision!==args.command.expected_revision||current.state_token!==args.command.state_token)
+      throw new SignalTopicEvaluationError("topic_evaluation_candidate_stale",409);
+    let next:{title:string;description:string;inclusion:unknown;exclusion:unknown;review_state:"pending"|"rejected"};
+    let targetRevision:number|null=null;
+    if(args.command.action==="save"){
+      if(current.review_state!=="pending")throw new SignalTopicEvaluationError("topic_evaluation_candidate_restore_required",409);
+      next={...args.command.values,review_state:"pending"};
+    }else if(args.command.action==="reject"){
+      if(current.review_state!=="pending")throw new SignalTopicEvaluationError("topic_evaluation_candidate_state_invalid",409);
+      next={title:current.title,description:current.description,inclusion:current.inclusion,
+        exclusion:current.exclusion,review_state:"rejected"};
+    }else if(args.command.action==="restore"){
+      if(current.review_state!=="rejected")throw new SignalTopicEvaluationError("topic_evaluation_candidate_state_invalid",409);
+      next={title:current.title,description:current.description,inclusion:current.inclusion,
+        exclusion:current.exclusion,review_state:"pending"};
+    }else{
+      if(!("target_revision" in args.command))throw new SignalTopicEvaluationError(
+        "topic_evaluation_candidate_undo_target_invalid",409);
+      targetRevision=args.command.target_revision;
+      const target=await client.query<{id:string;review_state:"pending"|"rejected";title:string;
+        description:string;inclusion:unknown;exclusion:unknown}>(`SELECT id::text,review_state,title,description,inclusion,exclusion
+        FROM signal_topic_evaluation_candidate_revisions WHERE candidate_id=$1::uuid AND revision=$2`,
+      [current.id,targetRevision]);
+      if(!target.rows[0]||target.rows[0].id!==current.predecessor_revision_id)
+        throw new SignalTopicEvaluationError("topic_evaluation_candidate_undo_target_invalid",409);
+      next=target.rows[0];
+    }
+    const operationId=crypto.randomUUID(),revisionId=crypto.randomUUID(),eventId=crypto.randomUUID();
+    const nextRevision=current.revision+1;
+    const insertedOperation=await client.query<{version_digest:string;state_token:string}>(`WITH value AS(
+      SELECT signal_topic_evaluation_candidate_version_digest_v1($1::uuid,$2,$3::uuid,$4,$5,$6,$7,
+        $8::jsonb,$9::jsonb) version_digest)
+      INSERT INTO signal_topic_evaluation_candidate_review_operations(id,workspace_id,run_id,candidate_id,
+        actor_user_id,idempotency_key,action,expected_revision,expected_state_token,target_revision,input,
+        input_digest,result_revision_id,result_revision,result_version_digest)
+      SELECT $10::uuid,$11::uuid,$12::uuid,$1::uuid,$13::uuid,$14,$4,$15,$16,$17,$18::jsonb,
+        'sha256:'||encode(digest(($18::jsonb)::text,'sha256'),'hex'),$19::uuid,$2,value.version_digest FROM value
+      RETURNING result_version_digest version_digest,
+        signal_topic_evaluation_candidate_state_token_v1(candidate_id,result_revision,result_version_digest) state_token`,
+    [current.id,nextRevision,current.revision_id,
+      args.command.action,next.review_state,next.title,next.description,JSON.stringify(next.inclusion),
+      JSON.stringify(next.exclusion),operationId,args.workspace_id,current.run_id,args.actor.id,
+      args.idempotency_key,current.revision,current.state_token,targetRevision,JSON.stringify(args.command),revisionId]);
+    const versionDigest=insertedOperation.rows[0]!.version_digest;
+    await client.query(`INSERT INTO signal_topic_evaluation_candidate_revisions(id,candidate_id,run_id,workspace_id,
+      revision,predecessor_revision_id,operation_id,action,review_state,title,description,inclusion,exclusion,version_digest)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14)`,
+    [revisionId,current.id,current.run_id,args.workspace_id,nextRevision,current.revision_id,operationId,
+      args.command.action,next.review_state,next.title,next.description,JSON.stringify(next.inclusion),
+      JSON.stringify(next.exclusion),versionDigest]);
+    await client.query(`INSERT INTO signal_topic_evaluation_candidate_review_events(id,operation_id,candidate_id,
+      run_id,workspace_id,event_kind,previous_version_digest,current_version_digest)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8)`,[eventId,operationId,current.id,
+      current.run_id,args.workspace_id,{save:"candidate_saved",reject:"candidate_rejected",
+        restore:"candidate_restored",undo:"candidate_undone"}[args.command.action],current.version_digest,versionDigest]);
+    await client.query("COMMIT");
+    return{candidate_key:current.candidate_key,review_state:next.review_state,revision:nextRevision,
+      state_token:insertedOperation.rows[0]!.state_token,idempotent_replay:false,
+      topic_adoption:false as const,publication:false as const,serving:false as const};
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
+}
+
+type ManagementRunRow={run_key:string;status:string;provider_call_count:number;candidate_count:number|null;
+  rubric_met:boolean|null;error_code:string|null;settled_micro_usd:string|null;queued_at:string;
+  started_at:string|null;completed_at:string|null;failed_at:string|null;updated_at:string};
+type ManagementCandidateRow={candidate_key:string;title:string;description:string;inclusion:unknown;
+  exclusion:unknown;source_proposal_keys:string[];source_proposal_count:number;evidence_count:number;
+  supports:number;limits:number;contradicts:number;review_state:"pending"|"rejected";revision:number;
+  state_token:string;undo_target_revision:number|null;updated_at:string};
+type LockedCandidateRow={id:string;run_id:string;workspace_id:string;candidate_key:string;revision_id:string;
+  revision:number;review_state:"pending"|"rejected";title:string;description:string;inclusion:unknown;
+  exclusion:unknown;version_digest:string;predecessor_revision_id:string|null;state_token:string};
+
+function emptyResults(limit:number){return{contract_version:"signal-topic-evaluation-candidate-page-v1" as const,
+  run_key:null,items:[],total:0,pending:0,rejected:0,limit,next_cursor:null};}
+function projectManagementCandidate(row:ManagementCandidateRow){return{
+  candidate_key:row.candidate_key,title:row.title,description:row.description,
+  inclusion:row.inclusion,exclusion:row.exclusion,
+  source_proposal_keys:row.source_proposal_keys.slice(0,12),source_proposal_count:row.source_proposal_count,
+  evidence:{count:row.evidence_count,supports:row.supports,limits:row.limits,contradicts:row.contradicts},
+  review_state:row.review_state,revision:row.revision,state_token:row.state_token,
+  undo_target_revision:row.undo_target_revision,updated_at:row.updated_at};}
+function encodeCandidateCursor(runKey:string,candidateKey:string){return Buffer.from(JSON.stringify({v:1,run_key:runKey,candidate_key:candidateKey}),
+  "utf8").toString("base64url");}
+function decodeCandidateCursor(cursor:string|null){if(!cursor)return null;try{const value=JSON.parse(
+  Buffer.from(cursor,"base64url").toString("utf8")) as {v?:unknown;run_key?:unknown;candidate_key?:unknown};
+  if(value.v!==1||typeof value.run_key!=="string"||value.run_key.length<1||value.run_key.length>200
+    ||typeof value.candidate_key!=="string"||value.candidate_key.length<1||value.candidate_key.length>200)
+    throw new Error();return{run_key:value.run_key,candidate_key:value.candidate_key};}catch{throw new SignalTopicEvaluationError(
+      "topic_evaluation_candidate_cursor_invalid",422);}}
+async function loadCandidateRevision(queryable:Queryable,candidateId:string,revisionId:string){
+  const result=await queryable.query<{candidate_key:string;review_state:"pending"|"rejected";revision:number;
+    state_token:string}>(`SELECT candidate.candidate_key,revision.review_state,revision.revision,
+      signal_topic_evaluation_candidate_state_token_v1(candidate.id,revision.revision,revision.version_digest) state_token
+    FROM signal_topic_evaluation_candidate_revisions revision
+    JOIN signal_topic_evaluation_candidates candidate ON candidate.id=revision.candidate_id
+    WHERE candidate.id=$1::uuid AND revision.id=$2::uuid`,[candidateId,revisionId]);
+  if(!result.rows[0])throw new SignalTopicEvaluationError("topic_evaluation_candidate_not_found",404);
+  return{...result.rows[0],topic_adoption:false as const,publication:false as const,serving:false as const};
 }
 
 export async function createSignalTopicEvaluationRunV1(args: {

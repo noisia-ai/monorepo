@@ -6913,6 +6913,61 @@ export const signalTopicEvaluationCandidateEvidence = pgTable("signal_topic_eval
   evidenceRefDigest: text("evidence_ref_digest").notNull()
 }, (table) => [primaryKey({ columns: [table.candidateId, table.evidenceRefDigest] })]);
 
+export const signalTopicEvaluationCandidateReviewOperations = pgTable(
+  "signal_topic_evaluation_candidate_review_operations", {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationCandidates.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    action: text("action").notNull(),
+    expectedRevision: integer("expected_revision").notNull(),
+    expectedStateToken: text("expected_state_token").notNull(),
+    targetRevision: integer("target_revision"),
+    input: jsonb("input").notNull(),
+    inputDigest: text("input_digest").notNull(),
+    resultRevisionId: uuid("result_revision_id").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    resultVersionDigest: text("result_version_digest").notNull(),
+    createdAt: now()
+  }, (table) => [unique("uq_signal_topic_evaluation_review_idempotency")
+    .on(table.workspaceId, table.idempotencyKey)]);
+
+export const signalTopicEvaluationCandidateRevisions = pgTable(
+  "signal_topic_evaluation_candidate_revisions", {
+    id: uuid("id").primaryKey(),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationCandidates.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    predecessorRevisionId: uuid("predecessor_revision_id"),
+    operationId: uuid("operation_id").references(() => signalTopicEvaluationCandidateReviewOperations.id, { onDelete: "restrict" }),
+    action: text("action").notNull(),
+    reviewState: text("review_state").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    inclusion: jsonb("inclusion").notNull(),
+    exclusion: jsonb("exclusion").notNull(),
+    versionDigest: text("version_digest").notNull(),
+    createdAt: now()
+  }, (table) => [unique("uq_signal_topic_evaluation_candidate_revision")
+    .on(table.candidateId, table.revision)]);
+
+export const signalTopicEvaluationCandidateReviewEvents = pgTable(
+  "signal_topic_evaluation_candidate_review_events", {
+    id: uuid("id").primaryKey(),
+    operationId: uuid("operation_id").notNull().unique()
+      .references(() => signalTopicEvaluationCandidateReviewOperations.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationCandidates.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    eventKind: text("event_kind").notNull(),
+    previousVersionDigest: text("previous_version_digest").notNull(),
+    currentVersionDigest: text("current_version_digest").notNull(),
+    createdAt: now()
+  });
+
 export const signalTopicEvaluationEvents = pgTable("signal_topic_evaluation_events", {
   id: uuid("id").primaryKey().defaultRandom(),
   runId: uuid("run_id").notNull().references(() => signalTopicEvaluationRuns.id, { onDelete: "restrict" }),

@@ -51,6 +51,13 @@ function operatorMessage(code:string){return({
   proposal_recovery_unavailable:"The proposal recovery drainer is not ready.",
   semantic_context_provider_outcome_ambiguous:"A provider call may have started; automatic retry is blocked to prevent duplicate spend.",
   semantic_context_proposal_run_not_retryable:"This run cannot be retried without risking duplicate spend."
+  ,topic_evaluation_candidate_not_found:"This Topic Evaluation candidate is no longer available."
+  ,topic_evaluation_candidate_stale:"This candidate changed. Refresh before trying again."
+  ,topic_evaluation_candidate_idempotency_conflict:"This review key was already used for a different command."
+  ,topic_evaluation_candidate_restore_required:"Restore the rejected candidate before editing it."
+  ,topic_evaluation_candidate_state_invalid:"This candidate action is not valid in its current state."
+  ,topic_evaluation_candidate_undo_target_invalid:"The reversible candidate version changed. Refresh before undoing."
+  ,topic_evaluation_candidate_cursor_invalid:"The candidate page changed. Return to the first page."
   ,semantic_context_review_filter_invalid:"One or more review filters are invalid."
   ,semantic_context_review_cursor_invalid:"The review page changed. Return to the first page and try again."
   ,semantic_context_review_element_not_found:"This Semantic Context element is not available in the selected generation."

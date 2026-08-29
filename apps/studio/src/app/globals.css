@@ -20944,3 +20944,36 @@ body:has(.signal-report)::before { display: none; }
 .signal-serving-warning svg {
   flex: 0 0 auto;
 }
+
+/* Topic Evaluation — candidate inspection stays inside the Brand OS resource surface. */
+.topic-evaluation-manager__results { display: grid; gap: 14px; }
+.topic-evaluation-manager__results-heading {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+}
+.topic-evaluation-manager__results-heading h3,
+.topic-evaluation-manager__results-heading p,
+.topic-evaluation-manager__empty p,
+.topic-evaluation-manager__evidence p { margin: 0; }
+.topic-evaluation-manager__results-heading p,
+.topic-evaluation-manager__empty p,
+.topic-evaluation-manager__evidence p { color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.topic-evaluation-manager__list { display: grid; gap: 8px; }
+.topic-evaluation-manager__candidate {
+  width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+  padding: 14px 16px; border: 1px solid var(--neutral-04); border-radius: 14px;
+  background: rgba(255,255,255,.62); color: inherit; text-align: left; cursor: pointer;
+}
+.topic-evaluation-manager__candidate:hover { border-color: rgba(0,138,138,.34); background: rgba(255,255,255,.88); }
+.topic-evaluation-manager__candidate:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.topic-evaluation-manager__candidate > span:first-child { display: grid; gap: 5px; min-width: 0; }
+.topic-evaluation-manager__candidate strong { font-size: 14px; }
+.topic-evaluation-manager__candidate small { color: var(--neutral-09); font-size: 12px; line-height: 1.45; }
+.topic-evaluation-manager__candidate-meta { display: flex; align-items: flex-end; gap: 7px; flex-direction: column; flex: 0 0 auto; }
+.topic-evaluation-manager__empty,
+.topic-evaluation-manager__evidence { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--neutral-04); border-radius: 14px; }
+.admin-drawer-form__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 520px) {
+  .topic-evaluation-manager__results-heading,
+  .topic-evaluation-manager__candidate { flex-direction: column; }
+  .topic-evaluation-manager__candidate-meta { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+}
