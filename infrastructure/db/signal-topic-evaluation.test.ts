@@ -136,3 +136,17 @@ test("0110 seals root uniqueness and dedicated append-only successor authority",
   assert.doesNotMatch(sql,/retry_allowed\s*=\s*true|provider_call_count BETWEEN 0 AND 2/u);
   assert.doesNotMatch(sql,/topic_contract|signal_serving|population_pointer/u);
 });
+
+test("0111 preserves successor authority while accepting only the legacy ambiguous outcome code",async()=>{
+  const sql=await readFile(new URL("./migrations/0111_signal_topic_evaluation_successor_legacy_outcome_compatibility.sql",
+    import.meta.url),"utf8");
+  assert.match(sql,/CREATE OR REPLACE FUNCTION validate_signal_topic_evaluation_successor_operation_v1\(\)/u);
+  assert.match(sql,/predecessor\.error_code IS NULL/u);
+  assert.match(sql,/predecessor\.error_code NOT IN\(\s*'topic_evaluation_provider_ambiguous_after_send',\s*'topic_evaluation_provider_outcome_unknown'\s*\)/u);
+  assert.match(sql,/predecessor\.provider_call_count<>1/u);
+  assert.match(sql,/reservation\.status='ambiguous'/u);
+  assert.match(sql,/outbox\.status='dead_letter'/u);
+  assert.match(sql,/AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR/u);
+  assert.doesNotMatch(sql,/retry_allowed\s*=\s*true|provider_call_count BETWEEN 0 AND 2/u);
+  assert.doesNotMatch(sql,/topic_contract|signal_serving|population_pointer/u);
+});

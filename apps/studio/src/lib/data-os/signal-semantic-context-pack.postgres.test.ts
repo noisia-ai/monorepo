@@ -105,7 +105,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
-  let migration0107="";let migration0108="";let migration0109="";let migration0110="";
+  let migration0107="";let migration0108="";let migration0109="";let migration0110="";let migration0111="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -125,6 +125,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0108_"))migration0108=sql;
       else if(file.startsWith("0109_"))migration0109=sql;
       else if(file.startsWith("0110_"))migration0110=sql;
+      else if(file.startsWith("0111_"))migration0111=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -155,6 +156,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0108,"0108 migration is present and must be applied after 0107");
   assert.ok(migration0109,"0109 migration is present and must be applied after 0108");
   assert.ok(migration0110,"0110 migration is present and must be applied after 0109");
+  assert.ok(migration0111,"0111 migration is present and must be applied after 0110");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -683,10 +685,12 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   try{await migration0108Client.query(migration0108);}finally{await migration0108Client.end();}
   const migration0109Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0109Client.connect();
   try{await migration0109Client.query(migration0109);}finally{await migration0109Client.end();}
-  await exerciseTopicEvaluationProviderBoundaryV1();
-  await exerciseTopicEvaluationCandidateReviewV1();
   const migration0110Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0110Client.connect();
   try{await migration0110Client.query(migration0110);}finally{await migration0110Client.end();}
+  const migration0111Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0111Client.connect();
+  try{await migration0111Client.query(migration0111);}finally{await migration0111Client.end();}
+  await exerciseTopicEvaluationProviderBoundaryV1();
+  await exerciseTopicEvaluationCandidateReviewV1();
   await exerciseTopicEvaluationSuccessorAuthorityV1();
 
   const canonical='{"a":1,"b":[2,3]}';
@@ -2666,6 +2670,14 @@ async function exerciseTopicEvaluationProviderBoundaryV1(){
   assert.deepEqual(ambiguousManagement.successor,{eligible:true,
     predecessor_run_key:ambiguousRun.run_key},
   "the management projection may expose only the current eligible predecessor key; the successor writer remains authoritative");
+  await pool.query(`UPDATE signal_topic_evaluation_runs
+    SET error_code='topic_evaluation_provider_outcome_unknown' WHERE id=$1::uuid`,[ambiguousRun.run_id]);
+  const legacyManagement=await loadSignalTopicEvaluationManagementV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"}});
+  assert.equal(legacyManagement.run?.provider_outcome_class,"ambiguous_after_send");
+  assert.deepEqual(legacyManagement.successor,{eligible:true,
+    predecessor_run_key:ambiguousRun.run_key},
+  "0111 admits the legacy outcome code only through the same closed successor authority");
   assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
     "provider boundary classification does not adopt Topics, publish or mutate serving state");
 }
@@ -2675,9 +2687,10 @@ async function exerciseTopicEvaluationSuccessorAuthorityV1(){
     envelope_digest:string;provider_request_identity:string}>(`SELECT run.id::text,run.workspace_id::text,
     run.requested_by_user_id::text actor_id,run.run_key,run.envelope_digest,run.provider_request_identity
     FROM signal_topic_evaluation_runs run WHERE run.status='outcome_unknown'
-      AND run.error_code='topic_evaluation_provider_ambiguous_after_send'
+      AND run.error_code IN('topic_evaluation_provider_ambiguous_after_send',
+        'topic_evaluation_provider_outcome_unknown')
     ORDER BY run.queued_at DESC LIMIT 1`)).rows[0]!;
-  assert.ok(predecessor,"0110 has one immutable ambiguous-after-send predecessor");
+  assert.ok(predecessor,"0111 has one immutable ambiguous predecessor");
   const configuration={enabled:true,credential_configured:true,pricing_configured:true,
     execution_configuration_complete:true,provider:"anthropic" as const,model:"fixture",
     pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,

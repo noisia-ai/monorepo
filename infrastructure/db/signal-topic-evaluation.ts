@@ -178,7 +178,8 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
       ELSE NULL END provider_outcome_class,
     candidate_count,rubric_met,error_code,settled_micro_usd::text,
     (status='outcome_unknown' AND provider_call_count=1 AND provider_call_state='in_flight'
-      AND error_code='topic_evaluation_provider_ambiguous_after_send'
+      AND error_code IN(
+        'topic_evaluation_provider_ambiguous_after_send','topic_evaluation_provider_outcome_unknown')
       AND provider_response_private IS NULL AND provider_response_digest IS NULL
       AND settled_micro_usd IS NULL AND candidate_count IS NULL
       AND EXISTS(SELECT 1 FROM signal_topic_evaluation_reservations reservation
@@ -572,7 +573,8 @@ export async function createSignalTopicEvaluationSuccessorRunV1(args:{
       WHERE run.workspace_id=$1::uuid AND run.run_key=$2
         AND run.status='outcome_unknown' AND run.provider_call_count=1
         AND run.provider_call_state='in_flight'
-        AND run.error_code='topic_evaluation_provider_ambiguous_after_send'
+        AND run.error_code IN(
+          'topic_evaluation_provider_ambiguous_after_send','topic_evaluation_provider_outcome_unknown')
         AND run.provider_response_private IS NULL AND run.provider_response_digest IS NULL
         AND run.settled_micro_usd IS NULL AND run.candidate_count IS NULL
         AND reservation.status='ambiguous' AND reservation.actual_micro_usd IS NULL
