@@ -148,10 +148,14 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
 function RunNotice({management,t,locale}:{management:SignalTopicEvaluationManagementV1;t:(key:string,values?:Record<string,string|number|Date>)=>string;locale:string}){
   const run=management.run!;const ambiguous=run.status==="outcome_unknown";
   const terminal=run.status==="completed"||run.status==="failed"||ambiguous;
+  const terminalBody=run.providerOutcomeClass==="definitely_not_sent"?t("run.definitelyNotSentBody"):
+    run.providerOutcomeClass==="known_response_invalid"?t("run.knownResponseInvalidBody"):
+    run.providerOutcomeClass==="ambiguous_after_send"?t("run.outcomeUnknownBody"):
+    run.status==="failed"?t("run.failedBody"):t("run.progressBody");
   return<div className="semantic-context-pack__run" role={ambiguous?"alert":"status"}><div className="semantic-context-pack__run-copy"><span className="semantic-context-pack__run-icon">
     {!terminal?<CircleNotch aria-hidden className="icon--spin" size={16}/>:run.status==="failed"||ambiguous?<Warning aria-hidden size={16}/>:<ChartLineUp aria-hidden size={16}/>}</span>
     <div><strong>{t(`run.states.${run.status}`)}</strong><p>{run.status==="completed"?t("run.completedBody",{count:run.candidateCount??0,cost:microUsd(run.settledMicroUsd,locale)}):
-      run.status==="failed"?t("run.failedBody"):ambiguous?t("run.outcomeUnknownBody"):t("run.progressBody")}</p></div></div><AdminStatus state={run.status==="completed"?"good":run.status==="failed"?"danger":"warning"}>{t(`run.states.${run.status}`)}</AdminStatus></div>;
+      terminalBody}</p></div></div><AdminStatus state={run.status==="completed"?"good":run.status==="failed"?"danger":"warning"}>{t(`run.states.${run.status}`)}</AdminStatus></div>;
 }
 function Empty({title,body}:{title:string;body:string}){return<div className="topic-evaluation-manager__empty"><strong>{title}</strong><p>{body}</p></div>;}
 function FlightRow({label,value}:{label:string;value:string}){return<div><span>{label}</span><strong>{value}</strong></div>;}

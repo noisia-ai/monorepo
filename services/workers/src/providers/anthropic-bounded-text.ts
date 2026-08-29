@@ -4,7 +4,6 @@ import type { ZodTypeAny } from "zod";
 
 import { buildSignalSemanticContextProviderOutputSchemaV3,
   signalTopicEvaluationProviderOutputSchemaV1,
-  stableSignalTopicEvaluationJsonV1,
   stableSignalSemanticContextJsonV1,
   type SignalTopicEvaluationProviderV1,
   type SignalSemanticContextProposalProviderV1 } from "@noisia/query-engine";
@@ -27,15 +26,15 @@ export async function generateAnthropicBoundedTextV1(request: {
       }) } : {}) });
     return { text: request.structured_output
       ? stableSignalSemanticContextJsonV1(result.output) : result.text,
-    provider_request_id: null,
+    provider_request_id: result.response.id || null,
     usage: { input_tokens: Math.max(0, Math.floor(result.usage.inputTokens ?? 0)),
       output_tokens: Math.max(0, Math.floor(result.usage.outputTokens ?? 0)) } };
   } catch (error) {
     // The provider did answer. Preserve its text and usage so the durable run can fail
     // validation without turning a known paid response into an ambiguous retry state.
     if (request.structured_output && NoObjectGeneratedError.isInstance(error)
-        && error.text !== undefined) {
-      return { text: error.text, provider_request_id: null,
+        && error.response !== undefined && error.usage !== undefined) {
+      return { text: error.text ?? "", provider_request_id: error.response.id || null,
         usage: { input_tokens: Math.max(0, Math.floor(error.usage?.inputTokens ?? 0)),
           output_tokens: Math.max(0, Math.floor(error.usage?.outputTokens ?? 0)) } };
     }
@@ -52,7 +51,9 @@ export function createAnthropicTopicEvaluationProviderV1(
       structured_output: { schema: signalTopicEvaluationProviderOutputSchemaV1,
         name: "signal_topic_evaluation_candidates",
         description: "Editable evidence-linked topic evaluation candidates; never Topic adoption." } });
-    return { ...result, text: stableSignalTopicEvaluationJsonV1(JSON.parse(result.text)) };
+    // Return the known provider response and usage unchanged. The durable runner persists
+    // them before independent output normalization and relational validation.
+    return result;
   } };
 }
 

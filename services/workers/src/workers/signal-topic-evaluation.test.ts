@@ -4,7 +4,9 @@ import test from "node:test";
 
 import { zodSchema } from "ai";
 
-import { SIGNAL_TOPIC_EVALUATION_OUTPUT_CONTRACT_VERSION } from "@noisia/query-engine";
+import { classifySignalTopicEvaluationProviderBoundaryV1,
+  SignalTopicEvaluationProviderBoundaryErrorV1,
+  SIGNAL_TOPIC_EVALUATION_OUTPUT_CONTRACT_VERSION } from "@noisia/query-engine";
 import { createAnthropicTopicEvaluationProviderV1 } from "../providers/anthropic-bounded-text";
 import { drainSignalTopicEvaluationOutboxV1 } from "./signal-topic-evaluation-outbox";
 
@@ -38,6 +40,40 @@ function findForbiddenSchemaKeywords(value:unknown,path="$",found:string[]=[]):s
 test("topic evaluation transport has no retry or fallback in its adapter",()=>{
   const source=createAnthropicTopicEvaluationProviderV1.toString();
   assert.doesNotMatch(source,/retry|fallback|Promise\.all/u);
+});
+
+test("known invalid structured output preserves safe response metadata before normalization",async()=>{
+  const provider=createAnthropicTopicEvaluationProviderV1(async()=>({
+    text:"{not-valid-json",provider_request_id:"safe-request-id",
+    usage:{input_tokens:321,output_tokens:45}
+  }));
+  const result=await provider.generate({model:"fixture",prompt:"sanitized",max_output_tokens:4096,
+    request_identity:`sha256:${"4".repeat(64)}`});
+  assert.equal(result.text,"{not-valid-json");
+  assert.equal(result.provider_request_id,"safe-request-id");
+  assert.deepEqual(result.usage,{input_tokens:321,output_tokens:45});
+});
+
+test("fake provider SDK failures retain closed boundary classes without retry",async()=>{
+  let definitelyCalls=0;
+  const definitely=createAnthropicTopicEvaluationProviderV1(async()=>{
+    definitelyCalls+=1;
+    throw new SignalTopicEvaluationProviderBoundaryErrorV1(
+      "definitely_not_sent","synthetic_sdk_preflight_rejected");
+  });
+  await assert.rejects(definitely.generate({model:"fixture",prompt:"sanitized",max_output_tokens:4096,
+    request_identity:`sha256:${"5".repeat(64)}`}),
+  (error)=>classifySignalTopicEvaluationProviderBoundaryV1(error).outcome_class==="definitely_not_sent");
+  assert.equal(definitelyCalls,1);
+
+  let ambiguousCalls=0;
+  const ambiguous=createAnthropicTopicEvaluationProviderV1(async()=>{
+    ambiguousCalls+=1;throw new Error("synthetic_connection_closed_after_dispatch");
+  });
+  await assert.rejects(ambiguous.generate({model:"fixture",prompt:"sanitized",max_output_tokens:4096,
+    request_identity:`sha256:${"6".repeat(64)}`}),
+  (error)=>classifySignalTopicEvaluationProviderBoundaryV1(error).outcome_class==="ambiguous_after_send");
+  assert.equal(ambiguousCalls,1);
 });
 
 test("worker checks execution flag before constructing provider transport",async()=>{

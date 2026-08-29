@@ -106,6 +106,26 @@ export const signalTopicEvaluationProviderOutputSchemaV1 = z.object({
 
 export type SignalTopicEvaluationEnvelopeV1 = z.infer<typeof signalTopicEvaluationEnvelopeSchemaV1>;
 export type SignalTopicEvaluationOutputV1 = z.infer<typeof signalTopicEvaluationOutputSchemaV1>;
+export type SignalTopicEvaluationProviderBoundaryClassV1 =
+  "definitely_not_sent" | "ambiguous_after_send";
+
+/** Only explicit pre-transport failures may use definitely_not_sent. Unknown errors are
+ * conservatively ambiguous because the provider may have accepted the request. */
+export class SignalTopicEvaluationProviderBoundaryErrorV1 extends Error {
+  constructor(public readonly outcome_class:SignalTopicEvaluationProviderBoundaryClassV1,
+    public readonly safe_code:string){super(safe_code);this.name="SignalTopicEvaluationProviderBoundaryErrorV1";}
+}
+
+export function classifySignalTopicEvaluationProviderBoundaryV1(error:unknown):{
+  outcome_class:SignalTopicEvaluationProviderBoundaryClassV1;error_code:
+    "topic_evaluation_provider_definitely_not_sent"|"topic_evaluation_provider_ambiguous_after_send"}{
+  const outcome=error instanceof SignalTopicEvaluationProviderBoundaryErrorV1
+    ?error.outcome_class:"ambiguous_after_send";
+  return outcome==="definitely_not_sent"
+    ?{outcome_class:outcome,error_code:"topic_evaluation_provider_definitely_not_sent"}
+    :{outcome_class:"ambiguous_after_send",error_code:"topic_evaluation_provider_ambiguous_after_send"};
+}
+
 export type SignalTopicEvaluationProviderV1 = { generate(request: {
   model: string;
   prompt: string;

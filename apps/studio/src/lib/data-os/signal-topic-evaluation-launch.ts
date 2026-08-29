@@ -30,7 +30,8 @@ export type SignalTopicEvaluationCandidateV1={candidateKey:string;title:string;d
   undoTargetRevision:number|null;updatedAt:string};
 export type SignalTopicEvaluationManagementV1={card:SignalTopicEvaluationFlightCardV1;run:null|{
   runKey:string;status:"queued"|"in_flight"|"response_persisted"|"completed"|"failed"|"outcome_unknown";
-  providerCallCount:number;candidateCount:number|null;rubricMet:boolean|null;errorCode:string|null;
+  providerCallCount:number;providerOutcomeClass:"definitely_not_sent"|"known_response_invalid"|
+    "ambiguous_after_send"|null;candidateCount:number|null;rubricMet:boolean|null;errorCode:string|null;
   settledMicroUsd:string|null;queuedAt:string;completedAt:string|null;failedAt:string|null;updatedAt:string};
   results:{runKey:string|null;items:SignalTopicEvaluationCandidateV1[];total:number;pending:number;rejected:number;
     limit:number;nextCursor:string|null}};
@@ -114,11 +115,13 @@ export function projectSignalTopicEvaluationManagementV1(value:unknown):SignalTo
     if(!isObject(value.run)||typeof value.run.run_key!=="string"||!isRunStatus(value.run.status)
       ||!Number.isInteger(value.run.provider_call_count)||(value.run.provider_call_count as number)<0
       ||(value.run.provider_call_count as number)>1||!nullableInteger(value.run.candidate_count)
+      ||!providerOutcomeClass(value.run.provider_outcome_class)
       ||!nullableBoolean(value.run.rubric_met)||!nullableStringValue(value.run.error_code)
       ||!nullableDigitString(value.run.settled_micro_usd)||typeof value.run.queued_at!=="string"
       ||!nullableStringValue(value.run.completed_at)||!nullableStringValue(value.run.failed_at)
       ||typeof value.run.updated_at!=="string")throw new Error("topic_evaluation_management_invalid");
     run={runKey:value.run.run_key,status:value.run.status,providerCallCount:value.run.provider_call_count as number,
+      providerOutcomeClass:value.run.provider_outcome_class,
       candidateCount:value.run.candidate_count as number|null,rubricMet:value.run.rubric_met as boolean|null,
       errorCode:value.run.error_code as string|null,settledMicroUsd:value.run.settled_micro_usd as string|null,
       queuedAt:value.run.queued_at,completedAt:value.run.completed_at as string|null,
@@ -170,6 +173,8 @@ function nullableInteger(value:unknown):value is number|null{return value===null
 function nullableBoolean(value:unknown):value is boolean|null{return value===null||typeof value==="boolean";}
 function nullableStringValue(value:unknown):value is string|null{return value===null||typeof value==="string";}
 function nullableDigitString(value:unknown):value is string|null{return value===null||(typeof value==="string"&&/^\d+$/u.test(value));}
+function providerOutcomeClass(value:unknown):value is NonNullable<SignalTopicEvaluationManagementV1["run"]>["providerOutcomeClass"]{
+  return value===null||value==="definitely_not_sent"||value==="known_response_invalid"||value==="ambiguous_after_send";}
 function nonnegativeInteger(value:unknown):value is number{return Number.isInteger(value)&&(value as number)>=0;}
 function stringArray(value:unknown,min:number,max:number):value is string[]{return Array.isArray(value)
   &&value.length>=min&&value.length<=max&&value.every((item)=>typeof item==="string");}

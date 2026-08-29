@@ -61,4 +61,5 @@ test("management routes retain workspace AuthZ, pagination and idempotent closed
   assert.match(commandRoute,/parseSignalTopicEvaluationCandidateCommandV1/u);
   assert.match(openapi,/reviewSignalTopicEvaluationCandidate/u);
   assert.match(openapi,/Append one reversible pending\/rejected candidate revision/u);
+  assert.match(openapi,/provider_outcome_class:[\s\S]*enum: \[definitely_not_sent, known_response_invalid, ambiguous_after_send, null\]/u);
 });

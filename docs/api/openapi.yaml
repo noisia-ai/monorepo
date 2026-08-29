@@ -3542,12 +3542,16 @@ components:
         run:
           type: [object, "null"]
           additionalProperties: false
-          required: [run_key, status, provider_call_count, candidate_count, rubric_met, error_code,
+          required: [run_key, status, provider_call_count, provider_outcome_class, candidate_count, rubric_met, error_code,
             settled_micro_usd, queued_at, started_at, completed_at, failed_at, updated_at]
           properties:
             run_key: { type: string }
             status: { type: string, enum: [queued, in_flight, response_persisted, completed, failed, outcome_unknown] }
             provider_call_count: { type: integer, minimum: 0, maximum: 1 }
+            provider_outcome_class:
+              type: [string, "null"]
+              enum: [definitely_not_sent, known_response_invalid, ambiguous_after_send, null]
+              description: Sanitized terminal provider boundary; never includes response, prompt, request identifiers, or credentials.
             candidate_count: { type: [integer, "null"], minimum: 0, maximum: 80 }
             rubric_met: { type: [boolean, "null"] }
             error_code: { type: [string, "null"] }

@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   buildSignalTopicEvaluationEnvelopeV1,
+  classifySignalTopicEvaluationProviderBoundaryV1,
   parseSignalTopicEvaluationOutputV1,
+  SignalTopicEvaluationProviderBoundaryErrorV1,
   signalTopicEvaluationDigestV1,
   signalTopicEvaluationSucceededV1,
   SIGNAL_TOPIC_EVALUATION_OUTPUT_CONTRACT_VERSION
@@ -93,4 +95,17 @@ test("strict output rejects duplicate source proposal keys within a candidate",(
       inclusion:["in"],exclusion:[],evidence_refs:[first.evidence[0]!.evidence_ref_digest],
       source_proposal_keys:[first.proposal_key,first.proposal_key]}]}),input),
   /topic_evaluation_duplicate_candidate_source_proposal_key/u);
+});
+
+test("provider boundary errors distinguish definitely-not-sent from ambiguous-after-send",()=>{
+  const beforeSend=new SignalTopicEvaluationProviderBoundaryErrorV1(
+    "definitely_not_sent","topic_evaluation_provider_configuration_rejected");
+  assert.deepEqual(classifySignalTopicEvaluationProviderBoundaryV1(beforeSend),{
+    outcome_class:"definitely_not_sent",
+    error_code:"topic_evaluation_provider_definitely_not_sent"
+  });
+  assert.deepEqual(classifySignalTopicEvaluationProviderBoundaryV1(new Error("socket_closed")),{
+    outcome_class:"ambiguous_after_send",
+    error_code:"topic_evaluation_provider_ambiguous_after_send"
+  });
 });

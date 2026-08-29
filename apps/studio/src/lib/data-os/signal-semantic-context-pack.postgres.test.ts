@@ -9,6 +9,7 @@ import pg from "pg";
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_OUTPUT_CONTRACT_VERSION_V3,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  SignalTopicEvaluationProviderBoundaryErrorV1,
   signalSemanticContextProposalDigestV1,
   type SignalSemanticContextProviderLineageV1 } from "@noisia/query-engine";
 import {
@@ -103,7 +104,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   t.after(installProviderEnvironment(terminalPreflightConfiguration));
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
-  let migration0107="";let migration0108="";
+  let migration0107="";let migration0108="";let migration0109="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -121,6 +122,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0106_"))migration0106=sql;
       else if(file.startsWith("0107_"))migration0107=sql;
       else if(file.startsWith("0108_"))migration0108=sql;
+      else if(file.startsWith("0109_"))migration0109=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -149,6 +151,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0106,"0106 migration is present and must be applied after 0105");
   assert.ok(migration0107,"0107 migration is present and must be applied after 0106");
   assert.ok(migration0108,"0108 migration is present and must be applied after 0107");
+  assert.ok(migration0109,"0109 migration is present and must be applied after 0108");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -675,6 +678,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   await exerciseTopicEvaluationControlPlaneV1();
   const migration0108Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0108Client.connect();
   try{await migration0108Client.query(migration0108);}finally{await migration0108Client.end();}
+  const migration0109Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0109Client.connect();
+  try{await migration0109Client.query(migration0109);}finally{await migration0109Client.end();}
+  await exerciseTopicEvaluationProviderBoundaryV1();
   await exerciseTopicEvaluationCandidateReviewV1();
 
   const canonical='{"a":1,"b":[2,3]}';
@@ -2522,19 +2528,137 @@ async function exerciseTopicEvaluationControlPlaneV1(){
       provider_request_id:"fixture-duplicate-request",usage:{input_tokens:1000,output_tokens:200}};}}}),
   /topic_evaluation_provider_output_invalid/u);
   assert.equal(duplicateProviderCalls,1);
-  assert.deepEqual((await pool.query<{status:string;calls:number;candidates:number;evidence_links:number}>(`SELECT
-    run.status,run.provider_call_count calls,
+  assert.deepEqual((await pool.query<{status:string;provider_call_state:string;calls:number;
+    response_persisted:boolean;provider_request_id:string|null;input_tokens:number;output_tokens:number;
+    settled_micro_usd:string;reservation_status:string;reservation_actual_micro_usd:string;
+    candidates:number;evidence_links:number}>(`SELECT
+    run.status,run.provider_call_state,run.provider_call_count calls,
+    run.provider_response_private IS NOT NULL response_persisted,run.provider_request_id,
+    run.input_tokens,run.output_tokens,run.settled_micro_usd::text,
+    reservation.status reservation_status,reservation.actual_micro_usd::text reservation_actual_micro_usd,
     (SELECT count(*)::int FROM signal_topic_evaluation_candidates candidate
       WHERE candidate.run_id=run.id) candidates,
     (SELECT count(*)::int FROM signal_topic_evaluation_candidate_evidence candidate_evidence
       WHERE candidate_evidence.run_id=run.id) evidence_links
-    FROM signal_topic_evaluation_runs run WHERE run.id=$1::uuid`,[duplicateRun.run_id])).rows,
-  [{status:"failed",calls:1,candidates:0,evidence_links:0}]);
+    FROM signal_topic_evaluation_runs run
+    JOIN signal_topic_evaluation_reservations reservation ON reservation.run_id=run.id
+    WHERE run.id=$1::uuid`,[duplicateRun.run_id])).rows,
+  [{status:"failed",provider_call_state:"settled",calls:1,response_persisted:true,
+    provider_request_id:"fixture-duplicate-request",input_tokens:1000,output_tokens:200,
+    settled_micro_usd:"6000",reservation_status:"settled",reservation_actual_micro_usd:"6000",
+    candidates:0,evidence_links:0}],"known invalid output settles only after response identity and usage persist");
   assert.deepEqual(await recoverSignalTopicEvaluationRunV1({pool,run_id:duplicateRun.run_id}),
     {status:"failed",provider_call_count:1});
   assert.equal(duplicateProviderCalls,1,"terminal failed recovery issues no second provider call");
+
   assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
     "Topic Evaluation does not adopt Topics, publish or mutate serving state");
+}
+
+async function exerciseTopicEvaluationProviderBoundaryV1(){
+  const fixture=(await pool.query<{workspace_id:string;actor_id:string}>(`SELECT run.workspace_id::text,
+    run.requested_by_user_id::text actor_id FROM signal_topic_evaluation_runs run
+    ORDER BY run.queued_at ASC LIMIT 1`)).rows[0]!;
+  const protectedBefore=await protectedCounts(fixture.workspace_id);
+  const configuration={enabled:true,credential_configured:true,pricing_configured:true,
+    execution_configuration_complete:true,provider:"anthropic" as const,model:"fixture",
+    pricing_version:"fixture-pricing",max_input_tokens:20_000,max_output_tokens:4_096,
+    input_usd_per_million_tokens:"3",output_usd_per_million_tokens:"15",
+    hard_cap_micro_usd:1_000_000n,estimated_input_tokens:10_000};
+  const prepareBoundaryRun=async(label:string,offsetSeconds:number)=>{
+    const artifactId=randomUUID();const discovery=digest(`topic-eval-${label}-discovery`);
+    await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+      workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+      review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+      $4,'topic_discovery_review_packet',$5,'{}'::jsonb,'needs_review',1,0,'{}'::jsonb)`,
+    [artifactId,fixture.workspace_id,discovery,`topic-evaluation-${label}-fixture`,
+      `Topic evaluation ${label} fixture`]);
+    for(let index=0;index<115;index++){
+      const proposalId=randomUUID();const groupId=randomUUID();const mentionId=randomUUID();
+      await pool.query(`INSERT INTO analysis_artifacts(id,workspace_id,workspace_artifact_kind,
+        workspace_authority_digest,discovery_run_digest,artifact_key,artifact_type,title,content,
+        review_status,revision,position,metadata) VALUES($1::uuid,$2::uuid,'topic_discovery',$3,$3,
+        $4,'topic_discovery_proposal',$5,$6::jsonb,'needs_review',1,$7,'{}'::jsonb)`,
+      [proposalId,fixture.workspace_id,discovery,
+        `topic-eval-${label}-proposal-${String(index).padStart(3,"0")}`,
+        `${label} diagnostic proposal ${index}`,JSON.stringify({local_terms:[`${label}-term-${index}`]}),index+1]);
+      await pool.query(`INSERT INTO analysis_artifact_relations(source_artifact_id,target_artifact_id,
+        relation_type,position,metadata) VALUES($1::uuid,$2::uuid,'contains_proposal',$3,'{}'::jsonb)`,
+      [artifactId,proposalId,index]);
+      await pool.query(`INSERT INTO analysis_evidence_groups(id,artifact_id,group_key,role,position,metadata)
+        VALUES($1::uuid,$2::uuid,'representatives','supporting',0,'{}'::jsonb)`,[groupId,proposalId]);
+      await pool.query(`INSERT INTO analysis_evidence_links(id,evidence_group_id,source_type,source_id,
+        relation_type,evidence_role,locator,position,metadata) VALUES(gen_random_uuid(),$1::uuid,
+        'signal_canonical_root',$2::uuid,'supports','medoid',$3::jsonb,0,'{}'::jsonb)`,
+      [groupId,mentionId,JSON.stringify({evidence_ref:digest(`topic-eval-${label}-evidence-${index}`)})]);
+    }
+    await pool.query(`INSERT INTO signal_topic_discovery_review_packets(artifact_id,workspace_id,
+      discovery_run_digest,candidate_artifact_digest,packet_digest,packet_file_digest,source_manifest_digest,
+      packet_policy_version,packet_policy_digest,reference_seed,rights_digest,modeling_denominator,
+      proposal_count,evidence_count,outlier_evidence_count,review_scope,source_holdout_state,
+      registered_by_user_id,registered_at)
+      VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,'fixture-v1',$8,17,$9,21195,115,115,0,
+        'complete_cluster_census','sealed',$10::uuid,clock_timestamp()+($11::text||' seconds')::interval)`,
+    [artifactId,fixture.workspace_id,discovery,digest(`${label}-candidate-artifact`),
+      digest(`${label}-packet`),digest(`${label}-packet-file`),digest(`${label}-source-manifest`),
+      digest(`${label}-packet-policy`),digest(`${label}-rights`),fixture.actor_id,offsetSeconds]);
+    const dryRun=await prepareSignalTopicEvaluationDryRunV1({queryable:pool,
+      workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"},
+      configuration});
+    return createSignalTopicEvaluationRunV1({pool,workspace_id:fixture.workspace_id,
+      actor:{id:fixture.actor_id,user_type:"noisia_internal"},idempotency_key:`topic-eval-${label}`,
+      expected_envelope_digest:dryRun.envelope_digest,confirmation:"RUN_ONE_TOPIC_EVALUATION",
+      hard_cap_micro_usd:1_000_000n,configuration});
+  };
+
+  const definitelyRun=await prepareBoundaryRun("definitely-not-sent",2);let definitelyCalls=0;
+  await assert.rejects(processSignalTopicEvaluationRunV1({pool,run_id:definitelyRun.run_id,
+    execution_enabled:true,provider:{generate:async()=>{definitelyCalls+=1;
+      throw new SignalTopicEvaluationProviderBoundaryErrorV1("definitely_not_sent",
+        "synthetic_sdk_preflight_rejected");}}}),/topic_evaluation_provider_definitely_not_sent/u);
+  assert.equal(definitelyCalls,1);
+  assert.deepEqual((await pool.query<{status:string;provider_call_state:string;calls:number;
+    response_persisted:boolean;settled_micro_usd:string;reservation_status:string;
+    reservation_actual_micro_usd:string;candidates:number}>(`SELECT run.status,run.provider_call_state,
+      run.provider_call_count calls,run.provider_response_private IS NOT NULL response_persisted,
+      run.settled_micro_usd::text,reservation.status reservation_status,
+      reservation.actual_micro_usd::text reservation_actual_micro_usd,
+      (SELECT count(*)::int FROM signal_topic_evaluation_candidates candidate
+        WHERE candidate.run_id=run.id) candidates FROM signal_topic_evaluation_runs run
+      JOIN signal_topic_evaluation_reservations reservation ON reservation.run_id=run.id
+      WHERE run.id=$1::uuid`,[definitelyRun.run_id])).rows,
+  [{status:"failed",provider_call_state:"settled",calls:1,response_persisted:false,
+    settled_micro_usd:"0",reservation_status:"settled",reservation_actual_micro_usd:"0",candidates:0}]);
+  assert.deepEqual(await recoverSignalTopicEvaluationRunV1({pool,run_id:definitelyRun.run_id}),
+    {status:"failed",provider_call_count:1});
+  assert.equal((await loadSignalTopicEvaluationManagementV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"}}))
+    .run?.provider_outcome_class,"definitely_not_sent");
+
+  const ambiguousRun=await prepareBoundaryRun("ambiguous-after-send",3);let ambiguousCalls=0;
+  await assert.rejects(processSignalTopicEvaluationRunV1({pool,run_id:ambiguousRun.run_id,
+    execution_enabled:true,provider:{generate:async()=>{ambiguousCalls+=1;
+      throw new Error("synthetic_connection_closed_after_dispatch");}}}),
+  /topic_evaluation_provider_ambiguous_after_send/u);
+  assert.equal(ambiguousCalls,1);
+  assert.deepEqual((await pool.query<{status:string;provider_call_state:string;calls:number;
+    response_persisted:boolean;settled_micro_usd:string|null;reservation_status:string;
+    candidates:number}>(`SELECT run.status,run.provider_call_state,run.provider_call_count calls,
+      run.provider_response_private IS NOT NULL response_persisted,run.settled_micro_usd::text,
+      reservation.status reservation_status,(SELECT count(*)::int
+        FROM signal_topic_evaluation_candidates candidate WHERE candidate.run_id=run.id) candidates
+      FROM signal_topic_evaluation_runs run JOIN signal_topic_evaluation_reservations reservation
+        ON reservation.run_id=run.id WHERE run.id=$1::uuid`,[ambiguousRun.run_id])).rows,
+  [{status:"outcome_unknown",provider_call_state:"in_flight",calls:1,response_persisted:false,
+    settled_micro_usd:null,reservation_status:"ambiguous",candidates:0}]);
+  assert.deepEqual(await recoverSignalTopicEvaluationRunV1({pool,run_id:ambiguousRun.run_id}),
+    {status:"blocked",provider_call_count:1,reason:"topic_evaluation_provider_ambiguous_after_send"});
+  assert.equal(ambiguousCalls,1,"ambiguous recovery issues no second provider call");
+  assert.equal((await loadSignalTopicEvaluationManagementV1({queryable:pool,
+    workspace_id:fixture.workspace_id,actor:{id:fixture.actor_id,user_type:"noisia_internal"}}))
+    .run?.provider_outcome_class,"ambiguous_after_send");
+  assert.deepEqual(await protectedCounts(fixture.workspace_id),protectedBefore,
+    "provider boundary classification does not adopt Topics, publish or mutate serving state");
 }
 
 async function exerciseTopicEvaluationCandidateReviewV1(){
@@ -2558,7 +2682,8 @@ async function exerciseTopicEvaluationCandidateReviewV1(){
     WHERE run.workspace_id=$1::uuid AND run.status='completed'`,[fixture.workspace_id]);
   const firstPage=await loadSignalTopicEvaluationManagementV1({queryable:pool,workspace_id:fixture.workspace_id,
     actor,limit:1});
-  assert.equal(firstPage.run?.status,"failed","latest terminal failure remains visible");
+  assert.equal(firstPage.run?.status,"outcome_unknown","latest ambiguous terminal remains visible");
+  assert.equal(firstPage.run?.provider_outcome_class,"ambiguous_after_send");
   assert.equal(firstPage.results.items.length,1,"latest completed result stays inspectable");
   assert.ok(firstPage.results.run_key,"result page identifies its completed run without private ids");
   assert.ok(firstPage.results.next_cursor,"stable pagination returns an opaque next cursor");

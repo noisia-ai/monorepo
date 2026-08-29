@@ -93,3 +93,14 @@ test("0107 seals a one-call non-serving relational control plane",async()=>{
   assert.doesNotMatch(sql,/retry_signal_topic|recovery_queued/u);
   assert.doesNotMatch(sql,/topic_contracts|signal_serving|pointer|binding/u);
 });
+
+test("0109 admits only the proven definitely-not-sent zero-cost terminal transition",async()=>{
+  const sql=await readFile(new URL("./migrations/0109_signal_topic_evaluation_provider_boundary_outcomes.sql",
+    import.meta.url),"utf8");
+  assert.match(sql,/WHEN 'in_flight' THEN NEW\.status IN\('in_flight','response_persisted','outcome_unknown'\) OR/u);
+  assert.match(sql,/NEW\.error_code='topic_evaluation_provider_definitely_not_sent'/u);
+  assert.match(sql,/NEW\.provider_call_state='settled'/u);
+  assert.match(sql,/NEW\.input_tokens=0 AND NEW\.output_tokens=0 AND NEW\.settled_micro_usd=0/u);
+  assert.match(sql,/NEW\.provider_response_private IS NULL/u);
+  assert.doesNotMatch(sql,/WHEN 'in_flight' THEN NEW\.status IN\([^)]*'failed'/u);
+});

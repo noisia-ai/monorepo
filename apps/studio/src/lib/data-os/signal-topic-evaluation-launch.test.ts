@@ -48,7 +48,7 @@ function blockedManagement(){return{...management(),preflight_status:"blocked",
   input_authority:null,envelope_digest:null,proposal_count:null};}
 
 function management(){return{...preflight(),run:{run_key:"topic-evaluation-safe",status:"completed",
-  provider_call_count:1,candidate_count:10,rubric_met:true,error_code:null,settled_micro_usd:"120000",
+  provider_call_count:1,provider_outcome_class:null,candidate_count:10,rubric_met:true,error_code:null,settled_micro_usd:"120000",
   queued_at:"2026-08-29T00:00:00.000Z",started_at:"2026-08-29T00:00:01.000Z",
   completed_at:"2026-08-29T00:00:02.000Z",failed_at:null,updated_at:"2026-08-29T00:00:02.000Z"},
   results:{contract_version:"signal-topic-evaluation-candidate-page-v1",run_key:"topic-evaluation-safe",total:10,pending:10,rejected:0,
@@ -145,6 +145,19 @@ test("Topic Evaluation projects sanitized terminal run and editable candidate pa
   assert.match(createSignalTopicEvaluationReviewIdempotencyKeyV1(()=>"one"),/^topic-evaluation:review:/u);
 });
 
+test("Topic Evaluation projects closed provider-boundary classes without private response fields",()=>{
+  for(const outcome of["definitely_not_sent","known_response_invalid","ambiguous_after_send"] as const){
+    const fixture=management();const value:Record<string,unknown>={...fixture,run:{...fixture.run,
+      status:outcome==="ambiguous_after_send"?"outcome_unknown":"failed",
+      provider_outcome_class:outcome,candidate_count:0,rubric_met:false,error_code:`topic_evaluation_${outcome}`,
+      settled_micro_usd:outcome==="ambiguous_after_send"?null:"0",completed_at:null,
+      failed_at:"2026-08-29T00:00:02.000Z",provider_response_private:"never_projected"}};
+    const projected=projectSignalTopicEvaluationManagementV1(value);
+    assert.equal(projected.run?.providerOutcomeClass,outcome);
+    assert.doesNotMatch(JSON.stringify(projected),/provider_response_private|never_projected/u);
+  }
+});
+
 test("Brand OS mounts the normal launch and reversible review surface without touching Discovery Review", async () => {
   const [component, page, drawer, css, es, en, openapi] = await Promise.all([
     readFile(new URL("../../components/brands/TopicEvaluationManager.tsx", import.meta.url), "utf8"),
@@ -177,7 +190,9 @@ test("Brand OS mounts the normal launch and reversible review surface without to
   assert.match(component,/const terminal=run\.status==="completed"\|\|run\.status==="failed"\|\|ambiguous/u);
   assert.match(component,/run\.status==="failed"\|\|ambiguous\?<Warning/u,
     "outcome_unknown renders a terminal warning without the progress spinner");
-  assert.match(component,/ambiguous\?t\("run\.outcomeUnknownBody"\):t\("run\.progressBody"\)/u);
+  assert.match(component,/run\.providerOutcomeClass==="ambiguous_after_send"\?t\("run\.outcomeUnknownBody"\)/u);
+  assert.match(component,/run\.providerOutcomeClass==="definitely_not_sent"/u);
+  assert.match(component,/run\.providerOutcomeClass==="known_response_invalid"/u);
   assert.ok(page.indexOf("<TopicEvaluationManager") > page.indexOf("<SemanticContextPackManager"));
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.ok(JSON.parse(es).AdminWorkspace.brandOs.topicEvaluation.boundary.authorityUnavailableBody);
@@ -186,6 +201,10 @@ test("Brand OS mounts the normal launch and reversible review surface without to
     /desconocido.*No ocurrió ningún retry automático/u);
   assert.match(JSON.parse(en).AdminWorkspace.brandOs.topicEvaluation.run.outcomeUnknownBody,
     /unknown.*No automatic retry occurred/u);
+  assert.match(JSON.parse(en).AdminWorkspace.brandOs.topicEvaluation.run.definitelyNotSentBody,
+    /not sent.*settled at zero/u);
+  assert.match(JSON.parse(es).AdminWorkspace.brandOs.topicEvaluation.run.knownResponseInvalidBody,
+    /respuesta.*conservaron.*contrato/u);
   assert.match(openapi, /confirmation: \{ const: RUN_ONE_TOPIC_EVALUATION \}/u);
   assert.match(openapi, /IdempotencyKey/u);
   assert.match(openapi, /SignalTopicEvaluationCandidateCommandV1/u);

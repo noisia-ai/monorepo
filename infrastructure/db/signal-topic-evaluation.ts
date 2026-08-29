@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 
 import {
   buildSignalTopicEvaluationEnvelopeV1,
+  classifySignalTopicEvaluationProviderBoundaryV1,
   parseSignalTopicEvaluationOutputV1,
   signalTopicEvaluationDigestV1,
   signalTopicEvaluationSucceededV1,
@@ -166,6 +167,13 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
   const limit=Math.min(Math.max(args.limit??20,1),50);
   const cursor=decodeCandidateCursor(args.cursor??null);
   const runResult=await args.queryable.query<ManagementRunRow>(`SELECT run_key,status,provider_call_count,
+    CASE
+      WHEN error_code='topic_evaluation_provider_definitely_not_sent' THEN 'definitely_not_sent'
+      WHEN error_code='topic_evaluation_provider_output_invalid' THEN 'known_response_invalid'
+      WHEN status='outcome_unknown' OR error_code IN(
+        'topic_evaluation_provider_outcome_unknown','topic_evaluation_provider_ambiguous_after_send')
+        THEN 'ambiguous_after_send'
+      ELSE NULL END provider_outcome_class,
     candidate_count,rubric_met,error_code,settled_micro_usd::text,
     queued_at::text,started_at::text,completed_at::text,failed_at::text,updated_at::text
     FROM signal_topic_evaluation_runs WHERE workspace_id=$1::uuid
@@ -178,6 +186,7 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
   [args.workspace_id,cursor?.run_key??null]);
   const resultRunKey=resultRun.rows[0]?.run_key;
   if(!resultRunKey)return{run:{run_key:run.run_key,status:run.status,provider_call_count:run.provider_call_count,
+    provider_outcome_class:run.provider_outcome_class,
     candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
     settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
     completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:emptyResults(limit)};
@@ -227,6 +236,7 @@ export async function loadSignalTopicEvaluationManagementV1(args:{
       count(*) FILTER(WHERE review_state='rejected')::int rejected FROM current_revision`,
   [args.workspace_id,resultRunKey]);
   return{run:{run_key:run.run_key,status:run.status,provider_call_count:run.provider_call_count,
+    provider_outcome_class:run.provider_outcome_class,
     candidate_count:run.candidate_count,rubric_met:run.rubric_met,error_code:run.error_code,
     settled_micro_usd:run.settled_micro_usd,queued_at:run.queued_at,started_at:run.started_at,
     completed_at:run.completed_at,failed_at:run.failed_at,updated_at:run.updated_at},results:{
@@ -332,7 +342,9 @@ export async function reviewSignalTopicEvaluationCandidateV1(args:{
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
 }
 
-type ManagementRunRow={run_key:string;status:string;provider_call_count:number;candidate_count:number|null;
+type ManagementRunRow={run_key:string;status:string;provider_call_count:number;
+  provider_outcome_class:"definitely_not_sent"|"known_response_invalid"|"ambiguous_after_send"|null;
+  candidate_count:number|null;
   rubric_met:boolean|null;error_code:string|null;settled_micro_usd:string|null;queued_at:string;
   started_at:string|null;completed_at:string|null;failed_at:string|null;updated_at:string};
 type ManagementCandidateRow={candidate_key:string;title:string;description:string;inclusion:unknown;
@@ -517,8 +529,13 @@ export async function processSignalTopicEvaluationRunV1(args: {
       prompt: buildPrompt(envelope!), max_output_tokens: run!.max_output_tokens,
       request_identity: run!.provider_request_identity });
   } catch (error) {
-    await markAmbiguous(args.pool,run!.id,"topic_evaluation_provider_outcome_unknown");
-    throw new SignalTopicEvaluationError("topic_evaluation_provider_outcome_unknown", 409);
+    const boundary=classifySignalTopicEvaluationProviderBoundaryV1(error);
+    if(boundary.outcome_class==="definitely_not_sent"){
+      await settleDefinitelyNotSent(args.pool,run!,boundary.error_code);
+    }else{
+      await markAmbiguous(args.pool,run!.id,boundary.error_code);
+    }
+    throw new SignalTopicEvaluationError(boundary.error_code,409);
   }
   return persistAndFinalize(args.pool,run!,envelope!,response);
 }
@@ -534,7 +551,7 @@ export async function recoverSignalTopicEvaluationRunV1(args: {
     if (!run) throw new SignalTopicEvaluationError("topic_evaluation_run_not_found",404);
     if (run.status === "outcome_unknown" || run.provider_call_state === "in_flight") {
       return { status: "blocked" as const, provider_call_count: run.provider_call_count,
-        reason: "topic_evaluation_provider_outcome_unknown" as const };
+        reason: "topic_evaluation_provider_ambiguous_after_send" as const };
     }
     if (run.status === "response_persisted" && run.provider_response_private) {
       const envelope = await loadEnvelope(client,run.workspace_id,run.requested_by_user_id);
@@ -748,6 +765,19 @@ async function markAmbiguous(pool:Pick<Pool,"connect">,runId:string,errorCode:st
   const run=await client.query<{workspace_id:string}>(`SELECT workspace_id::text FROM signal_topic_evaluation_runs WHERE id=$1::uuid`,[runId]);
   await insertEvent(client,runId,run.rows[0]!.workspace_id,2,"outcome_unknown",{error_code:errorCode});
   await client.query("COMMIT");}catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}}
+
+async function settleDefinitelyNotSent(pool:Pick<Pool,"connect">,run:RunRow,errorCode:string){
+  const client=await pool.connect();try{await client.query("BEGIN");
+    await client.query(`UPDATE signal_topic_evaluation_reservations SET status='settled',actual_micro_usd=0,
+      input_tokens=0,output_tokens=0,settled_at=clock_timestamp() WHERE run_id=$1::uuid`,[run.id]);
+    await client.query(`UPDATE signal_topic_evaluation_runs SET status='failed',provider_call_state='settled',
+      input_tokens=0,output_tokens=0,settled_micro_usd=0,error_code=$2,failed_at=clock_timestamp(),
+      updated_at=clock_timestamp() WHERE id=$1::uuid AND provider_call_count=1`,[run.id,errorCode]);
+    await client.query(`UPDATE signal_topic_evaluation_outbox SET status='dead_letter',error_code=$2
+      WHERE run_id=$1::uuid`,[run.id,errorCode]);
+    await insertEvent(client,run.id,run.workspace_id,2,"failed",{error_code:errorCode});
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}}
 
 async function settleFailure(client:PoolClient,run:RunRow,actual:bigint,errorCode:string){
   if(actual>BigInt(run.reservation_micro_usd))throw new SignalTopicEvaluationError("topic_evaluation_settlement_exceeds_reservation",500);
