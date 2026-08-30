@@ -12,6 +12,7 @@ import {
   numeric,
   pgTable,
   primaryKey,
+  real,
   smallint,
   text,
   timestamp,
@@ -7014,6 +7015,144 @@ export const signalTopicEvaluationEvents = pgTable("signal_topic_evaluation_even
   stateDigest: text("state_digest").notNull(),
   createdAt: now()
 }, (table) => [unique("uq_signal_topic_evaluation_event").on(table.runId, table.eventIndex)]);
+
+// Provider-disabled full-evidence evaluator V2. The historical summary evaluator above stays
+// intact; V2 stores stable membership and append-only retrieval/candidate provenance separately.
+export const signalTopicEvaluationV2Snapshots = pgTable("signal_topic_evaluation_v2_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  snapshotKey: text("snapshot_key").notNull(),
+  importContractVersion: text("import_contract_version").notNull(),
+  sourceRunKey: text("source_run_key").notNull(), sourceAlgorithmKey: text("source_algorithm_key").notNull(),
+  sourceSeed: integer("source_seed").notNull(), sourceManifestDigest: text("source_manifest_digest").notNull(),
+  packetSourceManifestDigest: text("packet_source_manifest_digest").notNull(),
+  sourceAssignmentDigest: text("source_assignment_digest").notNull(),
+  sourceExportDigest: text("source_export_digest").notNull(),
+  sourceResultDigest: text("source_result_digest").notNull(),
+  sourcePacketFileDigest: text("source_packet_file_digest").notNull(),
+  artifactBindingDigest: text("artifact_binding_digest").notNull(),
+  membershipBindingDigest: text("membership_binding_digest").notNull(),
+  packetArtifactId: uuid("packet_artifact_id").notNull()
+    .references(() => signalTopicDiscoveryReviewPackets.artifactId, { onDelete: "restrict" }),
+  packetDigest: text("packet_digest").notNull(), rightsDigest: text("rights_digest").notNull(),
+  semanticContextGenerationId: uuid("semantic_context_generation_id").notNull()
+    .references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
+  semanticContextAuthorityDigest: text("semantic_context_authority_digest").notNull(),
+  clusterCount: integer("cluster_count").notNull(), membershipCount: integer("membership_count").notNull(),
+  snapshotDigest: text("snapshot_digest").notNull(), state: text("state").notNull().default("frozen"),
+  createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_v2_snapshot_key").on(table.workspaceId, table.snapshotKey),
+  unique("uq_signal_topic_evaluation_v2_snapshot_digest").on(table.workspaceId, table.snapshotDigest)]);
+
+export const signalTopicEvaluationV2Clusters = pgTable("signal_topic_evaluation_v2_clusters", {
+  snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  clusterKey: text("cluster_key").notNull(), proposalKey: text("proposal_key"),
+  memberCount: integer("member_count").notNull(), profile: jsonb("profile").notNull(),
+  profileDigest: text("profile_digest").notNull()
+}, (table) => [primaryKey({ columns: [table.snapshotId, table.clusterKey] })]);
+
+export const signalTopicEvaluationV2ClusterMemberships = pgTable(
+  "signal_topic_evaluation_v2_cluster_memberships", {
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    clusterKey: text("cluster_key").notNull(),
+    mentionId: uuid("mention_id").notNull().references(() => mentions.id, { onDelete: "restrict" }),
+    memberRef: text("member_ref").notNull(), sourceRecordKey: text("source_record_key").notNull(),
+    sourceRecordDigest: text("source_record_digest").notNull(), sourceContentHash: text("source_content_hash").notNull(),
+    canonicalTextHash: text("canonical_text_hash").notNull(),
+    canonicalBindingDigest: text("canonical_binding_digest").notNull(),
+    assignmentIndex: integer("assignment_index").notNull(), assignmentLabel: integer("assignment_label").notNull(),
+    assignmentStrength: real("assignment_strength"), language: text("language"), market: text("market"), scope: text("scope"),
+    markets: text("markets").array().notNull(), scopes: text("scopes").array().notNull(),
+    publishedMonth: text("published_month").notNull(), stratum: text("stratum").notNull(),
+    clusterRank: integer("cluster_rank").notNull()
+  }, (table) => [primaryKey({ columns: [table.snapshotId, table.mentionId] }),
+    unique("uq_signal_topic_evaluation_v2_member_ref").on(table.snapshotId, table.memberRef),
+    unique("uq_signal_topic_evaluation_v2_assignment_index").on(table.snapshotId, table.assignmentIndex),
+    unique("uq_signal_topic_evaluation_v2_source_record_key").on(table.snapshotId, table.sourceRecordKey),
+    index("idx_signal_topic_evaluation_v2_membership_navigation").on(table.snapshotId, table.clusterKey,
+      table.language, table.market, table.scope, table.publishedMonth, table.clusterRank, table.memberRef)]);
+
+export const signalTopicEvaluationV2Runs = pgTable("signal_topic_evaluation_v2_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+  requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  idempotencyKey: text("idempotency_key").notNull(), runKey: text("run_key").notNull(),
+  confirmation: text("confirmation").notNull(), flightCard: jsonb("flight_card").notNull(),
+  flightCardDigest: text("flight_card_digest").notNull(), status: text("status").notNull().default("planned"),
+  providerExecutionEnabled: boolean("provider_execution_enabled").notNull().default(false),
+  providerCallCount: integer("provider_call_count").notNull().default(0),
+  modelTurnCount: integer("model_turn_count").notNull().default(0),
+  toolCallCount: integer("tool_call_count").notNull().default(0),
+  totalInputTokens: integer("total_input_tokens").notNull().default(0),
+  totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+  totalToolResultBytes: integer("total_tool_result_bytes").notNull().default(0),
+  reservedMicroUsd: bigint("reserved_micro_usd", { mode: "bigint" }).notNull().default(0n),
+  settledMicroUsd: bigint("settled_micro_usd", { mode: "bigint" }),
+  errorCode: text("error_code"), outputDigest: text("output_digest"), createdAt: now(),
+  completedAt: timestamp("completed_at", { withTimezone: true })
+}, (table) => [unique("uq_signal_topic_evaluation_v2_idempotency").on(table.workspaceId, table.idempotencyKey),
+  unique("uq_signal_topic_evaluation_v2_run_key").on(table.workspaceId, table.runKey)]);
+
+export const signalTopicEvaluationV2Retrievals = pgTable("signal_topic_evaluation_v2_retrievals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  retrievalIndex: integer("retrieval_index").notNull(), operation: text("operation").notNull(),
+  toolInputDigest: text("tool_input_digest").notNull(), resultDigest: text("result_digest").notNull(),
+  resultBytes: integer("result_bytes").notNull(), createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_v2_retrieval").on(table.runId, table.retrievalIndex)]);
+
+export const signalTopicEvaluationV2RetrievalEvidence = pgTable(
+  "signal_topic_evaluation_v2_retrieval_evidence", {
+    retrievalId: uuid("retrieval_id").notNull().references(() => signalTopicEvaluationV2Retrievals.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    memberRef: text("member_ref").notNull(), evidenceRef: text("evidence_ref").notNull()
+  }, (table) => [primaryKey({ columns: [table.retrievalId, table.evidenceRef] })]);
+
+export const signalTopicEvaluationV2ModelTurns = pgTable("signal_topic_evaluation_v2_model_turns", {
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  turnIndex: integer("turn_index").notNull(), turnKind: text("turn_kind").notNull(),
+  inputDigest: text("input_digest").notNull(), outputDigest: text("output_digest").notNull(),
+  inputTokens: integer("input_tokens").notNull(), outputTokens: integer("output_tokens").notNull(), createdAt: now()
+}, (table) => [primaryKey({ columns: [table.runId, table.turnIndex] })]);
+
+export const signalTopicEvaluationV2Candidates = pgTable("signal_topic_evaluation_v2_candidates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  candidateKey: text("candidate_key").notNull(), candidateDigest: text("candidate_digest").notNull(),
+  sourceClusterKeys: text("source_cluster_keys").array().notNull(), status: text("status").notNull().default("pending"),
+  adopted: boolean("adopted").notNull().default(false), published: boolean("published").notNull().default(false),
+  serving: boolean("serving").notNull().default(false), createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_v2_candidate").on(table.runId, table.candidateKey)]);
+
+export const signalTopicEvaluationV2CandidateRevisions = pgTable("signal_topic_evaluation_v2_candidate_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+  revision: integer("revision").notNull(), predecessorRevisionId: uuid("predecessor_revision_id"),
+  payload: jsonb("payload").notNull(), payloadDigest: text("payload_digest").notNull(), createdAt: now()
+}, (table) => [unique("uq_signal_topic_evaluation_v2_candidate_revision").on(table.candidateId, table.revision)]);
+
+export const signalTopicEvaluationV2CandidateEvidence = pgTable("signal_topic_evaluation_v2_candidate_evidence", {
+  candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+  retrievalId: uuid("retrieval_id").notNull().references(() => signalTopicEvaluationV2Retrievals.id, { onDelete: "restrict" }),
+  evidenceRef: text("evidence_ref").notNull(), explanationDigest: text("explanation_digest").notNull()
+}, (table) => [primaryKey({ columns: [table.candidateId, table.evidenceRef] })]);
+
+export const signalTopicEvaluationV2Rankings = pgTable("signal_topic_evaluation_v2_rankings", {
+  runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+  candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+  rank: integer("rank").notNull(), rankingReason: text("ranking_reason").notNull(),
+  rankingDigest: text("ranking_digest").notNull(), createdAt: now()
+}, (table) => [primaryKey({ columns: [table.runId, table.rank] }),
+  unique("uq_signal_topic_evaluation_v2_ranked_candidate").on(table.runId, table.candidateId)]);
 
 export const dashboardDataRefs = pgTable(
   "dashboard_data_refs",

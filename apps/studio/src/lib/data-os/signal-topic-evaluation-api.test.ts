@@ -1,6 +1,62 @@
 import assert from "node:assert/strict";import { readFile } from "node:fs/promises";import test from "node:test";
+import { createRequire } from "node:module";
+import { navigateSignalTopicEvaluationEvidenceV2 } from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
 import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
   parseSignalTopicEvaluationSuccessorStartRequestV1 } from "./signal-topic-evaluation-api";
+import { parseSignalTopicEvidenceNavigationRequestV2,signalTopicEvaluationFlightCardV2,
+  signalTopicEvidenceNavigationResultV2 }
+  from "@noisia/query-engine";
+
+test("actual compact catalog validates in runtime and OpenAPI; forged result fails before Studio",async()=>{
+  const digest=`sha256:${"1".repeat(64)}`;
+  let catalogRow:Record<string,unknown>={cluster_key:"cluster.1",proposal_key:"proposal.1",
+    member_count:12,profile_digest:digest};
+  const statements:string[]=[];
+  const queryable={query:async<T>(sql:string)=>{statements.push(sql);
+    if(sql.includes("SELECT snapshot.id"))return{rowCount:1,rows:[{id:"snapshot",workspace_id:"workspace",
+      snapshot_key:"snapshot",snapshot_digest:digest,rights_digest:digest,cluster_count:116,
+      membership_count:21195,semantic_context_authority_digest:digest}] as T[]};
+    assert.match(sql,/SELECT cluster_key,proposal_key,member_count,profile_digest\s+FROM/u);
+    return{rowCount:1,rows:[catalogRow] as T[]};}};
+  const args={queryable,workspace_id:"workspace",actor:{id:"actor",user_type:"noisia_internal" as const},
+    request:{operation:"cluster_catalog",limit:5,cursor:null}};
+  const result=await navigateSignalTopicEvaluationEvidenceV2(args);
+  assert.deepEqual(result.data,{clusters:[catalogRow],total_clusters:116});
+  assert.equal(signalTopicEvidenceNavigationResultV2.safeParse(result).success,true);
+  const require=createRequire(import.meta.url);
+  const requireEslint=createRequire(require.resolve("eslint"));
+  const {load}=requireEslint("js-yaml");const Ajv=requireEslint("ajv");
+  const openapi=load(await readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8"));
+  const validate=new Ajv({allErrors:true}).compile({$ref:"#/components/schemas/SignalTopicEvidenceNavigationResultV2",
+    components:openapi.components});
+  assert.equal(validate(result),true,JSON.stringify(validate.errors));
+  assert.equal(validate({...result,operation:"cluster_profile"}),false);
+  assert.equal(validate({...result,data:{...result.data,total_clusters:undefined}}),false);
+  const profile={...catalogRow,profile:{label:"Cluster",terms:[],phrases:[],limitations:[],
+    distributions:{language:{en:12},market:{US:12},scope:{category:12},month:{"2026-01":12}},
+    centrality_available:true}};
+  const mentions={cluster_key:"cluster.1",mentions:[{evidence_ref:digest,excerpt:"Sanitized excerpt",
+    language:"en",market:"US",scope:"category",month:"2026-01",stratum:"central",source_digest:digest}],
+    sampling_limit:"Bounded by metadata."};
+  const dataByOperation={cluster_catalog:result.data,cluster_profile:profile,
+    compare_clusters:{clusters:[profile,{...profile,cluster_key:"cluster.2"}]},
+    representative_mentions:{...mentions,sampling_guarantee:"deterministic_round_robin_across_observed_strata"},
+    search_cluster:{...mentions,sampling_guarantee:"stable_cluster_rank"},brand_os_context:{elements:[{
+      element_key:"identity.example",element_kind:"brand_identity",display_text:"Example",scope:"workspace",
+      locale:null,source_refs_digest:digest,evidence_count:1}]}};
+  for(const[operation,data]of Object.entries(dataByOperation)){
+    assert.equal(validate({...result,operation,data}),true,`${operation}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(signalTopicEvidenceNavigationResultV2.safeParse({...result,operation,data}).success,true);
+    for(const[other,foreignData]of Object.entries(dataByOperation))if(other!==operation){
+      const forged={...result,operation,data:foreignData};
+      assert.equal(validate(forged),false,`${operation} must reject ${other}`);
+      assert.equal(signalTopicEvidenceNavigationResultV2.safeParse(forged).success,false);
+    }
+  }
+  catalogRow={...catalogRow,profile:{private_payload:"must not escape"}};
+  await assert.rejects(navigateSignalTopicEvaluationEvidenceV2(args),/unrecognized_keys|Unrecognized key/u);
+  assert.ok(statements.every((sql)=>sql.trimStart().startsWith("SELECT")),"only read queries executed");
+});
 
 test("topic evaluation start request is closed and explicitly confirmed",()=>{
   const digest=`sha256:${"1".repeat(64)}`;
@@ -88,4 +144,23 @@ test("management routes retain workspace AuthZ, pagination and idempotent closed
   assert.match(openapi,/provider_outcome_class:[\s\S]*enum: \[definitely_not_sent, known_response_invalid, ambiguous_after_send, null\]/u);
   assert.match(openapi,/startSignalTopicEvaluationSuccessor/u);
   assert.match(openapi,/AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR/u);
+});
+
+test("full-evidence API is management-only, read-only and provider-disabled",async()=>{
+  const[preflightRoute,evidenceRoute,product,openapi]=await Promise.all([
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/route.ts",import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/evidence/route.ts",import.meta.url),"utf8"),
+    readFile(new URL("./signal-topic-evaluation.ts",import.meta.url),"utf8"),
+    readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8")]);
+  for(const source of[preflightRoute,evidenceRoute])assert.match(source,
+    /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(preflightRoute,/topic_evaluation_v2_disabled/u);
+  assert.doesNotMatch(preflightRoute,/startSignalTopicEvaluationProductV1|enqueue/u);
+  assert.match(evidenceRoute,/navigateSignalTopicEvaluationEvidenceProductV2/u);
+  assert.match(product,/navigateSignalTopicEvaluationEvidenceV2/u);
+  assert.match(openapi,/operationId: navigateSignalTopicEvaluationEvidence/u);
+  assert.match(openapi,/Not a SQL API/u);
+  assert.equal(signalTopicEvaluationFlightCardV2().provider_calls_allowed,0);
+  assert.throws(()=>parseSignalTopicEvidenceNavigationRequestV2({operation:"search_cluster",
+    cluster_key:"cluster.1",limit:20,cursor:null,filters:{query:"x'; SELECT secret"}}));
 });

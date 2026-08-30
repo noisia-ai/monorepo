@@ -106,6 +106,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
   let migration0107="";let migration0108="";let migration0109="";let migration0110="";let migration0111="";
+  let migration0112="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -126,6 +127,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0109_"))migration0109=sql;
       else if(file.startsWith("0110_"))migration0110=sql;
       else if(file.startsWith("0111_"))migration0111=sql;
+      else if(file.startsWith("0112_"))migration0112=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -157,6 +159,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0109,"0109 migration is present and must be applied after 0108");
   assert.ok(migration0110,"0110 migration is present and must be applied after 0109");
   assert.ok(migration0111,"0111 migration is present and must be applied after 0110");
+  assert.ok(migration0112,"0112 migration is present and must be applied after 0111");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -689,9 +692,13 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   try{await migration0110Client.query(migration0110);}finally{await migration0110Client.end();}
   const migration0111Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0111Client.connect();
   try{await migration0111Client.query(migration0111);}finally{await migration0111Client.end();}
+  const migration0112Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0112Client.connect();
+  try{await migration0112Client.query(migration0112);}finally{await migration0112Client.end();}
   await exerciseTopicEvaluationProviderBoundaryV1();
   await exerciseTopicEvaluationCandidateReviewV1();
   await exerciseTopicEvaluationSuccessorAuthorityV1();
+  assert.match(migration0112,/signal-topic-evaluation-frozen-membership-import-v1/u,
+    "0112 reserves V2 sealing for the dedicated real-artifact provenance integration");
 
   const canonical='{"a":1,"b":[2,3]}';
   const postgresDigest=(await pool.query<{digest:string}>(
@@ -2883,6 +2890,7 @@ async function exerciseTopicEvaluationSuccessorAuthorityV1(){
   assert.equal(terminalCounts.dispatches,before.dispatches,"successor authority does not dispatch provider work");
 }
 
+// The 21,195-row V2 provenance proof lives in @noisia/db's real-artifact restore integration.
 async function exerciseTopicEvaluationCandidateReviewV1(){
   const fixture=(await pool.query<{workspace_id:string;organization_id:string;actor_id:string}>(`SELECT run.workspace_id::text,
     workspace.organization_id::text,run.requested_by_user_id::text actor_id FROM signal_topic_evaluation_runs run

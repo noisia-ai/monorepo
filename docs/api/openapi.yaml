@@ -2093,6 +2093,55 @@ paths:
         "403": { description: Management authority denied or execution disabled by default. }
         "409": { description: Typed duplicate envelope/idempotency, frozen authority drift or unavailable product provider lane. Ordinary start never creates a successor flight. }
         "422": { description: Closed confirmation, token ceiling or hard cap rejected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence:
+    get:
+      tags: [Signal Topic Evaluation]
+      operationId: getSignalTopicEvaluationFullEvidencePreflight
+      summary: Read the provider-disabled full-evidence flight card and frozen membership authority.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      responses:
+        "200":
+          description: Read-only bounded navigation authority. It never contains member text or a private envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicEvaluationFullEvidencePreflightV2" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Frozen membership, rights or Semantic Context authority is unavailable. }
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: startSignalTopicEvaluationFullEvidence
+      summary: Closed R24 launch edge; provider execution is disabled in this gate.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      responses:
+        "403": { description: Full-evidence provider execution is disabled; no run or provider call is created. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/evidence:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: navigateSignalTopicEvaluationEvidence
+      summary: Execute one bounded, server-owned, read-only navigation over a frozen cluster snapshot.
+      description: Not a SQL API. The server owns membership, ordering, filtering, limits, cursor validation, rights checks and redaction.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicEvidenceNavigationRequestV2" }
+      responses:
+        "200":
+          description: Bounded sanitized evidence; raw identifiers and corpus payloads are excluded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicEvidenceNavigationResultV2" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Cluster unavailable in the authorized frozen snapshot. }
+        "409": { description: Snapshot or current authority unavailable. }
+        "422": { description: Closed operation, filters, size or cursor rejected without a write. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/successor:
     post:
       tags: [Signal Topic Evaluation]
@@ -3607,6 +3656,274 @@ components:
             predecessor_run_key: { type: [string, "null"], minLength: 1, maxLength: 200 }
         results:
           $ref: "#/components/schemas/SignalTopicEvaluationCandidatePageV1"
+    SignalTopicEvaluationFullEvidencePreflightV2:
+      type: object
+      additionalProperties: false
+      required: [contract_version, execution_enabled, provider_calls_allowed, no_retry,
+        action_time_confirmation_required, max_model_turns, max_tool_calls, max_tool_result_bytes,
+        max_total_tool_result_bytes, max_total_input_tokens, max_total_output_tokens,
+        hard_cap_micro_usd, preserve_complete_candidate_pool, top_view_limit, snapshot_key,
+        snapshot_digest, cluster_count, membership_count, semantic_context_authority_digest,
+        historical_summary_evaluator_preserved, candidates_are_pending_only, topic_adoption,
+        publication, serving]
+      properties:
+        contract_version: { const: signal-topic-evaluation-full-evidence-v2 }
+        execution_enabled: { const: false }
+        provider_calls_allowed: { const: 0 }
+        no_retry: { const: true }
+        action_time_confirmation_required: { const: true }
+        max_model_turns: { type: integer, minimum: 1, maximum: 12 }
+        max_tool_calls: { type: integer, minimum: 1, maximum: 24 }
+        max_tool_result_bytes: { type: integer, minimum: 1, maximum: 32768 }
+        max_total_tool_result_bytes: { type: integer, minimum: 1, maximum: 262144 }
+        max_total_input_tokens: { type: integer, minimum: 1, maximum: 450000 }
+        max_total_output_tokens: { type: integer, minimum: 1, maximum: 50000 }
+        hard_cap_micro_usd: { type: integer, minimum: 1, maximum: 20000000 }
+        preserve_complete_candidate_pool: { const: true }
+        top_view_limit: { const: 10 }
+        snapshot_key: { type: string, minLength: 1, maxLength: 180 }
+        snapshot_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        cluster_count: { const: 116 }
+        membership_count: { const: 21195 }
+        semantic_context_authority_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        historical_summary_evaluator_preserved: { const: true }
+        candidates_are_pending_only: { const: true }
+        topic_adoption: { const: false }
+        publication: { const: false }
+        serving: { const: false }
+    SignalTopicEvidenceNavigationRequestV2:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [operation, limit, cursor]
+          properties:
+            operation: { const: cluster_catalog }
+            limit: { type: integer, minimum: 1, maximum: 116 }
+            cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key]
+          properties:
+            operation: { const: cluster_profile }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key, limit, filters]
+          properties:
+            operation: { const: representative_mentions }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+            limit: { type: integer, minimum: 3, maximum: 24 }
+            filters: { $ref: "#/components/schemas/SignalTopicEvidenceFiltersV2" }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key, limit, cursor, filters]
+          properties:
+            operation: { const: search_cluster }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+            limit: { type: integer, minimum: 1, maximum: 20 }
+            cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+            filters: { $ref: "#/components/schemas/SignalTopicEvidenceFiltersV2" }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_keys]
+          properties:
+            operation: { const: compare_clusters }
+            cluster_keys: { type: array, minItems: 2, maxItems: 5, uniqueItems: true,
+              items: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+        - type: object
+          additionalProperties: false
+          required: [operation, element_keys]
+          properties:
+            operation: { const: brand_os_context }
+            element_keys: { type: array, minItems: 1, maxItems: 40, uniqueItems: true,
+              items: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+    SignalTopicEvidenceFiltersV2:
+      type: object
+      additionalProperties: false
+      properties:
+        language: { type: string, pattern: '^[a-z]{2}$' }
+        market: { type: string, pattern: '^[A-Z]{2}$' }
+        scope: { type: string, enum: [primary_brand, same_entity, competitor, category, other] }
+        month_from: { type: string, pattern: '^\d{4}-\d{2}$' }
+        month_to: { type: string, pattern: '^\d{4}-\d{2}$' }
+        query: { type: string, minLength: 2, maxLength: 80 }
+    SignalTopicEvidenceNavigationResultV2:
+      description: Six closed operation-specific results, each bounded to 32768 serialized UTF-8 bytes by the server.
+      discriminator:
+        propertyName: operation
+        mapping:
+          cluster_catalog: "#/components/schemas/SignalTopicEvidenceCatalogResultV2"
+          cluster_profile: "#/components/schemas/SignalTopicEvidenceProfileResultV2"
+          representative_mentions: "#/components/schemas/SignalTopicEvidenceRepresentativeResultV2"
+          search_cluster: "#/components/schemas/SignalTopicEvidenceSearchResultV2"
+          compare_clusters: "#/components/schemas/SignalTopicEvidenceCompareResultV2"
+          brand_os_context: "#/components/schemas/SignalTopicEvidenceContextResultV2"
+      oneOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceCatalogResultV2" }
+        - { $ref: "#/components/schemas/SignalTopicEvidenceProfileResultV2" }
+        - { $ref: "#/components/schemas/SignalTopicEvidenceRepresentativeResultV2" }
+        - { $ref: "#/components/schemas/SignalTopicEvidenceSearchResultV2" }
+        - { $ref: "#/components/schemas/SignalTopicEvidenceCompareResultV2" }
+        - { $ref: "#/components/schemas/SignalTopicEvidenceContextResultV2" }
+    SignalTopicEvidenceCatalogResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: cluster_catalog }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceCatalogDataV2" }
+    SignalTopicEvidenceProfileResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: cluster_profile }
+            next_cursor: { type: "null" }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceClusterV2" }
+    SignalTopicEvidenceRepresentativeResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: representative_mentions }
+            next_cursor: { type: "null" }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceRepresentativeDataV2" }
+    SignalTopicEvidenceSearchResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: search_cluster }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceSearchDataV2" }
+    SignalTopicEvidenceCompareResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: compare_clusters }
+            next_cursor: { type: "null" }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceCompareDataV2" }
+    SignalTopicEvidenceContextResultV2:
+      allOf:
+        - { $ref: "#/components/schemas/SignalTopicEvidenceResultEnvelopeV2" }
+        - properties:
+            operation: { const: brand_os_context }
+            next_cursor: { type: "null" }
+            data: { $ref: "#/components/schemas/SignalTopicEvidenceContextDataV2" }
+    SignalTopicEvidenceResultEnvelopeV2:
+      type: object
+      additionalProperties: false
+      required: [contract_version, operation, snapshot_digest, result_digest, evidence_refs, next_cursor, data]
+      properties:
+        contract_version: { const: signal-topic-evaluation-full-evidence-v2 }
+        operation: { type: string, enum: [cluster_catalog, cluster_profile, representative_mentions,
+          search_cluster, compare_clusters, brand_os_context] }
+        snapshot_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        result_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        evidence_refs: { type: array, maxItems: 200, uniqueItems: true,
+          items: { type: string, pattern: '^sha256:[0-9a-f]{64}$' } }
+        next_cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+        data:
+          type: object
+          description: Validated by the operation-specific result branch; never a raw corpus row or private envelope.
+    SignalTopicEvidenceCatalogDataV2:
+      type: object
+      additionalProperties: false
+      required: [clusters, total_clusters]
+      properties:
+        clusters: { type: array, maxItems: 116,
+          items: { $ref: "#/components/schemas/SignalTopicEvidenceClusterSummaryV2" } }
+        total_clusters: { const: 116 }
+    SignalTopicEvidenceCompareDataV2:
+      type: object
+      additionalProperties: false
+      required: [clusters]
+      properties:
+        clusters: { type: array, minItems: 2, maxItems: 5,
+          items: { $ref: "#/components/schemas/SignalTopicEvidenceClusterV2" } }
+    SignalTopicEvidenceContextDataV2:
+      type: object
+      additionalProperties: false
+      required: [elements]
+      properties:
+        elements: { type: array, minItems: 1, maxItems: 40,
+          items: { $ref: "#/components/schemas/SignalTopicEvidenceContextElementV2" } }
+    SignalTopicEvidenceRepresentativeDataV2:
+      type: object
+      additionalProperties: false
+      required: [cluster_key, mentions, sampling_guarantee, sampling_limit]
+      properties:
+        cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        mentions: { type: array, maxItems: 24, items: { $ref: "#/components/schemas/SignalTopicEvidenceMentionV2" } }
+        sampling_guarantee: { const: deterministic_round_robin_across_observed_strata }
+        sampling_limit: { type: string, minLength: 1, maxLength: 600 }
+    SignalTopicEvidenceSearchDataV2:
+      type: object
+      additionalProperties: false
+      required: [cluster_key, mentions, sampling_guarantee, sampling_limit]
+      properties:
+        cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        mentions: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/SignalTopicEvidenceMentionV2" } }
+        sampling_guarantee: { const: stable_cluster_rank }
+        sampling_limit: { type: string, minLength: 1, maxLength: 600 }
+    SignalTopicEvidenceMentionV2:
+      type: object
+      additionalProperties: false
+      required: [evidence_ref, excerpt, language, market, scope, month, stratum, source_digest]
+      properties:
+        evidence_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        excerpt: { type: string, minLength: 1, maxLength: 600 }
+        language: { type: [string, "null"], pattern: '^[a-z]{2}$' }
+        market: { type: [string, "null"], pattern: '^[A-Z]{2}$' }
+        scope: { type: [string, "null"], minLength: 1, maxLength: 40 }
+        month: { type: string, pattern: '^\d{4}-\d{2}$' }
+        stratum: { type: string, enum: [central, edge, minority] }
+        source_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+    SignalTopicEvidenceClusterProfileV2:
+      type: object
+      additionalProperties: false
+      required: [label, terms, phrases, limitations, distributions, centrality_available]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 240 }
+        terms: { type: array, maxItems: 24, items: { type: string, minLength: 1, maxLength: 120 } }
+        phrases: { type: array, maxItems: 16, items: { type: string, minLength: 1, maxLength: 240 } }
+        limitations: { type: array, maxItems: 12, items: { type: string, minLength: 1, maxLength: 400 } }
+        distributions:
+          type: object
+          additionalProperties: false
+          required: [language, market, scope, month]
+          properties:
+            language: { type: object, propertyNames: { pattern: '^[a-z]{2}$' }, additionalProperties: { type: integer, minimum: 0 } }
+            market: { type: object, propertyNames: { pattern: '^[A-Z]{2}$' }, additionalProperties: { type: integer, minimum: 0 } }
+            scope: { type: object, propertyNames: { maxLength: 40 }, additionalProperties: { type: integer, minimum: 0 } }
+            month: { type: object, propertyNames: { pattern: '^\d{4}-\d{2}$' }, additionalProperties: { type: integer, minimum: 0 } }
+        centrality_available: { type: boolean }
+    SignalTopicEvidenceClusterSummaryV2:
+      type: object
+      additionalProperties: false
+      required: [cluster_key, proposal_key, member_count, profile_digest]
+      properties:
+        cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        proposal_key: { type: [string, "null"], pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        member_count: { type: integer, minimum: 1 }
+        profile_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+    SignalTopicEvidenceClusterV2:
+      type: object
+      additionalProperties: false
+      required: [cluster_key, proposal_key, member_count, profile, profile_digest]
+      properties:
+        cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        proposal_key: { type: [string, "null"], pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        member_count: { type: integer, minimum: 1 }
+        profile: { $ref: "#/components/schemas/SignalTopicEvidenceClusterProfileV2" }
+        profile_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+    SignalTopicEvidenceContextElementV2:
+      type: object
+      additionalProperties: false
+      required: [element_key, element_kind, display_text, scope, locale, source_refs_digest, evidence_count]
+      properties:
+        element_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        element_kind: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        display_text: { type: string, minLength: 1, maxLength: 600 }
+        scope: { type: string, minLength: 1, maxLength: 40 }
+        locale: { type: [string, "null"], minLength: 1, maxLength: 35 }
+        source_refs_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        evidence_count: { type: integer, minimum: 0 }
     SignalTopicEvaluationCandidatePageV1:
       type: object
       additionalProperties: false

@@ -5,6 +5,8 @@ import {
   reviewSignalTopicEvaluationCandidateV1,
   signalTopicEvaluationConfigurationFromEnvV1
 } from "@noisia/db";
+import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2 }
+  from "@noisia/db";
 
 import type { ResolvedSignalWorkspace,SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
 
@@ -62,4 +64,18 @@ export async function reviewSignalTopicEvaluationCandidateProductV1(args:{worksp
   const{pool}=await import("@/lib/db");
   return reviewSignalTopicEvaluationCandidateV1({pool,workspace_id:args.workspace.id,
     actor:actor(args.actor),idempotency_key:args.idempotencyKey,command:args.command});
+}
+
+export async function loadSignalTopicEvaluationFullEvidencePreflightProductV2(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser}){
+  const{pool}=await import("@/lib/db");
+  return loadSignalTopicEvaluationV2Preflight({queryable:pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor)});
+}
+
+export async function navigateSignalTopicEvaluationEvidenceProductV2(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;request:unknown}){
+  const{pool}=await import("@/lib/db");
+  return navigateSignalTopicEvaluationEvidenceV2({queryable:pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),request:args.request});
 }

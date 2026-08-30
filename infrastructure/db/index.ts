@@ -8,4 +8,6 @@ export * from "./signal-taxonomy-profile";
 export * from "./signal-semantic-context-proposal";
 export * from "./signal-semantic-context-automatic-policy";
 export * from "./signal-topic-evaluation";
+export * from "./signal-topic-evaluation-v2";
+export * from "./signal-topic-evaluation-v2-import";
 export * from "./sentione-csv-ingest";

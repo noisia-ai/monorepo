@@ -53,6 +53,7 @@ export * from "./signal-semantic-review-v1";
 export * from "./signal-semantic-resolution-v1";
 export * from "./signal-semantic-context-proposal-v1";
 export * from "./signal-topic-evaluation-v1";
+export * from "./signal-topic-evaluation-v2";
 export * from "./signal-topics-narratives-v1";
 export * from "./signal-classification-authority-v1";
 export * from "./signal-taxonomy-insights-v1";
