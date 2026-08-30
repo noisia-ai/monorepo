@@ -3580,7 +3580,14 @@ components:
             provider_outcome_class:
               type: [string, "null"]
               enum: [definitely_not_sent, known_response_invalid, ambiguous_after_send, null]
-              description: Sanitized terminal provider boundary; never includes response, prompt, request identifiers, or credentials.
+              description: >-
+                Sanitized terminal provider boundary. definitely_not_sent is limited to an
+                explicit local pre-transport request or configuration failure. Any provider
+                HTTP response, including a non-retryable 4xx, proves the request crossed the
+                provider boundary and remains ambiguous_after_send unless a separately governed
+                durable state can prove otherwise. Network, timeout, reset and unknown failures
+                are also ambiguous and never retry automatically. The projection never includes
+                response bodies, prompts, headers, request identifiers or credentials.
             candidate_count: { type: [integer, "null"], minimum: 0, maximum: 80 }
             rubric_met: { type: [boolean, "null"] }
             error_code: { type: [string, "null"] }

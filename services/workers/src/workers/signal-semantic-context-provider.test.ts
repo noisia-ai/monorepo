@@ -12,6 +12,7 @@ test("semantic context reuses the bounded Anthropic transport with a closed dyna
   let calls = 0;
   const provider = createAnthropicSemanticContextProposalProviderV1(async (request) => {
     calls += 1;
+    assert.equal(request.temperature, 0);
     assert.ok(request.structured_output);
     const proposal = { element_key: "identity.fixture", element_kind: "identity_term",
       canonical_key: "fixture", display_text: "Fixture", scope: "primary_brand",

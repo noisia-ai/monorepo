@@ -3,7 +3,8 @@ import type { Job } from "bullmq";
 import { processSignalTopicEvaluationRunV1 } from "@noisia/db";
 import { signalTopicEvaluationJobDataV1 } from "@noisia/query-engine";
 import { pool } from "../db/client";
-import { createAnthropicTopicEvaluationProviderV1 } from "../providers/anthropic-bounded-text";
+import { createAnthropicTopicEvaluationProviderV1, sanitizeSignalTopicEvaluationJobErrorV1 } from
+  "../providers/anthropic-bounded-text";
 
 export async function signalTopicEvaluationJob(job: Job) {
   const data = signalTopicEvaluationJobDataV1(job.data);
@@ -21,10 +22,6 @@ export async function signalTopicEvaluationJob(job: Job) {
     await job.updateProgress(100);
     return result;
   } catch (error) {
-    const safe = new Error(error instanceof Error && "code" in error
-      && typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code : "topic_evaluation_job_failed");
-    safe.name = "SignalTopicEvaluationJobError";
-    throw safe;
+    throw sanitizeSignalTopicEvaluationJobErrorV1(error);
   }
 }

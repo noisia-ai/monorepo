@@ -1,8 +1,10 @@
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateText, NoObjectGeneratedError, Output } from "ai";
+import { generateText, InvalidPromptError, LoadAPIKeyError, LoadSettingError,
+  NoObjectGeneratedError, NoSuchModelError, Output, UnsupportedFunctionalityError } from "ai";
 import type { ZodTypeAny } from "zod";
 
 import { buildSignalSemanticContextProviderOutputSchemaV3,
+  SignalTopicEvaluationProviderBoundaryErrorV1,
   signalTopicEvaluationProviderOutputSchemaV1,
   stableSignalSemanticContextJsonV1,
   type SignalTopicEvaluationProviderV1,
@@ -13,12 +15,13 @@ export async function generateAnthropicBoundedTextV1(request: {
   model: string;
   prompt: string;
   max_output_tokens?: number;
-  temperature: number;
+  temperature?: number;
   structured_output?: { schema: ZodTypeAny; name: string; description: string };
-}) {
+}, modelFactory: (model: string) => ReturnType<typeof anthropic> = anthropic) {
   try {
-    const result = await generateText({ model: anthropic(request.model), prompt: request.prompt,
-      temperature: request.temperature, maxOutputTokens: request.max_output_tokens, maxRetries: 0,
+    const result = await generateText({ model: modelFactory(request.model), prompt: request.prompt,
+      ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+      maxOutputTokens: request.max_output_tokens, maxRetries: 0,
       ...(request.structured_output ? { output: Output.object({
         schema: request.structured_output.schema,
         name: request.structured_output.name,
@@ -42,18 +45,47 @@ export async function generateAnthropicBoundedTextV1(request: {
   }
 }
 
+/** Convert only local errors that prove transport never started into the zero-cost boundary.
+ * Provider responses, network, timeout and unknown failures stay ambiguous/no-retry. */
+export function mapAnthropicTopicEvaluationBoundaryErrorV1(error: unknown): unknown {
+  if (error instanceof SignalTopicEvaluationProviderBoundaryErrorV1) return error;
+  const localRequestRejected = LoadAPIKeyError.isInstance(error)
+    || LoadSettingError.isInstance(error)
+    || NoSuchModelError.isInstance(error)
+    || InvalidPromptError.isInstance(error)
+    || UnsupportedFunctionalityError.isInstance(error);
+  return localRequestRejected
+    ? new SignalTopicEvaluationProviderBoundaryErrorV1(
+      "definitely_not_sent", "topic_evaluation_provider_request_rejected")
+    : error;
+}
+
+export function sanitizeSignalTopicEvaluationJobErrorV1(error: unknown) {
+  const candidate = error instanceof Error && "code" in error
+    && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code : null;
+  const safe = new Error(candidate && /^topic_evaluation_[a-z0-9_]+$/u.test(candidate)
+    ? candidate : "topic_evaluation_job_failed");
+  safe.name = "SignalTopicEvaluationJobError";
+  return safe;
+}
+
 export function createAnthropicTopicEvaluationProviderV1(
   transport: typeof generateAnthropicBoundedTextV1 = generateAnthropicBoundedTextV1
 ): SignalTopicEvaluationProviderV1 {
   return { generate: async (request) => {
-    const result = await transport({ model: request.model, prompt: request.prompt,
-      max_output_tokens: request.max_output_tokens, temperature: 0,
-      structured_output: { schema: signalTopicEvaluationProviderOutputSchemaV1,
-        name: "signal_topic_evaluation_candidates",
-        description: "Editable evidence-linked topic evaluation candidates; never Topic adoption." } });
-    // Return the known provider response and usage unchanged. The durable runner persists
-    // them before independent output normalization and relational validation.
-    return result;
+    try {
+      const result = await transport({ model: request.model, prompt: request.prompt,
+        max_output_tokens: request.max_output_tokens,
+        structured_output: { schema: signalTopicEvaluationProviderOutputSchemaV1,
+          name: "signal_topic_evaluation_candidates",
+          description: "Editable evidence-linked topic evaluation candidates; never Topic adoption." } });
+      // Return the known provider response and usage unchanged. The durable runner persists
+      // them before independent output normalization and relational validation.
+      return result;
+    } catch (error) {
+      throw mapAnthropicTopicEvaluationBoundaryErrorV1(error);
+    }
   } };
 }
 
