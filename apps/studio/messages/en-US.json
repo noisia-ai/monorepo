@@ -2186,6 +2186,36 @@
         "candidate": { "eyebrow": "Pending candidate", "drawerTitle": "Review Topic candidate", "boundary": "Changes append a reversible candidate revision. They never adopt, publish, or serve a Topic.", "title": "Title", "description": "Description", "inclusion": "Include — one item per line", "exclusion": "Exclude — one item per line", "evidence": "{count, plural, one {# evidence link} other {# evidence links}}", "evidenceTitle": "Governed evidence projection", "evidenceProjection": "{count} links · {supports} support · {limits} limit · {contradicts} contradict", "sources": "{count, plural, one {# source proposal} other {# source proposals}}", "states": { "pending": "Pending", "rejected": "Rejected" } },
         "attempt": { "title": "The request was already emitted in this session", "body": "This control will not send another request. Review durable state through the authorized technical flow." },
         "errors": { "title": "Topic Evaluation could not load", "load": "The Topic Evaluation preflight and results could not load.", "start": "The evaluation could not start. This session will not send another request.", "review": "The candidate revision could not be saved." }
+      },
+      "fullEvidenceTopicEvaluation": {
+        "title": "Full evidence for Topics",
+        "subtitle": "Read-only state of the frozen BERTopic corpus that can power a later evaluation.",
+        "loading": "Loading sealed evidence…",
+        "actions": { "refresh": "Refresh" },
+        "summary": {
+          "historical": "Historical proposals",
+          "historicalHint": "115 preserved BERTopic proposals",
+          "clusters": "Sealed clusters",
+          "clustersHint": "115 proposals plus the outlier reservoir",
+          "memberships": "Linked mentions",
+          "membershipsHint": "Complete corpus with canonical binding",
+          "topView": "Top view",
+          "topViewHint": "A view, not a truncated pool"
+        },
+        "boundary": {
+          "title": "Provider disabled; evidence is ready",
+          "body": "This does not create candidates or Topics. It does not call Claude, publish, or enable serving. A future evaluation can read bounded, sanitized evidence from this snapshot."
+        },
+        "states": { "disabled": "Execution disabled" },
+        "navigation": {
+          "title": "Available capabilities for the next evaluation",
+          "body": "The server retains the complete corpus and exposes only bounded, authorized, read-only navigation.",
+          "catalog": "A catalog and profile for each cluster, plus cluster comparison.",
+          "mentions": "Representative samples and paginated in-cluster search with closed filters.",
+          "context": "Current Brand OS context tied to the sealed authority."
+        },
+        "digests": { "snapshot": "Snapshot {digest}", "authority": "Authority {digest}" },
+        "errors": { "title": "Full evidence is unavailable", "body": "The read-only preflight could not be verified. No execution was enabled." }
       }
     },
     "data": {

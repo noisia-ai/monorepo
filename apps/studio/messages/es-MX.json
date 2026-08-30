@@ -2186,6 +2186,36 @@
         "candidate": { "eyebrow": "Candidato pendiente", "drawerTitle": "Revisar candidato de Topic", "boundary": "Los cambios agregan una revisión reversible del candidato. Nunca adoptan, publican ni sirven un Topic.", "title": "Título", "description": "Descripción", "inclusion": "Incluye — un elemento por línea", "exclusion": "Excluye — un elemento por línea", "evidence": "{count, plural, one {# vínculo de evidencia} other {# vínculos de evidencia}}", "evidenceTitle": "Proyección de evidencia gobernada", "evidenceProjection": "{count} vínculos · {supports} sustentan · {limits} limitan · {contradicts} contradicen", "sources": "{count, plural, one {# propuesta fuente} other {# propuestas fuente}}", "states": { "pending": "Pendiente", "rejected": "Rechazado" } },
         "attempt": { "title": "La solicitud ya fue emitida en esta sesión", "body": "No se enviará otra solicitud desde este control. Revisa el estado durable por el flujo técnico autorizado." },
         "errors": { "title": "No se pudo cargar Topic Evaluation", "load": "No se pudieron cargar el preflight y los resultados de Topic Evaluation.", "start": "No se pudo iniciar la evaluación. No se enviará otra solicitud desde esta sesión.", "review": "No se pudo guardar la revisión del candidato." }
+      },
+      "fullEvidenceTopicEvaluation": {
+        "title": "Evidencia completa para Topics",
+        "subtitle": "Estado de solo lectura del corpus BERTopic congelado que podrá alimentar una evaluación posterior.",
+        "loading": "Cargando la evidencia sellada…",
+        "actions": { "refresh": "Actualizar" },
+        "summary": {
+          "historical": "Propuestas históricas",
+          "historicalHint": "115 propuestas BERTopic conservadas",
+          "clusters": "Clusters sellados",
+          "clustersHint": "115 propuestas y reservorio de outliers",
+          "memberships": "Menciones vinculadas",
+          "membershipsHint": "Corpus completo con binding canónico",
+          "topView": "Vista Top",
+          "topViewHint": "Una vista, no un recorte del pool"
+        },
+        "boundary": {
+          "title": "Proveedor desactivado; evidencia lista",
+          "body": "Esto no crea candidatos ni Topics. No llama a Claude, no publica y no activa serving. La futura evaluación podrá leer evidencia acotada y saneada desde este snapshot."
+        },
+        "states": { "disabled": "Ejecución desactivada" },
+        "navigation": {
+          "title": "Capacidades disponibles para la siguiente evaluación",
+          "body": "El servidor conserva el corpus completo y sólo expone recorridos acotados, autorizados y de solo lectura.",
+          "catalog": "Catálogo y perfil de cada cluster; comparación entre clusters.",
+          "mentions": "Muestras representativas y búsqueda paginada dentro de un cluster, con filtros cerrados.",
+          "context": "Contexto vigente de Brand OS, ligado a la autoridad sellada."
+        },
+        "digests": { "snapshot": "Snapshot {digest}", "authority": "Autoridad {digest}" },
+        "errors": { "title": "La evidencia completa no está disponible", "body": "No se pudo verificar el preflight de solo lectura. No se habilitó ninguna ejecución." }
       }
     },
     "data": {

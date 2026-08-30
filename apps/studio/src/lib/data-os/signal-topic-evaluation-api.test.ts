@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";import { readFile } from "node:fs/promises";import test from "node:test";
 import { createRequire } from "node:module";
-import { navigateSignalTopicEvaluationEvidenceV2 } from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
+import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2 }
+  from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
 import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
   parseSignalTopicEvaluationSuccessorStartRequestV1 } from "./signal-topic-evaluation-api";
 import { parseSignalTopicEvidenceNavigationRequestV2,signalTopicEvaluationFlightCardV2,
@@ -56,6 +57,30 @@ test("actual compact catalog validates in runtime and OpenAPI; forged result fai
   catalogRow={...catalogRow,profile:{private_payload:"must not escape"}};
   await assert.rejects(navigateSignalTopicEvaluationEvidenceV2(args),/unrecognized_keys|Unrecognized key/u);
   assert.ok(statements.every((sql)=>sql.trimStart().startsWith("SELECT")),"only read queries executed");
+});
+
+test("full-evidence preflight remains workspace-bound, management-only and read-only",async()=>{
+  const digest=`sha256:${"2".repeat(64)}`;
+  const statements:string[]=[];
+  const queryable={query:async<T>(sql:string,values?:unknown[])=>{
+    statements.push(sql);
+    const rows=values?.[0]==="workspace"?[{id:"snapshot",workspace_id:"workspace",snapshot_key:"snapshot",
+      snapshot_digest:digest,rights_digest:digest,cluster_count:116,membership_count:21195,
+      semantic_context_authority_digest:digest}]:[];
+    return{rowCount:rows.length,rows:rows as T[]};
+  }};
+  const internal={id:"actor",user_type:"noisia_internal" as const};
+  const preflight=await loadSignalTopicEvaluationV2Preflight({queryable,workspace_id:"workspace",actor:internal});
+  assert.deepEqual({clusters:preflight.cluster_count,memberships:preflight.membership_count,
+    execution:preflight.execution_enabled,calls:preflight.provider_calls_allowed,
+    adoption:preflight.topic_adoption,publication:preflight.publication,serving:preflight.serving},
+  {clusters:116,memberships:21195,execution:false,calls:0,adoption:false,publication:false,serving:false});
+  await assert.rejects(loadSignalTopicEvaluationV2Preflight({queryable,workspace_id:"other-workspace",actor:internal}),
+    /topic_evaluation_v2_snapshot_unavailable/u,"a snapshot cannot cross workspaces");
+  await assert.rejects(loadSignalTopicEvaluationV2Preflight({queryable,workspace_id:"workspace",
+    actor:{id:"client",user_type:"client"} as never}),/topic_evaluation_v2_forbidden/u,
+  "non-management actors cannot load a snapshot");
+  assert.ok(statements.every((sql)=>sql.trimStart().startsWith("SELECT")),"preflight is read-only");
 });
 
 test("topic evaluation start request is closed and explicitly confirmed",()=>{

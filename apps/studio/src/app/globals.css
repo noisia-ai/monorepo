@@ -20971,6 +20971,8 @@ body:has(.signal-report)::before { display: none; }
 .topic-evaluation-manager__candidate-meta { display: flex; align-items: flex-end; gap: 7px; flex-direction: column; flex: 0 0 auto; }
 .topic-evaluation-manager__empty,
 .topic-evaluation-manager__evidence { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--neutral-04); border-radius: 14px; }
+.full-evidence-topic-evaluation-status__capabilities { display: grid; gap: 4px; margin: 4px 0 0; padding-left: 18px; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.full-evidence-topic-evaluation-status__digest { margin: 0; color: var(--neutral-09); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; overflow-wrap: anywhere; }
 .admin-drawer-form__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 520px) {
   .topic-evaluation-manager__results-heading,

@@ -9,6 +9,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
+import { FullEvidenceTopicEvaluationStatus } from "@/components/brands/FullEvidenceTopicEvaluationStatus";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
 import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
 import { TopicEvaluationManager } from "@/components/brands/TopicEvaluationManager";
@@ -60,6 +61,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
         <>
           <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
           <TopicEvaluationManager workspaceId={workspace.summary.workspaceId} />
+          <FullEvidenceTopicEvaluationStatus workspaceId={workspace.summary.workspaceId} />
         </>
       ) : null}
 
