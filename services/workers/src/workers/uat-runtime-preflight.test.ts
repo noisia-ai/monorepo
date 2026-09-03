@@ -43,6 +43,8 @@ const emptyDatabase = {
       strategic_run_claimable: 0,
       strategic_step_claimable: 0,
       topic_evaluation_v2_execution_claimable: 0,
+      topic_evaluation_v2_execution_in_progress: 0,
+      topic_evaluation_v2_execution_partial: 0,
       workspace_import_claimable: 0
     }] };
   }
@@ -106,12 +108,35 @@ test("UAT empty cut rejects a pending V2 paid execution intent", async () => {
     assertUatWorkerStartup({
       database: { async query() { return { rows: [{ strategic_run_claimable: 0,
         strategic_step_claimable: 0,topic_evaluation_v2_execution_claimable: 1,
+        topic_evaluation_v2_execution_in_progress: 0,topic_evaluation_v2_execution_partial: 0,
         workspace_import_claimable: 0 }] }; } } as never,
       redis: emptyRedis,
       env: safeEnv()
     }),
     /uat_database_contains_claimable_outbox_rows/u
   );
+});
+
+test("UAT empty cut inventories and rejects every V2 in-progress or partial execution cohort", async () => {
+  for (const field of ["topic_evaluation_v2_execution_in_progress",
+    "topic_evaluation_v2_execution_partial"] as const) {
+    await assert.rejects(
+      assertUatWorkerStartup({
+        database: { async query(sql: string) {
+          assert.match(sql,/topic_evaluation_v2_execution_in_progress/u);
+          assert.match(sql,/topic_evaluation_v2_execution_partial/u);
+          return { rows: [{ strategic_run_claimable: 0,strategic_step_claimable: 0,
+            topic_evaluation_v2_execution_claimable: 0,
+            topic_evaluation_v2_execution_in_progress: field === "topic_evaluation_v2_execution_in_progress" ? 1 : 0,
+            topic_evaluation_v2_execution_partial: field === "topic_evaluation_v2_execution_partial" ? 1 : 0,
+            workspace_import_claimable: 0 }] };
+        } } as never,
+        redis: emptyRedis,
+        env: safeEnv()
+      }),
+      /uat_database_contains_claimable_outbox_rows/u
+    );
+  }
 });
 
 test("UAT recovery requires separate operator approval", async () => {

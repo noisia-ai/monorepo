@@ -17,10 +17,11 @@ test("V2 execution outbox is inert unless the explicit UAT flag is enabled", asy
 });
 
 test("V2 Worker is the only composition root that advances a durable dispatch intent", async () => {
-  const [outbox, entrypoint, executionAuthority] = await Promise.all([
+  const [outbox, entrypoint, executionAuthority, providerRun] = await Promise.all([
     readFile(new URL("./signal-topic-evaluation-v2-outbox.ts", import.meta.url), "utf8"),
     readFile(new URL("../index.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../../../infrastructure/db/signal-topic-evaluation-v2.ts", import.meta.url), "utf8")
+    readFile(new URL("../../../../infrastructure/db/signal-topic-evaluation-v2.ts", import.meta.url), "utf8"),
+    readFile(new URL("./signal-topic-evaluation-v2.ts", import.meta.url), "utf8")
   ]);
   assert.match(outbox, /claimNextSignalTopicEvaluationV2ExecutionOutbox/u);
   assert.match(outbox, /NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED/u);
@@ -29,6 +30,12 @@ test("V2 Worker is the only composition root that advances a durable dispatch in
   assert.match(entrypoint, /await topicEvaluationV2OutboxDrainer\.close\(\)/u);
   assert.match(executionAuthority, /claimSignalTopicEvaluationV2ExecutionAuthorityWithClient/u);
   assert.match(executionAuthority, /topic_evaluation_v2_run_not_executable/u);
+  assert.doesNotMatch(executionAuthority,
+    /export async function dispatchSignalTopicEvaluationV2ExecutionOutbox/u);
+  assert.doesNotMatch(executionAuthority,
+    /export async function claimSignalTopicEvaluationV2ExecutionAuthority\(/u);
+  assert.doesNotMatch(providerRun, /claimSignalTopicEvaluationV2ExecutionAuthority/u);
+  assert.doesNotMatch(providerRun, /failSignalTopicEvaluationV2DispatchBeforeClaim/u);
 });
 
 test("background V2 drain reports failures instead of creating an unhandled rejection", async () => {

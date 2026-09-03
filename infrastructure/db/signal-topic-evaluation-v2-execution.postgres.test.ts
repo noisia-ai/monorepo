@@ -6,21 +6,32 @@ import { buildSignalTopicEvaluationExecutionFlightCardV2,
   SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION } from "@noisia/query-engine";
 import pg from "pg";
 
-import { claimSignalTopicEvaluationV2ExecutionAuthority,
-  claimNextSignalTopicEvaluationV2ExecutionOutbox,
+import { claimNextSignalTopicEvaluationV2ExecutionOutbox,
   createSignalTopicEvaluationV2ExecutionAuthority,
-  dispatchSignalTopicEvaluationV2ExecutionOutbox,
-  failSignalTopicEvaluationV2DispatchBeforeClaim,
   recordSignalTopicEvaluationV2ProviderTurnAttempt,
   settleSignalTopicEvaluationV2ExecutionFailure } from "./signal-topic-evaluation-v2";
 import { processSignalTopicEvaluationV2ProviderRun } from "../../services/workers/src/workers/signal-topic-evaluation-v2";
 import { SignalTopicEvaluationProviderResponseInvalidErrorV2 }
   from "../../services/workers/src/providers/anthropic-full-evidence-topic-evaluation";
+import { assertUatWorkerStartup,connectionIdentityHash,supabaseProjectRefHash }
+  from "../../services/workers/src/workers/uat-runtime-preflight";
 
 const DATABASE_URL=process.env.NOISIA_TOPIC_EVALUATION_V2_EXECUTION_URL;
 const APPROVED=process.env.NOISIA_TOPIC_EVALUATION_V2_EXECUTION_APPROVED==="true";
+const PREFLIGHT_DATABASE_URL="postgresql://postgres.localfixture:local@pooler.supabase.com:5432/postgres";
+const PREFLIGHT_REDIS_URL="rediss://default:local@r31b-redis.example:6379";
+const PREFLIGHT_ENV={NOISIA_RUNTIME_PROFILE:"uat",NOISIA_REMOTE_DATABASE_TARGET:"staging",
+  DATABASE_URL:PREFLIGHT_DATABASE_URL,REDIS_URL:PREFLIGHT_REDIS_URL,
+  NOISIA_UAT_DATABASE_PROJECT_REF_SHA256:supabaseProjectRefHash(PREFLIGHT_DATABASE_URL),
+  NOISIA_UAT_REDIS_IDENTITY_SHA256:connectionIdentityHash(PREFLIGHT_REDIS_URL,"6379"),
+  NOISIA_UAT_STARTUP_MODE:"empty-cut",NOISIA_UAT_RECOVERY_APPROVED:"false",
+  NOISIA_SIGNAL_TB_PAID_RUN_APPROVED:"false",NOISIA_QUERY_ENGINE_QUEUE_NAME:"query-uat",
+  NOISIA_ENGINE_QUEUE_NAME:"engine-uat",NOISIA_DATA_OS_QUEUE_NAME:"data-os-uat",
+  NOISIA_SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME:"semantic-uat",
+  NOISIA_TB_ANALYSIS_QUEUE_NAME:"tb-uat"};
+const EMPTY_REDIS={async llen(){return 0;},async zcard(){return 0;}};
 
-test("0113/0114 creates one local-only execution authority, dispatches it once, and terminalizes a proven pre-transport failure",{
+test("0113/0114 commits only complete authority/run/outbox lifecycle cohorts",{
   skip:!DATABASE_URL||!APPROVED,timeout:60_000
 },async()=>{
   assert.ok(DATABASE_URL);assert.match(DATABASE_URL,/^(?:postgres(?:ql)?:\/\/)?(?:[^@/]+@)?(?:127\.0\.0\.1|localhost)(?::\d+)?\//u,
@@ -45,11 +56,43 @@ test("0113/0114 creates one local-only execution authority, dispatches it once, 
       configuration});
     assert.equal(created.reserved_micro_usd,200);
 
-    await assert.rejects(claimSignalTopicEvaluationV2ExecutionAuthority({pool,run_id:created.run_id}),
-      /topic_evaluation_v2_run_not_found/u,"a planned run cannot bypass its dispatch outbox");
-    assert.deepEqual(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),{run_id:created.run_id});
-    assert.equal(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),null,
-      "the same planned authority cannot be dispatched twice");
+    await assertDirectSqlRejected(pool,async(client)=>{
+      await client.query(`INSERT INTO signal_topic_evaluation_v2_execution_outbox(
+        run_id,workspace_id,execution_authorization_id,outbox_key)
+        SELECT run_id,workspace_id,execution_authorization_id,outbox_key||'-extra'
+        FROM signal_topic_evaluation_v2_execution_outbox WHERE run_id=$1::uuid`,[created.run_id]);
+    },/duplicate key/u);
+    await assertDirectSqlRejected(pool,async(client)=>{
+      await client.query(`DELETE FROM signal_topic_evaluation_v2_execution_outbox
+        WHERE run_id=$1::uuid`,[created.run_id]);
+    },/append-only/u);
+
+    await assertPartialVisibleAndRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_execution_outbox
+        SET status='dispatched',dispatch_count=1,dispatched_at=clock_timestamp()
+        WHERE run_id=$1::uuid`,[created.run_id]);
+    },/cohort is invalid/u);
+    await assertPartialVisibleAndRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
+        SET status='claimed' WHERE id=$1::uuid`,[created.execution_authorization_id]);
+      await client.query(`UPDATE signal_topic_evaluation_v2_runs
+        SET status='in_progress' WHERE id=$1::uuid`,[created.run_id]);
+    },/cohort is invalid/u);
+    await assertPartialVisibleAndRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
+        SET status='claimed' WHERE id=$1::uuid`,[created.execution_authorization_id]);
+    },/cohort is invalid/u);
+    await assertPartialVisibleAndRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_runs
+        SET status='in_progress' WHERE id=$1::uuid`,[created.run_id]);
+    },/cohort is invalid/u);
+
+    const rolledBack=await loadExecutionCohort(pool,created.run_id);
+    assert.deepEqual(rolledBack,{authority_status:"authorized",run_status:"planned",
+      outbox_status:"pending",dispatch_count:0},"every partial transition rolls back");
+    const claimed=await claimNextSignalTopicEvaluationV2ExecutionOutbox({pool});
+    assert.equal(claimed?.run_id,created.run_id,"the atomic Worker claim commits the complete cohort");
+    assert.equal(claimed?.snapshot_digest,authority.snapshot_digest);
     await assertDirectSqlRejected(pool,async(client)=>{
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_outbox SET status='pending',
         dispatch_count=0,dispatched_at=NULL WHERE run_id=$1::uuid`,[created.run_id]);
@@ -63,7 +106,7 @@ test("0113/0114 creates one local-only execution authority, dispatches it once, 
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='failed',
         error_code='forged_authorized_failure',settled_micro_usd=0,completed_at=clock_timestamp()
         WHERE id=$1::uuid`,[created.execution_authorization_id]);
-    },/pair is invalid/u);
+    },/cohort is invalid/u);
     await assertDirectSqlRejected(pool,async(client)=>{
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
         SET settled_micro_usd=0 WHERE id=$1::uuid`,[created.execution_authorization_id]);
@@ -89,10 +132,8 @@ test("0113/0114 creates one local-only execution authority, dispatches it once, 
           input_micro_usd_per_token,output_micro_usd_per_token,flight_card,flight_card_digest,
           reserved_micro_usd FROM signal_topic_evaluation_v2_execution_authorizations
         WHERE id=$1::uuid`,[created.execution_authorization_id]);
-    },/pair is invalid/u);
+    },/cohort is invalid/u);
 
-    const claimed=await claimSignalTopicEvaluationV2ExecutionAuthority({pool,run_id:created.run_id});
-    assert.equal(claimed.snapshot_digest,authority.snapshot_digest);
     assert.deepEqual(await recordSignalTopicEvaluationV2ProviderTurnAttempt({pool,run_id:created.run_id}),
       {provider_call_count:1,max_provider_calls:1});
     await assertDirectSqlRejected(pool,async(client)=>{
@@ -104,25 +145,20 @@ test("0113/0114 creates one local-only execution authority, dispatches it once, 
         error_code='forged_run_only_failure',settled_micro_usd=0,completed_at=clock_timestamp()
         WHERE id=$1::uuid`,[created.run_id]);
       await client.query("SET CONSTRAINTS ALL IMMEDIATE");
-    },/pair is invalid/u);
+    },/cohort is invalid/u);
     await assertDirectSqlRejected(pool,async(client)=>{
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='failed',
         error_code='forged_authority_only_failure',settled_micro_usd=0,completed_at=clock_timestamp()
         WHERE id=$1::uuid`,[created.execution_authorization_id]);
       await client.query("SET CONSTRAINTS ALL IMMEDIATE");
-    },/pair is invalid/u);
+    },/cohort is invalid/u);
     const settled=await settleSignalTopicEvaluationV2ExecutionFailure({pool,run_id:created.run_id,
       outcome:"definitely_not_sent",error_code:"topic_evaluation_provider_definitely_not_sent",
       provider_call_count:1,observed_input_tokens:0,observed_output_tokens:0,observed_cost_micro_usd:0});
     assert.deepEqual(settled,{status:"failed",settled_micro_usd:0,provider_call_count:1});
-    const dispatchedFailure=await createSignalTopicEvaluationV2ExecutionAuthority({pool,
-      workspace_id:authority.workspace_id,actor:{id:authority.actor_id,user_type:"noisia_internal"},
-      idempotency_key:`r31-dispatch-failure-${randomUUID()}`,
-      expected_snapshot_digest:authority.snapshot_digest,
-      confirmation:SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,configuration});
-    assert.deepEqual(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),{run_id:dispatchedFailure.run_id});
-    assert.deepEqual(await failSignalTopicEvaluationV2DispatchBeforeClaim({pool,run_id:dispatchedFailure.run_id}),
-      {status:"failed",settled_micro_usd:0,provider_call_count:0});
+    assert.deepEqual(await loadExecutionCohort(pool,created.run_id),{
+      authority_status:"failed",run_status:"failed",outbox_status:"dispatched",dispatch_count:1
+    },"a valid terminal pair retains its exactly-once dispatched outbox");
     const recorded=await pool.query<{run_status:string;authority_status:string;retrievals:number;candidates:number}>(`SELECT
       run.status run_status,authority.status authority_status,
       (SELECT count(*)::int FROM signal_topic_evaluation_v2_retrievals WHERE run_id=run.id) retrievals,
@@ -177,6 +213,12 @@ test("0113/0114 creates one local-only execution authority, dispatches it once, 
       provider_call_count:1,observed_input_tokens:0,observed_output_tokens:0,observed_cost_micro_usd:0}),
     {status:"outcome_unknown",settled_micro_usd:null,provider_call_count:1});
 
+    const emptyCut=await assertUatWorkerStartup({database:pool,redis:EMPTY_REDIS,env:PREFLIGHT_ENV});
+    assert.deepEqual(emptyCut.database_claimable_rows,{strategic_run_claimable:0,
+      strategic_step_claimable:0,topic_evaluation_v2_execution_claimable:0,
+      topic_evaluation_v2_execution_in_progress:0,topic_evaluation_v2_execution_partial:0,
+      workspace_import_claimable:0},"terminal cohorts leave the empty-cut inventory empty");
+
   }finally{await pool.end();}
 });
 
@@ -190,4 +232,30 @@ async function assertDirectSqlRejected(pool:pg.Pool,operation:(client:pg.PoolCli
     await client.query("ROLLBACK").catch(()=>undefined);
     client.release();
   }
+}
+
+async function assertPartialVisibleAndRejected(pool:pg.Pool,
+  operation:(client:pg.PoolClient)=>Promise<void>,expected:RegExp){
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await operation(client);
+    await assert.rejects(assertUatWorkerStartup({database:client as never,redis:EMPTY_REDIS,
+      env:PREFLIGHT_ENV}),/uat_database_contains_claimable_outbox_rows/u,
+    "empty-cut must inventory the uncommitted partial cohort through the same snapshot");
+    await assert.rejects(client.query("SET CONSTRAINTS ALL IMMEDIATE"),expected);
+  }finally{
+    await client.query("ROLLBACK").catch(()=>undefined);
+    client.release();
+  }
+}
+
+async function loadExecutionCohort(pool:pg.Pool,runId:string){
+  return (await pool.query<{authority_status:string;run_status:string;outbox_status:string;dispatch_count:number}>(
+    `SELECT authority.status authority_status,run.status run_status,outbox.status outbox_status,
+      outbox.dispatch_count FROM signal_topic_evaluation_v2_runs run
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority
+        ON authority.id=run.execution_authorization_id
+      JOIN signal_topic_evaluation_v2_execution_outbox outbox ON outbox.run_id=run.id
+      WHERE run.id=$1::uuid`,[runId])).rows[0];
 }

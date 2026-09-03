@@ -169,40 +169,8 @@ export async function createSignalTopicEvaluationV2ExecutionAuthority(args: {
 }
 
 /**
- * Advances exactly one durable, already-authorized dispatch intent. This is deliberately
- * separate from claiming the run: only the Worker composition root calls it, and an outbox row
- * can never return to pending. A process restart therefore cannot reinterpret an uncertain
- * provider boundary as permission for a second send.
- */
-export async function dispatchSignalTopicEvaluationV2ExecutionOutbox(args: {
-  pool: { connect(): Promise<PoolClient> };
-}): Promise<{ run_id: string } | null> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
-    const dispatched = await client.query<{ run_id: string }>(`WITH candidate AS (
-      SELECT outbox.run_id FROM signal_topic_evaluation_v2_execution_outbox outbox
-      JOIN signal_topic_evaluation_v2_runs run ON run.id=outbox.run_id
-      JOIN signal_topic_evaluation_v2_execution_authorizations authority
-        ON authority.id=outbox.execution_authorization_id
-      WHERE outbox.status='pending' AND outbox.dispatch_count=0
-        AND run.status='planned' AND authority.status='authorized'
-      ORDER BY outbox.created_at,outbox.run_id FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
-    ) UPDATE signal_topic_evaluation_v2_execution_outbox outbox
-      SET status='dispatched',dispatch_count=1,dispatched_at=clock_timestamp()
-      FROM candidate WHERE outbox.run_id=candidate.run_id
-      RETURNING outbox.run_id::text`);
-    await client.query("COMMIT");
-    return dispatched.rows[0] ?? null;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw error;
-  } finally { client.release(); }
-}
-
-/**
- * The Worker composition root uses this instead of dispatching and then claiming in separate
- * transactions.  If the Worker dies before commit, the authority remains pending; after commit
+ * The Worker composition root atomically dispatches and claims in one transaction. If the Worker
+ * dies before commit, the authority remains pending; after commit
  * it is already claimed and cannot be mistaken for a retryable provider send.
  */
 export async function claimNextSignalTopicEvaluationV2ExecutionOutbox(args: {
@@ -235,52 +203,6 @@ export async function claimNextSignalTopicEvaluationV2ExecutionOutbox(args: {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
   } finally { client.release(); }
-}
-
-/** Settles only a dispatched-but-not-claimed Worker failure. No provider transport was possible. */
-export async function failSignalTopicEvaluationV2DispatchBeforeClaim(args: {
-  pool: { connect(): Promise<PoolClient> }; run_id: string;
-}): Promise<{ status: "failed"; settled_micro_usd: 0; provider_call_count: 0 }> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
-    const run = (await client.query<{ execution_authorization_id: string; status: string;
-      authority_status: string; provider_call_count: number; outbox_status: string; dispatch_count: number }>(
-      `SELECT run.execution_authorization_id::text,run.status,authority.status authority_status,
-        run.provider_call_count,outbox.status outbox_status,outbox.dispatch_count
-        FROM signal_topic_evaluation_v2_runs run
-        JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
-        JOIN signal_topic_evaluation_v2_execution_outbox outbox ON outbox.run_id=run.id
-        WHERE run.id=$1::uuid FOR UPDATE OF run,authority,outbox`, [args.run_id])).rows[0];
-    if (!run || run.status!=="planned" || run.authority_status!=="authorized"
-        || run.provider_call_count!==0 || run.outbox_status!=="dispatched" || run.dispatch_count!==1) {
-      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_dispatch_failure_state_invalid",409);
-    }
-    const errorCode="topic_evaluation_v2_dispatch_pretransport_failed";
-    await client.query(`UPDATE signal_topic_evaluation_v2_runs SET status='failed',error_code=$2,
-      settled_micro_usd=0,completed_at=clock_timestamp() WHERE id=$1::uuid`,[args.run_id,errorCode]);
-    await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='failed',
-      error_code=$2,settled_micro_usd=0,completed_at=clock_timestamp() WHERE id=$1::uuid`,
-    [run.execution_authorization_id,errorCode]);
-    await client.query("COMMIT");
-    return { status:"failed",settled_micro_usd:0,provider_call_count:0 };
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
-  finally { client.release(); }
-}
-
-/** Claims an already authorized run immediately before its worker begins. No provider edge is
- * crossed here.  The worker must record every attempted provider turn before transport. */
-export async function claimSignalTopicEvaluationV2ExecutionAuthority(args: {
-  pool: { connect(): Promise<PoolClient> }; run_id: string;
-}): Promise<SignalTopicEvaluationV2ClaimedExecution> {
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    const claimed = await claimSignalTopicEvaluationV2ExecutionAuthorityWithClient(client, args.run_id);
-    await client.query("COMMIT");
-    return claimed;
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
-  finally { client.release(); }
 }
 
 async function claimSignalTopicEvaluationV2ExecutionAuthorityWithClient(client: PoolClient, runId: string)

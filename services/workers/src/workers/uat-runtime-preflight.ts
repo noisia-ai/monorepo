@@ -19,6 +19,8 @@ type PreflightCounts = {
   strategic_run_claimable: number;
   strategic_step_claimable: number;
   topic_evaluation_v2_execution_claimable: number;
+  topic_evaluation_v2_execution_in_progress: number;
+  topic_evaluation_v2_execution_partial: number;
   workspace_import_claimable: number;
 };
 
@@ -155,6 +157,50 @@ async function countExecutableRedisJobs(redis: RedisProbe, queueNames: string[])
 
 async function loadClaimableDatabaseRows(database: Pick<Pool, "query">) {
   const result = await database.query<PreflightCounts>(`
+    WITH topic_evaluation_v2_execution_cohorts AS (
+      SELECT authority_key.execution_authorization_id,
+        authority.id authority_id,authority.workspace_id authority_workspace_id,
+        authority.status authority_status,
+        run.id run_id,run.workspace_id run_workspace_id,
+        run.execution_authorization_id run_authorization_id,run.status run_status,
+        outbox.run_id outbox_run_id,outbox.workspace_id outbox_workspace_id,
+        outbox.execution_authorization_id outbox_authorization_id,
+        outbox.status outbox_status,outbox.dispatch_count,outbox.dispatched_at
+      FROM (
+        SELECT id execution_authorization_id
+        FROM signal_topic_evaluation_v2_execution_authorizations
+        UNION
+        SELECT execution_authorization_id
+        FROM signal_topic_evaluation_v2_runs WHERE execution_authorization_id IS NOT NULL
+        UNION
+        SELECT execution_authorization_id
+        FROM signal_topic_evaluation_v2_execution_outbox
+      ) authority_key
+      LEFT JOIN signal_topic_evaluation_v2_execution_authorizations authority
+        ON authority.id=authority_key.execution_authorization_id
+      LEFT JOIN signal_topic_evaluation_v2_runs run
+        ON run.execution_authorization_id=authority_key.execution_authorization_id
+      LEFT JOIN signal_topic_evaluation_v2_execution_outbox outbox
+        ON outbox.execution_authorization_id=authority_key.execution_authorization_id
+    ), topic_evaluation_v2_execution_inventory AS (
+      SELECT *,
+        COALESCE(authority_id IS NOT NULL AND run_id IS NOT NULL AND outbox_run_id IS NOT NULL
+          AND authority_workspace_id=run_workspace_id
+          AND authority_workspace_id=outbox_workspace_id
+          AND run_authorization_id=authority_id
+          AND outbox_authorization_id=authority_id
+          AND outbox_run_id=run_id
+          AND (
+            (authority_status='authorized' AND run_status='planned'
+              AND outbox_status='pending' AND dispatch_count=0 AND dispatched_at IS NULL)
+            OR (authority_status='claimed' AND run_status='in_progress'
+              AND outbox_status='dispatched' AND dispatch_count=1 AND dispatched_at IS NOT NULL)
+            OR (authority_status IN('completed','failed','outcome_unknown')
+              AND authority_status=run_status AND outbox_status='dispatched'
+              AND dispatch_count=1 AND dispatched_at IS NOT NULL)
+          ),false) cohort_valid
+      FROM topic_evaluation_v2_execution_cohorts
+    )
     SELECT
       (SELECT count(*)::int FROM signal_strategic_run_outbox outbox
        WHERE (outbox.status IN ('pending','failed') AND outbox.available_at <= now())
@@ -169,13 +215,15 @@ async function loadClaimableDatabaseRows(database: Pick<Pool, "query">) {
            OR (outbox.status='dispatching'
                AND COALESCE(outbox.lease_expires_at,outbox.updated_at) <= now())))
         AS strategic_step_claimable,
-      (SELECT count(*)::int FROM signal_topic_evaluation_v2_execution_outbox outbox
-       JOIN signal_topic_evaluation_v2_runs run ON run.id=outbox.run_id
-       JOIN signal_topic_evaluation_v2_execution_authorizations authority
-         ON authority.id=outbox.execution_authorization_id
-       WHERE outbox.status='pending' AND outbox.dispatch_count=0
-         AND run.status='planned' AND authority.status='authorized')
+      (SELECT count(*)::int FROM topic_evaluation_v2_execution_inventory
+       WHERE cohort_valid AND authority_status='authorized')
         AS topic_evaluation_v2_execution_claimable,
+      (SELECT count(*)::int FROM topic_evaluation_v2_execution_inventory
+       WHERE cohort_valid AND authority_status='claimed')
+        AS topic_evaluation_v2_execution_in_progress,
+      (SELECT count(*)::int FROM topic_evaluation_v2_execution_inventory
+       WHERE NOT cohort_valid)
+        AS topic_evaluation_v2_execution_partial,
       (SELECT count(*)::int FROM signal_workspace_import_outbox outbox
        JOIN import_batches batch ON batch.id=outbox.import_batch_id
        WHERE batch.status='queued'

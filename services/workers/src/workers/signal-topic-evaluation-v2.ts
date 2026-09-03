@@ -4,9 +4,7 @@ import { classifySignalTopicEvaluationProviderBoundaryV1,
   type SignalTopicEvaluationModelInputV2,
   type SignalTopicEvidenceNavigationRequestV2,
   type SignalTopicEvidenceNavigationResultV2 } from "@noisia/query-engine";
-import { claimSignalTopicEvaluationV2ExecutionAuthority,
-  failSignalTopicEvaluationV2DispatchBeforeClaim,
-  navigateSignalTopicEvaluationEvidenceV2,
+import { navigateSignalTopicEvaluationEvidenceV2,
   persistSignalTopicEvaluationProviderTraceV2,
   recordSignalTopicEvaluationV2ProviderTurnAttempt,
   settleSignalTopicEvaluationV2ExecutionFailure,
@@ -35,17 +33,16 @@ type FullEvidenceProviderModelV2={next(input:SignalTopicEvaluationModelInputV2):
 export async function processSignalTopicEvaluationV2ProviderRun(args:{
   pool:Pick<Pool,"connect"|"query">;
   run_id:string;
-  claimed_execution?: SignalTopicEvaluationV2ClaimedExecution;
+  claimed_execution: SignalTopicEvaluationV2ClaimedExecution;
   create_model:(input:{model:string;snapshot_digest:string;max_output_tokens:number;
     input_micro_usd_per_token:number;output_micro_usd_per_token:number})=>FullEvidenceProviderModelV2;
 }){
   let attempts=0;let inputTokens=0;let outputTokens=0;let costMicroUsd=0;let providerCompleted=false;
   let modelConstructed=false;let transportStarted=false;
-  let claimed:SignalTopicEvaluationV2ClaimedExecution|undefined=args.claimed_execution;
+  const claimed=args.claimed_execution;
   try{
-    if (claimed && claimed.run_id!==args.run_id) throw new Error("topic_evaluation_v2_claimed_run_mismatch");
-    const claimedAuthority=claimed??await claimSignalTopicEvaluationV2ExecutionAuthority({pool:args.pool,run_id:args.run_id});
-    claimed=claimedAuthority;
+    if (claimed.run_id!==args.run_id) throw new Error("topic_evaluation_v2_claimed_run_mismatch");
+    const claimedAuthority=claimed;
     const model=args.create_model({model:claimedAuthority.configuration.model,snapshot_digest:claimedAuthority.snapshot_digest,
       max_output_tokens:claimedAuthority.configuration.flight_card.max_total_output_tokens,
       input_micro_usd_per_token:claimedAuthority.configuration.input_micro_usd_per_token,
@@ -75,11 +72,6 @@ export async function processSignalTopicEvaluationV2ProviderRun(args:{
     return {status:"completed" as const,run_id:args.run_id,candidate_count:trace.output.candidates.length,
       provider_call_count:trace.provider_calls,settled_micro_usd:trace.total_cost_micro_usd};
   }catch(error){
-    if(!claimed){
-      const settled=await failSignalTopicEvaluationV2DispatchBeforeClaim({pool:args.pool,run_id:args.run_id});
-      return {status:settled.status,run_id:args.run_id,provider_call_count:0,
-        settled_micro_usd:0,error_code:"topic_evaluation_v2_dispatch_pretransport_failed"};
-    }
     const boundary=classifySignalTopicEvaluationProviderBoundaryV1(error);
     if (error instanceof SignalTopicEvaluationProviderResponseInvalidErrorV2) {
       inputTokens+=error.usage.input_tokens;

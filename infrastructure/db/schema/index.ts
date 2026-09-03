@@ -7140,6 +7140,7 @@ export const signalTopicEvaluationV2ExecutionOutbox = pgTable(
     dispatchCount: integer("dispatch_count").notNull().default(0), createdAt: now(),
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true })
   }, (table) => [unique("uq_signal_topic_evaluation_v2_execution_outbox_key").on(table.outboxKey),
+    unique("uq_signal_topic_evaluation_v2_execution_outbox_authorization").on(table.executionAuthorizationId),
     index("idx_signal_topic_evaluation_v2_execution_outbox_pending")
       .on(table.createdAt, table.runId).where(sql`${table.status} = 'pending'`)]
 );
