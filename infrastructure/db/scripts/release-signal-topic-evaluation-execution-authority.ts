@@ -362,7 +362,15 @@ function required(name: string) {
 
 function fingerprint(value: string) {
   const url = new URL(value);
-  return digest(`${decodeURIComponent(url.username)}@${url.hostname}:${url.port || "5432"}/${url.pathname.slice(1)}`);
+  // Keep the long-established Preview/UAT pooler fingerprint contract. This deliberately
+  // excludes the password while retaining scheme, host, port, database and username.
+  return digest([
+    url.protocol,
+    url.hostname.toLowerCase(),
+    url.port || "5432",
+    url.pathname.replace(/^\//u, ""),
+    decodeURIComponent(url.username)
+  ].join("|"));
 }
 function digest(value: string | Buffer) { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
 function stable(value: unknown): string {
