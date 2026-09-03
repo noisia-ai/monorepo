@@ -267,15 +267,28 @@ async function runPgDump(destination: string) {
   const container = process.env[`${ENV_PREFIX}_PG_TOOL_CONTAINER`];
   const toolHost = process.env[`${ENV_PREFIX}_PG_TOOL_HOST`] ?? url.hostname;
   const toolPort = (process.env[`${ENV_PREFIX}_PG_TOOL_PORT`] ?? url.port) || "5432";
-  const command = container ? "docker" : process.env[`${ENV_PREFIX}_PG_DUMP_COMMAND`] ?? "pg_dump";
-  const args = container
-    ? ["exec", "-i", "-e", `PGHOST=${toolHost}`, "-e", `PGPORT=${toolPort}`,
-      "-e", `PGUSER=${decodeURIComponent(url.username)}`, "-e", `PGPASSWORD=${decodeURIComponent(url.password)}`,
-      "-e", `PGDATABASE=${url.pathname.slice(1)}`, "-e",
-      `PGSSLMODE=${localRehearsal ? "disable" : "require"}`, container,
-      "pg_dump", "--format=custom", "--no-owner", "--no-acl", "--schema=public"]
-    : ["--format=custom", "--no-owner", "--no-acl", "--schema=public", databaseUrl];
-  await spawnToFile(command, args, destination);
+  const password = decodeURIComponent(url.password);
+  if (/\r|\n/u.test(password)) throw new Error("The database password cannot be safely supplied to pg_dump.");
+  const baseArgs = ["--format=custom", "--no-owner", "--no-acl", "--schema=public"];
+  const connectionEnv = {
+    PGHOST: toolHost,
+    PGPORT: toolPort,
+    PGUSER: decodeURIComponent(url.username),
+    PGDATABASE: url.pathname.slice(1),
+    PGSSLMODE: localRehearsal ? "disable" : "require"
+  };
+  if (container) {
+    // Docker exposes `exec -e PGPASSWORD=...` in the host process list. Feed the password
+    // over stdin to a tiny non-logging wrapper instead, then exec pg_dump with only safe
+    // connection metadata in its environment.
+    await spawnToFile("docker", ["exec", "-i",
+      ...Object.entries(connectionEnv).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+      container, "sh", "-ceu", "IFS= read -r PGPASSWORD; export PGPASSWORD; exec pg_dump \"$@\"", "sh", ...baseArgs
+    ], destination, `${password}\n`);
+  } else {
+    await spawnToFile(process.env[`${ENV_PREFIX}_PG_DUMP_COMMAND`] ?? "pg_dump", baseArgs, destination,
+      undefined, { ...connectionEnv, PGPASSWORD: password });
+  }
   await chmod(destination, 0o600);
 }
 
@@ -287,11 +300,21 @@ async function verifyArchive(source: string) {
   return output.split("\n").filter((line) => /^\d+;/u.test(line)).length;
 }
 
-function spawnToFile(command: string, args: string[], destination: string) {
+function spawnToFile(
+  command: string,
+  args: string[],
+  destination: string,
+  stdin?: string,
+  environment?: Record<string, string>
+) {
   return new Promise<void>((resolvePromise, reject) => {
     const output = createWriteStream(destination, { mode: 0o600 });
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: environment ? { ...process.env, ...environment } : process.env
+    });
     let stderr = "";
+    child.stdin.end(stdin);
     child.stdout.pipe(output);
     child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.on("error", reject);
