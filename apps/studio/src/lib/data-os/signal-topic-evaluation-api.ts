@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION } from "@noisia/query-engine";
+import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION,
+  SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION } from "@noisia/query-engine";
 
 const startSchema=z.object({
   expected_envelope_digest:z.string().regex(/^sha256:[0-9a-f]{64}$/u),
@@ -22,6 +23,16 @@ const successorStartSchema=z.object({
 export function parseSignalTopicEvaluationSuccessorStartRequestV1(value:unknown){
   const parsed=successorStartSchema.parse(value);
   return{...parsed,hard_cap_micro_usd:BigInt(parsed.hard_cap_micro_usd)};
+}
+
+const v2ExecutionStartSchema=z.object({
+  expected_snapshot_digest:z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+  confirmation:z.literal(SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION)
+}).strict();
+
+/** The server owns V2 model, pricing and budget configuration; callers bind only the frozen snapshot. */
+export function parseSignalTopicEvaluationV2ExecutionStartRequest(value:unknown){
+  return v2ExecutionStartSchema.parse(value);
 }
 
 const candidateKey=z.string().trim().min(1).max(160);

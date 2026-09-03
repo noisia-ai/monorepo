@@ -45,9 +45,25 @@ export type SignalTopicEvaluationV2ExecutionAuthority = {
   execution_authorization_id: string;
   run_id: string;
   run_key: string;
+  outbox_key: string;
   snapshot_digest: string;
   flight_card: SignalTopicEvaluationFlightCardV2;
   reserved_micro_usd: number;
+};
+
+export type SignalTopicEvaluationV2ClaimedExecution = {
+  run_id: string;
+  workspace_id: string;
+  requested_by_user_id: string;
+  snapshot_id: string;
+  snapshot_digest: string;
+  execution_authorization_id: string;
+  configuration: {
+    model: string;
+    input_micro_usd_per_token: number;
+    output_micro_usd_per_token: number;
+    flight_card: SignalTopicEvaluationFlightCardV2;
+  };
 };
 
 type SnapshotRow = { id: string; workspace_id: string; snapshot_key: string; snapshot_digest: string;
@@ -121,6 +137,8 @@ export async function createSignalTopicEvaluationV2ExecutionAuthority(args: {
       flight_card_digest: flightCardDigest }).slice(7, 23)}`;
     const runKey = `topic-v2-run-${signalTopicEvaluationDigestV2({ authorization_key: authorizationKey,
       snapshot_digest: snapshot.snapshot_digest }).slice(7, 23)}`;
+    const outboxKey = `topic-v2-outbox-${signalTopicEvaluationDigestV2({ run_key: runKey,
+      snapshot_digest: snapshot.snapshot_digest }).slice(7, 23)}`;
     const authorizationId = randomUUID(); const runId = randomUUID();
     await client.query(`INSERT INTO signal_topic_evaluation_v2_execution_authorizations(
       id,workspace_id,snapshot_id,requested_by_user_id,idempotency_key,authorization_key,confirmation,
@@ -137,26 +155,136 @@ export async function createSignalTopicEvaluationV2ExecutionAuthority(args: {
       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9::jsonb,$10,true,$11)`,
     [runId,args.workspace_id,snapshot.id,authorizationId,args.actor.id,args.idempotency_key,runKey,
       args.confirmation,JSON.stringify(card),flightCardDigest,reserved]);
+    await client.query(`INSERT INTO signal_topic_evaluation_v2_execution_outbox(
+      run_id,workspace_id,execution_authorization_id,outbox_key
+    ) VALUES($1::uuid,$2::uuid,$3::uuid,$4)`, [runId,args.workspace_id,authorizationId,outboxKey]);
     await client.query("COMMIT");
     return { execution_authorization_id: authorizationId, run_id: runId, run_key: runKey,
-      snapshot_digest: snapshot.snapshot_digest, flight_card: card, reserved_micro_usd: reserved };
+      outbox_key: outboxKey, snapshot_digest: snapshot.snapshot_digest,
+      flight_card: card, reserved_micro_usd: reserved };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw mapExecutionAuthorityConflict(error);
   } finally { client.release(); }
 }
 
+/**
+ * Advances exactly one durable, already-authorized dispatch intent. This is deliberately
+ * separate from claiming the run: only the Worker composition root calls it, and an outbox row
+ * can never return to pending. A process restart therefore cannot reinterpret an uncertain
+ * provider boundary as permission for a second send.
+ */
+export async function dispatchSignalTopicEvaluationV2ExecutionOutbox(args: {
+  pool: { connect(): Promise<PoolClient> };
+}): Promise<{ run_id: string } | null> {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const dispatched = await client.query<{ run_id: string }>(`WITH candidate AS (
+      SELECT outbox.run_id FROM signal_topic_evaluation_v2_execution_outbox outbox
+      JOIN signal_topic_evaluation_v2_runs run ON run.id=outbox.run_id
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority
+        ON authority.id=outbox.execution_authorization_id
+      WHERE outbox.status='pending' AND outbox.dispatch_count=0
+        AND run.status='planned' AND authority.status='authorized'
+      ORDER BY outbox.created_at,outbox.run_id FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
+    ) UPDATE signal_topic_evaluation_v2_execution_outbox outbox
+      SET status='dispatched',dispatch_count=1,dispatched_at=clock_timestamp()
+      FROM candidate WHERE outbox.run_id=candidate.run_id
+      RETURNING outbox.run_id::text`);
+    await client.query("COMMIT");
+    return dispatched.rows[0] ?? null;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
+}
+
+/**
+ * The Worker composition root uses this instead of dispatching and then claiming in separate
+ * transactions.  If the Worker dies before commit, the authority remains pending; after commit
+ * it is already claimed and cannot be mistaken for a retryable provider send.
+ */
+export async function claimNextSignalTopicEvaluationV2ExecutionOutbox(args: {
+  pool: { connect(): Promise<PoolClient> };
+}): Promise<SignalTopicEvaluationV2ClaimedExecution | null> {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    const dispatched = await client.query<{ run_id: string }>(`WITH candidate AS (
+      SELECT outbox.run_id FROM signal_topic_evaluation_v2_execution_outbox outbox
+      JOIN signal_topic_evaluation_v2_runs run ON run.id=outbox.run_id
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority
+        ON authority.id=outbox.execution_authorization_id
+      WHERE outbox.status='pending' AND outbox.dispatch_count=0
+        AND run.status='planned' AND authority.status='authorized'
+      ORDER BY outbox.created_at,outbox.run_id FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
+    ) UPDATE signal_topic_evaluation_v2_execution_outbox outbox
+      SET status='dispatched',dispatch_count=1,dispatched_at=clock_timestamp()
+      FROM candidate WHERE outbox.run_id=candidate.run_id
+      RETURNING outbox.run_id::text`);
+    const row = dispatched.rows[0];
+    if (!row) {
+      await client.query("COMMIT");
+      return null;
+    }
+    const claimed = await claimSignalTopicEvaluationV2ExecutionAuthorityWithClient(client, row.run_id);
+    await client.query("COMMIT");
+    return claimed;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
+}
+
+/** Settles only a dispatched-but-not-claimed Worker failure. No provider transport was possible. */
+export async function failSignalTopicEvaluationV2DispatchBeforeClaim(args: {
+  pool: { connect(): Promise<PoolClient> }; run_id: string;
+}): Promise<{ status: "failed"; settled_micro_usd: 0; provider_call_count: 0 }> {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const run = (await client.query<{ execution_authorization_id: string; status: string;
+      authority_status: string; provider_call_count: number; outbox_status: string; dispatch_count: number }>(
+      `SELECT run.execution_authorization_id::text,run.status,authority.status authority_status,
+        run.provider_call_count,outbox.status outbox_status,outbox.dispatch_count
+        FROM signal_topic_evaluation_v2_runs run
+        JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
+        JOIN signal_topic_evaluation_v2_execution_outbox outbox ON outbox.run_id=run.id
+        WHERE run.id=$1::uuid FOR UPDATE OF run,authority,outbox`, [args.run_id])).rows[0];
+    if (!run || run.status!=="planned" || run.authority_status!=="authorized"
+        || run.provider_call_count!==0 || run.outbox_status!=="dispatched" || run.dispatch_count!==1) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_dispatch_failure_state_invalid",409);
+    }
+    const errorCode="topic_evaluation_v2_dispatch_pretransport_failed";
+    await client.query(`UPDATE signal_topic_evaluation_v2_runs SET status='failed',error_code=$2,
+      settled_micro_usd=0,completed_at=clock_timestamp() WHERE id=$1::uuid`,[args.run_id,errorCode]);
+    await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='failed',
+      error_code=$2,settled_micro_usd=0,completed_at=clock_timestamp() WHERE id=$1::uuid`,
+    [run.execution_authorization_id,errorCode]);
+    await client.query("COMMIT");
+    return { status:"failed",settled_micro_usd:0,provider_call_count:0 };
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
+}
+
 /** Claims an already authorized run immediately before its worker begins. No provider edge is
  * crossed here.  The worker must record every attempted provider turn before transport. */
 export async function claimSignalTopicEvaluationV2ExecutionAuthority(args: {
   pool: { connect(): Promise<PoolClient> }; run_id: string;
-}): Promise<{ workspace_id: string; requested_by_user_id: string; snapshot_id: string;
-  snapshot_digest: string; execution_authorization_id: string; configuration: {
-    model: string; input_micro_usd_per_token: number; output_micro_usd_per_token: number;
-    flight_card: SignalTopicEvaluationFlightCardV2 } }> {
+}): Promise<SignalTopicEvaluationV2ClaimedExecution> {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    const claimed = await claimSignalTopicEvaluationV2ExecutionAuthorityWithClient(client, args.run_id);
+    await client.query("COMMIT");
+    return claimed;
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
+}
+
+async function claimSignalTopicEvaluationV2ExecutionAuthorityWithClient(client: PoolClient, runId: string)
+  : Promise<SignalTopicEvaluationV2ClaimedExecution> {
     const selected = await client.query<ExecutionRunRow>(`SELECT run.id::text,run.workspace_id::text,
       run.snapshot_id::text,run.requested_by_user_id::text,run.execution_authorization_id::text,
       run.status,run.provider_call_count,run.provider_execution_enabled,run.flight_card,
@@ -164,8 +292,10 @@ export async function claimSignalTopicEvaluationV2ExecutionAuthority(args: {
       authority.output_micro_usd_per_token::text,snapshot.snapshot_digest
       FROM signal_topic_evaluation_v2_runs run
       JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
+      JOIN signal_topic_evaluation_v2_execution_outbox outbox ON outbox.run_id=run.id
       JOIN signal_topic_evaluation_v2_snapshots snapshot ON snapshot.id=run.snapshot_id
-      WHERE run.id=$1::uuid FOR UPDATE OF run,authority`, [args.run_id]);
+      WHERE run.id=$1::uuid AND outbox.status='dispatched' AND outbox.dispatch_count=1
+      FOR UPDATE OF run,authority,outbox`, [runId]);
     const run = selected.rows[0];
     if (!run) throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_run_not_found", 404);
     if (run.status !== "planned" || run.authority_status !== "authorized" || !run.provider_execution_enabled
@@ -182,15 +312,12 @@ export async function claimSignalTopicEvaluationV2ExecutionAuthority(args: {
     await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='claimed'
       WHERE id=$1::uuid AND status='authorized'`, [run.execution_authorization_id]);
     await client.query(`UPDATE signal_topic_evaluation_v2_runs SET status='in_progress'
-      WHERE id=$1::uuid AND status='planned'`, [args.run_id]);
-    await client.query("COMMIT");
-    return { workspace_id: run.workspace_id, requested_by_user_id: run.requested_by_user_id,
+      WHERE id=$1::uuid AND status='planned'`, [runId]);
+    return { run_id: run.id, workspace_id: run.workspace_id, requested_by_user_id: run.requested_by_user_id,
       snapshot_id: run.snapshot_id, snapshot_digest: run.snapshot_digest,
       execution_authorization_id: run.execution_authorization_id, configuration: { model: run.model,
       input_micro_usd_per_token: parseSafeInteger(run.input_micro_usd_per_token),
       output_micro_usd_per_token: parseSafeInteger(run.output_micro_usd_per_token), flight_card: card } };
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
-  finally { client.release(); }
 }
 
 /** Marks an individual provider turn as attempted before the transport edge. This is what makes

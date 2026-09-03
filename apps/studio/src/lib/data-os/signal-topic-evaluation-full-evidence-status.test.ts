@@ -83,8 +83,9 @@ test("Brand OS status uses only the provider-disabled preflight GET and retains 
   assert.ok(page.indexOf("<FullEvidenceTopicEvaluationStatus") > page.indexOf("<TopicEvaluationManager"));
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
-  assert.match(route, /topic_evaluation_v2_disabled/u);
-  assert.doesNotMatch(route, /enqueue|startSignalTopicEvaluation/u);
+  assert.match(route, /parseSignalTopicEvaluationV2ExecutionStartRequest/u);
+  assert.match(route, /startSignalTopicEvaluationFullEvidenceProductV2/u);
+  assert.doesNotMatch(route, /enqueue/u);
   for (const messages of [JSON.parse(es), JSON.parse(en)]) {
     assert.ok(messages.AdminWorkspace.brandOs.fullEvidenceTopicEvaluation.boundary.body);
     assert.ok(messages.AdminWorkspace.brandOs.fullEvidenceTopicEvaluation.navigation.catalog);

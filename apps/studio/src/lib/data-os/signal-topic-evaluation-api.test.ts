@@ -3,7 +3,9 @@ import { createRequire } from "node:module";
 import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2 }
   from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
 import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
-  parseSignalTopicEvaluationSuccessorStartRequestV1 } from "./signal-topic-evaluation-api";
+  parseSignalTopicEvaluationSuccessorStartRequestV1,
+  parseSignalTopicEvaluationV2ExecutionStartRequest } from "./signal-topic-evaluation-api";
+import { signalTopicEvaluationV2ExecutionConfigurationFromEnv } from "./signal-topic-evaluation";
 import { parseSignalTopicEvidenceNavigationRequestV2,signalTopicEvaluationFlightCardV2,
   signalTopicEvidenceNavigationResultV2 }
   from "@noisia/query-engine";
@@ -111,6 +113,33 @@ test("topic evaluation successor start is a distinct closed acknowledgement cont
   "generic start cannot smuggle predecessor authority");
 });
 
+test("full-evidence V2 launch binds only a frozen snapshot and the closed confirmation",()=>{
+  const digest=`sha256:${"4".repeat(64)}`;
+  assert.deepEqual(parseSignalTopicEvaluationV2ExecutionStartRequest({expected_snapshot_digest:digest,
+    confirmation:"AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION"}),{
+    expected_snapshot_digest:digest,confirmation:"AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION"});
+  assert.throws(()=>parseSignalTopicEvaluationV2ExecutionStartRequest({expected_snapshot_digest:digest,
+    confirmation:"AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION",model:"caller-controls-this"}));
+  assert.throws(()=>parseSignalTopicEvaluationV2ExecutionStartRequest({expected_snapshot_digest:digest,
+    confirmation:"RUN_ONE_TOPIC_EVALUATION"}));
+});
+
+test("V2 server-owned configuration accepts the documented twenty-dollar hard cap",()=>{
+  const configuration=signalTopicEvaluationV2ExecutionConfigurationFromEnv({
+    NOISIA_RUNTIME_PROFILE:"uat",ANTHROPIC_API_KEY:"test-only-present",
+    NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED:"true",
+    NOISIA_TOPIC_EVALUATION_V2_MODEL:"claude-sonnet-5",
+    NOISIA_TOPIC_EVALUATION_V2_PRICING_VERSION:"anthropic-2026-08-29",
+    NOISIA_TOPIC_EVALUATION_V2_INPUT_MICRO_USD_PER_TOKEN:"3",
+    NOISIA_TOPIC_EVALUATION_V2_OUTPUT_MICRO_USD_PER_TOKEN:"15",
+    NOISIA_TOPIC_EVALUATION_V2_HARD_CAP_MICRO_USD:"20000000"
+  });
+  assert.equal(configuration.enabled,true);
+  assert.equal(configuration.flight_card.hard_cap_micro_usd,20_000_000);
+  assert.equal(configuration.input_micro_usd_per_token,3);
+  assert.equal(configuration.output_micro_usd_per_token,15);
+});
+
 test("topic evaluation candidate commands are closed and need no semantic rationale",()=>{
   const state_token=`sha256:${"2".repeat(64)}`;
   assert.deepEqual(parseSignalTopicEvaluationCandidateCommandV1({action:"save",candidate_key:"candidate.one",
@@ -171,7 +200,7 @@ test("management routes retain workspace AuthZ, pagination and idempotent closed
   assert.match(openapi,/AUTHORIZE_ONE_TOPIC_EVALUATION_SUCCESSOR/u);
 });
 
-test("full-evidence API is management-only, read-only and provider-disabled",async()=>{
+test("full-evidence API stays management-only and default-disabled behind a closed V2 command",async()=>{
   const[preflightRoute,evidenceRoute,product,openapi]=await Promise.all([
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/route.ts",import.meta.url),"utf8"),
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/evidence/route.ts",import.meta.url),"utf8"),
@@ -179,13 +208,17 @@ test("full-evidence API is management-only, read-only and provider-disabled",asy
     readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8")]);
   for(const source of[preflightRoute,evidenceRoute])assert.match(source,
     /loadSignalWorkspaceContextForSemanticContextManagement/u);
-  assert.match(preflightRoute,/topic_evaluation_v2_disabled/u);
+  assert.match(preflightRoute,/parseSignalTopicEvaluationV2ExecutionStartRequest/u);
+  assert.match(preflightRoute,/startSignalTopicEvaluationFullEvidenceProductV2/u);
   assert.doesNotMatch(preflightRoute,/startSignalTopicEvaluationProductV1|enqueue/u);
   assert.match(evidenceRoute,/navigateSignalTopicEvaluationEvidenceProductV2/u);
   assert.match(product,/navigateSignalTopicEvaluationEvidenceV2/u);
+  assert.match(product,/NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED/u);
+  assert.match(product,/expected_snapshot_digest/u);
   assert.match(openapi,/operationId: navigateSignalTopicEvaluationEvidence/u);
   assert.match(openapi,/Not a SQL API/u);
-  assert.equal(signalTopicEvaluationFlightCardV2().provider_calls_allowed,0);
+  assert.equal(signalTopicEvaluationFlightCardV2().provider_calls_allowed,0,
+    "the visible preflight remains provider-disabled");
   assert.throws(()=>parseSignalTopicEvidenceNavigationRequestV2({operation:"search_cluster",
     cluster_key:"cluster.1",limit:20,cursor:null,filters:{query:"x'; SELECT secret"}}));
 });

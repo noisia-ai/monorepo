@@ -7,7 +7,10 @@ import { buildSignalTopicEvaluationExecutionFlightCardV2,
 import pg from "pg";
 
 import { claimSignalTopicEvaluationV2ExecutionAuthority,
+  claimNextSignalTopicEvaluationV2ExecutionOutbox,
   createSignalTopicEvaluationV2ExecutionAuthority,
+  dispatchSignalTopicEvaluationV2ExecutionOutbox,
+  failSignalTopicEvaluationV2DispatchBeforeClaim,
   recordSignalTopicEvaluationV2ProviderTurnAttempt,
   settleSignalTopicEvaluationV2ExecutionFailure } from "./signal-topic-evaluation-v2";
 import { processSignalTopicEvaluationV2ProviderRun } from "../../services/workers/src/workers/signal-topic-evaluation-v2";
@@ -17,7 +20,7 @@ import { SignalTopicEvaluationProviderResponseInvalidErrorV2 }
 const DATABASE_URL=process.env.NOISIA_TOPIC_EVALUATION_V2_EXECUTION_URL;
 const APPROVED=process.env.NOISIA_TOPIC_EVALUATION_V2_EXECUTION_APPROVED==="true";
 
-test("0113 creates one local-only execution authority and terminalizes a proven pre-transport failure",{
+test("0113/0114 creates one local-only execution authority, dispatches it once, and terminalizes a proven pre-transport failure",{
   skip:!DATABASE_URL||!APPROVED,timeout:60_000
 },async()=>{
   assert.ok(DATABASE_URL);assert.match(DATABASE_URL,/^(?:postgres(?:ql)?:\/\/)?(?:[^@/]+@)?(?:127\.0\.0\.1|localhost)(?::\d+)?\//u,
@@ -42,11 +45,25 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
       configuration});
     assert.equal(created.reserved_micro_usd,200);
 
+    await assert.rejects(claimSignalTopicEvaluationV2ExecutionAuthority({pool,run_id:created.run_id}),
+      /topic_evaluation_v2_run_not_found/u,"a planned run cannot bypass its dispatch outbox");
+    assert.deepEqual(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),{run_id:created.run_id});
+    assert.equal(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),null,
+      "the same planned authority cannot be dispatched twice");
+    await assertDirectSqlRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_execution_outbox SET status='pending',
+        dispatch_count=0,dispatched_at=NULL WHERE run_id=$1::uuid`,[created.run_id]);
+    },/transition is invalid/u);
+    await assertDirectSqlRejected(pool,async(client)=>{
+      await client.query(`UPDATE signal_topic_evaluation_v2_execution_outbox SET dispatch_count=2
+        WHERE run_id=$1::uuid`,[created.run_id]);
+    },/transition is invalid/u);
+
     await assertDirectSqlRejected(pool,async(client)=>{
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='failed',
         error_code='forged_authorized_failure',settled_micro_usd=0,completed_at=clock_timestamp()
         WHERE id=$1::uuid`,[created.execution_authorization_id]);
-    },/transition is invalid/u);
+    },/pair is invalid/u);
     await assertDirectSqlRejected(pool,async(client)=>{
       await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
         SET settled_micro_usd=0 WHERE id=$1::uuid`,[created.execution_authorization_id]);
@@ -72,7 +89,7 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
           input_micro_usd_per_token,output_micro_usd_per_token,flight_card,flight_card_digest,
           reserved_micro_usd FROM signal_topic_evaluation_v2_execution_authorizations
         WHERE id=$1::uuid`,[created.execution_authorization_id]);
-    },/transition is invalid/u);
+    },/pair is invalid/u);
 
     const claimed=await claimSignalTopicEvaluationV2ExecutionAuthority({pool,run_id:created.run_id});
     assert.equal(claimed.snapshot_digest,authority.snapshot_digest);
@@ -98,6 +115,14 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
       outcome:"definitely_not_sent",error_code:"topic_evaluation_provider_definitely_not_sent",
       provider_call_count:1,observed_input_tokens:0,observed_output_tokens:0,observed_cost_micro_usd:0});
     assert.deepEqual(settled,{status:"failed",settled_micro_usd:0,provider_call_count:1});
+    const dispatchedFailure=await createSignalTopicEvaluationV2ExecutionAuthority({pool,
+      workspace_id:authority.workspace_id,actor:{id:authority.actor_id,user_type:"noisia_internal"},
+      idempotency_key:`r31-dispatch-failure-${randomUUID()}`,
+      expected_snapshot_digest:authority.snapshot_digest,
+      confirmation:SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,configuration});
+    assert.deepEqual(await dispatchSignalTopicEvaluationV2ExecutionOutbox({pool}),{run_id:dispatchedFailure.run_id});
+    assert.deepEqual(await failSignalTopicEvaluationV2DispatchBeforeClaim({pool,run_id:dispatchedFailure.run_id}),
+      {status:"failed",settled_micro_usd:0,provider_call_count:0});
     const recorded=await pool.query<{run_status:string;authority_status:string;retrievals:number;candidates:number}>(`SELECT
       run.status run_status,authority.status authority_status,
       (SELECT count(*)::int FROM signal_topic_evaluation_v2_retrievals WHERE run_id=run.id) retrievals,
@@ -117,7 +142,11 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
       actor:{id:authority.actor_id,user_type:"noisia_internal"},idempotency_key:`r29-factory-${randomUUID()}`,
       expected_snapshot_digest:authority.snapshot_digest,confirmation:SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,
       configuration});
+    const atomicallyClaimed=await claimNextSignalTopicEvaluationV2ExecutionOutbox({pool});
+    assert.equal(atomicallyClaimed?.run_id,factoryFailure.run_id,
+      "the Worker dispatches and claims its next authority in one transaction");
     const terminal=await processSignalTopicEvaluationV2ProviderRun({pool,run_id:factoryFailure.run_id,
+      claimed_execution:atomicallyClaimed!,
       create_model:()=>{throw new Error("local model factory failure");}});
     assert.deepEqual(terminal,{status:"failed",run_id:factoryFailure.run_id,provider_call_count:0,
       settled_micro_usd:0,error_code:"topic_evaluation_v2_provider_pretransport_failed"});
@@ -126,7 +155,10 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
       actor:{id:authority.actor_id,user_type:"noisia_internal"},idempotency_key:`r29-response-${randomUUID()}`,
       expected_snapshot_digest:authority.snapshot_digest,confirmation:SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,
       configuration});
+    const invalidResponseClaim=await claimNextSignalTopicEvaluationV2ExecutionOutbox({pool});
+    assert.equal(invalidResponseClaim?.run_id,invalidResponse.run_id);
     const knownTerminal=await processSignalTopicEvaluationV2ProviderRun({pool,run_id:invalidResponse.run_id,
+      claimed_execution:invalidResponseClaim!,
       create_model:()=>({next:async()=>{throw new SignalTopicEvaluationProviderResponseInvalidErrorV2({
         input_tokens:12,output_tokens:8,cost_micro_usd:20});}})});
     assert.deepEqual(knownTerminal,{status:"failed",run_id:invalidResponse.run_id,provider_call_count:1,
@@ -137,7 +169,8 @@ test("0113 creates one local-only execution authority and terminalizes a proven 
       idempotency_key:`r29-valid-outcome-${randomUUID()}`,
       expected_snapshot_digest:authority.snapshot_digest,
       confirmation:SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,configuration});
-    await claimSignalTopicEvaluationV2ExecutionAuthority({pool,run_id:ambiguous.run_id});
+    const ambiguousClaim=await claimNextSignalTopicEvaluationV2ExecutionOutbox({pool});
+    assert.equal(ambiguousClaim?.run_id,ambiguous.run_id);
     await recordSignalTopicEvaluationV2ProviderTurnAttempt({pool,run_id:ambiguous.run_id});
     assert.deepEqual(await settleSignalTopicEvaluationV2ExecutionFailure({pool,run_id:ambiguous.run_id,
       outcome:"ambiguous_after_send",error_code:"topic_evaluation_v2_test_outcome_unknown",
@@ -152,7 +185,7 @@ async function assertDirectSqlRejected(pool:pg.Pool,operation:(client:pg.PoolCli
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
-    await assert.rejects(operation(client),expected);
+    await assert.rejects((async()=>{await operation(client);await client.query("SET CONSTRAINTS ALL IMMEDIATE");})(),expected);
   }finally{
     await client.query("ROLLBACK").catch(()=>undefined);
     client.release();

@@ -2112,12 +2112,26 @@ paths:
     post:
       tags: [Signal Topic Evaluation]
       operationId: startSignalTopicEvaluationFullEvidence
-      summary: Closed R24 launch edge; provider execution is disabled in this gate.
+      summary: Create one separately confirmed, durable V2 execution authority.
+      description: >-
+        The server owns the UAT-only model, pricing, hard cap and Worker enablement. This command
+        records one authority, planned run and immutable dispatch intent; it never calls a provider
+        synchronously. It is disabled unless the sealed UAT configuration is present.
       security: [{ kindeSession: [] }]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicEvaluationV2ExecutionStartRequest" }
       responses:
-        "403": { description: Full-evidence provider execution is disabled; no run or provider call is created. }
+        "202": { description: One planned, server-owned execution authority and durable dispatch intent; provider_call_count=0. }
+        "400": { description: Idempotency-Key is required. }
+        "403": { description: Management authority denied or V2 execution remains disabled. No run or provider call is created. }
+        "409": { description: Snapshot drift, existing active authority or idempotency conflict. }
+        "422": { description: Closed confirmation or request shape rejected before any write. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/evidence:
     post:
       tags: [Signal Topic Evaluation]
@@ -3691,6 +3705,13 @@ components:
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+    SignalTopicEvaluationV2ExecutionStartRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_snapshot_digest, confirmation]
+      properties:
+        expected_snapshot_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        confirmation: { const: AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION }
     SignalTopicEvidenceNavigationRequestV2:
       oneOf:
         - type: object

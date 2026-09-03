@@ -106,7 +106,20 @@ UTF-8 input-token ceiling plus fixed protocol headroom from that remaining card,
 requested output ceiling to what the residual budget can afford. A turn that cannot fit is a
 proven pre-transport failure, never a late over-cap request.
 
-No queue is registered and no Studio write endpoint is enabled by this preparation. Any provider
-adapter activation, queue registration, migration application, data population or enabled flight
-still requires a separate audited gate after UAT target/restore/API review. Discovery Review
-remains a separate product surface.
+Migration `0114_signal_topic_evaluation_v2_execution_outbox.sql` is the next forward-only,
+still-local companion migration. Its single append-only outbox row is inserted atomically with
+the 0113 authority/run. Only the UAT Worker composition root may advance that row from `pending`
+to `dispatched`, exactly once; a run refuses to claim unless its paired outbox has already made
+that irreversible transition. This makes a Worker restart, a second browser request or a direct
+routine invocation unable to produce an implicit retry. The Worker remains inert unless both its
+UAT runtime profile and `NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED=true` are configured.
+
+The Studio POST command binds only the frozen snapshot digest, a fresh idempotency key and the
+closed confirmation. Model, pricing, budget and credentials are server-owned and are never
+accepted from the browser. It records the authority/run/outbox transactionally, but never calls a
+provider synchronously.
+
+Neither the Worker queue nor the Studio write endpoint is enabled by default. Any provider adapter
+activation, migration application, data population or enabled flight still requires a separate
+audited gate after UAT target/restore/API review. Discovery Review remains a separate product
+surface.

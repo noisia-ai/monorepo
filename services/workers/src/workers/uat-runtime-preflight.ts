@@ -18,6 +18,7 @@ const QUEUE_ENV_NAMES = [
 type PreflightCounts = {
   strategic_run_claimable: number;
   strategic_step_claimable: number;
+  topic_evaluation_v2_execution_claimable: number;
   workspace_import_claimable: number;
 };
 
@@ -168,6 +169,13 @@ async function loadClaimableDatabaseRows(database: Pick<Pool, "query">) {
            OR (outbox.status='dispatching'
                AND COALESCE(outbox.lease_expires_at,outbox.updated_at) <= now())))
         AS strategic_step_claimable,
+      (SELECT count(*)::int FROM signal_topic_evaluation_v2_execution_outbox outbox
+       JOIN signal_topic_evaluation_v2_runs run ON run.id=outbox.run_id
+       JOIN signal_topic_evaluation_v2_execution_authorizations authority
+         ON authority.id=outbox.execution_authorization_id
+       WHERE outbox.status='pending' AND outbox.dispatch_count=0
+         AND run.status='planned' AND authority.status='authorized')
+        AS topic_evaluation_v2_execution_claimable,
       (SELECT count(*)::int FROM signal_workspace_import_outbox outbox
        JOIN import_batches batch ON batch.id=outbox.import_batch_id
        WHERE batch.status='queued'

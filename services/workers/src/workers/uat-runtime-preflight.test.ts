@@ -42,6 +42,7 @@ const emptyDatabase = {
     return { rows: [{
       strategic_run_claimable: 0,
       strategic_step_claimable: 0,
+      topic_evaluation_v2_execution_claimable: 0,
       workspace_import_claimable: 0
     }] };
   }
@@ -97,6 +98,19 @@ test("UAT empty cut rejects executable Redis work", async () => {
       env: safeEnv()
     }),
     /uat_redis_contains_executable_jobs/u
+  );
+});
+
+test("UAT empty cut rejects a pending V2 paid execution intent", async () => {
+  await assert.rejects(
+    assertUatWorkerStartup({
+      database: { async query() { return { rows: [{ strategic_run_claimable: 0,
+        strategic_step_claimable: 0,topic_evaluation_v2_execution_claimable: 1,
+        workspace_import_claimable: 0 }] }; } } as never,
+      redis: emptyRedis,
+      env: safeEnv()
+    }),
+    /uat_database_contains_claimable_outbox_rows/u
   );
 });
 

@@ -7127,6 +7127,23 @@ export const signalTopicEvaluationV2ExecutionAuthorizations = pgTable(
   ]
 );
 
+// One durable, append-only dispatch intent is created atomically with a separately confirmed
+// provider-enabled V2 authority/run. The Worker drainer remains disabled unless an explicit UAT
+// runtime flag is later configured.
+export const signalTopicEvaluationV2ExecutionOutbox = pgTable(
+  "signal_topic_evaluation_v2_execution_outbox", {
+    runId: uuid("run_id").primaryKey().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    executionAuthorizationId: uuid("execution_authorization_id").notNull()
+      .references(() => signalTopicEvaluationV2ExecutionAuthorizations.id, { onDelete: "restrict" }),
+    outboxKey: text("outbox_key").notNull(), status: text("status").notNull().default("pending"),
+    dispatchCount: integer("dispatch_count").notNull().default(0), createdAt: now(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true })
+  }, (table) => [unique("uq_signal_topic_evaluation_v2_execution_outbox_key").on(table.outboxKey),
+    index("idx_signal_topic_evaluation_v2_execution_outbox_pending")
+      .on(table.createdAt, table.runId).where(sql`${table.status} = 'pending'`)]
+);
+
 export const signalTopicEvaluationV2Retrievals = pgTable("signal_topic_evaluation_v2_retrievals", {
   id: uuid("id").primaryKey().defaultRandom(),
   runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
