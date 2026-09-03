@@ -8,7 +8,8 @@ import {
   SIGNAL_TOPIC_EVALUATION_V2_CONTRACT,
   signalTopicEvidenceNavigationResultV2,
   signalTopicEvaluationDigestV2,
-  signalTopicEvaluationFlightCardV2
+  signalTopicEvaluationFlightCardV2,
+  buildSignalTopicEvaluationExecutionFlightCardV2
 } from "./signal-topic-evaluation-v2";
 
 const digest = (value: unknown) => signalTopicEvaluationDigestV2(value);
@@ -56,6 +57,23 @@ test("each navigation result has one closed operation-specific shape; catalog st
     ...responseData.search_cluster, mentions: Array(21).fill(mention(digest("evidence"))) })).success, false);
 });
 
+test("a sealed execution card stops before another model edge once its own budget is exhausted", async () => {
+  const snapshot = digest("snapshot"); let calls = 0;
+  const limits = buildSignalTopicEvaluationExecutionFlightCardV2({ provider_calls_allowed: 2,
+    max_model_turns: 2, max_tool_calls: 2, max_tool_result_bytes: 32_768,
+    max_total_tool_result_bytes: 65_536, max_total_input_tokens: 10_000,
+    max_total_output_tokens: 1_000, hard_cap_micro_usd: 5 });
+  await assert.rejects(runOfflineSignalTopicEvaluationV2({ snapshot_digest: snapshot,
+    provider_calls_on_completion: "model_turns", limits,
+    model: { next: async () => { calls += 1; return { kind: "tool", request: {
+      operation: "cluster_catalog", limit: 1, cursor: null }, usage: {
+      input_tokens: 1, output_tokens: 1, cost_micro_usd: 5 } }; } },
+    navigate: async (request) => signalTopicEvidenceNavigationResultV2.parse({
+      ...response(request.operation), snapshot_digest: snapshot }) }),
+  /topic_evaluation_v2_cost_limit_exceeded/u);
+  assert.equal(calls, 1, "a second provider turn is not requested after the sealed cap is consumed");
+});
+
 test("v2 flight card is provider-disabled and absolutely bounded", () => {
   const card = signalTopicEvaluationFlightCardV2();
   assert.equal(card.execution_enabled, false);
@@ -64,6 +82,22 @@ test("v2 flight card is provider-disabled and absolutely bounded", () => {
   assert.equal(card.hard_cap_micro_usd, 20_000_000);
   assert.equal(card.preserve_complete_candidate_pool, true);
   assert.equal(card.top_view_limit, 10);
+});
+
+test("execution flight card is explicit, bounded, and cannot exceed the static maximums", () => {
+  const card = buildSignalTopicEvaluationExecutionFlightCardV2({ provider_calls_allowed: 12,
+    max_model_turns: 12, max_tool_calls: 24, max_tool_result_bytes: 32_768,
+    max_total_tool_result_bytes: 262_144, max_total_input_tokens: 450_000,
+    max_total_output_tokens: 50_000, hard_cap_micro_usd: 18_147_816 });
+  assert.equal(card.execution_enabled, true);
+  assert.equal(card.provider_calls_allowed, 12);
+  assert.equal(card.hard_cap_micro_usd, 18_147_816);
+  assert.equal(card.no_retry, true);
+  assert.throws(() => buildSignalTopicEvaluationExecutionFlightCardV2({ provider_calls_allowed: 13,
+    max_model_turns: 12, max_tool_calls: 24, max_tool_result_bytes: 32_768,
+    max_total_tool_result_bytes: 262_144, max_total_input_tokens: 450_000,
+    max_total_output_tokens: 50_000, hard_cap_micro_usd: 20_000_000 }),
+  /topic_evaluation_v2_execution_flight_card_invalid/u);
 });
 
 test("navigation schema rejects injection, oversize and duplicate cluster sets", () => {
@@ -115,6 +149,35 @@ test("offline fake loop progressively retrieves evidence and preserves pool beyo
   assert.equal(trace.output.candidates.length, 12);
   assert.equal(trace.output.ranking.length, 10);
   assert.deepEqual(trace.output.candidates.map((item) => item.status), Array(12).fill("pending"));
+});
+
+test("the next model turn receives only prior validated, sanitized evidence results", async () => {
+  const snapshot = digest("snapshot");
+  const evidence = digest("evidence");
+  const observed: unknown[] = [];
+  const final = JSON.stringify({ contract_version: "signal-topic-evaluation-full-evidence-output-v2",
+    candidates: [{ candidate_key: "candidate.1", title: "Candidate", description: "Description",
+      inclusion: ["in"], exclusion: [], explanation: "Bounded explanation", source_cluster_keys: ["cluster.1"],
+      evidence_refs: [evidence], status: "pending" }], ranking: [{ rank: 1, candidate_key: "candidate.1",
+      ranking_reason: "Reason" }] });
+  const trace = await runOfflineSignalTopicEvaluationV2({ snapshot_digest: snapshot,
+    model: { next: async ({ turn_index, prior_results }) => {
+      observed.push(prior_results);
+      return turn_index === 0
+        ? { kind: "tool", request: { operation: "representative_mentions", cluster_key: "cluster.1",
+          limit: 3, filters: {} } }
+        : { kind: "final", json: final };
+    } },
+    navigate: async (request) => signalTopicEvidenceNavigationResultV2.parse({ ...response(request.operation,
+      { ...responseData.representative_mentions, mentions: [mention(evidence)] }), snapshot_digest: snapshot,
+      evidence_refs: [evidence], result_digest: digest("bounded-result") }) });
+  assert.equal(trace.retrievals.length, 1);
+  assert.deepEqual(observed[0], []);
+  assert.equal(Array.isArray(observed[1]), true);
+  assert.equal((observed[1] as Array<{ data: { mentions: Array<{ excerpt: string }> } }>)[0]!
+    .data.mentions[0]!.excerpt, "Sanitized fixture excerpt");
+  assert.equal(JSON.stringify(observed[1]).includes("mention_id"), false);
+  assert.equal(JSON.stringify(observed[1]).includes("source-record"), false);
 });
 
 test("offline loop rejects foreign evidence and oversized tool output without provider calls", async () => {

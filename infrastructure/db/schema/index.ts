@@ -7079,6 +7079,8 @@ export const signalTopicEvaluationV2Runs = pgTable("signal_topic_evaluation_v2_r
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
   snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+  executionAuthorizationId: uuid("execution_authorization_id")
+    .references(() => signalTopicEvaluationV2ExecutionAuthorizations.id, { onDelete: "restrict" }),
   requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   idempotencyKey: text("idempotency_key").notNull(), runKey: text("run_key").notNull(),
   confirmation: text("confirmation").notNull(), flightCard: jsonb("flight_card").notNull(),
@@ -7095,7 +7097,35 @@ export const signalTopicEvaluationV2Runs = pgTable("signal_topic_evaluation_v2_r
   errorCode: text("error_code"), outputDigest: text("output_digest"), createdAt: now(),
   completedAt: timestamp("completed_at", { withTimezone: true })
 }, (table) => [unique("uq_signal_topic_evaluation_v2_idempotency").on(table.workspaceId, table.idempotencyKey),
-  unique("uq_signal_topic_evaluation_v2_run_key").on(table.workspaceId, table.runKey)]);
+  unique("uq_signal_topic_evaluation_v2_run_key").on(table.workspaceId, table.runKey),
+  uniqueIndex("uq_signal_topic_evaluation_v2_run_execution_authorization")
+    .on(table.executionAuthorizationId).where(sql`${table.executionAuthorizationId} IS NOT NULL`)]);
+
+// Execution remains disabled by default. This table is only the durable, UAT-scoped authority
+// required by migration 0113 before a later separately confirmed provider flight can create a run.
+export const signalTopicEvaluationV2ExecutionAuthorizations = pgTable(
+  "signal_topic_evaluation_v2_execution_authorizations", {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(), authorizationKey: text("authorization_key").notNull(),
+    confirmation: text("confirmation").notNull(), runtimeProfile: text("runtime_profile").notNull(),
+    provider: text("provider").notNull(), model: text("model").notNull(), pricingVersion: text("pricing_version").notNull(),
+    inputMicroUsdPerToken: bigint("input_micro_usd_per_token", { mode: "bigint" }).notNull(),
+    outputMicroUsdPerToken: bigint("output_micro_usd_per_token", { mode: "bigint" }).notNull(),
+    flightCard: jsonb("flight_card").notNull(), flightCardDigest: text("flight_card_digest").notNull(),
+    reservedMicroUsd: bigint("reserved_micro_usd", { mode: "bigint" }).notNull(),
+    settledMicroUsd: bigint("settled_micro_usd", { mode: "bigint" }), providerCallCount: integer("provider_call_count").notNull().default(0),
+    status: text("status").notNull().default("authorized"), errorCode: text("error_code"), createdAt: now(),
+    completedAt: timestamp("completed_at", { withTimezone: true })
+  }, (table) => [
+    unique("uq_signal_topic_evaluation_v2_execution_authorization_idempotency").on(table.workspaceId, table.idempotencyKey),
+    unique("uq_signal_topic_evaluation_v2_execution_authorization_key").on(table.workspaceId, table.authorizationKey),
+    uniqueIndex("uq_signal_topic_evaluation_v2_execution_authorization_active_snapshot")
+      .on(table.workspaceId, table.snapshotId).where(sql`${table.status} IN ('authorized','claimed')`)
+  ]
+);
 
 export const signalTopicEvaluationV2Retrievals = pgTable("signal_topic_evaluation_v2_retrievals", {
   id: uuid("id").primaryKey().defaultRandom(),

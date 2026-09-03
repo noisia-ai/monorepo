@@ -5,6 +5,9 @@ import { z } from "zod";
 export const SIGNAL_TOPIC_EVALUATION_V2_CONTRACT = "signal-topic-evaluation-full-evidence-v2" as const;
 export const SIGNAL_TOPIC_EVALUATION_V2_OUTPUT = "signal-topic-evaluation-full-evidence-output-v2" as const;
 export const SIGNAL_TOPIC_EVALUATION_V2_CONFIRMATION = "RUN_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION" as const;
+/** A provider-enabled flight is a distinct, auditable operation from the disabled preflight. */
+export const SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION =
+  "AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION" as const;
 
 export const SIGNAL_TOPIC_EVALUATION_V2_LIMITS = Object.freeze({
   max_model_turns: 12,
@@ -157,10 +160,21 @@ export const signalTopicEvaluationOutputSchemaV2 = z.object({
 
 export type SignalTopicEvaluationOutputV2 = z.infer<typeof signalTopicEvaluationOutputSchemaV2>;
 
+/**
+ * The only model decision protocol accepted by the full-evidence runner. A model can request one
+ * of the six server-owned navigation operations, or return the final candidate-only output. The
+ * runner never accepts free-form transport instructions, SQL, artifact paths or raw mention IDs.
+ */
+export const signalTopicEvaluationProviderTurnSchemaV2 = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("tool"), request: signalTopicEvidenceNavigationRequestV2 }).strict(),
+  z.object({ kind: z.literal("final"), output: signalTopicEvaluationOutputSchemaV2 }).strict()
+]);
+export type SignalTopicEvaluationProviderTurnV2 = z.infer<typeof signalTopicEvaluationProviderTurnSchemaV2>;
+
 export type SignalTopicEvaluationFlightCardV2 = {
   contract_version: typeof SIGNAL_TOPIC_EVALUATION_V2_CONTRACT;
-  execution_enabled: false;
-  provider_calls_allowed: 0;
+  execution_enabled: boolean;
+  provider_calls_allowed: number;
   no_retry: true;
   action_time_confirmation_required: true;
   max_model_turns: number;
@@ -185,6 +199,44 @@ export function signalTopicEvaluationFlightCardV2(): SignalTopicEvaluationFlight
     max_total_output_tokens: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_output_tokens,
     hard_cap_micro_usd: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.hard_cap_micro_usd,
     preserve_complete_candidate_pool: true, top_view_limit: 10 };
+}
+
+/**
+ * Builds the separate, action-time card for a real full-evidence flight.  The default card above
+ * remains disabled and is the only card exposed by the read-only preflight.  This builder is
+ * deliberately pure: it neither checks credentials nor starts a provider call.
+ */
+export function buildSignalTopicEvaluationExecutionFlightCardV2(args: {
+  provider_calls_allowed: number;
+  max_model_turns: number;
+  max_tool_calls: number;
+  max_tool_result_bytes: number;
+  max_total_tool_result_bytes: number;
+  max_total_input_tokens: number;
+  max_total_output_tokens: number;
+  hard_cap_micro_usd: number;
+}): SignalTopicEvaluationFlightCardV2 {
+  const card: SignalTopicEvaluationFlightCardV2 = {
+    contract_version: SIGNAL_TOPIC_EVALUATION_V2_CONTRACT,
+    execution_enabled: true, no_retry: true, action_time_confirmation_required: true,
+    preserve_complete_candidate_pool: true, top_view_limit: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.top_view_limit,
+    ...args
+  };
+  const bounds: Array<[number, number]> = [
+    [card.provider_calls_allowed, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_model_turns],
+    [card.max_model_turns, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_model_turns],
+    [card.max_tool_calls, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_calls],
+    [card.max_tool_result_bytes, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_result_bytes],
+    [card.max_total_tool_result_bytes, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_tool_result_bytes],
+    [card.max_total_input_tokens, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_input_tokens],
+    [card.max_total_output_tokens, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_output_tokens],
+    [card.hard_cap_micro_usd, SIGNAL_TOPIC_EVALUATION_V2_LIMITS.hard_cap_micro_usd]
+  ];
+  if (bounds.some(([value, maximum]) => !Number.isSafeInteger(value) || value < 1 || value > maximum)
+      || card.provider_calls_allowed > card.max_model_turns) {
+    throw new Error("topic_evaluation_v2_execution_flight_card_invalid");
+  }
+  return Object.freeze(card);
 }
 
 export function parseSignalTopicEvidenceNavigationRequestV2(value: unknown) {
@@ -254,40 +306,72 @@ export type SignalTopicEvaluationTraceV2 = {
   total_input_tokens: number;
   total_output_tokens: number;
   total_cost_micro_usd: number;
-  provider_calls: 0;
+  provider_calls: number;
 };
 
 type OfflineUsageV2 = { input_tokens: number; output_tokens: number; cost_micro_usd: number };
 type OfflineDecisionV2 = ({ kind: "tool"; request: unknown } | { kind: "final"; json: string }) &
   { usage?: OfflineUsageV2 };
+export type SignalTopicEvaluationModelInputV2 = {
+  turn_index: number;
+  /** Only prior server-validated, sanitized, byte-bounded tool results are supplied to the model. */
+  prior_results: SignalTopicEvidenceNavigationResultV2[];
+  /** Exact remaining budget for this sealed flight, before the next provider transport edge. */
+  remaining_input_tokens: number;
+  remaining_output_tokens: number;
+  remaining_cost_micro_usd: number;
+};
+
+type SignalTopicEvaluationRunLimitsV2 = Pick<SignalTopicEvaluationFlightCardV2,
+  "provider_calls_allowed"|"max_model_turns"|"max_tool_calls"|"max_tool_result_bytes"|
+  "max_total_tool_result_bytes"|"max_total_input_tokens"|"max_total_output_tokens"|
+  "hard_cap_micro_usd">;
 
 export async function runOfflineSignalTopicEvaluationV2(args: {
   snapshot_digest: string;
-  model: { next(input: { turn_index: number; prior_result_digests: string[] }): Promise<OfflineDecisionV2> };
+  model: { next(input: SignalTopicEvaluationModelInputV2): Promise<OfflineDecisionV2> };
   navigate: (request: SignalTopicEvidenceNavigationRequestV2) => Promise<SignalTopicEvidenceNavigationResultV2>;
+  /** The provider-backed worker is unregistered until a later gate. Offline callers retain zero. */
+  provider_calls_on_completion?: "model_turns";
+  /** A provider worker supplies its action-time card; offline fixtures use the static maxima. */
+  limits?: SignalTopicEvaluationRunLimitsV2;
 }): Promise<SignalTopicEvaluationTraceV2> {
   digest.parse(args.snapshot_digest);
+  const limits = normalizeRunLimits(args.limits);
   const turns: SignalTopicEvaluationTraceV2["turns"] = [];
   const retrievals: SignalTopicEvaluationTraceV2["retrievals"] = [];
+  const priorResults: SignalTopicEvidenceNavigationResultV2[] = [];
   const evidence = new Set<string>(); const clusters = new Set<string>();
   let totalBytes = 0; let totalInputTokens = 0; let totalOutputTokens = 0; let totalCostMicroUsd = 0;
-  for (let turn = 0; turn < SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_model_turns; turn += 1) {
-    const decision = await args.model.next({ turn_index: turn,
-      prior_result_digests: retrievals.map((item) => item.result_digest) });
+  const maxTurns = args.provider_calls_on_completion === "model_turns"
+    ? Math.min(limits.max_model_turns, limits.provider_calls_allowed) : limits.max_model_turns;
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    if (totalInputTokens >= limits.max_total_input_tokens || totalOutputTokens >= limits.max_total_output_tokens) {
+      throw new Error("topic_evaluation_v2_token_limit_exceeded");
+    }
+    if (totalCostMicroUsd >= limits.hard_cap_micro_usd) {
+      throw new Error("topic_evaluation_v2_cost_limit_exceeded");
+    }
+    // Do not hand an async model adapter the mutable working array: it may only observe the
+    // tool results that existed at the start of this turn.
+    const decision = await args.model.next({ turn_index: turn, prior_results: [...priorResults],
+      remaining_input_tokens: limits.max_total_input_tokens-totalInputTokens,
+      remaining_output_tokens: limits.max_total_output_tokens-totalOutputTokens,
+      remaining_cost_micro_usd: limits.hard_cap_micro_usd-totalCostMicroUsd });
     const usage = decision.usage ?? { input_tokens: 0, output_tokens: 0, cost_micro_usd: 0 };
     if (![usage.input_tokens, usage.output_tokens, usage.cost_micro_usd].every((value) =>
       Number.isSafeInteger(value) && value >= 0)) throw new Error("topic_evaluation_v2_usage_invalid");
     totalInputTokens += usage.input_tokens; totalOutputTokens += usage.output_tokens;
     totalCostMicroUsd += usage.cost_micro_usd;
-    if (totalInputTokens > SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_input_tokens
-        || totalOutputTokens > SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_output_tokens) {
+    if (totalInputTokens > limits.max_total_input_tokens
+        || totalOutputTokens > limits.max_total_output_tokens) {
       throw new Error("topic_evaluation_v2_token_limit_exceeded");
     }
-    if (totalCostMicroUsd > SIGNAL_TOPIC_EVALUATION_V2_LIMITS.hard_cap_micro_usd) {
+    if (totalCostMicroUsd > limits.hard_cap_micro_usd) {
       throw new Error("topic_evaluation_v2_cost_limit_exceeded");
     }
     if (decision.kind === "tool") {
-      if (retrievals.length >= SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_calls) {
+      if (retrievals.length >= limits.max_tool_calls) {
         throw new Error("topic_evaluation_v2_tool_call_limit_exceeded");
       }
       const request = parseSignalTopicEvidenceNavigationRequestV2(decision.request);
@@ -298,17 +382,18 @@ export async function runOfflineSignalTopicEvaluationV2(args: {
         throw new Error("topic_evaluation_v2_tool_result_authority_mismatch");
       }
       const bytes = Buffer.byteLength(stableJson(result), "utf8");
-      if (bytes > SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_result_bytes) {
+      if (bytes > limits.max_tool_result_bytes) {
         throw new Error("topic_evaluation_v2_tool_result_too_large");
       }
       totalBytes += bytes;
-      if (totalBytes > SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_tool_result_bytes) {
+      if (totalBytes > limits.max_total_tool_result_bytes) {
         throw new Error("topic_evaluation_v2_total_tool_result_limit_exceeded");
       }
       result.evidence_refs.forEach((item) => evidence.add(item));
       const inputDigest = signalTopicEvaluationDigestV2(request);
       retrievals.push({ retrieval_index: retrievals.length, tool_input_digest: inputDigest,
         result_digest: result.result_digest, evidence_refs: [...result.evidence_refs], result_bytes: bytes });
+      priorResults.push(result);
       turns.push({ turn_index: turn, kind: "tool", input_digest: inputDigest,
         output_digest: result.result_digest, tool_operation: request.operation, result_bytes: bytes,
         ...usage });
@@ -321,9 +406,22 @@ export async function runOfflineSignalTopicEvaluationV2(args: {
     result_bytes: Buffer.byteLength(decision.json, "utf8"), ...usage });
     return { turns, retrievals, output, total_tool_result_bytes: totalBytes,
       total_input_tokens: totalInputTokens, total_output_tokens: totalOutputTokens,
-      total_cost_micro_usd: totalCostMicroUsd, provider_calls: 0 };
+      total_cost_micro_usd: totalCostMicroUsd,
+      provider_calls: args.provider_calls_on_completion === "model_turns" ? turns.length : 0 };
   }
   throw new Error("topic_evaluation_v2_model_turn_limit_exceeded");
+}
+
+function normalizeRunLimits(value: SignalTopicEvaluationRunLimitsV2 | undefined): SignalTopicEvaluationRunLimitsV2 {
+  if (!value) return { provider_calls_allowed: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_model_turns,
+    max_model_turns: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_model_turns,
+    max_tool_calls: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_calls,
+    max_tool_result_bytes: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_tool_result_bytes,
+    max_total_tool_result_bytes: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_tool_result_bytes,
+    max_total_input_tokens: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_input_tokens,
+    max_total_output_tokens: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.max_total_output_tokens,
+    hard_cap_micro_usd: SIGNAL_TOPIC_EVALUATION_V2_LIMITS.hard_cap_micro_usd };
+  return buildSignalTopicEvaluationExecutionFlightCardV2(value);
 }
 
 function stableJson(value: unknown): string {

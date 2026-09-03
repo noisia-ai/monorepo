@@ -79,6 +79,34 @@ turn, every pending candidate and its explanation/evidence lineage, plus a separ
 The complete candidate pool remains durable and editable; Top 10 is a view, not truncation.
 Candidate tables carry closed false adoption/publication/serving fields.
 
-Any future provider adapter, queue registration, data population or enabled flight requires a
-separate audited gate after migration and API review. Discovery Review remains a separate product
-surface.
+## Prepared execution boundary (still disabled)
+
+Migration `0113_signal_topic_evaluation_full_evidence_execution_authority.sql` is forward-only
+and remains local until a separately audited UAT cut. It adds one append-only, UAT-only execution
+authority per explicit confirmation. The authority seals the frozen snapshot, actor, model,
+pricing version, flight card, reservation and idempotency key; its planned run must reference the
+same immutable values. A run cannot substitute another authority, lower a recorded attempt
+counter, reduce recorded usage, or rewrite its reservation/flight card. Terminal runs and
+terminal authorities are immutable.
+
+The disabled preflight string is `RUN_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION`; it cannot create a
+provider-enabled run. The separately displayed action-time consent for this authority is
+`AUTHORIZE_BOUNDED_FULL_EVIDENCE_TOPIC_EVALUATION`. They are intentionally distinct so that a
+stale preflight payload cannot be replayed as a paid execution.
+
+The unregistered Worker adapter records an attempt before each model transport call. Only a local
+SDK configuration error proven to occur before transport can end as `definitely_not_sent`. A
+provider HTTP response, timeout, network reset, persistence uncertainty or other unknown edge is
+`outcome_unknown`, retains its reservation and has no automatic retry. A known malformed/control
+failure can settle only the usage observed before it. The adapter receives only prior server-
+validated, sanitized, byte-bounded navigation results; it never receives raw mention IDs,
+artifact paths, SQL, credentials or an unbounded corpus export. Before each turn, it also receives
+only the remaining sealed token/cost budget. Before transport, the adapter reserves a conservative
+UTF-8 input-token ceiling plus fixed protocol headroom from that remaining card, then reduces the
+requested output ceiling to what the residual budget can afford. A turn that cannot fit is a
+proven pre-transport failure, never a late over-cap request.
+
+No queue is registered and no Studio write endpoint is enabled by this preparation. Any provider
+adapter activation, queue registration, migration application, data population or enabled flight
+still requires a separate audited gate after UAT target/restore/API review. Discovery Review
+remains a separate product surface.

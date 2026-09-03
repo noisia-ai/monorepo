@@ -2,14 +2,17 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import {
+  buildSignalTopicEvaluationExecutionFlightCardV2,
   parseSignalTopicEvidenceNavigationRequestV2,
   sanitizeSignalTopicEvidenceExcerptV2,
+  SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,
   SIGNAL_TOPIC_EVALUATION_V2_CONTRACT,
   signalTopicEvaluationDigestV2,
   signalTopicEvaluationFlightCardV2,
   signalTopicEvidenceNavigationResultV2,
   type SignalTopicEvidenceNavigationRequestV2,
   type SignalTopicEvidenceNavigationResultV2,
+  type SignalTopicEvaluationFlightCardV2,
   type SignalTopicEvaluationTraceV2
 } from "@noisia/query-engine";
 
@@ -20,6 +23,32 @@ export type SignalTopicEvaluationActorV2 = { id: string; user_type: "noisia_inte
 export class SignalTopicEvaluationV2Error extends Error {
   constructor(public readonly code: string, public readonly status = 409) { super(code); }
 }
+
+/**
+ * This is deliberately supplied by a future, UAT-only Worker composition root rather than read
+ * from process.env in the database package.  The database stores the selected immutable values,
+ * never a credential.  The current gate does not construct this with a real credential.
+ */
+export type SignalTopicEvaluationV2ExecutionConfiguration = {
+  enabled: boolean;
+  runtime_profile: "uat";
+  credential_configured: boolean;
+  provider: "anthropic";
+  model: string;
+  pricing_version: string;
+  input_micro_usd_per_token: number;
+  output_micro_usd_per_token: number;
+  flight_card: SignalTopicEvaluationFlightCardV2;
+};
+
+export type SignalTopicEvaluationV2ExecutionAuthority = {
+  execution_authorization_id: string;
+  run_id: string;
+  run_key: string;
+  snapshot_digest: string;
+  flight_card: SignalTopicEvaluationFlightCardV2;
+  reserved_micro_usd: number;
+};
 
 type SnapshotRow = { id: string; workspace_id: string; snapshot_key: string; snapshot_digest: string;
   rights_digest: string; cluster_count: number; membership_count: number;
@@ -39,6 +68,158 @@ export async function loadSignalTopicEvaluationV2Preflight(args: { queryable: Qu
     historical_summary_evaluator_preserved: true as const,
     candidates_are_pending_only: true as const, topic_adoption: false as const,
     publication: false as const, serving: false as const };
+}
+
+/**
+ * Creates the durable UAT-only authority and its planned run, but does not enqueue, call a
+ * provider, or write candidates.  The worker must claim the exact authority later.  Keeping the
+ * creation and reservation in one serializable transaction makes a confirmation auditable and
+ * prevents the UI from turning a stale preflight into a different flight.
+ */
+export async function createSignalTopicEvaluationV2ExecutionAuthority(args: {
+  pool: { connect(): Promise<PoolClient> };
+  workspace_id: string;
+  actor: SignalTopicEvaluationActorV2;
+  idempotency_key: string;
+  expected_snapshot_digest: string;
+  confirmation: string;
+  configuration: SignalTopicEvaluationV2ExecutionConfiguration;
+}): Promise<SignalTopicEvaluationV2ExecutionAuthority> {
+  assertActor(args.actor);
+  assertExecutionConfiguration(args.configuration);
+  if (args.confirmation !== SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_confirmation_required", 422);
+  }
+  if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_idempotency_invalid", 422);
+  }
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`signal-topic-evaluation-v2:${args.workspace_id}`]);
+    const duplicate = await client.query(`SELECT 1 FROM signal_topic_evaluation_v2_execution_authorizations
+      WHERE workspace_id=$1::uuid AND idempotency_key=$2`, [args.workspace_id, args.idempotency_key]);
+    if ((duplicate.rowCount ?? 0) > 0) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_idempotency_already_used", 409);
+    }
+    const snapshot = await loadSnapshot(client, args.workspace_id, args.actor.id);
+    if (snapshot.snapshot_digest !== args.expected_snapshot_digest) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_snapshot_drift", 409);
+    }
+    const active = await client.query(`SELECT 1 FROM signal_topic_evaluation_v2_execution_authorizations
+      WHERE workspace_id=$1::uuid AND snapshot_id=$2::uuid AND status IN('authorized','claimed')`,
+    [args.workspace_id, snapshot.id]);
+    if ((active.rowCount ?? 0) > 0) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_already_active", 409);
+    }
+    const card = parseExecutionFlightCard(args.configuration.flight_card);
+    const reserved = reserveMicroUsd(card, args.configuration);
+    const flightCardDigest = signalTopicEvaluationDigestV2(card);
+    const authorizationKey = `topic-v2-auth-${signalTopicEvaluationDigestV2({ workspace_id: args.workspace_id,
+      actor_id: args.actor.id, idempotency_key: args.idempotency_key, snapshot_digest: snapshot.snapshot_digest,
+      flight_card_digest: flightCardDigest }).slice(7, 23)}`;
+    const runKey = `topic-v2-run-${signalTopicEvaluationDigestV2({ authorization_key: authorizationKey,
+      snapshot_digest: snapshot.snapshot_digest }).slice(7, 23)}`;
+    const authorizationId = randomUUID(); const runId = randomUUID();
+    await client.query(`INSERT INTO signal_topic_evaluation_v2_execution_authorizations(
+      id,workspace_id,snapshot_id,requested_by_user_id,idempotency_key,authorization_key,confirmation,
+      runtime_profile,provider,model,pricing_version,input_micro_usd_per_token,output_micro_usd_per_token,
+      flight_card,flight_card_digest,reserved_micro_usd)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,'uat','anthropic',$8,$9,$10,$11,
+        $12::jsonb,$13,$14)`, [authorizationId,args.workspace_id,snapshot.id,args.actor.id,args.idempotency_key,
+      authorizationKey,args.confirmation,args.configuration.model,args.configuration.pricing_version,
+      args.configuration.input_micro_usd_per_token,args.configuration.output_micro_usd_per_token,
+      JSON.stringify(card),flightCardDigest,reserved]);
+    await client.query(`INSERT INTO signal_topic_evaluation_v2_runs(
+      id,workspace_id,snapshot_id,execution_authorization_id,requested_by_user_id,idempotency_key,run_key,
+      confirmation,flight_card,flight_card_digest,provider_execution_enabled,reserved_micro_usd)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9::jsonb,$10,true,$11)`,
+    [runId,args.workspace_id,snapshot.id,authorizationId,args.actor.id,args.idempotency_key,runKey,
+      args.confirmation,JSON.stringify(card),flightCardDigest,reserved]);
+    await client.query("COMMIT");
+    return { execution_authorization_id: authorizationId, run_id: runId, run_key: runKey,
+      snapshot_digest: snapshot.snapshot_digest, flight_card: card, reserved_micro_usd: reserved };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw mapExecutionAuthorityConflict(error);
+  } finally { client.release(); }
+}
+
+/** Claims an already authorized run immediately before its worker begins. No provider edge is
+ * crossed here.  The worker must record every attempted provider turn before transport. */
+export async function claimSignalTopicEvaluationV2ExecutionAuthority(args: {
+  pool: { connect(): Promise<PoolClient> }; run_id: string;
+}): Promise<{ workspace_id: string; requested_by_user_id: string; snapshot_id: string;
+  snapshot_digest: string; execution_authorization_id: string; configuration: {
+    model: string; input_micro_usd_per_token: number; output_micro_usd_per_token: number;
+    flight_card: SignalTopicEvaluationFlightCardV2 } }> {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    const selected = await client.query<ExecutionRunRow>(`SELECT run.id::text,run.workspace_id::text,
+      run.snapshot_id::text,run.requested_by_user_id::text,run.execution_authorization_id::text,
+      run.status,run.provider_call_count,run.provider_execution_enabled,run.flight_card,
+      authority.status authority_status,authority.model,authority.input_micro_usd_per_token::text,
+      authority.output_micro_usd_per_token::text,snapshot.snapshot_digest
+      FROM signal_topic_evaluation_v2_runs run
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
+      JOIN signal_topic_evaluation_v2_snapshots snapshot ON snapshot.id=run.snapshot_id
+      WHERE run.id=$1::uuid FOR UPDATE OF run,authority`, [args.run_id]);
+    const run = selected.rows[0];
+    if (!run) throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_run_not_found", 404);
+    if (run.status !== "planned" || run.authority_status !== "authorized" || !run.provider_execution_enabled
+        || run.provider_call_count !== 0) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_run_not_executable", 409);
+    }
+    // Re-read authority through the regular loader before transport: a new semantic generation,
+    // invalid actor, or unfrozen snapshot fails closed rather than running against stale context.
+    const snapshot = await loadSnapshot(client, run.workspace_id, run.requested_by_user_id);
+    if (snapshot.id !== run.snapshot_id || snapshot.snapshot_digest !== run.snapshot_digest) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_snapshot_drift", 409);
+    }
+    const card = parseExecutionFlightCard(run.flight_card);
+    await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status='claimed'
+      WHERE id=$1::uuid AND status='authorized'`, [run.execution_authorization_id]);
+    await client.query(`UPDATE signal_topic_evaluation_v2_runs SET status='in_progress'
+      WHERE id=$1::uuid AND status='planned'`, [args.run_id]);
+    await client.query("COMMIT");
+    return { workspace_id: run.workspace_id, requested_by_user_id: run.requested_by_user_id,
+      snapshot_id: run.snapshot_id, snapshot_digest: run.snapshot_digest,
+      execution_authorization_id: run.execution_authorization_id, configuration: { model: run.model,
+      input_micro_usd_per_token: parseSafeInteger(run.input_micro_usd_per_token),
+      output_micro_usd_per_token: parseSafeInteger(run.output_micro_usd_per_token), flight_card: card } };
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
+}
+
+/** Marks an individual provider turn as attempted before the transport edge. This is what makes
+ * network and provider errors conservatively terminal/ambiguous instead of silently retryable. */
+export async function recordSignalTopicEvaluationV2ProviderTurnAttempt(args: {
+  pool: { connect(): Promise<PoolClient> }; run_id: string;
+}) {
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query<{execution_authorization_id:string;provider_call_count:number;
+      max_calls:number;status:string;authority_status:string}>(`SELECT run.execution_authorization_id::text,
+      run.provider_call_count,COALESCE((run.flight_card->>'provider_calls_allowed')::int,0) max_calls,
+      run.status,authority.status authority_status FROM signal_topic_evaluation_v2_runs run
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
+      WHERE run.id=$1::uuid FOR UPDATE OF run,authority`, [args.run_id]);
+    const run = selected.rows[0];
+    if (!run || run.status !== "in_progress" || run.authority_status !== "claimed"
+        || run.provider_call_count >= run.max_calls) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_provider_turn_not_permitted", 409);
+    }
+    await client.query(`UPDATE signal_topic_evaluation_v2_runs SET provider_call_count=provider_call_count+1
+      WHERE id=$1::uuid`, [args.run_id]);
+    await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
+      SET provider_call_count=provider_call_count+1 WHERE id=$1::uuid`, [run.execution_authorization_id]);
+    await client.query("COMMIT");
+    return { provider_call_count: run.provider_call_count + 1, max_provider_calls: run.max_calls };
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
 }
 
 export async function navigateSignalTopicEvaluationEvidenceV2(args: { queryable: Queryable;
@@ -201,6 +382,32 @@ async function loadSnapshot(queryable: Queryable, workspaceId: string, actorId: 
 
 export async function persistOfflineSignalTopicEvaluationTraceV2(args:{client:PoolClient;run_id:string;
   workspace_id:string;snapshot_id:string;trace:SignalTopicEvaluationTraceV2}) {
+  return persistSignalTopicEvaluationTraceV2({ ...args, provider_execution: false });
+}
+
+/** The provider worker calls this only after every model turn was durably marked attempted. */
+export async function persistSignalTopicEvaluationProviderTraceV2(args:{client:PoolClient;run_id:string;
+  workspace_id:string;snapshot_id:string;execution_authorization_id:string;trace:SignalTopicEvaluationTraceV2}) {
+  return persistSignalTopicEvaluationTraceV2({ ...args, provider_execution: true });
+}
+
+async function persistSignalTopicEvaluationTraceV2(args:{client:PoolClient;run_id:string;
+  workspace_id:string;snapshot_id:string;trace:SignalTopicEvaluationTraceV2;provider_execution:boolean;
+  execution_authorization_id?:string}) {
+  const run=(await args.client.query<{status:string;provider_execution_enabled:boolean;provider_call_count:number;
+    execution_authorization_id:string|null;reserved_micro_usd:string}>(`SELECT status,provider_execution_enabled,
+      provider_call_count,execution_authorization_id::text,reserved_micro_usd::text
+      FROM signal_topic_evaluation_v2_runs WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`,
+  [args.run_id,args.workspace_id])).rows[0];
+  if(!run||run.status!=="in_progress"||run.provider_execution_enabled!==args.provider_execution
+    ||(args.provider_execution&&run.execution_authorization_id!==args.execution_authorization_id)
+    ||(!args.provider_execution&&run.execution_authorization_id!==null)
+    ||run.provider_call_count!==args.trace.provider_calls){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_trace_run_state_invalid",409);
+  }
+  if(args.trace.total_cost_micro_usd>parseSafeInteger(run.reserved_micro_usd)){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_settlement_exceeds_reservation",422);
+  }
   const snapshot=(await args.client.query<{snapshot_digest:string}>(`SELECT snapshot_digest FROM
     signal_topic_evaluation_v2_snapshots WHERE id=$1::uuid AND workspace_id=$2::uuid`,
   [args.snapshot_id,args.workspace_id])).rows[0];
@@ -258,6 +465,64 @@ export async function persistOfflineSignalTopicEvaluationTraceV2(args:{client:Po
   [args.run_id,args.trace.turns.length,args.trace.retrievals.length,args.trace.total_tool_result_bytes,
     signalTopicEvaluationDigestV2(args.trace.output),args.trace.total_input_tokens,
     args.trace.total_output_tokens,args.trace.total_cost_micro_usd,args.workspace_id]);
+  if(args.provider_execution){
+    await args.client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations
+      SET status='completed',settled_micro_usd=$2,provider_call_count=$3,completed_at=clock_timestamp()
+      WHERE id=$1::uuid AND status='claimed'`,[args.execution_authorization_id,
+      args.trace.total_cost_micro_usd,args.trace.provider_calls]);
+  }
+}
+
+/**
+ * A provider boundary never retries automatically.  `outcome_unknown` deliberately retains the
+ * full reservation because a remote endpoint may have accepted the last marked attempt.  A
+ * proven pre-transport failure can settle only the already-observed usage from earlier turns.
+ */
+export async function settleSignalTopicEvaluationV2ExecutionFailure(args: {
+  pool: { connect(): Promise<PoolClient> };
+  run_id: string;
+  outcome: "definitely_not_sent" | "ambiguous_after_send" | "known_response_invalid";
+  error_code: string;
+  provider_call_count: number;
+  observed_input_tokens: number;
+  observed_output_tokens: number;
+  observed_cost_micro_usd: number;
+}) {
+  if (!/^[a-z0-9_]{1,120}$/u.test(args.error_code)
+      || ![args.provider_call_count,args.observed_input_tokens,args.observed_output_tokens,
+        args.observed_cost_micro_usd].every((value)=>Number.isSafeInteger(value)&&value>=0)) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_failure_shape_invalid", 422);
+  }
+  const client=await args.pool.connect();
+  try {
+    await client.query("BEGIN");
+    const run=(await client.query<{workspace_id:string;execution_authorization_id:string;reserved_micro_usd:string;
+      provider_call_count:number;status:string;authority_status:string}>(`SELECT run.workspace_id::text,
+      run.execution_authorization_id::text,run.reserved_micro_usd::text,run.provider_call_count,run.status,
+      authority.status authority_status FROM signal_topic_evaluation_v2_runs run
+      JOIN signal_topic_evaluation_v2_execution_authorizations authority ON authority.id=run.execution_authorization_id
+      WHERE run.id=$1::uuid FOR UPDATE OF run,authority`,[args.run_id])).rows[0];
+    if(!run||run.status!=="in_progress"||run.authority_status!=="claimed"
+      ||run.provider_call_count!==args.provider_call_count){
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_failure_run_state_invalid",409);
+    }
+    if(args.observed_cost_micro_usd>parseSafeInteger(run.reserved_micro_usd)){
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_settlement_exceeds_reservation",422);
+    }
+    const ambiguous=args.outcome==="ambiguous_after_send";
+    const status=ambiguous?"outcome_unknown":"failed";
+    const settled=ambiguous?null:args.observed_cost_micro_usd;
+    await client.query(`UPDATE signal_topic_evaluation_v2_runs SET status=$2,error_code=$3,
+      total_input_tokens=$4,total_output_tokens=$5,settled_micro_usd=$6,completed_at=clock_timestamp()
+      WHERE id=$1::uuid`,[args.run_id,status,args.error_code,args.observed_input_tokens,
+      args.observed_output_tokens,settled]);
+    await client.query(`UPDATE signal_topic_evaluation_v2_execution_authorizations SET status=$2,error_code=$3,
+      settled_micro_usd=$4,provider_call_count=$5,completed_at=clock_timestamp() WHERE id=$1::uuid`,
+    [run.execution_authorization_id,status,args.error_code,settled,args.provider_call_count]);
+    await client.query("COMMIT");
+    return { status, settled_micro_usd:settled, provider_call_count:args.provider_call_count };
+  } catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
 }
 
 function encodeCursor(snapshot:SnapshotRow,operation:string,filterDigest:string|null,value:string,rank?:number) {
@@ -274,6 +539,78 @@ function decodeCursor(cursor:string,snapshot:SnapshotRow,operation:string,filter
       ||decoded.payload.filter_digest!==filterDigest||typeof decoded.payload.value!=="string")throw new Error();
     return decoded.payload;
   } catch { throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_cursor_invalid",422); }
+}
+type ExecutionRunRow={id:string;workspace_id:string;snapshot_id:string;requested_by_user_id:string;
+  execution_authorization_id:string;status:string;provider_call_count:number;provider_execution_enabled:boolean;
+  flight_card:unknown;authority_status:string;model:string;input_micro_usd_per_token:string;
+  output_micro_usd_per_token:string;snapshot_digest:string};
+
+function assertExecutionConfiguration(configuration: SignalTopicEvaluationV2ExecutionConfiguration) {
+  if (!configuration.enabled) throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_disabled", 403);
+  if (configuration.runtime_profile !== "uat") {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_runtime_profile_invalid", 409);
+  }
+  if (configuration.provider !== "anthropic") {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_configuration_invalid", 422);
+  }
+  if (!configuration.credential_configured) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_product_provider_unavailable", 409);
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{2,159}$/u.test(configuration.model)
+      || !/^[a-z0-9][a-z0-9._:-]{2,159}$/u.test(configuration.pricing_version)
+      || ![configuration.input_micro_usd_per_token, configuration.output_micro_usd_per_token]
+        .every((value)=>Number.isSafeInteger(value)&&value>=0&&value<=1_000_000)) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_configuration_invalid", 422);
+  }
+  const card=parseExecutionFlightCard(configuration.flight_card);
+  if (!card.execution_enabled) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_configuration_invalid", 422);
+  }
+}
+
+function parseExecutionFlightCard(value: unknown): SignalTopicEvaluationFlightCardV2 {
+  if (!value || typeof value !== "object") {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_flight_card_invalid", 422);
+  }
+  const card=value as Record<string,unknown>;
+  if (card.contract_version!==SIGNAL_TOPIC_EVALUATION_V2_CONTRACT||card.execution_enabled!==true
+      ||card.no_retry!==true||card.action_time_confirmation_required!==true
+      ||card.preserve_complete_candidate_pool!==true||card.top_view_limit!==10) {
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_flight_card_invalid", 422);
+  }
+  try{return buildSignalTopicEvaluationExecutionFlightCardV2({
+    provider_calls_allowed:asSafeCardInteger(card.provider_calls_allowed),
+    max_model_turns:asSafeCardInteger(card.max_model_turns),max_tool_calls:asSafeCardInteger(card.max_tool_calls),
+    max_tool_result_bytes:asSafeCardInteger(card.max_tool_result_bytes),
+    max_total_tool_result_bytes:asSafeCardInteger(card.max_total_tool_result_bytes),
+    max_total_input_tokens:asSafeCardInteger(card.max_total_input_tokens),
+    max_total_output_tokens:asSafeCardInteger(card.max_total_output_tokens),
+    hard_cap_micro_usd:asSafeCardInteger(card.hard_cap_micro_usd)
+  });}catch(error){if(error instanceof SignalTopicEvaluationV2Error)throw error;
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_flight_card_invalid",422);}
+}
+
+function asSafeCardInteger(value:unknown){if(typeof value!=="number"||!Number.isSafeInteger(value)){
+  throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_flight_card_invalid",422);
+}return value;}
+function parseSafeInteger(value:string){const parsed=Number(value);if(!Number.isSafeInteger(parsed)||parsed<0){
+  throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_execution_state_invalid",500);
+}return parsed;}
+function reserveMicroUsd(card:SignalTopicEvaluationFlightCardV2,
+  configuration:SignalTopicEvaluationV2ExecutionConfiguration){
+  const input=Math.ceil(card.max_total_input_tokens*configuration.input_micro_usd_per_token);
+  const output=Math.ceil(card.max_total_output_tokens*configuration.output_micro_usd_per_token);
+  const total=input+output;
+  if(!Number.isSafeInteger(total)||total<1||total>card.hard_cap_micro_usd){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_hard_cap_insufficient",422);
+  }return total;}
+function mapExecutionAuthorityConflict(error:unknown){
+  if(error instanceof SignalTopicEvaluationV2Error)return error;
+  const pgError=error as {code?:unknown;constraint?:unknown};
+  if(pgError.code!=="23505")return error;
+  const constraint=typeof pgError.constraint==="string"?pgError.constraint:"";
+  return new SignalTopicEvaluationV2Error(constraint.includes("idempotency")
+    ?"topic_evaluation_v2_idempotency_already_used":"topic_evaluation_v2_execution_already_active",409);
 }
 function assertActor(actor:SignalTopicEvaluationActorV2){if(actor.user_type!=="noisia_internal"){
   throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_forbidden",403);}}
