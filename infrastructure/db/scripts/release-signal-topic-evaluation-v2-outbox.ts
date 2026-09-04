@@ -77,13 +77,23 @@ type RunnerContext = {
   mode: Mode;
   localRehearsal: boolean;
   evidenceDir: string;
-  databaseUrl: string;
-  targetFingerprint: string;
+  databaseTarget: SealedDatabaseTarget;
   releaseCommit: string;
   migrationSql: string;
   preAttestation: Attestation;
   preAttestationBytes: Buffer;
 };
+
+export type SealedDatabaseTarget = Readonly<{
+  protocol: "postgresql:";
+  hostname: string;
+  port: number;
+  username: string;
+  password: string;
+  database: string;
+  sslMode: "disable" | "require";
+  fingerprint: string;
+}>;
 
 export function stable(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -100,15 +110,44 @@ export function allowlistDigest() {
   return digest(`${[...SIGNAL_TOPIC_EVALUATION_V2_0114_RELEASE_ALLOWLIST].sort().join("\n")}\n`);
 }
 
-export function databaseTargetFingerprint(value: string) {
+export function canonicalizeDatabaseTarget(value: string, localRehearsal: boolean): SealedDatabaseTarget {
   const url = new URL(value);
-  return digest([
-    url.protocol,
-    url.hostname.toLowerCase(),
-    url.port || "5432",
-    url.pathname.replace(/^\//u, ""),
-    decodeURIComponent(url.username)
-  ].join("|"));
+  if (!new Set(["postgres:", "postgresql:"]).has(url.protocol) || url.hash) {
+    throw new Error("The database target must be a canonical PostgreSQL URI without a fragment.");
+  }
+  const queryEntries = [...url.searchParams.entries()];
+  const allowedSslMode = localRehearsal ? "disable" : "require";
+  if (queryEntries.some(([key, entryValue]) => key !== "sslmode" || entryValue !== allowedSslMode)
+      || queryEntries.filter(([key]) => key === "sslmode").length > 1) {
+    throw new Error("Database URI query routing overrides are forbidden.");
+  }
+  const hostname = url.hostname.toLowerCase();
+  const port = Number(url.port || "5432");
+  const username = decodeURIComponent(url.username);
+  const password = decodeURIComponent(url.password);
+  const database = decodeURIComponent(url.pathname.replace(/^\//u, ""));
+  if (!hostname || !username || !database || database.includes("/")
+      || !Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("The canonical PostgreSQL target authority is incomplete.");
+  }
+  const fingerprint = digest(["postgresql:", hostname, String(port), database, username].join("|"));
+  return Object.freeze({ protocol: "postgresql:", hostname, port, username, password, database,
+    sslMode: localRehearsal ? "disable" : "require", fingerprint });
+}
+
+export function databaseTargetFingerprint(value: string, localRehearsal = false) {
+  return canonicalizeDatabaseTarget(value, localRehearsal).fingerprint;
+}
+
+export function postgresClientConfiguration(target: SealedDatabaseTarget, applicationName: string): pg.ClientConfig {
+  return { host: target.hostname, port: target.port, user: target.username, password: target.password,
+    database: target.database, ssl: target.sslMode === "disable" ? false : { rejectUnauthorized: false },
+    application_name: applicationName };
+}
+
+export function pgDumpConnectionEnvironment(target: SealedDatabaseTarget) {
+  return { PGHOST: target.hostname, PGPORT: String(target.port), PGUSER: target.username,
+    PGDATABASE: target.database, PGSSLMODE: target.sslMode };
 }
 
 export function validateAttestation(args: {
@@ -161,11 +200,8 @@ export function assertFresh(recordedAt: unknown, now = Date.now()) {
 
 export async function runSignalTopicEvaluationV20114Release(env: NodeJS.ProcessEnv, argv: string[]) {
   const context = await loadContext(env, argv);
-  const client = new pg.Client({
-    connectionString: context.databaseUrl,
-    ssl: context.localRehearsal ? false : { rejectUnauthorized: false },
-    application_name: `noisia-topic-evaluation-0114-${context.mode}`
-  });
+  const client = new pg.Client(postgresClientConfiguration(context.databaseTarget,
+    `noisia-topic-evaluation-0114-${context.mode}`));
   await client.connect();
   try {
     await client.query("SET statement_timeout='15min'");
@@ -190,11 +226,14 @@ async function loadContext(env: NodeJS.ProcessEnv, argv: string[]): Promise<Runn
   const localRehearsal = env[`${ENV_PREFIX}_LOCAL_REHEARSAL`] === "true";
   const evidenceDir = required(env, `${ENV_PREFIX}_EVIDENCE_DIR`);
   const databaseUrl = required(env, `${ENV_PREFIX}_DATABASE_URL`);
-  const url = new URL(databaseUrl);
-  if (localRehearsal && !new Set(["127.0.0.1", "localhost", "::1"]).has(url.hostname)) {
+  if (env[`${ENV_PREFIX}_PG_TOOL_HOST`] !== undefined || env[`${ENV_PREFIX}_PG_TOOL_PORT`] !== undefined) {
+    throw new Error("Alternate pg_dump host or port overrides are forbidden.");
+  }
+  const databaseTarget = canonicalizeDatabaseTarget(databaseUrl, localRehearsal);
+  if (localRehearsal && !new Set(["127.0.0.1", "localhost", "::1"]).has(databaseTarget.hostname)) {
     throw new Error("Local rehearsal requires an explicitly loopback PostgreSQL target.");
   }
-  const targetFingerprint = databaseTargetFingerprint(databaseUrl);
+  const targetFingerprint = databaseTarget.fingerprint;
   if (!localRehearsal && targetFingerprint !== EXPECTED.uatTargetFingerprint) {
     throw new Error("The configured database is not the sealed Preview/UAT target.");
   }
@@ -209,7 +248,7 @@ async function loadContext(env: NodeJS.ProcessEnv, argv: string[]): Promise<Runn
     phase: "pre_apply", localRehearsal, targetFingerprint, releaseCommit });
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   await chmod(evidenceDir, 0o700);
-  return { mode, localRehearsal, evidenceDir, databaseUrl, targetFingerprint, releaseCommit,
+  return { mode, localRehearsal, evidenceDir, databaseTarget, releaseCommit,
     migrationSql, preAttestation, preAttestationBytes };
 }
 
@@ -247,6 +286,7 @@ async function readOnly(client: pg.Client, context: RunnerContext, env: NodeJS.P
       if (applyReceipt.mode !== "apply" || applyReceipt.action !== "applied_exactly_once"
           || applyReceipt.state?.migration_state !== "complete"
           || applyReceipt.release?.commit !== context.releaseCommit
+          || applyReceipt.target?.target_fingerprint !== context.databaseTarget.fingerprint
           || applyReceipt.pre_attestation_sha256 !== digest(context.preAttestationBytes)) {
         throw new Error("Verify requires the exact sealed 0114 apply receipt.");
       }
@@ -255,7 +295,7 @@ async function readOnly(client: pg.Client, context: RunnerContext, env: NodeJS.P
       assertPrivateFile(path);
       const bytes = await readFile(path);
       verification = validateAttestation({ value: JSON.parse(bytes.toString("utf8")), phase: "post_apply",
-        localRehearsal: context.localRehearsal, targetFingerprint: context.targetFingerprint,
+        localRehearsal: context.localRehearsal, targetFingerprint: context.databaseTarget.fingerprint,
         releaseCommit: context.releaseCommit,
         workersDeploymentBefore: context.preAttestation.workers.deployment_id_before });
       verificationDigest = digest(bytes);
@@ -283,6 +323,7 @@ async function capture(client: pg.Client, context: RunnerContext, env: NodeJS.Pr
   if (preflight.mode !== "preflight" || preflight.writes_performed !== false
       || preflight.state?.migration_state !== "absent"
       || preflight.release?.commit !== context.releaseCommit
+      || preflight.target?.target_fingerprint !== context.databaseTarget.fingerprint
       || preflight.pre_attestation_sha256 !== digest(context.preAttestationBytes)) {
     throw new Error("A fresh sealed 0114 preflight is required before restore capture.");
   }
@@ -336,6 +377,8 @@ async function apply(client: pg.Client, context: RunnerContext, env: NodeJS.Proc
       || restore.restore?.file !== "preview-uat-before-0114.public.dump"
       || typeof restore.restore?.sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(restore.restore.sha256)
       || !Number.isSafeInteger(restore.restore?.bytes) || restore.restore.bytes <= 0
+      || preflight.target?.target_fingerprint !== context.databaseTarget.fingerprint
+      || restore.target?.target_fingerprint !== context.databaseTarget.fingerprint
       || restore.preflight_sha256 !== digest(preflightBytes)
       || preflight.pre_attestation_sha256 !== digest(context.preAttestationBytes)
       || restore.pre_attestation_sha256 !== digest(context.preAttestationBytes)
@@ -366,7 +409,7 @@ async function apply(client: pg.Client, context: RunnerContext, env: NodeJS.Proc
     await client.query(`INSERT INTO signal_workspace_data_plane_migration_ledger(
       migration_name, ordinal, checksum_sha256, disposition, runner_version, target_fingerprint
     ) VALUES($1,114,$2,'applied','topic-evaluation-v2-0114-release-v1',$3)`,
-    [MIGRATION_FILE, EXPECTED.migration0114, context.targetFingerprint]);
+    [MIGRATION_FILE, EXPECTED.migration0114, context.databaseTarget.fingerprint]);
     const after = await inspect(client);
     if (after.migration_state !== "complete") throw new Error("0114 ledger or sentinel verification failed.");
     assertInvariantState(after);
@@ -475,15 +518,12 @@ function assertInvariantState(state: Awaited<ReturnType<typeof inspect>>) {
 }
 
 async function runPgDump(context: RunnerContext, env: NodeJS.ProcessEnv, destination: string) {
-  const url = new URL(context.databaseUrl);
+  const target = context.databaseTarget;
   const container = env[`${ENV_PREFIX}_PG_TOOL_CONTAINER`];
-  const toolHost = env[`${ENV_PREFIX}_PG_TOOL_HOST`] ?? url.hostname;
-  const toolPort = (env[`${ENV_PREFIX}_PG_TOOL_PORT`] ?? url.port) || "5432";
-  const password = decodeURIComponent(url.password);
+  const password = target.password;
   if (/\r|\n/u.test(password)) throw new Error("The database password cannot be safely supplied to pg_dump.");
   const args = ["--format=custom", "--no-owner", "--no-acl", "--schema=public"];
-  const connectionEnv = { PGHOST: toolHost, PGPORT: toolPort, PGUSER: decodeURIComponent(url.username),
-    PGDATABASE: url.pathname.slice(1), PGSSLMODE: context.localRehearsal ? "disable" : "require" };
+  const connectionEnv = pgDumpConnectionEnvironment(target);
   if (container) {
     await spawnToFile("docker", ["exec", "-i", ...Object.entries(connectionEnv).flatMap(([key, value]) =>
       ["-e", `${key}=${value}`]), container, "sh", "-ceu",
@@ -570,7 +610,7 @@ function envelope(context: RunnerContext, state: Record<string, unknown>, writes
 
 function publicTarget(context: RunnerContext) {
   return { environment: context.localRehearsal ? "local-disposable" : "Preview/UAT",
-    target_fingerprint: context.targetFingerprint, production_accessed: false };
+    target_fingerprint: context.databaseTarget.fingerprint, production_accessed: false };
 }
 
 function releaseIdentity(context: RunnerContext) {

@@ -11,8 +11,11 @@ import {
   SIGNAL_TOPIC_EVALUATION_V2_0114_RELEASE_ALLOWLIST,
   allowlistDigest,
   assertFresh,
+  canonicalizeDatabaseTarget,
   databaseTargetFingerprint,
   digest,
+  pgDumpConnectionEnvironment,
+  postgresClientConfiguration,
   stable,
   validateAttestation
 } from "./release-signal-topic-evaluation-v2-outbox";
@@ -45,7 +48,8 @@ function attestation(args: { phase: "pre_apply" | "post_apply"; fingerprint: str
 }
 
 test("0114 release helpers seal deterministic target, allowlist and freshness", () => {
-  assert.match(databaseTargetFingerprint("postgresql://local@127.0.0.1:55439/db"), /^sha256:[0-9a-f]{64}$/u);
+  assert.match(databaseTargetFingerprint("postgresql://local@127.0.0.1:55439/db", true),
+    /^sha256:[0-9a-f]{64}$/u);
   assert.equal(SIGNAL_TOPIC_EVALUATION_V2_0114_RELEASE_ALLOWLIST.length, 19);
   assert.match(allowlistDigest(), /^sha256:[0-9a-f]{64}$/u);
   assert.equal(stable({ b: 2, a: [1] }), '{"a":[1],"b":2}');
@@ -54,8 +58,36 @@ test("0114 release helpers seal deterministic target, allowlist and freshness", 
   assert.throws(() => assertFresh(new Date(Date.now() - 3_600_001).toISOString()), /stale/u);
 });
 
+test("0114 canonical target rejects URI routing overrides and binds Client plus pg_dump identically", () => {
+  const canonical = canonicalizeDatabaseTarget("postgres://runner:local@EXAMPLE.test/release", false);
+  const equivalent = canonicalizeDatabaseTarget(
+    "postgresql://runner:local@example.test:5432/release?sslmode=require", false);
+  assert.deepEqual(equivalent, canonical);
+  assert.equal(canonical.fingerprint, databaseTargetFingerprint(
+    "postgresql://runner:other-password@example.test/release?sslmode=require"));
+  const client = postgresClientConfiguration(canonical, "sealed-test");
+  assert.deepEqual({ host: client.host, port: client.port, user: client.user, password: client.password,
+    database: client.database, ssl: client.ssl }, { host: "example.test", port: 5432, user: "runner",
+    password: "local", database: "release", ssl: { rejectUnauthorized: false } });
+  assert.deepEqual(pgDumpConnectionEnvironment(canonical), { PGHOST: "example.test", PGPORT: "5432",
+    PGUSER: "runner", PGDATABASE: "release", PGSSLMODE: "require" });
+
+  const overrides = ["host=evil.test", "hostaddr=127.0.0.1", "port=6543", "user=other",
+    "username=other", "database=other", "dbname=other", "socket=%2Ftmp%2Fevil", "service=other",
+    "options=-csearch_path%3Devil", "target_session_attrs=read-write", "sslmode=disable",
+    "sslcert=%2Ftmp%2Fcert", "application_name=alternate"];
+  for (const override of overrides) assert.throws(() => canonicalizeDatabaseTarget(
+    `postgresql://runner:local@example.test/release?${override}`, false), /query routing overrides/u,
+  override);
+  assert.throws(() => canonicalizeDatabaseTarget(
+    "postgresql://runner:local@example.test/release?sslmode=require&sslmode=require", false),
+  /query routing overrides/u);
+  assert.throws(() => canonicalizeDatabaseTarget(
+    "postgresql://runner:local@example.test/release#host=evil.test", false), /without a fragment/u);
+});
+
 test("0114 deployment attestations distinguish pre-apply and post-apply service truth", () => {
-  const fingerprint = databaseTargetFingerprint("postgresql://local@localhost:55439/db");
+  const fingerprint = databaseTargetFingerprint("postgresql://local@localhost:55439/db", true);
   const pre = attestation({ phase: "pre_apply", fingerprint });
   assert.equal(validateAttestation({ value: pre, phase: "pre_apply", localRehearsal: true,
     targetFingerprint: fingerprint, releaseCommit: "WORKTREE" }).phase, "pre_apply");
@@ -64,6 +96,9 @@ test("0114 deployment attestations distinguish pre-apply and post-apply service 
     targetFingerprint: fingerprint, releaseCommit: "WORKTREE",
     workersDeploymentBefore: "local-worker-unchanged" }).phase, "post_apply");
   assert.throws(() => validateAttestation({ value: { ...pre, allowlist_digest: "sha256:forged" },
+    phase: "pre_apply", localRehearsal: true, targetFingerprint: fingerprint,
+    releaseCommit: "WORKTREE" }), /attestation is invalid/u);
+  assert.throws(() => validateAttestation({ value: { ...pre, target_fingerprint: "sha256:alternate" },
     phase: "pre_apply", localRehearsal: true, targetFingerprint: fingerprint,
     releaseCommit: "WORKTREE" }), /attestation is invalid/u);
   assert.throws(() => validateAttestation({ value: { ...post, workers: {
@@ -82,7 +117,7 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
   const evidenceDir = await mkdtemp(resolve(tmpdir(), "noisia-0114-runner-"));
   const prePath = resolve(evidenceDir, "pre-attestation.private.json");
   const postPath = resolve(evidenceDir, "post-attestation.private.json");
-  const fingerprint = databaseTargetFingerprint(DATABASE_URL);
+  const fingerprint = databaseTargetFingerprint(DATABASE_URL, true);
   await writePrivate(prePath, attestation({ phase: "pre_apply", fingerprint }));
   await writePrivate(postPath, attestation({ phase: "post_apply", fingerprint }));
   const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: false, max: 2 });
@@ -99,11 +134,14 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
   };
   if (process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_CONTAINER) {
     common[`${PREFIX}_PG_TOOL_CONTAINER`] = process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_CONTAINER;
-    common[`${PREFIX}_PG_TOOL_HOST`] = process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_HOST ?? "127.0.0.1";
-    common[`${PREFIX}_PG_TOOL_PORT`] = process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_PORT ?? url.port;
   }
 
   try {
+    assert.equal((await execute("preflight", { ...common, [`${PREFIX}_PG_TOOL_HOST`]: "alternate" })).code, 1,
+      "a tool host override is rejected before DB access");
+    assert.equal((await execute("preflight", { ...common, [`${PREFIX}_PG_TOOL_PORT`]: "6543" })).code, 1,
+      "a tool port override is rejected before DB access");
+    assert.equal(await migrationCount(pool), 0);
     assert.equal((await execute("preflight", common)).code, 0);
     assert.equal((await execute("capture", common)).code, 0);
     const preflight = await readFile(resolve(evidenceDir, "preflight.sanitized.json"));
@@ -117,6 +155,16 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
     assert.equal((await execute("apply", { ...authorized,
       [`${PREFIX}_RESTORE_SHA256`]: "sha256:forged" })).code, 1, "receipt mismatch fails before SQL");
     assert.equal(await migrationCount(pool), 0);
+    const parsedRestore = JSON.parse(restore.toString("utf8"));
+    await writePrivate(resolve(evidenceDir, "restore.sanitized.json"), {
+      ...parsedRestore, target: { ...parsedRestore.target, target_fingerprint: "sha256:alternate" }
+    });
+    const alternateRestore = await readFile(resolve(evidenceDir, "restore.sanitized.json"));
+    assert.equal((await execute("apply", { ...authorized,
+      [`${PREFIX}_RESTORE_SHA256`]: digest(alternateRestore) })).code, 1,
+    "a restore receipt from another target is rejected before SQL");
+    assert.equal(await migrationCount(pool), 0);
+    await writeFile(resolve(evidenceDir, "restore.sanitized.json"), restore, { mode: 0o600 });
 
     const concurrent = await Promise.all([execute("apply", authorized), execute("apply", authorized)]);
     assert.equal(concurrent.filter((result) => result.code === 0).length, 1,
