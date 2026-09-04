@@ -124,3 +124,23 @@ Neither the Worker queue nor the Studio write endpoint is enabled by default. An
 activation, migration application, data population or enabled flight still requires a separate
 audited gate after UAT target/restore/API review. Discovery Review remains a separate product
 surface.
+
+## Candidate-only reversible management
+
+Migration `0115_signal_topic_evaluation_v2_candidate_review.sql` adds an editorial layer without
+changing the immutable V2 model-output tables. The UPDATE/DELETE guards installed by 0112 remain
+the authority for snapshots, memberships, retrievals, model turns, generated candidates, original
+candidate revisions, evidence links and rankings. An operator edit never updates those rows.
+
+The management projection identifies a candidate by both its sealed `run_key` and
+`candidate_key`. A server-authorized internal operator may append one of four closed commands:
+save the name/description/inclusion/exclusion fields, reject, restore, or undo only the immediately
+preceding editorial revision. Each command requires a fresh idempotency key and the exact current
+revision/state token. The database binds the operation, actor, input digest, predecessor, result
+revision and one event as a complete deferred cohort; direct or partial writes fail closed.
+
+Editorial states are only `pending` and `rejected`. Rejecting does not delete evidence, and restore
+or undo does not rewrite history. No command can approve, adopt, merge, publish or serve a Topic.
+The list/detail API returns bounded structured candidate fields, opaque evidence references and
+digests; it never returns a raw provider response, prompt, corpus export, credential or private
+mention identity. Discovery Review and Topic Contract adoption remain separate, later controls.

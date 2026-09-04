@@ -5,7 +5,9 @@ import {
   reviewSignalTopicEvaluationCandidateV1,
   signalTopicEvaluationConfigurationFromEnvV1
 } from "@noisia/db";
-import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2 }
+import { loadSignalTopicEvaluationV2CandidateDetail,loadSignalTopicEvaluationV2CandidateManagement,
+  loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2,
+  reviewSignalTopicEvaluationV2Candidate }
   from "@noisia/db";
 import { createSignalTopicEvaluationV2ExecutionAuthority,
   type SignalTopicEvaluationV2ExecutionConfiguration } from "@noisia/db";
@@ -82,6 +84,28 @@ export async function navigateSignalTopicEvaluationEvidenceProductV2(args:{
   const{pool}=await import("@/lib/db");
   return navigateSignalTopicEvaluationEvidenceV2({queryable:pool,workspace_id:args.workspace.id,
     actor:actor(args.actor),request:args.request});
+}
+
+export async function loadSignalTopicEvaluationV2CandidatesProduct(args:{workspace:ResolvedSignalWorkspace;
+  actor:SignalWorkspaceUser;cursor?:string|null;limit?:number}){
+  const{pool}=await import("@/lib/db");
+  return loadSignalTopicEvaluationV2CandidateManagement({queryable:pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),cursor:args.cursor,limit:args.limit});
+}
+
+export async function loadSignalTopicEvaluationV2CandidateDetailProduct(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;runKey:string;candidateKey:string}){
+  const{pool}=await import("@/lib/db");
+  return loadSignalTopicEvaluationV2CandidateDetail({queryable:pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),run_key:args.runKey,candidate_key:args.candidateKey});
+}
+
+export async function reviewSignalTopicEvaluationV2CandidateProduct(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;
+  command:Parameters<typeof reviewSignalTopicEvaluationV2Candidate>[0]["command"]}){
+  const{pool}=await import("@/lib/db");
+  return reviewSignalTopicEvaluationV2Candidate({pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),idempotency_key:args.idempotencyKey,command:args.command});
 }
 
 /**

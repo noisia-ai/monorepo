@@ -2216,6 +2216,20 @@
         },
         "digests": { "snapshot": "Snapshot {digest}", "authority": "Autoridad {digest}" },
         "errors": { "title": "La evidencia completa no está disponible", "body": "No se pudo verificar el preflight de solo lectura. No se habilitó ninguna ejecución." }
+      },
+      "fullEvidenceTopicCandidates": {
+        "title": "Candidatos de Topic con evidencia completa",
+        "subtitle": "Copias de revisión editables sobre output y evidencia de modelo inmutables.",
+        "loading": "Cargando revisión de candidatos…",
+        "boundary": "Editar, rechazar, restaurar y deshacer sólo agregan revisiones editoriales. Nunca adoptan, publican ni sirven un Topic.",
+        "actions": { "refresh": "Actualizar", "more": "Cargar más", "close": "Cerrar", "save": "Guardar", "reject": "Rechazar", "restore": "Restaurar", "undo": "Deshacer" },
+        "summary": { "total": "Candidatos", "totalHint": "Pool editable completo", "pending": "Pendientes", "pendingHint": "Disponibles para revisión", "rejected": "Rechazados", "rejectedHint": "Estado editorial reversible" },
+        "states": { "pending": "Pendiente", "rejected": "Rechazado" },
+        "evidence": "{count, plural, one {# referencia de evidencia} other {# referencias de evidencia}}",
+        "empty": { "title": "Aún no hay candidatos V2", "body": "El control plane está listo, pero no se ha creado un resultado con evidencia completa." },
+        "drawer": { "title": "Revisar candidato con evidencia completa", "eyebrow": "Revisión sólo de candidato", "boundary": "El payload original del modelo, evidencia, ranking y lineage permanecen inmutables.", "evidenceTitle": "Provenance inmutable", "evidenceBody": "{count} referencias de evidencia en {clusters} clusters fuente.", "originalDigest": "Digest original del modelo: {digest}" },
+        "fields": { "title": "Nombre", "description": "Descripción", "inclusion": "Incluye — un elemento por línea", "exclusion": "Excluye — un elemento por línea" },
+        "errors": { "title": "La revisión de candidatos no está disponible", "load": "No se pudo cargar la revisión de candidatos.", "command": "No se pudo guardar el cambio del candidato." }
       }
     },
     "data": {

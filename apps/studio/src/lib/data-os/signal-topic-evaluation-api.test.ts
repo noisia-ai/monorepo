@@ -4,8 +4,12 @@ import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvide
   from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
 import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
   parseSignalTopicEvaluationSuccessorStartRequestV1,
+  parseSignalTopicEvaluationV2CandidateCommand,parseSignalTopicEvaluationV2CandidateDetailQuery,
+  parseSignalTopicEvaluationV2CandidatePageQuery,
   parseSignalTopicEvaluationV2ExecutionStartRequest } from "./signal-topic-evaluation-api";
 import { signalTopicEvaluationV2ExecutionConfigurationFromEnv } from "./signal-topic-evaluation";
+import { parseSignalTopicEvaluationV2CandidateDetail,parseSignalTopicEvaluationV2CandidatePage }
+  from "./signal-topic-evaluation-v2-management";
 import { parseSignalTopicEvidenceNavigationRequestV2,signalTopicEvaluationFlightCardV2,
   signalTopicEvidenceNavigationResultV2 }
   from "@noisia/query-engine";
@@ -138,6 +142,75 @@ test("V2 server-owned configuration accepts the documented twenty-dollar hard ca
   assert.equal(configuration.flight_card.hard_cap_micro_usd,20_000_000);
   assert.equal(configuration.input_micro_usd_per_token,3);
   assert.equal(configuration.output_micro_usd_per_token,15);
+});
+
+test("full-evidence candidate management is closed, run-bound, and candidate-only",async()=>{
+  const digest=`sha256:${"5".repeat(64)}`;
+  const candidate={candidate_key:"candidate.one",title:"One",description:"Description",
+    inclusion:["Included"],exclusion:[],source_cluster_keys:["cluster.1"],evidence_count:1,rank:1,
+    review_state:"pending" as const,revision:1,state_token:digest,undo_target_revision:null,
+    updated_at:"2026-09-04T00:00:00.000Z"};
+  const page={contract_version:"signal-topic-evaluation-v2-candidate-page-v1",run_key:"run.v2.one",
+    items:[candidate],total:1,pending:1,rejected:0,limit:20,next_cursor:null,
+    topic_adoption:false,publication:false,serving:false};
+  assert.equal(parseSignalTopicEvaluationV2CandidatePage(page).items[0]?.candidate_key,"candidate.one");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidatePage({...page,topic_adoption:true}));
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidatePage({...page,pending:0}));
+  const detail={contract_version:"signal-topic-evaluation-v2-candidate-detail-v1",run_key:"run.v2.one",
+    candidate:{...candidate,candidate_digest:digest,base_model_payload_digest:digest,
+      base_model_payload:{candidate_key:"candidate.one",title:"One",description:"Description",
+        inclusion:["Included"],exclusion:[],explanation:"Evidence-backed",
+        source_cluster_keys:["cluster.1"],evidence_refs:[digest],status:"pending"},evidence:[{
+          evidence_ref:digest,explanation_digest:digest,retrieval_operation:"representative_mentions",
+          retrieval_index:0}]},topic_adoption:false,publication:false,serving:false};
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(detail).candidate.review_state,"pending");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,
+    candidate:{...detail.candidate,raw_provider_response:{private:true}}}));
+  const save=parseSignalTopicEvaluationV2CandidateCommand({action:"save",run_key:"run.v2.one",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,values:{title:"Edited",
+      description:"Description",inclusion:["Included"],exclusion:[]}});
+  assert.equal(save.action,"save");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateCommand({action:"save",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,values:{title:"Edited",
+      description:"Description",inclusion:["Included"],exclusion:[]}}),
+  "commands cannot be detached from the exact completed run");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateCommand({action:"reject",run_key:"run.v2.one",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,rationale:"not accepted"}));
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidatePageQuery(
+    "https://example.test/candidates?limit=25"),{cursor:null,limit:25});
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidateDetailQuery(
+    "https://example.test/candidate?run_key=run.v2.one"),{run_key:"run.v2.one"});
+
+  const[listing,detailRoute,commandRoute,component,openapi]=await Promise.all([
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/[candidateKey]/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/[candidateKey]/commands/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../components/brands/FullEvidenceTopicCandidateManager.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8")]);
+  for(const source of[listing,detailRoute,commandRoute])assert.match(source,
+    /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(commandRoute,/requireIdempotencyKey/u);assert.match(commandRoute,/candidate_key!==candidateKey/u);
+  assert.match(component,/WorkspaceDrawer/u);assert.match(component,/command\("save"\)/u);
+  assert.match(component,/command\("reject"\)/u);assert.match(component,/command\("restore"\)/u);
+  assert.match(component,/command\("undo"\)/u);
+  assert.doesNotMatch(component,/approve|adopt|publish|serve/u);
+  assert.match(openapi,/operationId: reviewSignalTopicEvaluationV2Candidate/u);
+  assert.match(openapi,/Append one reversible editorial revision; never mutate model output or adopt\/publish\/serve a Topic/u);
+  const require=createRequire(import.meta.url),requireEslint=createRequire(require.resolve("eslint"));
+  const {load}=requireEslint("js-yaml"),Ajv=requireEslint("ajv"),document=load(openapi);
+  const candidatePage=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidatePage",components:document.components});
+  const candidateDetail=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidateDetail",components:document.components});
+  const candidateCommand=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidateCommand",components:document.components});
+  assert.equal(candidatePage(page),true,JSON.stringify(candidatePage.errors));
+  assert.equal(candidateDetail(detail),true,JSON.stringify(candidateDetail.errors));
+  assert.equal(candidateCommand(save),true,JSON.stringify(candidateCommand.errors));
+  assert.equal(candidateCommand({...save,reason:"not permitted"}),false);
 });
 
 test("topic evaluation candidate commands are closed and need no semantic rationale",()=>{
