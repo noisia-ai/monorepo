@@ -24,6 +24,12 @@ const BASE_COMMIT = "75f0873f0321b8f4cfb3e6105aefa5b2614784d5";
 const ENV_PREFIX = "NOISIA_TOPIC_EVALUATION_V2_0114";
 const APPROVAL_LITERAL = "APPLY_0114_EXACTLY_ONCE_TO_PREVIEW_UAT";
 const RECEIPT_MAX_AGE_MS = 60 * 60 * 1000;
+const TRUSTED_PG_DUMP = "/usr/bin/pg_dump";
+const TRUSTED_PG_RESTORE = "/usr/bin/pg_restore";
+const TRUSTED_DOCKER = "/Applications/Docker.app/Contents/Resources/bin/docker";
+const LOCAL_TOOL_CONTAINER = "noisia-topic-evaluation-0114-local-tools";
+const LOCAL_TOOL_IMAGE = "pgvector/pgvector:pg17";
+const LOCAL_TOOL_LABEL = "topic-evaluation-0114-backup-tools";
 const EXPECTED = {
   uatTargetFingerprint: "sha256:0630a1bc2a84b4aa0864bb67312bf20238e778c03a566eae9bdd808661901815",
   protectedDigest: "sha256:5cf291ca7d426ead697b784080fe3b5380f39b4e3965441b8f4df9689645ffdc",
@@ -78,11 +84,22 @@ type RunnerContext = {
   localRehearsal: boolean;
   evidenceDir: string;
   databaseTarget: SealedDatabaseTarget;
+  backupTools: TrustedBackupTools;
   releaseCommit: string;
   migrationSql: string;
   preAttestation: Attestation;
   preAttestationBytes: Buffer;
 };
+
+type TrustedBackupTools = Readonly<{
+  mode: "native";
+  dumpCommand: typeof TRUSTED_PG_DUMP;
+  restoreCommand: typeof TRUSTED_PG_RESTORE;
+} | {
+  mode: "local-disposable-container";
+  dockerCommand: typeof TRUSTED_DOCKER;
+  container: typeof LOCAL_TOOL_CONTAINER;
+}>;
 
 export type SealedDatabaseTarget = Readonly<{
   protocol: "postgresql:";
@@ -142,12 +159,31 @@ export function databaseTargetFingerprint(value: string, localRehearsal = false)
 export function postgresClientConfiguration(target: SealedDatabaseTarget, applicationName: string): pg.ClientConfig {
   return { host: target.hostname, port: target.port, user: target.username, password: target.password,
     database: target.database, ssl: target.sslMode === "disable" ? false : { rejectUnauthorized: false },
-    application_name: applicationName };
+    application_name: applicationName, options: "-c search_path=public" };
 }
 
 export function pgDumpConnectionEnvironment(target: SealedDatabaseTarget) {
   return { PGHOST: target.hostname, PGPORT: String(target.port), PGUSER: target.username,
     PGDATABASE: target.database, PGSSLMODE: target.sslMode };
+}
+
+export function isolatedPgDumpEnvironment(target: SealedDatabaseTarget) {
+  return Object.freeze({ ...pgDumpConnectionEnvironment(target), PGPASSWORD: target.password });
+}
+
+export function validateLocalToolContainerInspection(value: unknown, target: SealedDatabaseTarget) {
+  const rows = value as Array<{ Name?: string; Config?: { Image?: string; Labels?: Record<string, string> };
+    State?: { Running?: boolean }; HostConfig?: { PortBindings?: Record<string, Array<{
+      HostIp?: string; HostPort?: string }> | null> } }>;
+  const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : undefined;
+  const bindings = row?.HostConfig?.PortBindings?.["5432/tcp"];
+  if (target.hostname !== "127.0.0.1" || target.port !== 5432 || target.sslMode !== "disable"
+      || row?.Name !== `/${LOCAL_TOOL_CONTAINER}` || row.Config?.Image !== LOCAL_TOOL_IMAGE
+      || row.Config?.Labels?.["noisia.local-purpose"] !== LOCAL_TOOL_LABEL
+      || row.State?.Running !== true || !Array.isArray(bindings) || bindings.length !== 1
+      || bindings[0]?.HostIp !== "127.0.0.1" || bindings[0]?.HostPort !== "5432") {
+    throw new Error("The fixed local disposable PostgreSQL tool container is not trusted.");
+  }
 }
 
 export function validateAttestation(args: {
@@ -226,13 +262,16 @@ async function loadContext(env: NodeJS.ProcessEnv, argv: string[]): Promise<Runn
   const localRehearsal = env[`${ENV_PREFIX}_LOCAL_REHEARSAL`] === "true";
   const evidenceDir = required(env, `${ENV_PREFIX}_EVIDENCE_DIR`);
   const databaseUrl = required(env, `${ENV_PREFIX}_DATABASE_URL`);
-  if (env[`${ENV_PREFIX}_PG_TOOL_HOST`] !== undefined || env[`${ENV_PREFIX}_PG_TOOL_PORT`] !== undefined) {
-    throw new Error("Alternate pg_dump host or port overrides are forbidden.");
+  const forbiddenToolSelectors = ["PG_TOOL_HOST", "PG_TOOL_PORT", "PG_DUMP_COMMAND",
+    "PG_RESTORE_COMMAND", "PG_TOOL_CONTAINER"];
+  if (forbiddenToolSelectors.some((name) => env[`${ENV_PREFIX}_${name}`] !== undefined)) {
+    throw new Error("Caller-selected PostgreSQL backup tools or routing overrides are forbidden.");
   }
   const databaseTarget = canonicalizeDatabaseTarget(databaseUrl, localRehearsal);
   if (localRehearsal && !new Set(["127.0.0.1", "localhost", "::1"]).has(databaseTarget.hostname)) {
     throw new Error("Local rehearsal requires an explicitly loopback PostgreSQL target.");
   }
+  const backupTools = resolveTrustedBackupTools(localRehearsal, databaseTarget);
   const targetFingerprint = databaseTarget.fingerprint;
   if (!localRehearsal && targetFingerprint !== EXPECTED.uatTargetFingerprint) {
     throw new Error("The configured database is not the sealed Preview/UAT target.");
@@ -248,8 +287,41 @@ async function loadContext(env: NodeJS.ProcessEnv, argv: string[]): Promise<Runn
     phase: "pre_apply", localRehearsal, targetFingerprint, releaseCommit });
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   await chmod(evidenceDir, 0o700);
-  return { mode, localRehearsal, evidenceDir, databaseTarget, releaseCommit,
+  return { mode, localRehearsal, evidenceDir, databaseTarget, backupTools, releaseCommit,
     migrationSql, preAttestation, preAttestationBytes };
+}
+
+function resolveTrustedBackupTools(localRehearsal: boolean,
+  target: SealedDatabaseTarget): TrustedBackupTools {
+  if (localRehearsal) {
+    assertTrustedExecutable(TRUSTED_DOCKER, new Set([0, process.getuid?.() ?? -1]));
+    const inspected = spawnSync(TRUSTED_DOCKER, ["inspect", "--type", "container", LOCAL_TOOL_CONTAINER], {
+      encoding: "utf8", env: {}
+    });
+    if (inspected.status !== 0) {
+      throw new Error("The fixed local disposable PostgreSQL tool container is unavailable.");
+    }
+    try {
+      validateLocalToolContainerInspection(JSON.parse(inspected.stdout), target);
+    } catch {
+      throw new Error("The fixed local disposable PostgreSQL tool container is unavailable or invalid.");
+    }
+    return Object.freeze({ mode: "local-disposable-container", dockerCommand: TRUSTED_DOCKER,
+      container: LOCAL_TOOL_CONTAINER });
+  }
+  assertTrustedExecutable(TRUSTED_PG_DUMP);
+  assertTrustedExecutable(TRUSTED_PG_RESTORE);
+  return Object.freeze({ mode: "native", dumpCommand: TRUSTED_PG_DUMP,
+    restoreCommand: TRUSTED_PG_RESTORE });
+}
+
+function assertTrustedExecutable(path: string, allowedOwners = new Set([0])) {
+  let stat: ReturnType<typeof statSync>;
+  try { stat = statSync(path); } catch { throw new Error("A fixed trusted PostgreSQL tool is unavailable."); }
+  if (!stat.isFile() || !allowedOwners.has(stat.uid) || (stat.mode & 0o111) === 0
+      || (stat.mode & 0o022) !== 0) {
+    throw new Error("A fixed trusted PostgreSQL tool failed ownership or executable validation.");
+  }
 }
 
 export function assertReleaseAllowlist(releaseCommit: string, localRehearsal: boolean) {
@@ -329,8 +401,8 @@ async function capture(client: pg.Client, context: RunnerContext, env: NodeJS.Pr
   }
   const dumpPath = resolve(context.evidenceDir, "preview-uat-before-0114.public.dump");
   if (existsSync(dumpPath)) throw new Error("Restore capture refuses to reuse an existing 0114 archive.");
-  await runPgDump(context, env, dumpPath);
-  const tocEntries = await verifyArchive(env, dumpPath);
+  await runPgDump(context, dumpPath);
+  const tocEntries = await verifyArchive(context, dumpPath);
   if (tocEntries < 3_000) throw new Error("Restore archive verification found too few table-of-contents entries.");
 
   await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -517,29 +589,33 @@ function assertInvariantState(state: Awaited<ReturnType<typeof inspect>>) {
   if (state.protected_state.digest !== expectedProtected) throw new Error("Protected-state digest mismatch.");
 }
 
-async function runPgDump(context: RunnerContext, env: NodeJS.ProcessEnv, destination: string) {
+async function runPgDump(context: RunnerContext, destination: string) {
   const target = context.databaseTarget;
-  const container = env[`${ENV_PREFIX}_PG_TOOL_CONTAINER`];
   const password = target.password;
   if (/\r|\n/u.test(password)) throw new Error("The database password cannot be safely supplied to pg_dump.");
   const args = ["--format=custom", "--no-owner", "--no-acl", "--schema=public"];
   const connectionEnv = pgDumpConnectionEnvironment(target);
-  if (container) {
-    await spawnToFile("docker", ["exec", "-i", ...Object.entries(connectionEnv).flatMap(([key, value]) =>
-      ["-e", `${key}=${value}`]), container, "sh", "-ceu",
-    "IFS= read -r PGPASSWORD; export PGPASSWORD; exec pg_dump \"$@\"", "sh", ...args], destination, `${password}\n`);
+  if (context.backupTools.mode === "local-disposable-container") {
+    await spawnToFile(context.backupTools.dockerCommand, ["exec", "-i", context.backupTools.container,
+      "/bin/sh", "-ceu", `IFS= read -r secret
+exec env -i PGHOST="$1" PGPORT="$2" PGUSER="$3" PGDATABASE="$4" PGSSLMODE="$5" PGPASSWORD="$secret" \
+  /usr/bin/pg_dump "$6" "$7" "$8" "$9"`, "sealed-pg-dump", connectionEnv.PGHOST,
+      connectionEnv.PGPORT, connectionEnv.PGUSER, connectionEnv.PGDATABASE, connectionEnv.PGSSLMODE,
+      ...args], destination, `${password}\n`, {});
   } else {
-    await spawnToFile(env[`${ENV_PREFIX}_PG_DUMP_COMMAND`] ?? "pg_dump", args, destination, undefined,
-      { ...connectionEnv, PGPASSWORD: password });
+    await spawnToFile(context.backupTools.dumpCommand, args, destination, undefined,
+      isolatedPgDumpEnvironment(target));
   }
   await chmod(destination, 0o600);
 }
 
-async function verifyArchive(env: NodeJS.ProcessEnv, source: string) {
-  const container = env[`${ENV_PREFIX}_PG_TOOL_CONTAINER`];
-  const command = container ? "docker" : env[`${ENV_PREFIX}_PG_RESTORE_COMMAND`] ?? "pg_restore";
-  const args = container ? ["exec", "-i", container, "pg_restore", "--list"] : ["--list"];
-  const output = await spawnWithInput(command, args, source);
+async function verifyArchive(context: RunnerContext, source: string) {
+  const command = context.backupTools.mode === "local-disposable-container"
+    ? context.backupTools.dockerCommand : context.backupTools.restoreCommand;
+  const args = context.backupTools.mode === "local-disposable-container"
+    ? ["exec", "-i", context.backupTools.container, "/usr/bin/env", "-i",
+      "/usr/bin/pg_restore", "--list"] : ["--list"];
+  const output = await spawnWithInput(command, args, source, {});
   return output.split("\n").filter((line) => /^\d+;/u.test(line)).length;
 }
 
@@ -548,7 +624,7 @@ function spawnToFile(command: string, args: string[], destination: string, stdin
   return new Promise<void>((resolvePromise, reject) => {
     const output = createWriteStream(destination, { mode: 0o600 });
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"],
-      env: environment ? { ...process.env, ...environment } : process.env });
+      env: environment ?? {} });
     let stderr = "";
     child.stdin.end(stdin);
     child.stdout.pipe(output);
@@ -562,9 +638,9 @@ function spawnToFile(command: string, args: string[], destination: string, stdin
   });
 }
 
-function spawnWithInput(command: string, args: string[], source: string) {
+function spawnWithInput(command: string, args: string[], source: string, environment: Record<string, string>) {
   return new Promise<string>((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env: environment });
     let stdout = ""; let stderr = "";
     const input = createReadStream(source);
     input.on("error", reject);

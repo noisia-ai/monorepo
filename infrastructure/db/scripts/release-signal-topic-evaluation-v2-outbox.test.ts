@@ -14,9 +14,11 @@ import {
   canonicalizeDatabaseTarget,
   databaseTargetFingerprint,
   digest,
+  isolatedPgDumpEnvironment,
   pgDumpConnectionEnvironment,
   postgresClientConfiguration,
   stable,
+  validateLocalToolContainerInspection,
   validateAttestation
 } from "./release-signal-topic-evaluation-v2-outbox";
 
@@ -67,10 +69,13 @@ test("0114 canonical target rejects URI routing overrides and binds Client plus 
     "postgresql://runner:other-password@example.test/release?sslmode=require"));
   const client = postgresClientConfiguration(canonical, "sealed-test");
   assert.deepEqual({ host: client.host, port: client.port, user: client.user, password: client.password,
-    database: client.database, ssl: client.ssl }, { host: "example.test", port: 5432, user: "runner",
-    password: "local", database: "release", ssl: { rejectUnauthorized: false } });
+    database: client.database, ssl: client.ssl, options: client.options }, { host: "example.test", port: 5432,
+    user: "runner", password: "local", database: "release", ssl: { rejectUnauthorized: false },
+    options: "-c search_path=public" });
   assert.deepEqual(pgDumpConnectionEnvironment(canonical), { PGHOST: "example.test", PGPORT: "5432",
     PGUSER: "runner", PGDATABASE: "release", PGSSLMODE: "require" });
+  assert.deepEqual(isolatedPgDumpEnvironment(canonical), { PGHOST: "example.test", PGPORT: "5432",
+    PGUSER: "runner", PGDATABASE: "release", PGSSLMODE: "require", PGPASSWORD: "local" });
 
   const overrides = ["host=evil.test", "hostaddr=127.0.0.1", "port=6543", "user=other",
     "username=other", "database=other", "dbname=other", "socket=%2Ftmp%2Fevil", "service=other",
@@ -84,6 +89,24 @@ test("0114 canonical target rejects URI routing overrides and binds Client plus 
   /query routing overrides/u);
   assert.throws(() => canonicalizeDatabaseTarget(
     "postgresql://runner:local@example.test/release#host=evil.test", false), /without a fragment/u);
+});
+
+test("0114 local backup tool identity is fixed, disposable and bound to the same endpoint", () => {
+  const target = canonicalizeDatabaseTarget(
+    "postgresql://runner:local@127.0.0.1:5432/release?sslmode=disable", true);
+  const validInspection = { Name: "/noisia-topic-evaluation-0114-local-tools",
+    Config: { Image: "pgvector/pgvector:pg17",
+      Labels: { "noisia.local-purpose": "topic-evaluation-0114-backup-tools" } },
+    State: { Running: true },
+    HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "5432" }] } } };
+  const inspection = [validInspection];
+  assert.doesNotThrow(() => validateLocalToolContainerInspection(inspection, target));
+  assert.throws(() => validateLocalToolContainerInspection([{ ...validInspection,
+    Name: "/caller-selected" }], target), /not trusted/u);
+  assert.throws(() => validateLocalToolContainerInspection([{ ...validInspection,
+    Config: { ...validInspection.Config, Image: "caller/image:latest" } }], target), /not trusted/u);
+  assert.throws(() => validateLocalToolContainerInspection(inspection, canonicalizeDatabaseTarget(
+    "postgresql://runner:local@127.0.0.1:55439/release?sslmode=disable", true)), /not trusted/u);
 });
 
 test("0114 deployment attestations distinguish pre-apply and post-apply service truth", () => {
@@ -125,6 +148,17 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
   assert.equal(protectedDigest, PROTECTED_DIGEST, "the disposable clone retains the sealed protected digest");
   const common: NodeJS.ProcessEnv = {
     ...process.env,
+    PGHOST: "alternate.invalid",
+    PGPORT: "6543",
+    PGUSER: "alternate",
+    PGDATABASE: "alternate",
+    PGSERVICE: "alternate",
+    PGSERVICEFILE: "/tmp/alternate-service",
+    PGPASSFILE: "/tmp/alternate-password",
+    PGSSLMODE: "verify-full",
+    PGSSLCERT: "/tmp/alternate-cert",
+    PGSSLKEY: "/tmp/alternate-key",
+    PGOPTIONS: "-c search_path=alternate",
     [`${PREFIX}_LOCAL_REHEARSAL`]: "true",
     [`${PREFIX}_DATABASE_URL`]: DATABASE_URL,
     [`${PREFIX}_EVIDENCE_DIR`]: evidenceDir,
@@ -132,15 +166,16 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
     [`${PREFIX}_PRE_ATTESTATION_PATH`]: prePath,
     [`${PREFIX}_POST_ATTESTATION_PATH`]: postPath
   };
-  if (process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_CONTAINER) {
-    common[`${PREFIX}_PG_TOOL_CONTAINER`] = process.env.NOISIA_TOPIC_EVALUATION_V2_0114_RUNNER_PG_TOOL_CONTAINER;
-  }
-
   try {
     assert.equal((await execute("preflight", { ...common, [`${PREFIX}_PG_TOOL_HOST`]: "alternate" })).code, 1,
       "a tool host override is rejected before DB access");
     assert.equal((await execute("preflight", { ...common, [`${PREFIX}_PG_TOOL_PORT`]: "6543" })).code, 1,
       "a tool port override is rejected before DB access");
+    for (const selector of ["PG_DUMP_COMMAND", "PG_RESTORE_COMMAND", "PG_TOOL_CONTAINER"]) {
+      assert.equal((await execute("preflight", { ...common,
+        [`${PREFIX}_${selector}`]: "caller-selected" })).code, 1,
+      `${selector} is rejected before DB access`);
+    }
     assert.equal(await migrationCount(pool), 0);
     assert.equal((await execute("preflight", common)).code, 0);
     assert.equal((await execute("capture", common)).code, 0);
@@ -190,6 +225,14 @@ test("0114 runner seals preflight, fresh restore, one locked apply and post-appl
     assert.equal(verify.state.protected_state.digest, protectedDigest);
     assert.equal(verify.service_reconciliation, "healthy_studio_release__workers_unchanged_inert");
     assert.equal(verify.production_accessed, false);
+    for (const name of receipts.filter((receipt) => receipt.endsWith(".json"))) {
+      const body = await readFile(resolve(evidenceDir, name), "utf8");
+      assert.equal(body.includes(decodeURIComponent(url.password)), false,
+        `${name} never exposes the canonical credential`);
+      assert.equal(body.includes(DATABASE_URL), false, `${name} never exposes the database URI`);
+      assert.doesNotMatch(body, /PG(?:HOST|PORT|SERVICE|PASSFILE|SSLCERT|SSLKEY|OPTIONS)/u,
+        `${name} never exposes tool routing inputs`);
+    }
   } finally {
     await pool.end();
   }
