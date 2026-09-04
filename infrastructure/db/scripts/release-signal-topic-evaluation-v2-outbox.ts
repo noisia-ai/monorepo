@@ -29,6 +29,7 @@ const TRUSTED_PG_RESTORE = "/usr/bin/pg_restore";
 const TRUSTED_DOCKER = "/Applications/Docker.app/Contents/Resources/bin/docker";
 const LOCAL_TOOL_CONTAINER = "noisia-topic-evaluation-0114-local-tools";
 const LOCAL_TOOL_IMAGE = "pgvector/pgvector:pg17";
+const LOCAL_TOOL_IMAGE_ID = "sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f";
 const LOCAL_TOOL_LABEL = "topic-evaluation-0114-backup-tools";
 const EXPECTED = {
   uatTargetFingerprint: "sha256:0630a1bc2a84b4aa0864bb67312bf20238e778c03a566eae9bdd808661901815",
@@ -172,13 +173,15 @@ export function isolatedPgDumpEnvironment(target: SealedDatabaseTarget) {
 }
 
 export function validateLocalToolContainerInspection(value: unknown, target: SealedDatabaseTarget) {
-  const rows = value as Array<{ Name?: string; Config?: { Image?: string; Labels?: Record<string, string> };
+  const rows = value as Array<{ Name?: string; Image?: string;
+    Config?: { Image?: string; Labels?: Record<string, string> };
     State?: { Running?: boolean }; HostConfig?: { PortBindings?: Record<string, Array<{
       HostIp?: string; HostPort?: string }> | null> } }>;
   const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : undefined;
   const bindings = row?.HostConfig?.PortBindings?.["5432/tcp"];
   if (target.hostname !== "127.0.0.1" || target.port !== 5432 || target.sslMode !== "disable"
       || row?.Name !== `/${LOCAL_TOOL_CONTAINER}` || row.Config?.Image !== LOCAL_TOOL_IMAGE
+      || row.Image !== LOCAL_TOOL_IMAGE_ID
       || row.Config?.Labels?.["noisia.local-purpose"] !== LOCAL_TOOL_LABEL
       || row.State?.Running !== true || !Array.isArray(bindings) || bindings.length !== 1
       || bindings[0]?.HostIp !== "127.0.0.1" || bindings[0]?.HostPort !== "5432") {

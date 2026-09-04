@@ -95,6 +95,7 @@ test("0114 local backup tool identity is fixed, disposable and bound to the same
   const target = canonicalizeDatabaseTarget(
     "postgresql://runner:local@127.0.0.1:5432/release?sslmode=disable", true);
   const validInspection = { Name: "/noisia-topic-evaluation-0114-local-tools",
+    Image: "sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f",
     Config: { Image: "pgvector/pgvector:pg17",
       Labels: { "noisia.local-purpose": "topic-evaluation-0114-backup-tools" } },
     State: { Running: true },
@@ -105,8 +106,15 @@ test("0114 local backup tool identity is fixed, disposable and bound to the same
     Name: "/caller-selected" }], target), /not trusted/u);
   assert.throws(() => validateLocalToolContainerInspection([{ ...validInspection,
     Config: { ...validInspection.Config, Image: "caller/image:latest" } }], target), /not trusted/u);
+  assert.throws(() => validateLocalToolContainerInspection([{ ...validInspection,
+    Image: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }], target),
+  /not trusted/u);
+  const { Image: _missingImageId, ...missingImageId } = validInspection;
+  assert.throws(() => validateLocalToolContainerInspection([missingImageId], target), /not trusted/u);
   assert.throws(() => validateLocalToolContainerInspection(inspection, canonicalizeDatabaseTarget(
     "postgresql://runner:local@127.0.0.1:55439/release?sslmode=disable", true)), /not trusted/u);
+  assert.throws(() => validateLocalToolContainerInspection(inspection, canonicalizeDatabaseTarget(
+    "postgresql://runner:local@example.test:5432/release?sslmode=require", false)), /not trusted/u);
 });
 
 test("0114 deployment attestations distinguish pre-apply and post-apply service truth", () => {
