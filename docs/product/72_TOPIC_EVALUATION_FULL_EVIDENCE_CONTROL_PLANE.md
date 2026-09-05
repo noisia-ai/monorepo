@@ -144,3 +144,38 @@ or undo does not rewrite history. No command can approve, adopt, merge, publish 
 The list/detail API returns bounded structured candidate fields, opaque evidence references and
 digests; it never returns a raw provider response, prompt, corpus export, credential or private
 mention identity. Discovery Review and Topic Contract adoption remain separate, later controls.
+
+## Protected Preview/UAT release-executor prerequisite
+
+Migration 0114/0115 release work cannot use the local Docker rehearsal path or caller-selected
+database clients. A future release host must first produce the provider-disabled capability
+receipt `noisia-protected-preview-uat-release-executor-capability-v1`. The attestor is disabled by
+default, opens no network connection and applies no migration. It accepts only:
+
+- the fixed native paths `/usr/bin/pg_dump` and `/usr/bin/pg_restore`, both root-owned,
+  executable, non-group/world-writable and matching SHA-256 fingerprints sealed in a root-owned
+  policy at `/etc/noisia/topic-evaluation-v2-release-executor-v1.json`;
+- the single Preview/UAT target fingerprint in that policy; production is always false;
+- a root-owned, fresh ephemeral-secret attestation at
+  `/run/noisia/topic-evaluation-v2-release-secret-v1.json`. It names the UAT-only environment
+  handle and its expiry but never contains or exposes the value;
+- root-owned mode-0700 restore custody at `/var/lib/noisia/topic-evaluation-v2-release`;
+- a fresh root-owned Workers posture attestation proving a Studio-only deployment strategy,
+  unchanged Worker deployment digest, healthy service, no registered V2 job and no autodeploy
+  setting mutation; and
+- the literal action-time approval `ATTEST_PROTECTED_PREVIEW_UAT_EXECUTOR_FOR_0114_0115`.
+
+The closed policy allowlists only 0114 and 0115 with their audited names, ordinals and checksums.
+Those checksums are policy declarations at capability-attestation time; the later sealed release
+runner independently reads and recomputes the migration bytes before it can apply either file.
+The sanitized receipt records tool/target fingerprints, secret expiry, restore custody, Workers
+posture and zero-effect counters; it never records a database URI, password, provider credential,
+raw deployment identifier or corpus data. Caller-provided tool paths, containers and inherited
+libpq routing variables fail before any host evidence is accepted.
+
+Before a separate UAT preflight may open, an operator must provision those root-owned files on an
+ephemeral non-production host, inject the scoped secret for one process with a maximum one-hour
+lifetime, attest current Workers state, and retain the receipt plus later restore archive under
+private custody. This capability receipt is not migration authority: a later gate must still
+capture a fresh restore, validate ledger/sentinels, obtain the migration-specific apply literal,
+and reconcile Studio/Workers and all zero product effects.
