@@ -3,6 +3,7 @@ import {
   signalTopicEvaluationProviderTurnSchemaV2,
   type SignalTopicEvaluationModelInputV2
 } from "@noisia/query-engine";
+import { z } from "zod";
 
 import { generateAnthropicBoundedTextV1, mapAnthropicTopicEvaluationBoundaryErrorV1 } from "./anthropic-bounded-text";
 
@@ -32,6 +33,13 @@ export class SignalTopicEvaluationProviderResponseInvalidErrorV2 extends Error {
 // A UTF-8 byte is a conservative upper bound for a tokenizer's byte-level input units. Reserve
 // additional room for the provider's structured-output envelope, which is not in the prompt body.
 const PROVIDER_INPUT_PROTOCOL_OVERHEAD_TOKENS = 8_192;
+
+// Anthropic custom-tool schemas require a root JSON object. The turn protocol itself is a
+// discriminated union, which serializes as a root union without `input_schema.type`; carry it in
+// an explicit envelope at the provider boundary and unwrap it before the server-owned protocol.
+const signalTopicEvaluationProviderTurnEnvelopeSchemaV2 = z.object({
+  turn: signalTopicEvaluationProviderTurnSchemaV2
+}).strict();
 
 /**
  * Product-provider adapter for the future full-evidence flight. It is not registered in any
@@ -73,7 +81,7 @@ export function createAnthropicFullEvidenceTopicEvaluationModelV2(args: {
           // Do not ask a later turn for more output than the sealed flight still permits.
           max_output_tokens: maxOutputTokens,
           structured_output: {
-            schema: signalTopicEvaluationProviderTurnSchemaV2,
+            schema: signalTopicEvaluationProviderTurnEnvelopeSchemaV2,
             name: "signal_topic_evaluation_full_evidence_turn",
             description: "One bounded evidence navigation request or the final editable Topic candidates."
           }
@@ -85,7 +93,7 @@ export function createAnthropicFullEvidenceTopicEvaluationModelV2(args: {
         };
         let parsed;
         try {
-          parsed = signalTopicEvaluationProviderTurnSchemaV2.parse(JSON.parse(result.text));
+          parsed = signalTopicEvaluationProviderTurnEnvelopeSchemaV2.parse(JSON.parse(result.text)).turn;
         } catch {
           throw new SignalTopicEvaluationProviderResponseInvalidErrorV2(usage);
         }

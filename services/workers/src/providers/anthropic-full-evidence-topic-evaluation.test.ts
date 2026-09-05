@@ -13,8 +13,8 @@ test("default full-evidence adapter preserves the UAT catalog-first protocol", a
     snapshot_digest: snapshot, max_output_tokens: 1000,
     pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async (request) => {
     observed.push(request as Record<string, unknown>);
-    return { text: JSON.stringify({ kind: "tool", request: { operation: "cluster_catalog", limit: 1,
-      cursor: null } }), provider_request_id: null, usage: { input_tokens: 12, output_tokens: 8 } };
+    return { text: JSON.stringify({ turn: { kind: "tool", request: { operation: "cluster_catalog", limit: 1,
+      cursor: null } } }), provider_request_id: null, usage: { input_tokens: 12, output_tokens: 8 } };
   });
   const result = await model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
     remaining_output_tokens: 32, remaining_cost_micro_usd: 1_000_000 });
@@ -23,6 +23,11 @@ test("default full-evidence adapter preserves the UAT catalog-first protocol", a
   assert.equal(observed.length, 1);
   assert.equal("temperature" in observed[0]!, false);
   assert.equal(observed[0]!.max_output_tokens, 32);
+  const providerSchema = observed[0]!.structured_output as { schema: { safeParse(value: unknown): { success: boolean } } };
+  assert.equal(providerSchema.schema.safeParse({ turn: { kind: "tool", request: { operation: "cluster_catalog",
+    limit: 1, cursor: null } } }).success, true);
+  assert.equal(providerSchema.schema.safeParse({ kind: "tool", request: { operation: "cluster_catalog",
+    limit: 1, cursor: null } }).success, false);
   assert.match(String(observed[0]!.prompt), /Prior bounded navigation results/u);
   assert.doesNotMatch(String(observed[0]!.prompt), /evaluation_brief/u);
   assert.match(String(observed[0]!.prompt), /cluster keys you actually navigated/u);
@@ -36,7 +41,7 @@ test("Lab context-first adapter requires evaluation_brief on turn zero", async (
     bootstrap_mode: "context_first_lab_v1",
     pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async (request) => {
     observed.push(request as Record<string, unknown>);
-    return { text: JSON.stringify({ kind: "tool", request: { operation: "evaluation_brief" } }),
+    return { text: JSON.stringify({ turn: { kind: "tool", request: { operation: "evaluation_brief" } } }),
       provider_request_id: null, usage: { input_tokens: 12, output_tokens: 8 } };
   });
   const result = await model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
@@ -52,7 +57,7 @@ test("Lab context-first adapter terminalizes a received non-brief turn without r
     snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
     bootstrap_mode: "context_first_lab_v1",
     pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async () => ({
-    text: JSON.stringify({ kind: "tool", request: { operation: "cluster_catalog", limit: 1, cursor: null } }),
+    text: JSON.stringify({ turn: { kind: "tool", request: { operation: "cluster_catalog", limit: 1, cursor: null } } }),
     provider_request_id: "received-response", usage: { input_tokens: 12, output_tokens: 8 }
   }));
   await assert.rejects(model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
@@ -66,7 +71,7 @@ test("UAT catalog-first adapter rejects the Lab-only brief before shared navigat
     snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
     bootstrap_mode: "catalog_first_v1",
     pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async () => ({
-    text: JSON.stringify({ kind: "tool", request: { operation: "evaluation_brief" } }),
+    text: JSON.stringify({ turn: { kind: "tool", request: { operation: "evaluation_brief" } } }),
     provider_request_id: "received-response", usage: { input_tokens: 12, output_tokens: 8 }
   }));
   await assert.rejects(model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
@@ -89,7 +94,7 @@ test("full-evidence adapter retains metered usage when a received response viola
   const model = createAnthropicFullEvidenceTopicEvaluationModelV2({ model: "claude-sonnet-5",
     snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
     pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async () => ({
-    text: "{\"kind\":\"not-a-turn\"}", provider_request_id: "received-response",
+    text: "{\"turn\":{\"kind\":\"not-a-turn\"}}", provider_request_id: "received-response",
     usage: { input_tokens: 12, output_tokens: 8 }
   }));
   await assert.rejects(model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
