@@ -53,6 +53,8 @@ test("Lab context-first adapter requires evaluation_brief on turn zero", async (
   assert.equal(result.kind === "tool" && result.request.operation, "evaluation_brief");
   assert.match(String(observed[0]!.prompt), /On turn zero, request evaluation_brief/u);
   assert.match(String(observed[0]!.prompt), /representative_mentions for every source cluster/u);
+  assert.match(String(observed[0]!.prompt), /at least ten distinct, coherent, evidence-backed editable candidates/u);
+  assert.match(String(observed[0]!.prompt), /non-empty brand_os_matches/u);
 });
 
 test("Lab context-first adapter terminalizes a received non-brief turn without retry", async () => {

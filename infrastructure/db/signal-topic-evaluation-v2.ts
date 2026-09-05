@@ -292,13 +292,13 @@ async function navigate(queryable: Queryable, snapshot: SnapshotRow,
     // The Lab's fixed psql transport deliberately permits one active query per client. Keep this
     // server-owned read sequence serial so the same navigation works with pg pools and the Lab.
     const context = await loadApprovedBrandOsContext(queryable, snapshot, undefined, 80);
-    const shortlist = await loadEvaluationBriefShortlist(queryable, snapshot);
+    const shortlist = await loadEvaluationBriefShortlist(queryable, snapshot, context);
     if (context.length === 0 || shortlist.length === 0) {
       throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_evaluation_brief_unavailable", 409);
     }
     return { evidence_refs: [], next_cursor: null, data: {
       brand_os: { elements: context.map(projectBrandOsContextElement), total_elements: context.length },
-      shortlist: { clusters: shortlist, policy: "balanced_scope_membership_v1" as const }
+      shortlist: { clusters: shortlist, policy: "brand_os_anchor_alignment_v1" as const }
     } };
   }
   if (request.operation === "cluster_catalog") {
@@ -381,6 +381,7 @@ type BrandOsContextRow = { element_key:string; element_kind:string; display_text
   scope:string; locale:string|null; source_refs_digest:string; evidence_count:number };
 type EvaluationBriefClusterRow = { cluster_key:string; proposal_key:string; member_count:number;
   profile:unknown };
+type EvaluationBriefSeed = { element_key:string; normalized:string; words:number; weight:number };
 
 async function loadApprovedBrandOsContext(queryable: Queryable, snapshot: SnapshotRow,
   elementKeys?: string[], maxElements?: 80): Promise<BrandOsContextRow[]> {
@@ -412,40 +413,17 @@ function projectBrandOsContextElement(row: BrandOsContextRow) {
   return { ...row, display_text: sanitizeSignalTopicEvidenceExcerptV2(row.display_text).slice(0, 240) };
 }
 
-async function loadEvaluationBriefShortlist(queryable: Queryable, snapshot: SnapshotRow) {
-  const rows = (await queryable.query<EvaluationBriefClusterRow>(`WITH scoped AS (
-    SELECT cluster_key,proposal_key,member_count,profile,
-      COALESCE((profile#>>'{distributions,scope,primary_brand}')::int,0) primary_count,
-      COALESCE((profile#>>'{distributions,scope,competitor}')::int,0) competitor_count,
-      COALESCE((profile#>>'{distributions,scope,category}')::int,0) category_count
-    -- The explicit outlier reservoir is corpus coverage, not a historical BERTopic proposal.
-    -- Keep it navigable through the regular catalog, but do not spend the model's bootstrap on it.
-    FROM signal_topic_evaluation_v2_clusters WHERE snapshot_id=$1::uuid AND proposal_key IS NOT NULL
-  ), primary_selection AS (
-    SELECT *,1 selection_order FROM scoped WHERE primary_count>0
-    ORDER BY primary_count DESC,member_count DESC,cluster_key LIMIT 12
-  ), competitor AS (
-    SELECT scoped.*,2 selection_order FROM scoped WHERE competitor_count>0
-      AND NOT EXISTS(SELECT 1 FROM primary_selection
-        WHERE primary_selection.cluster_key=scoped.cluster_key)
-    ORDER BY competitor_count DESC,member_count DESC,cluster_key LIMIT 8
-  ), category AS (
-    SELECT scoped.*,3 selection_order FROM scoped WHERE category_count>0
-      AND NOT EXISTS(SELECT 1 FROM primary_selection
-        WHERE primary_selection.cluster_key=scoped.cluster_key)
-      AND NOT EXISTS(SELECT 1 FROM competitor WHERE competitor.cluster_key=scoped.cluster_key)
-    ORDER BY category_count DESC,member_count DESC,cluster_key LIMIT 4
-  ), selected AS (
-    SELECT * FROM primary_selection UNION ALL SELECT * FROM competitor UNION ALL SELECT * FROM category
-  ), fallback AS (
-    SELECT scoped.*,4 selection_order FROM scoped
-    WHERE NOT EXISTS(SELECT 1 FROM selected WHERE selected.cluster_key=scoped.cluster_key)
-    ORDER BY member_count DESC,cluster_key
-    LIMIT GREATEST(0,24-(SELECT count(*) FROM selected))
-  ) SELECT cluster_key,proposal_key,member_count,profile FROM (
-    SELECT * FROM selected UNION ALL SELECT * FROM fallback
-  ) picked ORDER BY selection_order,member_count DESC,cluster_key`, [snapshot.id])).rows;
-  return rows.map((row) => projectEvaluationBriefCluster(row));
+async function loadEvaluationBriefShortlist(queryable: Queryable, snapshot: SnapshotRow,
+  brandOs: BrandOsContextRow[]) {
+  // The brief is a bounded orientation device, not a corpus search. Rank all 115 historical
+  // proposals deterministically against approved Brand OS anchors first, then retain zero-match
+  // rows only when the <=24 fixed window has room. This prevents a high-volume but irrelevant
+  // scope from consuming the model's first evidence turns without reserving artificial noise.
+  const rows = (await queryable.query<EvaluationBriefClusterRow>(`SELECT cluster_key,proposal_key,
+    member_count,profile FROM signal_topic_evaluation_v2_clusters
+    WHERE snapshot_id=$1::uuid AND proposal_key IS NOT NULL
+    ORDER BY cluster_key`, [snapshot.id])).rows;
+  return rankEvaluationBriefShortlist(rows, brandOs).slice(0, 24);
 }
 
 function projectEvaluationBriefCluster(row: EvaluationBriefClusterRow) {
@@ -456,10 +434,96 @@ function projectEvaluationBriefCluster(row: EvaluationBriefClusterRow) {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([scope, count]) => ({ scope: scope as "primary_brand"|"same_entity"|"competitor"|"category"|"other", count }));
   return { cluster_key: row.cluster_key, proposal_key: row.proposal_key, member_count: row.member_count,
+    brand_os_matches: [] as string[], brand_os_match_count: 0,
     terms: profile.terms.slice(0, 8).map((term) => term.slice(0, 64)),
     phrases: profile.phrases.slice(0, 4).map((phrase) => phrase.slice(0, 96)),
     scope_distribution };
 }
+
+const EVALUATION_BRIEF_TOPIC_SEED_NAMESPACES = new Set([
+  "alias", "identity", "benefit", "category", "competitor", "feature", "product", "surface", "usage", "need"
+]);
+const EVALUATION_BRIEF_TOPIC_SEED_FILLERS = new Set([
+  "a", "an", "and", "for", "in", "is", "not", "of", "out", "symbol", "the", "to", "with"
+]);
+const EVALUATION_BRIEF_COMPETITOR_GENERIC_TAILS = new Set(["control", "device", "home", "voice"]);
+
+/**
+ * Brand OS keys are the only source of the deterministic ranking anchors.  We retain whole
+ * multi-word keys for every topical namespace, but permit one-word matching only for a standalone
+ * alias/product or a distinctive competitor tail. That preserves identity coverage without
+ * claiming an Echo Dot or Alexa+ match whenever a cluster says merely "Echo" or "Alexa".
+ */
+function buildEvaluationBriefSeeds(brandOs: BrandOsContextRow[]): EvaluationBriefSeed[] {
+  const seeds = new Map<string, EvaluationBriefSeed>();
+  const add = (elementKey: string, parts: string[], allowSingle: boolean) => {
+    const normalizedParts = parts.map(normalizeEvaluationBriefText).flatMap((part) => part.split(" "))
+      .filter((part) => part.length >= 3 && !EVALUATION_BRIEF_TOPIC_SEED_FILLERS.has(part));
+    const phrase = normalizedParts.join(" ");
+    if (normalizedParts.length >= 2) {
+      const seed = { element_key: elementKey, normalized: phrase, words: normalizedParts.length,
+        weight: normalizedParts.length };
+      seeds.set(`${elementKey}:${phrase}`, seed);
+    }
+    if (allowSingle && normalizedParts.length === 1) {
+      for (const token of normalizedParts) {
+        if (token.length < 4) continue;
+        seeds.set(`${elementKey}:${token}`, { element_key: elementKey, normalized: token,
+          words: 1, weight: 1 });
+      }
+    }
+    if (elementKey.startsWith("competitor.") && normalizedParts.length >= 2) {
+      const terminal = normalizedParts.at(-1)!;
+      if (terminal.length >= 4 && !EVALUATION_BRIEF_COMPETITOR_GENERIC_TAILS.has(terminal)) {
+        seeds.set(`${elementKey}:${terminal}`, { element_key: elementKey, normalized: terminal,
+          words: 1, weight: 1 });
+      }
+    }
+  };
+  for (const element of brandOs) {
+    const parts = element.element_key.split(/[._-]/u);
+    const namespace = parts[0];
+    if (!namespace || !EVALUATION_BRIEF_TOPIC_SEED_NAMESPACES.has(namespace)) continue;
+    const detail = parts.slice(1);
+    add(element.element_key, detail, namespace === "alias" || namespace === "product");
+  }
+  return [...seeds.values()].sort((left, right) => left.element_key.localeCompare(right.element_key)
+    || left.normalized.localeCompare(right.normalized));
+}
+
+function normalizeEvaluationBriefText(value: string) {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("und")
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/gu, " ");
+}
+
+function containsEvaluationBriefSeed(values: string[], seed: EvaluationBriefSeed) {
+  const needle = ` ${seed.normalized} `;
+  return values.some((value) => ` ${value} `.includes(needle));
+}
+
+function rankEvaluationBriefShortlist(rows: EvaluationBriefClusterRow[], brandOs: BrandOsContextRow[]) {
+  const seeds = buildEvaluationBriefSeeds(brandOs);
+  return rows.map((row) => {
+    const projected = projectEvaluationBriefCluster(row);
+    const profile = signalTopicEvidenceClusterProfileSchemaV2.parse(row.profile);
+    const values = [...profile.terms, ...profile.phrases].map(normalizeEvaluationBriefText)
+      .filter((value) => value.length > 0);
+    const matched = new Map<string, number>();
+    for (const seed of seeds) {
+      if (!containsEvaluationBriefSeed(values, seed)) continue;
+      matched.set(seed.element_key, Math.max(matched.get(seed.element_key) ?? 0, seed.weight));
+    }
+    const all_brand_os_matches = [...matched.keys()].sort((left, right) => left.localeCompare(right));
+    const match_weight = [...matched.values()].reduce((sum, weight) => sum + weight, 0);
+    return { ...projected, brand_os_matches: all_brand_os_matches.slice(0, 12),
+      brand_os_match_count: all_brand_os_matches.length, match_weight };
+  }).sort((left, right) => right.match_weight - left.match_weight
+    || right.brand_os_match_count - left.brand_os_match_count
+    || right.member_count - left.member_count || left.cluster_key.localeCompare(right.cluster_key))
+    .map(({ match_weight: _matchWeight, ...row }) => row);
+}
+
+export const signalTopicEvaluationV2TestOnly = { rankEvaluationBriefShortlist };
 
 function publicMention(snapshot: SnapshotRow, row: MemberRow) {
   return { evidence_ref: signalTopicEvaluationDigestV2({ snapshot: snapshot.snapshot_digest,

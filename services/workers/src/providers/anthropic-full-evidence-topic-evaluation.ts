@@ -137,8 +137,9 @@ function buildPrompt(snapshotDigest: string, input: SignalTopicEvaluationModelIn
   ];
   const protocol = bootstrapMode === "context_first_lab_v1"
     ? [
-      "On turn zero, request evaluation_brief. It returns the compact approved Brand OS map and a deterministic balanced shortlist; it is orientation, not mention evidence.",
+      "On turn zero, request evaluation_brief. It returns the compact approved Brand OS map and a deterministic Brand-OS-anchored shortlist; it is orientation, not mention evidence.",
       "Use the brief to select coherent clusters, then retrieve representative_mentions for every source cluster you use in a candidate. Judge relevance against the Brand OS map and the returned mentions, not generic term overlap.",
+      "Practical Lab success is at least ten distinct, coherent, evidence-backed editable candidates when the brief contains that many plausible Brand-OS-anchored clusters. Before finalising, use one representative_mentions navigation for up to ten distinct shortlist clusters with non-empty brand_os_matches while turns remain. Do not finalise early merely because the first few candidates are strong; omit only unsupported, duplicate, or clearly out-of-scope clusters.",
       "When enough evidence is available, return only the final pending candidate output. Each candidate must cite evidence references already returned and source cluster keys you actually navigated. Preserve a complete useful pool; ranking is only the Top-10 projection."
     ]
     : ["When enough evidence is available, return only the final pending candidate output. Each candidate must cite evidence references already returned and cluster keys you actually navigated."];

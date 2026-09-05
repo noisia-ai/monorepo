@@ -96,6 +96,10 @@ const evaluationBriefCluster = z.object({
   cluster_key: key,
   proposal_key: key,
   member_count: z.number().int().positive(),
+  /** At most twelve deterministic Brand OS match hints for this orientation row. The exact count
+   * remains visible separately; neither field is a relevance decision or evidence citation. */
+  brand_os_matches: z.array(key).max(12),
+  brand_os_match_count: z.number().int().min(0).max(80),
   terms: z.array(z.string().min(1).max(64)).max(8),
   phrases: z.array(z.string().min(1).max(96)).max(4),
   scope_distribution: z.array(z.object({
@@ -110,7 +114,7 @@ const evaluationBriefData = z.object({
   }).strict(),
   shortlist: z.object({
     clusters: z.array(evaluationBriefCluster).min(1).max(24),
-    policy: z.literal("balanced_scope_membership_v1")
+    policy: z.literal("brand_os_anchor_alignment_v1")
   }).strict()
 }).strict();
 const mentionData = z.object({ cluster_key: key, mentions: z.array(signalTopicEvidenceMentionV2),

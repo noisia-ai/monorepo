@@ -70,6 +70,16 @@ appears when the requested limit is at least the number of observed strata. It c
 every cross-product of the secondary dimensions, infer missing market/scope metadata, or prove
 statistical representativeness.
 
+The disposable local Lab's `evaluation_brief` is an additional closed orientation operation. It
+returns the same approved Brand OS map plus at most 24 historical proposal clusters. Its
+`brand_os_anchor_alignment_v1` selector deterministically ranks clusters by exact normalized
+matches to current approved Brand OS element keys. Each row exposes at most 12 sorted matching-key
+hints plus the exact total match count, keeping the orientation payload bounded. Zero-match coverage
+rows appear only after aligned rows when the 24-row window has room; no arbitrary fallback is
+reserved. This is not a score that trains BERTopic and it is not a relevance decision: the model
+must still navigate sanitized representative mentions and the resulting candidates remain pending
+and editable.
+
 ## Flight card and provenance
 
 V2 is disabled by default and exposes no launch edge in this gate. The maximum future flight card
