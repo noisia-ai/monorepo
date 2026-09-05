@@ -4,6 +4,9 @@ import test from "node:test";
 
 import { signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
 
+import type { SignalTopicEvaluationLabHostReceiptV1 } from
+  "./signal-topic-evaluation-lab-host-provenance-v2";
+
 import { SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME,
   SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE,parseSignalTopicEvaluationLabTargetV2,
   preflightSignalTopicEvaluationLabV2,prepareSignalTopicEvaluationLabInvocationV2,
@@ -34,6 +37,23 @@ const marker={marker_namespace:"noisia.topic-evaluation.disposable-lab-clone",
   source_run_key:authority.source_run_key,source_snapshot_digest:authority.snapshot_digest,
   source_artifact_binding_digest:authority.artifact_binding_digest,
   recorded_system_identifier:"7462383493939691021",current_system_identifier:"7462383493939691021"};
+const hostReceiptUnsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_digest">={
+  contract_version:"signal-topic-evaluation-lab-host-provenance-v1",
+  marker_namespace:"noisia.topic-evaluation.disposable-lab-host-anchor" as const,
+  created_at:"2026-09-04T20:30:00.000Z",container_name:"noisia-r24a-provenance-pg" as const,
+  container_id:"a".repeat(64),image_id:`sha256:${"b".repeat(64)}`,
+  image_reference:"pgvector/pgvector:pg17" as const,endpoint_host:"127.0.0.1" as const,
+  endpoint_port:55439,clone_name:clone,server_system_identifier:marker.current_system_identifier,
+  source_database_name:"noisia_r32_clean_20260904",
+  source_run_key:"backend-10c2c-2026-08-21-final-2-bertopic-bge-detail-seed-17",
+  source_snapshot_digest:authority.snapshot_digest,
+  source_artifact_binding_digest:authority.artifact_binding_digest,
+  source_membership_binding_digest:authority.membership_binding_digest,
+  candidate_review_migration_digest:
+    "sha256:7a6b61cc16dba808e0c98645855e2597db8d0f8ca4665979945c866a0bc3e946" as const,
+  database_marker_setup_digest:
+    "sha256:0906a2b7cfebbbfb5408d94b48c50652645d6313030f05a01632b16ae6be242b" as const};
+const hostReceipt={...hostReceiptUnsigned,receipt_digest:signalTopicEvaluationDigestV2(hostReceiptUnsigned)};
 const ledger=[
   {ordinal:112,migration_name:"0112_signal_topic_evaluation_full_evidence_control_plane.sql",
     checksum_sha256:"sha256:51f6fbff712ec1737b41da9997bda86b068abb81f4edafc9a338af590c462ab5",disposition:"applied"},
@@ -86,24 +106,21 @@ test("target accepts only an explicitly named loopback disposable clone",()=>{
   }
 });
 
-test("closed local Lab profile rejects missing, unknown and remote profiles before target access",()=>{
+test("closed local Lab profile rejects missing, unknown and remote profiles before anchor access",async()=>{
   for(const profile of [undefined,"local","preview","uat","staging","production"]){
-    let targetRead=false;
+    let anchorRead=false;
     const base:NodeJS.ProcessEnv={};
     if(profile!==undefined)base.NOISIA_RUNTIME_PROFILE=profile;
-    const env=new Proxy(base,{get(value,key,receiver){
-      if(key==="NOISIA_TOPIC_EVALUATION_LAB_DATABASE_URL")targetRead=true;
-      return Reflect.get(value,key,receiver);
-    }});
-    assert.throws(()=>prepareSignalTopicEvaluationLabInvocationV2(env),
-      /topic_evaluation_lab_runtime_profile_invalid/u);
-    assert.equal(targetRead,false);
+    await assert.rejects(prepareSignalTopicEvaluationLabInvocationV2(base,{verifyHostReceipt:async()=>{
+      anchorRead=true;return{receipt:hostReceipt,container:{} as never};}}),
+    /topic_evaluation_lab_runtime_profile_invalid/u);
+    assert.equal(anchorRead,false);
   }
-  const prepared=prepareSignalTopicEvaluationLabInvocationV2({
-    NOISIA_RUNTIME_PROFILE:SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE,
-    NOISIA_TOPIC_EVALUATION_LAB_CLONE_NAME:clone,
-    NOISIA_TOPIC_EVALUATION_LAB_DATABASE_URL:`postgres://local@127.0.0.1:55439/${clone}`});
+  const prepared=await prepareSignalTopicEvaluationLabInvocationV2({
+    NOISIA_RUNTIME_PROFILE:SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE},{
+    verifyHostReceipt:async()=>({receipt:hostReceipt,container:{} as never})});
   assert.equal(prepared.target.database,clone);
+  assert.equal(prepared.anchor.receipt_digest,hostReceipt.receipt_digest);
 });
 
 test("provider configuration check observes presence only and never reads its value",()=>{
@@ -116,12 +133,14 @@ test("provider configuration check observes presence only and never reads its va
 
 test("valid preflight reattests full real-import shape and emits a disabled sanitized flight card",async()=>{
   const run=harness();const receipt=await preflightSignalTopicEvaluationLabV2({pool:run.pool,target,
-    provider_configuration_present:false,dependencies:run.dependencies});
+    host_receipt:hostReceipt,provider_configuration_present:false,dependencies:run.dependencies});
   assert.equal(receipt.source_authority.canonical_roots,21195);
   assert.equal(receipt.source_authority.historical_proposals,115);
   assert.equal(receipt.source_authority.catalog_entries,116);
   assert.equal(receipt.source_authority.assigned,11186);assert.equal(receipt.source_authority.outliers,10009);
   assert.match(receipt.target.clone_provenance_digest,/^sha256:[0-9a-f]{64}$/u);
+  assert.equal(receipt.target.host_anchor_receipt_digest,hostReceipt.receipt_digest);
+  assert.match(receipt.target.container_identity_digest,/^sha256:[0-9a-f]{64}$/u);
   assert.equal(receipt.target.runtime_profile,SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE);
   assert.equal(receipt.flight_card.execution_enabled,false);
   assert.equal(receipt.flight_card.provider_transport_allowed,false);
@@ -144,7 +163,7 @@ test("authority drift, synthetic-sized mismatch, nonempty work and missing candi
     harness({authority:{source_export_digest:digest("forged")}}),harness({work:{runs:1}}),
     harness({sentinels:{pending_only_candidates:false}})]){
     await assert.rejects(preflightSignalTopicEvaluationLabV2({pool:run.pool,target,
-      provider_configuration_present:false,dependencies:run.dependencies}),
+      host_receipt:hostReceipt,provider_configuration_present:false,dependencies:run.dependencies}),
     /topic_evaluation_lab_(frozen_authority_mismatch|not_empty|schema_incomplete)/u);
     assert.equal(run.receipts.length,0);
   }
@@ -156,7 +175,8 @@ test("missing or mismatched server-owned clone provenance fails inside the read-
     [harness({marker:{source_snapshot_digest:digest("other-snapshot")}}),"clone_provenance_invalid"],
     [harness({marker:{current_system_identifier:"9000000000000000000"}}),"clone_provenance_invalid"]] as const){
     await assert.rejects(preflightSignalTopicEvaluationLabV2({pool:run.pool,target,
-      provider_configuration_present:false,dependencies:run.dependencies}),new RegExp(expected,"u"));
+      host_receipt:hostReceipt,provider_configuration_present:false,dependencies:run.dependencies}),
+    new RegExp(expected,"u"));
     assert.equal(run.receipts.length,0);
     assert.equal(run.statements[0],"BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
   }
@@ -170,6 +190,7 @@ test("Lab runner contains no UAT Worker, queue, env loader, provider transport o
     import.meta.url),"utf8");
   const worker=await readFile(new URL("../src/workers/signal-topic-evaluation-v2.ts",import.meta.url),"utf8");
   assert.doesNotMatch(source,/env\/load|bullmq|signal-topic-evaluation-v2-outbox|generateAnthropicBoundedText|createAnthropicFullEvidence/u);
+  assert.doesNotMatch(source,/NOISIA_TOPIC_EVALUATION_LAB_DATABASE_URL|NOISIA_TOPIC_EVALUATION_LAB_CLONE_NAME/u);
   assert.match(source,/Object\.hasOwn\(env,SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME\)/u);
   assert.match(provider,/transport: BoundedTransport/u);
   assert.match(worker,/export async function processSignalTopicEvaluationV2ProviderRun/u);

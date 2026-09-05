@@ -30,18 +30,25 @@ must match `noisia_topic_eval_lab_*` and may not contain Preview, UAT, staging o
 These caller-visible checks are necessary but not sufficient: loopback can still terminate a tunnel
 to a remote database.
 
-After creating a fresh clone from the registered frozen source and applying the hand-verified V2
-schema, run
-`services/workers/scripts/setup-signal-topic-evaluation-lab-provenance-v2.sql` exactly once against
-that clone. The script takes no variables. It derives the connected database name, frozen source
-run, snapshot and artifact-binding digests, and PostgreSQL system identifier from the server, then
-installs an immutable clone-local marker. Do not copy this marker from another clone or include it
-in a database template.
+Run `pnpm --filter @noisia/workers signal:topic-evaluation:lab-clone` only with the closed local Lab
+runtime profile. That step accepts no target, URI, source database, clone name, marker or credential
+argument. It inspects the fixed local pgvector container, verifies the registered frozen source,
+generates a fresh clone name, applies the hand-verified candidate-review schema and installs the
+database marker. The marker SQL takes no variables and derives the connected database name, frozen
+source run, snapshot/artifact digests and PostgreSQL system identifier from the server.
 
-The provider-disabled preflight verifies that marker inside its `REPEATABLE READ READ ONLY`
-transaction and emits only a derived provenance digest. Missing or drifted markers, source digests,
-clone names or server identities fail closed. The command supplies neither marker contents nor a
-claim that a target is non-production.
+After verifying the clone, the creation step writes
+`.data/signal-topic-evaluation/lab-1b/clone-provenance.current.json` with mode `0600`. This
+host-side receipt binds the immutable Docker container and image identities, loopback port, clone,
+server system identity and frozen source digests. It lives outside PostgreSQL and is never supplied
+as a preflight argument.
+
+The provider-disabled preflight loads that fixed receipt, re-inspects the fixed container and
+derives its endpoint and expected identity from the receipt. It then opens one persistent `psql`
+session with `docker exec`, not a caller-provided URL or an extracted password. Inside its
+`REPEATABLE READ READ ONLY` transaction it reconciles the external anchor with the database marker
+as defence in depth and emits only derived provenance/container digests. Missing, copied or drifted
+receipts, containers, sources, clone names or system identities fail closed.
 
 ## What the Lab evaluates
 

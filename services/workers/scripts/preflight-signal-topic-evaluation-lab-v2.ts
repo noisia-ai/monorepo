@@ -13,7 +13,10 @@ import { fileURLToPath } from "node:url";
 import { verifyRegisteredSignalTopicEvaluationArtifactsV2 } from "@noisia/db";
 import { buildSignalTopicEvaluationExecutionFlightCardV2,
   signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
-import pg from "pg";
+
+import { createSignalTopicEvaluationLabDockerPoolV1 } from "./signal-topic-evaluation-lab-docker-pool-v2";
+import { type SignalTopicEvaluationLabHostReceiptV1,
+  verifyFixedSignalTopicEvaluationLabHostReceiptV1 } from "./signal-topic-evaluation-lab-host-provenance-v2";
 
 process.umask(0o077);
 
@@ -56,7 +59,7 @@ type ArtifactProof={records:number;labels:number;topics:number;assigned:number;o
   assignment_digest:string;result_digest:string;packet_file_digest:string;packet_digest:string;
   artifact_binding_digest:string};
 type Dependencies={now():number;verifyArtifacts(sourceRunKey:string):Promise<ArtifactProof>;
-  migration0115Digest():Promise<string>;writeReceipt(receipt:unknown):Promise<void>};
+  migration0115Digest():Promise<string>;writeReceipt(receipt:unknown,cloneName:string):Promise<void>};
 
 export class SignalTopicEvaluationLabPreflightError extends Error {
   constructor(public readonly code:string){super(code);this.name="SignalTopicEvaluationLabPreflightError";}
@@ -66,13 +69,17 @@ export function signalTopicEvaluationLabProviderConfiguredV2(env:NodeJS.ProcessE
   return Object.hasOwn(env,SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME);
 }
 
-export function prepareSignalTopicEvaluationLabInvocationV2(env:NodeJS.ProcessEnv){
+export async function prepareSignalTopicEvaluationLabInvocationV2(env:NodeJS.ProcessEnv,
+  dependencies:{verifyHostReceipt?:typeof verifyFixedSignalTopicEvaluationLabHostReceiptV1}={}){
   if(env.NOISIA_RUNTIME_PROFILE!==SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE){
     throw new SignalTopicEvaluationLabPreflightError("topic_evaluation_lab_runtime_profile_invalid");
   }
-  const clone=env.NOISIA_TOPIC_EVALUATION_LAB_CLONE_NAME??"";
-  const connectionString=env.NOISIA_TOPIC_EVALUATION_LAB_DATABASE_URL??"";
-  return{connectionString,target:parseSignalTopicEvaluationLabTargetV2(connectionString,clone),
+  const verified=await(dependencies.verifyHostReceipt??verifyFixedSignalTopicEvaluationLabHostReceiptV1)();
+  const anchor=verified.receipt;
+  const target=parseSignalTopicEvaluationLabTargetV2(
+    `postgres://local@${anchor.endpoint_host}:${anchor.endpoint_port}/${anchor.clone_name}`,
+    anchor.clone_name);
+  return{anchor,target,
     provider_configuration_present:signalTopicEvaluationLabProviderConfiguredV2(env)};
 }
 
@@ -97,6 +104,7 @@ export function parseSignalTopicEvaluationLabTargetV2(raw:string,expectedCloneNa
 
 export async function preflightSignalTopicEvaluationLabV2(args:{
   pool:LabPool;target:ReturnType<typeof parseSignalTopicEvaluationLabTargetV2>;
+  host_receipt:SignalTopicEvaluationLabHostReceiptV1;
   provider_configuration_present:boolean;dependencies?:Dependencies
 }){
   const dependencies=args.dependencies??realDependencies;
@@ -122,7 +130,7 @@ export async function preflightSignalTopicEvaluationLabV2(args:{
     if(markerPresent!==true)throw new SignalTopicEvaluationLabPreflightError(
       "topic_evaluation_lab_clone_provenance_missing");
     const marker=(await client.query<CloneProvenanceRow>(CLONE_PROVENANCE_SQL)).rows;
-    const cloneProvenanceDigest=assertCloneProvenance(marker,args.target,authority!);
+    const cloneProvenanceDigest=assertCloneProvenance(marker,args.target,authority!,args.host_receipt);
     const ledger=(await client.query<LedgerRow>(`SELECT ordinal,migration_name,checksum_sha256,disposition
       FROM signal_workspace_data_plane_migration_ledger WHERE ordinal BETWEEN 112 AND 114 ORDER BY ordinal`)).rows;
     assertLedger(ledger);
@@ -147,7 +155,10 @@ export async function preflightSignalTopicEvaluationLabV2(args:{
       target:{clone_name:args.target.database,endpoint_class:args.target.endpoint_class,
         port:args.target.port,target_fingerprint:args.target.target_fingerprint,uri_recorded:false,
         password_recorded:false,runtime_profile:SIGNAL_TOPIC_EVALUATION_LAB_V2_RUNTIME_PROFILE,
-        clone_provenance_digest:cloneProvenanceDigest,preview_uat:false,production:false},
+        clone_provenance_digest:cloneProvenanceDigest,
+        host_anchor_receipt_digest:args.host_receipt.receipt_digest,
+        container_identity_digest:signalTopicEvaluationDigestV2({container_id:args.host_receipt.container_id,
+          image_id:args.host_receipt.image_id}),preview_uat:false,production:false},
       source_authority:{import_contract_version:"signal-topic-evaluation-frozen-membership-import-v1",
         source_run_key:SIGNAL_TOPIC_EVALUATION_LAB_V2_SOURCE_RUN,algorithm:"bertopic-bge-detail",seed:17,
         canonical_roots:21_195,historical_proposals:115,catalog_entries:116,assigned:11_186,
@@ -184,7 +195,7 @@ export async function preflightSignalTopicEvaluationLabV2(args:{
         applied_to_disposable_clone:true}},
       effects:{database_writes:0,provider_calls:0,queue_jobs:0,runs:0,candidates:0,adoptions:0,
         publications:0,serving_effects:0,uat_connections:0,production_accessed:false}};
-    await dependencies.writeReceipt(receipt);
+    await dependencies.writeReceipt(receipt,args.target.database);
     return receipt;
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
@@ -286,7 +297,8 @@ function assertAuthority(row:AuthorityRow|undefined,artifacts:ArtifactProof){
   }
 }
 function assertCloneProvenance(rows:CloneProvenanceRow[],target:ReturnType<
-  typeof parseSignalTopicEvaluationLabTargetV2>,authority:AuthorityRow){
+  typeof parseSignalTopicEvaluationLabTargetV2>,authority:AuthorityRow,
+  hostReceipt:SignalTopicEvaluationLabHostReceiptV1){
   const row=rows[0];
   if(rows.length!==1||!row||row.marker_namespace!=="noisia.topic-evaluation.disposable-lab-clone"
       ||row.contract_version!=="signal-topic-evaluation-lab-clone-provenance-v1"
@@ -294,7 +306,12 @@ function assertCloneProvenance(rows:CloneProvenanceRow[],target:ReturnType<
       ||row.source_snapshot_digest!==authority.snapshot_digest
       ||row.source_artifact_binding_digest!==authority.artifact_binding_digest
       ||!/^\d+$/u.test(row.recorded_system_identifier)
-      ||row.recorded_system_identifier!==row.current_system_identifier){
+      ||row.recorded_system_identifier!==row.current_system_identifier
+      ||row.current_system_identifier!==hostReceipt.server_system_identifier
+      ||hostReceipt.clone_name!==target.database||hostReceipt.source_run_key!==authority.source_run_key
+      ||hostReceipt.source_snapshot_digest!==authority.snapshot_digest
+      ||hostReceipt.source_artifact_binding_digest!==authority.artifact_binding_digest
+      ||hostReceipt.source_membership_binding_digest!==authority.membership_binding_digest){
     throw new SignalTopicEvaluationLabPreflightError("topic_evaluation_lab_clone_provenance_invalid");
   }
   return signalTopicEvaluationDigestV2({marker_namespace:row.marker_namespace,
@@ -324,11 +341,8 @@ const realDependencies:Dependencies={now:()=>Date.now(),verifyArtifacts:async(so
     packet_digest:value.packet_digest,artifact_binding_digest:value.artifact_binding_digest};},
   migration0115Digest:async()=>`sha256:${createHash("sha256").update(await readFile(resolve(REPO_ROOT,
     "infrastructure/db/migrations",MIGRATION_0115.name))).digest("hex")}`,
-  writeReceipt:async(receipt)=>{const raw=process.env.NOISIA_TOPIC_EVALUATION_LAB_EVIDENCE_DIR;
-    if(!raw)throw new SignalTopicEvaluationLabPreflightError("topic_evaluation_lab_evidence_directory_required");
-    const directory=resolve(raw);const allowed=resolve(REPO_ROOT,".data/signal-topic-evaluation/lab-1");
-    if(directory!==allowed&&!directory.startsWith(`${allowed}/`))throw new SignalTopicEvaluationLabPreflightError(
-      "topic_evaluation_lab_evidence_directory_invalid");
+  writeReceipt:async(receipt,cloneName)=>{
+    const directory=resolve(REPO_ROOT,".data/signal-topic-evaluation/lab-1b",cloneName);
     await mkdir(directory,{recursive:true,mode:0o700});await writeFile(resolve(directory,"preflight.sanitized.json"),
       `${JSON.stringify(receipt,null,2)}\n`,{mode:0o600,flag:"wx"});}};
 
@@ -337,15 +351,15 @@ async function main(){
     SignalTopicEvaluationLabPreflightError("topic_evaluation_lab_preflight_disabled");
   if(process.env.NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED==="true")throw new
     SignalTopicEvaluationLabPreflightError("topic_evaluation_lab_uat_runtime_forbidden");
-  const invocation=prepareSignalTopicEvaluationLabInvocationV2(process.env);
-  const pool=new pg.Pool({connectionString:invocation.connectionString,
-    ssl:false,max:1,application_name:"noisia-topic-evaluation-disposable-lab-preflight"});
+  const invocation=await prepareSignalTopicEvaluationLabInvocationV2(process.env);
+  const pool=createSignalTopicEvaluationLabDockerPoolV1(invocation.anchor);
   try{const receipt=await preflightSignalTopicEvaluationLabV2({pool,target:invocation.target,
+    host_receipt:invocation.anchor,
     provider_configuration_present:invocation.provider_configuration_present});
     console.log(JSON.stringify({status:receipt.status,target:receipt.target,
       source_authority:receipt.source_authority,flight_card:receipt.flight_card,
       isolated_execution_path:receipt.isolated_execution_path,effects:receipt.effects}));}
-  finally{await pool.end();}
+  finally{/* docker psql session is closed by the client release */}
 }
 
 const isMain=process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
