@@ -14,6 +14,8 @@
     "signal:tb:staging-supervisor": "tsx scripts/signal-tb-staging-supervisor.ts",
     "signal:semantic-resolution:monitor": "tsx scripts/monitor-signal-semantic-resolution-readonly.ts",
     "signal:semantic-review:staging-supervisor": "tsx scripts/signal-semantic-review-staging-supervisor.ts",
+    "signal:topic-evaluation:lab-preflight": "tsx scripts/preflight-signal-topic-evaluation-lab-v2.ts",
+    "test:signal-topic-evaluation:lab-preflight": "node --test --import tsx scripts/preflight-signal-topic-evaluation-lab-v2.test.ts",
     "signal:discover-topics-narratives": "tsx scripts/discover-signal-topics-narratives.ts",
     "signal:run-topics-narratives-backfill": "tsx scripts/run-signal-taxonomy-backfill.ts",
     "typecheck": "tsc --noEmit",
