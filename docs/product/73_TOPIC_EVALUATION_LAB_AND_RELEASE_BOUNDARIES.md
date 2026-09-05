@@ -23,6 +23,26 @@ The first lane is intentionally cheap to reverse: drop the named local clone aft
 sanitized evidence receipt. The second and third lanes need release controls because other people
 can see or depend on their state.
 
+## Disposable clone setup and provenance
+
+The Lab preflight accepts `NOISIA_RUNTIME_PROFILE=local_disposable_lab_v1` only. A clone name
+must match `noisia_topic_eval_lab_*` and may not contain Preview, UAT, staging or production labels.
+These caller-visible checks are necessary but not sufficient: loopback can still terminate a tunnel
+to a remote database.
+
+After creating a fresh clone from the registered frozen source and applying the hand-verified V2
+schema, run
+`services/workers/scripts/setup-signal-topic-evaluation-lab-provenance-v2.sql` exactly once against
+that clone. The script takes no variables. It derives the connected database name, frozen source
+run, snapshot and artifact-binding digests, and PostgreSQL system identifier from the server, then
+installs an immutable clone-local marker. Do not copy this marker from another clone or include it
+in a database template.
+
+The provider-disabled preflight verifies that marker inside its `REPEATABLE READ READ ONLY`
+transaction and emits only a derived provenance digest. Missing or drifted markers, source digests,
+clone names or server identities fail closed. The command supplies neither marker contents nor a
+claim that a target is non-production.
+
 ## What the Lab evaluates
 
 The computational input is the entire frozen model population, not a random sample:
