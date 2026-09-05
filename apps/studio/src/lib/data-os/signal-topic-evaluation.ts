@@ -9,6 +9,8 @@ import { loadSignalTopicEvaluationV2CandidateDetail,loadSignalTopicEvaluationV2C
   loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2,
   reviewSignalTopicEvaluationV2Candidate }
   from "@noisia/db";
+import { createSignalTopicCandidateRefinementSessionV1,
+  navigateSignalTopicCandidateRefinementV1 } from "@noisia/db";
 import { createSignalTopicEvaluationV2ExecutionAuthority,
   type SignalTopicEvaluationV2ExecutionConfiguration } from "@noisia/db";
 import { buildSignalTopicEvaluationExecutionFlightCardV2,
@@ -106,6 +108,25 @@ export async function reviewSignalTopicEvaluationV2CandidateProduct(args:{
   const{pool}=await import("@/lib/db");
   return reviewSignalTopicEvaluationV2Candidate({pool,workspace_id:args.workspace.id,
     actor:actor(args.actor),idempotency_key:args.idempotencyKey,command:args.command});
+}
+
+/** Opens a sealed, short-lived candidate evidence session. This is provider-neutral and cannot
+ * mutate editorial candidate state or create/adopt/publish/serve a Topic. */
+export async function startSignalTopicCandidateRefinementProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;input:unknown
+}){
+  const{pool}=await import("@/lib/db");
+  return createSignalTopicCandidateRefinementSessionV1({pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),idempotency_key:args.idempotencyKey,input:args.input});
+}
+
+/** Appends one bounded evidence-navigation trace to an existing sealed candidate session. */
+export async function navigateSignalTopicCandidateRefinementProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;sessionKey:string;request:unknown
+}){
+  const{pool}=await import("@/lib/db");
+  return navigateSignalTopicCandidateRefinementV1({pool,workspace_id:args.workspace.id,
+    actor:actor(args.actor),session_key:args.sessionKey,request:args.request});
 }
 
 /**

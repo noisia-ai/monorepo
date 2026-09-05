@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { SIGNAL_TOPIC_EVALUATION_SUCCESSOR_CONFIRMATION,
-  SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION } from "@noisia/query-engine";
+  SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,
+  parseSignalTopicCandidateRefinementNavigationRequestV1,
+  parseSignalTopicCandidateRefinementSessionStartV1 } from "@noisia/query-engine";
 
 const startSchema=z.object({
   expected_envelope_digest:z.string().regex(/^sha256:[0-9a-f]{64}$/u),
@@ -93,3 +95,8 @@ export function parseSignalTopicEvaluationV2CandidateDetailQuery(url:string){
   if(keys.length!==1||keys[0]!=="run_key")throw new Error("invalid_query");
   return{run_key:v2RunKey.parse(search.get("run_key"))};
 }
+
+export const parseSignalTopicCandidateRefinementSessionStartRequestV1=
+  parseSignalTopicCandidateRefinementSessionStartV1;
+export const parseSignalTopicCandidateRefinementNavigationRequestV1Api=
+  parseSignalTopicCandidateRefinementNavigationRequestV1;

@@ -2221,6 +2221,68 @@ paths:
         "404": { description: Candidate not found in the authorized workspace and run. }
         "409": { description: Stale state, invalid transition, undo target or idempotency conflict. }
         "422": { description: Closed command rejected before write. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/refinement:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: startSignalTopicCandidateRefinement
+      summary: Seal one pending V2 candidate for a 15-minute, proposal-only evidence session.
+      description: >-
+        Provider-neutral. The session is candidate/revision/Brand-OS/source-cluster bound and can
+        only append bounded navigation traces later. It cannot save editorial state, create a Topic
+        Contract, adopt, publish or serve a Topic.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - name: candidateKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicCandidateRefinementSessionStartV1" }
+      responses:
+        "201":
+          description: A server-clock sealed 15-minute candidate refinement session; provider calls remain zero.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicCandidateRefinementSessionV1" }
+        "400": { description: Idempotency-Key is required. }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: Candidate is stale, no longer pending, or its frozen authority changed. }
+        "422": { description: Closed session request rejected before any write. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/refinement/{sessionKey}/evidence:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: navigateSignalTopicCandidateRefinementEvidence
+      summary: Append one bounded evidence navigation trace within a sealed candidate session.
+      description: >-
+        Only the candidate's sealed source clusters are reachable. There is no catalog, SQL, raw
+        corpus, provider, editorial or Topic-management operation on this endpoint.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: sessionKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^topic-refine-[a-f0-9]{16}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicCandidateRefinementNavigationRequestV1" }
+      responses:
+        "200":
+          description: Bounded sanitized evidence plus an append-only trace acknowledgement; provider calls remain zero.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: false }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Sealed session is unavailable to this actor/workspace. }
+        "409": { description: Session expired, candidate state drifted, or the navigation budget is exhausted. }
+        "422": { description: Closed navigation, filters or session-bound cursor rejected. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/successor:
     post:
       tags: [Signal Topic Evaluation]
@@ -3975,6 +4037,72 @@ components:
             operation: { const: brand_os_context }
             element_keys: { type: array, minItems: 1, maxItems: 40, uniqueItems: true,
               items: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+    SignalTopicCandidateRefinementSessionStartV1:
+      type: object
+      additionalProperties: false
+      required: [run_key, candidate_key, expected_revision, state_token]
+      properties:
+        run_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{7,199}$' }
+        candidate_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        expected_revision: { type: integer, minimum: 1 }
+        state_token: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+    SignalTopicCandidateRefinementSessionV1:
+      type: object
+      additionalProperties: false
+      required: [contract_version, session_key, run_key, candidate_key, candidate_revision,
+        expires_at, navigation_calls_remaining, provider_calls_allowed, topic_adoption, publication, serving]
+      properties:
+        contract_version: { const: signal-topic-candidate-refinement-v1 }
+        session_key: { type: string, pattern: '^topic-refine-[a-f0-9]{16}$' }
+        run_key: { type: string }
+        candidate_key: { type: string }
+        candidate_revision: { type: integer, minimum: 1 }
+        expires_at: { type: string, format: date-time }
+        navigation_calls_remaining: { type: integer, minimum: 0, maximum: 12 }
+        provider_calls_allowed: { const: 0 }
+        topic_adoption: { const: false }
+        publication: { const: false }
+        serving: { const: false }
+    SignalTopicCandidateRefinementNavigationRequestV1:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [operation]
+          properties: { operation: { const: candidate_context } }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key]
+          properties:
+            operation: { const: cluster_profile }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key, limit, filters]
+          properties:
+            operation: { const: representative_mentions }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+            limit: { type: integer, minimum: 3, maximum: 12 }
+            filters: { $ref: "#/components/schemas/SignalTopicEvidenceFiltersV2" }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_key, limit, cursor, filters]
+          properties:
+            operation: { const: search_cluster }
+            cluster_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+            limit: { type: integer, minimum: 1, maximum: 20 }
+            cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+            filters: { $ref: "#/components/schemas/SignalTopicEvidenceFiltersV2" }
+        - type: object
+          additionalProperties: false
+          required: [operation, cluster_keys]
+          properties:
+            operation: { const: compare_clusters }
+            cluster_keys: { type: array, minItems: 2, maxItems: 2, uniqueItems: true,
+              items: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+        - type: object
+          additionalProperties: false
+          required: [operation]
+          properties: { operation: { const: brand_os_context } }
     SignalTopicEvidenceFiltersV2:
       type: object
       additionalProperties: false

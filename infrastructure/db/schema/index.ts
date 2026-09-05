@@ -7262,6 +7262,85 @@ export const signalTopicEvaluationV2CandidateReviewEvents = pgTable(
   }
 );
 
+// Candidate refinement is a separate proposal-only plane. It never mutates model output or the
+// ordinary pending/rejected editorial history, and is deliberately not a Topic Contract surface.
+export const signalTopicEvaluationV2CandidateRefinementSessions = pgTable(
+  "signal_topic_evaluation_v2_candidate_refinement_sessions", {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+    baseModelRevisionId: uuid("base_model_revision_id").notNull()
+      .references(() => signalTopicEvaluationV2CandidateRevisions.id, { onDelete: "restrict" }),
+    candidateEditorialRevisionId: uuid("candidate_editorial_revision_id")
+      .references(() => signalTopicEvaluationV2CandidateEditorialRevisions.id, { onDelete: "restrict" }),
+    candidateRevision: integer("candidate_revision").notNull(),
+    candidateStateToken: text("candidate_state_token").notNull(),
+    candidateVersionDigest: text("candidate_version_digest").notNull(),
+    brandOsAuthorityDigest: text("brand_os_authority_digest").notNull(),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    sourceClusterKeys: text("source_cluster_keys").array().notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    startInputDigest: text("start_input_digest").notNull(),
+    sessionKey: text("session_key").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    sessionDigest: text("session_digest").notNull(),
+    createdAt: now()
+  }, (table) => [
+    unique("uq_signal_topic_evaluation_v2_refinement_session_scope")
+      .on(table.id, table.workspaceId, table.runId, table.snapshotId, table.candidateId),
+    unique("uq_signal_topic_evaluation_v2_refinement_session_idempotency")
+      .on(table.workspaceId, table.idempotencyKey),
+    unique("uq_signal_topic_evaluation_v2_refinement_session_key").on(table.workspaceId, table.sessionKey),
+    index("idx_signal_topic_evaluation_v2_refinement_session_candidate")
+      .on(table.candidateId, table.createdAt)
+  ]
+);
+
+export const signalTopicEvaluationV2CandidateRefinementTraces = pgTable(
+  "signal_topic_evaluation_v2_candidate_refinement_navigation_traces", {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id").notNull()
+      .references(() => signalTopicEvaluationV2CandidateRefinementSessions.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+    navigationIndex: integer("trace_index").notNull(),
+    operation: text("operation").notNull(),
+    request: jsonb("request").notNull(),
+    requestDigest: text("request_digest").notNull(),
+    resultDigest: text("result_digest").notNull(),
+    resultBytes: integer("result_bytes").notNull(),
+    evidenceRefs: text("evidence_refs").array().notNull(),
+    cursorDigest: text("cursor_digest"),
+    cursorContextDigest: text("cursor_context_digest"),
+    createdAt: now()
+  }, (table) => [unique("uq_signal_topic_evaluation_v2_refinement_trace")
+    .on(table.sessionId, table.navigationIndex)]
+);
+
+export const signalTopicEvaluationV2CandidateRefinementProposals = pgTable(
+  "signal_topic_evaluation_v2_candidate_refinement_proposals", {
+    id: uuid("id").primaryKey(),
+    sessionId: uuid("session_id").notNull()
+      .references(() => signalTopicEvaluationV2CandidateRefinementSessions.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull().references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+    displayName: text("display_name").notNull(), description: text("description").notNull(),
+    evidenceRefs: text("evidence_refs").array().notNull(),
+    relatedCandidateKeys: text("related_candidate_keys").array().notNull(),
+    recommendation: text("recommendation").notNull(), rationale: text("rationale").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    proposalDigest: text("proposal_digest").notNull(), createdAt: now()
+  }, (table) => [unique("uq_signal_topic_evaluation_v2_refinement_proposal_session").on(table.sessionId),
+    unique("uq_signal_topic_evaluation_v2_refinement_proposal_idempotency")
+      .on(table.sessionId, table.idempotencyKey)]
+);
+
 export const dashboardDataRefs = pgTable(
   "dashboard_data_refs",
   {
