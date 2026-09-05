@@ -107,9 +107,15 @@ test("0116 seals one direct disposable Lab flight and preserves UAT/outbox separ
       navigate:(request)=>navigateSignalTopicEvaluationEvidenceV2({queryable:persistence,
         workspace_id:claimed.workspace_id,actor:{id:claimed.requested_by_user_id,
           user_type:"noisia_internal"},request}),model:{next:async(modelInput)=>{
-        if(modelInput.turn_index===0)return{kind:"tool" as const,request:{
-          operation:"representative_mentions" as const,cluster_key:clusterKey,limit:3,filters:{}}};
-        const prior=modelInput.prior_results[0] as {evidence_refs:string[]};const evidence=prior.evidence_refs[0]!;
+        if(modelInput.turn_index===0)return{kind:"tool" as const,request:{operation:"evaluation_brief" as const}};
+        if(modelInput.turn_index===1){
+          const brief=modelInput.prior_results[0] as {data:{brand_os:{elements:unknown[]};shortlist:{clusters:unknown[]}}};
+          assert.equal(brief.data.brand_os.elements.length>0,true);
+          assert.equal(brief.data.shortlist.clusters.length>0&&brief.data.shortlist.clusters.length<=24,true);
+          return{kind:"tool" as const,request:{operation:"representative_mentions" as const,
+            cluster_key:clusterKey,limit:3,filters:{}}};
+        }
+        const prior=modelInput.prior_results[1] as {evidence_refs:string[]};const evidence=prior.evidence_refs[0]!;
         return{kind:"final" as const,json:JSON.stringify({
           contract_version:"signal-topic-evaluation-full-evidence-output-v2",
           candidates:[{candidate_key:"candidate.lab-proof",title:"Lab proof",

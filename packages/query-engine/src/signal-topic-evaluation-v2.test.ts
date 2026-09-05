@@ -23,6 +23,11 @@ const mention = (ref: string) => ({ evidence_ref: ref, excerpt: "Sanitized fixtu
   language: "en", market: "US", scope: "category", month: "2026-01", stratum: "central",
   source_digest: digest("source") });
 const responseData = {
+  evaluation_brief: { brand_os: { elements: [{ element_key: "identity.example", element_kind: "brand_identity",
+    display_text: "Example", scope: "workspace", locale: null, source_refs_digest: digest("source"), evidence_count: 1 }],
+    total_elements: 1 }, shortlist: { clusters: [{ cluster_key: "cluster.1", proposal_key: "proposal.1",
+      member_count: 12, terms: ["term"], phrases: ["example phrase"],
+      scope_distribution: [{ scope: "primary_brand", count: 12 }] }], policy: "balanced_scope_membership_v1" } },
   cluster_catalog: { clusters: [clusterSummary], total_clusters: 116 },
   cluster_profile: clusterProfile,
   compare_clusters: { clusters: [clusterProfile, { ...clusterProfile, cluster_key: "cluster.2" }] },
@@ -101,6 +106,7 @@ test("execution flight card is explicit, bounded, and cannot exceed the static m
 });
 
 test("navigation schema rejects injection, oversize and duplicate cluster sets", () => {
+  assert.throws(() => parseSignalTopicEvidenceNavigationRequestV2({ operation: "evaluation_brief", cursor: null }));
   assert.throws(() => parseSignalTopicEvidenceNavigationRequestV2({ operation: "search_cluster",
     cluster_key: "cluster.1", limit: 20, cursor: null, filters: { query: "x'; drop table mentions;--" } }));
   assert.throws(() => parseSignalTopicEvidenceNavigationRequestV2({ operation: "search_cluster",
@@ -123,8 +129,7 @@ test("offline fake loop progressively retrieves evidence and preserves pool beyo
   const snapshot = digest("snapshot");
   const evidence = Array.from({ length: 12 }, (_, index) => digest(`evidence-${index}`));
   const decisions: Array<{ kind: "tool"; request: unknown } | { kind: "final"; json: string }> = [
-    { kind: "tool", request: { operation: "cluster_catalog", limit: 5, cursor: null } },
-    { kind: "tool", request: { operation: "cluster_profile", cluster_key: "cluster.1" } },
+    { kind: "tool", request: { operation: "evaluation_brief" } },
     { kind: "tool", request: { operation: "representative_mentions", cluster_key: "cluster.1",
       limit: 12, filters: {} } },
     { kind: "final", json: JSON.stringify({ contract_version: "signal-topic-evaluation-full-evidence-output-v2",
@@ -145,7 +150,7 @@ test("offline fake loop progressively retrieves evidence and preserves pool beyo
           mentions: refs.map(mention) } : responseData[request.operation]), evidence_refs: refs });
     } });
   assert.equal(trace.provider_calls, 0);
-  assert.equal(trace.retrievals.length, 3);
+  assert.equal(trace.retrievals.length, 2);
   assert.equal(trace.output.candidates.length, 12);
   assert.equal(trace.output.ranking.length, 10);
   assert.deepEqual(trace.output.candidates.map((item) => item.status), Array(12).fill("pending"));

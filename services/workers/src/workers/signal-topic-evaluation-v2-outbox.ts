@@ -30,6 +30,9 @@ export async function drainSignalTopicEvaluationV2ExecutionOutbox(options: Optio
       model: input.model,
       snapshot_digest: input.snapshot_digest,
       max_output_tokens: input.max_output_tokens,
+      // UAT 0112 deliberately has no Lab-only evaluation_brief retrieval ledger. Keep this
+      // explicit so a future shared-adapter change cannot silently alter its contract.
+      bootstrap_mode: "catalog_first_v1",
       pricing: {
         input_micro_usd_per_token: input.input_micro_usd_per_token,
         output_micro_usd_per_token: input.output_micro_usd_per_token

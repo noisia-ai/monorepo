@@ -38,11 +38,11 @@ function validEnv(){return{NOISIA_RUNTIME_PROFILE:"local_disposable_lab_v1",
   [SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME]:"fixture-only"};}
 
 function dependencies(counters:{prepare:number;preflight:number;write:number;credential:number;
-  provider:number}){return{
+  provider:number},evaluationBriefLedgerCount=1){return{
   prepare:async()=>{counters.prepare+=1;return{anchor,target:{}} as never;},
   createReadPool:()=>({}) as never,preflight:async()=>{counters.preflight+=1;return receipt as never;},
-  createWritePool:()=>({query:async()=>({rows:[{ledger_count:1,authorities:0,runs:0,outboxes:0,
-    candidates:0}]})}) as never,createAndClaim:async(args:Record<string,unknown>)=>{
+  createWritePool:()=>({query:async()=>({rows:[{ledger_count:1,evaluation_brief_ledger_count:evaluationBriefLedgerCount,
+    authorities:0,runs:0,outboxes:0,candidates:0}]})}) as never,createAndClaim:async(args:Record<string,unknown>)=>{
     counters.write+=1;assert.equal("workspace_id" in args,false);assert.equal("actor" in args,false);
     return claimed as never;},readCredential:(env:NodeJS.ProcessEnv)=>{counters.credential+=1;
     return env[SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME]!;},
@@ -68,6 +68,13 @@ test("one Lab execution derives authority, reads the dedicated credential once a
   assert.equal(result.queue_used,false);assert.equal(result.outbox_used,false);
   assert.equal(result.topic_adoption,false);assert.equal(result.publication,false);
   assert.equal(result.serving,false);assert.equal(result.uat_connections,0);
+});
+
+test("missing 0117 evaluation-brief ledger fails before credential, claim and provider",async()=>{
+  const counts={prepare:0,preflight:0,write:0,credential:0,provider:0};
+  await assert.rejects(runSignalTopicEvaluationLabExecutionV2(validEnv(),dependencies(counts,0)),
+    /immediate_authority_invalid/u);
+  assert.deepEqual(counts,{prepare:1,preflight:1,write:0,credential:0,provider:0});
 });
 
 test("fixed write binder never interpolates source syntax and supports arrays",()=>{

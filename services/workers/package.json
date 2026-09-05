@@ -18,6 +18,7 @@
     "signal:topic-evaluation:lab-preflight": "tsx scripts/preflight-signal-topic-evaluation-lab-v2.ts",
     "signal:topic-evaluation:lab-execute": "tsx scripts/run-signal-topic-evaluation-lab-v2.ts",
     "signal:topic-evaluation:lab-apply-0116": "tsx scripts/apply-signal-topic-evaluation-lab-execution-v2.ts",
+    "signal:topic-evaluation:lab-apply-0117": "tsx scripts/apply-signal-topic-evaluation-lab-evaluation-brief-migration-v2.ts",
     "test:signal-topic-evaluation:lab-preflight": "node --test --import tsx scripts/*signal-topic-evaluation-lab*.test.ts",
     "signal:discover-topics-narratives": "tsx scripts/discover-signal-topics-narratives.ts",
     "signal:run-topics-narratives-backfill": "tsx scripts/run-signal-taxonomy-backfill.ts",

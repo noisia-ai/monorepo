@@ -25,6 +25,8 @@ export const SIGNAL_TOPIC_EVALUATION_LAB_IDEMPOTENCY_NAME =
   "NOISIA_TOPIC_EVALUATION_LAB_IDEMPOTENCY_KEY";
 export const SIGNAL_TOPIC_EVALUATION_LAB_MIGRATION_0116_SHA256 =
   "sha256:02a53637d73be36c4001536a05fc112fb0d7f0aceb32878cb45939e7533e9664";
+export const SIGNAL_TOPIC_EVALUATION_LAB_MIGRATION_0117_SHA256 =
+  "sha256:096e0e81bafe38ee7ca5071aaf4a06007c7a376a4da7e9b5515286b43b6a6c02";
 
 type Dependencies={
   prepare:typeof prepareSignalTopicEvaluationLabInvocationV2;
@@ -48,6 +50,7 @@ const defaults:Dependencies={prepare:prepareSignalTopicEvaluationLabInvocationV2
     const provider=createAnthropic({apiKey:credential});
     return createAnthropicFullEvidenceTopicEvaluationModelV2({model:input.model,
       snapshot_digest:input.snapshot_digest,max_output_tokens:input.max_output_tokens,
+      bootstrap_mode:"context_first_lab_v1",
       pricing:{input_micro_usd_per_token:input.input_micro_usd_per_token,
         output_micro_usd_per_token:input.output_micro_usd_per_token}},
     (request)=>generateAnthropicBoundedTextV1(request,provider));
@@ -75,17 +78,21 @@ export async function runSignalTopicEvaluationLabExecutionV2(env:NodeJS.ProcessE
       receipt.effects.runs!==0||receipt.effects.candidates!==0)throw new Error(
     "topic_evaluation_lab_execution_preflight_not_pristine");
   const pool=dependencies.createWritePool(prepared.anchor);
-  const immediate=(await pool.query<{ledger_count:number;authorities:number;runs:number;outboxes:number;
-    candidates:number}>(`SELECT
+  const immediate=(await pool.query<{ledger_count:number;evaluation_brief_ledger_count:number;authorities:number;
+    runs:number;outboxes:number;candidates:number}>(`SELECT
     (SELECT count(*)::int FROM signal_workspace_data_plane_migration_ledger WHERE ordinal=116
       AND migration_name='0116_signal_topic_evaluation_disposable_lab_execution.sql'
       AND checksum_sha256=$1 AND disposition='applied') ledger_count,
+    (SELECT count(*)::int FROM signal_workspace_data_plane_migration_ledger WHERE ordinal=117
+      AND migration_name='0117_signal_topic_evaluation_lab_evaluation_brief.sql'
+      AND checksum_sha256=$2 AND disposition='applied') evaluation_brief_ledger_count,
     (SELECT count(*)::int FROM signal_topic_evaluation_v2_execution_authorizations) authorities,
     (SELECT count(*)::int FROM signal_topic_evaluation_v2_runs) runs,
     (SELECT count(*)::int FROM signal_topic_evaluation_v2_execution_outbox) outboxes,
     (SELECT count(*)::int FROM signal_topic_evaluation_v2_candidates) candidates`,
-  [SIGNAL_TOPIC_EVALUATION_LAB_MIGRATION_0116_SHA256])).rows[0];
-  if(!immediate||immediate.ledger_count!==1||immediate.authorities!==0||immediate.runs!==0||
+  [SIGNAL_TOPIC_EVALUATION_LAB_MIGRATION_0116_SHA256,SIGNAL_TOPIC_EVALUATION_LAB_MIGRATION_0117_SHA256])).rows[0];
+  if(!immediate||immediate.ledger_count!==1||immediate.evaluation_brief_ledger_count!==1||
+      immediate.authorities!==0||immediate.runs!==0||
       immediate.outboxes!==0||immediate.candidates!==0)throw new Error(
     "topic_evaluation_lab_execution_immediate_authority_invalid");
   const credential=dependencies.readCredential(env);

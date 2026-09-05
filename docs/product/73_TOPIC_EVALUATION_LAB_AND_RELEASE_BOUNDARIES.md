@@ -69,6 +69,21 @@ and current Brand OS context. The server chooses the records, limits and cursors
 model can investigate a cluster without becoming a general database client or receiving an
 unbounded export.
 
+### Context-first evidence bootstrap
+
+The first model turn is `evaluation_brief`, a server-owned read. It provides a compact map of the
+currently approved Brand OS elements plus up to 24 historical BERTopic proposals selected by a
+deterministic scope-balanced policy (primary-brand, competitor, category, then a membership-size
+fallback). It exposes short profile terms, phrases and scope counts—not raw mention text. The
+outlier reservoir remains part of the full corpus and can still be navigated deliberately, but it
+does not consume a bootstrap slot because it is not one of the 115 historical proposals.
+
+The next turns must use `representative_mentions`, `search_cluster` or comparisons to obtain
+bounded, sanitized evidence for any proposal the model wants to keep. A candidate can cite only
+evidence references returned by those mention operations. In plain terms: Brand OS tells the model
+what matters; BERTopic gives it a map of the full corpus; the model then reads representative human
+mentions before it names or ranks an editable candidate.
+
 ## Lab success and failure
 
 One flight card records a purpose, model, fixed input authority, tool and token limits, a maximum
@@ -92,13 +107,23 @@ database derives workspace and actor from the frozen snapshot, accepts no caller
 and permits at most one Lab flight for that snapshot. The historical `uat` profile remains separate
 and still requires its exact outbox cohort.
 
+Migration 0117 is also local-Lab-only and forward-only. It records the `evaluation_brief` operation
+in the immutable retrieval ledger after proving that 0116 is present in the same pristine anchored
+clone. It does not alter candidates, corpus mappings, UAT, or any release target.
+
+The shared Anthropic transport has two explicit bootstrap modes. The existing UAT outbox always
+constructs the adapter with `catalog_first_v1`, exactly matching its 0112 retrieval ledger. Only
+the direct local Lab runner constructs `context_first_lab_v1`; it requires `evaluation_brief` as
+turn zero and only after 0117 has been attested. Thus a Lab protocol improvement cannot make a
+future UAT request ask for an operation UAT has not migrated to support.
+
 The only executable local entrypoint is
 `pnpm --filter @noisia/workers signal:topic-evaluation:lab-execute`. It is disabled unless the
 closed Lab runtime, literal action-time confirmation, fresh idempotency key and dedicated Lab
 credential configuration are all present. The runner replays the externally anchored read-only
-preflight immediately before its first write, then creates and claims the authority directly through
+preflight immediately before its first write, verifies the 0116 and 0117 ledgers, then creates and claims the authority directly through
 the fixed Docker container transport. It does not use HTTP, BullMQ, the UAT drainer or a product
-credential lane. The dedicated credential value is read once only after the pristine/0116 check and
+credential lane. The dedicated credential value is read once only after the pristine/0116-and-0117 check and
 immediately before durable claim. It is never written to a receipt or log.
 
 The sealed flight allows at most 12 model turns, 24 evidence navigations, 450,000 input tokens,

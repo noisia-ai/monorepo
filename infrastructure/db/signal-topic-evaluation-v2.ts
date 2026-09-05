@@ -7,6 +7,7 @@ import {
   sanitizeSignalTopicEvidenceExcerptV2,
   SIGNAL_TOPIC_EVALUATION_V2_EXECUTION_CONFIRMATION,
   SIGNAL_TOPIC_EVALUATION_V2_CONTRACT,
+  signalTopicEvidenceClusterProfileSchemaV2,
   signalTopicEvaluationDigestV2,
   signalTopicEvaluationFlightCardV2,
   signalTopicEvidenceNavigationResultV2,
@@ -287,6 +288,19 @@ export async function navigateSignalTopicEvaluationEvidenceV2(args: { queryable:
 
 async function navigate(queryable: Queryable, snapshot: SnapshotRow,
   request: SignalTopicEvidenceNavigationRequestV2) {
+  if (request.operation === "evaluation_brief") {
+    // The Lab's fixed psql transport deliberately permits one active query per client. Keep this
+    // server-owned read sequence serial so the same navigation works with pg pools and the Lab.
+    const context = await loadApprovedBrandOsContext(queryable, snapshot, undefined, 80);
+    const shortlist = await loadEvaluationBriefShortlist(queryable, snapshot);
+    if (context.length === 0 || shortlist.length === 0) {
+      throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_evaluation_brief_unavailable", 409);
+    }
+    return { evidence_refs: [], next_cursor: null, data: {
+      brand_os: { elements: context.map(projectBrandOsContextElement), total_elements: context.length },
+      shortlist: { clusters: shortlist, policy: "balanced_scope_membership_v1" as const }
+    } };
+  }
   if (request.operation === "cluster_catalog") {
     const after = request.cursor ? decodeCursor(request.cursor, snapshot, "cluster_catalog", null) : null;
     const result = await queryable.query<{cluster_key:string;proposal_key:string|null;member_count:number;
@@ -307,26 +321,11 @@ async function navigate(queryable: Queryable, snapshot: SnapshotRow,
     return { evidence_refs: [], next_cursor: null, data: { clusters } };
   }
   if (request.operation === "brand_os_context") {
-    const context = await queryable.query<{element_key:string;element_kind:string;display_text:string;
-      scope:string;locale:string|null;source_refs_digest:string;evidence_count:number}>(`SELECT element.element_key,
-      element.element_kind,element.display_text,COALESCE(element.scope,'workspace') scope,element.locale,
-      element.source_refs_digest,count(link.id)::int evidence_count
-      FROM signal_topic_evaluation_v2_snapshots snapshot
-      JOIN signal_semantic_context_element_versions element
-        ON element.generation_id=snapshot.semantic_context_generation_id
-      LEFT JOIN analysis_evidence_links link ON link.evidence_group_id=element.evidence_group_id
-      WHERE snapshot.id=$1::uuid AND element.workspace_id=$2::uuid
-        AND element.element_key=ANY($3::text[]) AND element.disposition='approved'
-        AND element.lifecycle_state='active'
-        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
-          WHERE successor.supersedes_element_id=element.id)
-      GROUP BY element.id ORDER BY element.element_key`, [snapshot.id, snapshot.workspace_id,
-      request.element_keys]);
-    if (context.rows.length !== request.element_keys.length) {
+    const context = await loadApprovedBrandOsContext(queryable, snapshot, request.element_keys);
+    if (context.length !== request.element_keys.length) {
       throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_context_authority_invalid", 409);
     }
-    return { evidence_refs: [], next_cursor: null, data: { elements: context.rows.map((row) => ({ ...row,
-      display_text: sanitizeSignalTopicEvidenceExcerptV2(row.display_text) })) } };
+    return { evidence_refs: [], next_cursor: null, data: { elements: context.map(projectBrandOsContextElement) } };
   }
   await requireClusters(queryable, snapshot, [request.cluster_key]);
   const filters = request.filters;
@@ -376,6 +375,90 @@ async function navigate(queryable: Queryable, snapshot: SnapshotRow,
       sampling_guarantee: request.operation === "representative_mentions"
         ? "deterministic_round_robin_across_observed_strata" : "stable_cluster_rank",
       sampling_limit: "Observed strata are round-robin covered when the requested limit is at least their count; language, market, scope and time diversity remains bounded by available metadata and the limit." } };
+}
+
+type BrandOsContextRow = { element_key:string; element_kind:string; display_text:string;
+  scope:string; locale:string|null; source_refs_digest:string; evidence_count:number };
+type EvaluationBriefClusterRow = { cluster_key:string; proposal_key:string; member_count:number;
+  profile:unknown };
+
+async function loadApprovedBrandOsContext(queryable: Queryable, snapshot: SnapshotRow,
+  elementKeys?: string[], maxElements?: 80): Promise<BrandOsContextRow[]> {
+  if (maxElements !== undefined && maxElements !== 80) {
+    throw new Error("topic_evaluation_v2_context_limit_invalid");
+  }
+  const requested = elementKeys?.length ? "AND element.element_key=ANY($3::text[])" : "";
+  const values = elementKeys?.length
+    ? [snapshot.id, snapshot.workspace_id, elementKeys]
+    : [snapshot.id, snapshot.workspace_id];
+  // This explicit server-side cap matches the serialized evaluation_brief contract. Ordinary
+  // targeted brand_os_context reads remain governed by their separate request max of 40.
+  const limit = maxElements === 80 ? " LIMIT 80" : "";
+  return (await queryable.query<BrandOsContextRow>(`SELECT element.element_key,
+    element.element_kind,element.display_text,COALESCE(element.scope,'workspace') scope,element.locale,
+    element.source_refs_digest,count(link.id)::int evidence_count
+    FROM signal_topic_evaluation_v2_snapshots snapshot
+    JOIN signal_semantic_context_element_versions element
+      ON element.generation_id=snapshot.semantic_context_generation_id
+    LEFT JOIN analysis_evidence_links link ON link.evidence_group_id=element.evidence_group_id
+    WHERE snapshot.id=$1::uuid AND element.workspace_id=$2::uuid ${requested}
+      AND element.disposition='approved' AND element.lifecycle_state='active'
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)
+    GROUP BY element.id ORDER BY element.element_key${limit}`, values)).rows;
+}
+
+function projectBrandOsContextElement(row: BrandOsContextRow) {
+  return { ...row, display_text: sanitizeSignalTopicEvidenceExcerptV2(row.display_text).slice(0, 240) };
+}
+
+async function loadEvaluationBriefShortlist(queryable: Queryable, snapshot: SnapshotRow) {
+  const rows = (await queryable.query<EvaluationBriefClusterRow>(`WITH scoped AS (
+    SELECT cluster_key,proposal_key,member_count,profile,
+      COALESCE((profile#>>'{distributions,scope,primary_brand}')::int,0) primary_count,
+      COALESCE((profile#>>'{distributions,scope,competitor}')::int,0) competitor_count,
+      COALESCE((profile#>>'{distributions,scope,category}')::int,0) category_count
+    -- The explicit outlier reservoir is corpus coverage, not a historical BERTopic proposal.
+    -- Keep it navigable through the regular catalog, but do not spend the model's bootstrap on it.
+    FROM signal_topic_evaluation_v2_clusters WHERE snapshot_id=$1::uuid AND proposal_key IS NOT NULL
+  ), primary_selection AS (
+    SELECT *,1 selection_order FROM scoped WHERE primary_count>0
+    ORDER BY primary_count DESC,member_count DESC,cluster_key LIMIT 12
+  ), competitor AS (
+    SELECT scoped.*,2 selection_order FROM scoped WHERE competitor_count>0
+      AND NOT EXISTS(SELECT 1 FROM primary_selection
+        WHERE primary_selection.cluster_key=scoped.cluster_key)
+    ORDER BY competitor_count DESC,member_count DESC,cluster_key LIMIT 8
+  ), category AS (
+    SELECT scoped.*,3 selection_order FROM scoped WHERE category_count>0
+      AND NOT EXISTS(SELECT 1 FROM primary_selection
+        WHERE primary_selection.cluster_key=scoped.cluster_key)
+      AND NOT EXISTS(SELECT 1 FROM competitor WHERE competitor.cluster_key=scoped.cluster_key)
+    ORDER BY category_count DESC,member_count DESC,cluster_key LIMIT 4
+  ), selected AS (
+    SELECT * FROM primary_selection UNION ALL SELECT * FROM competitor UNION ALL SELECT * FROM category
+  ), fallback AS (
+    SELECT scoped.*,4 selection_order FROM scoped
+    WHERE NOT EXISTS(SELECT 1 FROM selected WHERE selected.cluster_key=scoped.cluster_key)
+    ORDER BY member_count DESC,cluster_key
+    LIMIT GREATEST(0,24-(SELECT count(*) FROM selected))
+  ) SELECT cluster_key,proposal_key,member_count,profile FROM (
+    SELECT * FROM selected UNION ALL SELECT * FROM fallback
+  ) picked ORDER BY selection_order,member_count DESC,cluster_key`, [snapshot.id])).rows;
+  return rows.map((row) => projectEvaluationBriefCluster(row));
+}
+
+function projectEvaluationBriefCluster(row: EvaluationBriefClusterRow) {
+  const profile = signalTopicEvidenceClusterProfileSchemaV2.parse(row.profile);
+  const allowedScopes = new Set(["primary_brand", "same_entity", "competitor", "category", "other"]);
+  const scope_distribution = Object.entries(profile.distributions.scope)
+    .filter(([scope, count]) => allowedScopes.has(scope) && count > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([scope, count]) => ({ scope: scope as "primary_brand"|"same_entity"|"competitor"|"category"|"other", count }));
+  return { cluster_key: row.cluster_key, proposal_key: row.proposal_key, member_count: row.member_count,
+    terms: profile.terms.slice(0, 8).map((term) => term.slice(0, 64)),
+    phrases: profile.phrases.slice(0, 4).map((phrase) => phrase.slice(0, 96)),
+    scope_distribution };
 }
 
 function publicMention(snapshot: SnapshotRow, row: MemberRow) {

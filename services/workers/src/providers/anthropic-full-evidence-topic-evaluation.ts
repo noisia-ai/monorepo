@@ -13,6 +13,13 @@ export type SignalTopicEvaluationV2Pricing = {
   output_micro_usd_per_token: number;
 };
 
+/**
+ * The UAT execution contract and the disposable Lab deliberately share the bounded transport,
+ * but not the same first-turn protocol. Keep the historical UAT path catalog-first until a
+ * separately migrated UAT contract explicitly opts into the Lab's context bootstrap.
+ */
+export type SignalTopicEvaluationBootstrapModeV2 = "catalog_first_v1" | "context_first_lab_v1";
+
 /** A completed provider response whose structured turn is unusable is not an ambiguous network
  * edge. Preserve its metered usage so the durable caller can terminalize it without retrying. */
 export class SignalTopicEvaluationProviderResponseInvalidErrorV2 extends Error {
@@ -36,10 +43,12 @@ export function createAnthropicFullEvidenceTopicEvaluationModelV2(args: {
   snapshot_digest: string;
   max_output_tokens: number;
   pricing: SignalTopicEvaluationV2Pricing;
+  bootstrap_mode?: SignalTopicEvaluationBootstrapModeV2;
 }, transport: BoundedTransport = generateAnthropicBoundedTextV1) {
   return {
     next: async (input: SignalTopicEvaluationModelInputV2) => {
-      const prompt = buildPrompt(args.snapshot_digest, input);
+      const bootstrapMode = args.bootstrap_mode ?? "catalog_first_v1";
+      const prompt = buildPrompt(args.snapshot_digest, input, bootstrapMode);
       const maximumInputTokens = promptInputTokenCeiling(prompt);
       const maximumInputCost = costMicroUsd(maximumInputTokens, 0, args.pricing);
       if (maximumInputTokens > input.remaining_input_tokens
@@ -80,6 +89,17 @@ export function createAnthropicFullEvidenceTopicEvaluationModelV2(args: {
         } catch {
           throw new SignalTopicEvaluationProviderResponseInvalidErrorV2(usage);
         }
+        if (bootstrapMode === "context_first_lab_v1" && input.turn_index === 0
+            && (parsed.kind !== "tool" || parsed.request.operation !== "evaluation_brief")) {
+          throw new SignalTopicEvaluationProviderResponseInvalidErrorV2(usage);
+        }
+        // 0112's UAT retrieval ledger predates the Lab-only operation. Reject it before the
+        // shared runner can navigate or persist an unsupported request, while preserving metered
+        // usage as a terminal received-response outcome.
+        if (bootstrapMode === "catalog_first_v1" && parsed.kind === "tool"
+            && parsed.request.operation === "evaluation_brief") {
+          throw new SignalTopicEvaluationProviderResponseInvalidErrorV2(usage);
+        }
         return parsed.kind === "tool"
           ? { kind: "tool" as const, request: parsed.request, usage }
           : { kind: "final" as const, json: JSON.stringify(parsed.output), usage };
@@ -99,13 +119,22 @@ function promptInputTokenCeiling(prompt: string) {
   return ceiling;
 }
 
-function buildPrompt(snapshotDigest: string, input: SignalTopicEvaluationModelInputV2) {
-  return [
+function buildPrompt(snapshotDigest: string, input: SignalTopicEvaluationModelInputV2,
+  bootstrapMode: SignalTopicEvaluationBootstrapModeV2) {
+  const common = [
     "You are the bounded Full Evidence Topic Evaluation agent for Noisia.",
     "You are reviewing candidate topics only. You must never adopt, publish, serve, delete or mutate a Topic.",
     "The only evidence available to you is the prior server-owned navigation output below. Do not infer unseen mentions.",
     "When more evidence is needed, return exactly one allowed navigation request. Never request SQL, raw IDs, URLs, files, credentials or unbounded corpus content.",
-    "When enough evidence is available, return only the final pending candidate output. Each candidate must cite evidence references already returned and cluster keys you actually navigated.",
+  ];
+  const protocol = bootstrapMode === "context_first_lab_v1"
+    ? [
+      "On turn zero, request evaluation_brief. It returns the compact approved Brand OS map and a deterministic balanced shortlist; it is orientation, not mention evidence.",
+      "Use the brief to select coherent clusters, then retrieve representative_mentions for every source cluster you use in a candidate. Judge relevance against the Brand OS map and the returned mentions, not generic term overlap.",
+      "When enough evidence is available, return only the final pending candidate output. Each candidate must cite evidence references already returned and source cluster keys you actually navigated. Preserve a complete useful pool; ranking is only the Top-10 projection."
+    ]
+    : ["When enough evidence is available, return only the final pending candidate output. Each candidate must cite evidence references already returned and cluster keys you actually navigated."];
+  return [...common, ...protocol,
     `Frozen snapshot digest: ${snapshotDigest}.`,
     `Turn index: ${input.turn_index}.`,
     `Remaining output-token ceiling: ${input.remaining_output_tokens}.`,

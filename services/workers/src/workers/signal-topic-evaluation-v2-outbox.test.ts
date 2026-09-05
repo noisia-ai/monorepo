@@ -26,6 +26,7 @@ test("V2 Worker is the only composition root that advances a durable dispatch in
   assert.match(outbox, /claimNextSignalTopicEvaluationV2ExecutionOutbox/u);
   assert.match(outbox, /NOISIA_TOPIC_EVALUATION_V2_EXECUTION_ENABLED/u);
   assert.match(outbox, /processSignalTopicEvaluationV2ProviderRun/u);
+  assert.match(outbox, /bootstrap_mode:\s*"catalog_first_v1"/u);
   assert.match(entrypoint, /startSignalTopicEvaluationV2ExecutionOutboxDrainer\(\)/u);
   assert.match(entrypoint, /await topicEvaluationV2OutboxDrainer\.close\(\)/u);
   assert.match(executionAuthority, /claimSignalTopicEvaluationV2ExecutionAuthorityWithClient/u);

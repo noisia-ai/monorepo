@@ -6,7 +6,7 @@ import { signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
 import { createAnthropicFullEvidenceTopicEvaluationModelV2,
   SignalTopicEvaluationProviderResponseInvalidErrorV2 } from "./anthropic-full-evidence-topic-evaluation";
 
-test("full-evidence adapter supplies only bounded prior results and leaves temperature unset", async () => {
+test("default full-evidence adapter preserves the UAT catalog-first protocol", async () => {
   const snapshot = signalTopicEvaluationDigestV2("snapshot");
   const observed: Array<Record<string, unknown>> = [];
   const model = createAnthropicFullEvidenceTopicEvaluationModelV2({ model: "claude-sonnet-5",
@@ -24,7 +24,55 @@ test("full-evidence adapter supplies only bounded prior results and leaves tempe
   assert.equal("temperature" in observed[0]!, false);
   assert.equal(observed[0]!.max_output_tokens, 32);
   assert.match(String(observed[0]!.prompt), /Prior bounded navigation results/u);
+  assert.doesNotMatch(String(observed[0]!.prompt), /evaluation_brief/u);
+  assert.match(String(observed[0]!.prompt), /cluster keys you actually navigated/u);
   assert.equal(String(observed[0]!.prompt).includes("ANTHROPIC_API_KEY"), false);
+});
+
+test("Lab context-first adapter requires evaluation_brief on turn zero", async () => {
+  const observed: Array<Record<string, unknown>> = [];
+  const model = createAnthropicFullEvidenceTopicEvaluationModelV2({ model: "claude-sonnet-5",
+    snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
+    bootstrap_mode: "context_first_lab_v1",
+    pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async (request) => {
+    observed.push(request as Record<string, unknown>);
+    return { text: JSON.stringify({ kind: "tool", request: { operation: "evaluation_brief" } }),
+      provider_request_id: null, usage: { input_tokens: 12, output_tokens: 8 } };
+  });
+  const result = await model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
+    remaining_output_tokens: 32, remaining_cost_micro_usd: 1_000_000 });
+  assert.equal(result.kind, "tool");
+  assert.equal(result.kind === "tool" && result.request.operation, "evaluation_brief");
+  assert.match(String(observed[0]!.prompt), /On turn zero, request evaluation_brief/u);
+  assert.match(String(observed[0]!.prompt), /representative_mentions for every source cluster/u);
+});
+
+test("Lab context-first adapter terminalizes a received non-brief turn without retry", async () => {
+  const model = createAnthropicFullEvidenceTopicEvaluationModelV2({ model: "claude-sonnet-5",
+    snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
+    bootstrap_mode: "context_first_lab_v1",
+    pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async () => ({
+    text: JSON.stringify({ kind: "tool", request: { operation: "cluster_catalog", limit: 1, cursor: null } }),
+    provider_request_id: "received-response", usage: { input_tokens: 12, output_tokens: 8 }
+  }));
+  await assert.rejects(model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
+    remaining_output_tokens: 1_000, remaining_cost_micro_usd: 1_000_000 }),
+  (error) => error instanceof SignalTopicEvaluationProviderResponseInvalidErrorV2
+    && error.usage.cost_micro_usd === 156);
+});
+
+test("UAT catalog-first adapter rejects the Lab-only brief before shared navigation", async () => {
+  const model = createAnthropicFullEvidenceTopicEvaluationModelV2({ model: "claude-sonnet-5",
+    snapshot_digest: signalTopicEvaluationDigestV2("snapshot"), max_output_tokens: 1_000,
+    bootstrap_mode: "catalog_first_v1",
+    pricing: { input_micro_usd_per_token: 3, output_micro_usd_per_token: 15 } }, async () => ({
+    text: JSON.stringify({ kind: "tool", request: { operation: "evaluation_brief" } }),
+    provider_request_id: "received-response", usage: { input_tokens: 12, output_tokens: 8 }
+  }));
+  await assert.rejects(model.next({ turn_index: 0, prior_results: [], remaining_input_tokens: 450_000,
+    remaining_output_tokens: 1_000, remaining_cost_micro_usd: 1_000_000 }),
+  (error) => error instanceof SignalTopicEvaluationProviderResponseInvalidErrorV2
+    && error.usage.cost_micro_usd === 156);
 });
 
 test("full-evidence adapter preserves ambiguous transport failures for the durable caller", async () => {

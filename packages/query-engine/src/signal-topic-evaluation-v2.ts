@@ -54,6 +54,7 @@ const boundedFilters = z.object({
 }).strict();
 
 export const signalTopicEvidenceNavigationRequestV2 = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("evaluation_brief") }).strict(),
   z.object({ operation: z.literal("cluster_catalog"), limit: z.number().int().min(1)
     .max(SIGNAL_TOPIC_EVALUATION_V2_LIMITS.catalog_limit), cursor: z.string().min(16).max(512).nullable() }).strict(),
   z.object({ operation: z.literal("cluster_profile"), cluster_key: key }).strict(),
@@ -91,10 +92,32 @@ const contextElement = z.object({
   scope: z.string().min(1).max(40), locale: z.string().min(1).max(35).nullable(),
   source_refs_digest: digest, evidence_count: z.number().int().nonnegative()
 }).strict();
+const evaluationBriefCluster = z.object({
+  cluster_key: key,
+  proposal_key: key,
+  member_count: z.number().int().positive(),
+  terms: z.array(z.string().min(1).max(64)).max(8),
+  phrases: z.array(z.string().min(1).max(96)).max(4),
+  scope_distribution: z.array(z.object({
+    scope: z.enum(["primary_brand", "same_entity", "competitor", "category", "other"]),
+    count: z.number().int().positive()
+  }).strict()).max(5)
+}).strict();
+const evaluationBriefData = z.object({
+  brand_os: z.object({
+    elements: z.array(contextElement.extend({ display_text: z.string().min(1).max(240) }).strict()).min(1).max(80),
+    total_elements: z.number().int().min(1).max(80)
+  }).strict(),
+  shortlist: z.object({
+    clusters: z.array(evaluationBriefCluster).min(1).max(24),
+    policy: z.literal("balanced_scope_membership_v1")
+  }).strict()
+}).strict();
 const mentionData = z.object({ cluster_key: key, mentions: z.array(signalTopicEvidenceMentionV2),
   sampling_limit: z.string().min(1).max(600) }).strict();
 
 export const signalTopicEvidenceNavigationDataSchemasV2 = {
+  evaluation_brief: evaluationBriefData,
   cluster_catalog: z.object({ clusters: z.array(clusterSummary).max(SIGNAL_TOPIC_EVALUATION_V2_LIMITS.catalog_limit),
     total_clusters: z.literal(116) }).strict(),
   cluster_profile: cluster,
@@ -119,6 +142,8 @@ const navigationResultBase = z.object({
 }).strict();
 
 export const signalTopicEvidenceNavigationResultV2 = z.discriminatedUnion("operation", [
+  navigationResultBase.extend({ operation: z.literal("evaluation_brief"), next_cursor: z.null(),
+    data: signalTopicEvidenceNavigationDataSchemasV2.evaluation_brief }).strict(),
   navigationResultBase.extend({ operation: z.literal("cluster_catalog"),
     data: signalTopicEvidenceNavigationDataSchemasV2.cluster_catalog }).strict(),
   navigationResultBase.extend({ operation: z.literal("cluster_profile"), next_cursor: z.null(),
