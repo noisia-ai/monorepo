@@ -7101,8 +7101,8 @@ export const signalTopicEvaluationV2Runs = pgTable("signal_topic_evaluation_v2_r
   uniqueIndex("uq_signal_topic_evaluation_v2_run_execution_authorization")
     .on(table.executionAuthorizationId).where(sql`${table.executionAuthorizationId} IS NOT NULL`)]);
 
-// Execution remains disabled by default. This table is only the durable, UAT-scoped authority
-// required by migration 0113 before a later separately confirmed provider flight can create a run.
+// Execution remains disabled by default. UAT uses its outbox authority; migration 0116 also admits
+// one no-outbox authority inside the externally anchored disposable local Lab clone only.
 export const signalTopicEvaluationV2ExecutionAuthorizations = pgTable(
   "signal_topic_evaluation_v2_execution_authorizations", {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -7111,6 +7111,8 @@ export const signalTopicEvaluationV2ExecutionAuthorizations = pgTable(
     requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
     idempotencyKey: text("idempotency_key").notNull(), authorizationKey: text("authorization_key").notNull(),
     confirmation: text("confirmation").notNull(), runtimeProfile: text("runtime_profile").notNull(),
+    authorityChannel: text("authority_channel").notNull().default("uat_management_v1"),
+    authorityInput: jsonb("authority_input"), authorityInputDigest: text("authority_input_digest"),
     provider: text("provider").notNull(), model: text("model").notNull(), pricingVersion: text("pricing_version").notNull(),
     inputMicroUsdPerToken: bigint("input_micro_usd_per_token", { mode: "bigint" }).notNull(),
     outputMicroUsdPerToken: bigint("output_micro_usd_per_token", { mode: "bigint" }).notNull(),

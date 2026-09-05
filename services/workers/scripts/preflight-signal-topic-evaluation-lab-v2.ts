@@ -105,7 +105,7 @@ export function parseSignalTopicEvaluationLabTargetV2(raw:string,expectedCloneNa
 export async function preflightSignalTopicEvaluationLabV2(args:{
   pool:LabPool;target:ReturnType<typeof parseSignalTopicEvaluationLabTargetV2>;
   host_receipt:SignalTopicEvaluationLabHostReceiptV1;
-  provider_configuration_present:boolean;dependencies?:Dependencies
+  provider_configuration_present:boolean;dependencies?:Dependencies;write_receipt?:boolean
 }){
   const dependencies=args.dependencies??realDependencies;
   if(await dependencies.migration0115Digest()!==MIGRATION_0115.sha256){
@@ -195,7 +195,7 @@ export async function preflightSignalTopicEvaluationLabV2(args:{
         applied_to_disposable_clone:true}},
       effects:{database_writes:0,provider_calls:0,queue_jobs:0,runs:0,candidates:0,adoptions:0,
         publications:0,serving_effects:0,uat_connections:0,production_accessed:false}};
-    await dependencies.writeReceipt(receipt,args.target.database);
+    if(args.write_receipt!==false)await dependencies.writeReceipt(receipt,args.target.database);
     return receipt;
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}

@@ -83,6 +83,31 @@ If the Lab produces weak candidates, the next step is to inspect the frozen corp
 handoff and compare local bounded clustering or ranking alternatives. A paid call is never retried
 blindly. The operator can then authorize a new sealed experiment with its own cost cap.
 
+## Disposable execution authority
+
+Migration 0116 is local-Lab-only and begins by proving the externally anchored clone marker, frozen
+snapshot, 21,195 memberships and empty execution state. It must never be included in a Preview/UAT
+or production release. It adds one `local_disposable_lab_v1` authority/run pair with no outbox. The
+database derives workspace and actor from the frozen snapshot, accepts no caller workspace or actor,
+and permits at most one Lab flight for that snapshot. The historical `uat` profile remains separate
+and still requires its exact outbox cohort.
+
+The only executable local entrypoint is
+`pnpm --filter @noisia/workers signal:topic-evaluation:lab-execute`. It is disabled unless the
+closed Lab runtime, literal action-time confirmation, fresh idempotency key and dedicated Lab
+credential configuration are all present. The runner replays the externally anchored read-only
+preflight immediately before its first write, then creates and claims the authority directly through
+the fixed Docker container transport. It does not use HTTP, BullMQ, the UAT drainer or a product
+credential lane. The dedicated credential value is read once only after durable claim at the actual
+transport boundary and is never written to a receipt or log.
+
+The sealed flight allows at most 12 model turns, 24 evidence navigations, 450,000 input tokens,
+50,000 output tokens and USD 2.10. Each attempted provider turn is durably counted before transport.
+A proven local pre-transport failure can settle as `failed`; an HTTP, network or otherwise unknown
+after-send boundary remains `outcome_unknown`. Neither state is retried automatically. Successful
+output remains append-only local `pending` candidates with evidence links and a Top-10 projection;
+adoption, publication and serving stay structurally false.
+
 ## What remains non-negotiable
 
 - Use the real registered importer and frozen artifacts; never synthetic memberships or a sample

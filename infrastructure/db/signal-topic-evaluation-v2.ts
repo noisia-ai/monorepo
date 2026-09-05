@@ -185,7 +185,7 @@ export async function claimNextSignalTopicEvaluationV2ExecutionOutbox(args: {
       JOIN signal_topic_evaluation_v2_execution_authorizations authority
         ON authority.id=outbox.execution_authorization_id
       WHERE outbox.status='pending' AND outbox.dispatch_count=0
-        AND run.status='planned' AND authority.status='authorized'
+        AND run.status='planned' AND authority.status='authorized' AND authority.runtime_profile='uat'
       ORDER BY outbox.created_at,outbox.run_id FOR UPDATE OF outbox SKIP LOCKED LIMIT 1
     ) UPDATE signal_topic_evaluation_v2_execution_outbox outbox
       SET status='dispatched',dispatch_count=1,dispatched_at=clock_timestamp()
