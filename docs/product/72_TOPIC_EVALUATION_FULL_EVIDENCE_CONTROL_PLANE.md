@@ -80,6 +80,16 @@ reserved. This is not a score that trains BERTopic and it is not a relevance dec
 must still navigate sanitized representative mentions and the resulting candidates remain pending
 and editable.
 
+For the context-first disposable Lab only, initial `representative_mentions` requests are capped
+server-side at three samples per cluster. The Lab has a structural twelve-turn schedule: turn zero
+can request the brief, turns one through ten can request one distinct Brand-OS-aligned sample, and
+turn eleven is final-only. Input, output and cost are allocated across every pre-final turn before
+the 72K-input / 12K-output synthesis reserve; the Lab cannot spend that reserve early. Intermediate
+turns receive a compact orientation projection rather than accumulated excerpts, and the final
+turn receives the bounded three-excerpt evidence projection. This is a first-pass breadth budget;
+it does not alter the normal bounded search operation or claim that the model has inspected a
+complete cluster. The full evidence plane remains navigable in later separately governed work.
+
 ## Flight card and provenance
 
 V2 is disabled by default and exposes no launch edge in this gate. The maximum future flight card

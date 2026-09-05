@@ -50,7 +50,7 @@ const defaults:Dependencies={prepare:prepareSignalTopicEvaluationLabInvocationV2
     const provider=createAnthropic({apiKey:credential});
     return createAnthropicFullEvidenceTopicEvaluationModelV2({model:input.model,
       snapshot_digest:input.snapshot_digest,max_output_tokens:input.max_output_tokens,
-      bootstrap_mode:"context_first_lab_v1",
+      bootstrap_mode:"context_first_lab_v2",
       pricing:{input_micro_usd_per_token:input.input_micro_usd_per_token,
         output_micro_usd_per_token:input.output_micro_usd_per_token}},
     (request)=>generateAnthropicBoundedTextV1(request,provider));
