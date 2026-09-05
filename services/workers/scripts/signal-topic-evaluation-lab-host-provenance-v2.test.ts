@@ -57,7 +57,8 @@ test("fixed host path and runner sources contain no credential extraction path",
     /\.data\/signal-topic-evaluation\/lab-1b\/clone-provenance\.current\.json$/u);
   const files=await Promise.all(["./signal-topic-evaluation-lab-host-provenance-v2.ts",
     "./create-signal-topic-evaluation-lab-clone-v2.ts",
-    "./signal-topic-evaluation-lab-docker-pool-v2.ts"].map((path)=>readFile(new URL(path,import.meta.url),
+    "./signal-topic-evaluation-lab-docker-pool-v2.ts",
+    "./signal-topic-evaluation-lab-docker-transport-v2.ts"].map((path)=>readFile(new URL(path,import.meta.url),
     "utf8")));
   assert.doesNotMatch(files.join("\n"),/printenv|POSTGRES_PASSWORD|Config\.Env|docker inspect.*Env/iu);
 });

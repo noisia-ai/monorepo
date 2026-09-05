@@ -8,12 +8,12 @@ import { constants } from "node:fs";
 import { access,readFile,writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { verifyRegisteredSignalTopicEvaluationArtifactsV2 } from "@noisia/db";
 import { signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
 
+import { runSignalTopicEvaluationLabDockerV1 } from
+  "./signal-topic-evaluation-lab-docker-transport-v2";
 import { SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,SIGNAL_TOPIC_EVALUATION_LAB_HOST_RECEIPT_PATH,
   SIGNAL_TOPIC_EVALUATION_LAB_SOURCE_DATABASE,ensureSignalTopicEvaluationLabHostReceiptDirectoryV1,
   inspectSignalTopicEvaluationLabContainerV1,signalTopicEvaluationLabHostReceiptDigestV1,
@@ -33,21 +33,9 @@ class LabCloneCreationError extends Error{
   constructor(readonly code:string){super(code);this.name="LabCloneCreationError";}
 }
 
-async function runDocker(args:string[],input?:Buffer){
-  return new Promise<string>((resolveRun,reject)=>{
-    const child=spawn("docker",args,{stdio:["pipe","pipe","pipe"]}) as ChildProcessWithoutNullStreams;
-    const stdout:Buffer[]=[];const stderr:Buffer[]=[];let size=0;
-    child.stdout.on("data",(chunk:Buffer)=>{size+=chunk.length;if(size<=1024*1024)stdout.push(chunk);});
-    child.stderr.on("data",(chunk:Buffer)=>{size+=chunk.length;if(size<=1024*1024)stderr.push(chunk);});
-    child.on("error",()=>reject(new LabCloneCreationError("topic_evaluation_lab_docker_exec_failed")));
-    child.on("close",(code)=>{if(code!==0||size>1024*1024)reject(new LabCloneCreationError(
-      "topic_evaluation_lab_docker_exec_failed"));else resolveRun(Buffer.concat(stdout).toString("utf8").trim());});
-    child.stdin.end(input);
-  });
-}
-
 async function queryJson(database:string,sql:string){
-  const output=await runDocker(["exec",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"psql","--no-psqlrc",
+  const output=await runSignalTopicEvaluationLabDockerV1(["exec",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
+    "psql","--no-psqlrc",
     "--quiet","--tuples-only","--no-align","--set","ON_ERROR_STOP=1","--username","postgres",
     "--dbname",database,"--command",sql]);
   try{return JSON.parse(output) as Record<string,unknown>;}catch{throw new LabCloneCreationError(
@@ -107,11 +95,14 @@ async function main(){
 
   const day=new Date().toISOString().slice(0,10).replaceAll("-","");
   const cloneName=`noisia_topic_eval_lab_${day}_${randomBytes(6).toString("hex")}`;
-  await runDocker(["exec",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"createdb","--username","postgres",
+  await runSignalTopicEvaluationLabDockerV1(["exec",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
+    "createdb","--username","postgres",
     "--template",SIGNAL_TOPIC_EVALUATION_LAB_SOURCE_DATABASE,cloneName]);
-  await runDocker(["exec","--interactive",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"psql","--no-psqlrc",
+  await runSignalTopicEvaluationLabDockerV1(["exec","--interactive",
+    SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"psql","--no-psqlrc",
     "--quiet","--set","ON_ERROR_STOP=1","--username","postgres","--dbname",cloneName],migration);
-  await runDocker(["exec","--interactive",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"psql","--no-psqlrc",
+  await runSignalTopicEvaluationLabDockerV1(["exec","--interactive",
+    SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,"psql","--no-psqlrc",
     "--quiet","--set","ON_ERROR_STOP=1","--username","postgres","--dbname",cloneName],marker);
 
   const clone=await queryJson(cloneName,CLONE_PROOF_SQL);

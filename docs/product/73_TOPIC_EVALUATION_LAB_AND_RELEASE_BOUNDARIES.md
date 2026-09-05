@@ -44,8 +44,11 @@ server system identity and frozen source digests. It lives outside PostgreSQL an
 as a preflight argument.
 
 The provider-disabled preflight loads that fixed receipt, re-inspects the fixed container and
-derives its endpoint and expected identity from the receipt. It then opens one persistent `psql`
-session with `docker exec`, not a caller-provided URL or an extracted password. Inside its
+derives its endpoint and expected identity from the receipt. Every Docker command uses the fixed
+Docker Desktop binary and the current OS user's owned Unix socket explicitly; any ambient
+`DOCKER_*` routing/configuration value is rejected before filesystem probing or process creation,
+and the child receives a minimal environment without `HOME` or Docker context state. It then opens
+one persistent `psql` session inside the fixed container, not a caller-provided URL or an extracted password. Inside its
 `REPEATABLE READ READ ONLY` transaction it reconciles the external anchor with the database marker
 as defence in depth and emits only derived provenance/container digests. Missing, copied or drifted
 receipts, containers, sources, clone names or system identities fail closed.

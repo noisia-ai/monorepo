@@ -1,14 +1,14 @@
-import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { mkdir,open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
 import { z } from "zod";
 
-const execFileAsync=promisify(execFile);
+import { runSignalTopicEvaluationLabDockerV1 } from
+  "./signal-topic-evaluation-lab-docker-transport-v2";
+
 const REPO_ROOT=resolve(fileURLToPath(new URL("../../..",import.meta.url)));
 const DIGEST=/^sha256:[0-9a-f]{64}$/u;
 const CONTAINER_ID=/^[0-9a-f]{64}$/u;
@@ -71,10 +71,9 @@ export function parseSignalTopicEvaluationLabHostReceiptV1(value:unknown){
 export async function inspectSignalTopicEvaluationLabContainerV1(){
   let stdout:string;
   try{
-    const result=await execFileAsync("docker",["inspect","--type","container","--format",
+    stdout=await runSignalTopicEvaluationLabDockerV1(["inspect","--type","container","--format",
       "{{.Id}}|{{.Image}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{json (index .NetworkSettings.Ports \"5432/tcp\")}}",
-      SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME],{encoding:"utf8",maxBuffer:64*1024});
-    stdout=String(result.stdout).trim();
+      SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME]);
   }catch{throw new SignalTopicEvaluationLabHostProvenanceError("topic_evaluation_lab_container_unavailable");}
   const [containerId,imageId,rawName,imageReference,status,rawPorts,...extra]=stdout.split("|");
   let ports:unknown;

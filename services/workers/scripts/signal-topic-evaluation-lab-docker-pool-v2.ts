@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { spawn,type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface,type Interface } from "node:readline";
 
 import { SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
   type SignalTopicEvaluationLabHostReceiptV1 } from "./signal-topic-evaluation-lab-host-provenance-v2";
+import { spawnSignalTopicEvaluationLabDockerV1 } from
+  "./signal-topic-evaluation-lab-docker-transport-v2";
 
 type Pending={token:string;command:boolean;lines:string[];
   resolve(value:{rows:unknown[]}):void;reject(error:Error):void};
@@ -14,15 +16,21 @@ class DockerPsqlLabClientV1{
   private pending:Pending|undefined;
   private closed=false;
 
-  constructor(database:string){
-    this.child=spawn("docker",["exec","--interactive",SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
-      "psql","--no-psqlrc","--quiet","--tuples-only","--no-align","--set","ON_ERROR_STOP=1",
-      "--username","postgres","--dbname",database],{stdio:["pipe","pipe","pipe"]});
+  private constructor(database:string,child:ChildProcessWithoutNullStreams){
+    this.child=child;
     this.lines=createInterface({input:this.child.stdout,crlfDelay:Infinity});
     this.lines.on("line",(line)=>this.onLine(line));
     this.child.stderr.on("data",()=>undefined);
     this.child.on("error",()=>this.fail());
     this.child.on("exit",()=>this.fail());
+  }
+
+  static async create(database:string){
+    const child=await spawnSignalTopicEvaluationLabDockerV1(["exec","--interactive",
+      SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
+      "psql","--no-psqlrc","--quiet","--tuples-only","--no-align","--set","ON_ERROR_STOP=1",
+      "--username","postgres","--dbname",database],{stdio:["pipe","pipe","pipe"]});
+    return new DockerPsqlLabClientV1(database,child);
   }
 
   query<T=Record<string,unknown>>(sql:string,values?:unknown[]):Promise<{rows:T[]}>{
@@ -63,5 +71,5 @@ class DockerPsqlLabClientV1{
 }
 
 export function createSignalTopicEvaluationLabDockerPoolV1(anchor:SignalTopicEvaluationLabHostReceiptV1){
-  return{connect:async()=>new DockerPsqlLabClientV1(anchor.clone_name)};
+  return{connect:async()=>DockerPsqlLabClientV1.create(anchor.clone_name)};
 }
