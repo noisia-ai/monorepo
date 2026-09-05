@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { zodSchema } from "ai";
 import { signalTopicEvaluationDigestV2 } from "@noisia/query-engine";
+import type { ZodTypeAny } from "zod";
 
 import { createAnthropicFullEvidenceTopicEvaluationModelV2,
   SignalTopicEvaluationProviderResponseInvalidErrorV2 } from "./anthropic-full-evidence-topic-evaluation";
@@ -23,11 +25,12 @@ test("default full-evidence adapter preserves the UAT catalog-first protocol", a
   assert.equal(observed.length, 1);
   assert.equal("temperature" in observed[0]!, false);
   assert.equal(observed[0]!.max_output_tokens, 32);
-  const providerSchema = observed[0]!.structured_output as { schema: { safeParse(value: unknown): { success: boolean } } };
+  const providerSchema = observed[0]!.structured_output as { schema: ZodTypeAny };
   assert.equal(providerSchema.schema.safeParse({ turn: { kind: "tool", request: { operation: "cluster_catalog",
     limit: 1, cursor: null } } }).success, true);
   assert.equal(providerSchema.schema.safeParse({ kind: "tool", request: { operation: "cluster_catalog",
     limit: 1, cursor: null } }).success, false);
+  assert.equal((zodSchema(providerSchema.schema).jsonSchema as { type?: unknown }).type, "object");
   assert.match(String(observed[0]!.prompt), /Prior bounded navigation results/u);
   assert.doesNotMatch(String(observed[0]!.prompt), /evaluation_brief/u);
   assert.match(String(observed[0]!.prompt), /cluster keys you actually navigated/u);
