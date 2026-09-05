@@ -98,8 +98,8 @@ closed Lab runtime, literal action-time confirmation, fresh idempotency key and 
 credential configuration are all present. The runner replays the externally anchored read-only
 preflight immediately before its first write, then creates and claims the authority directly through
 the fixed Docker container transport. It does not use HTTP, BullMQ, the UAT drainer or a product
-credential lane. The dedicated credential value is read once only after durable claim at the actual
-transport boundary and is never written to a receipt or log.
+credential lane. The dedicated credential value is read once only after the pristine/0116 check and
+immediately before durable claim. It is never written to a receipt or log.
 
 The sealed flight allows at most 12 model turns, 24 evidence navigations, 450,000 input tokens,
 50,000 output tokens and USD 2.10. Each attempted provider turn is durably counted before transport.
@@ -120,6 +120,28 @@ adoption, publication and serving stay structurally false.
   local clone, never to UAT by convenience.
 - Keep Topic adoption, publication, Signal serving, production and Discovery Review redesign out
   of the experiment.
+
+## Evaluación explícita de bloqueos del Lab
+
+El corpus y los registros del Lab son **datos desechables de desarrollo**, no un compromiso con
+Amazon, Alexa, UAT ni un contrato de Signal. Por ello, el Lab no se detiene por controles cuyo
+propósito es proteger un release: puede aplicar migraciones nuevas, forward-only y verificadas
+manualmente dentro de su clon local anclado, y puede reinicializar ese clon desde la fuente congelada
+si un experimento falla. No necesita un ejecutor de release de UAT ni un despliegue remoto para
+seguir construyendo y probando el producto.
+
+| Situación | Decisión para desarrollo | Por qué |
+| --- | --- | --- |
+| Un ejecutor protegido de Preview/UAT no está disponible | **No bloquea el Lab.** Se difiere el release. | El runner, 0116 y sus resultados viven sólo en el clon local desechable. |
+| Una migración local forward-only está lista y auditada | **Se aplica al clon del Lab.** | Permite probar el control plane real sin tocar UAT ni fabricar resultados. |
+| Un resultado es débil o falla | **No bloquea el desarrollo.** Se conserva el recibo, se diagnostica el handoff o algoritmo y se abre el siguiente experimento sellado. | Así se itera hacia diez candidatos útiles sin presentar una muestra como evidencia. |
+| Existe riesgo de adopción, publicación o serving | **Fuera de alcance del Lab.** | Es una frontera de producto, no una excusa para detener la experimentación. |
+| Falta la credencial de Lab vigente en el proceso que ejecutará la llamada | **Único bloqueo de configuración para una llamada pagada.** Todo lo demás puede continuar. | No se puede deducir ni reutilizar una clave histórica; el runner necesita una credencial nueva, dedicada e inyectada sólo en el proceso de ejecución. |
+
+La regla operativa es proporcional: no se añaden formularios, aprobaciones ni gates de release para
+arreglos locales, migraciones del clon o iteración algorítmica. Cada llamada de proveedor sí queda
+limitada por su presupuesto, recibo terminal y salida no-adoptada, para que el experimento sea
+recuperable y medible en vez de opaco.
 
 ## Release comes later
 
