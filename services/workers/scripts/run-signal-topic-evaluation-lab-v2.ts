@@ -63,8 +63,8 @@ export async function runSignalTopicEvaluationLabExecutionV2(env:NodeJS.ProcessE
   const idempotency=env[SIGNAL_TOPIC_EVALUATION_LAB_IDEMPOTENCY_NAME];
   if(typeof idempotency!=="string"||!/^[A-Za-z0-9._:-]{8,200}$/u.test(idempotency))throw new Error(
     "topic_evaluation_lab_execution_idempotency_invalid");
-  // Presence is checked without reading the value. The value is read once, after durable claim,
-  // at the exact transport boundary.
+  // Presence is checked without reading the value. The value is read once after the pristine
+  // preflight and immediately before durable claim, so a missing key cannot leave a claimed run.
   if(!Object.hasOwn(env,SIGNAL_TOPIC_EVALUATION_LAB_V2_PROVIDER_CREDENTIAL_NAME))throw new Error(
     "topic_evaluation_lab_provider_credential_unavailable");
   const prepared=await dependencies.prepare(env);
