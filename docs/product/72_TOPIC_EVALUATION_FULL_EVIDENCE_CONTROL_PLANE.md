@@ -3,6 +3,9 @@
 Status: local contract, provider execution disabled. This document does not authorize a run,
 deployment, migration application, Topic adoption, publication or serving.
 
+For the explicit distinction between a disposable local product experiment and a release-grade
+Preview/UAT cut, see [Topic Evaluation Lab and release boundaries](73_TOPIC_EVALUATION_LAB_AND_RELEASE_BOUNDARIES.md).
+
 ## Product boundary
 
 The historical `signal-topic-evaluation-v1` evaluator remains the summary-only comparison
