@@ -6,6 +6,7 @@ import {
   char,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -7333,6 +7334,42 @@ export const organizationsRelations = relations(organizations, ({ many, one }) =
     references: [users.id]
   })
 }));
+
+export const signalTopicContractDraftVersions = pgTable("signal_topic_contract_draft_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, {onDelete:"restrict"}),
+  runId: uuid("run_id").notNull(),candidateId: uuid("candidate_id").notNull(),
+  snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, {onDelete:"restrict"}),
+  baseRevisionId: uuid("base_revision_id").notNull().references(() => signalTopicEvaluationV2CandidateRevisions.id, {onDelete:"restrict"}),
+  editorialRevisionId: uuid("editorial_revision_id").references(() => signalTopicEvaluationV2CandidateEditorialRevisions.id, {onDelete:"restrict"}),
+  sourceRevision: integer("source_revision").notNull(),sourceVersionDigest: text("source_version_digest").notNull(),
+  sourceStateToken: text("source_state_token").notNull(),revision: integer("revision").notNull(),
+  predecessorId: uuid("predecessor_id").references(():AnyPgColumn => signalTopicContractDraftVersions.id, {onDelete:"restrict"}),
+  predecessorDigest: text("predecessor_digest"),ruleSpec: jsonb("rule_spec").notNull(),
+  specDigest: text("spec_digest").notNull(),draftDigest: text("draft_digest").notNull(),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id, {onDelete:"restrict"}),
+  idempotencyKey: text("idempotency_key").notNull(),request: jsonb("request").notNull(),
+  requestDigest: text("request_digest").notNull(),createdAt: now()
+}, (table) => [unique("uq_topic_rule_draft_key").on(table.workspaceId,table.idempotencyKey),
+  unique("uq_topic_rule_draft_revision").on(table.candidateId,table.revision),
+  unique("uq_topic_rule_draft_workspace").on(table.id,table.workspaceId),
+  foreignKey({columns:[table.candidateId,table.runId,table.workspaceId],
+    foreignColumns:[signalTopicEvaluationV2Candidates.id,signalTopicEvaluationV2Candidates.runId,
+      signalTopicEvaluationV2Candidates.workspaceId]}).onDelete("restrict"),
+  index("idx_signal_topic_contract_draft_latest").on(table.candidateId,sql`${table.revision} DESC`)]);
+
+export const signalTopicContractDraftTrialReceipts = pgTable("signal_topic_contract_draft_trial_receipts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, {onDelete:"restrict"}),
+  draftId: uuid("draft_id").notNull(),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id, {onDelete:"restrict"}),
+  idempotencyKey: text("idempotency_key").notNull(),request: jsonb("request").notNull(),
+  requestDigest: text("request_digest").notNull(),result: jsonb("result").notNull(),
+  resultDigest: text("result_digest").notNull(),createdAt: now()
+}, (table) => [unique("uq_topic_rule_trial_key").on(table.workspaceId,table.idempotencyKey),
+  foreignKey({columns:[table.draftId,table.workspaceId],
+    foreignColumns:[signalTopicContractDraftVersions.id,signalTopicContractDraftVersions.workspaceId]}).onDelete("restrict"),
+  index("idx_signal_topic_contract_trial_latest").on(table.draftId,sql`${table.createdAt} DESC`,table.id)]);
 
 export const brandsRelations = relations(brands, ({ one, many }) => ({
   organization: one(organizations, {

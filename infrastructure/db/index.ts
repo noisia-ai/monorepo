@@ -11,4 +11,5 @@ export * from "./signal-topic-evaluation";
 export * from "./signal-topic-evaluation-v2";
 export * from "./signal-topic-evaluation-v2-import";
 export * from "./signal-topic-evaluation-v2-result-import";
+export * from "./signal-topic-contract-drafts";
 export * from "./sentione-csv-ingest";

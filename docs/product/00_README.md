@@ -82,6 +82,7 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 60 | `60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md` | Corte online Preview/UAT: Railway aislado, Supabase staging, Redis UAT, guardas de Worker, QA y rollback |
 | 61 | `61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md` | Handoff operativo UAT: custodia de accesos, checklist browser/async, rollback, defect protocol y continuación greenfield Amazon Alexa |
 | 62 | `62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md` | Preregistración 10C.2 ligada al corpus Amazon Alexa multi-scope congelado; sampling, splits, candidatos y hard gates, sin ejecutar modelado ni abrir 10D |
+| 75 | [Topic Rule Drafts y pruebas léxicas](75_TOPIC_RULE_DRAFTS_AND_LEXICAL_TRIALS.md) | Contrato local de borradores ligados a candidatos, pruebas sobre membresías congeladas, límites y denominadores; no activa Topics. |
 
 ---
 
