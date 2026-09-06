@@ -3,6 +3,7 @@ import test from "node:test";
 import {readFileSync} from "node:fs";
 import {signalTopicEvaluationDigestV2 as digest} from "@noisia/query-engine";
 import {createSignalTopicContractDraftV1 as create,loadSignalTopicContractDraftV1 as load,
+  loadSignalTopicContractDraftLatestTrialV1 as loadTrial,
   runSignalTopicContractDraftTrialV1 as trial,type SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 const scope={workspace_id:"11111111-1111-4111-8111-111111111111",run_key:"topic-run-original",candidate_key:"topic.original"};
 const actor={id:"22222222-2222-4222-8222-222222222222",user_type:"noisia_internal" as const};
@@ -34,7 +35,9 @@ function fixture(){
       rows=sql.includes("idempotency_key=$2")?state.drafts.filter((row)=>row.workspace_id===values[0]&&row.key===values[1]):
         state.drafts.filter((row)=>row.id===values[0]&&row.workspace_id===values[1]);
     }else if(sql.startsWith("SELECT COALESCE(max(revision)"))rows=[{revision:state.drafts.at(-1)?.revision??0}];
-    else if(sql.includes("FROM signal_topic_contract_draft_versions")&&sql.includes("ORDER BY revision DESC"))rows=state.drafts.slice(-1);
+    else if(sql.includes("FROM signal_topic_contract_draft_versions")&&sql.includes("ORDER BY revision DESC"))rows=state.drafts.filter((row)=>
+      row.candidate_id===values[0]&&(values.length===1||row.workspace_id===values[1])
+      &&(values.length<4||(row.run_id===values[2]&&row.snapshot_id===values[3]))).slice(-1);
     else if(sql.startsWith("INSERT INTO signal_topic_contract_draft_versions")){
       const row={id:values[0],workspace_id:values[1],run_id:values[2],candidate_id:values[3],snapshot_id:values[4],
         source_revision:values[7],source_version_digest:values[8],revision:values[10],predecessor_id:values[11],
@@ -42,7 +45,10 @@ function fixture(){
         key:values[17],request:JSON.parse(values[18] as string),request_digest:values[19],
         run_key:scope.run_key,candidate_key:scope.candidate_key,created_at:"2026-09-06T20:00:00Z"};
       state.drafts.push(row);rows=[row];
-    }else if(sql.includes("FROM signal_topic_contract_draft_trial_receipts"))rows=state.trials.filter((row)=>row.workspace_id===values[0]&&row.key===values[1]);
+    }else if(sql.includes("FROM signal_topic_contract_draft_trial_receipts"))rows=sql.includes("draft_id=$2::uuid")?
+      state.trials.filter((row)=>row.workspace_id===values[0]&&row.draft_id===values[1])
+        .sort((a,b)=>b.created_at.localeCompare(a.created_at)||b.id.localeCompare(a.id)).slice(0,1):
+      state.trials.filter((row)=>row.workspace_id===values[0]&&row.key===values[1]);
     else if(sql.startsWith("SELECT current_setting"))rows=[{value:"0"}];
     else if(sql.startsWith("SELECT set_config")){}
     else if(sql.startsWith("WITH requested_examples AS MATERIALIZED")){
@@ -123,6 +129,51 @@ test("load reports null or latest draft and source staleness without writes",asy
   const f=fixture();assert.equal(await load({queryable:f.client,...scope,actor}),null);
   const first=await create(createArgs(f));f.state.source.version_digest=digest("changed without number");
   const result=await load({queryable:f.client,...scope,actor});assert.equal(result!.draft_id,first.draft_id);assert.equal(result!.is_stale,true);
+});
+test("latest-trial reader returns null for no draft and for an untested successor without falling back",async()=>{
+  const f=fixture(),readArgs={queryable:f.client,...scope,actor};f.state.active=false;
+  assert.equal(await loadTrial(readArgs),null);f.state.active=true;
+  const args=await setupTrial(f);assert.equal(await loadTrial(readArgs),null);await trial(args);
+  await create(createArgs(f,{idempotency_key:"draft-proof:untested",expected_draft_revision:1,
+    expected_draft_digest:args.expected_draft_digest}));
+  assert.equal(await loadTrial(readArgs),null);assert.equal(f.state.trials.length,1);
+});
+test("latest-trial reader selects the newest scoped receipt and performs no writes, locks or lexical execution",async()=>{
+  const f=fixture(),args=await setupTrial(f);await trial(args);
+  const second=await trial({...args,idempotency_key:"trial-proof:newest",max_memberships:2});
+  f.state.trials[1]!.created_at="2026-09-06T20:00:02Z";
+  const start=f.queries.length,saved=structuredClone({drafts:f.state.drafts,trials:f.state.trials});f.state.active=false;
+  const read=await loadTrial({queryable:f.client,...scope,actor});
+  assert.equal(read!.trial_id,second.trial_id);assert.deepEqual(read!.counts,second.counts);
+  assert.equal(read!.is_latest_draft,true);assert.equal(read!.idempotent_replay,false);assert.equal(read!.is_stale,false);
+  assert.equal(f.state.measuredCalls,2);assert.deepEqual({drafts:f.state.drafts,trials:f.state.trials},saved);
+  const queries=f.queries.slice(start),sql=queries.map((row)=>row.sql).join("\n");
+  assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|SAVEPOINT|COMMIT|BEGIN|set_config|pg_advisory|tsquery|to_tsvector)\b/u);
+  const draft=queries.find(({sql})=>sql.includes("FROM signal_topic_contract_draft_versions"))!;
+  assert.deepEqual(draft.values,[initial.candidate_id,scope.workspace_id,initial.run_id,initial.snapshot_id]);
+  const receipt=queries.find(({sql})=>sql.includes("FROM signal_topic_contract_draft_trial_receipts"))!;
+  assert.deepEqual(receipt.values,[scope.workspace_id,args.draft_id]);
+  assert.match(receipt.sql,/ORDER BY created_at DESC,id DESC LIMIT 1/u);
+});
+test("latest-trial reader enforces DB actor and exact workspace/run/candidate scope before any result lookup",async()=>{
+  const f=fixture(),args=await setupTrial(f);await trial(args);const readArgs={queryable:f.client,...scope,actor};
+  f.state.authorized=false;await assert.rejects(loadTrial(readArgs),{code:"topic_rule_draft_forbidden"});
+  f.state.authorized=true;
+  for(const change of [{workspace_id:"77777777-7777-4777-8777-777777777777"},{run_key:"foreign-run"},{candidate_key:"topic.foreign"}]){
+    const start=f.queries.length;await assert.rejects(loadTrial({...readArgs,...change}),{code:"topic_rule_candidate_not_found"});
+    assert.ok(!f.queries.slice(start).some(({sql})=>sql.includes("FROM signal_topic_contract_draft_trial_receipts")));
+  }
+});
+test("latest-trial reader projects current rights and source staleness without changing historical metrics",async()=>{
+  for(const change of [{revision:2},{version_digest:digest("changed")},{review_state:"rejected"}]){
+    const f=fixture(),args=await setupTrial(f),original=await trial(args);Object.assign(f.state.source,change);
+    f.state.currentExample="unavailable";const saved=structuredClone(f.state.trials[0]);
+    const read=await loadTrial({queryable:f.client,...scope,actor});
+    assert.equal(read!.is_stale,true);assert.deepEqual(read!.examples,[]);
+    assert.deepEqual(read!.example_availability,{stored:1,available:0,unavailable:1});
+    assert.deepEqual(read!.counts,original.counts);assert.equal(read!.considered_digest,original.considered_digest);
+    assert.equal(read!.trial_id,original.trial_id);assert.equal(f.state.measuredCalls,1);assert.deepEqual(f.state.trials[0],saved);
+  }
 });
 test("DB authorization, foreign workspace/candidate and malformed inputs fail closed",async()=>{
   const f=fixture();f.state.authorized=false;await assert.rejects(create(createArgs(f)),{status:403});

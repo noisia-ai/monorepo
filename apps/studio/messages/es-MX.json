@@ -2219,6 +2219,80 @@
         "errors": { "title": "La evidencia completa no está disponible", "body": "No se pudo verificar el preflight de solo lectura. No se habilitó ninguna ejecución." }
       },
       "fullEvidenceTopicCandidates": {
+        "ruleDraft": {
+          "title": "Probar una regla del candidato",
+          "body": "Escribe frases para explorar coincidencias en el corpus congelado. Esta prueba no asigna ni activa tópicos.",
+          "savedIdentity": "Candidato guardado",
+          "loading": "Cargando el borrador y su última prueba…",
+          "empty": "Todavía no hay una regla. Las frases se definen aquí; no se deducen de la descripción.",
+          "editorDirty": "Hay cambios sin guardar en el candidato. Guarda esos cambios antes de crear o probar su regla.",
+          "rejected": "Restaura el candidato para guardar o probar una regla.",
+          "stale": "El candidato cambió. Actualiza y guarda una nueva versión del borrador antes de probar.",
+          "fields": {
+            "any": "Cualquiera de estas frases",
+            "all": "Todas estas frases",
+            "not": "Excluir estas frases",
+            "languages": "Idiomas (códigos)",
+            "markets": "Países (códigos)"
+          },
+          "hints": {
+            "any": "Una frase por línea. Basta con encontrar una de ellas.",
+            "all": "Una frase por línea. Deben aparecer todas, además de la condición anterior si la llenaste.",
+            "not": "Una frase por línea. Cualquiera de ellas descarta la coincidencia.",
+            "languages": "Opcional: un código de dos letras minúsculas por línea, como es o en.",
+            "markets": "Opcional: un código de dos letras mayúsculas por línea, como MX o US."
+          },
+          "phraseLimits": "Frases de hasta 160 caracteres; máximo 16 por campo y 32 en total. No se separan por comas. Se buscan palabras consecutivas, no significados ni patrones de código.",
+          "filters": "Filtros opcionales",
+          "filtersHint": "Vacío significa sin restricción. Los códigos filtran metadatos existentes; no cambian la disponibilidad de la marca.",
+          "existingScopes": "Ámbitos conservados del borrador: {values}",
+          "invalid": "Agrega al menos una frase en Cualquiera o Todas. Revisa los límites y los códigos; no se recorta ni corrige texto automáticamente.",
+          "dirty": "Cambios de regla sin guardar. Guarda el borrador para probar exactamente esta versión.",
+          "ambiguous": "La respuesta no pudo confirmarse. Actualiza primero; después puedes recuperar la misma solicitud, sin crear otra prueba.",
+          "saved": "Borrador guardado.",
+          "tested": "Prueba completada.",
+          "save": "Guardar borrador",
+          "test": "Probar borrador",
+          "working": "Procesando…",
+          "refresh": "Actualizar",
+          "recover": "Recuperar misma solicitud",
+          "cap": "Prueba local de hasta {count} menciones, máximo 15 segundos. No llama a un proveedor ni modifica asignaciones.",
+          "results": "Resultado de la prueba guardada",
+          "historicalCounts": "Estos conteos corresponden a la prueba guardada. Una coincidencia léxica no es una asignación validada al tópico.",
+          "resultsStale": "Este resultado pertenece a una versión anterior o hay cambios sin guardar. No representa el borrador que estás editando.",
+          "counts": {
+            "total": "Menciones en el corpus congelado",
+            "considered": "Menciones consideradas",
+            "matched": "Coincidencias léxicas",
+            "abstained": "Sin coincidencia léxica",
+            "filter_excluded": "Excluidas por filtros",
+            "unavailable": "No disponibles para analizar",
+            "not_tested": "No probadas por el límite"
+          },
+          "measuredCap": "Límite usado en esta prueba: {count}.",
+          "zeroMatches": "No hubo coincidencias con esta regla. Puedes editar sus frases y guardar otra versión.",
+          "availability": "Ejemplos guardados: {stored}. Disponibles ahora: {available}. No disponibles ahora: {unavailable}.",
+          "examples": {
+            "matched": "Ejemplo con coincidencia",
+            "abstained": "Ejemplo sin coincidencia"
+          },
+          "noExamples": "No hay ejemplos disponibles para mostrar. Los conteos históricos no se han recalculado.",
+          "untested": "Esta versión del borrador todavía no tiene una prueba guardada.",
+          "errors": {
+            "topic_rule_request_invalid": "La regla o la solicitud no es válida. Revisa los campos.",
+            "topic_rule_scope_mismatch": "La solicitud no corresponde a este candidato. Actualiza la pantalla.",
+            "topic_rule_candidate_stale": "El candidato cambió. Actualiza antes de continuar.",
+            "topic_rule_draft_stale": "Hay una versión más reciente del borrador. Actualiza antes de continuar.",
+            "topic_rule_draft_source_stale": "El candidato cambió desde que guardaste esta regla. Actualiza y guarda otra versión.",
+            "topic_rule_draft_idempotency_conflict": "Esta clave corresponde a otra solicitud. Actualiza para revisar el estado guardado.",
+            "topic_rule_draft_forbidden": "No tienes acceso a esta operación.",
+            "topic_rule_candidate_not_found": "El candidato ya no está disponible.",
+            "topic_rule_draft_not_found": "El borrador ya no está disponible.",
+            "topic_rule_trial_timeout": "La prueba excedió su tiempo máximo y no guardó un resultado. Puedes acotar la regla y volver a probar.",
+            "topic_rule_schema_unavailable": "Las pruebas de reglas todavía no están disponibles en este entorno.",
+            "topic_rule_operation_failed": "No se pudo confirmar la operación. Actualiza para consultar el estado guardado."
+          }
+        },
         "citations": {
           "candidate": { "title": "Citas del candidato original", "body": "Referencias exactas citadas en la evaluación original, no una nueva muestra del cluster." },
           "refinement": { "title": "Citas de la sugerencia", "body": "Referencias exactas guardadas con este refinamiento. Pueden ser distintas de las citas del candidato original." },

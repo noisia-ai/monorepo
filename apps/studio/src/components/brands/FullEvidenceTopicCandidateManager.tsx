@@ -9,6 +9,7 @@ import { AdminFeedbackState,AdminResourceSection,AdminStatus,AdminSummaryStrip,
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { TopicCandidateRefinementSuggestion } from "./TopicCandidateRefinementSuggestion";
 import { TopicCandidateEvidence } from "./TopicCandidateEvidence";
+import { TopicCandidateRuleDraft } from "./TopicCandidateRuleDraft";
 import { copySignalTopicEvaluationV2RefinementWording,createSignalTopicEvaluationV2ReviewIdempotencyKey,
   parseSignalTopicEvaluationV2CandidateDetail,parseSignalTopicEvaluationV2CandidatePage,
   type SignalTopicEvaluationV2Candidate,type SignalTopicEvaluationV2CandidateDetail,
@@ -30,6 +31,7 @@ export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}
   const[page,setPage]=useState<SignalTopicEvaluationV2CandidatePage|null>(null);
   const[detail,setDetail]=useState<SignalTopicEvaluationV2CandidateDetail|null>(null);
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
+  const[ruleBusy,setRuleBusy]=useState(false);
   const[title,setTitle]=useState(""),[description,setDescription]=useState("");
   const[inclusion,setInclusion]=useState(""),[exclusion,setExclusion]=useState("");
   const[proposalDismissed,setProposalDismissed]=useState(false),[proposalCopied,setProposalCopied]=useState(false);
@@ -55,13 +57,13 @@ export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}
     finally{setBusy(false);}
   }
   function useProposal(){
-    if(!detail||busy||detail.refinement.status!=="available")return;
+    if(!detail||busy||ruleBusy||detail.refinement.status!=="available")return;
     const next=copySignalTopicEvaluationV2RefinementWording({candidate:detail.candidate,
       proposal:detail.refinement.proposal,fields:{title,description,inclusion,exclusion}});
     if(!next)return;setTitle(next.title);setDescription(next.description);setProposalCopied(true);
   }
   async function command(action:"save"|"reject"|"restore"|"undo"){
-    if(!detail||busy)return;setBusy(true);setError(null);const candidate=detail.candidate;
+    if(!detail||busy||ruleBusy)return;setBusy(true);setError(null);const candidate=detail.candidate;
     const common={action,run_key:detail.run_key,candidate_key:candidate.candidate_key,
       expected_revision:candidate.revision,state_token:candidate.state_token};
     const body=action==="save"?{...common,values:{title:title.trim(),description:description.trim(),
@@ -75,6 +77,16 @@ export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}
     finally{setBusy(false);}
   }
   const candidate=detail?.candidate;
+  const editorDirty=!!candidate&&(title!==candidate.title||description!==candidate.description
+    ||inclusion!==candidate.inclusion.join("\n")||exclusion!==candidate.exclusion.join("\n"));
+  async function refreshCandidate(){
+    if(!detail||busy||ruleBusy||editorDirty)return;setBusy(true);setError(null);
+    try{const next=parseSignalTopicEvaluationV2CandidateDetail(await requestJson(
+      `${endpoint}/${encodeURIComponent(detail.candidate.candidate_key)}?run_key=${encodeURIComponent(detail.run_key)}`));
+      setDetail(next);setTitle(next.candidate.title);setDescription(next.candidate.description);
+      setInclusion(next.candidate.inclusion.join("\n"));setExclusion(next.candidate.exclusion.join("\n"));
+    }catch(cause){setError(cause instanceof Error?cause.message:t("errors.load"));}finally{setBusy(false);}
+  }
   return<><AdminResourceSection actions={<button className="admin-button" disabled={loading||busy}
       onClick={()=>void load()} type="button">{loading?<CircleNotch aria-hidden className="icon--spin" size={14}/>:null}
       {t("actions.refresh")}</button>} className="topic-evaluation-manager" subtitle={t("subtitle")} title={t("title")}>
@@ -98,23 +110,23 @@ export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}
         {t("actions.more")}</button>:null}{error?<p className="workspace-form__error" role="alert">{error}</p>:null}</>:null}
   </AdminResourceSection>
   {candidate&&detail?<WorkspaceDrawer ariaLabel={t("drawer.title")} closeLabel={t("actions.close")}
-    eyebrow={t("drawer.eyebrow")} onClose={()=>{if(!busy)setDetail(null);}} returnFocusRef={openerRef} title={candidate.title}>
+    eyebrow={t("drawer.eyebrow")} onClose={()=>{if(!busy&&!ruleBusy)setDetail(null);}} returnFocusRef={openerRef} title={candidate.title}>
     <div className="admin-drawer-form topic-evaluation-manager__editor"><p className="admin-drawer-form__intro">{t("drawer.boundary")}</p>
       {detail.result_origin?<p className="admin-drawer-form__hint">{t("importedResult")}</p>:null}
       <TopicCandidateRefinementSuggestion refinement={detail.refinement} dismissed={proposalDismissed}
-        copied={proposalCopied} busy={busy} editable={candidate.review_state==="pending"} t={t}
+        copied={proposalCopied} busy={busy||ruleBusy} editable={candidate.review_state==="pending"} t={t}
         onUse={useProposal} onDismiss={()=>setProposalDismissed(true)} onShow={()=>setProposalDismissed(false)}/>
       <label className="workspace-field"><span>{t("fields.title")}</span><input className="workspace-control"
-        disabled={candidate.review_state==="rejected"||busy} maxLength={160}
+        disabled={candidate.review_state==="rejected"||busy||ruleBusy} maxLength={160}
         onChange={(event)=>setTitle(event.target.value)} value={title}/></label>
       <label className="workspace-field"><span>{t("fields.description")}</span><textarea className="workspace-control"
-        disabled={candidate.review_state==="rejected"||busy} maxLength={1500}
+        disabled={candidate.review_state==="rejected"||busy||ruleBusy} maxLength={1500}
         onChange={(event)=>setDescription(event.target.value)} rows={5} value={description}/></label>
       <label className="workspace-field"><span>{t("fields.inclusion")}</span><textarea className="workspace-control"
-        disabled={candidate.review_state==="rejected"||busy} onChange={(event)=>setInclusion(event.target.value)}
+        disabled={candidate.review_state==="rejected"||busy||ruleBusy} onChange={(event)=>setInclusion(event.target.value)}
         rows={4} value={inclusion}/></label>
       <label className="workspace-field"><span>{t("fields.exclusion")}</span><textarea className="workspace-control"
-        disabled={candidate.review_state==="rejected"||busy} onChange={(event)=>setExclusion(event.target.value)}
+        disabled={candidate.review_state==="rejected"||busy||ruleBusy} onChange={(event)=>setExclusion(event.target.value)}
         rows={3} value={exclusion}/></label>
       <div className="topic-evaluation-manager__evidence"><strong>{t("drawer.evidenceTitle")}</strong>
         <p>{t("drawer.evidenceBody",{count:candidate.evidence.length,clusters:candidate.source_cluster_keys.length})}</p>
@@ -126,14 +138,17 @@ export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}
       {detail.refinement.status==="available"?<TopicCandidateEvidence
         key={`${workspaceId}:${detail.run_key}:${candidate.candidate_key}:refinement:${detail.refinement.proposal.proposal_digest}`}
         endpoint={endpoint} runKey={detail.run_key} candidateKey={candidate.candidate_key} collection="refinement" t={t}/>:null}
+      <TopicCandidateRuleDraft key={`${workspaceId}:${detail.run_key}:${candidate.candidate_key}`}
+        endpoint={endpoint} runKey={detail.run_key} candidate={candidate} editorDirty={editorDirty}
+        editorBusy={busy} onBusyChange={setRuleBusy} onRefreshCandidate={refreshCandidate}/>
       {error?<p className="workspace-form__error" role="alert">{error}</p>:null}
       <div className="admin-drawer-form__actions">{candidate.review_state==="pending"?<>
-        <button className="admin-button admin-button--primary" disabled={busy||!title.trim()||!description.trim()
+        <button className="admin-button admin-button--primary" disabled={busy||ruleBusy||!title.trim()||!description.trim()
           ||!lines(inclusion).length} onClick={()=>void command("save")} type="button"><PencilSimple aria-hidden size={15}/>{t("actions.save")}</button>
-        <button className="admin-button" disabled={busy} onClick={()=>void command("reject")} type="button"><XCircle aria-hidden size={15}/>{t("actions.reject")}</button></>
-        :<button className="admin-button admin-button--primary" disabled={busy} onClick={()=>void command("restore")} type="button">
+        <button className="admin-button" disabled={busy||ruleBusy} onClick={()=>void command("reject")} type="button"><XCircle aria-hidden size={15}/>{t("actions.reject")}</button></>
+        :<button className="admin-button admin-button--primary" disabled={busy||ruleBusy} onClick={()=>void command("restore")} type="button">
           <ArrowCounterClockwise aria-hidden size={15}/>{t("actions.restore")}</button>}
-        {candidate.undo_target_revision?<button className="admin-button" disabled={busy} onClick={()=>void command("undo")} type="button">
+        {candidate.undo_target_revision?<button className="admin-button" disabled={busy||ruleBusy} onClick={()=>void command("undo")} type="button">
           <ArrowCounterClockwise aria-hidden size={15}/>{t("actions.undo")}</button>:null}</div>
     </div>
   </WorkspaceDrawer>:null}</>;

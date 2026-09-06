@@ -3,6 +3,7 @@ import {createHash,randomUUID} from "node:crypto";
 import test from "node:test";
 import {compileSignalTopicRuleSpecV1,signalTopicEvaluationDigestV2 as digest} from "@noisia/query-engine";
 import {createSignalTopicContractDraftV1,runSignalTopicContractDraftTrialV1,loadSignalTopicContractDraftV1,
+  loadSignalTopicContractDraftLatestTrialV1,type SignalTopicContractDraftTrialV1,
   SIGNAL_TOPIC_DRAFT_NORMALIZED_TEXT_SQL,type SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 import type {SignalTopicEvaluationActorV2} from "./signal-topic-evaluation-v2";
 type DraftFixture={workspace_id:string;actor:SignalTopicEvaluationActorV2;run_key:string;candidate_key:string;
@@ -31,6 +32,39 @@ export async function proveSignalTopicContractDraftPostgresV1(client:SignalTopic
   assert.equal(trialReplay.idempotent_replay,true);
   const loaded=await loadSignalTopicContractDraftV1({...fixture,queryable:client});assert.equal(loaded!.draft_id,draft.draft_id);
   return{draft_id:draft.draft_id,full:full.counts,bounded:bounded.counts,normalization_parity:true,replay:true};
+}
+
+/** Append to the existing positive proof after its latest draft has a persisted trial.
+ * Reader calls are instrumented to reject writes/locks/FTS. Only a temporary successor draft
+ * is appended to prove that GET cannot borrow an older trial; it is rolled back on exit. */
+export async function proveSignalTopicContractDraftLatestTrialPostgresV1(client:SignalTopicContractDraftClient,
+  fixture:DraftFixture,expected:SignalTopicContractDraftTrialV1){
+  await client.query("SAVEPOINT topic_rule_latest_trial_proof");let readQueries=0;
+  const queryable:SignalTopicContractDraftClient={async query<T>(sql:string,values?:unknown[]){
+    assert.match(sql.trim(),/^(?:SELECT|WITH)\b/u);
+    assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|SAVEPOINT|COMMIT|BEGIN|set_config|pg_advisory|tsquery|to_tsvector)\b/u);
+    readQueries++;return client.query<T>(sql,values);
+  }};
+  try{
+    const args={queryable,...fixture},loaded=await loadSignalTopicContractDraftLatestTrialV1(args);
+    assert.ok(loaded);assert.equal(loaded.trial_id,expected.trial_id);assert.equal(loaded.draft_id,expected.draft_id);
+    assert.deepEqual(loaded.counts,expected.counts);assert.equal(loaded.considered_digest,expected.considered_digest);
+    assert.equal(loaded.idempotent_replay,false);assert.equal(loaded.is_latest_draft,true);
+    assert.equal(loaded.example_availability.stored,expected.example_availability.stored);
+    assert.equal(loaded.examples.length,loaded.example_availability.available);
+    await assert.rejects(loadSignalTopicContractDraftLatestTrialV1({...args,actor:{...fixture.actor,id:randomUUID()}}),
+      {code:"topic_rule_draft_forbidden"});
+    for(const change of [{run_key:`foreign-${randomUUID()}`},{candidate_key:`foreign-${randomUUID()}`}]){
+      await assert.rejects(loadSignalTopicContractDraftLatestTrialV1({...args,...change}),{code:"topic_rule_candidate_not_found"});
+    }
+    const draft=await loadSignalTopicContractDraftV1(args);assert.ok(draft);
+    await createSignalTopicContractDraftV1({client,...fixture,expected_draft_revision:draft.revision,
+      expected_draft_digest:draft.draft_digest,idempotency_key:`latest-trial-proof:${randomUUID()}`,rule_spec:draft.rule_spec});
+    assert.equal(await loadSignalTopicContractDraftLatestTrialV1(args),null);
+    return{latest_trial_exact:true,untested_latest_returns_null:true,read_query_count:readQueries,
+      reader_dml:0,reader_fts:0,example_availability:loaded.example_availability,helper_rows_rolled_back:true};
+  }finally{await client.query("ROLLBACK TO SAVEPOINT topic_rule_latest_trial_proof");
+    await client.query("RELEASE SAVEPOINT topic_rule_latest_trial_proof");}
 }
 
 /** Actual PostgreSQL negative cases, contained in the supplied caller's outer transaction.

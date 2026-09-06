@@ -1,6 +1,7 @@
 # Topic Rule Drafts y pruebas léxicas
 
-Referencia del corte LAB-2Y, 6 de septiembre de 2026. Implementación local en revisión;
+Referencia de los cortes LAB-2Y/2Z, 6 de septiembre de 2026. Motor local auditado;
+integración de pantalla en revisión local. Esto
 no implica que la migración 0123 o una nueva UI estén desplegadas. Los diez candidatos
 y sus citas ya visibles en UAT pertenecen al corte anterior LAB-2X.
 
@@ -81,6 +82,7 @@ En [`@noisia/db`](../../infrastructure/db/signal-topic-contract-drafts.ts):
 |---|---|
 | `createSignalTopicContractDraftV1` | `client`, workspace/actor, run/candidate keys, CAS del candidato, revisión/digest anteriores del borrador, `idempotency_key`, `rule_spec`. |
 | `loadSignalTopicContractDraftV1` | `queryable`, workspace/actor, run/candidate keys. Devuelve el último borrador o `null`; no ejecuta una prueba. |
+| `loadSignalTopicContractDraftLatestTrialV1` | La misma identidad. Devuelve la última prueba del último borrador, o `null` si ese borrador aún no se probó. |
 | `runSignalTopicContractDraftTrialV1` | `client`, workspace/actor, `draft_id`, CAS de candidato y borrador, `idempotency_key`, límites opcionales. |
 
 CAS significa comprobar que la versión que se leyó sigue vigente. Para el candidato
@@ -98,6 +100,28 @@ No se toman credenciales ni URLs de la petición del navegador.
 Solo un actor interno activo y autorizado para el workspace puede operar. La misma
 clave idempotente y petición del mismo actor recuperan el resultado persistido;
 cambiar actor o petición produce conflicto. No hay autoejecución de pruebas en GET.
+
+El GET de producto lee candidato, borrador y prueba dentro de una sola transacción
+`REPEATABLE READ READ ONLY`. Nunca devuelve una prueba del borrador anterior como
+si correspondiera al nuevo. Revalida únicamente la disponibilidad actual de los
+ejemplos del recibo; no vuelve a calcular conteos ni crea recibos.
+
+## Uso en el editor de candidatos
+
+En el drawer existente, **Probar una regla del candidato** usa el nombre y descripción
+ya guardados. Si la edición editorial tiene cambios pendientes, se guardan primero.
+Las frases de `Cualquiera`, `Todas` y `Excluir` se escriben una por línea; una coma no
+divide una frase. Los filtros de idiomas y países son opcionales.
+
+**Guardar borrador** añade una versión sin sobrescribir la anterior. **Probar borrador** mide
+exactamente esa versión, con cap de 25,000 y timeout de 15 segundos. **Actualizar**
+solo consulta lo guardado. No se piden motivo, comentario justificativo ni una
+segunda confirmación; tampoco se llama a un proveedor.
+
+Si se pierde una respuesta, la pantalla conserva la misma petición y clave en la
+sesión del navegador. Primero se actualiza el estado y luego puede recuperarse esa
+misma solicitud, sin crear otra prueba. Un conflicto de versiones requiere releer
+el candidato/borrador; no sobrescribe el trabajo de otro operador.
 
 ## Resultado y denominadores
 

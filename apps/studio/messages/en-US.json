@@ -2219,6 +2219,80 @@
         "errors": { "title": "Full evidence is unavailable", "body": "The read-only preflight could not be verified. No execution was enabled." }
       },
       "fullEvidenceTopicCandidates": {
+        "ruleDraft": {
+          "title": "Test a candidate rule",
+          "body": "Write phrases to explore matches in the frozen corpus. This trial does not assign or activate topics.",
+          "savedIdentity": "Saved candidate",
+          "loading": "Loading the draft and its latest trial…",
+          "empty": "There is no rule yet. Define phrases here; they are not inferred from the description.",
+          "editorDirty": "The candidate has unsaved changes. Save those changes before creating or testing its rule.",
+          "rejected": "Restore the candidate to save or test a rule.",
+          "stale": "The candidate changed. Refresh and save a new draft version before testing.",
+          "fields": {
+            "any": "Any of these phrases",
+            "all": "All of these phrases",
+            "not": "Exclude these phrases",
+            "languages": "Languages (codes)",
+            "markets": "Countries (codes)"
+          },
+          "hints": {
+            "any": "One phrase per line. At least one must appear.",
+            "all": "One phrase per line. All must appear, as well as the condition above if supplied.",
+            "not": "One phrase per line. Any of these excludes a match.",
+            "languages": "Optional: one lowercase two-letter code per line, such as es or en.",
+            "markets": "Optional: one uppercase two-letter code per line, such as MX or US."
+          },
+          "phraseLimits": "Up to 160 characters per phrase, 16 per field and 32 total. Commas do not split phrases. Matches use consecutive words, not meaning or code patterns.",
+          "filters": "Optional filters",
+          "filtersHint": "Empty means unrestricted. Codes filter existing metadata; they do not change brand availability.",
+          "existingScopes": "Preserved draft scopes: {values}",
+          "invalid": "Add at least one phrase in Any or All. Check limits and codes; text is never silently trimmed to a limit or corrected.",
+          "dirty": "Unsaved rule changes. Save the draft to test this exact version.",
+          "ambiguous": "The response could not be confirmed. Refresh first, then recover the same request without creating another trial.",
+          "saved": "Draft saved.",
+          "tested": "Trial completed.",
+          "save": "Save draft",
+          "test": "Test draft",
+          "working": "Processing…",
+          "refresh": "Refresh",
+          "recover": "Recover same request",
+          "cap": "Local trial of up to {count} mentions, maximum 15 seconds. No provider call or assignment changes.",
+          "results": "Saved trial result",
+          "historicalCounts": "These counts describe the saved trial. A lexical match is not a validated topic assignment.",
+          "resultsStale": "This result belongs to an earlier version or there are unsaved changes. It does not describe the draft you are editing.",
+          "counts": {
+            "total": "Mentions in frozen corpus",
+            "considered": "Mentions considered",
+            "matched": "Lexical matches",
+            "abstained": "No lexical match",
+            "filter_excluded": "Excluded by filters",
+            "unavailable": "Unavailable for analysis",
+            "not_tested": "Not tested due to limit"
+          },
+          "measuredCap": "Limit used for this trial: {count}.",
+          "zeroMatches": "This rule had no matches. You can edit its phrases and save another version.",
+          "availability": "Stored examples: {stored}. Available now: {available}. Unavailable now: {unavailable}.",
+          "examples": {
+            "matched": "Matching example",
+            "abstained": "Non-matching example"
+          },
+          "noExamples": "No examples are available to display. Historical counts have not been recalculated.",
+          "untested": "This draft version does not have a saved trial yet.",
+          "errors": {
+            "topic_rule_request_invalid": "The rule or request is invalid. Check the fields.",
+            "topic_rule_scope_mismatch": "The request does not belong to this candidate. Refresh the page.",
+            "topic_rule_candidate_stale": "The candidate changed. Refresh before continuing.",
+            "topic_rule_draft_stale": "There is a newer draft version. Refresh before continuing.",
+            "topic_rule_draft_source_stale": "The candidate changed since this rule was saved. Refresh and save another version.",
+            "topic_rule_draft_idempotency_conflict": "This key belongs to a different request. Refresh to review the saved state.",
+            "topic_rule_draft_forbidden": "You do not have access to this operation.",
+            "topic_rule_candidate_not_found": "The candidate is no longer available.",
+            "topic_rule_draft_not_found": "The draft is no longer available.",
+            "topic_rule_trial_timeout": "The trial exceeded its time limit and did not save a result. Narrow the rule and test again.",
+            "topic_rule_schema_unavailable": "Rule trials are not available in this environment yet.",
+            "topic_rule_operation_failed": "The operation could not be confirmed. Refresh to check the saved state."
+          }
+        },
         "citations": {
           "candidate": { "title": "Original candidate citations", "body": "Exact references cited in the original evaluation, not a new sample of the cluster." },
           "refinement": { "title": "Suggestion citations", "body": "Exact references saved with this refinement. They may differ from the original candidate citations." },

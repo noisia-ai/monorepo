@@ -2205,6 +2205,144 @@ paths:
         "404": { description: Candidate not found in the authorized workspace and run. }
         "409": { description: Frozen citation authority is unavailable. }
         "422": { description: Query or scope-bound cursor rejected without a write. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/rule-draft:
+    get:
+      tags:
+        - Signal Topic Evaluation
+      operationId: getSignalTopicRuleDraft
+      summary: Read current saved candidate identity, latest draft and its latest trial without running matching.
+      description: >-
+        Internal management. Coherent REPEATABLE READ READ ONLY. A new untested draft returns trial=null; never
+        borrows an older draft receipt. Cached examples recheck current rights and content. No provider, Worker,
+        adoption, publication or serving.
+      security:
+        - kindeSession: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: candidateKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        - name: run_key
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9][a-z0-9._:-]{7,199}$
+      responses:
+        '200':
+          description: Latest draft and current-rights historical trial projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalTopicRuleDraftManagementV1'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Exact candidate/draft not found in authorized workspace/run.
+        '409':
+          description: Stale candidate/draft, idempotency conflict, or bounded trial timeout; no partial receipt.
+        '422':
+          description: Closed request, route binding or limits invalid.
+        '503':
+          description: Rule draft schema not yet available in this environment.
+    post:
+      tags:
+        - Signal Topic Evaluation
+      operationId: saveSignalTopicRuleDraft
+      summary: >-
+        Append an explicitly authored lexical draft using saved candidate identity, candidate CAS and predecessor
+        draft CAS.
+      description: >-
+        No motive, rationale or duplicate confirmation. One caller-owned SERIALIZABLE transaction. Scope is exact
+        workspace/run/candidate. Same key/body replays the original draft; changed content conflicts.
+      security:
+        - kindeSession: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: candidateKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._:-]{8,200}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalTopicRuleDraftSaveV1'
+      responses:
+        '200':
+          description: Saved or replayed append-only rule draft.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalTopicContractDraftV1'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Exact candidate/draft not found in authorized workspace/run.
+        '409':
+          description: Stale candidate/draft, idempotency conflict, or bounded trial timeout; no partial receipt.
+        '422':
+          description: Closed request, route binding or limits invalid.
+        '503':
+          description: Rule draft schema not yet available in this environment.
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/rule-draft/trial:
+    post:
+      tags:
+        - Signal Topic Evaluation
+      operationId: testSignalTopicRuleDraft
+      summary: Measure one exact saved lexical draft against bounded frozen snapshot memberships and append a trial receipt.
+      description: >-
+        Parameterized simple FTS only. Explicit cap 1..50000, examples 0..10, timeout 1..15000 ms. UI
+        declares 25000/10/15000. Exact route/draft/candidate CAS binding; no assignments, provider, Worker, Topic
+        activation. Same-key replay never reruns FTS and rechecks stored example rights. Lost responses must be
+        reconciled by GET before retrying the exact request/key; never a blind new trial.
+      security:
+        - kindeSession: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: candidateKey
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._:-]{8,200}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalTopicRuleDraftTrialRequestV1'
+      responses:
+        '200':
+          description: Immutable counts with currently available sanitized examples.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalTopicContractDraftTrialV1'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Exact candidate/draft not found in authorized workspace/run.
+        '409':
+          description: Stale candidate/draft, idempotency conflict, or bounded trial timeout; no partial receipt.
+        '422':
+          description: Closed request, route binding or limits invalid.
+        '503':
+          description: Rule draft schema not yet available in this environment.
   /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/commands:
     post:
       tags: [Signal Topic Evaluation]
@@ -3786,6 +3924,517 @@ components:
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+    SignalTopicRuleSpecV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - kind
+        - label
+        - definition
+        - lexical
+        - filters
+      properties:
+        contract_version:
+          const: signal-topic-rule-spec-v1
+        kind:
+          const: topic
+        label:
+          type: string
+          minLength: 1
+          maxLength: 160
+        definition:
+          type: string
+          minLength: 1
+          maxLength: 1500
+        lexical:
+          type: object
+          additionalProperties: false
+          required:
+            - any
+            - all
+            - not
+          properties:
+            any:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                minLength: 1
+                maxLength: 160
+            all:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                minLength: 1
+                maxLength: 160
+            not:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                minLength: 1
+                maxLength: 160
+          anyOf:
+            - properties:
+                any:
+                  minItems: 1
+            - properties:
+                all:
+                  minItems: 1
+          description: >-
+            At least one any/all phrase; at most 32 total before dedup. Each literal contains a letter or number, no
+            controls; exact server parser validates. Phrases are data, not SQL, regex or tsquery programs.
+        filters:
+          type: object
+          additionalProperties: false
+          required:
+            - languages
+            - markets
+            - scopes
+          properties:
+            languages:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                pattern: ^[a-z]{2}$
+            markets:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                pattern: ^[A-Z]{2}$
+            scopes:
+              type: array
+              maxItems: 16
+              items:
+                type: string
+                enum:
+                  - primary_brand
+                  - same_entity
+                  - competitor
+                  - category
+                  - other
+    SignalTopicRuleDraftSaveV1:
+      type: object
+      additionalProperties: false
+      required:
+        - run_key
+        - candidate_key
+        - expected_candidate_revision
+        - expected_candidate_state_token
+        - expected_draft_revision
+        - expected_draft_digest
+        - rule_spec
+      properties:
+        run_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{7,199}$
+        candidate_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        expected_candidate_revision:
+          type: integer
+          minimum: 1
+        expected_candidate_state_token:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        expected_draft_revision:
+          type: integer
+          minimum: 0
+        expected_draft_digest:
+          oneOf:
+            - type: 'null'
+            - type: string
+              pattern: ^sha256:[0-9a-f]{64}$
+        rule_spec:
+          $ref: '#/components/schemas/SignalTopicRuleSpecV1'
+      allOf:
+        - if:
+            properties:
+              expected_draft_revision:
+                const: 0
+          then:
+            properties:
+              expected_draft_digest:
+                type: 'null'
+          else:
+            properties:
+              expected_draft_digest:
+                type: string
+                pattern: ^sha256:[0-9a-f]{64}$
+    SignalTopicRuleDraftTrialRequestV1:
+      type: object
+      additionalProperties: false
+      required:
+        - run_key
+        - candidate_key
+        - expected_candidate_revision
+        - expected_candidate_state_token
+        - draft_id
+        - expected_draft_revision
+        - expected_draft_digest
+        - max_memberships
+        - example_limit
+        - timeout_ms
+      properties:
+        run_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{7,199}$
+        candidate_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        expected_candidate_revision:
+          type: integer
+          minimum: 1
+        expected_candidate_state_token:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        draft_id:
+          type: string
+          format: uuid
+        expected_draft_revision:
+          type: integer
+          minimum: 1
+        expected_draft_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        max_memberships:
+          type: integer
+          minimum: 1
+          maximum: 50000
+        example_limit:
+          type: integer
+          minimum: 0
+          maximum: 10
+        timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 15000
+    SignalTopicContractDraftV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - draft_id
+        - revision
+        - draft_digest
+        - predecessor_draft_id
+        - rule_spec
+        - spec_digest
+        - source
+        - created_at
+        - is_stale
+        - is_latest
+        - idempotent_replay
+      properties:
+        contract_version:
+          const: signal-topic-contract-draft-v1
+        draft_id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        draft_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        predecessor_draft_id:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: uuid
+        rule_spec:
+          $ref: '#/components/schemas/SignalTopicRuleSpecV1'
+        spec_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        source:
+          type: object
+          additionalProperties: false
+          required:
+            - run_key
+            - candidate_key
+            - revision
+            - version_digest
+            - snapshot_digest
+          properties:
+            run_key:
+              type: string
+              pattern: ^[a-z0-9][a-z0-9._:-]{7,199}$
+            candidate_key:
+              type: string
+              pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+            revision:
+              type: integer
+              minimum: 1
+            version_digest:
+              type: string
+              pattern: ^sha256:[0-9a-f]{64}$
+            snapshot_digest:
+              type: string
+              pattern: ^sha256:[0-9a-f]{64}$
+        created_at:
+          type: string
+          format: date-time
+        is_stale:
+          type: boolean
+        is_latest:
+          type: boolean
+        idempotent_replay:
+          type: boolean
+    SignalTopicContractDraftTrialV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - draft_id
+        - draft_revision
+        - draft_digest
+        - spec_digest
+        - compiler_version
+        - plan_hash
+        - snapshot_digest
+        - population_digest
+        - considered_digest
+        - population_kind
+        - counts
+        - max_memberships
+        - example_limit
+        - timeout_ms
+        - examples
+        - example_availability
+        - topic_adoption
+        - publication
+        - serving
+        - trial_id
+        - created_at
+        - is_stale
+        - is_latest_draft
+        - idempotent_replay
+      properties:
+        contract_version:
+          const: signal-topic-contract-draft-trial-v1
+        draft_id:
+          type: string
+          format: uuid
+        draft_revision:
+          type: integer
+          minimum: 1
+        draft_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        spec_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        compiler_version:
+          const: signal-topic-rule-simple-fts-v1
+        plan_hash:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        snapshot_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        population_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        considered_digest:
+          type: string
+          pattern: ^sha256:[0-9a-f]{64}$
+        population_kind:
+          const: frozen_snapshot_memberships
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - total
+            - considered
+            - not_tested
+            - filter_excluded
+            - unavailable
+            - matched
+            - abstained
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            considered:
+              type: integer
+              minimum: 0
+            not_tested:
+              type: integer
+              minimum: 0
+            filter_excluded:
+              type: integer
+              minimum: 0
+            unavailable:
+              type: integer
+              minimum: 0
+            matched:
+              type: integer
+              minimum: 0
+            abstained:
+              type: integer
+              minimum: 0
+        max_memberships:
+          type: integer
+          minimum: 1
+          maximum: 50000
+        example_limit:
+          type: integer
+          minimum: 0
+          maximum: 10
+        timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 15000
+        examples:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - evidence_ref
+              - outcome
+              - excerpt
+              - language
+              - market
+              - scope
+              - month
+            properties:
+              evidence_ref:
+                type: string
+                pattern: ^sha256:[0-9a-f]{64}$
+              outcome:
+                enum:
+                  - matched
+                  - abstained
+              excerpt:
+                type: string
+                maxLength: 600
+              language:
+                oneOf:
+                  - type: 'null'
+                  - type: string
+                    pattern: ^[a-z]{2}$
+              market:
+                oneOf:
+                  - type: 'null'
+                  - type: string
+                    pattern: ^[A-Z]{2}$
+              scope:
+                oneOf:
+                  - type: 'null'
+                  - type: string
+                    enum:
+                      - primary_brand
+                      - same_entity
+                      - competitor
+                      - category
+                      - other
+              month:
+                type: string
+                pattern: ^20[0-9]{2}-(0[1-9]|1[0-2])$
+        example_availability:
+          type: object
+          additionalProperties: false
+          required:
+            - stored
+            - available
+            - unavailable
+          properties:
+            stored:
+              type: integer
+              minimum: 0
+              maximum: 10
+            available:
+              type: integer
+              minimum: 0
+              maximum: 10
+            unavailable:
+              type: integer
+              minimum: 0
+              maximum: 10
+        topic_adoption:
+          const: false
+        publication:
+          const: false
+        serving:
+          const: false
+        trial_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        is_stale:
+          type: boolean
+        is_latest_draft:
+          type: boolean
+        idempotent_replay:
+          type: boolean
+      description: >-
+        Immutable historical trial metrics. Current read rechecks cached examples; available + unavailable = stored and
+        available equals returned examples. No remeasurement on GET or same-key replay. Considered=min(total,cap),
+        total=considered+not_tested, considered=unavailable+filter_excluded+matched+abstained.
+    SignalTopicRuleDraftManagementV1:
+      type: object
+      additionalProperties: false
+      required:
+        - contract_version
+        - run_key
+        - candidate_key
+        - candidate
+        - draft
+        - trial
+      properties:
+        contract_version:
+          const: signal-topic-rule-draft-management-v1
+        run_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{7,199}$
+        candidate_key:
+          type: string
+          pattern: ^[a-z0-9][a-z0-9._:-]{0,179}$
+        candidate:
+          type: object
+          additionalProperties: false
+          required:
+            - title
+            - description
+            - revision
+            - state_token
+            - review_state
+          properties:
+            title:
+              type: string
+              minLength: 1
+              maxLength: 160
+            description:
+              type: string
+              minLength: 1
+              maxLength: 1500
+            revision:
+              type: integer
+              minimum: 1
+            state_token:
+              type: string
+              pattern: ^sha256:[0-9a-f]{64}$
+            review_state:
+              enum:
+                - pending
+                - rejected
+        draft:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SignalTopicContractDraftV1'
+        trial:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SignalTopicContractDraftTrialV1'
     SignalTopicEvaluationV2CandidateEvidencePage:
       type: object
       additionalProperties: false

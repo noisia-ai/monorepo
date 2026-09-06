@@ -91,6 +91,26 @@ export async function loadSignalTopicContractDraftV1(args:Context&{queryable:Sig
   return row?project(row,source,row.revision,false):null;
 }
 
+/** Latest draft only: an untested new version never inherits an older version's trial.
+ * Call alongside the draft reader in one read-only repeatable-read transaction for a coherent GET. */
+export async function loadSignalTopicContractDraftLatestTrialV1(args:Context&{queryable:SignalTopicContractDraftClient;
+  run_key:string;candidate_key:string}):Promise<SignalTopicContractDraftTrialV1|null>{
+  await authorize(args.queryable,args);const source=await sourceFor(args.queryable,args);
+  const draft=(await args.queryable.query<DraftRow>(`SELECT *,created_at::text FROM signal_topic_contract_draft_versions
+    WHERE candidate_id=$1::uuid AND workspace_id=$2::uuid AND run_id=$3::uuid AND snapshot_id=$4::uuid
+    ORDER BY revision DESC LIMIT 1`,[source.candidate_id,args.workspace_id,source.run_id,source.snapshot_id])).rows[0];
+  if(!draft)return null;
+  const receipt=(await args.queryable.query<{id:string;result:SignalTopicContractDraftTrialResultV1;created_at:string}>(
+    `SELECT id::text,result,created_at::text FROM signal_topic_contract_draft_trial_receipts
+      WHERE workspace_id=$1::uuid AND draft_id=$2::uuid ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [args.workspace_id,draft.id])).rows[0];
+  if(!receipt)return null;
+  return{...receipt.result,...await projectCurrentExamples(args.queryable,draft,receipt.result),
+    trial_id:receipt.id,created_at:new Date(receipt.created_at).toISOString(),
+    is_stale:source.revision!==draft.source_revision||source.version_digest!==draft.source_version_digest||source.review_state!=="pending",
+    is_latest_draft:true,idempotent_replay:false};
+}
+
 export async function runSignalTopicContractDraftTrialV1(args:Context&CandidateCAS&{
   client:SignalTopicContractDraftClient;draft_id:string;expected_draft_revision:number;
   expected_draft_digest:string;idempotency_key:string;max_memberships?:number;example_limit?:number;timeout_ms?:number
