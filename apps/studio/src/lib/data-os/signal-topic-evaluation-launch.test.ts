@@ -245,7 +245,7 @@ test("Brand OS mounts the normal launch and reversible review surface without to
   assert.match(component,/run\.providerOutcomeClass==="ambiguous_after_send"\?t\("run\.outcomeUnknownBody"\)/u);
   assert.match(component,/run\.providerOutcomeClass==="definitely_not_sent"/u);
   assert.match(component,/run\.providerOutcomeClass==="known_response_invalid"/u);
-  assert.ok(page.indexOf("<TopicEvaluationManager") > page.indexOf("<SemanticContextPackManager"));
+  assert.ok(page.indexOf("<BrandTopicEvaluationPanels") > page.indexOf("<SemanticContextPackManager"));
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.ok(JSON.parse(es).AdminWorkspace.brandOs.topicEvaluation.boundary.authorityUnavailableBody);
   assert.ok(JSON.parse(en).AdminWorkspace.brandOs.topicEvaluation.boundary.authorityUnavailableBody);

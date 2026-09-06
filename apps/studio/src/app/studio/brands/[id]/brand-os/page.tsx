@@ -9,11 +9,9 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
-import { FullEvidenceTopicEvaluationStatus } from "@/components/brands/FullEvidenceTopicEvaluationStatus";
-import { FullEvidenceTopicCandidateManager } from "@/components/brands/FullEvidenceTopicCandidateManager";
+import { BrandTopicEvaluationPanels } from "@/components/brands/BrandTopicEvaluationPanels";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
 import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
-import { TopicEvaluationManager } from "@/components/brands/TopicEvaluationManager";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
 import { getBrandDetailForUser } from "@/lib/data/brands";
@@ -61,9 +59,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       {workspace.summary.workspaceId ? (
         <>
           <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
-          <TopicEvaluationManager workspaceId={workspace.summary.workspaceId} />
-          <FullEvidenceTopicEvaluationStatus workspaceId={workspace.summary.workspaceId} />
-          <FullEvidenceTopicCandidateManager workspaceId={workspace.summary.workspaceId} />
+          <BrandTopicEvaluationPanels key={workspace.summary.workspaceId} workspaceId={workspace.summary.workspaceId} />
         </>
       ) : null}
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import {
@@ -688,6 +688,186 @@ export async function loadSignalTopicEvaluationV2CandidateDetail(args:{queryable
     candidate:{...projectV2ManagementCandidate(row),candidate_digest:row.candidate_digest,
       base_model_payload:row.base_payload,base_model_payload_digest:row.base_payload_digest,
       evidence},refinement,result_origin,topic_adoption:false as const,publication:false as const,serving:false as const};
+}
+
+export type SignalTopicEvaluationV2CandidateCitation =
+  | {evidence_ref:string;status:"available";excerpt:string;language:string|null;market:string|null;
+      scope:string|null;month:string;stratum:"central"|"edge"|"minority";source_digest:string}
+  | {evidence_ref:string;status:"unavailable";
+      reason:"rights_changed"|"source_changed"|"reference_unavailable"};
+export type SignalTopicEvaluationV2CandidateEvidencePage = {
+  contract_version:"signal-topic-evaluation-v2-candidate-evidence-v1";
+  run_key:string;candidate_key:string;collection:"candidate"|"refinement";
+  status:"available"|"none"|"unavailable";items:SignalTopicEvaluationV2CandidateCitation[];
+  total:number;limit:number;next_cursor:string|null;topic_adoption:false;publication:false;serving:false;
+};
+type V2CitationBinding={evidence_ref:string;member_ref:string|null};
+type V2CitationMemberRow={evidence_ref:string;member_ref:string|null;source_record_digest:string|null;
+  source_content_hash:string|null;canonical_text_hash:string|null;text_hash:string|null;text_clean:string|null;
+  rights_valid:boolean;canonical_valid:boolean;language:string|null;market:string|null;scope:string|null;
+  published_month:string|null;stratum:"central"|"edge"|"minority"|null};
+
+/** Human-only historical citation reader. The caller selects a candidate, never a mention or
+ * arbitrary evidence ref. Editorial revisions and newer snapshots cannot replace these citations. */
+export async function loadSignalTopicEvaluationV2CandidateEvidence(args:{queryable:Queryable;
+  workspace_id:string;actor:SignalTopicEvaluationActorV2;run_key:string;candidate_key:string;
+  collection:"candidate"|"refinement";limit?:number;cursor?:string|null}
+):Promise<SignalTopicEvaluationV2CandidateEvidencePage>{
+  assertActor(args.actor);
+  const limit=args.limit??20;
+  if(!Number.isSafeInteger(limit)||limit<1||limit>20
+    ||!["candidate","refinement"].includes(args.collection)
+    ||!/^[a-z0-9][a-z0-9._:-]{7,199}$/u.test(args.run_key)
+    ||!/^[a-z0-9][a-z0-9._:-]{0,179}$/u.test(args.candidate_key)){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_query_invalid",422);
+  }
+  const cursor=decodeV2CitationCursor(args.cursor??null);
+  const authorized=(await args.queryable.query<{authorized:boolean}>(`SELECT EXISTS(
+    SELECT 1 FROM users actor WHERE actor.id=$2::uuid AND actor.user_type='noisia_internal'
+      AND actor.status='active' AND signal_data_governance_actor_is_valid($1::uuid,actor.id)) authorized`,
+  [args.workspace_id,args.actor.id])).rows[0]?.authorized;
+  if(!authorized)throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_forbidden",403);
+  const anchor=(await args.queryable.query<{candidate_id:string;run_id:string;snapshot_id:string;
+    snapshot_digest:string;rights_digest:string}>(`SELECT candidate.id::text candidate_id,
+      run.id::text run_id,snapshot.id::text snapshot_id,snapshot.snapshot_digest,snapshot.rights_digest
+    FROM signal_topic_evaluation_v2_candidates candidate
+    JOIN signal_topic_evaluation_v2_runs run ON run.id=candidate.run_id
+      AND run.workspace_id=candidate.workspace_id AND run.status='completed'
+    JOIN signal_topic_evaluation_v2_snapshots snapshot ON snapshot.id=run.snapshot_id
+      AND snapshot.workspace_id=run.workspace_id AND snapshot.state='frozen'
+    WHERE candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3
+      AND candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving
+    LIMIT 1`,[args.workspace_id,args.run_key,args.candidate_key])).rows[0];
+  if(!anchor)throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_not_found",404);
+  const page:SignalTopicEvaluationV2CandidateEvidencePage={
+    contract_version:"signal-topic-evaluation-v2-candidate-evidence-v1",run_key:args.run_key,
+    candidate_key:args.candidate_key,collection:args.collection,status:"available",items:[],total:0,
+    limit,next_cursor:null,topic_adoption:false,publication:false,serving:false};
+  let bindings:V2CitationBinding[];let proposalDigest:string|null=null;
+  if(args.collection==="candidate"){
+    bindings=(await args.queryable.query<V2CitationBinding>(`SELECT evidence.evidence_ref,linked.member_ref
+      FROM signal_topic_evaluation_v2_candidate_evidence evidence
+      LEFT JOIN signal_topic_evaluation_v2_retrievals retrieval ON retrieval.id=evidence.retrieval_id
+        AND retrieval.run_id=$2::uuid AND retrieval.workspace_id=$3::uuid
+        AND retrieval.operation IN('representative_mentions','search_cluster')
+      LEFT JOIN signal_topic_evaluation_v2_retrieval_evidence linked ON linked.retrieval_id=retrieval.id
+        AND linked.snapshot_id=$4::uuid AND linked.evidence_ref=evidence.evidence_ref
+      WHERE evidence.candidate_id=$1::uuid ORDER BY evidence.evidence_ref LIMIT 49`,
+    [anchor.candidate_id,anchor.run_id,args.workspace_id,anchor.snapshot_id])).rows;
+  }else{
+    const available=(await args.queryable.query<{archives_available:boolean;imports_available:boolean;
+      live_available:boolean}>(`SELECT
+      to_regclass('public.signal_topic_evaluation_v2_archived_refinements') IS NOT NULL archives_available,
+      to_regclass('public.signal_topic_evaluation_v2_result_import_receipts') IS NOT NULL imports_available,
+      to_regclass('public.signal_topic_evaluation_v2_candidate_refinement_proposals') IS NOT NULL live_available`
+    )).rows[0];
+    if(!available?.archives_available||!available.imports_available){
+      if(cursor)throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_cursor_invalid",422);
+      return{...page,status:"unavailable"};
+    }
+    const archived=(await args.queryable.query<{proposal_digest:string;evidence_refs:string[];
+      bindings:V2CitationBinding[]}>(`SELECT archive.source_proposal_digest proposal_digest,
+      ARRAY(SELECT ref FROM unnest(archive.evidence_refs) ref ORDER BY ref LIMIT 49) evidence_refs,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('evidence_ref',bounded.evidence_ref,
+        'member_ref',bounded.member_ref)) FROM(
+          SELECT citation.evidence_ref,citation.member_ref
+          FROM jsonb_to_recordset(receipt.artifact->'refinement'->'evidence')
+            AS citation(evidence_ref text,member_ref text)
+          WHERE citation.evidence_ref=ANY(archive.evidence_refs) ORDER BY citation.evidence_ref LIMIT 49
+        ) bounded),'[]'::jsonb) bindings
+      FROM public.signal_topic_evaluation_v2_archived_refinements archive
+      JOIN public.signal_topic_evaluation_v2_result_import_receipts receipt
+        ON receipt.id=archive.import_receipt_id AND receipt.run_id=archive.run_id
+        AND receipt.workspace_id=archive.workspace_id AND receipt.snapshot_id=archive.snapshot_id
+      JOIN signal_topic_evaluation_v2_runs run ON run.id=archive.run_id
+        AND run.import_receipt_id=receipt.id AND run.workspace_id=archive.workspace_id
+        AND run.snapshot_id=archive.snapshot_id AND run.origin='imported_result' AND run.status='completed'
+      WHERE archive.candidate_id=$1::uuid AND archive.run_id=$2::uuid
+        AND archive.workspace_id=$3::uuid AND archive.snapshot_id=$4::uuid
+      ORDER BY archive.source_created_at DESC,archive.id DESC LIMIT 1`,
+    [anchor.candidate_id,anchor.run_id,args.workspace_id,anchor.snapshot_id])).rows[0];
+    if(!archived){
+      if(cursor)throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_cursor_invalid",422);
+      return{...page,status:available.live_available?"unavailable":"none"};
+    }
+    proposalDigest=archived.proposal_digest;
+    bindings=archived.evidence_refs.map((ref)=>{
+      const matches=archived.bindings.filter((item)=>item.evidence_ref===ref);
+      return{evidence_ref:ref,member_ref:matches.length===1?matches[0]!.member_ref:null};
+    });
+  }
+  if(bindings.length>48||new Set(bindings.map((row)=>row.evidence_ref)).size!==bindings.length
+    ||bindings.some((row)=>!/^sha256:[0-9a-f]{64}$/u.test(row.evidence_ref))){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_invalid",409);
+  }
+  const bindingDigest=signalTopicEvaluationDigestV2({workspace_id:args.workspace_id,run_id:anchor.run_id,
+    run_key:args.run_key,candidate_key:args.candidate_key,candidate_id:anchor.candidate_id,
+    snapshot_id:anchor.snapshot_id,snapshot_digest:anchor.snapshot_digest,
+    rights_digest:anchor.rights_digest,collection:args.collection,proposal_digest:proposalDigest,bindings,limit});
+  const after=cursor?bindings.findIndex((item)=>item.evidence_ref===cursor.after):-1;
+  if(cursor&&(cursor.binding!==bindingDigest||after<0)){
+    throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_cursor_invalid",422);
+  }
+  const selected=bindings.slice(after+1,after+1+limit);
+  page.total=bindings.length;
+  if(!selected.length)return page;
+  // A left join deliberately retains a citation whose membership/source is unavailable. The
+  // canonical text is fetched only for currently eligible, same-workspace sources and roots.
+  const members=(await args.queryable.query<V2CitationMemberRow>(`WITH selected_citations AS(
+      SELECT evidence_ref,member_ref FROM jsonb_to_recordset($3::jsonb)
+        AS citation(evidence_ref text,member_ref text)), resolved AS(
+      SELECT citation.evidence_ref,membership.member_ref,membership.source_record_digest,
+        membership.source_content_hash,membership.canonical_text_hash,mention.text_hash,
+        membership.language,membership.market,membership.scope,membership.published_month,membership.stratum,
+        COALESCE(mention.workspace_id=$1::uuid AND mention.inclusion_status='included'
+          AND source.workspace_id=$1::uuid AND source.status='active',false) rights_valid,
+        COALESCE(mention.id=mention.canonical_mention_id
+          AND mention.text_hash=membership.canonical_text_hash,false) canonical_valid,
+        CASE WHEN mention.workspace_id=$1::uuid AND mention.inclusion_status='included'
+          AND source.workspace_id=$1::uuid AND source.status='active'
+          AND mention.id=mention.canonical_mention_id AND mention.text_hash=membership.canonical_text_hash
+          THEN mention.text_clean ELSE NULL END text_clean
+      FROM selected_citations citation
+      LEFT JOIN signal_topic_evaluation_v2_cluster_memberships membership
+        ON membership.member_ref=citation.member_ref AND membership.snapshot_id=$2::uuid
+        AND membership.workspace_id=$1::uuid
+      LEFT JOIN mentions mention ON mention.id=membership.mention_id
+      LEFT JOIN data_sources source ON source.id=mention.data_source_id)
+    SELECT * FROM resolved ORDER BY evidence_ref LIMIT 20`,
+  [args.workspace_id,anchor.snapshot_id,JSON.stringify(selected)])).rows;
+  page.items=selected.map((citation)=>{
+    const matches=members.filter((row)=>row.evidence_ref===citation.evidence_ref);
+    const row=matches.length===1?matches[0]:undefined;
+    const unavailable=(reason:"rights_changed"|"source_changed"|"reference_unavailable"):
+      SignalTopicEvaluationV2CandidateCitation=>({evidence_ref:citation.evidence_ref,status:"unavailable",reason});
+    if(!row?.member_ref||!row.source_record_digest||signalTopicEvaluationDigestV2({
+      snapshot:anchor.snapshot_digest,member_ref:row.member_ref,source:row.source_record_digest
+    })!==citation.evidence_ref)return unavailable("reference_unavailable");
+    if(!row.rights_valid)return unavailable("rights_changed");
+    if(!row.canonical_valid||row.text_hash!==row.canonical_text_hash||row.text_clean===null
+      ||`sha256:${createHash("sha256").update(row.text_clean.normalize("NFKC").replace(/\s+/gu," ").trim())
+        .digest("hex")}`!==row.source_content_hash)return unavailable("source_changed");
+    const excerpt=sanitizeSignalTopicEvidenceExcerptV2(row.text_clean);
+    if(!excerpt||!row.published_month||!row.stratum)return unavailable("reference_unavailable");
+    return{evidence_ref:citation.evidence_ref,status:"available",excerpt,language:row.language,
+      market:row.market,scope:row.scope,month:row.published_month,stratum:row.stratum,
+      source_digest:row.source_record_digest};
+  });
+  if(after+1+selected.length<bindings.length)page.next_cursor=Buffer.from(JSON.stringify({
+    binding:bindingDigest,after:selected.at(-1)!.evidence_ref}),"utf8").toString("base64url");
+  return page;
+}
+
+function decodeV2CitationCursor(cursor:string|null):{binding:string;after:string}|null{
+  if(cursor===null)return null;
+  try{
+    if(cursor.length<16||cursor.length>512||!/^[A-Za-z0-9_-]+$/u.test(cursor))throw new Error();
+    const value=JSON.parse(Buffer.from(cursor,"base64url").toString("utf8")) as Record<string,unknown>;
+    if(!value||Object.keys(value).sort().join(",")!=="after,binding"
+      ||typeof value.binding!=="string"||!/^sha256:[0-9a-f]{64}$/u.test(value.binding)
+      ||typeof value.after!=="string"||!/^sha256:[0-9a-f]{64}$/u.test(value.after))throw new Error();
+    return{binding:value.binding,after:value.after};
+  }catch{throw new SignalTopicEvaluationV2Error("topic_evaluation_v2_candidate_evidence_cursor_invalid",422);}
 }
 
 /** Historical proposal reader only. Session expiry limits navigation, not visibility of a saved

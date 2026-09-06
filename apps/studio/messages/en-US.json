@@ -2174,6 +2174,7 @@
         "kinds": { "identity_term": "Identity term", "alias": "Alias", "product": "Product", "feature": "Feature", "surface": "Surface", "category": "Category", "need": "Need", "benefit": "Benefit", "friction": "Friction", "usage_occasion": "Usage occasion", "competitor_term": "Competitor term", "locale_variant": "Locale variant", "exclusion": "Exclusion", "homonym": "Homonym", "ambiguous_term": "Ambiguous term", "abstention_rule": "Abstention rule", "positive_anchor": "Positive anchor", "negative_anchor": "Negative anchor", "boundary_anchor": "Boundary anchor", "typed_relation": "Typed relation", "other": "Other governed type" }
       },
       "topicEvaluation": {
+        "historical": { "title": "Historical evaluation · prior attempt", "body": "This record belongs to the earlier evaluation, not the imported full-evidence result below. Its counts, cost and outcome are preserved for reference. No new attempt can be launched here.", "checking": "Checking current result provenance. Launch controls remain hidden until this finishes; if it fails, refresh the candidate panel below." },
         "eyebrow": "Controlled evaluation", "title": "Topic candidates", "subtitle": "Compare one contextual evaluation with the 115 historical proposals. The result remains editable candidates; it never adopts, publishes, or serves Topics automatically.",
         "loading": "Loading the sealed preflight…",
         "actions": { "refresh": "Refresh", "open": "Review flight", "openSuccessor": "Review successor attempt", "close": "Close", "start": "Start one evaluation", "startSuccessor": "Authorize successor attempt", "starting": "Starting…", "more": "Load more", "save": "Save change", "reject": "Reject", "restore": "Restore", "undo": "Undo" },
@@ -2218,6 +2219,19 @@
         "errors": { "title": "Full evidence is unavailable", "body": "The read-only preflight could not be verified. No execution was enabled." }
       },
       "fullEvidenceTopicCandidates": {
+        "citations": {
+          "candidate": { "title": "Original candidate citations", "body": "Exact references cited in the original evaluation, not a new sample of the cluster." },
+          "refinement": { "title": "Suggestion citations", "body": "Exact references saved with this refinement. They may differ from the original candidate citations." },
+          "explanation": "Why the original evaluation proposed this candidate",
+          "load": "View cited mentions", "loading": "Loading cited mentions…", "refresh": "Refresh citations", "more": "Load more citations",
+          "error": "Citations could not be loaded. Try again; no candidate was changed.",
+          "none": "No saved suggestion citations exist for this candidate.",
+          "unavailable": "These exact citations are not available in this environment. No replacement mentions are shown.",
+          "empty": "No cited mentions are available.", "count": "Showing {shown} of {total} cited references.", "reference": "Reference {index}",
+          "metadata": "{month} · Language: {language} · Market: {market} · Scope: {scope} · {stratum}", "unspecified": "not specified",
+          "strata": { "central": "Central example", "edge": "Edge example", "minority": "Minority example" },
+          "reasons": { "rights_changed": "This reference is unavailable because current data-use permission changed.", "source_changed": "This reference is unavailable because its source no longer matches the saved evidence.", "reference_unavailable": "The exact cited reference is unavailable; it was not replaced with another mention." }
+        },
         "importedResult": "Lab result imported for review. Its candidates and references were preserved; importing it did not run another evaluation or incur a new charge.",
         "refinement": {
           "title": "Refinement suggestion",

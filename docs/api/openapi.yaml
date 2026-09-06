@@ -2181,6 +2181,30 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { description: Candidate not found in the authorized workspace and run. }
         "422": { description: Closed query shape rejected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/evidence:
+    get:
+      tags: [Signal Topic Evaluation]
+      operationId: getSignalTopicEvaluationV2CandidateEvidence
+      summary: Read exact persisted candidate or archived refinement citations, never replacement samples.
+      description: Internal management only. Rechecks current workspace rights and canonical source integrity on each read. Returns sanitized excerpts and safe metadata, or explicit unavailable references. No source IDs, raw URLs, handles, prompt, provider call, or write. Cursor is bound to the workspace, run, candidate, collection, snapshot, reference set and limit.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { name: candidateKey, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+        - { name: run_key, in: query, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{7,199}$' } }
+        - { name: collection, in: query, required: true, schema: { type: string, enum: [candidate, refinement] } }
+        - { name: cursor, in: query, required: false, schema: { type: string, minLength: 16, maxLength: 512 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 20, default: 20 } }
+      responses:
+        "200":
+          description: Exact cited-reference page; missing references stay unavailable, never silently substituted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicEvaluationV2CandidateEvidencePage" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: Candidate not found in the authorized workspace and run. }
+        "409": { description: Frozen citation authority is unavailable. }
+        "422": { description: Query or scope-bound cursor rejected without a write. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/commands:
     post:
       tags: [Signal Topic Evaluation]
@@ -3762,6 +3786,52 @@ components:
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+    SignalTopicEvaluationV2CandidateEvidencePage:
+      type: object
+      additionalProperties: false
+      required: [contract_version, run_key, candidate_key, collection, status, items, total, limit, next_cursor, topic_adoption, publication, serving]
+      properties:
+        contract_version: { const: signal-topic-evaluation-v2-candidate-evidence-v1 }
+        run_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{7,199}$' }
+        candidate_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' }
+        collection: { type: string, enum: [candidate, refinement] }
+        status: { type: string, enum: [available, none, unavailable] }
+        items: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/SignalTopicEvaluationV2CandidateCitation" } }
+        total: { type: integer, minimum: 0, maximum: 48 }
+        limit: { type: integer, minimum: 1, maximum: 20 }
+        next_cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+        topic_adoption: { const: false }
+        publication: { const: false }
+        serving: { const: false }
+      allOf:
+        - if: { properties: { status: { enum: [none, unavailable] } } }
+          then:
+            properties:
+              total: { const: 0 }
+              items: { maxItems: 0 }
+              next_cursor: { type: "null" }
+    SignalTopicEvaluationV2CandidateCitation:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [evidence_ref, status, excerpt, language, market, scope, month, stratum, source_digest]
+          properties:
+            evidence_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            status: { const: available }
+            excerpt: { type: string, minLength: 1, maxLength: 600 }
+            language: { type: [string, "null"], maxLength: 80 }
+            market: { type: [string, "null"], maxLength: 80 }
+            scope: { type: [string, "null"], maxLength: 80 }
+            month: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' }
+            stratum: { type: string, enum: [central, edge, minority] }
+            source_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        - type: object
+          additionalProperties: false
+          required: [evidence_ref, status, reason]
+          properties:
+            evidence_ref: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            status: { const: unavailable }
+            reason: { type: string, enum: [rights_changed, source_changed, reference_unavailable] }
     SignalTopicEvaluationV2CandidateDetail:
       type: object
       additionalProperties: false

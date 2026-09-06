@@ -82,3 +82,14 @@ export function parseSignalTopicEvaluationV2CandidateDetailQuery(url:string){
   if(keys.length!==1||keys[0]!=="run_key")throw new Error("invalid_query");
   return{run_key:v2RunKey.parse(search.get("run_key"))};
 }
+
+export function parseSignalTopicEvaluationV2CandidateEvidenceQuery(url:string){
+  const search=new URL(url).searchParams,keys=[...search.keys()];
+  if(new Set(keys).size!==keys.length||keys.some((key)=>!["run_key","collection","limit","cursor"].includes(key)))
+    throw new Error("invalid_query");
+  const collection=z.enum(["candidate","refinement"]).parse(search.get("collection"));
+  const rawLimit=search.get("limit"),cursor=search.get("cursor");
+  if(rawLimit!==null&&!/^(?:[1-9]|1[0-9]|20)$/u.test(rawLimit))throw new Error("invalid_query");
+  if(cursor!==null&&(cursor.length<16||cursor.length>512))throw new Error("invalid_query");
+  return{run_key:v2RunKey.parse(search.get("run_key")),collection,limit:rawLimit===null?20:Number(rawLimit),cursor};
+}

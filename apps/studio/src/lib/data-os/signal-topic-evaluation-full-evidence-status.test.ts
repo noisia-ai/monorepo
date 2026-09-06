@@ -79,8 +79,9 @@ test("Brand OS status uses only the provider-disabled preflight GET and retains 
   assert.match(component, /method: "GET"/u);
   assert.doesNotMatch(component, /method:\s*"POST"|topic-evaluation\/full-evidence\/evidence/u);
   assert.match(projection, /execution_enabled !== false|provider_calls_allowed !== 0/u);
-  assert.match(page, /FullEvidenceTopicEvaluationStatus/u);
-  assert.ok(page.indexOf("<FullEvidenceTopicEvaluationStatus") > page.indexOf("<TopicEvaluationManager"));
+  assert.match(page, /BrandTopicEvaluationPanels/u);
+  const panels=await readFile(new URL("../../components/brands/BrandTopicEvaluationPanels.tsx",import.meta.url),"utf8");
+  assert.ok(panels.indexOf("<FullEvidenceTopicEvaluationStatus") > panels.indexOf("<TopicEvaluationManager"));
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(route, /topic_evaluation_v2_disabled/u);

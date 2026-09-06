@@ -8,6 +8,7 @@ import { AdminFeedbackState,AdminResourceSection,AdminStatus,AdminSummaryStrip,
   formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { TopicCandidateRefinementSuggestion } from "./TopicCandidateRefinementSuggestion";
+import { TopicCandidateEvidence } from "./TopicCandidateEvidence";
 import { copySignalTopicEvaluationV2RefinementWording,createSignalTopicEvaluationV2ReviewIdempotencyKey,
   parseSignalTopicEvaluationV2CandidateDetail,parseSignalTopicEvaluationV2CandidatePage,
   type SignalTopicEvaluationV2Candidate,type SignalTopicEvaluationV2CandidateDetail,
@@ -22,7 +23,8 @@ async function requestJson(url:string,init?:RequestInit){
 }
 function lines(value:string){return value.split("\n").map((item)=>item.trim()).filter(Boolean).slice(0,16);}
 
-export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:string}){
+export function FullEvidenceTopicCandidateManager({workspaceId,onImportedResult}:{workspaceId:string;
+  onImportedResult?:(imported:boolean)=>void}){
   const t=useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates"),locale=useLocale();
   const endpoint=`/api/data-os/signal/${workspaceId}/topic-evaluation/full-evidence/candidates`;
   const[page,setPage]=useState<SignalTopicEvaluationV2CandidatePage|null>(null);
@@ -40,6 +42,7 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
     }catch(loadError){setError(loadError instanceof Error?loadError.message:t("errors.load"));}
     finally{setLoading(false);}},[endpoint,t]);
   useEffect(()=>{void load();},[load]);
+  useEffect(()=>{if(page)onImportedResult?.(page.result_origin?.kind==="imported_result");},[page,onImportedResult]);
 
   async function open(candidate:SignalTopicEvaluationV2Candidate,event:MouseEvent<HTMLButtonElement>){
     if(!page?.run_key)return;openerRef.current=event.currentTarget;setBusy(true);setError(null);
@@ -116,6 +119,13 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
       <div className="topic-evaluation-manager__evidence"><strong>{t("drawer.evidenceTitle")}</strong>
         <p>{t("drawer.evidenceBody",{count:candidate.evidence.length,clusters:candidate.source_cluster_keys.length})}</p>
         <p>{t("drawer.originalDigest",{digest:candidate.base_model_payload_digest})}</p></div>
+      <section className="topic-evaluation-manager__evidence"><h3>{t("citations.explanation")}</h3>
+        <p>{candidate.base_model_payload.explanation}</p></section>
+      <TopicCandidateEvidence key={`${workspaceId}:${detail.run_key}:${candidate.candidate_key}:candidate`}
+        endpoint={endpoint} runKey={detail.run_key} candidateKey={candidate.candidate_key} collection="candidate" t={t}/>
+      {detail.refinement.status==="available"?<TopicCandidateEvidence
+        key={`${workspaceId}:${detail.run_key}:${candidate.candidate_key}:refinement:${detail.refinement.proposal.proposal_digest}`}
+        endpoint={endpoint} runKey={detail.run_key} candidateKey={candidate.candidate_key} collection="refinement" t={t}/>:null}
       {error?<p className="workspace-form__error" role="alert">{error}</p>:null}
       <div className="admin-drawer-form__actions">{candidate.review_state==="pending"?<>
         <button className="admin-button admin-button--primary" disabled={busy||!title.trim()||!description.trim()

@@ -2174,6 +2174,7 @@
         "kinds": { "identity_term": "Término de identidad", "alias": "Alias", "product": "Producto", "feature": "Funcionalidad", "surface": "Superficie", "category": "Categoría", "need": "Necesidad", "benefit": "Beneficio", "friction": "Fricción", "usage_occasion": "Ocasión de uso", "competitor_term": "Término competitivo", "locale_variant": "Variante local", "exclusion": "Exclusión", "homonym": "Homónimo", "ambiguous_term": "Término ambiguo", "abstention_rule": "Regla de abstención", "positive_anchor": "Ancla positiva", "negative_anchor": "Ancla negativa", "boundary_anchor": "Ancla de frontera", "typed_relation": "Relación tipada", "other": "Otro tipo gobernado" }
       },
       "topicEvaluation": {
+        "historical": { "title": "Evaluación histórica · intento anterior", "body": "Este registro pertenece a la evaluación anterior, no al resultado con evidencia completa importado que aparece abajo. Se conservan sus conteos, costo y desenlace como referencia. Aquí no se puede lanzar otro intento.", "checking": "Verificando el origen del resultado actual. Los controles de lanzamiento siguen ocultos; si falla la carga, actualiza el panel de candidatos de abajo." },
         "eyebrow": "Evaluación controlada", "title": "Candidatos de tópicos", "subtitle": "Compara una sola evaluación contextual con las 115 propuestas históricas. El resultado queda como candidatos editables; nunca adopta, publica ni sirve tópicos automáticamente.",
         "loading": "Cargando el preflight sellado…",
         "actions": { "refresh": "Actualizar", "open": "Revisar vuelo", "openSuccessor": "Revisar intento sucesor", "close": "Cerrar", "start": "Iniciar una evaluación", "startSuccessor": "Autorizar intento sucesor", "starting": "Iniciando…", "more": "Cargar más", "save": "Guardar cambio", "reject": "Rechazar", "restore": "Restaurar", "undo": "Deshacer" },
@@ -2218,6 +2219,19 @@
         "errors": { "title": "La evidencia completa no está disponible", "body": "No se pudo verificar el preflight de solo lectura. No se habilitó ninguna ejecución." }
       },
       "fullEvidenceTopicCandidates": {
+        "citations": {
+          "candidate": { "title": "Citas del candidato original", "body": "Referencias exactas citadas en la evaluación original, no una nueva muestra del cluster." },
+          "refinement": { "title": "Citas de la sugerencia", "body": "Referencias exactas guardadas con este refinamiento. Pueden ser distintas de las citas del candidato original." },
+          "explanation": "Por qué la evaluación original propuso este candidato",
+          "load": "Ver menciones citadas", "loading": "Cargando menciones citadas…", "refresh": "Actualizar citas", "more": "Cargar más citas",
+          "error": "No se pudieron cargar las citas. Intenta de nuevo; ningún candidato cambió.",
+          "none": "Este candidato no tiene citas de una sugerencia guardada.",
+          "unavailable": "Estas citas exactas no están disponibles en este ambiente. No se muestran menciones sustitutas.",
+          "empty": "No hay menciones citadas disponibles.", "count": "Mostrando {shown} de {total} referencias citadas.", "reference": "Referencia {index}",
+          "metadata": "{month} · Idioma: {language} · Mercado: {market} · Alcance: {scope} · {stratum}", "unspecified": "sin especificar",
+          "strata": { "central": "Ejemplo central", "edge": "Ejemplo límite", "minority": "Ejemplo minoritario" },
+          "reasons": { "rights_changed": "Esta referencia no está disponible porque cambió el permiso vigente de uso de datos.", "source_changed": "Esta referencia no está disponible porque su fuente ya no coincide con la evidencia guardada.", "reference_unavailable": "La referencia exacta citada no está disponible; no fue sustituida por otra mención." }
+        },
         "importedResult": "Resultado de laboratorio incorporado para revisión. Se conservaron sus candidatos y referencias; incorporarlo no ejecutó otra evaluación ni generó un nuevo cargo.",
         "refinement": {
           "title": "Propuesta de refinamiento",

@@ -5,7 +5,7 @@ import {
   reviewSignalTopicEvaluationCandidateV1,
   signalTopicEvaluationConfigurationFromEnvV1
 } from "@noisia/db";
-import { loadSignalTopicEvaluationV2CandidateDetail,loadSignalTopicEvaluationV2CandidateManagement,
+import { loadSignalTopicEvaluationV2CandidateDetail,loadSignalTopicEvaluationV2CandidateEvidence,loadSignalTopicEvaluationV2CandidateManagement,
   loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2,
   reviewSignalTopicEvaluationV2Candidate }
   from "@noisia/db";
@@ -94,6 +94,16 @@ export async function loadSignalTopicEvaluationV2CandidateDetailProduct(args:{
   const{pool}=await import("@/lib/db");
   return loadSignalTopicEvaluationV2CandidateDetail({queryable:pool,workspace_id:args.workspace.id,
     actor:actor(args.actor),run_key:args.runKey,candidate_key:args.candidateKey});
+}
+
+export async function loadSignalTopicEvaluationV2CandidateEvidenceProduct(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;runKey:string;candidateKey:string;
+  collection:"candidate"|"refinement";limit?:number;cursor?:string|null}){
+  const authorizedActor=actor(args.actor);
+  const{pool}=await import("@/lib/db");
+  return loadSignalTopicEvaluationV2CandidateEvidence({queryable:pool,workspace_id:args.workspace.id,
+    actor:authorizedActor,run_key:args.runKey,candidate_key:args.candidateKey,
+    collection:args.collection,limit:args.limit,cursor:args.cursor});
 }
 
 export async function reviewSignalTopicEvaluationV2CandidateProduct(args:{

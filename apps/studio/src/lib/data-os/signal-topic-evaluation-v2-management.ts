@@ -71,6 +71,56 @@ export type SignalTopicEvaluationV2CandidatePage=z.infer<typeof signalTopicEvalu
 export type SignalTopicEvaluationV2CandidateDetail=z.infer<typeof signalTopicEvaluationV2CandidateDetailSchema>;
 export type SignalTopicEvaluationV2RefinementProposal=z.infer<typeof signalTopicEvaluationV2RefinementProposalSchema>;
 
+const citation=z.discriminatedUnion("status",[
+  z.object({evidence_ref:digest,status:z.literal("available"),excerpt:z.string().min(1).max(600),
+    language:z.string().max(80).nullable(),market:z.string().max(80).nullable(),scope:z.string().max(80).nullable(),
+    month:z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/u),stratum:z.enum(["central","edge","minority"]),
+    source_digest:digest}).strict(),
+  z.object({evidence_ref:digest,status:z.literal("unavailable"),
+    reason:z.enum(["rights_changed","source_changed","reference_unavailable"])}).strict()
+]);
+export const signalTopicEvaluationV2CandidateEvidencePageSchema=z.object({
+  contract_version:z.literal("signal-topic-evaluation-v2-candidate-evidence-v1"),run_key:key,candidate_key:key,
+  collection:z.enum(["candidate","refinement"]),status:z.enum(["available","none","unavailable"]),
+  items:z.array(citation).max(20),total:z.number().int().min(0).max(48),limit:z.number().int().min(1).max(20),
+  next_cursor:z.string().min(16).max(512).nullable(),topic_adoption:z.literal(false),
+  publication:z.literal(false),serving:z.literal(false)
+}).strict().superRefine((page,context)=>{
+  if(page.items.length>page.limit||page.items.length>page.total
+    ||(page.status!=="available"&&(page.total!==0||page.items.length!==0||page.next_cursor!==null))
+    ||new Set(page.items.map((item)=>item.evidence_ref)).size!==page.items.length){
+    context.addIssue({code:z.ZodIssueCode.custom,message:"topic_evaluation_v2_candidate_evidence_invalid"});
+  }
+});
+export type SignalTopicEvaluationV2CandidateEvidencePage=z.infer<typeof signalTopicEvaluationV2CandidateEvidencePageSchema>;
+export function parseSignalTopicEvaluationV2CandidateEvidencePage(value:unknown){
+  return signalTopicEvaluationV2CandidateEvidencePageSchema.parse(value);
+}
+
+export function appendSignalTopicEvaluationV2CandidateEvidencePage(
+  current:SignalTopicEvaluationV2CandidateEvidencePage,next:SignalTopicEvaluationV2CandidateEvidencePage){
+  if(current.run_key!==next.run_key||current.candidate_key!==next.candidate_key
+    ||current.collection!==next.collection)throw new Error("candidate_evidence_scope_mismatch");
+  if(next.status!=="available")return next;
+  // A denial belongs only to that exact reference, never to other previously checked sources.
+  return{...next,items:[...current.items,...next.items]};
+}
+
+/** A late response may never enter a different drawer or citation collection. */
+export async function requestSignalTopicEvaluationV2CandidateEvidence(args:{endpoint:string;runKey:string;
+  candidateKey:string;collection:"candidate"|"refinement";cursor?:string|null;signal:AbortSignal},
+  transport:typeof fetch=fetch){
+  const search=new URLSearchParams({run_key:args.runKey,collection:args.collection,limit:"20"});
+  if(args.cursor)search.set("cursor",args.cursor);
+  const response=await transport(`${args.endpoint}/${encodeURIComponent(args.candidateKey)}/evidence?${search}`,{
+    method:"GET",cache:"no-store",signal:args.signal});
+  if(!response.ok)throw new Error("candidate_evidence_unavailable");
+  const page=parseSignalTopicEvaluationV2CandidateEvidencePage(await response.json());
+  if(page.run_key!==args.runKey||page.candidate_key!==args.candidateKey||page.collection!==args.collection)
+    throw new Error("candidate_evidence_scope_mismatch");
+  return page;
+}
+
 /** Pure unsaved-field projection. The existing editorial command remains the only save path. */
 export function copySignalTopicEvaluationV2RefinementWording(args:{
   candidate:SignalTopicEvaluationV2Candidate;proposal:SignalTopicEvaluationV2RefinementProposal;

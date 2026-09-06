@@ -28,7 +28,7 @@ function readStoredAttempt(value:string|null,mode:LaunchMode):StoredAttempt|null
     ||(parsed.status!==null&&parsed.status!=="queued"))return null;
   return{idempotencyKey:parsed.idempotencyKey,status:parsed.status};}catch{return null;}}
 
-export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
+export function TopicEvaluationManager({workspaceId,readOnly=false}:{workspaceId:string;readOnly?:boolean}){
   const t=useTranslations("AdminWorkspace.brandOs.topicEvaluation"),locale=useLocale();
   const endpoint=`/api/data-os/signal/${workspaceId}/topic-evaluation`,storagePrefix=`noisia:topic-evaluation-launch:${workspaceId}`;
   const[management,setManagement]=useState<SignalTopicEvaluationManagementV1|null>(null);
@@ -62,7 +62,7 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
     const stored=readStoredAttempt(window.sessionStorage.getItem(storageKey),launchMode);
     setAttemptRecorded(stored!==null);setRunStatus(stored?.status??null);submitLockRef.current=stored!==null;
     setSessionChecked(true);},[launchMode,storageKey]);
-  const commandDisabled=!sessionChecked||launchMode===null||!ready||!acknowledged||attemptRecorded||submitting;
+  const commandDisabled=readOnly||!sessionChecked||launchMode===null||!ready||!acknowledged||attemptRecorded||submitting;
   function openCandidate(candidate:SignalTopicEvaluationCandidateV1,event:MouseEvent<HTMLButtonElement>){
     openerRef.current=event.currentTarget;setSelected(candidate);setTitle(candidate.title);setDescription(candidate.description);
     setInclusion(candidate.inclusion.join("\n"));setExclusion(candidate.exclusion.join("\n"));setDrawer("candidate");setError(null);}
@@ -78,7 +78,7 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
     }catch(submitError){setError(submitError instanceof Error?submitError.message:t("errors.start"));}
     finally{setSubmitting(false);}}
   async function review(action:"save"|"reject"|"restore"|"undo"){
-    if(!selected||submitting)return;setSubmitting(true);setError(null);
+    if(readOnly||!selected||submitting)return;setSubmitting(true);setError(null);
     const common={action,candidate_key:selected.candidateKey,expected_revision:selected.revision,state_token:selected.stateToken};
     const body=action==="save"?{...common,values:{title:title.trim(),description:description.trim(),
       inclusion:lines(inclusion),exclusion:lines(exclusion)}}:action==="undo"?{...common,target_revision:selected.undoTargetRevision}:common;
@@ -89,9 +89,9 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
     finally{setSubmitting(false);}}
   const actions=<><button className="admin-button" disabled={loading||submitting} onClick={()=>void load()} type="button">
     {loading?<CircleNotch aria-hidden className="icon--spin" size={14}/>:null}{t("actions.refresh")}</button>
-    <button className="admin-button admin-button--primary" disabled={launchMode===null||attemptRecorded||loading}
+    {!readOnly?<button className="admin-button admin-button--primary" disabled={launchMode===null||attemptRecorded||loading}
       onClick={(event)=>{openerRef.current=event.currentTarget;setAcknowledged(false);setDrawer("launch");}} type="button">
-      <Play aria-hidden size={15}/>{launchMode==="successor"?t("actions.openSuccessor"):t("actions.open")}</button></>;
+      <Play aria-hidden size={15}/>{launchMode==="successor"?t("actions.openSuccessor"):t("actions.open")}</button>:null}</>;
   return<><AdminResourceSection actions={actions} className="topic-evaluation-manager" subtitle={t("subtitle")} title={t("title")}>
     {loading&&!management?<div aria-busy="true" aria-live="polite" className="semantic-context-pack__preflight-loading" role="status">
       <CircleNotch aria-hidden className="icon--spin" size={18}/><span>{t("loading")}</span></div>:null}
@@ -111,7 +111,7 @@ export function TopicEvaluationManager({workspaceId}:{workspaceId:string}){
         <div className="topic-evaluation-manager__results-heading"><div><h3>{t("results.title")}</h3><p>{t("results.body")}</p></div>
           <AdminStatus state={management.results.total>=card!.successMinimumCandidates?"good":"warning"}>{management.results.total>=card!.successMinimumCandidates?t("results.rubricMet"):t("results.rubricMissed")}</AdminStatus></div>
         {management.results.items.length?<div className="topic-evaluation-manager__list">{management.results.items.map((candidate)=><button
-          className="topic-evaluation-manager__candidate" key={candidate.candidateKey} onClick={(event)=>openCandidate(candidate,event)} type="button">
+          className="topic-evaluation-manager__candidate" disabled={readOnly} key={candidate.candidateKey} onClick={(event)=>openCandidate(candidate,event)} type="button">
           <span><strong>{candidate.title}</strong><small>{candidate.description}</small></span>
           <span className="topic-evaluation-manager__candidate-meta"><AdminStatus state={candidate.reviewState==="pending"?"warning":"not_available"}>{t(`candidate.states.${candidate.reviewState}`)}</AdminStatus>
             <small>{t("candidate.evidence",{count:candidate.evidence.count})}</small></span></button>)}</div>
