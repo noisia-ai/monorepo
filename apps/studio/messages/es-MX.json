@@ -2216,6 +2216,36 @@
         },
         "digests": { "snapshot": "Snapshot {digest}", "authority": "Autoridad {digest}" },
         "errors": { "title": "La evidencia completa no está disponible", "body": "No se pudo verificar el preflight de solo lectura. No se habilitó ninguna ejecución." }
+      },
+      "fullEvidenceTopicCandidates": {
+        "importedResult": "Resultado de laboratorio incorporado para revisión. Se conservaron sus candidatos y referencias; incorporarlo no ejecutó otra evaluación ni generó un nuevo cargo.",
+        "refinement": {
+          "title": "Propuesta de refinamiento",
+          "hint": "Compara la propuesta con el candidato. Usarla reemplaza sólo el nombre y la descripción del formulario; nada cambia hasta Guardar.",
+          "unavailable": "Las propuestas de refinamiento aún no están disponibles en este entorno. Puedes seguir editando el candidato.",
+          "none": "Este candidato aún no tiene una propuesta de refinamiento guardada.",
+          "basis": "Ver fundamento · {count, plural, one {# referencia consultada} other {# referencias consultadas}}",
+          "sourceRevision": "Basada en la revisión {revision} del candidato.",
+          "related": "Candidatos relacionados: {names}",
+          "consider_merge": "Sugiere revisar una posible combinación. No combina candidatos automáticamente.",
+          "consider_split": "Sugiere revisar una posible separación. No crea otros candidatos automáticamente.",
+          "stale": "El candidato cambió desde esta propuesta. Puedes consultar su contenido, pero ya no copiarlo automáticamente sobre la revisión actual.",
+          "use": "Usar propuesta", "dismiss": "Ocultar propuesta", "show": "Mostrar propuesta",
+          "dismissed": "Propuesta oculta en este panel. El candidato y la propuesta guardada no cambiaron.",
+          "copied": "Propuesta copiada al formulario. Puedes ajustarla antes de Guardar; después podrás deshacer el cambio."
+        },
+        "title": "Candidatos de Topic con evidencia completa",
+        "subtitle": "Copias de revisión editables sobre output y evidencia de modelo inmutables.",
+        "loading": "Cargando revisión de candidatos…",
+        "boundary": "Editar, rechazar, restaurar y deshacer sólo agregan revisiones editoriales. Nunca adoptan, publican ni sirven un Topic.",
+        "actions": { "refresh": "Actualizar", "more": "Cargar más", "close": "Cerrar", "save": "Guardar", "reject": "Rechazar", "restore": "Restaurar", "undo": "Deshacer" },
+        "summary": { "total": "Candidatos", "totalHint": "Pool editable completo", "pending": "Pendientes", "pendingHint": "Disponibles para revisión", "rejected": "Rechazados", "rejectedHint": "Estado editorial reversible" },
+        "states": { "pending": "Pendiente", "rejected": "Rechazado" },
+        "evidence": "{count, plural, one {# referencia de evidencia} other {# referencias de evidencia}}",
+        "empty": { "title": "Aún no hay candidatos V2", "body": "El control plane está listo, pero no se ha creado un resultado con evidencia completa." },
+        "drawer": { "title": "Revisar candidato con evidencia completa", "eyebrow": "Revisión sólo de candidato", "boundary": "El payload original del modelo, evidencia, ranking y lineage permanecen inmutables.", "evidenceTitle": "Provenance inmutable", "evidenceBody": "{count} referencias de evidencia en {clusters} clusters fuente.", "originalDigest": "Digest original del modelo: {digest}" },
+        "fields": { "title": "Nombre", "description": "Descripción", "inclusion": "Incluye — un elemento por línea", "exclusion": "Excluye — un elemento por línea" },
+        "errors": { "title": "La revisión de candidatos no está disponible", "load": "No se pudo cargar la revisión de candidatos.", "command": "No se pudo guardar el cambio del candidato." }
       }
     },
     "data": {

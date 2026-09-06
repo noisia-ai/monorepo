@@ -3,10 +3,116 @@ import { createRequire } from "node:module";
 import { loadSignalTopicEvaluationV2Preflight,navigateSignalTopicEvaluationEvidenceV2 }
   from "../../../../../infrastructure/db/signal-topic-evaluation-v2";
 import { parseSignalTopicEvaluationCandidateCommandV1,parseSignalTopicEvaluationStartRequestV1,
-  parseSignalTopicEvaluationSuccessorStartRequestV1 } from "./signal-topic-evaluation-api";
+  parseSignalTopicEvaluationSuccessorStartRequestV1,
+  parseSignalTopicEvaluationV2CandidateCommand,parseSignalTopicEvaluationV2CandidateDetailQuery,
+  parseSignalTopicEvaluationV2CandidatePageQuery } from "./signal-topic-evaluation-api";
+import { parseSignalTopicEvaluationV2CandidateDetail,parseSignalTopicEvaluationV2CandidatePage }
+  from "./signal-topic-evaluation-v2-management";
 import { parseSignalTopicEvidenceNavigationRequestV2,signalTopicEvaluationFlightCardV2,
   signalTopicEvidenceNavigationResultV2 }
   from "@noisia/query-engine";
+
+test("full-evidence candidate management is closed, run-bound, and candidate-only",async()=>{
+  const digest=`sha256:${"5".repeat(64)}`;
+  const candidate={candidate_key:"candidate.one",title:"One",description:"Description",
+    inclusion:["Included"],exclusion:[],source_cluster_keys:["cluster.1"],evidence_count:1,rank:1,
+    review_state:"pending" as const,revision:1,state_token:digest,undo_target_revision:null,
+    updated_at:"2026-09-04T00:00:00.000Z"};
+  const page={contract_version:"signal-topic-evaluation-v2-candidate-page-v1",run_key:"run.v2.one",
+    items:[candidate],total:1,pending:1,rejected:0,limit:20,next_cursor:null,
+    topic_adoption:false,publication:false,serving:false};
+  assert.equal(parseSignalTopicEvaluationV2CandidatePage(page).items[0]?.candidate_key,"candidate.one");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidatePage({...page,topic_adoption:true}));
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidatePage({...page,pending:0}));
+  const detail={contract_version:"signal-topic-evaluation-v2-candidate-detail-v1",run_key:"run.v2.one",
+    candidate:{...candidate,candidate_digest:digest,base_model_payload_digest:digest,
+      base_model_payload:{candidate_key:"candidate.one",title:"One",description:"Description",
+        inclusion:["Included"],exclusion:[],explanation:"Evidence-backed",
+        source_cluster_keys:["cluster.1"],evidence_refs:[digest],status:"pending"},evidence:[{
+          evidence_ref:digest,explanation_digest:digest,retrieval_operation:"representative_mentions",
+          retrieval_index:0}]},topic_adoption:false,publication:false,serving:false};
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(detail).candidate.review_state,"pending");
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(detail).refinement.status,"unavailable");
+  const suggestion={display_name:"Echo campaign",description:"Campaign scope",rationale:"Evidence summary",
+    evidence_refs:[digest],related_candidates:[{candidate_key:"candidate.two",title:"Launch news"}],
+    recommendation:"consider_merge",proposal_digest:digest,created_at:"2026-09-06T00:00:00.000Z",
+    source_revision:1,is_stale:false};
+  const withRefinement={...detail,refinement:{status:"available",proposal:suggestion}};
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(withRefinement).refinement.status,"available");
+  const origin={kind:"imported_result",source_run_key:"source.lab-run",source_output_digest:digest,
+    source_completed_at:"2026-09-05T20:00:00.000Z",imported_at:"2026-09-06T10:00:00.000Z",
+    source_provider_calls:12,source_cost_micro_usd:396885};
+  assert.equal(parseSignalTopicEvaluationV2CandidatePage(page).result_origin,null);
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidatePage({...page,result_origin:origin}).result_origin,origin);
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidateDetail({...detail,result_origin:origin}).result_origin,origin);
+  for(const invalid of[{...origin,kind:"uat_execution"},{...origin,source_cost_micro_usd:-1},
+    {...origin,source_provider_calls:13},{...origin,artifact:{private:true}}]){
+    assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,result_origin:invalid}));
+  }
+  for(const invalid of [
+    {status:"available",proposal:null},
+    {status:"none",proposal:suggestion},
+    {status:"available",proposal:{...suggestion,provider_response_private:"private"}},
+    {status:"available",proposal:{...suggestion,related_candidates:Array(9).fill(suggestion.related_candidates[0])}},
+    {status:"available",proposal:{...suggestion,evidence_refs:Array(49).fill(digest)}},
+    {status:"available",proposal:{...suggestion,recommendation:"merge"}}
+  ])assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,refinement:invalid}));
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,
+    candidate:{...detail.candidate,raw_provider_response:{private:true}}}));
+  const save=parseSignalTopicEvaluationV2CandidateCommand({action:"save",run_key:"run.v2.one",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,values:{title:"Edited",
+      description:"Description",inclusion:["Included"],exclusion:[]}});
+  assert.equal(save.action,"save");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateCommand({action:"save",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,values:{title:"Edited",
+      description:"Description",inclusion:["Included"],exclusion:[]}}),
+  "commands cannot be detached from the exact completed run");
+  assert.throws(()=>parseSignalTopicEvaluationV2CandidateCommand({action:"reject",run_key:"run.v2.one",
+    candidate_key:"candidate.one",expected_revision:1,state_token:digest,rationale:"not accepted"}));
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidatePageQuery(
+    "https://example.test/candidates?limit=25"),{cursor:null,limit:25});
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidateDetailQuery(
+    "https://example.test/candidate?run_key=run.v2.one"),{run_key:"run.v2.one"});
+
+  const[listing,detailRoute,commandRoute,component,openapi]=await Promise.all([
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/[candidateKey]/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/candidates/[candidateKey]/commands/route.ts",
+      import.meta.url),"utf8"),
+    readFile(new URL("../../components/brands/FullEvidenceTopicCandidateManager.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../../../../../docs/api/openapi.yaml",import.meta.url),"utf8")]);
+  for(const source of[listing,detailRoute,commandRoute])assert.match(source,
+    /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(commandRoute,/requireIdempotencyKey/u);assert.match(commandRoute,/candidate_key!==candidateKey/u);
+  assert.match(component,/WorkspaceDrawer/u);assert.match(component,/command\("save"\)/u);
+  assert.match(component,/command\("reject"\)/u);assert.match(component,/command\("restore"\)/u);
+  assert.match(component,/command\("undo"\)/u);
+  assert.doesNotMatch(component,/approve|adopt|publish|serve/u);
+  assert.match(openapi,/operationId: reviewSignalTopicEvaluationV2Candidate/u);
+  assert.match(openapi,/Append one reversible editorial revision; never mutate model output or adopt\/publish\/serve a Topic/u);
+  const require=createRequire(import.meta.url),requireEslint=createRequire(require.resolve("eslint"));
+  const {load}=requireEslint("js-yaml"),Ajv=requireEslint("ajv"),document=load(openapi);
+  const candidatePage=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidatePage",components:document.components});
+  const candidateDetail=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidateDetail",components:document.components});
+  const candidateCommand=new Ajv({allErrors:true}).compile({
+    $ref:"#/components/schemas/SignalTopicEvaluationV2CandidateCommand",components:document.components});
+  assert.equal(candidatePage(page),true,JSON.stringify(candidatePage.errors));
+  assert.equal(candidateDetail(detail),true,JSON.stringify(candidateDetail.errors));
+  assert.equal(candidatePage({...page,result_origin:origin}),true,JSON.stringify(candidatePage.errors));
+  assert.equal(candidateDetail({...detail,result_origin:origin}),true,JSON.stringify(candidateDetail.errors));
+  assert.equal(candidateDetail({...detail,result_origin:{...origin,artifact:{private:true}}}),false);
+  for(const refinement of [{status:"available",proposal:suggestion},{status:"none",proposal:null},
+    {status:"unavailable",proposal:null}])assert.equal(candidateDetail({...detail,refinement}),true,
+      JSON.stringify(candidateDetail.errors));
+  assert.equal(candidateDetail({...detail,refinement:{status:"available",proposal:{...suggestion,
+    provider_response_private:"private"}}}),false);
+  assert.equal(candidateCommand(save),true,JSON.stringify(candidateCommand.errors));
+  assert.equal(candidateCommand({...save,reason:"not permitted"}),false);
+});
 
 test("actual compact catalog validates in runtime and OpenAPI; forged result fails before Studio",async()=>{
   const digest=`sha256:${"1".repeat(64)}`;
