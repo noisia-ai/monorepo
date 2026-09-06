@@ -20957,6 +20957,30 @@ body:has(.signal-report)::before { display: none; }
 .topic-evaluation-manager__results-heading p,
 .topic-evaluation-manager__empty p,
 .topic-evaluation-manager__evidence p { color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.topic-cohort-manager { display: grid; gap: 16px; min-width: 0; }
+.topic-cohort-manager header h3, .topic-cohort-manager h4 { margin: 0 0 6px; }
+.topic-cohort-manager p { margin: 0; overflow-wrap: anywhere; }
+.topic-cohort-manager__source { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: center; }
+.topic-cohort-manager__source > input { width: 18px; height: 18px; margin: 0; accent-color: var(--admin-text, #202223); }
+.topic-cohort-manager__source > input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.topic-cohort-manager__selection ul { list-style: none; padding: 0; display: grid; gap: 10px; }
+.topic-cohort-manager__selection li { display: flex; gap: 12px; justify-content: space-between; align-items: center; }
+.topic-cohort-manager__selection li > span { min-width: 0; overflow-wrap: anywhere; }
+.topic-cohort-manager__selection small { display: block; }
+.topic-cohort-manager__results { display: grid; gap: 16px; padding-top: 16px; border-top: 1px solid #e3e3e3; min-width: 0; }
+.topic-cohort-manager__counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 16px; margin: 0; }
+.topic-cohort-manager__counts dt { font-size: 12px; color: #616161; }
+.topic-cohort-manager__counts dd { margin: 4px 0 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.topic-cohort-manager__table { max-width: 100%; overflow-x: auto; }
+.topic-cohort-manager__table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.topic-cohort-manager__table caption { text-align: left; font-weight: 600; margin-bottom: 8px; }
+.topic-cohort-manager__table th, .topic-cohort-manager__table td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #e3e3e3; }
+.topic-cohort-manager__table td { font-variant-numeric: tabular-nums; }
+.topic-cohort-manager__table th:first-child { min-width: 120px; }
+.topic-cohort-manager__pairs { list-style: none; padding: 0; display: grid; gap: 8px; }
+.topic-cohort-manager__pairs li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+.topic-cohort-manager__pairs span { overflow-wrap: anywhere; }
+.topic-cohort-manager summary { cursor: pointer; font-weight: 600; }
 .topic-evaluation-manager__list { display: grid; gap: 8px; }
 .topic-evaluation-manager__candidate {
   width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;

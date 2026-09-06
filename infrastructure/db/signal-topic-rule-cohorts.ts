@@ -33,6 +33,13 @@ export type SignalTopicRuleCohortTrialResultV1=SignalTopicRuleCohortAggregateV1&
 export type SignalTopicRuleCohortTrialV1=SignalTopicRuleCohortTrialResultV1&{trial_id:string;created_at:string;
   is_stale:boolean;stale_reasons:string[];is_latest_cohort:boolean;idempotent_replay:boolean;
   example_availability:{stored:number;available:number;unavailable:number}};
+export type SignalTopicRuleCohortSourceV1={candidate_key:string;title:string;description:string;inclusion:string[];exclusion:string[];
+  revision:number;state_token:string;review_state:"pending"|"rejected";
+  draft:null|{draft_id:string;revision:number;draft_digest:string;spec_digest:string;is_stale:boolean};
+  eligibility:"eligible"|"missing_draft"|"stale_draft"|"rejected"};
+export type SignalTopicRuleCohortSourcesV1={contract_version:"signal-topic-rule-cohort-sources-v1";run_key:string;
+  snapshot_digest:string;total:number;limit:number;items:SignalTopicRuleCohortSourceV1[];next_cursor:string|null;
+  selected:SignalTopicRuleCohortSourceV1[];missing_selected_candidate_keys:string[]};
 function fail(code:string,status=409):never{throw new SignalTopicContractDraftError(`topic_rule_cohort_${code}`,status);}
 const sha=(value:unknown)=>typeof value==="string"&&/^sha256:[0-9a-f]{64}$/u.test(value);
 const uuid=(value:unknown)=>typeof value==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value);
@@ -57,6 +64,73 @@ async function snapshot(client:SignalTopicContractDraftClient,args:Context):Prom
     FROM signal_topic_evaluation_v2_runs run JOIN signal_topic_evaluation_v2_snapshots s ON s.id=run.snapshot_id AND s.workspace_id=run.workspace_id
     WHERE run.workspace_id=$1::uuid AND run.run_key=$2 AND run.status='completed' AND s.state='frozen'`,[args.workspace_id,args.run_key])).rows[0];
   return row??fail("run_not_found",404);
+}
+type SourcesCursor={version:1;workspace_id:string;run_key:string;snapshot_digest:string;after_key:string};
+function sourceCursor(value:string|null):SourcesCursor|null{
+  if(value===null)return null;
+  try{
+    if(typeof value!=="string"||value.length>2048||!/^[A-Za-z0-9_-]+$/u.test(value))throw new Error();
+    const decoded=Buffer.from(value,"base64url");if(decoded.toString("base64url")!==value)throw new Error();
+    const payload=JSON.parse(decoded.toString("utf8")) as SourcesCursor;
+    if(!payload||Object.keys(payload).sort().join(",")!=="after_key,run_key,snapshot_digest,version,workspace_id"
+      ||payload.version!==1||!uuid(payload.workspace_id)||!sha(payload.snapshot_digest)
+      ||typeof payload.run_key!=="string"||!/^[a-z0-9][a-z0-9._:-]{7,199}$/u.test(payload.run_key)
+      ||typeof payload.after_key!=="string"||!/^[a-z0-9][a-z0-9._:-]{0,179}$/u.test(payload.after_key))throw new Error();
+    return payload;
+  }catch{fail("sources_cursor_invalid",422);}
+}
+const sourceSummarySql=`SELECT candidate.candidate_key,
+  COALESCE(editorial.title,base.payload->>'title') title,COALESCE(editorial.description,base.payload->>'description') description,
+  COALESCE(editorial.inclusion,base.payload->'inclusion') inclusion,COALESCE(editorial.exclusion,base.payload->'exclusion') exclusion,
+  COALESCE(editorial.revision,1)::int revision,COALESCE(editorial.review_state,'pending') review_state,
+  signal_topic_evaluation_v2_candidate_state_token_v1(candidate.id,COALESCE(editorial.revision,1),
+    COALESCE(editorial.version_digest,base.payload_digest)) state_token,
+  CASE WHEN draft.id IS NULL THEN NULL ELSE jsonb_build_object('draft_id',draft.id::text,'revision',draft.revision,
+    'draft_digest',draft.draft_digest,'spec_digest',draft.spec_digest,'is_stale',
+    draft.source_revision<>COALESCE(editorial.revision,1)
+      OR draft.source_version_digest<>COALESCE(editorial.version_digest,base.payload_digest)
+      OR COALESCE(editorial.review_state,'pending')<>'pending') END draft
+  FROM signal_topic_evaluation_v2_candidates candidate
+  JOIN signal_topic_evaluation_v2_candidate_revisions base ON base.candidate_id=candidate.id AND base.revision=1
+  LEFT JOIN LATERAL(SELECT * FROM signal_topic_evaluation_v2_candidate_editorial_revisions
+    WHERE candidate_id=candidate.id AND workspace_id=$1::uuid AND run_id=$2::uuid ORDER BY revision DESC LIMIT 1) editorial ON true
+  LEFT JOIN LATERAL(SELECT id,revision,draft_digest,spec_digest,source_revision,source_version_digest
+    FROM signal_topic_contract_draft_versions WHERE candidate_id=candidate.id AND workspace_id=$1::uuid
+      AND run_id=$2::uuid AND snapshot_id=$3::uuid ORDER BY revision DESC LIMIT 1) draft ON true
+  WHERE candidate.workspace_id=$1::uuid AND candidate.run_id=$2::uuid
+    AND candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving
+    AND ($4::text[] IS NULL OR candidate.candidate_key=ANY($4::text[]))
+    AND ($5::text IS NULL OR candidate.candidate_key COLLATE "C">$5::text COLLATE "C")
+  ORDER BY candidate.candidate_key COLLATE "C" LIMIT $6`;
+
+/** Exact-run management projection. Compose all management readers in the caller's RRRO
+ * transaction. Keyset order is independent of mutable titles/draft eligibility. Selected rows
+ * report current state separately; they never rewrite an operator's retained selection CAS. */
+export async function loadSignalTopicRuleCohortSourcesV1(args:Context&{queryable:SignalTopicContractDraftClient;
+  limit?:number;cursor?:string|null;selected_candidate_keys?:string[]}):Promise<SignalTopicRuleCohortSourcesV1>{
+  const limit=args.limit??20,selectedKeys=args.selected_candidate_keys??[];
+  if(!Number.isSafeInteger(limit)||limit<1||limit>20||typeof args.run_key!=="string"
+    ||!/^[a-z0-9][a-z0-9._:-]{7,199}$/u.test(args.run_key)||!Array.isArray(selectedKeys)||selectedKeys.length>15
+    ||selectedKeys.some(key=>typeof key!=="string"||!/^[a-z0-9][a-z0-9._:-]{0,179}$/u.test(key))
+    ||new Set(selectedKeys).size!==selectedKeys.length)fail("sources_query_invalid",422);
+  const cursor=sourceCursor(args.cursor??null);await shared.authorize(args.queryable,args);const snap=await snapshot(args.queryable,args);
+  if(cursor&&(cursor.workspace_id!==args.workspace_id||cursor.run_key!==args.run_key||cursor.snapshot_digest!==snap.snapshot_digest))fail("sources_cursor_invalid",422);
+  const total=(await args.queryable.query<{total:number}>(`SELECT count(*)::int total FROM signal_topic_evaluation_v2_candidates candidate
+    WHERE candidate.workspace_id=$1::uuid AND candidate.run_id=$2::uuid
+      AND candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving`,[args.workspace_id,snap.run_id])).rows[0]!.total;
+  type SourceRow=Omit<SignalTopicRuleCohortSourceV1,"eligibility">;
+  const projectSource=(row:SourceRow):SignalTopicRuleCohortSourceV1=>({...row,eligibility:row.review_state==="rejected"?"rejected":
+    !row.draft?"missing_draft":row.draft.is_stale?"stale_draft":"eligible"});
+  const rows=(await args.queryable.query<SourceRow>(sourceSummarySql,[args.workspace_id,snap.run_id,snap.snapshot_id,null,cursor?.after_key??null,limit+1])).rows;
+  const items=rows.slice(0,limit).map(projectSource);
+  const selectedRows=selectedKeys.length?(await args.queryable.query<SourceRow>(sourceSummarySql,
+    [args.workspace_id,snap.run_id,snap.snapshot_id,selectedKeys,null,15])).rows:[];
+  const selectedByKey=new Map(selectedRows.map(row=>[row.candidate_key,projectSource(row)]));
+  return{contract_version:"signal-topic-rule-cohort-sources-v1",run_key:args.run_key,snapshot_digest:snap.snapshot_digest,total,limit,items,
+    next_cursor:rows.length>limit?Buffer.from(JSON.stringify({version:1,workspace_id:args.workspace_id,run_key:args.run_key,
+      snapshot_digest:snap.snapshot_digest,after_key:items.at(-1)!.candidate_key} satisfies SourcesCursor),"utf8").toString("base64url"):null,
+    selected:selectedKeys.flatMap(key=>selectedByKey.has(key)?[selectedByKey.get(key)!]:[]),
+    missing_selected_candidate_keys:selectedKeys.filter(key=>!selectedByKey.has(key))};
 }
 async function familyLock(client:SignalTopicContractDraftClient,args:Context){
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-topic-cohort:${args.workspace_id}:${args.run_key}`]);

@@ -16,9 +16,9 @@ function retainPending(endpoint:string,pending:TopicRulePending|null){
   else sessionStorage.removeItem(storageKey(endpoint));
 }
 
-export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,editorBusy,onBusyChange,onRefreshCandidate}:{
+export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,editorBusy,onBusyChange,onRefreshCandidate,onRuleSaved}:{
   endpoint:string;runKey:string;candidate:Candidate;editorDirty:boolean;editorBusy:boolean;
-  onBusyChange:(busy:boolean)=>void;onRefreshCandidate:()=>Promise<void>}){
+  onBusyChange:(busy:boolean)=>void;onRefreshCandidate:()=>Promise<void>;onRuleSaved?:()=>void}){
   const t=useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates.ruleDraft"),locale=useLocale();
   const url=`${endpoint}/${encodeURIComponent(candidate.candidate_key)}/rule-draft`;
   const[page,setPage]=useState<TopicRuleDraftPage|null>(null),[fields,setFields]=useState<TopicRuleFields>(emptyTopicRuleFields);
@@ -74,6 +74,7 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
         throw new Error("scope_mismatch");
       retainPending(url,null);pendingRef.current=null;
       if(!mounted.current)return;setPending(null);setSuccess(operation.kind==="save"?"saved":"tested");
+      if(operation.kind==="save")onRuleSaved?.();
       await load(operation.kind==="save");
     }catch(cause){
       if(!mounted.current)return;

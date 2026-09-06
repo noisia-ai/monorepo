@@ -25,6 +25,45 @@ todas sus consultas: una futura sugerencia automática debe producir el mismo co
 
 ## Identidad y almacenamiento
 
+### Uso en la pantalla de candidatos (LAB-3C, validación local)
+
+1. Abre un candidato para ver sus citas y editar o guardar su regla. El checkbox
+   y el botón de abrir son controles separados; seleccionar no edita el candidato.
+2. Selecciona entre dos y quince candidatos con «Regla lista». «Falta guardar una
+   regla», «Regla desactualizada» y «Rechazado» explican por qué otro no puede seleccionarse.
+3. Pulsa **Guardar catálogo**. Guarda las versiones seleccionadas; todavía no mide.
+   Si esa versión no tiene una prueba, la pantalla lo dice explícitamente.
+4. Pulsa **Probar catálogo** para ver cobertura, coincidencias exclusivas/compartidas,
+   solapamiento entre pares y ejemplos. **Actualizar** sólo vuelve a leer el resultado.
+
+No hay motivo, justificación escrita ni segunda confirmación para estas acciones ordinarias.
+Las selecciones se conservan al cargar más candidatos. Si otro editor cambia una fuente o
+guarda otro catálogo mientras lo revisas, la pantalla conserva tu selección original y pide
+reconciliar las versiones. Una regla aún desactualizada debe abrirse y guardarse de nuevo,
+o quitarse de la selección; el sistema no inventa su reemplazo. Los resultados antiguos
+mantienen los nombres de las reglas que realmente se midieron, aun si cambió el título actual.
+
+Si se pierde la respuesta de Guardar/Probar, «Recuperar misma solicitud» reutiliza la
+petición y clave guardadas en esa pestaña, incluso tras desmontar el componente. Refrescar
+no lanza otra prueba ni da por terminada una petición incierta sólo porque existe un recibo.
+Una petición de otro workspace/evaluación nunca se traslada al contexto nuevo.
+
+El lector carga páginas de hasta veinte candidatos del run exacto, junto con el estado
+actual de hasta quince seleccionados. La UI ofrece inicialmente 25,000 menciones, diez
+ejemplos y quince segundos. No existe una llamada a IA oculta detrás de estos botones.
+
+### Contratos de esta pantalla
+
+- GET `full-evidence/cohorts/[runKey]`: fuentes, último catálogo y último ensayo de
+  esa versión en una lectura coherente; no escribe ni ejecuta búsqueda de texto.
+- POST en la misma ruta: guarda referencias de candidatos/reglas y revisiones esperadas.
+- POST `full-evidence/cohorts/[runKey]/trial`: prueba el catálogo guardado y sus límites.
+
+El servidor determina actor y workspace, valida el run de la ruta y rechaza SQL, RuleSpecs
+libres o autoridad enviada por el navegador. Los contratos completos viven en OpenAPI.
+
+### Modelo de catálogo
+
 Una selección contiene entre 2 y 15 candidatos distintos de un único workspace, evaluación
 y snapshot congelado. El servidor exige la revisión actual del candidato y la última regla
 guardada correspondiente. Un candidato rechazado o una fuente modificada no puede pasar como

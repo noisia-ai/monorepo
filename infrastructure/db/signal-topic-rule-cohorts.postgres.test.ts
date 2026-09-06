@@ -4,8 +4,9 @@ import test from "node:test";
 import {readFileSync} from "node:fs";
 import {signalTopicEvaluationDigestV2 as digest} from "@noisia/query-engine";
 import {createSignalTopicRuleCohortV1,runSignalTopicRuleCohortTrialV1,
-  loadSignalTopicRuleCohortV1,loadSignalTopicRuleCohortLatestTrialV1,type SignalTopicRuleCohortSelectionV1} from "./signal-topic-rule-cohorts";
-import {createSignalTopicContractDraftV1,type SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
+  loadSignalTopicRuleCohortV1,loadSignalTopicRuleCohortLatestTrialV1,loadSignalTopicRuleCohortSourcesV1,
+  type SignalTopicRuleCohortSelectionV1,type SignalTopicRuleCohortSourceV1} from "./signal-topic-rule-cohorts";
+import {createSignalTopicContractDraftV1,loadSignalTopicContractDraftV1,type SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 import {insertSignalTaxonomyDraftCoreV1} from "./signal-taxonomy-profile";
 import type {SignalTopicEvaluationActorV2} from "./signal-topic-evaluation-v2";
 type Fixture={workspace_id:string;actor:SignalTopicEvaluationActorV2;run_key:string;sources:SignalTopicRuleCohortSelectionV1[]};
@@ -131,6 +132,45 @@ export async function proveSignalTopicRuleCohortAdversarialPostgresV1(client:Sig
       global_allocator:{before,unrelated:unrelated.version,cohort:cohort.profile_version,after:after.version,successor:successor.profile_version},
       cohort_revision:cohort.cohort_revision,helper_rows_rolled_back:true};
   }finally{await client.query("ROLLBACK TO SAVEPOINT topic_cohort_adversarial_proof");await client.query("RELEASE SAVEPOINT topic_cohort_adversarial_proof");}
+}
+
+/** Reader-only companion. The root supplies the existing coherent local transaction and
+ * any fixture changes; this helper never writes, starts a transaction or executes FTS. */
+export async function proveSignalTopicRuleCohortSourcesPostgresV1(client:SignalTopicContractDraftClient,fixture:Omit<Fixture,"sources">){
+  let readQueries=0;const queryable:SignalTopicContractDraftClient={async query<T>(sql:string,values?:unknown[]){
+    assert.match(sql.trim(),/^(?:SELECT|WITH)\b/u);
+    assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|SAVEPOINT|COMMIT|BEGIN|set_config|pg_advisory|tsquery|to_tsvector)\b/u);
+    readQueries++;return client.query<T>(sql,values);
+  }};
+  const args={...fixture,queryable,limit:2},first=await loadSignalTopicRuleCohortSourcesV1(args);
+  const items:SignalTopicRuleCohortSourceV1[]=[...first.items];let cursor=first.next_cursor,pages=1;
+  while(cursor){assert.ok(pages<25,"bounded_fixture_page_count");const page=await loadSignalTopicRuleCohortSourcesV1({...args,cursor});
+    assert.equal(page.total,first.total);assert.equal(page.run_key,fixture.run_key);assert.equal(page.snapshot_digest,first.snapshot_digest);
+    items.push(...page.items);cursor=page.next_cursor;pages++;}
+  assert.equal(items.length,first.total);assert.equal(new Set(items.map(row=>row.candidate_key)).size,items.length);
+  const keys=items.slice(-14).map(row=>row.candidate_key),missing=`missing-${randomUUID()}`;
+  const refreshed=await loadSignalTopicRuleCohortSourcesV1({...args,selected_candidate_keys:[...keys,missing]});
+  assert.deepEqual(refreshed.selected.map(row=>row.candidate_key),keys);
+  assert.deepEqual(refreshed.missing_selected_candidate_keys,[missing]);
+  for(const source of refreshed.selected){
+    const draft=await loadSignalTopicContractDraftV1({...fixture,queryable,candidate_key:source.candidate_key});
+    assert.deepEqual(source.draft,draft?{draft_id:draft.draft_id,revision:draft.revision,draft_digest:draft.draft_digest,
+      spec_digest:draft.spec_digest,is_stale:draft.is_stale}:null);
+    assert.equal(source.eligibility,source.review_state==="rejected"?"rejected":!draft?"missing_draft":draft.is_stale?"stale_draft":"eligible");
+  }
+  await assert.rejects(loadSignalTopicRuleCohortSourcesV1({...args,actor:{...fixture.actor,id:randomUUID()}}),{code:"topic_rule_draft_forbidden"});
+  await assert.rejects(loadSignalTopicRuleCohortSourcesV1({...args,run_key:`missing-${randomUUID()}`}),{code:"topic_rule_cohort_run_not_found"});
+  await assert.rejects(loadSignalTopicRuleCohortSourcesV1({...args,workspace_id:randomUUID()}),(error:unknown)=>
+    ["topic_rule_draft_forbidden","topic_rule_cohort_run_not_found"].includes((error as{code:string}).code));
+  if(first.next_cursor){const payload=JSON.parse(Buffer.from(first.next_cursor,"base64url").toString("utf8"));
+    for(const change of [{workspace_id:randomUUID()},{run_key:`other-${randomUUID()}`},{snapshot_digest:digest("other")}]){
+      const badCursor=Buffer.from(JSON.stringify({...payload,...change})).toString("base64url");
+      await assert.rejects(loadSignalTopicRuleCohortSourcesV1({...args,cursor:badCursor}),{code:"topic_rule_cohort_sources_cursor_invalid"});
+    }
+  }
+  return{total:first.total,pages,selected:refreshed.selected.length,missing_selected:1,
+    eligibility:items.reduce<Record<string,number>>((counts,row)=>{counts[row.eligibility]=(counts[row.eligibility]??0)+1;return counts;},{}),
+    summary_digest:digest(items),read_queries:readQueries,reader_dml:0,reader_fts:0,current_draft_reader_parity:true};
 }
 
 test("PostgreSQL helper is supplied-client only and never manages a connection or outer commit",()=>{

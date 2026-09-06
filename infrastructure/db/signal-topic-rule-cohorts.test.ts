@@ -3,7 +3,8 @@ import test from "node:test";
 import {readFileSync} from "node:fs";
 import {signalTopicEvaluationDigestV2 as digest,type SignalTopicRuleSpecV1} from "@noisia/query-engine";
 import {createSignalTopicRuleCohortV1 as create,runSignalTopicRuleCohortTrialV1 as trial,
-  loadSignalTopicRuleCohortV1 as load,loadSignalTopicRuleCohortLatestTrialV1 as loadTrial} from "./signal-topic-rule-cohorts";
+  loadSignalTopicRuleCohortV1 as load,loadSignalTopicRuleCohortLatestTrialV1 as loadTrial,
+  loadSignalTopicRuleCohortSourcesV1 as loadSources,type SignalTopicRuleCohortSourceV1} from "./signal-topic-rule-cohorts";
 import type {SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 type Row=Record<string,any>;
 const uuid=(n:number)=>`00000000-0000-4000-8000-${n.toString().padStart(12,"0")}`;
@@ -170,4 +171,85 @@ test("migration closes appended projections and retains existing activation cont
   for(const alias of ["profile","taxonomy","rules","model","term"])assert.ok(sql.includes(`to_jsonb(${alias}.*)`));
   assert.doesNotMatch(sql,/to_jsonb\(rules\)/u);
   assert.doesNotMatch(sql,/DROP |ALTER TABLE |DISABLE TRIGGER|INSERT INTO signal_classification|record_tags/);
+});
+
+function readerFixture(){
+  const source=(key:string):Omit<SignalTopicRuleCohortSourceV1,"eligibility">=>({candidate_key:key,title:`Title ${key}`,
+    description:`Current description ${key}`,inclusion:["Current included subject"],exclusion:["Current exclusion"],
+    revision:1,state_token:digest(key),review_state:"pending",draft:{draft_id:uuid(70),revision:1,
+      draft_digest:digest(`draft-${key}`),spec_digest:digest(`spec-${key}`),is_stale:false}});
+  const state={authorized:true,throwSql:false,snapshot:{...snap},rows:[source("topic.alpha"),{...source("topic.beta"),draft:null},
+    {...source("topic.gamma"),draft:{...source("topic.gamma").draft!,is_stale:true}},
+    {...source("topic.omega"),review_state:"rejected" as const,draft:{...source("topic.omega").draft!,is_stale:true}}]};
+  const queries:Array<{sql:string;values:unknown[]}>=[];
+  const client={async query(sql:string,values:unknown[]=[]){queries.push({sql,values});let rows:unknown[]=[];
+    assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|SAVEPOINT|COMMIT|BEGIN|set_config|pg_advisory|tsquery|to_tsvector)\b/u);
+    if(state.throwSql)throw Object.assign(new Error("injected SQL failure"),{code:"XX000"});
+    if(sql.startsWith("SELECT EXISTS"))rows=[{authorized:state.authorized}];
+    else if(sql.startsWith("SELECT run.id::text"))rows=values[0]===context.workspace_id&&values[1]===context.run_key?[state.snapshot]:[];
+    else if(sql.startsWith("SELECT count(*)::int total")){assert.deepEqual(values,[context.workspace_id,snap.run_id]);rows=[{total:state.rows.length}];}
+    else if(sql.startsWith("SELECT candidate.candidate_key")){
+      assert.deepEqual(values.slice(0,3),[context.workspace_id,snap.run_id,snap.snapshot_id]);
+      rows=state.rows.filter(row=>(values[3]===null||(values[3] as string[]).includes(row.candidate_key))
+        &&(values[4]===null||row.candidate_key>(values[4] as string))).slice(0,values[5] as number);
+    }else throw new Error("unhandled reader SQL");
+    return{rows:structuredClone(rows),rowCount:rows.length};}} as SignalTopicContractDraftClient;
+  return{state,queries,client};
+}
+test("source page uses the explicit completed run, returns current candidate payload and all four eligibility states",async()=>{
+  const f=readerFixture(),page=await loadSources({...context,queryable:f.client});
+  assert.equal(page.run_key,context.run_key);assert.equal(page.snapshot_digest,snap.snapshot_digest);assert.equal(page.total,4);
+  assert.equal(page.limit,20);assert.equal(page.next_cursor,null);
+  assert.deepEqual(page.items.map(row=>row.eligibility),["eligible","missing_draft","stale_draft","rejected"]);
+  assert.deepEqual(page.items[0]!.inclusion,["Current included subject"]);assert.equal(page.items[0]!.revision,1);
+  const sql=f.queries.map(row=>row.sql).join("\n");assert.doesNotMatch(sql,/ORDER BY run\.(?:completed_at|created_at)|LIMIT 100/u);
+  assert.match(sql,/draft\.source_revision<>COALESCE\(editorial\.revision,1\)/u);
+  assert.match(sql,/draft\.source_version_digest<>COALESCE\(editorial\.version_digest,base\.payload_digest\)/u);
+  assert.match(sql,/run_id=\$2::uuid AND snapshot_id=\$3::uuid ORDER BY revision DESC LIMIT 1/u);
+});
+test("source keyset pages neither repeat nor omit candidates when display text and eligibility change",async()=>{
+  const f=readerFixture(),args={...context,queryable:f.client,limit:2};const first=await loadSources(args);
+  assert.ok(first.next_cursor);f.state.rows[0]!.title="ZZZ edited title";f.state.rows[0]!.review_state="rejected";
+  const second=await loadSources({...args,cursor:first.next_cursor});
+  assert.equal(second.total,4);assert.equal(second.next_cursor,null);
+  assert.deepEqual([...first.items,...second.items].map(row=>row.candidate_key),f.state.rows.map(row=>row.candidate_key));
+  const pages=f.queries.filter(row=>row.sql.startsWith("SELECT candidate.candidate_key"));
+  assert.deepEqual(pages.map(row=>row.values.slice(3)),[[null,null,3],[null,"topic.beta",3]]);
+  assert.match(pages[0]!.sql,/ORDER BY candidate\.candidate_key COLLATE "C" LIMIT \$6/u);
+});
+test("selected refresh is exact, separately bounded and reports missing keys without mutating retained CAS",async()=>{
+  const f=readerFixture(),initial=await loadSources({...context,queryable:f.client,limit:1});
+  const retained={candidate_key:initial.items[0]!.candidate_key,expected_candidate_revision:initial.items[0]!.revision,
+    expected_candidate_state_token:initial.items[0]!.state_token};const old=structuredClone(retained);
+  f.state.rows[0]!.revision=2;f.state.rows[0]!.state_token=digest("new-state");f.state.rows[0]!.draft!.is_stale=true;
+  const keys=["topic.omega","topic.alpha","topic.missing"],page=await loadSources({...context,queryable:f.client,
+    limit:1,cursor:initial.next_cursor,selected_candidate_keys:keys});
+  assert.deepEqual(page.items.map(row=>row.candidate_key),["topic.beta"]);
+  assert.deepEqual(page.selected.map(row=>row.candidate_key),["topic.omega","topic.alpha"]);
+  assert.deepEqual(page.missing_selected_candidate_keys,["topic.missing"]);
+  assert.equal(page.selected[1]!.revision,2);assert.equal(page.selected[1]!.eligibility,"stale_draft");assert.deepEqual(retained,old);
+  assert.deepEqual(keys,["topic.omega","topic.alpha","topic.missing"]);
+  assert.deepEqual(f.queries.at(-1)!.values.slice(3),[keys,null,15]);
+});
+test("source cursor is closed and bound to workspace, explicit run and frozen snapshot",async()=>{
+  const f=readerFixture(),args={...context,queryable:f.client,limit:1},page=await loadSources(args);
+  const payload=JSON.parse(Buffer.from(page.next_cursor!,"base64url").toString("utf8"));
+  for(const change of [{workspace_id:uuid(99)},{run_key:"topic-other-run"},{snapshot_digest:digest("changed")},{unexpected:true}]){
+    const cursor=Buffer.from(JSON.stringify({...payload,...change})).toString("base64url");
+    await assert.rejects(loadSources({...args,cursor}),{code:"topic_rule_cohort_sources_cursor_invalid"});
+  }
+  for(const cursor of ["not-json","a".repeat(2049),"",`${page.next_cursor}=`])
+    await assert.rejects(loadSources({...args,cursor}),{code:"topic_rule_cohort_sources_cursor_invalid"});
+});
+test("source reader rejects wrong scope, actor, duplicate/unbounded selections and arbitrary SQL failures",async()=>{
+  const f=readerFixture(),args={...context,queryable:f.client};f.state.authorized=false;
+  await assert.rejects(loadSources(args),{code:"topic_rule_draft_forbidden"});f.state.authorized=true;
+  for(const extra of [{run_key:"topic-missing-run"},{workspace_id:uuid(99)}])
+    await assert.rejects(loadSources({...args,...extra}),{code:"topic_rule_cohort_run_not_found"});
+  for(const extra of [{limit:0},{limit:21},{selected_candidate_keys:["topic.alpha","topic.alpha"]},
+    {selected_candidate_keys:Array.from({length:16},(_,n)=>`topic.${n}`)},{selected_candidate_keys:["INVALID KEY"]}]){
+    const count=f.queries.length;await assert.rejects(loadSources({...args,...extra}),{code:"topic_rule_cohort_sources_query_invalid"});
+    assert.equal(f.queries.length,count);
+  }
+  f.state.throwSql=true;await assert.rejects(loadSources(args),{code:"XX000"});
 });

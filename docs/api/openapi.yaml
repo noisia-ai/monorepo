@@ -2343,6 +2343,219 @@ paths:
           description: Closed request, route binding or limits invalid.
         '503':
           description: Rule draft schema not yet available in this environment.
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/cohorts/{runKey}:
+    get:
+      tags: [ Signal Topic Evaluation ]
+      security:
+        - kindeSession: []
+      operationId: getSignalTopicRuleCohortManagement
+      summary: Read exact-run selectable drafts, latest cohort and its latest historical trial.
+      description: One REPEATABLE READ READ ONLY transaction; never substitutes the latest run. Only limit, cursor and
+        repeated selected_candidate_key are allowed; duplicate singleton parameters or selected keys are rejected. Page
+        and selected refresh are separate; retain original selection CAS until explicit reselection. No matching, writes,
+        provider, Workers, activation or assignments. Null means actual absence only.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/TopicCohortRunKey" }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 20 }
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor bound to workspace/run/frozen snapshot; omit for first page.
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+        - name: selected_candidate_key
+          in: query
+          style: form
+          explode: true
+          description: Repeat to refresh up to fifteen distinct selected candidates, including outside the current page.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+            maxItems: 15
+            uniqueItems: true
+      responses:
+        "200":
+          description: Validated projection or exact same-actor/request replay.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicRuleCohortManagementV1" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401":
+          {
+            description: Valid Kinde session required. Recover the session before explicit operator resubmission; no automatic
+              mutation replay.
+          }
+        "403":
+          description: Internal management role or live workspace authorization denied.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - type: object
+                    additionalProperties: false
+                    required: [ error, message ]
+                    properties:
+                      error: { const: forbidden }
+                      message: { type: string }
+        "404":
+          description: Exact run/cohort missing, or workspace inaccessible/inactive.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
+        "409": { $ref: "#/components/responses/SignalTopicRuleCohortConflict" }
+        "422": { $ref: "#/components/responses/SignalTopicRuleCohortInvalid" }
+        "500": { $ref: "#/components/responses/SignalTopicRuleCohortFailure" }
+        "503":
+          description: Required schema/function unavailable, or shared workspace feature disabled.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
+    post:
+      tags: [ Signal Topic Evaluation ]
+      security:
+        - kindeSession: []
+      operationId: saveSignalTopicRuleCohort
+      summary: Append one candidate-bound draft catalog using exact source and predecessor CAS.
+      description: Body run_key equals path runKey. Actor/workspace come only from server authorization. One SERIALIZABLE
+        transaction composes existing savepoint writers; closed response DTO and all deferred constraints are validated
+        before commit, rollback on failure. Same actor/key/exact canonical request replays its original cohort; divergence
+        conflicts. No RuleSpec/profile/SQL supplied by browser, paid flight, activation, publication or serving.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/TopicCohortRunKey" }
+        - { $ref: "#/components/parameters/TopicRuleIdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicRuleCohortSaveV1" }
+      responses:
+        "200":
+          description: Validated projection or exact same-actor/request replay.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicRuleCohortStoreV1" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401":
+          {
+            description: Valid Kinde session required. Recover the session before explicit operator resubmission; no automatic
+              mutation replay.
+          }
+        "403":
+          description: Internal management role or live workspace authorization denied.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - type: object
+                    additionalProperties: false
+                    required: [ error, message ]
+                    properties:
+                      error: { const: forbidden }
+                      message: { type: string }
+        "404":
+          description: Exact run/cohort missing, or workspace inaccessible/inactive.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
+        "409": { $ref: "#/components/responses/SignalTopicRuleCohortConflict" }
+        "422": { $ref: "#/components/responses/SignalTopicRuleCohortInvalid" }
+        "500": { $ref: "#/components/responses/SignalTopicRuleCohortFailure" }
+        "503":
+          description: Required schema/function unavailable, or shared workspace feature disabled.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/cohorts/{runKey}/trial:
+    post:
+      tags: [ Signal Topic Evaluation ]
+      security:
+        - kindeSession: []
+      operationId: testSignalTopicRuleCohort
+      summary: Measure the saved current cohort jointly and append one bounded immutable trial.
+      description: Body run_key equals path runKey; exact current cohort CAS and source/profile validity are required. One
+        SERIALIZABLE transaction, response DTO and deferred constraints before commit. One parameterized simple-FTS vector
+        per eligible membership, shared cap, own filter AND lexical predicate per rule. Timeout rolls back without a
+        receipt. Same-key replay preserves historical counts and rechecks example rights without FTS. After an uncertain
+        response, GET state and manually retry the exact saved body/key; GET alone does not identify that request or
+        authorize an automatic new trial. No provider, Worker, assignments, activation, publication or serving.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - { $ref: "#/components/parameters/TopicCohortRunKey" }
+        - { $ref: "#/components/parameters/TopicRuleIdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalTopicRuleCohortTrialRequestV1" }
+      responses:
+        "200":
+          description: Validated projection or exact same-actor/request replay.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalTopicRuleCohortTrialV1" }
+        "400": { $ref: "#/components/responses/SignalBackendError" }
+        "401":
+          {
+            description: Valid Kinde session required. Recover the session before explicit operator resubmission; no automatic
+              mutation replay.
+          }
+        "403":
+          description: Internal management role or live workspace authorization denied.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - type: object
+                    additionalProperties: false
+                    required: [ error, message ]
+                    properties:
+                      error: { const: forbidden }
+                      message: { type: string }
+        "404":
+          description: Exact run/cohort missing, or workspace inaccessible/inactive.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
+        "409": { $ref: "#/components/responses/SignalTopicRuleCohortConflict" }
+        "422": { $ref: "#/components/responses/SignalTopicRuleCohortInvalid" }
+        "500": { $ref: "#/components/responses/SignalTopicRuleCohortFailure" }
+        "503":
+          description: Required schema/function unavailable, or shared workspace feature disabled.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+                  - { $ref: "#/components/schemas/SignalBackendErrorV1" }
   /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/commands:
     post:
       tags: [Signal Topic Evaluation]
@@ -2715,6 +2928,18 @@ components:
       schema:
         type: string
       description: Published output id.
+    TopicCohortRunKey:
+      name: runKey
+      in: path
+      required: true
+      description: Explicit completed evaluation in the authorized workspace; never replaced by a newer run.
+      schema: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+    TopicRuleIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Preserve exact header/body for manual uncertain-response recovery. Same key with another actor or request conflicts.
+      schema: { type: string, minLength: 8, maxLength: 200, pattern: "^[A-Za-z0-9._:-]{8,200}$" }
     WorkspaceId:
       name: workspaceId
       in: path
@@ -2817,6 +3042,31 @@ components:
       description: Fail with a typed stale or partial response instead of serving degraded materialization state.
       schema: { type: boolean, default: false }
   responses:
+    SignalTopicRuleCohortConflict:
+      description: Stale candidate/draft/cohort, same-key conflict or bounded trial timeout. No partial append.
+      headers:
+        Cache-Control:
+          schema: { type: string, const: "private, no-store" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+    SignalTopicRuleCohortInvalid:
+      description: Closed request, path/body binding, cursor, limits or selection rejected.
+      headers:
+        Cache-Control:
+          schema: { type: string, const: "private, no-store" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
+    SignalTopicRuleCohortFailure:
+      description: Safe operation_failed fallback without SQL diagnostics. Uncertain POST responses require state inspection
+        and manual same-body/key recovery.
+      headers:
+        Cache-Control:
+          schema: { type: string, const: "private, no-store" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SignalTopicRuleCohortErrorV1" }
     SignalWorkspaceSuccess:
       description: signal-backend-v1 response. Concrete shape depends on the route.
       content:
@@ -4380,6 +4630,483 @@ components:
         Immutable historical trial metrics. Current read rechecks cached examples; available + unavailable = stored and
         available equals returned examples. No remeasurement on GET or same-key replay. Considered=min(total,cap),
         total=considered+not_tested, considered=unavailable+filter_excluded+matched+abstained.
+    SignalTopicCohortDigestV1: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+    SignalTopicCohortCandidateKeyV1: { type: string, pattern: "^[a-z0-9][a-z0-9._:-]{0,179}$" }
+    SignalTopicCohortRunKeyV1: { type: string, pattern: "^[a-z0-9][a-z0-9._:-]{7,199}$" }
+    SignalTopicCohortStaleReasonsV1:
+      type: array
+      items:
+        type: string
+        enum: [ source_changed, snapshot_changed, profile_changed ]
+      maxItems: 3
+    SignalTopicRuleCohortSelectionV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          candidate_key,
+          draft_id,
+          expected_candidate_revision,
+          expected_candidate_state_token,
+          expected_draft_revision,
+          expected_draft_digest
+        ]
+      properties:
+        candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+        draft_id: { type: string, format: uuid }
+        expected_candidate_revision: { type: integer, minimum: 1 }
+        expected_candidate_state_token: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        expected_draft_revision: { type: integer, minimum: 1 }
+        expected_draft_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+    SignalTopicRuleCohortSaveV1:
+      type: object
+      additionalProperties: false
+      required: [ run_key, expected_cohort_revision, expected_cohort_digest, sources ]
+      properties:
+        run_key: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+        expected_cohort_revision: { type: integer, minimum: 0 }
+        expected_cohort_digest:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicRuleCohortSelectionV1" }
+          minItems: 2
+          maxItems: 15
+          uniqueItems: true
+          description: Candidate keys and draft IDs are each distinct and current in the exact workspace/run/snapshot.
+      description: Body run_key equals path runKey. Only source references/CAS; no browser RuleSpec, actor, workspace, profile or SQL.
+      allOf:
+        - if:
+            properties:
+              expected_cohort_revision: { const: 0 }
+          then:
+            properties:
+              expected_cohort_digest: { type: "null" }
+          else:
+            properties:
+              expected_cohort_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+    SignalTopicRuleCohortTrialRequestV1:
+      type: object
+      additionalProperties: false
+      required: [ run_key, expected_cohort_revision, expected_cohort_digest, max_memberships, example_limit, timeout_ms ]
+      properties:
+        run_key: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+        expected_cohort_revision: { type: integer, minimum: 1 }
+        expected_cohort_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        max_memberships: { type: integer, minimum: 1, maximum: 50000 }
+        example_limit: { type: integer, minimum: 0, maximum: 10 }
+        timeout_ms: { type: integer, minimum: 1, maximum: 15000 }
+      description: All fields are required. UI initially submits limits 25000/10/15000. Body run_key equals path runKey;
+        server resolves immutable rules from exact current cohort CAS.
+    SignalTopicRuleCohortSourceV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          candidate_key,
+          title,
+          description,
+          inclusion,
+          exclusion,
+          revision,
+          state_token,
+          review_state,
+          draft,
+          eligibility
+        ]
+      properties:
+        candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+        title: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, minLength: 1, maxLength: 1500 }
+        inclusion:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 240 }
+          minItems: 1
+          maxItems: 16
+        exclusion:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 240 }
+          maxItems: 16
+        revision: { type: integer, minimum: 1 }
+        state_token: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        review_state:
+          type: string
+          enum: [ pending, rejected ]
+        draft:
+          oneOf:
+            - { type: "null" }
+            - type: object
+              additionalProperties: false
+              required: [ draft_id, revision, draft_digest, spec_digest, is_stale ]
+              properties:
+                draft_id: { type: string, format: uuid }
+                revision: { type: integer, minimum: 1 }
+                draft_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+                spec_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+                is_stale: { type: boolean }
+        eligibility:
+          type: string
+          enum: [ eligible, missing_draft, stale_draft, rejected ]
+      description: Current candidate payload/CAS and latest draft. Rejected takes precedence; otherwise no draft means
+        missing_draft, stale draft means stale_draft, remaining case eligible.
+    SignalTopicRuleCohortSourcesV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          contract_version,
+          run_key,
+          snapshot_digest,
+          total,
+          limit,
+          items,
+          next_cursor,
+          selected,
+          missing_selected_candidate_keys
+        ]
+      properties:
+        contract_version: { const: signal-topic-rule-cohort-sources-v1 }
+        run_key: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+        snapshot_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 20 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicRuleCohortSourceV1" }
+          maxItems: 20
+        next_cursor:
+          oneOf:
+            - { type: "null" }
+            - { type: string, minLength: 1, maxLength: 2048 }
+        selected:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicRuleCohortSourceV1" }
+          maxItems: 15
+        missing_selected_candidate_keys:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+          maxItems: 15
+      description: Keyset page bound to workspace/run/frozen snapshot. selected plus missing keys exactly reconcile requested
+        refresh keys. Current selected summaries do not replace the operator's retained selection CAS.
+    SignalTopicRuleCohortBindingRuleV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          candidate_id,
+          candidate_key,
+          candidate_revision,
+          candidate_version_digest,
+          candidate_state_token,
+          draft_id,
+          draft_revision,
+          draft_digest,
+          spec_digest,
+          rule_spec
+        ]
+      properties:
+        candidate_id: { type: string, format: uuid }
+        candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+        candidate_revision: { type: integer, minimum: 1 }
+        candidate_version_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        candidate_state_token: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        draft_id: { type: string, format: uuid }
+        draft_revision: { type: integer, minimum: 1 }
+        draft_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        spec_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        rule_spec: { $ref: "#/components/schemas/SignalTopicRuleSpecV1" }
+    SignalTopicRuleCohortStoreV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          contract_version,
+          cohort_id,
+          cohort_revision,
+          cohort_digest,
+          profile_id,
+          profile_version,
+          binding,
+          created_at,
+          is_stale,
+          stale_reasons,
+          is_latest,
+          idempotent_replay
+        ]
+      properties:
+        contract_version: { const: signal-topic-rule-cohort-store-v1 }
+        cohort_id: { type: string, format: uuid }
+        cohort_revision: { type: integer, minimum: 1 }
+        cohort_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        profile_id: { type: string, format: uuid }
+        profile_version: { type: integer, minimum: 1 }
+        binding:
+          type: object
+          additionalProperties: false
+          required:
+            [
+              run_id,
+              snapshot_id,
+              snapshot_digest,
+              population_digest,
+              rights_digest,
+              semantic_context_authority_digest,
+              artifact_binding_digest,
+              workspace_id,
+              run_key,
+              cohort_revision,
+              predecessor_digest,
+              rules
+            ]
+          properties:
+            run_id: { type: string, format: uuid }
+            snapshot_id: { type: string, format: uuid }
+            snapshot_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            population_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            rights_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            semantic_context_authority_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            artifact_binding_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            workspace_id: { type: string, format: uuid }
+            run_key: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+            cohort_revision: { type: integer, minimum: 1 }
+            predecessor_digest:
+              oneOf:
+                - { type: "null" }
+                - { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+            rules:
+              type: array
+              items: { $ref: "#/components/schemas/SignalTopicRuleCohortBindingRuleV1" }
+              minItems: 2
+              maxItems: 15
+        created_at: { type: string, format: date-time }
+        is_stale: { type: boolean }
+        stale_reasons: { $ref: "#/components/schemas/SignalTopicCohortStaleReasonsV1" }
+        is_latest: { type: boolean }
+        idempotent_replay: { type: boolean }
+      description: Immutable full binding; binding revision equals cohort revision, candidate keys distinct. Per-run
+        cohort_revision is separate from global workspace/kind profile_version. Linked catalog stays draft; graph/source
+        drift is stale. Exact replay may return an older version with is_latest=false.
+    SignalTopicRuleCohortExampleV1:
+      type: object
+      additionalProperties: false
+      required: [ evidence_ref, outcome, matched_candidate_keys, excerpt, language, market, scope, month ]
+      properties:
+        evidence_ref: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        outcome:
+          type: string
+          enum: [ abstained, single_match, multiple_match ]
+        matched_candidate_keys:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+          maxItems: 15
+          uniqueItems: true
+        excerpt: { type: string, maxLength: 600 }
+        language:
+          oneOf:
+            - { type: "null" }
+            - { type: string, pattern: "^[a-z]{2}$" }
+        market:
+          oneOf:
+            - { type: "null" }
+            - { type: string, pattern: "^[A-Z]{2}$" }
+        scope:
+          oneOf:
+            - { type: "null" }
+            - type: string
+              enum: [ primary_brand, same_entity, competitor, category, other ]
+        month: { type: string, pattern: "^20[0-9]{2}-(0[1-9]|1[0-2])$" }
+      description: Current-rights sanitized diagnostic, not a precision sample. All keys belong to the cohort; abstained has
+        zero keys, single_match one, multiple_match at least two.
+    SignalTopicRuleCohortTrialV1:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          contract_version,
+          cohort_id,
+          cohort_revision,
+          cohort_digest,
+          profile_id,
+          profile_version,
+          compiler_version,
+          plan_hash,
+          rule_plans,
+          snapshot_digest,
+          population_digest,
+          considered_digest,
+          population_kind,
+          counts,
+          per_rule,
+          pairs,
+          max_memberships,
+          example_limit,
+          timeout_ms,
+          examples,
+          topic_adoption,
+          publication,
+          serving,
+          trial_id,
+          created_at,
+          is_stale,
+          stale_reasons,
+          is_latest_cohort,
+          idempotent_replay,
+          example_availability
+        ]
+      properties:
+        contract_version: { const: signal-topic-rule-cohort-trial-v1 }
+        cohort_id: { type: string, format: uuid }
+        cohort_revision: { type: integer, minimum: 1 }
+        cohort_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        profile_id: { type: string, format: uuid }
+        profile_version: { type: integer, minimum: 1 }
+        compiler_version: { const: signal-topic-rule-cohort-simple-fts-v1 }
+        plan_hash: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        rule_plans:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ candidate_key, spec_digest, plan_hash, compiler_version ]
+            properties:
+              candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+              spec_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+              plan_hash: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+              compiler_version: { const: signal-topic-rule-simple-fts-v1 }
+          minItems: 2
+          maxItems: 15
+        snapshot_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        population_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        considered_digest: { $ref: "#/components/schemas/SignalTopicCohortDigestV1" }
+        population_kind: { const: frozen_snapshot_memberships }
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            [
+              total,
+              considered,
+              not_tested,
+              unavailable,
+              excluded_by_all_filters,
+              abstained,
+              single_match,
+              multiple_match,
+              covered
+            ]
+          properties:
+            total: { type: integer, minimum: 0 }
+            considered: { type: integer, minimum: 0 }
+            not_tested: { type: integer, minimum: 0 }
+            unavailable: { type: integer, minimum: 0 }
+            excluded_by_all_filters: { type: integer, minimum: 0 }
+            abstained: { type: integer, minimum: 0 }
+            single_match: { type: integer, minimum: 0 }
+            multiple_match: { type: integer, minimum: 0 }
+            covered: { type: integer, minimum: 0 }
+        per_rule:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ candidate_key, matched, exclusive, shared ]
+            properties:
+              candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+              matched: { type: integer, minimum: 0 }
+              exclusive: { type: integer, minimum: 0 }
+              shared: { type: integer, minimum: 0 }
+          minItems: 2
+          maxItems: 15
+        pairs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [ left_candidate_key, right_candidate_key, intersection ]
+            properties:
+              left_candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+              right_candidate_key: { $ref: "#/components/schemas/SignalTopicCohortCandidateKeyV1" }
+              intersection: { type: integer, minimum: 0 }
+          maxItems: 105
+        max_memberships: { type: integer, minimum: 1, maximum: 50000 }
+        example_limit: { type: integer, minimum: 0, maximum: 10 }
+        timeout_ms: { type: integer, minimum: 1, maximum: 15000 }
+        examples:
+          type: array
+          items: { $ref: "#/components/schemas/SignalTopicRuleCohortExampleV1" }
+          maxItems: 10
+        topic_adoption: { const: false }
+        publication: { const: false }
+        serving: { const: false }
+        trial_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        is_stale: { type: boolean }
+        stale_reasons: { $ref: "#/components/schemas/SignalTopicCohortStaleReasonsV1" }
+        is_latest_cohort: { type: boolean }
+        idempotent_replay: { type: boolean }
+        example_availability:
+          type: object
+          additionalProperties: false
+          required: [ stored, available, unavailable ]
+          properties:
+            stored: { type: integer, minimum: 0, maximum: 10 }
+            available: { type: integer, minimum: 0, maximum: 10 }
+            unavailable: { type: integer, minimum: 0, maximum: 10 }
+      description: "One shared membership cap including outliers; own filter AND lexical per rule. considered=min(total,cap),
+        total=considered+not_tested; considered=unavailable+excluded_by_all_filters+abstained+single_match+multiple_match;
+        covered=single_match+multiple_match. Per rule matched=exclusive+shared. Exactly N*(N-1)/2 distinct cohort pairs;
+        intersections do not sum to coverage. Historical counts immutable. GET/replay only recheck examples:
+        available+unavailable=stored, available=examples.length, stored<=example_limit. No precision/recall/gold claim."
+    SignalTopicRuleCohortManagementV1:
+      type: object
+      additionalProperties: false
+      required: [ contract_version, run_key, sources, cohort, trial ]
+      properties:
+        contract_version: { const: signal-topic-rule-cohort-management-v1 }
+        run_key: { $ref: "#/components/schemas/SignalTopicCohortRunKeyV1" }
+        sources: { $ref: "#/components/schemas/SignalTopicRuleCohortSourcesV1" }
+        cohort:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/SignalTopicRuleCohortStoreV1" }
+        trial:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/SignalTopicRuleCohortTrialV1" }
+      description: Coherent exact-run RRRO. Nested run keys match run_key. Cohort is latest or null; trial matches its
+        ID/revision/digest and is_latest_cohort=true. New untested cohort has trial=null. Errors never become absence. GET
+        does not establish completion of a specific ambiguous idempotency key.
+    SignalTopicRuleCohortErrorV1:
+      type: object
+      additionalProperties: false
+      required: [ error ]
+      properties:
+        error:
+          type: string
+          enum:
+            [
+              topic_rule_cohort_request_invalid,
+              topic_rule_cohort_scope_mismatch,
+              topic_rule_cohort_selection_invalid,
+              topic_rule_cohort_selection_duplicate,
+              topic_rule_cohort_run_not_found,
+              topic_rule_cohort_source_stale,
+              topic_rule_cohort_draft_stale,
+              topic_rule_cohort_draft_digest_invalid,
+              topic_rule_cohort_idempotency_conflict,
+              topic_rule_cohort_stale,
+              topic_rule_cohort_not_found,
+              topic_rule_cohort_limits_invalid,
+              topic_rule_cohort_sources_query_invalid,
+              topic_rule_cohort_sources_cursor_invalid,
+              topic_rule_cohort_forbidden,
+              topic_rule_cohort_trial_timeout,
+              topic_rule_cohort_schema_unavailable,
+              topic_rule_cohort_operation_failed
+            ]
+      description: Closed safe domain errors; no raw SQL diagnostics, stacks, arbitrary exception codes or provider payload.
     SignalTopicRuleDraftManagementV1:
       type: object
       additionalProperties: false
