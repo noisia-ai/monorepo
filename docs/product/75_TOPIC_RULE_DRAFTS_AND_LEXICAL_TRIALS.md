@@ -4,7 +4,7 @@ Referencia de los cortes LAB-2Y/2Z/3A, 6 de septiembre de 2026. Motor auditado y
 editor desplegado en Preview/UAT en `bd7dbf9`, con 0123 aplicada una vez y QA autenticado
 de lectura terminado. Las pruebas de guardar y medir se ejecutaron en PostgreSQL local
 con rollback; en UAT no se guardaron reglas durante el QA. Los diez candidatos y sus
-citas pertenecen al corte LAB-2X. La preparación posterior de un catálogo conjunto se
+citas pertenecen al corte LAB-2X. El catálogo conjunto, desplegado por LAB-3D en `d9a9ce7`, se
 describe en [Catálogo y prueba conjunta](76_TOPIC_COHORT_CATALOG_AND_JOINT_TRIAL.md).
 
 ## Qué resuelve

@@ -56,6 +56,7 @@ export * from "./signal-topic-evaluation-v1";
 export * from "./signal-topic-evaluation-v2";
 export * from "./signal-topic-rule-spec-v1";
 export * from "./signal-topic-rule-cohort-v1";
+export * from "./signal-topic-rule-suggestion-v1";
 export * from "./signal-topics-narratives-v1";
 export * from "./signal-classification-authority-v1";
 export * from "./signal-taxonomy-insights-v1";

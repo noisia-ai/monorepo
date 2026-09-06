@@ -1,9 +1,10 @@
 # Catálogo de tópicos en borrador y prueba conjunta
 
-LAB-3B, 6 de septiembre de 2026. Implementación y prueba real local completadas;
-el veredicto independiente final se registra en Prompt Looping.
-Este documento no declara desplegada la nueva función ni activos los tópicos en Signal.
-El corte anterior LAB-3A sí dejó en UAT el editor individual descrito en
+LAB-3B/3C/3D, 6 de septiembre de 2026. Núcleo, UI y prueba real local auditados;
+desplegado en Preview/UAT en `d9a9ce7`, deployment `3af84ebb`, con 0124 aplicada una vez.
+QA autenticado de lectura y reconciliación independiente terminaron sin cambios a los diez
+candidatos ni al corpus. Los tópicos no están activos en Signal; aún no se guardó un catálogo
+ni se ejecutó su prueba en UAT. El corte anterior LAB-3A dejó el editor individual descrito en
 [Topic Rule Drafts](75_TOPIC_RULE_DRAFTS_AND_LEXICAL_TRIALS.md).
 
 ## Qué añade al proceso
@@ -25,7 +26,7 @@ todas sus consultas: una futura sugerencia automática debe producir el mismo co
 
 ## Identidad y almacenamiento
 
-### Uso en la pantalla de candidatos (LAB-3C, validación local)
+### Uso en la pantalla de candidatos (LAB-3C, desplegado por LAB-3D)
 
 1. Abre un candidato para ver sus citas y editar o guardar su regla. El checkbox
    y el botón de abrir son controles separados; seleccionar no edita el candidato.
@@ -165,9 +166,10 @@ cambios remotos, asignaciones o activaciones. Estos resultados aún no son datos
 
 ## Lo que viene después
 
-La UI mínima de selección y prueba conjunta se añade sobre el editor existente una vez que
-el núcleo funciona. Después pueden compararse reglas sugeridas e interpretación semántica
-acotada, sin repetir automáticamente una llamada pagada.
+La UI mínima de selección y prueba conjunta ya está sobre el editor existente. El siguiente
+paso local es producir sugerencias de reglas editables desde candidato, contexto de marca y
+menciones verificadas. Reutiliza este contrato y no atribuye métricas al modelo. Una nueva
+ejecución presupuestada permanece separada de editar, guardar o probar las reglas.
 
 La clasificación persistente es otro paso: debe usar la autoridad existente de funciones,
 políticas, generaciones y asignaciones. El camino de 0087 exige un perfil activo y su append
