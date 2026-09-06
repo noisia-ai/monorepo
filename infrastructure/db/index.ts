@@ -11,5 +11,9 @@ export * from "./signal-topic-evaluation";
 export * from "./signal-topic-evaluation-v2";
 export * from "./signal-topic-evaluation-v2-import";
 export * from "./signal-topic-evaluation-v2-result-import";
-export * from "./signal-topic-contract-drafts";
+export {createSignalTopicContractDraftV1,loadSignalTopicContractDraftV1,loadSignalTopicContractDraftLatestTrialV1,
+  runSignalTopicContractDraftTrialV1,SignalTopicContractDraftError,SIGNAL_TOPIC_DRAFT_NORMALIZED_TEXT_SQL,
+  type SignalTopicContractDraftClient,type SignalTopicContractDraftV1,type SignalTopicContractDraftTrialResultV1,
+  type SignalTopicContractDraftTrialV1} from "./signal-topic-contract-drafts";
+export * from "./signal-topic-rule-cohorts";
 export * from "./sentione-csv-ingest";

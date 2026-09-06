@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import {
   normalizeSignalTaxonomyProposalV1,
@@ -17,6 +17,48 @@ type DiscoveryContextRow = {
   version: string;
   content: string;
 };
+
+export type SignalTaxonomyDraftInsertClient={query<T=Record<string,unknown>>(sql:string,values?:unknown[]):
+  Promise<{rows:T[];rowCount:number|null}>};
+export type SignalTaxonomyDraftInsertTerm={term_key:string;label:string;definition:string;metadata:Record<string,unknown>};
+
+/** Low-level insertion only. Caller owns context validation, deduplication and its transaction.
+ * Both legacy and cohort paths acquire the SAME global allocator lock before MAX(version)+1. */
+export async function insertSignalTaxonomyDraftCoreV1(args:{client:SignalTaxonomyDraftInsertClient;workspace_id:string;
+  kind:SignalTaxonomyKindV1;context_hash:string;terms:SignalTaxonomyDraftInsertTerm[];rules:unknown;
+  rule_set_metadata:Record<string,unknown>;provider:string;model_version:string;prompt_hash:string;
+  model_metadata:Record<string,unknown>;profile_metadata:Record<string,unknown>;context_refs:SignalTaxonomyContextRefV1[]}){
+  const client=args.client;await client.query("SAVEPOINT signal_taxonomy_insert_core_v1");
+  try{
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",[`signal-taxonomy:${args.workspace_id}:${args.kind}`]);
+    const version=(await client.query<{version:number}>(`SELECT COALESCE(MAX(version), 0)::int + 1 AS version
+      FROM signal_taxonomy_profiles WHERE workspace_id = $1::uuid AND kind = $2`,[args.workspace_id,args.kind])).rows[0]?.version??1;
+    const taxonomyKey=signalTaxonomyProfileKeyV1({workspace_id:args.workspace_id,kind:args.kind,version});
+    const taxonomyId=requiredId((await client.query<{id:string}>(`INSERT INTO taxonomies (
+      taxonomy_key,name,description,scope,methodology_slug,status)
+      VALUES($1,$2,$3,'workspace','signal-topics-narratives','draft') RETURNING id::text`,[taxonomyKey,
+      `${args.kind==="topic"?"Topics":"Narratives"} v${version}`,args.kind==="topic"
+        ?"Concrete recurring subjects discussed in the Signal workspace.":"Recurring propositions, stories or frames constructed in the Signal workspace."])).rows[0]?.id,"taxonomy");
+    await insertCandidateTerms(client,taxonomyId,args.terms);
+    const key=`signal_tn_${args.workspace_id.replaceAll("-","")}_${args.kind}`;
+    const ruleSetId=requiredId((await client.query<{id:string}>(`INSERT INTO tagging_rule_sets (
+      rule_set_key,version,methodology_slug,subject_type,scope,taxonomy_id,rules,status,metadata)
+      VALUES($1,$2,'signal-topics-narratives','mention','workspace',$3::uuid,$4::jsonb,'draft',$5::jsonb) RETURNING id::text`,
+    [key,version,taxonomyId,JSON.stringify(args.rules),JSON.stringify(args.rule_set_metadata)])).rows[0]?.id,"rule set");
+    const modelVersionId=requiredId((await client.query<{id:string}>(`INSERT INTO tagging_model_versions (
+      model_key,provider,version,methodology_slug,tagging_rule_set_id,prompt_hash,metadata)
+      VALUES($1,$2,$3,'signal-topics-narratives',$4::uuid,$5,$6::jsonb) RETURNING id::text`,
+    [key,args.provider,`profile-v${version}:${args.model_version}`,ruleSetId,args.prompt_hash,JSON.stringify(args.model_metadata)])).rows[0]?.id,"model version");
+    const profileId=requiredId((await client.query<{id:string}>(`INSERT INTO signal_taxonomy_profiles (
+      workspace_id,taxonomy_id,kind,version,status,context_hash,rule_set_id,model_version_id,metadata)
+      VALUES($1::uuid,$2::uuid,$3,$4,'draft',$5,$6::uuid,$7::uuid,$8::jsonb) RETURNING id::text`,
+    [args.workspace_id,taxonomyId,args.kind,version,args.context_hash,ruleSetId,modelVersionId,JSON.stringify(args.profile_metadata)])).rows[0]?.id,"taxonomy profile");
+    await insertDiscoveryLineage(client,profileId,{taxonomyId,ruleSetId,modelVersionId,contextRefs:args.context_refs});
+    await client.query("RELEASE SAVEPOINT signal_taxonomy_insert_core_v1");
+    return{version,taxonomyId,ruleSetId,modelVersionId,profileId};
+  }catch(error){await client.query("ROLLBACK TO SAVEPOINT signal_taxonomy_insert_core_v1");
+    await client.query("RELEASE SAVEPOINT signal_taxonomy_insert_core_v1");throw error;}
+}
 
 export type SignalTaxonomyDiscoveryContextStoreV1 = {
   workspace_id: string;
@@ -207,104 +249,17 @@ export async function createSignalTaxonomyDraftStoreV1(args: {
         reused: true
       };
     }
-    const versionResult = await client.query<{ version: number }>(`
-      SELECT COALESCE(MAX(version), 0)::int + 1 AS version
-      FROM signal_taxonomy_profiles
-      WHERE workspace_id = $1::uuid AND kind = $2
-    `, [args.workspace_id, proposal.kind]);
-    const version = versionResult.rows[0]?.version ?? 1;
-    const taxonomyKey = signalTaxonomyProfileKeyV1({
-      workspace_id: args.workspace_id,
-      kind: proposal.kind,
-      version
-    });
-    const taxonomy = await client.query<{ id: string }>(`
-      INSERT INTO taxonomies (
-        taxonomy_key, name, description, scope, methodology_slug, status
-      ) VALUES ($1, $2, $3, 'workspace', 'signal-topics-narratives', 'draft')
-      RETURNING id::text
-    `, [
-      taxonomyKey,
-      `${proposal.kind === "topic" ? "Topics" : "Narratives"} v${version}`,
-      proposal.kind === "topic"
-        ? "Concrete recurring subjects discussed in the Signal workspace."
-        : "Recurring propositions, stories or frames constructed in the Signal workspace."
-    ]);
-    const taxonomyId = requiredId(taxonomy.rows[0]?.id, "taxonomy");
-    await insertCandidateTerms(client, taxonomyId, proposal.terms);
-    const ruleSet = await client.query<{ id: string }>(`
-      INSERT INTO tagging_rule_sets (
-        rule_set_key, version, methodology_slug, subject_type,
-        scope, taxonomy_id, rules, status, metadata
-      ) VALUES (
-        $1, $2, 'signal-topics-narratives', 'mention',
-        'workspace', $3::uuid, $4::jsonb, 'draft', $5::jsonb
-      )
-      RETURNING id::text
-    `, [
-      `signal_tn_${args.workspace_id.replaceAll("-", "")}_${proposal.kind}`,
-      version,
-      taxonomyId,
-      JSON.stringify({
-        contract_version: proposal.contract_version,
-        kind: proposal.kind,
-        terms: proposal.terms
-      }),
-      JSON.stringify({ context_hash: proposal.context_hash })
-    ]);
-    const ruleSetId = requiredId(ruleSet.rows[0]?.id, "rule set");
-    const model = await client.query<{ id: string }>(`
-      INSERT INTO tagging_model_versions (
-        model_key, provider, version, methodology_slug,
-        tagging_rule_set_id, prompt_hash, metadata
-      ) VALUES (
-        $1, $2, $3, 'signal-topics-narratives',
-        $4::uuid, $5, $6::jsonb
-      )
-      RETURNING id::text
-    `, [
-      `signal_tn_${args.workspace_id.replaceAll("-", "")}_${proposal.kind}`,
-      proposal.provider,
-      `profile-v${version}:${proposal.model_version}`,
-      ruleSetId,
-      proposal.prompt_hash,
-      JSON.stringify({
-        context_hash: proposal.context_hash,
-        discovery_usage: args.input.discovery_usage ?? null
-      })
-    ]);
-    const modelVersionId = requiredId(model.rows[0]?.id, "model version");
-    const profile = await client.query<{ id: string }>(`
-      INSERT INTO signal_taxonomy_profiles (
-        workspace_id, taxonomy_id, kind, version, status,
-        context_hash, rule_set_id, model_version_id, metadata
-      ) VALUES (
-        $1::uuid, $2::uuid, $3, $4, 'draft',
-        $5, $6::uuid, $7::uuid, $8::jsonb
-      )
-      RETURNING id::text
-    `, [
-      args.workspace_id,
-      taxonomyId,
-      proposal.kind,
-      version,
-      proposal.context_hash,
-      ruleSetId,
-      modelVersionId,
-      JSON.stringify({
-        contract_version: proposal.contract_version,
-        discovery_provider: proposal.provider,
-        context_refs: proposal.context_refs,
-        corpus_revision: context.corpus_revision,
-        discovery_usage: args.input.discovery_usage ?? null
-      })
-    ]);
-    const profileId = requiredId(profile.rows[0]?.id, "taxonomy profile");
-    await insertDiscoveryLineage(client, profileId, {
-      taxonomyId,
-      ruleSetId,
-      modelVersionId,
-      contextRefs: proposal.context_refs
+    const {version,taxonomyId,ruleSetId,modelVersionId,profileId}=await insertSignalTaxonomyDraftCoreV1({
+      client,workspace_id:args.workspace_id,kind:proposal.kind,context_hash:proposal.context_hash,
+      terms:proposal.terms.map(term=>({term_key:term.term_key,label:term.label,definition:term.definition,
+        metadata:{statement:term.statement,examples:term.examples,exclusions:term.exclusions}})),
+      rules:{contract_version:proposal.contract_version,kind:proposal.kind,terms:proposal.terms},
+      rule_set_metadata:{context_hash:proposal.context_hash},provider:proposal.provider,
+      model_version:proposal.model_version,prompt_hash:proposal.prompt_hash,
+      model_metadata:{context_hash:proposal.context_hash,discovery_usage:args.input.discovery_usage??null},
+      profile_metadata:{contract_version:proposal.contract_version,discovery_provider:proposal.provider,
+        context_refs:proposal.context_refs,corpus_revision:context.corpus_revision,discovery_usage:args.input.discovery_usage??null},
+      context_refs:proposal.context_refs
     });
     await client.query("COMMIT");
     return {
@@ -368,9 +323,9 @@ function appendDiscoveryContext(
 }
 
 async function insertCandidateTerms(
-  client: PoolClient,
+  client: SignalTaxonomyDraftInsertClient,
   taxonomyId: string,
-  terms: SignalTaxonomyCandidateV1[]
+  terms: SignalTaxonomyDraftInsertTerm[]
 ) {
   for (const [index, term] of terms.entries()) {
     await client.query(`
@@ -386,17 +341,13 @@ async function insertCandidateTerms(
       term.label,
       term.definition,
       index + 1,
-      JSON.stringify({
-        statement: term.statement,
-        examples: term.examples,
-        exclusions: term.exclusions
-      })
+      JSON.stringify(term.metadata)
     ]);
   }
 }
 
 async function insertDiscoveryLineage(
-  client: PoolClient,
+  client: SignalTaxonomyDraftInsertClient,
   profileId: string,
   input: {
     taxonomyId: string;

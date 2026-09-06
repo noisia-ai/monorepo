@@ -7371,6 +7371,36 @@ export const signalTopicContractDraftTrialReceipts = pgTable("signal_topic_contr
     foreignColumns:[signalTopicContractDraftVersions.id,signalTopicContractDraftVersions.workspaceId]}).onDelete("restrict"),
   index("idx_signal_topic_contract_trial_latest").on(table.draftId,sql`${table.createdAt} DESC`,table.id)]);
 
+export const signalTopicRuleCohortVersions = pgTable("signal_topic_rule_cohort_versions", {
+  id:uuid("id").primaryKey().defaultRandom(),
+  workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
+  runId:uuid("run_id").notNull().references(()=>signalTopicEvaluationV2Runs.id,{onDelete:"restrict"}),
+  snapshotId:uuid("snapshot_id").notNull().references(()=>signalTopicEvaluationV2Snapshots.id,{onDelete:"restrict"}),
+  cohortRevision:integer("cohort_revision").notNull(),
+  predecessorId:uuid("predecessor_id").references(():AnyPgColumn=>signalTopicRuleCohortVersions.id,{onDelete:"restrict"}),
+  binding:jsonb("binding").notNull(),cohortDigest:text("cohort_digest").notNull(),
+  profileId:uuid("profile_id").notNull().unique().references(()=>signalTaxonomyProfiles.id,{onDelete:"restrict"}),
+  profileVersion:integer("profile_version").notNull(),profileBindingDigest:text("profile_binding_digest").notNull(),
+  actorUserId:uuid("actor_user_id").notNull().references(()=>users.id,{onDelete:"restrict"}),
+  idempotencyKey:text("idempotency_key").notNull(),request:jsonb("request").notNull(),requestDigest:text("request_digest").notNull(),
+  createdAt:timestamp("created_at",{withTimezone:true}).notNull().default(sql`clock_timestamp()`)
+},table=>[unique("uq_topic_rule_cohort_key").on(table.workspaceId,table.idempotencyKey),
+  unique("uq_topic_rule_cohort_revision").on(table.workspaceId,table.runId,table.cohortRevision),
+  unique("uq_topic_rule_cohort_workspace").on(table.id,table.workspaceId),
+  index("idx_signal_topic_rule_cohort_latest").on(table.workspaceId,table.runId,sql`${table.cohortRevision} DESC`)]);
+
+export const signalTopicRuleCohortTrialReceipts = pgTable("signal_topic_rule_cohort_trial_receipts", {
+  id:uuid("id").primaryKey().defaultRandom(),
+  workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
+  cohortId:uuid("cohort_id").notNull(),actorUserId:uuid("actor_user_id").notNull().references(()=>users.id,{onDelete:"restrict"}),
+  idempotencyKey:text("idempotency_key").notNull(),request:jsonb("request").notNull(),requestDigest:text("request_digest").notNull(),
+  result:jsonb("result").notNull(),resultDigest:text("result_digest").notNull(),
+  createdAt:timestamp("created_at",{withTimezone:true}).notNull().default(sql`clock_timestamp()`)
+},table=>[unique("uq_topic_rule_cohort_trial_key").on(table.workspaceId,table.idempotencyKey),
+  foreignKey({columns:[table.cohortId,table.workspaceId],foreignColumns:[signalTopicRuleCohortVersions.id,
+    signalTopicRuleCohortVersions.workspaceId]}).onDelete("restrict"),
+  index("idx_signal_topic_rule_cohort_trial_latest").on(table.cohortId,sql`${table.createdAt} DESC`,sql`${table.id} DESC`)]);
+
 export const brandsRelations = relations(brands, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [brands.organizationId],

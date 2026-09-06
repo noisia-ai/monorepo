@@ -1,9 +1,11 @@
 # Topic Rule Drafts y pruebas léxicas
 
-Referencia de los cortes LAB-2Y/2Z, 6 de septiembre de 2026. Motor local auditado;
-integración de pantalla en revisión local. Esto
-no implica que la migración 0123 o una nueva UI estén desplegadas. Los diez candidatos
-y sus citas ya visibles en UAT pertenecen al corte anterior LAB-2X.
+Referencia de los cortes LAB-2Y/2Z/3A, 6 de septiembre de 2026. Motor auditado y
+editor desplegado en Preview/UAT en `bd7dbf9`, con 0123 aplicada una vez y QA autenticado
+de lectura terminado. Las pruebas de guardar y medir se ejecutaron en PostgreSQL local
+con rollback; en UAT no se guardaron reglas durante el QA. Los diez candidatos y sus
+citas pertenecen al corte LAB-2X. La preparación posterior de un catálogo conjunto se
+describe en [Catálogo y prueba conjunta](76_TOPIC_COHORT_CATALOG_AND_JOINT_TRIAL.md).
 
 ## Qué resuelve
 

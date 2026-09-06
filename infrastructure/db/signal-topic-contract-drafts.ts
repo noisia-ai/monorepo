@@ -184,8 +184,8 @@ export async function runSignalTopicContractDraftTrialV1(args:Context&CandidateC
 export const SIGNAL_TOPIC_DRAFT_NORMALIZED_TEXT_SQL=String.raw`btrim(regexp_replace(normalize(mention.text_clean,NFKC),
   U&'[\0009-\000D\0020\00A0\1680\2000-\200A\2028\2029\202F\205F\3000\FEFF]+',' ','g'))`;
 /** Recheck only persisted example bindings. Historical measurements and receipts never change. */
-async function projectCurrentExamples(client:SignalTopicContractDraftClient,draft:DraftRow,
-  result:SignalTopicContractDraftTrialResultV1){
+async function projectCurrentExamples<T extends {evidence_ref:string}>(client:SignalTopicContractDraftClient,
+  draft:{workspace_id:string;snapshot_id:string},result:{snapshot_digest:string;examples:T[]}){
   const refs=result.examples.map((example)=>example.evidence_ref);
   if(refs.length>10)throw new SignalTopicContractDraftError("topic_rule_trial_examples_invalid");
   const rows=refs.length?(await client.query<{evidence_ref:string;available:boolean}>(`WITH requested_examples AS MATERIALIZED(
@@ -306,3 +306,6 @@ async function transaction<T>(client:SignalTopicContractDraftClient,body:()=>Pro
   catch(error){await client.query("ROLLBACK TO SAVEPOINT topic_rule_draft_v1");
     await client.query("RELEASE SAVEPOINT topic_rule_draft_v1");throw error;}
 }
+
+/** Internal DB composition only; intentionally not exported from the package barrel. */
+export const signalTopicRuleDraftInternal={authorize,sourceFor,projectCurrentExamples,sourceAvailabilitySql,transaction};
