@@ -1,6 +1,6 @@
 # Sugerencias de reglas para candidatos de tópicos
 
-LAB-3E-A, 6 de septiembre de 2026. Adaptador local terminado y auditado; todavía no es
+LAB-3E-A/B, 6 de septiembre de 2026. Adaptador y puente de guardado locales auditados; todavía no es
 una nueva acción disponible en UAT ni una llamada ejecutada a IA. El catálogo y
 la prueba conjunta ya están desplegados por LAB-3D.
 
@@ -72,12 +72,39 @@ pasaron; lint conserva 15 advertencias anteriores sin errores nuevos. La revisi�
 independiente cerró sin hallazgos pendientes. Esto valida el adaptador, no una
 generación, recepción persistente ni pantalla nueva en UAT.
 
-## Después de A
+## Segundo corte: recibo y edición reversible
 
 La recepción persistente de sugerencias, su reapertura y vinculación al guardado
-ordinario forman el siguiente corte. Una edición conserva la propuesta original;
+ordinario ya pasaron una prueba real local de PostgreSQL en LAB-3E-B. Usa una plantilla
+simulada sobre candidato y evidencia reales cargados por el servidor. Está
+marcada como `local_fixture`, con cero llamadas y coste; no se presenta como una
+respuesta real de IA ni está conectada a una ruta pública o al botón de UAT.
+
+Una edición conserva la propuesta original;
 restaurar una regla anterior debe crear otra versión, no borrar historia ni usar
 el undo editorial del candidato.
+
+Guardar la propuesta, cambiar sus frases y restaurar una regla guardada reutilizan
+el writer ordinario de borradores. El vínculo conserva cuál sugerencia inició esa
+versión y cuál fue la regla efectivamente guardada. Leerla no vuelve a generar ni
+a medir; las referencias dejan de estar disponibles si cambian sus fuentes.
+
+La prueba conservó tres citas actuales y contexto de marca disponible, guardó tres
+revisiones (guardar, editar y restaurar), comprobó la recuperación de la misma
+operación y formó un catálogo con reglas de dos candidatos distintos. Una prueba
+léxica separada consideró sólo 100 de 21,195 registros: los otros 21,095 se informaron
+como no evaluados. No hubo coincidencias en esos 100; no es una conclusión sobre
+la calidad o cobertura de la regla en todo el corpus.
+
+Todo se revirtió al terminar y la huella de los datos originales quedó idéntica.
+Los controles de permisos, versiones, evidencia cambiada y escritura parcial se
+probaron realmente en PostgreSQL; no se simuló concurrencia entre conexiones.
+Este resultado todavía no despliega una pantalla ni representa una llamada a IA.
+
+El comprobante final de PostgreSQL cubre 34 controles, incluido el rechazo de
+caracteres de control en la explicación. La suite estándar de DB conserva 169
+pruebas aprobadas y 28 omisiones explícitas de integración; la prueba real anterior
+se ejecutó por separado con cliente local y rollback, no se infiere de esas omisiones.
 
 Después se conecta la acción de sugerir con ejecución presupuestada de propósito
 específico. No se reutiliza un recibo viejo de naming como permiso para generar

@@ -16,4 +16,5 @@ export {createSignalTopicContractDraftV1,loadSignalTopicContractDraftV1,loadSign
   type SignalTopicContractDraftClient,type SignalTopicContractDraftV1,type SignalTopicContractDraftTrialResultV1,
   type SignalTopicContractDraftTrialV1} from "./signal-topic-contract-drafts";
 export * from "./signal-topic-rule-cohorts";
+export * from "./signal-topic-rule-suggestions";
 export * from "./sentione-csv-ingest";

@@ -7401,6 +7401,42 @@ export const signalTopicRuleCohortTrialReceipts = pgTable("signal_topic_rule_coh
     signalTopicRuleCohortVersions.workspaceId]}).onDelete("restrict"),
   index("idx_signal_topic_rule_cohort_trial_latest").on(table.cohortId,sql`${table.createdAt} DESC`,sql`${table.id} DESC`)]);
 
+export const signalTopicRuleSuggestionReceipts = pgTable("signal_topic_rule_suggestion_receipts", {
+  id:uuid("id").primaryKey().defaultRandom(),workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
+  runId:uuid("run_id").notNull(),candidateId:uuid("candidate_id").notNull(),snapshotId:uuid("snapshot_id").notNull(),
+  sourceRevision:integer("source_revision").notNull(),sourceVersionDigest:text("source_version_digest").notNull(),
+  sourceStateToken:text("source_state_token").notNull(),rightsDigest:text("rights_digest").notNull(),authorityDigest:text("authority_digest").notNull(),
+  origin:text("origin").notNull().default("local_fixture"),providerExecution:boolean("provider_execution").notNull().default(false),
+  providerCalls:integer("provider_calls").notNull().default(0),inputTokens:integer("input_tokens").notNull().default(0),
+  outputTokens:integer("output_tokens").notNull().default(0),costMicroUsd:bigint("cost_micro_usd",{mode:"number"}).notNull().default(0),
+  fixture:jsonb("fixture").notNull(),fixtureDigest:text("fixture_digest").notNull(),context:jsonb("context").notNull(),
+  contextDigest:text("context_digest").notNull(),adaptation:jsonb("adaptation").notNull(),outputDigest:text("output_digest").notNull(),
+  preparedContext:jsonb("prepared_context").notNull(),preparedContextDigest:text("prepared_context_digest").notNull(),
+  receiptDigest:text("receipt_digest").notNull(),actorUserId:uuid("actor_user_id").notNull().references(()=>users.id,{onDelete:"restrict"}),
+  idempotencyKey:text("idempotency_key").notNull(),request:jsonb("request").notNull(),requestDigest:text("request_digest").notNull(),
+  createdAt:timestamp("created_at",{withTimezone:true}).notNull().default(sql`clock_timestamp()`)
+},table=>[unique("uq_topic_rule_suggestion_key").on(table.workspaceId,table.idempotencyKey),
+  unique("uq_topic_rule_suggestion_workspace").on(table.id,table.workspaceId),
+  foreignKey({columns:[table.candidateId,table.runId,table.workspaceId],foreignColumns:[signalTopicEvaluationV2Candidates.id,
+    signalTopicEvaluationV2Candidates.runId,signalTopicEvaluationV2Candidates.workspaceId]}).onDelete("restrict"),
+  foreignKey({columns:[table.snapshotId,table.workspaceId],foreignColumns:[signalTopicEvaluationV2Snapshots.id,
+    signalTopicEvaluationV2Snapshots.workspaceId]}).onDelete("restrict"),
+  index("idx_signal_topic_rule_suggestion_latest").on(table.workspaceId,table.runId,table.candidateId,sql`${table.createdAt} DESC`,sql`${table.id} DESC`)]);
+
+export const signalTopicRuleSuggestionDraftLinks = pgTable("signal_topic_rule_suggestion_draft_links", {
+  id:uuid("id").primaryKey().defaultRandom(),workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
+  receiptId:uuid("receipt_id").notNull(),draftId:uuid("draft_id").notNull(),action:text("action").notNull(),
+  restoreDraftId:uuid("restore_draft_id").references(()=>signalTopicContractDraftVersions.id,{onDelete:"restrict"}),
+  actorUserId:uuid("actor_user_id").notNull().references(()=>users.id,{onDelete:"restrict"}),idempotencyKey:text("idempotency_key").notNull(),
+  request:jsonb("request").notNull(),requestDigest:text("request_digest").notNull(),draftKey:text("draft_key").notNull(),
+  draftRequest:jsonb("draft_request").notNull(),createdAt:timestamp("created_at",{withTimezone:true}).notNull().default(sql`clock_timestamp()`)
+},table=>[unique("uq_topic_rule_suggestion_link_key").on(table.workspaceId,table.idempotencyKey),unique("uq_topic_rule_suggestion_link_draft").on(table.draftId),
+  foreignKey({columns:[table.receiptId,table.workspaceId],foreignColumns:[signalTopicRuleSuggestionReceipts.id,
+    signalTopicRuleSuggestionReceipts.workspaceId]}).onDelete("restrict"),
+  foreignKey({columns:[table.draftId,table.workspaceId],foreignColumns:[signalTopicContractDraftVersions.id,
+    signalTopicContractDraftVersions.workspaceId]}).onDelete("restrict"),
+  index("idx_signal_topic_rule_suggestion_link_latest").on(table.receiptId,sql`${table.createdAt} DESC`,sql`${table.id} DESC`)]);
+
 export const brandsRelations = relations(brands, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [brands.organizationId],
