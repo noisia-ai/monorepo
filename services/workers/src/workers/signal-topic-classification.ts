@@ -685,7 +685,10 @@ async function registerCalibratedAuthorities(
   `, [execution.source_execution_id])).rows[0];
   const result = new Map<string, TopicCalibrationAuthority>();
   if (!source?.embedding_model) return result;
-  const effectiveFrom = new Date().toISOString();
+  const effectiveFrom = (await client.query<{ effective_from: string }>(
+    "SELECT transaction_timestamp()::text effective_from"
+  )).rows[0]?.effective_from;
+  if (!effectiveFrom) throw new Error("topic_authority_effective_time_unavailable");
   for (const topic of topics) {
     const calibration = calibrations.get(topic.definition.term_key);
     if (!calibration?.available || calibration.threshold === null) continue;

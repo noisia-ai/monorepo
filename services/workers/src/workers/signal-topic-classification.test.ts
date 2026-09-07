@@ -120,3 +120,11 @@ test("publication rejects scopes without a governed Signal output", async () => 
   assert.match(source, /activeTopics\.some\(\(topic\) => topic\.definition\.scope !== "primary_brand"\)/u);
   assert.match(source, /throw new Error\("topic_signal_scope_unsupported"\)/u);
 });
+
+test("classification authority shares the database transaction timestamp", async () => {
+  const source = await readFile(new URL("./signal-topic-classification.ts", import.meta.url), "utf8");
+  const register = source.slice(source.indexOf("async function registerCalibratedAuthorities"),
+    source.indexOf("async function loadRoots"));
+  assert.match(register, /SELECT transaction_timestamp\(\)::text effective_from/u);
+  assert.doesNotMatch(register, /const effectiveFrom = new Date\(\)/u);
+});

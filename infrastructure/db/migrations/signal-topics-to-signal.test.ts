@@ -4,6 +4,18 @@ import test from "node:test";
 
 const migrationUrl = new URL("./0127_signal_topics_to_signal.sql", import.meta.url);
 const hardeningUrl = new URL("./0128_signal_topics_to_signal_hardening.sql", import.meta.url);
+const watermarkHardeningUrl = new URL(
+  "./0129_signal_classification_watermark_digest_hardening.sql",
+  import.meta.url
+);
+const authoritySearchPathHardeningUrl = new URL(
+  "./0130_signal_classification_authority_search_path_hardening.sql",
+  import.meta.url
+);
+const populationWatermarkRunnerUrl = new URL(
+  "../scripts/prepare-signal-topics-uat-population-watermark.ts",
+  import.meta.url
+);
 
 test("Topics catalog migration keeps search evidence durable and corrections replay-safe", async () => {
   const sql = await readFile(migrationUrl, "utf8");
@@ -65,4 +77,37 @@ test("Topics hardening seals population, corrections and paid embedding outcomes
   assert.match(sql, /requires a freshly recomputed population and definition snapshot/u);
   assert.match(sql, /profile\.status='activating'/u);
   assert.doesNotMatch(sql, /(?:DROP TABLE|TRUNCATE|DELETE FROM mentions)/u);
+});
+
+test("classification watermark remains callable from a restricted publication search path", async () => {
+  const sql = await readFile(watermarkHardeningUrl, "utf8");
+  assert.match(sql,
+    /CREATE OR REPLACE FUNCTION public\.signal_classification_watermark_digest_v1/u);
+  assert.match(sql, /extensions\.digest/u);
+  assert.match(sql, /FROM public\.signal_data_watermarks/u);
+  assert.doesNotMatch(sql, /(?:DROP TABLE|TRUNCATE|DELETE FROM)/u);
+});
+
+test("classification authority writers can resolve trusted extension functions", async () => {
+  const sql = await readFile(authoritySearchPathHardeningUrl, "utf8");
+  for (const name of [
+    "register_signal_labeling_function_v1",
+    "register_signal_classification_approval_policy_v1",
+    "project_signal_classification_generation_v1",
+    "begin_signal_classification_generation_v1",
+    "append_signal_classification_result_batch_v1",
+    "finalize_signal_classification_generation_v1"
+  ]) assert.match(sql, new RegExp(`ALTER FUNCTION public\\.${name}`, "u"));
+  assert.equal((sql.match(/SET search_path=public,extensions,pg_temp/gu) ?? []).length, 12);
+  assert.doesNotMatch(sql, /(?:DROP TABLE|TRUNCATE|DELETE FROM)/u);
+});
+
+test("the UAT population watermark is guarded, derived and idempotently verified", async () => {
+  const source = await readFile(populationWatermarkRunnerUrl, "utf8");
+  assert.match(source, /target !== "noisia-staging"/u);
+  assert.match(source, /NOISIA_TOPIC_CATALOG_FIXTURE_APPROVED/u);
+  assert.match(source, /expectedIncludedMentions = 192/u);
+  assert.match(source, /derived_from_watermark_id/u);
+  assert.match(source, /fixture\.length === 1/u);
+  assert.doesNotMatch(source, /(?:DROP TABLE|TRUNCATE|DELETE FROM)/u);
 });
