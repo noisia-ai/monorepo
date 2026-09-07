@@ -21,21 +21,21 @@ type ReceiptRow={id:string;workspace_id:string;run_id:string;candidate_id:string
   source_revision:number;source_version_digest:string;source_state_token:string;rights_digest:string;
   authority_digest:string;context:SignalTopicRuleSuggestionContextV1;adaptation:SignalTopicRuleSuggestionDraftV1;
   fixture_digest:string;output_digest:string;context_digest:string;prepared_context_digest:string;receipt_digest:string;created_at:string;
-  actor_user_id:string;request_digest:string};
+  actor_user_id:string;request_digest:string;origin?:"local_fixture"|"provider";provider_calls?:number;input_tokens?:number;output_tokens?:number;cost_micro_usd?:number};
 type LinkRow={id:string;receipt_id:string;draft_id:string;action:"save"|"restore";request:Record<string,unknown>;
   request_digest:string;actor_user_id:string;draft_key:string;draft_request:Parameters<typeof createSignalTopicContractDraftV1>[0]};
 export type SignalTopicRuleSuggestionReceiptV1={contract_version:"signal-topic-rule-suggestion-receipt-v1";
-  receipt_id:string;origin:"local_fixture";fixture_digest:string;output_digest:string;context_digest:string;prepared_context_digest:string;
+  receipt_id:string;origin:"local_fixture"|"provider";fixture_digest:string;output_digest:string;context_digest:string;prepared_context_digest:string;
   receipt_digest:string;adaptation:SignalTopicRuleSuggestionDraftV1;created_at:string;is_stale:boolean;
   stale_reasons:Array<"candidate_changed"|"brand_os_changed"|"evidence_unavailable">;
   current_draft:{revision:number;digest:string|null};draft_changed:boolean;
   evidence:{stored:number;available:number;unavailable:number};
   latest_link:null|{link_id:string;draft_id:string;action:"save"|"restore"};
-  provider_execution:false;provider_calls:0;input_tokens:0;output_tokens:0;cost_micro_usd:0;idempotent_replay:boolean};
+  provider_execution:boolean;provider_calls:number;input_tokens:number;output_tokens:number;cost_micro_usd:number;idempotent_replay:boolean};
 export type SignalTopicRuleSuggestionBridgeV1={link_id:string;receipt_id:string;action:"save"|"restore";
   draft:SignalTopicContractDraftV1;idempotent_replay:boolean};
 export type SignalTopicRuleSuggestionEvidenceV1={contract_version:"signal-topic-rule-suggestion-evidence-v1";
-  receipt_id:string;origin:"local_fixture";citations:Array<
+  receipt_id:string;origin:"local_fixture"|"provider";citations:Array<
     {evidence_ref:string;status:"available";excerpt:string;language:string|null;market:string|null;scope:string|null;month:string}
     |{evidence_ref:string;status:"unavailable";reason:"source_changed"}>;
   availability:{stored:number;available:number;unavailable:number}};
@@ -259,7 +259,7 @@ export async function loadSignalTopicRuleSuggestionEvidenceV1(args:ReceiptRead):
       {snapshot_digest:source.snapshot_digest,examples:examples.slice(offset,offset+10)});
     projected.examples.forEach(example=>available.set(example.evidence_ref,example));
   }
-  return{contract_version:"signal-topic-rule-suggestion-evidence-v1",receipt_id:receipt.id,origin:"local_fixture",
+  return{contract_version:"signal-topic-rule-suggestion-evidence-v1",receipt_id:receipt.id,origin:receipt.origin??"local_fixture",
     citations:refs.map(ref=>available.get(ref.evidence_ref)??{evidence_ref:ref.evidence_ref,status:"unavailable",reason:"source_changed"}),
     availability:{stored:refs.length,available:available.size,unavailable:refs.length-available.size}};
 }
@@ -292,13 +292,13 @@ async function project(client:Client,args:Scope,row:ReceiptRow,replayed:boolean)
   const link=(await client.query<{id:string;draft_id:string;action:"save"|"restore"}>(`SELECT id::text,draft_id::text,action
     FROM signal_topic_rule_suggestion_draft_links WHERE receipt_id=$1::uuid AND workspace_id=$2::uuid ORDER BY created_at DESC,id DESC LIMIT 1`,
   [row.id,args.workspace_id])).rows[0];
-  return{contract_version:"signal-topic-rule-suggestion-receipt-v1",receipt_id:row.id,origin:"local_fixture",
+  return{contract_version:"signal-topic-rule-suggestion-receipt-v1",receipt_id:row.id,origin:row.origin??"local_fixture",
     fixture_digest:row.fixture_digest,output_digest:row.output_digest,context_digest:row.context_digest,
     prepared_context_digest:row.prepared_context_digest,receipt_digest:row.receipt_digest,
     adaptation:row.adaptation,created_at:new Date(row.created_at).toISOString(),is_stale:stale.length>0,stale_reasons:stale,
     current_draft:prior,draft_changed:prior.revision!==row.context.draft.revision||prior.digest!==row.context.draft.digest,evidence,
     latest_link:link?{link_id:link.id,draft_id:link.draft_id,action:link.action}:null,
-    provider_execution:false,provider_calls:0,input_tokens:0,output_tokens:0,cost_micro_usd:0,idempotent_replay:replayed};
+    provider_execution:row.origin==="provider",provider_calls:row.provider_calls??0,input_tokens:row.input_tokens??0,output_tokens:row.output_tokens??0,cost_micro_usd:Number(row.cost_micro_usd??0),idempotent_replay:replayed};
 }
 
 type Edit={action:"save";lexical:SignalTopicRuleSpecV1["lexical"];filters:SignalTopicRuleSpecV1["filters"]}
@@ -346,3 +346,6 @@ export async function saveSignalTopicRuleSuggestionDraftV1(args:Scope&CAS&Edit&{
     return{link_id:link.id,receipt_id:args.receipt_id,action:args.action,draft,idempotent_replay:false};
   });
 }
+
+/** Server-only composition for the dedicated execution module; not execution authority. */
+export const signalTopicRuleSuggestionInternal={validate,requestCAS,source,candidateCAS,assertDraftCAS,currentReferences,transaction};

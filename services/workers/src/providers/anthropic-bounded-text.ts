@@ -1,6 +1,6 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText, InvalidPromptError, LoadAPIKeyError, LoadSettingError,
-  NoObjectGeneratedError, NoSuchModelError, Output, UnsupportedFunctionalityError } from "ai";
+  NoObjectGeneratedError, NoOutputGeneratedError, NoSuchModelError, Output, UnsupportedFunctionalityError } from "ai";
 import type { ZodTypeAny } from "zod";
 
 import { buildSignalSemanticContextProviderOutputSchemaV3,
@@ -10,6 +10,12 @@ import { buildSignalSemanticContextProviderOutputSchemaV3,
   type SignalTopicEvaluationProviderV1,
   type SignalSemanticContextProposalProviderV1 } from "@noisia/query-engine";
 
+type BoundedTextResult = {
+  text: string; provider_request_id: string | null;
+  usage: { input_tokens: number; output_tokens: number };
+  structured_output_failure?: "output_limit" | "missing_output";
+};
+
 /** Canonical Worker transport. Domain adapters own prompts, schemas and authority. */
 export async function generateAnthropicBoundedTextV1(request: {
   model: string;
@@ -17,7 +23,7 @@ export async function generateAnthropicBoundedTextV1(request: {
   max_output_tokens?: number;
   temperature?: number;
   structured_output?: { schema: ZodTypeAny; name: string; description: string };
-}, modelFactory: (model: string) => ReturnType<typeof anthropic> = anthropic) {
+}, modelFactory: (model: string) => ReturnType<typeof anthropic> = anthropic): Promise<BoundedTextResult> {
   try {
     const result = await generateText({ model: modelFactory(request.model), prompt: request.prompt,
       ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
@@ -27,11 +33,22 @@ export async function generateAnthropicBoundedTextV1(request: {
         name: request.structured_output.name,
         description: request.structured_output.description
       }) } : {}) });
-    return { text: request.structured_output
-      ? stableSignalSemanticContextJsonV1(result.output) : result.text,
-    provider_request_id: result.response.id || null,
-    usage: { input_tokens: Math.max(0, Math.floor(result.usage.inputTokens ?? 0)),
-      output_tokens: Math.max(0, Math.floor(result.usage.outputTokens ?? 0)) } };
+    const metadata = { provider_request_id: result.response.id || null,
+      usage: { input_tokens: Math.max(0, Math.floor(result.usage.inputTokens ?? 0)),
+        output_tokens: Math.max(0, Math.floor(result.usage.outputTokens ?? 0)) } };
+    try {
+      return { text: request.structured_output
+        ? stableSignalSemanticContextJsonV1(result.output) : result.text, ...metadata };
+    } catch (error) {
+      // In AI SDK 6 a length/refusal finish returns a metered result, then its output getter
+      // throws NoOutputGeneratedError without that metadata. It is NOT an unknown transport.
+      // Empty text deliberately fails domain validation; never accept a partial proposal.
+      if (request.structured_output && NoOutputGeneratedError.isInstance(error)) {
+        return { text: "", ...metadata, structured_output_failure:
+          result.finishReason === "length" ? "output_limit" : "missing_output" };
+      }
+      throw error;
+    }
   } catch (error) {
     // The provider did answer. Preserve its text and usage so the durable run can fail
     // validation without turning a known paid response into an ambiguous retry state.

@@ -120,6 +120,7 @@ async function harness(overrides:Record<string,unknown>={}){
     module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)((name:string)=>{
     if(name==="@noisia/db")return fns;if(name==="@/lib/db")return{pool:{connect:async()=>{log.push("connect");return client;}}};
     if(name==="./signal-topic-rule-draft-product")return{withTopicRuleTransaction};
+    if(name==="./signal-topic-rule-execution-product")return{topicRuleExecutionCapability:async()=>({enabled:false,reason:"execution_not_enabled"})};
     if(name==="./signal-topic-rule-suggestion-management")return management;throw new Error(`Unexpected ${name}`);
   },exports);return{api:exports as typeof import("./signal-topic-rule-suggestion-product"),log};
 }

@@ -4,6 +4,7 @@ import {loadSignalTopicRuleSuggestionV1,loadSignalTopicRuleSuggestionEvidenceV1,
 import type {ResolvedSignalWorkspace,SignalWorkspaceUser} from "./signal-workspace";
 import {withTopicRuleTransaction} from "./signal-topic-rule-draft-product";
 import {topicRuleSuggestionPageSchema,topicRuleSuggestionBridgeSchema,type TopicRuleSuggestionCommand} from "./signal-topic-rule-suggestion-management";
+import {topicRuleExecutionCapability} from "./signal-topic-rule-execution-product";
 type Context={workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser};
 function actor(value:SignalWorkspaceUser){if(value.userType!=="noisia_internal")
   throw Object.assign(new Error("topic_rule_suggestion_forbidden"),{code:"topic_rule_suggestion_forbidden"});
@@ -17,6 +18,7 @@ function receiptProjection(receipt:SignalTopicRuleSuggestionReceiptV1|null){if(!
     evidence:receipt.evidence,latest_link:receipt.latest_link,created_at:receipt.created_at};}
 export async function loadTopicRuleSuggestionProduct(args:Context&{runKey:string;candidateKey:string;receiptId?:string;includeCitations?:boolean}){
   const authorized=actor(args.actor),{pool}=await import("@/lib/db");
+  const generation=await topicRuleExecutionCapability({workspace:args.workspace.id,run:args.runKey,candidate:args.candidateKey});
   return withTopicRuleTransaction(pool,true,async client=>{
     const context={queryable:client,workspace_id:args.workspace.id,actor:authorized,run_key:args.runKey,candidate_key:args.candidateKey};
     const detail=await loadSignalTopicEvaluationV2CandidateDetail(context);
@@ -33,7 +35,7 @@ export async function loadTopicRuleSuggestionProduct(args:Context&{runKey:string
         candidate:{title,description,revision,state_token,review_state},draft,trial},receipt:receiptProjection(receipt),
       citations:evidence?{receipt_id:evidence.receipt_id,items:evidence.citations,availability:evidence.availability}:null,
       prior_drafts:prior?[{draft_id:prior.draft_id,revision:prior.revision}]:[],
-      generation:{enabled:false,reason:"execution_not_enabled"}});
+      generation});
   });
 }
 export async function saveTopicRuleSuggestionProduct(args:Context&{request:TopicRuleSuggestionCommand;idempotencyKey:string}){

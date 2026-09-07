@@ -2316,6 +2316,27 @@
             "generate": "Suggest rule",
             "generationDisabled": "Automatic generation is not enabled in this environment yet. You can edit and test saved rules.",
             "localFixture": "Local simulation",
+            "provider": "AI suggestion",
+            "execution": {
+              "generate": "Suggest rule",
+              "disabled": "Automatic generation is not enabled in this environment yet. You can edit and test saved rules.",
+              "budget": "One suggestion, up to USD {amount}. Uses the saved candidate, Brand OS and its mentions. Saving and testing are separate steps.",
+              "cost": "Known cost: USD {amount}.",
+              "refresh": "Check status",
+              "recover": "Recover same request",
+              "readFailed": "Could not check the status. Check again before recovering the request.",
+              "storageFailed": "Could not retain the request in this browser. No new generation was sent.",
+              "rejected": "Generation is unavailable for this request. Refresh the candidate and check its status.",
+              "uncertain": "Receipt was not confirmed. Check the status and recover the same request; do not start another.",
+              "status": {
+                "pending": "Request saved, waiting for the Worker.",
+                "claimed": "Preparing the suggestion with context and mentions. You can return later.",
+                "completed": "Suggestion ready to review. Your edited fields are preserved.",
+                "definitely_not_sent": "Execution ended before contacting the provider.",
+                "outcome_unknown": "The provider outcome requires reconciliation. It will not be retried automatically.",
+                "failed": "Execution ended without a usable suggestion. You can continue editing the rule."
+              }
+            },
             "empty": "This candidate has no saved rule suggestion yet.",
             "stale": "The source, candidate or permissions changed. You can read this suggestion, but cannot use it as current.",
             "insufficient": "There was not enough evidence to suggest a rule.",
@@ -2348,6 +2369,12 @@
               "topic_rule_suggestion_restore_invalid": "That previous version cannot be restored.",
               "topic_rule_suggestion_idempotency_conflict": "This key belongs to another request. Review the saved state.",
               "topic_rule_suggestion_forbidden": "You no longer have access to this operation.",
+              "topic_rule_suggestion_execution_not_enabled": "Generation is not enabled yet.",
+              "topic_rule_suggestion_execution_experiment_limit": "The authorized experiment already has a request. Check its result.",
+              "topic_rule_suggestion_execution_source_stale": "The context changed. Refresh the candidate before continuing.",
+              "topic_rule_suggestion_execution_idempotency_conflict": "This key belongs to a different request.",
+              "topic_rule_suggestion_execution_not_found": "This execution was not found.",
+              "topic_rule_suggestion_execution_forbidden": "You no longer have access to this execution.",
               "topic_rule_suggestion_schema_unavailable": "Suggestions are not available here yet. Ordinary editing remains available.",
               "topic_rule_suggestion_operation_failed": "The operation could not be confirmed. Refresh and recover the same request if needed."
             }

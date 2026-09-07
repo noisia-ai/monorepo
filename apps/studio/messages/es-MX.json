@@ -2316,6 +2316,27 @@
             "generate": "Sugerir regla",
             "generationDisabled": "La generación automática todavía no está habilitada en este entorno. Puedes editar y probar reglas guardadas.",
             "localFixture": "Simulación local",
+            "provider": "Sugerencia de IA",
+            "execution": {
+              "generate": "Sugerir regla",
+              "disabled": "La generación automática todavía no está habilitada en este entorno. Puedes editar y probar reglas guardadas.",
+              "budget": "Una sugerencia, hasta USD {amount}. Usa el candidato guardado, Brand OS y sus menciones. Guardar y probar son pasos separados.",
+              "cost": "Coste conocido: USD {amount}.",
+              "refresh": "Consultar estado",
+              "recover": "Recuperar misma solicitud",
+              "readFailed": "No se pudo consultar el estado. Vuelve a consultar antes de recuperar la solicitud.",
+              "storageFailed": "No se pudo conservar la solicitud en este navegador. No se ha enviado una nueva generación.",
+              "rejected": "La generación no está disponible para esta solicitud. Actualiza el candidato y consulta su estado.",
+              "uncertain": "No se confirmó la recepción. Consulta el estado y recupera la misma solicitud; no inicies otra.",
+              "status": {
+                "pending": "Solicitud guardada, esperando al Worker.",
+                "claimed": "Preparando la sugerencia con contexto y menciones. Puedes volver más tarde.",
+                "completed": "Sugerencia lista para revisar. Tus campos editados se conservan.",
+                "definitely_not_sent": "La ejecución terminó antes de llamar al proveedor.",
+                "outcome_unknown": "El resultado del proveedor requiere reconciliación. No se repetirá automáticamente.",
+                "failed": "La ejecución terminó sin una sugerencia utilizable. Puedes continuar editando la regla."
+              }
+            },
             "empty": "Este candidato aún no tiene una sugerencia de regla guardada.",
             "stale": "La fuente, el candidato o los permisos cambiaron. Puedes leer esta sugerencia, pero no usarla como vigente.",
             "insufficient": "No hubo evidencia suficiente para proponer una regla.",
@@ -2348,6 +2369,12 @@
               "topic_rule_suggestion_restore_invalid": "Esa versión anterior no se puede restaurar.",
               "topic_rule_suggestion_idempotency_conflict": "La clave corresponde a otra solicitud. Revisa el estado guardado.",
               "topic_rule_suggestion_forbidden": "Ya no tienes acceso a esta operación.",
+              "topic_rule_suggestion_execution_not_enabled": "La generación todavía no está habilitada.",
+              "topic_rule_suggestion_execution_experiment_limit": "El experimento autorizado ya tiene una solicitud. Consulta su resultado.",
+              "topic_rule_suggestion_execution_source_stale": "Cambió el contexto. Actualiza el candidato antes de continuar.",
+              "topic_rule_suggestion_execution_idempotency_conflict": "La clave corresponde a otra solicitud.",
+              "topic_rule_suggestion_execution_not_found": "No se encontró esta ejecución.",
+              "topic_rule_suggestion_execution_forbidden": "Ya no tienes acceso a esta ejecución.",
               "topic_rule_suggestion_schema_unavailable": "Las sugerencias todavía no están disponibles aquí. La edición ordinaria sigue disponible.",
               "topic_rule_suggestion_operation_failed": "No pudimos confirmar la operación. Actualiza y recupera la misma solicitud si fuera necesario."
             }

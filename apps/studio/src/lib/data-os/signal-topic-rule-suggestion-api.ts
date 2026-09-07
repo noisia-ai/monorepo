@@ -17,6 +17,6 @@ export function topicRuleSuggestionError(error:unknown){
   const code=topicRuleSuggestionSafeErrors.find(item=>item===mapped)??"topic_rule_suggestion_operation_failed";
   const status=code.endsWith("forbidden")?403:code.endsWith("not_found")?404
     :code.endsWith("request_invalid")||code.endsWith("scope_mismatch")||code.endsWith("restore_invalid")?422
-    :code.endsWith("schema_unavailable")?503:code.endsWith("operation_failed")?500:409;
+    :code.endsWith("schema_unavailable")||code.endsWith("execution_not_enabled")?503:code.endsWith("operation_failed")?500:409;
   return topicRuleResponse({error:code},status);
 }

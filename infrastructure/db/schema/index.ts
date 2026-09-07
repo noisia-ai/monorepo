@@ -7401,7 +7401,30 @@ export const signalTopicRuleCohortTrialReceipts = pgTable("signal_topic_rule_coh
     signalTopicRuleCohortVersions.workspaceId]}).onDelete("restrict"),
   index("idx_signal_topic_rule_cohort_trial_latest").on(table.cohortId,sql`${table.createdAt} DESC`,sql`${table.id} DESC`)]);
 
+// SQL 0126 owns lifecycle triggers, exact terminal binding and the deferred receipt FK.
+export const signalTopicRuleSuggestionExecutions = pgTable("signal_topic_rule_suggestion_executions", {
+  id:uuid("id").primaryKey().defaultRandom(),workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
+  actorUserId:uuid("actor_user_id").notNull().references(()=>users.id,{onDelete:"restrict"}),
+  runId:uuid("run_id").notNull(),candidateId:uuid("candidate_id").notNull(),snapshotId:uuid("snapshot_id").notNull(),
+  purpose:text("purpose").notNull().default("topic_rule_suggestion_v1"),model:text("model").notNull().default("claude-haiku-4-5-20251001"),
+  request:jsonb("request").notNull(),requestDigest:text("request_digest").notNull(),idempotencyKey:text("idempotency_key").notNull(),
+  status:text("status").notNull().default("pending"),claimToken:uuid("claim_token"),context:jsonb("context").notNull(),preparedContext:jsonb("prepared_context").notNull(),
+  rightsDigest:text("rights_digest").notNull(),authorityDigest:text("authority_digest").notNull(),budgetMicroUsd:bigint("budget_micro_usd",{mode:"number"}).notNull(),
+  calls:jsonb("calls").notNull().default(sql`'[]'::jsonb`),navigations:jsonb("navigations").notNull().default(sql`'[]'::jsonb`),
+  receiptId:uuid("receipt_id"),outputText:text("output_text"),outputDigest:text("output_digest"),adaptation:jsonb("adaptation"),receiptDigest:text("receipt_digest"),
+  providerCalls:integer("provider_calls").notNull().default(0),inputTokens:integer("input_tokens").notNull().default(0),outputTokens:integer("output_tokens").notNull().default(0),
+  costMicroUsd:bigint("cost_micro_usd",{mode:"number"}).default(0),createdAt:timestamp("created_at",{withTimezone:true}).notNull().default(sql`clock_timestamp()`),
+  terminalAt:timestamp("terminal_at",{withTimezone:true})
+},table=>[unique("signal_topic_rule_suggestion_executions_id_workspace_id_key").on(table.id,table.workspaceId),
+  unique("signal_topic_rule_suggestion_executions_workspace_id_idempotency_key_key").on(table.workspaceId,table.idempotencyKey),
+  unique("signal_topic_rule_suggestion_executions_workspace_id_purpose_key").on(table.workspaceId,table.purpose),
+  foreignKey({columns:[table.candidateId,table.runId,table.workspaceId],foreignColumns:[signalTopicEvaluationV2Candidates.id,
+    signalTopicEvaluationV2Candidates.runId,signalTopicEvaluationV2Candidates.workspaceId]}).onDelete("restrict"),
+  foreignKey({columns:[table.snapshotId,table.workspaceId],foreignColumns:[signalTopicEvaluationV2Snapshots.id,signalTopicEvaluationV2Snapshots.workspaceId]}).onDelete("restrict"),
+  index("idx_topic_rule_suggestion_pending_dispatch").on(table.createdAt).where(sql`${table.status}='pending'`)]);
+
 export const signalTopicRuleSuggestionReceipts = pgTable("signal_topic_rule_suggestion_receipts", {
+  executionId:uuid("execution_id").unique("signal_topic_suggestion_execution_unique").references(()=>signalTopicRuleSuggestionExecutions.id,{onDelete:"restrict"}),
   id:uuid("id").primaryKey().defaultRandom(),workspaceId:uuid("workspace_id").notNull().references(()=>signalWorkspaces.id,{onDelete:"restrict"}),
   runId:uuid("run_id").notNull(),candidateId:uuid("candidate_id").notNull(),snapshotId:uuid("snapshot_id").notNull(),
   sourceRevision:integer("source_revision").notNull(),sourceVersionDigest:text("source_version_digest").notNull(),

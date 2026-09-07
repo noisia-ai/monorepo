@@ -15,6 +15,7 @@ import {
 } from "@noisia/query-engine";
 
 type DataOsStudioJobData =
+  | {execution_id:string}
   | DataOsShadowRunJobData
   | SignalMaterializeJobDataV1
   | SignalMonthlyInsightJobDataV1

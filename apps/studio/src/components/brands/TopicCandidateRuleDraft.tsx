@@ -1,6 +1,7 @@
 "use client";
 
 import React,{ useCallback,useEffect,useRef,useState } from "react";
+import {TopicRuleSuggestionExecution} from "./TopicRuleSuggestionExecution";
 import { useLocale,useTranslations } from "next-intl";
 import { formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { emptyTopicRuleFields,loadTopicRuleDraftPage,requestTopicRuleJson,TopicRuleRequestError,
@@ -32,6 +33,8 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
   const[usedReceipt,setUsedReceipt]=useState<string|null>(null),[beforeCopy,setBeforeCopy]=useState<{fields:TopicRuleFields;receipt:string|null}|null>(null);
   const[formBase,setFormBase]=useState<{candidate_revision:number;candidate_state_token:string;draft_revision:number;draft_digest:string|null}|null>(null);
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
+  const[executionBusy,setExecutionBusy]=useState(false);
+  const generationBusyChange=useCallback((value:boolean)=>{setExecutionBusy(value);onBusyChange(value);},[onBusyChange]);
   const[error,setError]=useState<TopicRuleSafeError|null>(null),[pending,setPending]=useState<TopicRuleSuggestionPending|null>(null);
   const[readChecked,setReadChecked]=useState(false),[success,setSuccess]=useState<"saved"|"tested"|null>(null);
   const[storageBlocked,setStorageBlocked]=useState(false);
@@ -93,7 +96,7 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
   const formStale=!!page&&!!formBase&&topicRuleSuggestionFormStale(page,formBase);
   const linkedStale=usedReceipt!==null&&(!suggestionPage?.receipt||suggestionPage.receipt.receipt_id!==usedReceipt||suggestionPage.receipt.is_stale);
   let valid=false;try{topicRuleSpecFromFields(candidate,fields);valid=true;}catch{/* Inline bounded form feedback. */}
-  const blocked=busy||loading||editorBusy||editorDirty||!page||sourceStale||formStale||linkedStale||storageBlocked||candidate.review_state!=="pending";
+  const blocked=busy||executionBusy||loading||editorBusy||editorDirty||!page||sourceStale||formStale||linkedStale||storageBlocked||candidate.review_state!=="pending";
 
   async function submit(input:TopicRuleSuggestionPending){
     if(inFlight.current)return;
@@ -180,7 +183,13 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
     dirty={dirty} used={usedReceipt!==null} canUndoCopy={beforeCopy!==null} onUse={useSuggestion}
     onCitations={()=>{const id=suggestionPage?.receipt?.receipt_id;if(id)void load(false,true,id);}}
     onUndoCopy={()=>{if(beforeCopy){setFields(beforeCopy.fields);setBeforeCopy(null);setUsedReceipt(beforeCopy.receipt);usedReceiptRef.current=beforeCopy.receipt;}}}
-    onRestore={restore}/>
+    onRestore={restore} execution={page?<TopicRuleSuggestionExecution key={scope} endpoint={`${suggestionUrl}/execution`}
+      workspaceId={decodeURIComponent(/\/signal\/([^/]+)/u.exec(endpoint)?.[1]??"")}
+      request={{run_key:runKey,candidate_key:candidate.candidate_key,expected_candidate_revision:page.candidate.revision,
+        expected_candidate_state_token:page.candidate.state_token,expected_draft_revision:page.draft?.revision??0,
+        expected_draft_digest:page.draft?.draft_digest??null}}
+      capability={suggestionPage?.generation??{enabled:false,reason:"execution_not_enabled"}}
+      disabled={blocked||!!pending} onBusyChange={generationBusyChange} onReceipt={id=>void load(false,false,id)}/>:undefined}/>
   {formStale?<p role="status">{t("suggestion.formStale")}</p>:null}
   {(dirty||formStale||usedReceipt)?<button type="button" className="admin-button" disabled={busy||loading||!!pending||editorDirty}
     onClick={()=>void load(true)}>{t("suggestion.discard")}</button>:null}
@@ -191,17 +200,17 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
     onRecover={()=>{if(pendingRef.current&&readChecked&&!busy)void submit(pendingRef.current);}}/></>;
 }
 
-export function TopicRuleSuggestionView({page,error,t,blocked,reading,dirty,used,canUndoCopy,onUse,onCitations,onUndoCopy,onRestore}:{
+export function TopicRuleSuggestionView({page,error,t,blocked,reading,dirty,used,canUndoCopy,onUse,onCitations,onUndoCopy,onRestore,execution}:{
   page:TopicRuleSuggestionPage|null;error:TopicRuleSuggestionSafeError|null;t:Translate;blocked:boolean;dirty:boolean;used:boolean;
-  reading:boolean;canUndoCopy:boolean;onUse:()=>void;onCitations:()=>void;onUndoCopy:()=>void;onRestore:()=>void}){
+  reading:boolean;canUndoCopy:boolean;onUse:()=>void;onCitations:()=>void;onUndoCopy:()=>void;onRestore:()=>void;execution?:React.ReactNode}){
   const receipt=page?.receipt,prior=page?.prior_drafts[0];
   return<section className="topic-evaluation-manager__evidence admin-drawer-form" aria-label={t("suggestion.title")}>
     <h3>{t("suggestion.title")}</h3><p>{t("suggestion.body")}</p>
-    <button type="button" className="admin-button" disabled aria-describedby="topic-rule-generation-disabled">{t("suggestion.generate")}</button>
-    <p id="topic-rule-generation-disabled" className="admin-drawer-form__hint">{t("suggestion.generationDisabled")}</p>
+    {execution??<><button type="button" className="admin-button" disabled>{t("suggestion.generate")}</button>
+    <p className="admin-drawer-form__hint">{t("suggestion.generationDisabled")}</p></>}
     {error?<p role="alert" className="workspace-form__error">{t(`suggestion.errors.${error}`)}</p>:null}
     {page&&!receipt?<p>{t("suggestion.empty")}</p>:null}
-    {receipt?<><strong>{t("suggestion.localFixture")}</strong><p>{receipt.explanation}</p>
+    {receipt?<><strong>{t(receipt.origin==="provider"?"suggestion.provider":"suggestion.localFixture")}</strong><p>{receipt.explanation}</p>
       {receipt.is_stale?<p role="status">{t("suggestion.stale")}</p>:null}
       {receipt.status==="insufficient_evidence"?<p>{t("suggestion.insufficient")}</p>:null}
       {receipt.rule_spec?<dl>{(["any","all","not"]as const).map(key=><div key={key}>

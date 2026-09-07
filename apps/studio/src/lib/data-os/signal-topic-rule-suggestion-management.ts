@@ -15,7 +15,7 @@ export const topicRuleSuggestionCommandSchema=z.discriminatedUnion("action",[
 export type TopicRuleSuggestionCommand=z.infer<typeof topicRuleSuggestionCommandSchema>;
 const availability=z.object({stored:count.max(12),available:count.max(12),unavailable:count.max(12)}).strict()
   .refine(value=>value.stored===value.available+value.unavailable);
-export const topicRuleSuggestionReceiptSchema=z.object({receipt_id:uuid,origin:z.literal("local_fixture"),
+export const topicRuleSuggestionReceiptSchema=z.object({receipt_id:uuid,origin:z.enum(["local_fixture","provider"]),
   status:z.enum(["suggested","insufficient_evidence"]),explanation:z.string().min(1).max(600),
   rule_spec:topicRuleSpecUiSchema.nullable(),run_key:run,candidate_key:candidate,...cas,
   is_stale:z.boolean(),stale_reasons:z.array(z.enum(["candidate_changed","brand_os_changed","evidence_unavailable"])).max(3),
@@ -37,7 +37,10 @@ export const topicRuleSuggestionPageSchema=z.object({contract_version:z.literal(
   page:topicRuleDraftPageSchema,receipt:topicRuleSuggestionReceiptSchema.nullable(),
   citations:z.object({receipt_id:uuid,items:z.array(citation).max(12),availability}).strict().nullable(),
   prior_drafts:z.array(z.object({draft_id:uuid,revision:z.number().int().positive()}).strict()).max(10),
-  generation:z.object({enabled:z.literal(false),reason:z.literal("execution_not_enabled")}).strict()
+  generation:z.discriminatedUnion("enabled",[
+    z.object({enabled:z.literal(false),reason:z.enum(["execution_not_enabled","worker_unavailable"])}).strict(),
+    z.object({enabled:z.literal(true),reason:z.literal("ready"),budget_micro_usd:z.number().int().positive().max(1000000)}).strict()
+  ])
 }).strict().superRefine((value,context)=>{
   const r=value.receipt,p=value.page,c=value.citations;
   if((r&&(r.run_key!==p.run_key||r.candidate_key!==p.candidate_key||r.current_draft.revision!==(p.draft?.revision??0)
@@ -61,7 +64,10 @@ export type TopicRuleSuggestionPending=z.infer<typeof topicRuleSuggestionPending
 export const topicRuleSuggestionSafeErrors=["topic_rule_suggestion_request_invalid","topic_rule_suggestion_scope_mismatch",
   "topic_rule_suggestion_source_stale","topic_rule_suggestion_draft_stale","topic_rule_suggestion_not_found",
   "topic_rule_suggestion_insufficient_evidence","topic_rule_suggestion_restore_invalid","topic_rule_suggestion_idempotency_conflict",
-  "topic_rule_suggestion_forbidden","topic_rule_suggestion_schema_unavailable","topic_rule_suggestion_operation_failed"]as const;
+  "topic_rule_suggestion_forbidden","topic_rule_suggestion_schema_unavailable","topic_rule_suggestion_operation_failed",
+  "topic_rule_suggestion_execution_not_enabled","topic_rule_suggestion_execution_experiment_limit",
+  "topic_rule_suggestion_execution_source_stale","topic_rule_suggestion_execution_idempotency_conflict",
+  "topic_rule_suggestion_execution_not_found","topic_rule_suggestion_execution_forbidden"]as const;
 export type TopicRuleSuggestionSafeError=typeof topicRuleSuggestionSafeErrors[number];
 export class TopicRuleSuggestionRequestError extends Error{
   constructor(public readonly code:TopicRuleSuggestionSafeError,public readonly ambiguous=false){super(code);}
