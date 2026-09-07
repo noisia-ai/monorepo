@@ -44,7 +44,9 @@ export async function GET(
       ? await resolveSignalClientEvidenceServingScopeV1({
           workspace: loaded.workspace,
           filter,
-          viewKey: loaded.servingScope.view_key
+          viewKey: loaded.servingScope.view_key,
+          allowOperationalBrandBridge:
+            loaded.servingScope.visible_source === "operational-brand-bridge"
         })
       : null;
     const evidenceServingScope = evidence?.servingScope ?? null;

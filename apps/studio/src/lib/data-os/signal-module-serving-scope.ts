@@ -20,6 +20,7 @@ import {
 
 import {
   resolveSignalGovernedViewV1,
+  resolveSignalOperationalBrandBridgeV1,
   type SignalGovernedViewResolverStore
 } from "@/lib/data-os/signal-governed-view-resolver";
 import {
@@ -85,6 +86,12 @@ export type SignalClientEvidenceServingScopeV1 =
 type SignalModuleServingScopeDependencies = {
   resolveLegacyScope?: typeof resolveSignalOperationalReadScopeV1;
   resolveGovernedView?: typeof resolveSignalGovernedViewV1;
+  resolveOperationalBrandBridge?: (
+    workspace: ResolvedSignalWorkspace,
+    moduleKey: SignalBrandServingModuleKeyV1,
+    viewKey: SignalClientGovernedViewKeyV1,
+    store?: SignalGovernedViewResolverStore
+  ) => Promise<SignalGovernedViewDescriptorV1>;
   governedStore?: SignalGovernedViewResolverStore;
 };
 
@@ -229,6 +236,120 @@ export async function resolveSignalModuleServingScopeV1(
 }
 
 /**
+ * Promotes only Topics & Narratives to the current operational population once
+ * a topic-catalog publication has completed and its Signal materialization is
+ * still authoritative. Other Signal modules keep the configured rollout mode.
+ */
+export async function resolveSignalTopicCatalogServingScopeV1(
+  workspace: ResolvedSignalWorkspace,
+  options: {
+    viewKey?: unknown;
+    dependencies?: SignalModuleServingScopeDependencies;
+    queryable?: SignalModuleServingQueryable;
+  } = {}
+): Promise<SignalModuleServingScopeV1> {
+  const configured = await resolveSignalModuleServingScopeV1(
+    workspace,
+    "topics-narratives",
+    {
+      viewKey: options.viewKey ?? "brand",
+      ...(options.dependencies ? { dependencies: options.dependencies } : {})
+    }
+  );
+  if (configured.rollout_mode !== "legacy" || configured.view_key !== "brand") {
+    return configured;
+  }
+  const queryable = options.queryable ?? (await import("@/lib/db")).pool;
+  if (!await hasCurrentPublishedTopicCatalogV1(workspace.id, queryable)) {
+    return configured;
+  }
+  return resolveOperationalBrandBridgeModuleScopeV1(
+    workspace,
+    "topics-narratives",
+    "brand",
+    options.dependencies
+  );
+}
+
+async function resolveOperationalBrandBridgeModuleScopeV1(
+  workspace: ResolvedSignalWorkspace,
+  moduleKey: SignalBrandServingModuleKeyV1,
+  viewKey: SignalClientGovernedViewKeyV1,
+  dependencies?: SignalModuleServingScopeDependencies
+): Promise<SignalModuleServingScopeV1> {
+  const resolveBridge = dependencies?.resolveOperationalBrandBridge
+    ?? resolveSignalOperationalBrandBridgeV1;
+  const descriptor = dependencies?.governedStore
+    ? await resolveBridge(workspace, moduleKey, viewKey, dependencies.governedStore)
+    : await resolveBridge(workspace, moduleKey, viewKey);
+  const readScope = governedDescriptorReadScope(workspace, descriptor, "governed", viewKey);
+  return {
+    workspace_id: workspace.id,
+    module_key: moduleKey,
+    view_key: viewKey,
+    rollout_mode: "governed",
+    visible_source: "operational-brand-bridge",
+    readScope,
+    governed: {
+      state: "available",
+      descriptor,
+      readScope
+    }
+  };
+}
+
+async function hasCurrentPublishedTopicCatalogV1(
+  workspaceId: string,
+  queryable: SignalModuleServingQueryable
+) {
+  const result = await queryable.query<{ ready: boolean }>(`
+    SELECT EXISTS(
+      SELECT 1
+      FROM signal_workspace_population_pointers pointer
+      JOIN signal_population_definitions population
+        ON population.id=pointer.population_id
+       AND population.workspace_id=pointer.workspace_id
+       AND population.status='active'
+      JOIN signal_topic_catalog_executions execution
+        ON execution.workspace_id=pointer.workspace_id
+       AND execution.intent='publish'
+       AND execution.status='completed'
+       AND execution.result_summary->>'signal_population_id'=population.id::text
+       AND execution.result_summary->>'signal_population_version'=population.version::text
+       AND execution.result_summary->>'signal_population_definition_hash'=population.definition_hash
+      JOIN signal_taxonomy_profiles profile
+        ON profile.id=execution.taxonomy_profile_id
+       AND profile.workspace_id=execution.workspace_id
+       AND profile.kind='topic'
+       AND profile.status='active'
+      JOIN signal_classification_generations generation
+        ON generation.id=execution.generation_id
+       AND generation.workspace_id=execution.workspace_id
+       AND generation.taxonomy_profile_id=profile.id
+       AND generation.status='ready'
+      WHERE pointer.workspace_id=$1::uuid
+        AND pointer.purpose='operational'
+        AND signal_classification_generation_is_current_v1(generation.id,now())
+        AND jsonb_typeof(execution.result_summary->'signal_topic_volume_rows')='number'
+        AND (execution.result_summary->>'signal_topic_volume_rows')::int>0
+        AND execution.result_summary->>'signal_materialization_state' IN ('fresh','partial')
+        AND EXISTS(
+          SELECT 1
+          FROM metric_materializations materialization
+          WHERE materialization.workspace_id=execution.workspace_id
+            AND materialization.population_id=population.id
+            AND materialization.population_version=population.version
+            AND materialization.population_definition_hash=population.definition_hash
+            AND materialization.metric_key='topic.volume'
+            AND materialization.typed_payload->>'profile_id'=profile.id::text
+            AND materialization.materialization_state IN ('fresh','partial','stale')
+        )
+    ) AS ready
+  `, [workspaceId]);
+  return result.rows[0]?.ready === true;
+}
+
+/**
  * Resolves the client-visible Mentions capability used by metric modules.
  *
  * Evidence is a narrower capability than metrics. A stale, missing, bridged or
@@ -244,27 +365,40 @@ export async function resolveSignalClientEvidenceServingScopeV1(args: {
   resolvedScope?: SignalModuleServingScopeV1;
   dependencies?: SignalModuleServingScopeDependencies;
   queryable?: SignalModuleServingQueryable;
+  allowOperationalBrandBridge?: boolean;
 }): Promise<SignalClientEvidenceServingScopeV1> {
   try {
     const viewKey = requireClientServingViewKey(
       args.viewKey ?? args.resolvedScope?.view_key ?? "brand"
     );
-    const scope = args.resolvedScope ?? await resolveSignalModuleServingScopeV1(
-      args.workspace,
-      "mentions",
-      {
-        mode: "governed",
-        viewKey,
-        ...(args.dependencies ? { dependencies: args.dependencies } : {})
-      }
+    const scope = args.resolvedScope ?? (
+      args.allowOperationalBrandBridge && viewKey === "brand"
+        ? await resolveOperationalBrandBridgeModuleScopeV1(
+            args.workspace,
+            "mentions",
+            viewKey,
+            args.dependencies
+          )
+        : await resolveSignalModuleServingScopeV1(
+            args.workspace,
+            "mentions",
+            {
+              mode: "governed",
+              viewKey,
+              ...(args.dependencies ? { dependencies: args.dependencies } : {})
+            }
+          )
     );
+    const permittedSource = scope.visible_source === "governed-binding"
+      || (args.allowOperationalBrandBridge
+        && scope.visible_source === "operational-brand-bridge");
     if (scope.workspace_id !== args.workspace.id
       || scope.module_key !== "mentions"
       || scope.view_key !== viewKey
       || scope.rollout_mode !== "governed"
-      || scope.visible_source !== "governed-binding"
+      || !permittedSource
       || scope.governed.state !== "available"
-      || scope.governed.descriptor.resolution_source !== "governed-binding") {
+      || scope.governed.descriptor.resolution_source !== scope.visible_source) {
       return {
         state: "not_available",
         reason: "mentions_capability_not_available",

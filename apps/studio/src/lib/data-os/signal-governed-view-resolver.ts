@@ -281,6 +281,21 @@ export async function resolveSignalGovernedViewV1(
   }
 }
 
+/**
+ * Resolves the server-owned operational brand bridge without consulting a
+ * possibly stale governed-view binding. This is intentionally separate from
+ * the normal resolver: callers must first prove that their product-specific
+ * result is complete for the current operational population.
+ */
+export function resolveSignalOperationalBrandBridgeV1(
+  workspace: ResolvedSignalWorkspace,
+  moduleKey: SignalGovernedViewModuleKeyV1,
+  viewKey: SignalGovernedViewKeyV1,
+  store: SignalGovernedViewResolverStore = postgresSignalGovernedViewResolverStore
+) {
+  return resolveOperationalBrandBridge(workspace, moduleKey, viewKey, store);
+}
+
 async function resolveOperationalBrandBridge(
   workspace: ResolvedSignalWorkspace,
   moduleKey: SignalGovernedViewModuleKeyV1,

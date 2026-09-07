@@ -18,6 +18,7 @@ import {
 import {
   finalizeSignalModuleServingScopeV1,
   resolveSignalModuleServingScopeV1,
+  resolveSignalTopicCatalogServingScopeV1,
   signalClientServingViewFromRequestV1,
   type SignalBrandServingModuleKeyV1
 } from "@/lib/data-os/signal-module-serving-scope";
@@ -106,9 +107,9 @@ export async function loadSignalWorkspaceModuleContext(
     const viewKey = request
       ? signalClientServingViewFromRequestV1(request)
       : "brand";
-    const servingScope = await resolveSignalModuleServingScopeV1(workspace, moduleKey, {
-      viewKey
-    });
+    const servingScope = moduleKey === "topics-narratives"
+      ? await resolveSignalTopicCatalogServingScopeV1(workspace, { viewKey })
+      : await resolveSignalModuleServingScopeV1(workspace, moduleKey, { viewKey });
     return {
       ...loaded,
       workspace,

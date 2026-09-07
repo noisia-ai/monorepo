@@ -14,6 +14,7 @@ import {
   loadSignalModuleShadowAuthorityV1,
   resolveSignalClientEvidenceServingScopeV1,
   resolveSignalModuleServingScopeV1,
+  resolveSignalTopicCatalogServingScopeV1,
   signalClientServingViewFromRequestV1,
   signalModuleServingEtagSeedV1,
   type SignalBrandServingModuleKeyV1
@@ -186,6 +187,13 @@ function dependencies(args: {
         input.module_key as SignalBrandServingModuleKeyV1,
         input.view_key as "brand" | "competition" | "category" | "all-governed"
       );
+    },
+    resolveOperationalBrandBridge: async (
+      _workspace: ResolvedSignalWorkspace,
+      moduleKey: SignalBrandServingModuleKeyV1
+    ) => {
+      args.calls?.push(`bridge:${moduleKey}`);
+      return governedDescriptor(moduleKey, "operational-brand-bridge");
     }
   };
 }
@@ -289,6 +297,41 @@ test("an absent binding may resolve the explicit bridge", async () => {
   assert.equal(scope.readScope.population?.period_end, "2026-07-31");
 });
 
+test("a completed current catalog promotes only Topics from legacy to the operational bridge", async () => {
+  const calls: string[] = [];
+  const scope = await resolveSignalTopicCatalogServingScopeV1(workspace, {
+    dependencies: dependencies({ calls }),
+    queryable: {
+      async query<Row>(sql: string) {
+        assert.match(sql, /signal_topic_catalog_executions/u);
+        assert.match(sql, /signal_classification_generation_is_current_v1/u);
+        return { rows: [{ ready: true } as Row], rowCount: 1 };
+      }
+    }
+  });
+  assert.deepEqual(calls, ["legacy", "bridge:topics-narratives"]);
+  assert.equal(scope.rollout_mode, "governed");
+  assert.equal(scope.visible_source, "operational-brand-bridge");
+  assert.equal(scope.readScope.visibleSource, "governed_population");
+  assert.equal(scope.module_key, "topics-narratives");
+});
+
+test("Topics stays on configured legacy serving until publication is current and materialized", async () => {
+  const calls: string[] = [];
+  const scope = await resolveSignalTopicCatalogServingScopeV1(workspace, {
+    dependencies: dependencies({ calls }),
+    queryable: {
+      async query<Row>() {
+        return { rows: [{ ready: false } as Row], rowCount: 1 };
+      }
+    }
+  });
+  assert.deepEqual(calls, ["legacy"]);
+  assert.equal(scope.rollout_mode, "legacy");
+  assert.equal(scope.visible_source, "legacy");
+  assert.equal(scope.readScope.visibleSource, "legacy_corpus");
+});
+
 test("a descriptor cannot widen the brand read scope beyond its compiled policy", async () => {
   const incompatible = governedDescriptor("mentions");
   if (incompatible.read_contract.authority_source !== "compiled-policy") {
@@ -375,6 +418,44 @@ test("an unavailable or bridged Mentions authority withholds evidence without wi
   });
   assert.equal(bridged.state, "not_available");
   assert.equal(bridged.reason, "mentions_capability_not_available");
+});
+
+test("an explicit operational bridge grants evidence for the published Topics population", async () => {
+  let queryIndex = 0;
+  const evidence = await resolveSignalClientEvidenceServingScopeV1({
+    workspace,
+    filter: {
+      contract_version: "signal-backend-v1",
+      date_range: { start: "2026-07-01", end: "2026-07-31" },
+      timezone: "UTC",
+      granularity: "day",
+      dimensions: {}
+    },
+    allowOperationalBrandBridge: true,
+    dependencies: dependencies(),
+    queryable: {
+      async query<Row>() {
+        queryIndex += 1;
+        return queryIndex === 1
+          ? {
+              rows: [{
+                captured: 12,
+                quality_eligible: 12,
+                reviewed: 12,
+                resolved_attributed: 12,
+                unattributed: 0
+              } as Row],
+              rowCount: 1
+            }
+          : { rows: [{ used_by_view: 12 } as Row], rowCount: 1 };
+      }
+    }
+  });
+  assert.equal(queryIndex, 2);
+  assert.equal(evidence.state, "available");
+  assert.equal(evidence.readScope?.visibleSource, "governed_population");
+  assert.equal(evidence.servingScope?.resolution_source, "operational-brand-bridge");
+  assert.equal(evidence.servingScope?.module_key, "mentions");
 });
 
 test("evidence resolution does not hide infrastructure failures as capability decisions", async () => {

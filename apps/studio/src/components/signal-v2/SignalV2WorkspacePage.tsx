@@ -17,9 +17,11 @@ import {
 import {
   finalizeSignalModuleServingScopeV1,
   resolveSignalClientEvidenceServingScopeV1,
-  resolveSignalModuleServingScopeV1
+  resolveSignalModuleServingScopeV1,
+  resolveSignalTopicCatalogServingScopeV1
 } from "@/lib/data-os/signal-module-serving-scope";
 import {
+  loadSignalBootstrapV1,
   loadSignalMentionByIdV1,
   loadSignalMentionsV1
 } from "@/lib/data-os/signal-workspace-serving";
@@ -116,7 +118,7 @@ export async function SignalV2WorkspacePage({
       topicsNarrativesServingScope
     ] = await Promise.all([
       resolveSignalModuleServingScopeV1(workspace, "brand-monitoring", { viewKey }),
-      resolveSignalModuleServingScopeV1(workspace, "topics-narratives", { viewKey })
+      resolveSignalTopicCatalogServingScopeV1(workspace, { viewKey })
     ]);
     if (activeModule === "mentions") {
       mentionsServingScope = await resolveSignalModuleServingScopeV1(
@@ -204,10 +206,40 @@ export async function SignalV2WorkspacePage({
     );
   }
 
+  const publishedTopicCatalogCoverage = activeModule === "topics"
+    && topicsNarrativesServingScope.visible_source === "operational-brand-bridge"
+    ? (await loadSignalBootstrapV1(
+        workspace,
+        session.appUser.userType === "noisia_internal",
+        topicsNarrativesReadScope
+      )).coverage
+    : null;
+
   let filter = home.default_filter;
   let comparison = resolveSignalComparisonV1({ filter, mode: "previous_period" });
+  const usePublishedTopicCatalogRange = activeModule === "topics"
+    && topicsNarrativesServingScope.visible_source === "operational-brand-bridge"
+    && query.start == null
+    && query.end == null
+    && publishedTopicCatalogCoverage?.date_from
+    && publishedTopicCatalogCoverage.date_through;
+  if (usePublishedTopicCatalogRange) {
+    filter = {
+      ...filter,
+      date_range: {
+        start: publishedTopicCatalogCoverage!.date_from!,
+        end: publishedTopicCatalogCoverage!.date_through!
+      },
+      granularity: preferredGranularity(
+        publishedTopicCatalogCoverage!.date_from!,
+        publishedTopicCatalogCoverage!.date_through!
+      )
+    };
+    comparison = resolveSignalComparisonV1({ filter, mode: "previous_period" });
+  }
+  const fallbackFilter = filter;
   try {
-    const queryParams = new URLSearchParams(canonicalSignalFilterQueryV1(home.default_filter));
+    const queryParams = new URLSearchParams(canonicalSignalFilterQueryV1(fallbackFilter));
     for (const [key, rawValue] of Object.entries(query)) {
       if (key === "study" || key === "mention" || key === "view") continue;
       queryParams.delete(key);
@@ -223,7 +255,7 @@ export async function SignalV2WorkspacePage({
     }
     ({ filter, comparison } = parseSignalAnalyticsQueryParamsV1(queryParams));
   } catch {
-    filter = home.default_filter;
+    filter = fallbackFilter;
     comparison = resolveSignalComparisonV1({ filter, mode: "previous_period" });
   }
 
