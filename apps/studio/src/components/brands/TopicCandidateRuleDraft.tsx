@@ -4,14 +4,17 @@ import React,{ useCallback,useEffect,useRef,useState } from "react";
 import { useLocale,useTranslations } from "next-intl";
 import { formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { emptyTopicRuleFields,loadTopicRuleDraftPage,requestTopicRuleJson,TopicRuleRequestError,
-  topicRuleDraftSchema,topicRuleTrialSchema,topicRulePendingSchema,topicRuleFieldsFromSpec,topicRuleSpecFromFields,
-  type TopicRuleDraftPage,type TopicRuleFields,type TopicRulePending,type TopicRuleSafeError } from "@/lib/data-os/signal-topic-rule-draft-management";
+  topicRuleDraftSchema,topicRuleTrialSchema,topicRuleFieldsFromSpec,topicRuleSpecFromFields,
+  type TopicRuleDraftPage,type TopicRuleFields,type TopicRuleSafeError } from "@/lib/data-os/signal-topic-rule-draft-management";
+import {loadTopicRuleSuggestionPage,requestTopicRuleSuggestionJson,TopicRuleSuggestionRequestError,
+  topicRuleSuggestionBridgeSchema,topicRuleSuggestionPendingSchema,topicRuleSuggestionFields,topicRuleSuggestionFormStale,
+  type TopicRuleSuggestionPage,type TopicRuleSuggestionPending,type TopicRuleSuggestionSafeError} from "@/lib/data-os/signal-topic-rule-suggestion-management";
 import type { SignalTopicEvaluationV2Candidate } from "@/lib/data-os/signal-topic-evaluation-v2-management";
 
 type Translate=(key:string,values?:Record<string,string|number>)=>string;
 type Candidate=Pick<SignalTopicEvaluationV2Candidate,"candidate_key"|"title"|"description"|"revision"|"state_token"|"review_state">;
 function storageKey(endpoint:string){return`noisia:topic-rule-pending-v1:${endpoint}`;}
-function retainPending(endpoint:string,pending:TopicRulePending|null){
+function retainPending(endpoint:string,pending:TopicRuleSuggestionPending|null){
   if(pending)sessionStorage.setItem(storageKey(endpoint),JSON.stringify(pending));
   else sessionStorage.removeItem(storageKey(endpoint));
 }
@@ -21,50 +24,100 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
   onBusyChange:(busy:boolean)=>void;onRefreshCandidate:()=>Promise<void>;onRuleSaved?:()=>void}){
   const t=useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates.ruleDraft"),locale=useLocale();
   const url=`${endpoint}/${encodeURIComponent(candidate.candidate_key)}/rule-draft`;
+  const suggestionUrl=`${endpoint}/${encodeURIComponent(candidate.candidate_key)}/rule-suggestions`;
+  const scope=`${url}:${runKey}:${candidate.candidate_key}`;
   const[page,setPage]=useState<TopicRuleDraftPage|null>(null),[fields,setFields]=useState<TopicRuleFields>(emptyTopicRuleFields);
+  const[suggestionPage,setSuggestionPage]=useState<TopicRuleSuggestionPage|null>(null);
+  const[suggestionError,setSuggestionError]=useState<TopicRuleSuggestionSafeError|null>(null);
+  const[usedReceipt,setUsedReceipt]=useState<string|null>(null),[beforeCopy,setBeforeCopy]=useState<{fields:TopicRuleFields;receipt:string|null}|null>(null);
+  const[formBase,setFormBase]=useState<{candidate_revision:number;candidate_state_token:string;draft_revision:number;draft_digest:string|null}|null>(null);
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
-  const[error,setError]=useState<TopicRuleSafeError|null>(null),[pending,setPending]=useState<TopicRulePending|null>(null);
+  const[error,setError]=useState<TopicRuleSafeError|null>(null),[pending,setPending]=useState<TopicRuleSuggestionPending|null>(null);
   const[readChecked,setReadChecked]=useState(false),[success,setSuccess]=useState<"saved"|"tested"|null>(null);
   const[storageBlocked,setStorageBlocked]=useState(false);
-  const inFlight=useRef(false),mounted=useRef(true),read=useRef<AbortController|null>(null);
-  const pendingRef=useRef<TopicRulePending|null>(null);
-  const load=useCallback(async(replaceFields=false)=>{
+  const inFlight=useRef(false),mounted=useRef(true),read=useRef<AbortController|null>(null),epoch=useRef(0);
+  const pendingRef=useRef<TopicRuleSuggestionPending|null>(null),usedReceiptRef=useRef<string|null>(null);
+  const load=useCallback(async(replaceFields=false,includeCitations=false,exactReceipt?:string)=>{
     read.current?.abort();const controller=new AbortController();read.current=controller;
-    setLoading(true);setError(null);
-    try{const next=await loadTopicRuleDraftPage(url,runKey,candidate.candidate_key,controller.signal);
+    setLoading(true);setError(null);setSuggestionError(null);
+    try{let next:TopicRuleDraftPage,suggestions:TopicRuleSuggestionPage|null=null;
+      const retained=pendingRef.current;
+      const receipt_id=exactReceipt??usedReceiptRef.current??(retained?.kind==="suggestion"?retained.body.receipt_id:undefined);
+      try{suggestions=await loadTopicRuleSuggestionPage(suggestionUrl,runKey,candidate.candidate_key,
+        {receipt_id:receipt_id??undefined,include_citations:includeCitations,signal:controller.signal});next=suggestions.page;}
+      catch(cause){if(!(cause instanceof TopicRuleSuggestionRequestError)||cause.code!=="topic_rule_suggestion_schema_unavailable")throw cause;
+        next=await loadTopicRuleDraftPage(url,runKey,candidate.candidate_key,controller.signal);
+        if(!controller.signal.aborted&&mounted.current)setSuggestionError(cause.code);}
       if(controller.signal.aborted||!mounted.current)return;
-      setPage(next);if(replaceFields)setFields(next.draft?topicRuleFieldsFromSpec(next.draft.rule_spec):emptyTopicRuleFields());
+      setPage(next);setSuggestionPage(suggestions);
+      if(replaceFields){setFields(next.draft?topicRuleFieldsFromSpec(next.draft.rule_spec):emptyTopicRuleFields());
+        setFormBase({candidate_revision:next.candidate.revision,candidate_state_token:next.candidate.state_token,
+          draft_revision:next.draft?.revision??0,draft_digest:next.draft?.draft_digest??null});setBeforeCopy(null);
+        const linked=next.draft&&suggestions?.receipt&&!suggestions.receipt.is_stale
+          &&suggestions.receipt.latest_link?.draft_id===next.draft.draft_id?suggestions.receipt.receipt_id:null;
+        usedReceiptRef.current=linked;setUsedReceipt(linked);
+        if(retained&&retained.kind!=="trial"){
+          const request=retained.body;setFormBase({candidate_revision:request.expected_candidate_revision,
+            candidate_state_token:request.expected_candidate_state_token,draft_revision:request.expected_draft_revision,
+            draft_digest:request.expected_draft_digest});
+          if(retained.kind==="save")setFields(topicRuleFieldsFromSpec(retained.body.rule_spec));
+          else{usedReceiptRef.current=retained.body.receipt_id;setUsedReceipt(retained.body.receipt_id);
+            if(retained.body.action==="save")setFields(topicRuleFieldsFromSpec({contract_version:"signal-topic-rule-spec-v1",kind:"topic",
+              label:next.candidate.title,definition:next.candidate.description,lexical:retained.body.lexical,filters:retained.body.filters}));}
+        }}
       setReadChecked(true);
     }catch(cause){if(controller.signal.aborted||!mounted.current)return;
-      setPage(null);setReadChecked(false);setError(cause instanceof TopicRuleRequestError?cause.code:"topic_rule_operation_failed");
+      setPage(null);setSuggestionPage(null);setReadChecked(false);
+      if(cause instanceof TopicRuleSuggestionRequestError){setSuggestionError(cause.code);
+        if(cause.code==="topic_rule_suggestion_forbidden"||cause.code==="topic_rule_suggestion_not_found"){
+          setFields(emptyTopicRuleFields());setBeforeCopy(null);setUsedReceipt(null);usedReceiptRef.current=null;}}
+      else setError(cause instanceof TopicRuleRequestError?cause.code:"topic_rule_operation_failed");
     }finally{if(!controller.signal.aborted&&mounted.current)setLoading(false);}
-  },[url,runKey,candidate.candidate_key]);
+  },[url,suggestionUrl,runKey,candidate.candidate_key]);
   useEffect(()=>{
-    mounted.current=true;
-    try{const raw=sessionStorage.getItem(storageKey(url));if(raw){const prior=topicRulePendingSchema.parse(JSON.parse(raw));
-      if(prior.body.run_key===runKey&&prior.body.candidate_key===candidate.candidate_key){
+    const activeEpoch=epoch.current+1;epoch.current=activeEpoch;mounted.current=true;
+    inFlight.current=false;pendingRef.current=null;usedReceiptRef.current=null;
+    setBusy(false);setPending(null);setUsedReceipt(null);setBeforeCopy(null);setFormBase(null);
+    setPage(null);setSuggestionPage(null);setFields(emptyTopicRuleFields());setStorageBlocked(false);setReadChecked(false);
+    try{const raw=sessionStorage.getItem(storageKey(url));if(raw){const prior=topicRuleSuggestionPendingSchema.parse(JSON.parse(raw));
+      if(prior.body.run_key===runKey&&prior.body.candidate_key===candidate.candidate_key&&(prior.kind!=="suggestion"||prior.scope===scope)){
         pendingRef.current=prior;setPending(prior);
       }else{setStorageBlocked(true);setError("topic_rule_scope_mismatch");}}}
     catch{setStorageBlocked(true);setError("topic_rule_operation_failed");}
     void load(true);
-    return()=>{mounted.current=false;read.current?.abort();onBusyChange(false);};
-  },[load,url,runKey,candidate.candidate_key,onBusyChange]);
+    return()=>{mounted.current=false;epoch.current=activeEpoch+1;read.current?.abort();onBusyChange(false);};
+  },[load,url,runKey,candidate.candidate_key,onBusyChange,scope]);
   const draft=page?.draft;
   const dirty=JSON.stringify(fields)!==JSON.stringify(draft?topicRuleFieldsFromSpec(draft.rule_spec):emptyTopicRuleFields());
   const sourceStale=!!page&&(page.candidate.state_token!==candidate.state_token||page.candidate.revision!==candidate.revision);
+  const formStale=!!page&&!!formBase&&topicRuleSuggestionFormStale(page,formBase);
+  const linkedStale=usedReceipt!==null&&(!suggestionPage?.receipt||suggestionPage.receipt.receipt_id!==usedReceipt||suggestionPage.receipt.is_stale);
   let valid=false;try{topicRuleSpecFromFields(candidate,fields);valid=true;}catch{/* Inline bounded form feedback. */}
-  const blocked=busy||loading||editorBusy||editorDirty||!page||sourceStale||storageBlocked||candidate.review_state!=="pending";
+  const blocked=busy||loading||editorBusy||editorDirty||!page||sourceStale||formStale||linkedStale||storageBlocked||candidate.review_state!=="pending";
 
-  async function submit(operation:TopicRulePending){
+  async function submit(input:TopicRuleSuggestionPending){
     if(inFlight.current)return;
+    // Normalize once before BOTH persistence and the first send, so recovery after schema parsing keeps identical bytes.
+    let operation:TopicRuleSuggestionPending;
+    try{operation=topicRuleSuggestionPendingSchema.parse(input);}catch{setError("topic_rule_request_invalid");return;}
+    if(operation.kind==="suggestion"&&operation.scope!==scope){setSuggestionError("topic_rule_suggestion_scope_mismatch");return;}
     // Store the exact request/key before transport; failure to retain it means zero POSTs.
     try{retainPending(url,operation);}catch{setError("topic_rule_operation_failed");return;}
+    const startedEpoch=epoch.current;
     inFlight.current=true;pendingRef.current=operation;setPending(operation);setReadChecked(false);
-    setBusy(true);onBusyChange(true);setError(null);setSuccess(null);
-    try{const value=await requestTopicRuleJson(operation.kind==="trial"?`${url}/trial`:url,{
+    setBusy(true);onBusyChange(true);setError(null);setSuggestionError(null);setSuccess(null);
+    try{const init={
       method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":operation.key},
-      body:JSON.stringify(operation.body)});
-      const result=operation.kind==="save"?topicRuleDraftSchema.parse(value):topicRuleTrialSchema.parse(value);
+      body:JSON.stringify(operation.body)};
+      const value=operation.kind==="suggestion"?await requestTopicRuleSuggestionJson(
+        `${suggestionUrl}/${encodeURIComponent(operation.body.receipt_id)}/draft`,init)
+        :await requestTopicRuleJson(operation.kind==="trial"?`${url}/trial`:url,init);
+      const bridge=operation.kind==="suggestion"?topicRuleSuggestionBridgeSchema.parse(value):null;
+      const result=bridge?bridge.draft:operation.kind==="save"?topicRuleDraftSchema.parse(value):topicRuleTrialSchema.parse(value);
+      if(bridge&&operation.kind==="suggestion"&&(bridge.receipt_id!==operation.body.receipt_id||bridge.action!==operation.body.action
+        ||bridge.draft.source.run_key!==runKey||bridge.draft.source.candidate_key!==candidate.candidate_key
+        ||bridge.draft.source.revision!==operation.body.expected_candidate_revision
+        ||bridge.draft.revision!==operation.body.expected_draft_revision+1))throw new Error("scope_mismatch");
       if(operation.kind==="save"&&"source" in result&&(result.source.run_key!==runKey
         ||result.source.candidate_key!==candidate.candidate_key
         ||result.source.revision!==operation.body.expected_candidate_revision
@@ -72,23 +125,33 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
       if(operation.kind==="trial"&&"draft_revision" in result&&(result.draft_id!==operation.body.draft_id
         ||result.draft_revision!==operation.body.expected_draft_revision||result.draft_digest!==operation.body.expected_draft_digest))
         throw new Error("scope_mismatch");
+      if(!mounted.current||startedEpoch!==epoch.current)return;
       retainPending(url,null);pendingRef.current=null;
-      if(!mounted.current)return;setPending(null);setSuccess(operation.kind==="save"?"saved":"tested");
-      if(operation.kind==="save")onRuleSaved?.();
-      await load(operation.kind==="save");
+      if(!mounted.current)return;setPending(null);setSuccess(operation.kind!=="trial"?"saved":"tested");
+      if(operation.kind!=="trial")onRuleSaved?.();
+      await load(operation.kind!=="trial");
     }catch(cause){
-      if(!mounted.current)return;
+      if(!mounted.current||startedEpoch!==epoch.current)return;
       // Known rejected requests did not commit. Unknown transport/parse/5xx outcomes retain the exact key.
-      if(cause instanceof TopicRuleRequestError&&!cause.ambiguous){
+      if((cause instanceof TopicRuleRequestError||cause instanceof TopicRuleSuggestionRequestError)&&!cause.ambiguous){
         try{retainPending(url,null);pendingRef.current=null;setPending(null);}catch{/* Retain pending if storage fails. */}
       }
-      setError(cause instanceof TopicRuleRequestError?cause.code:"topic_rule_operation_failed");
-    }finally{inFlight.current=false;if(mounted.current){setBusy(false);onBusyChange(false);}}
+      if(cause instanceof TopicRuleSuggestionRequestError){setSuggestionError(cause.code);
+        if(cause.code==="topic_rule_suggestion_forbidden"||cause.code==="topic_rule_suggestion_not_found"){
+          setSuggestionPage(null);setPage(null);setReadChecked(false);setFields(emptyTopicRuleFields());
+          setBeforeCopy(null);setUsedReceipt(null);usedReceiptRef.current=null;}}
+      else setError(cause instanceof TopicRuleRequestError?cause.code:"topic_rule_operation_failed");
+    }finally{if(startedEpoch===epoch.current){inFlight.current=false;if(mounted.current){setBusy(false);onBusyChange(false);}}}
   }
-  function save(){if(blocked||pendingRef.current||!valid)return;
+  function save(){if(blocked||pendingRef.current||!valid||!formBase)return;
+    if(usedReceipt){const spec=topicRuleSpecFromFields(candidate,fields);
+      void submit({kind:"suggestion",scope,key:`topic-rule:suggestion:${crypto.randomUUID()}`,body:{action:"save",run_key:runKey,
+        candidate_key:candidate.candidate_key,receipt_id:usedReceipt,expected_candidate_revision:formBase.candidate_revision,
+        expected_candidate_state_token:formBase.candidate_state_token,expected_draft_revision:formBase.draft_revision,
+        expected_draft_digest:formBase.draft_digest,lexical:spec.lexical,filters:spec.filters}});return;}
     const body={run_key:runKey,candidate_key:candidate.candidate_key,
-      expected_candidate_revision:candidate.revision,expected_candidate_state_token:candidate.state_token,
-      expected_draft_revision:draft?.revision??0,expected_draft_digest:draft?.draft_digest??null,
+      expected_candidate_revision:formBase.candidate_revision,expected_candidate_state_token:formBase.candidate_state_token,
+      expected_draft_revision:formBase.draft_revision,expected_draft_digest:formBase.draft_digest,
       rule_spec:topicRuleSpecFromFields(candidate,fields)};
     void submit({kind:"save",key:`topic-rule:save:${crypto.randomUUID()}`,body});
   }
@@ -104,11 +167,60 @@ export function TopicCandidateRuleDraft({endpoint,runKey,candidate,editorDirty,e
     // Always reconcile the receipt snapshot after the parent identity refresh; keep authored phrases.
     await load(false);
   }
-  return<TopicCandidateRuleDraftView candidate={candidate} page={page} fields={fields} t={t} locale={locale}
+  function useSuggestion(){const receipt=suggestionPage?.receipt;if(blocked||pending||!receipt||receipt.is_stale||!receipt.rule_spec)return;
+    setBeforeCopy({fields,receipt:usedReceipt});setFields(topicRuleSuggestionFields(receipt));setUsedReceipt(receipt.receipt_id);
+    usedReceiptRef.current=receipt.receipt_id;setSuccess(null);}
+  function restore(){const receipt=suggestionPage?.receipt,prior=suggestionPage?.prior_drafts[0];
+    if(blocked||pending||dirty||!receipt||receipt.is_stale||!prior||!formBase)return;
+    void submit({kind:"suggestion",scope,key:`topic-rule:restore:${crypto.randomUUID()}`,body:{action:"restore",run_key:runKey,
+      candidate_key:candidate.candidate_key,receipt_id:receipt.receipt_id,restore_draft_id:prior.draft_id,
+      expected_candidate_revision:formBase.candidate_revision,expected_candidate_state_token:formBase.candidate_state_token,
+      expected_draft_revision:formBase.draft_revision,expected_draft_digest:formBase.draft_digest}});}
+  return<><TopicRuleSuggestionView page={suggestionPage} error={suggestionError} t={t} blocked={blocked||!!pending} reading={busy||loading}
+    dirty={dirty} used={usedReceipt!==null} canUndoCopy={beforeCopy!==null} onUse={useSuggestion}
+    onCitations={()=>{const id=suggestionPage?.receipt?.receipt_id;if(id)void load(false,true,id);}}
+    onUndoCopy={()=>{if(beforeCopy){setFields(beforeCopy.fields);setBeforeCopy(null);setUsedReceipt(beforeCopy.receipt);usedReceiptRef.current=beforeCopy.receipt;}}}
+    onRestore={restore}/>
+  {formStale?<p role="status">{t("suggestion.formStale")}</p>:null}
+  {(dirty||formStale||usedReceipt)?<button type="button" className="admin-button" disabled={busy||loading||!!pending||editorDirty}
+    onClick={()=>void load(true)}>{t("suggestion.discard")}</button>:null}
+  <TopicCandidateRuleDraftView candidate={candidate} page={page} fields={fields} t={t} locale={locale}
     loading={loading} busy={busy} blocked={blocked} dirty={dirty} valid={valid} editorDirty={editorDirty}
     sourceStale={sourceStale} error={storageBlocked?"topic_rule_operation_failed":error} pending={pending!==null} readChecked={readChecked} success={success}
     onFields={(next)=>{setFields(next);setSuccess(null);}} onSave={save} onTrial={trial} onRefresh={()=>void refresh()}
-    onRecover={()=>{if(pendingRef.current&&readChecked&&!busy)void submit(pendingRef.current);}}/>;
+    onRecover={()=>{if(pendingRef.current&&readChecked&&!busy)void submit(pendingRef.current);}}/></>;
+}
+
+export function TopicRuleSuggestionView({page,error,t,blocked,reading,dirty,used,canUndoCopy,onUse,onCitations,onUndoCopy,onRestore}:{
+  page:TopicRuleSuggestionPage|null;error:TopicRuleSuggestionSafeError|null;t:Translate;blocked:boolean;dirty:boolean;used:boolean;
+  reading:boolean;canUndoCopy:boolean;onUse:()=>void;onCitations:()=>void;onUndoCopy:()=>void;onRestore:()=>void}){
+  const receipt=page?.receipt,prior=page?.prior_drafts[0];
+  return<section className="topic-evaluation-manager__evidence admin-drawer-form" aria-label={t("suggestion.title")}>
+    <h3>{t("suggestion.title")}</h3><p>{t("suggestion.body")}</p>
+    <button type="button" className="admin-button" disabled aria-describedby="topic-rule-generation-disabled">{t("suggestion.generate")}</button>
+    <p id="topic-rule-generation-disabled" className="admin-drawer-form__hint">{t("suggestion.generationDisabled")}</p>
+    {error?<p role="alert" className="workspace-form__error">{t(`suggestion.errors.${error}`)}</p>:null}
+    {page&&!receipt?<p>{t("suggestion.empty")}</p>:null}
+    {receipt?<><strong>{t("suggestion.localFixture")}</strong><p>{receipt.explanation}</p>
+      {receipt.is_stale?<p role="status">{t("suggestion.stale")}</p>:null}
+      {receipt.status==="insufficient_evidence"?<p>{t("suggestion.insufficient")}</p>:null}
+      {receipt.rule_spec?<dl>{(["any","all","not"]as const).map(key=><div key={key}>
+        <dt>{t(`fields.${key}`)}</dt><dd>{receipt.rule_spec!.lexical[key].join(" · ")||t("suggestion.none")}</dd></div>)}</dl>:null}
+      <p className="admin-drawer-form__hint">{t("suggestion.citationCount",receipt.evidence)}</p>
+      <div className="admin-drawer-form__actions">
+        <button type="button" className="admin-button" disabled={blocked||receipt.is_stale||!receipt.rule_spec} onClick={onUse}>{t("suggestion.use")}</button>
+        <button type="button" className="admin-button" disabled={reading} onClick={onCitations}>{t("suggestion.citations")}</button>
+        {canUndoCopy?<button type="button" className="admin-button" disabled={blocked} onClick={onUndoCopy}>{t("suggestion.undoCopy")}</button>:null}
+        {prior?<button type="button" className="admin-button" disabled={blocked||dirty||receipt.is_stale||!receipt.rule_spec} onClick={onRestore}>
+          {t("suggestion.restore",{revision:prior.revision})}</button>:null}
+      </div>
+      {used?<p role="status">{t("suggestion.copied")}</p>:null}
+      {page?.citations?.items.map((item,index)=><article className="topic-evaluation-manager__evidence" key={item.evidence_ref}>
+        <strong>{t("suggestion.reference",{index:index+1})}</strong>{item.status==="available"?<>
+          <blockquote>{item.excerpt}</blockquote><p>{[item.month,item.language,item.market,item.scope].filter(Boolean).join(" · ")}</p>
+        </>:<p>{t("suggestion.citationUnavailable")}</p>}</article>)}
+    </>:null}
+  </section>;
 }
 
 export function TopicCandidateRuleDraftView({candidate,page,fields,t,locale,loading,busy,blocked,dirty,valid,
@@ -137,7 +249,12 @@ export function TopicCandidateRuleDraftView({candidate,page,fields,t,locale,load
         <span>{t(`fields.${field}`)}</span><textarea className="workspace-control" rows={2} disabled={disabled}
           value={fields[field]} onChange={(event)=>onFields({...fields,[field]:event.target.value})}/>
         <small className="admin-drawer-form__hint">{t(`hints.${field}`)}</small></label>)}
-      {fields.scopes.length?<p>{t("existingScopes",{values:fields.scopes.join(", ")})}</p>:null}
+      <fieldset disabled={disabled}><legend>{t("suggestion.scopes")}</legend>
+        {(["primary_brand","same_entity","competitor","category","other"]as const).map(scope=><label key={scope}>
+          <input type="checkbox" checked={fields.scopes.includes(scope)} onChange={event=>onFields({...fields,
+            scopes:event.target.checked?[...fields.scopes,scope]:fields.scopes.filter(value=>value!==scope)})}/>
+          {t(`suggestion.scopeLabels.${scope}`)}</label>)}
+      </fieldset>
     </details>
     {dirty&&!valid?<p className="workspace-form__error" role="alert">{t("invalid")}</p>:null}
     {dirty&&valid?<p role="status">{t("dirty")}</p>:null}

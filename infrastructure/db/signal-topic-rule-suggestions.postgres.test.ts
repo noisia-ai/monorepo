@@ -4,7 +4,8 @@ import test from "node:test";
 import {adaptSignalTopicRuleSuggestionToDraftV1,prepareSignalTopicRuleSuggestionContextV1,
   signalTopicEvaluationDigestV2 as digest} from "@noisia/query-engine";
 import {receiveSimulatedSignalTopicRuleSuggestionV1 as receive,loadSignalTopicRuleSuggestionV1 as load,
-  saveSignalTopicRuleSuggestionDraftV1 as save} from "./signal-topic-rule-suggestions";
+  saveSignalTopicRuleSuggestionDraftV1 as save,loadSignalTopicRuleSuggestionEvidenceV1 as readEvidence,
+  loadSignalTopicRuleSuggestionPriorDraftV1 as readPrior} from "./signal-topic-rule-suggestions";
 import {loadSignalTopicContractDraftV1,runSignalTopicContractDraftTrialV1,signalTopicRuleDraftInternal as core,
   type SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 import {createSignalTopicRuleCohortV1,loadSignalTopicRuleCohortV1} from "./signal-topic-rule-cohorts";
@@ -208,3 +209,84 @@ export async function proveSignalTopicRuleSuggestionsPostgresV1(client:SignalTop
   finally{await client.query("ROLLBACK TO SAVEPOINT topic_suggestion_proof");await client.query("RELEASE SAVEPOINT topic_suggestion_proof");}
 }
 test("suggestion PostgreSQL proof requires a supplied local client and outer rollback",{skip:true},()=>{});
+
+/** C-UI reader proof only: no closed B adversarial suite, trial, cohort or full benchmark.
+ * Caller supplies the existing local target, SERIALIZABLE, audited DDL and outer rollback. */
+export async function proveSignalTopicRuleSuggestionReadersPostgresV1(client:SignalTopicContractDraftClient,fixture:Fixture){
+  assert.notEqual(fixture.candidate_key,fixture.second_candidate_key);
+  await client.query("SAVEPOINT topic_suggestion_reader_proof");
+  const checked:Record<string,string>={},suffix=randomUUID();let stage="initial",readQueries=0;
+  const scope={workspace_id:fixture.workspace_id,actor:fixture.actor,run_key:fixture.run_key,candidate_key:fixture.candidate_key};
+  const queryable:SignalTopicContractDraftClient={async query<T>(sql:string,values?:unknown[]){
+    assert.match(sql.trim(),/^(?:SELECT|WITH)\b/u);assert.doesNotMatch(sql,
+      /\b(?:INSERT|UPDATE|DELETE|SAVEPOINT|COMMIT|BEGIN|set_config|pg_advisory|tsquery|to_tsvector)\b/u);
+    readQueries++;return client.query<T>(sql,values);
+  }};
+  async function cas(){const source=await core.sourceFor(client,scope),draft=await loadSignalTopicContractDraftV1({queryable:client,...scope});
+    return{expected_candidate_revision:source.revision,expected_candidate_state_token:source.state_token,
+      expected_draft_revision:draft?.revision??0,expected_draft_digest:draft?.draft_digest??null};}
+  try{
+    const initial=await cas(),template={status:"suggested" as const,lexical:{any:["football"],all:[],not:[]},
+      filters:{languages:[],markets:[],scopes:[]},explanation:"C-UI local simulation only.",citation_count:3};
+    stage="reader_fixture";
+    const receipt=await receive({client,...scope,...initial,idempotency_key:`reader-fixture:${suffix}`,fixture:template});
+    const readArgs={queryable,...scope,receipt_id:receipt.receipt_id},evidence=(await readEvidence(readArgs))!;
+    assert.equal(evidence.origin,"local_fixture");assert.deepEqual(evidence.availability,{stored:3,available:3,unavailable:0});
+    assert.deepEqual(evidence.citations.map(row=>row.evidence_ref),receipt.adaptation.provenance.evidence.map(row=>row.evidence_ref));
+    assert.ok(evidence.citations.every(row=>row.status==="available"&&row.excerpt.length>0&&row.excerpt.length<=600));
+    assert.doesNotMatch(JSON.stringify(evidence),/"(?:mention_id|member_ref|source_digest|context|actor_user_id)"/u);
+    checked.own_current_citations="passed";
+    for(const read of [readEvidence,readPrior]){
+      assert.equal(await read({...readArgs,receipt_id:randomUUID()}),null);
+      assert.equal(await read({...readArgs,candidate_key:fixture.second_candidate_key}),null);
+      await assert.rejects(read({...readArgs,run_key:`foreign-${suffix}`}),{code:"topic_rule_candidate_not_found"});
+      await assert.rejects(read({...readArgs,actor:{...fixture.actor,id:randomUUID()}}),{code:"topic_rule_draft_forbidden"});
+      await assert.rejects(read({...readArgs,workspace_id:randomUUID()}),(error:unknown)=>
+        ["topic_rule_draft_forbidden","topic_rule_candidate_not_found"].includes((error as{code:string}).code));
+    }
+    checked.foreign_receipt_candidate_run_workspace_actor="passed";
+    const source=await core.sourceFor(client,scope),ref=evidence.citations[0]!.evidence_ref;
+    const member=(await client.query<{mention_id:string;data_source_id:string}>(`SELECT membership.mention_id::text,mention.data_source_id::text
+      FROM signal_topic_evaluation_v2_cluster_memberships membership JOIN mentions mention ON mention.id=membership.mention_id
+      WHERE membership.snapshot_id=$1::uuid AND membership.workspace_id=$2::uuid AND signal_semantic_context_digest_json_v2(
+        jsonb_build_object('snapshot',$3::text,'member_ref',membership.member_ref,'source',membership.source_record_digest))=$4`,
+    [source.snapshot_id,fixture.workspace_id,source.snapshot_digest,ref])).rows[0]!;
+    assert.ok(member);
+    for(const mutation of ["rights","content"] as const){
+      stage=`reader_${mutation}`;await client.query("SAVEPOINT topic_suggestion_reader_change");
+      try{
+        const changed=await client.query(mutation==="rights"?"UPDATE data_sources SET status='paused' WHERE id=$1::uuid":
+          "UPDATE mentions SET text_clean=text_clean||' changed reader fixture content' WHERE id=$1::uuid",
+        [mutation==="rights"?member.data_source_id:member.mention_id]);assert.equal(changed.rowCount,1);
+        const result=(await readEvidence(readArgs))!,hidden=result.citations.find(row=>row.evidence_ref===ref)!;
+        assert.deepEqual(hidden,{evidence_ref:ref,status:"unavailable",reason:"source_changed"});
+        assert.ok(result.availability.unavailable>=1);
+        assert.equal((await load(readArgs))!.receipt_digest,receipt.receipt_digest);
+      }finally{await client.query("ROLLBACK TO SAVEPOINT topic_suggestion_reader_change");await client.query("RELEASE SAVEPOINT topic_suggestion_reader_change");}
+      assert.deepEqual(await readEvidence(readArgs),evidence);checked[`current_${mutation}_withdraw_and_recover`]="passed";
+    }
+    stage="reader_prior";
+    const saveArgs={client,...scope,...initial,receipt_id:receipt.receipt_id,idempotency_key:`reader-save:${suffix}`,
+      action:"save" as const,lexical:template.lexical,filters:template.filters};
+    const first=await save(saveArgs);
+    if(initial.expected_draft_revision===0){assert.equal(await readPrior(readArgs),null);checked.no_fake_empty_prior="passed";}
+    const second=await save({...saveArgs,...await cas(),idempotency_key:`reader-edit:${suffix}`,
+      lexical:{any:["Alexa","Echo"],all:[],not:[]}});
+    const prior=(await readPrior(readArgs))!;
+    assert.deepEqual(prior,{draft_id:first.draft.draft_id,revision:first.draft.revision,
+      lexical:first.draft.rule_spec.lexical,filters:first.draft.rule_spec.filters,created_at:first.draft.created_at});
+    checked.latest_prior_only="passed";
+    stage="reader_restore";
+    const restored=await save({client,...scope,...await cas(),receipt_id:receipt.receipt_id,idempotency_key:`reader-restore:${suffix}`,
+      action:"restore",restore_draft_id:prior.draft_id});
+    assert.equal(restored.draft.revision,second.draft.revision+1);
+    assert.deepEqual(restored.draft.rule_spec.lexical,first.draft.rule_spec.lexical);
+    assert.equal((await readPrior(readArgs))!.draft_id,second.draft.draft_id);
+    assert.deepEqual((await load(readArgs))!.adaptation,receipt.adaptation);checked.restore_is_new_revision="passed";
+    return{checks:checked,read_queries:readQueries,reader_dml:0,reader_fts:0,provider_calls:0,cost_micro_usd:0,
+      origin:"local_fixture",citation_count:evidence.availability.stored,
+      draft_revision_delta:restored.draft.revision-initial.expected_draft_revision,trial_calls:0,cohort_calls:0,
+      helper_rows_rolled_back:true};
+  }catch(error){if(error&&typeof error==="object")Object.assign(error,{proof_stage:stage});throw error;}
+  finally{await client.query("ROLLBACK TO SAVEPOINT topic_suggestion_reader_proof");await client.query("RELEASE SAVEPOINT topic_suggestion_reader_proof");}
+}

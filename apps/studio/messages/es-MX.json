@@ -2310,6 +2310,48 @@
           }
         },
         "ruleDraft": {
+          "suggestion": {
+            "title": "Sugerencia de regla",
+            "body": "Revisa su explicación y evidencia. Usarla sólo copia los campos editables; Guardar y Probar siguen siendo pasos separados.",
+            "generate": "Sugerir regla",
+            "generationDisabled": "La generación automática todavía no está habilitada en este entorno. Puedes editar y probar reglas guardadas.",
+            "localFixture": "Simulación local",
+            "empty": "Este candidato aún no tiene una sugerencia de regla guardada.",
+            "stale": "La fuente, el candidato o los permisos cambiaron. Puedes leer esta sugerencia, pero no usarla como vigente.",
+            "insufficient": "No hubo evidencia suficiente para proponer una regla.",
+            "none": "Sin frases",
+            "citationCount": "Referencias: {stored}. Disponibles ahora: {available}. No disponibles: {unavailable}.",
+            "use": "Usar sugerencia",
+            "citations": "Ver menciones citadas",
+            "undoCopy": "Deshacer copia",
+            "restore": "Restaurar versión {revision}",
+            "copied": "La regla está vinculada a esta sugerencia. Puedes editarla antes de guardar; no se ejecutó ninguna generación.",
+            "reference": "Referencia {index}",
+            "citationUnavailable": "Esta referencia ya no está disponible con sus permisos y contenido actuales. No se reemplazó por otra mención.",
+            "formStale": "Hay una versión nueva. Tus campos y su versión original se conservaron. Descarta los cambios para cargar la versión guardada antes de continuar.",
+            "discard": "Descartar cambios y cargar versión guardada",
+            "scopes": "Ámbito de las menciones",
+            "scopeLabels": {
+              "primary_brand": "Marca principal",
+              "same_entity": "Misma entidad",
+              "competitor": "Competencia",
+              "category": "Categoría",
+              "other": "Otro"
+            },
+            "errors": {
+              "topic_rule_suggestion_request_invalid": "La solicitud de regla no es válida.",
+              "topic_rule_suggestion_scope_mismatch": "El resultado no corresponde a este candidato.",
+              "topic_rule_suggestion_source_stale": "La fuente cambió. Actualiza y revisa antes de guardar.",
+              "topic_rule_suggestion_draft_stale": "Hay una versión nueva de la regla. Actualiza para revisarla.",
+              "topic_rule_suggestion_not_found": "La sugerencia o el candidato ya no está disponible.",
+              "topic_rule_suggestion_insufficient_evidence": "No hay una regla respaldada por evidencia que guardar.",
+              "topic_rule_suggestion_restore_invalid": "Esa versión anterior no se puede restaurar.",
+              "topic_rule_suggestion_idempotency_conflict": "La clave corresponde a otra solicitud. Revisa el estado guardado.",
+              "topic_rule_suggestion_forbidden": "Ya no tienes acceso a esta operación.",
+              "topic_rule_suggestion_schema_unavailable": "Las sugerencias todavía no están disponibles aquí. La edición ordinaria sigue disponible.",
+              "topic_rule_suggestion_operation_failed": "No pudimos confirmar la operación. Actualiza y recupera la misma solicitud si fuera necesario."
+            }
+          },
           "title": "Probar una regla del candidato",
           "body": "Escribe frases para explorar coincidencias en el corpus congelado. Esta prueba no asigna ni activa tópicos.",
           "savedIdentity": "Candidato guardado",

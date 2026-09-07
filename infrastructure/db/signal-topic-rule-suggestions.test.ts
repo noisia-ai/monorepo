@@ -4,7 +4,8 @@ import {readFileSync} from "node:fs";
 import {signalTopicEvaluationDigestV2 as digest,sanitizeSignalTopicEvidenceExcerptV2,
   prepareSignalTopicRuleSuggestionContextV1} from "@noisia/query-engine";
 import {receiveSimulatedSignalTopicRuleSuggestionV1 as receive,
-  loadSignalTopicRuleSuggestionV1 as load,saveSignalTopicRuleSuggestionDraftV1 as save}
+  loadSignalTopicRuleSuggestionV1 as load,saveSignalTopicRuleSuggestionDraftV1 as save,
+  loadSignalTopicRuleSuggestionEvidenceV1 as evidence,loadSignalTopicRuleSuggestionPriorDraftV1 as priorDraft}
   from "./signal-topic-rule-suggestions";
 import type {SignalTopicContractDraftClient} from "./signal-topic-contract-drafts";
 
@@ -145,4 +146,95 @@ test("0125 is two scoped append-only tables, no existing schema rewrite, executi
   assert.doesNotMatch(sql,/\b(?:ALTER TABLE|DROP TABLE|DISABLE TRIGGER|COMMIT)\b|INSERT INTO (?:signal_classification|record_tags)/u);
   const source=readFileSync(new URL("./signal-topic-rule-suggestions.ts",import.meta.url),"utf8");
   assert.doesNotMatch(source,/process\.env|new Pool\(|new Client\(|generateAnthropic|fetch\(/u);
+});
+
+function readerProbe(options:{count?:number;available?:boolean;missing?:boolean;prior?:boolean;
+  contextChange?:(context:Record<string,any>)=>void}={}){
+  const refs=Array.from({length:options.count??3},(_,index)=>digest(`reader-ref-${index}`));
+  const source={workspace_id:scope.workspace_id,run_key:scope.run_key,candidate_key:scope.candidate_key,snapshot_digest:digest("snapshot")};
+  const context={source,candidate:{historical_evidence_refs:[digest("historical-only")]},traces:[{mentions:refs.map(evidence_ref=>({
+    evidence_ref,status:"available",source_digest:digest("source"),excerpt:"Alexa at https://example.test/secret by @private_name",
+    language:"en",market:"MX",scope:"primary_brand",month:"2026-05",mention_id:uuid(55)}))}]};
+  options.contextChange?.(context);
+  const row={id:uuid(8),workspace_id:scope.workspace_id,run_id:uuid(3),candidate_id:uuid(4),snapshot_id:uuid(5),context,
+    adaptation:{provenance:{source,evidence:refs.map(evidence_ref=>({evidence_ref,source_digest:digest("source")}))}}};
+  const rule_spec={contract_version:"signal-topic-rule-spec-v1",kind:"topic",label:"Old label",definition:"Old definition",lexical,filters};
+  const p=probe({authorized:true,resolve(sql,values){
+    if(sql.includes("SELECT candidate.id::text candidate_id"))return[{candidate_id:row.candidate_id,run_id:row.run_id,
+      snapshot_id:row.snapshot_id,snapshot_digest:source.snapshot_digest}];
+    if(sql.includes("SELECT snapshot.rights_digest"))return[{rights_digest:digest("rights"),authority_digest:digest("authority"),authority_current:true}];
+    if(sql.includes("FROM signal_topic_rule_suggestion_receipts"))return options.missing?[]:[row];
+    if(sql.startsWith("WITH requested_examples"))return (values[3] as string[]).map(evidence_ref=>({evidence_ref,available:options.available??true}));
+    if(sql.includes("FROM signal_topic_contract_draft_versions prior"))return options.prior?[{draft_id:uuid(9),revision:2,rule_spec,
+      created_at:"2026-09-06T00:00:00Z"}]:[];
+    throw new Error("Unexpected reader query");
+  }});
+  return{...p,refs,row,readArgs:{...scope,queryable:p.client,receipt_id:row.id}};
+}
+
+test("lazy receipt readers validate exact receipt IDs and enforce core authorization before evidence reads",async()=>{
+  for(const read of [evidence,priorDraft]){
+    const invalid=probe();await assert.rejects(read({...scope,queryable:invalid.client,receipt_id:"foreign-text"}),
+      {code:"topic_rule_suggestion_request_invalid"});assert.equal(invalid.queries.length,0);
+    const denied=probe();await assert.rejects(read({...scope,queryable:denied.client,receipt_id:uuid(8)}),
+      {code:"topic_rule_draft_forbidden"});noWrites(denied.queries);
+    assert.equal(denied.queries.length,1);
+  }
+});
+test("receipt evidence projects only its own citations, removes identifiers, and uses current core content/rights checks",async()=>{
+  const p=readerProbe({count:12}),result=(await evidence(p.readArgs))!;
+  assert.equal(result.origin,"local_fixture");assert.deepEqual(result.availability,{stored:12,available:12,unavailable:0});
+  assert.deepEqual(result.citations.map(row=>row.evidence_ref),p.refs);
+  assert.doesNotMatch(JSON.stringify(result),/historical-only|example\.test|private_name|mention_id|source_digest/u);
+  const queries=p.queries.filter(row=>row.sql.startsWith("WITH requested_examples"));
+  assert.deepEqual(queries.map(row=>(row.values[3] as string[]).length),[10,2]);
+  for(const query of queries){assert.deepEqual(query.values.slice(0,3),[scope.workspace_id,p.row.snapshot_id,digest("snapshot")]);
+    assert.match(query.sql,/source.status='active'/u);assert.match(query.sql,/mention\.text_hash=selected\.canonical_text_hash/u);
+    assert.match(query.sql,/selected\.source_content_hash/u);}
+  noWrites(p.queries);
+});
+test("withdrawn or changed current evidence never returns a retained excerpt",async()=>{
+  const p=readerProbe({available:false}),result=(await evidence(p.readArgs))!;
+  assert.deepEqual(result.availability,{stored:3,available:0,unavailable:3});
+  assert.deepEqual(result.citations,p.refs.map(evidence_ref=>({evidence_ref,status:"unavailable",reason:"source_changed"})));
+  assert.doesNotMatch(JSON.stringify(result),/excerpt|language|market|month/u);noWrites(p.queries);
+});
+test("an unavailable trace vetoes a stored citation even if another trace had text",async()=>{
+  const p=readerProbe({contextChange(context){context.traces.push({mentions:[{evidence_ref:context.traces[0].mentions[0].evidence_ref,
+    status:"unavailable",reason:"rights_changed"}]});}});
+  const result=(await evidence(p.readArgs))!;
+  assert.equal(result.citations[0]!.status,"unavailable");assert.equal(result.availability.available,2);
+  const sent=p.queries.filter(row=>row.sql.startsWith("WITH requested_examples")).flatMap(row=>row.values[3] as string[]);
+  assert.ok(!sent.includes(p.refs[0]!));noWrites(p.queries);
+});
+test("reader bound is twelve unique receipt references; a missing receipt never falls back to naming evidence",async()=>{
+  const over=readerProbe({count:13});await assert.rejects(evidence(over.readArgs),{code:"topic_rule_suggestion_evidence_invalid"});
+  assert.ok(!over.queries.some(row=>row.sql.startsWith("WITH requested_examples")));
+  const duplicate=readerProbe();duplicate.row.adaptation.provenance.evidence.push(duplicate.row.adaptation.provenance.evidence[0]!);
+  await assert.rejects(evidence(duplicate.readArgs),{code:"topic_rule_suggestion_evidence_invalid"});
+  for(const read of [evidence,priorDraft]){const absent=readerProbe({missing:true});assert.equal(await read(absent.readArgs),null);
+    assert.ok(!absent.queries.some(row=>row.sql.startsWith("WITH requested_examples")||row.sql.includes("FROM signal_topic_contract_draft_versions prior")));
+    const lookup=absent.queries.find(row=>row.sql.includes("FROM signal_topic_rule_suggestion_receipts"))!;
+    assert.deepEqual(lookup.values,[scope.workspace_id,absent.row.run_id,absent.row.candidate_id,absent.row.snapshot_id,uuid(8)]);
+    noWrites(absent.queries);}
+});
+test("receipt context from another scope fails without projecting its text",async()=>{
+  for(const key of ["workspace_id","run_key","candidate_key"]){
+    const p=readerProbe({contextChange(context){context.source={...context.source,[key]:"foreign"};}});
+    await assert.rejects(evidence(p.readArgs),{code:"topic_rule_suggestion_source_invalid"});
+    assert.ok(!p.queries.some(row=>row.sql.startsWith("WITH requested_examples")));noWrites(p.queries);
+  }
+});
+test("prior rule is a single earlier ordinary revision scoped to workspace, run, candidate and snapshot",async()=>{
+  const p=readerProbe({prior:true}),result=(await priorDraft(p.readArgs))!;
+  assert.deepEqual(result,{draft_id:uuid(9),revision:2,lexical,filters,created_at:"2026-09-06T00:00:00.000Z"});
+  assert.doesNotMatch(JSON.stringify(result),/label|definition|provider|actor/u);
+  const query=p.queries.find(row=>row.sql.includes("FROM signal_topic_contract_draft_versions prior"))!;
+  assert.deepEqual(query.values,[scope.workspace_id,p.row.run_id,p.row.candidate_id,p.row.snapshot_id]);
+  assert.match(query.sql,/prior\.revision<\(SELECT max\(current\.revision\)/u);
+  for(const name of ["workspace_id","run_id","candidate_id","snapshot_id"]){
+    assert.match(query.sql,new RegExp(`prior\\.${name}=\\$[1-4]::uuid`,"u"));
+    assert.match(query.sql,new RegExp(`current\\.${name}=\\$[1-4]::uuid`,"u"));}
+  assert.match(query.sql,/ORDER BY prior\.revision DESC LIMIT 1/u);noWrites(p.queries);
+  const empty=readerProbe();assert.equal(await priorDraft(empty.readArgs),null);noWrites(empty.queries);
 });

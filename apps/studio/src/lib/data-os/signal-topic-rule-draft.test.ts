@@ -208,7 +208,7 @@ test("route guards precede parser/writer; pending key survives UI remount and re
   assert.match(source,/pendingRef\.current&&readChecked&&!busy/u);assert.match(source,/submit\(pendingRef\.current\)/u);
   assert.match(source,/sessionStorage\.getItem/u);assert.match(source,/read\.current\?\.abort\(\)/u);
   assert.match(source,/max_memberships:25000,example_limit:10,timeout_ms:15000/u);
-  const refresh=source.slice(source.indexOf("async function refresh()"),source.indexOf("return<TopicCandidateRuleDraftView"));
+  const refresh=source.slice(source.indexOf("async function refresh()"),source.indexOf("function useSuggestion()"));
   assert.match(refresh,/await onRefreshCandidate\(\)/u);assert.match(refresh,/await load\(false\)/u);
   assert.ok(refresh.indexOf("await onRefreshCandidate()")<refresh.indexOf("await load(false)"));
   assert.doesNotMatch(refresh,/else|load\(true\)|setFields/u,"identity refresh rereads receipts without resetting manual phrases");

@@ -2205,6 +2205,66 @@ paths:
         "404": { description: Candidate not found in the authorized workspace and run. }
         "409": { description: Frozen citation authority is unavailable. }
         "422": { description: Query or scope-bound cursor rejected without a write. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/rule-suggestions:
+    get:
+      tags: [Signal Topic Evaluation]
+      operationId: getSignalTopicRuleSuggestion
+      summary: Read a rule suggestion and current ordinary draft; no generation or matching.
+      description: >-
+        Internal management, coherent REPEATABLE READ READ ONLY. Latest or exact receipt belongs to this candidate/run.
+        Optional lazy citations are only this receipt's own references and recheck current content and rights.
+        Unavailable references are never replaced. local_fixture is a local simulation, not AI execution.
+        Generation is explicitly disabled; no POST fixture receiver exists.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: candidateKey, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+        - { name: run_key, in: query, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{7,199}$' } }
+        - { name: receipt_id, in: query, schema: { type: string, format: uuid } }
+        - { name: include_citations, in: query, schema: { type: string, const: 'true' } }
+      responses:
+        '200':
+          description: Closed read-only candidate, draft, receipt and optional citations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignalTopicRuleSuggestionManagementV1' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Exact scoped candidate or receipt not found. }
+        '422': { description: Invalid, duplicate or unknown query parameter. }
+        '503': { description: Suggestion schema unavailable. Ordinary rule editing is unaffected. }
+  /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/rule-suggestions/{receiptId}/draft:
+    post:
+      tags: [Signal Topic Evaluation]
+      operationId: saveSignalTopicRuleSuggestionDraft
+      summary: Save edited suggestion fields or restore an earlier rule as a new ordinary draft revision.
+      description: >-
+        Internal management, SERIALIZABLE transaction. Existing B writer saves draft and receipt link atomically.
+        Exact candidate and draft CAS, actor, run, receipt and idempotency binding. Same-key recovery replays the
+        original body; latest GET alone does not confirm it. Restore never rewrites history. DTO and constraints
+        validate before COMMIT. No provider, trial, Topic adoption, publication or serving; no reason/confirmation fields.
+      security: [{ kindeSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - { name: candidateKey, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,179}$' } }
+        - { name: receiptId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._:-]{8,200}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignalTopicRuleSuggestionCommandV1' }
+      responses:
+        '200':
+          description: Linked ordinary draft or exact replay of the prior request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignalTopicRuleSuggestionBridgeV1' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Exact scoped candidate or receipt not found. }
+        '409': { description: Candidate/draft/source stale, insufficient evidence or idempotency conflict. }
+        '422': { description: Closed body, route binding or restore target invalid; no write. }
+        '500': { description: Unknown outcome; reconcile and recover only the exact same body/key. }
+        '503': { description: Suggestion schema unavailable. }
   /api/data-os/signal/{workspaceId}/topic-evaluation/full-evidence/candidates/{candidateKey}/rule-draft:
     get:
       tags:
@@ -4174,6 +4234,10 @@ components:
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+    SignalTopicRuleSuggestionCommandV1: {"description":"Closed save or restore. Draft revision zero iff digest null. Exact server parser validates lexical totals. Source actor/context/origin and user reasons are not accepted.","oneOf":[{"type":"object","additionalProperties":false,"required":["run_key","candidate_key","receipt_id","expected_candidate_revision","expected_candidate_state_token","expected_draft_revision","expected_draft_digest","action","lexical","filters"],"properties":{"run_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{7,199}$"},"candidate_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{0,179}$"},"receipt_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"expected_candidate_revision":{"type":"integer","minimum":1},"expected_candidate_state_token":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"expected_draft_revision":{"type":"integer","minimum":0},"expected_draft_digest":{"oneOf":[{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},{"type":"null"}]},"action":{"const":"save"},"lexical":{"$ref":"#/components/schemas/SignalTopicRuleSpecV1/properties/lexical"},"filters":{"$ref":"#/components/schemas/SignalTopicRuleSpecV1/properties/filters"}}},{"type":"object","additionalProperties":false,"required":["run_key","candidate_key","receipt_id","expected_candidate_revision","expected_candidate_state_token","expected_draft_revision","expected_draft_digest","action","restore_draft_id"],"properties":{"run_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{7,199}$"},"candidate_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{0,179}$"},"receipt_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"expected_candidate_revision":{"type":"integer","minimum":1},"expected_candidate_state_token":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"expected_draft_revision":{"type":"integer","minimum":0},"expected_draft_digest":{"oneOf":[{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},{"type":"null"}]},"action":{"const":"restore"},"restore_draft_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}}}]}
+    SignalTopicRuleSuggestionReceiptProjectionV1: {"type":"object","additionalProperties":false,"required":["receipt_id","origin","status","explanation","rule_spec","run_key","candidate_key","expected_candidate_revision","expected_candidate_state_token","expected_draft_revision","expected_draft_digest","is_stale","stale_reasons","current_draft","draft_changed","evidence","latest_link","created_at"],"properties":{"receipt_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"origin":{"const":"local_fixture"},"status":{"enum":["suggested","insufficient_evidence"]},"explanation":{"type":"string","minLength":1,"maxLength":600},"rule_spec":{"oneOf":[{"$ref":"#/components/schemas/SignalTopicRuleSpecV1"},{"type":"null"}]},"run_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{7,199}$"},"candidate_key":{"type":"string","pattern":"^[a-z0-9][a-z0-9._:-]{0,179}$"},"expected_candidate_revision":{"type":"integer","minimum":1},"expected_candidate_state_token":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"expected_draft_revision":{"type":"integer","minimum":0},"expected_draft_digest":{"oneOf":[{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},{"type":"null"}]},"is_stale":{"type":"boolean"},"stale_reasons":{"type":"array","maxItems":3,"items":{"enum":["candidate_changed","brand_os_changed","evidence_unavailable"]}},"current_draft":{"type":"object","additionalProperties":false,"required":["revision","digest"],"properties":{"revision":{"type":"integer","minimum":0},"digest":{"oneOf":[{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},{"type":"null"}]}}},"draft_changed":{"type":"boolean"},"evidence":{"type":"object","additionalProperties":false,"required":["stored","available","unavailable"],"properties":{"stored":{"type":"integer","minimum":0,"maximum":12},"available":{"type":"integer","minimum":0,"maximum":12},"unavailable":{"type":"integer","minimum":0,"maximum":12}}},"latest_link":{"oneOf":[{"type":"object","additionalProperties":false,"required":["link_id","draft_id","action"],"properties":{"link_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"draft_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"action":{"enum":["save","restore"]}}},{"type":"null"}]},"created_at":{"type":"string"}}}
+    SignalTopicRuleSuggestionManagementV1: {"type":"object","additionalProperties":false,"required":["contract_version","page","receipt","citations","prior_drafts","generation"],"properties":{"contract_version":{"const":"signal-topic-rule-suggestion-management-v1"},"page":{"$ref":"#/components/schemas/SignalTopicRuleDraftManagementV1"},"receipt":{"oneOf":[{"$ref":"#/components/schemas/SignalTopicRuleSuggestionReceiptProjectionV1"},{"type":"null"}]},"citations":{"oneOf":[{"type":"object","additionalProperties":false,"required":["receipt_id","items","availability"],"properties":{"receipt_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"items":{"type":"array","maxItems":12,"items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["evidence_ref","status","excerpt","language","market","month","scope"],"properties":{"evidence_ref":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"status":{"const":"available"},"excerpt":{"type":"string","minLength":1,"maxLength":600},"language":{"oneOf":[{"type":"string"},{"type":"null"}]},"market":{"oneOf":[{"type":"string"},{"type":"null"}]},"month":{"type":"string"},"scope":{"oneOf":[{"type":"string"},{"type":"null"}]}}},{"type":"object","additionalProperties":false,"required":["evidence_ref","status","reason"],"properties":{"evidence_ref":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"status":{"const":"unavailable"},"reason":{"enum":["rights_changed","source_changed","reference_unavailable"]}}}]}},"availability":{"type":"object","additionalProperties":false,"required":["stored","available","unavailable"],"properties":{"stored":{"type":"integer","minimum":0,"maximum":12},"available":{"type":"integer","minimum":0,"maximum":12},"unavailable":{"type":"integer","minimum":0,"maximum":12}}}}},{"type":"null"}]},"prior_drafts":{"type":"array","maxItems":10,"items":{"type":"object","additionalProperties":false,"required":["draft_id","revision"],"properties":{"draft_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"revision":{"type":"integer","minimum":1}}}},"generation":{"type":"object","additionalProperties":false,"required":["enabled","reason"],"properties":{"enabled":{"const":false},"reason":{"const":"execution_not_enabled"}}}}}
+    SignalTopicRuleSuggestionBridgeV1: {"type":"object","additionalProperties":false,"required":["link_id","receipt_id","action","draft","idempotent_replay"],"properties":{"link_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"receipt_id":{"type":"string","pattern":"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},"action":{"enum":["save","restore"]},"draft":{"$ref":"#/components/schemas/SignalTopicContractDraftV1"},"idempotent_replay":{"type":"boolean"}}}
     SignalTopicRuleSpecV1:
       type: object
       additionalProperties: false

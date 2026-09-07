@@ -2310,6 +2310,48 @@
           }
         },
         "ruleDraft": {
+          "suggestion": {
+            "title": "Rule suggestion",
+            "body": "Review its explanation and evidence. Using it only copies editable fields; Save and Test remain separate steps.",
+            "generate": "Suggest rule",
+            "generationDisabled": "Automatic generation is not enabled in this environment yet. You can edit and test saved rules.",
+            "localFixture": "Local simulation",
+            "empty": "This candidate has no saved rule suggestion yet.",
+            "stale": "The source, candidate or permissions changed. You can read this suggestion, but cannot use it as current.",
+            "insufficient": "There was not enough evidence to suggest a rule.",
+            "none": "No phrases",
+            "citationCount": "References: {stored}. Available now: {available}. Unavailable: {unavailable}.",
+            "use": "Use suggestion",
+            "citations": "View cited mentions",
+            "undoCopy": "Undo copy",
+            "restore": "Restore version {revision}",
+            "copied": "The rule is linked to this suggestion. You can edit it before saving; no generation was executed.",
+            "reference": "Reference {index}",
+            "citationUnavailable": "This reference is no longer available with current permissions and content. It was not replaced with another mention.",
+            "formStale": "A newer version exists. Your fields and their original version were preserved. Discard changes to load the saved version before continuing.",
+            "discard": "Discard changes and load saved version",
+            "scopes": "Mention scope",
+            "scopeLabels": {
+              "primary_brand": "Primary brand",
+              "same_entity": "Same entity",
+              "competitor": "Competitor",
+              "category": "Category",
+              "other": "Other"
+            },
+            "errors": {
+              "topic_rule_suggestion_request_invalid": "The rule request is invalid.",
+              "topic_rule_suggestion_scope_mismatch": "The result does not belong to this candidate.",
+              "topic_rule_suggestion_source_stale": "The source changed. Refresh and review before saving.",
+              "topic_rule_suggestion_draft_stale": "There is a newer rule version. Refresh to review it.",
+              "topic_rule_suggestion_not_found": "The suggestion or candidate is no longer available.",
+              "topic_rule_suggestion_insufficient_evidence": "There is no evidence-supported rule to save.",
+              "topic_rule_suggestion_restore_invalid": "That previous version cannot be restored.",
+              "topic_rule_suggestion_idempotency_conflict": "This key belongs to another request. Review the saved state.",
+              "topic_rule_suggestion_forbidden": "You no longer have access to this operation.",
+              "topic_rule_suggestion_schema_unavailable": "Suggestions are not available here yet. Ordinary editing remains available.",
+              "topic_rule_suggestion_operation_failed": "The operation could not be confirmed. Refresh and recover the same request if needed."
+            }
+          },
           "title": "Test a candidate rule",
           "body": "Write phrases to explore matches in the frozen corpus. This trial does not assign or activate topics.",
           "savedIdentity": "Saved candidate",

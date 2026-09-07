@@ -34,6 +34,13 @@ export type SignalTopicRuleSuggestionReceiptV1={contract_version:"signal-topic-r
   provider_execution:false;provider_calls:0;input_tokens:0;output_tokens:0;cost_micro_usd:0;idempotent_replay:boolean};
 export type SignalTopicRuleSuggestionBridgeV1={link_id:string;receipt_id:string;action:"save"|"restore";
   draft:SignalTopicContractDraftV1;idempotent_replay:boolean};
+export type SignalTopicRuleSuggestionEvidenceV1={contract_version:"signal-topic-rule-suggestion-evidence-v1";
+  receipt_id:string;origin:"local_fixture";citations:Array<
+    {evidence_ref:string;status:"available";excerpt:string;language:string|null;market:string|null;scope:string|null;month:string}
+    |{evidence_ref:string;status:"unavailable";reason:"source_changed"}>;
+  availability:{stored:number;available:number;unavailable:number}};
+export type SignalTopicRuleSuggestionPriorDraftV1={draft_id:string;revision:number;
+  lexical:SignalTopicRuleSpecV1["lexical"];filters:SignalTopicRuleSpecV1["filters"];created_at:string};
 export class SignalTopicRuleSuggestionError extends Error{
   constructor(public readonly code:string,public readonly status=409){super(code);}
 }
@@ -221,6 +228,56 @@ async function selectedReceipt(client:Client,args:Scope&{receipt_id?:string}){
 export async function loadSignalTopicRuleSuggestionV1(args:Scope&{queryable:Client;receipt_id?:string}){
   await core.authorize(args.queryable,args);const row=await selectedReceipt(args.queryable,args);
   return row?project(args.queryable,args,row,false):null;
+}
+type ReceiptRead=Scope&{queryable:Client;receipt_id:string};
+async function exactReceipt(args:ReceiptRead){
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(args.receipt_id))fail("request_invalid",422);
+  await core.authorize(args.queryable,args);return selectedReceipt(args.queryable,args);
+}
+/** Lazy receipt-owned citations only. The persisted excerpt is usable only while its exact
+ * source content and current rights still pass the ordinary core projector. No navigation,
+ * naming evidence, raw mention identity, FTS or writes occur on this path. Caller owns RRRO. */
+export async function loadSignalTopicRuleSuggestionEvidenceV1(args:ReceiptRead):Promise<SignalTopicRuleSuggestionEvidenceV1|null>{
+  const receipt=await exactReceipt(args);if(!receipt)return null;
+  const refs=receipt.adaptation.provenance.evidence;
+  if(refs.length>12||new Set(refs.map(row=>row.evidence_ref)).size!==refs.length)fail("evidence_invalid");
+  const context=receipt.context,source=context.source;
+  if(source.workspace_id!==args.workspace_id||source.run_key!==args.run_key||source.candidate_key!==args.candidate_key
+    ||source.snapshot_digest!==receipt.adaptation.provenance.source.snapshot_digest)fail("source_invalid");
+  const examples:Extract<SignalTopicRuleSuggestionEvidenceV1["citations"][number],{status:"available"}>[]=[];
+  for(const ref of refs){
+    const mentions=context.traces.flatMap(trace=>trace.mentions.filter(mention=>mention.evidence_ref===ref.evidence_ref));
+    if(mentions.some(mention=>mention.status==="unavailable"))continue;
+    const mention=mentions.find(mention=>mention.status==="available"&&mention.source_digest===ref.source_digest);
+    if(!mention||mention.status!=="available")continue;
+    examples.push({evidence_ref:ref.evidence_ref,status:"available",excerpt:sanitizeSignalTopicEvidenceExcerptV2(mention.excerpt),
+      language:mention.language,market:mention.market,scope:mention.scope,month:mention.month});
+  }
+  const available=new Map<string,typeof examples[number]>();
+  for(let offset=0;offset<examples.length;offset+=10){
+    const projected=await core.projectCurrentExamples(args.queryable,{workspace_id:args.workspace_id,snapshot_id:receipt.snapshot_id},
+      {snapshot_digest:source.snapshot_digest,examples:examples.slice(offset,offset+10)});
+    projected.examples.forEach(example=>available.set(example.evidence_ref,example));
+  }
+  return{contract_version:"signal-topic-rule-suggestion-evidence-v1",receipt_id:receipt.id,origin:"local_fixture",
+    citations:refs.map(ref=>available.get(ref.evidence_ref)??{evidence_ref:ref.evidence_ref,status:"unavailable",reason:"source_changed"}),
+    availability:{stored:refs.length,available:available.size,unavailable:refs.length-available.size}};
+}
+/** The single preceding ordinary revision, not an unbounded history or a suggested identity.
+ * Restore still uses B's command with fresh candidate/draft CAS and appends a new revision. */
+export async function loadSignalTopicRuleSuggestionPriorDraftV1(args:ReceiptRead):Promise<SignalTopicRuleSuggestionPriorDraftV1|null>{
+  const receipt=await exactReceipt(args);if(!receipt)return null;
+  const row=(await args.queryable.query<{draft_id:string;revision:number;rule_spec:SignalTopicRuleSpecV1;created_at:string}>(
+    `SELECT prior.id::text draft_id,prior.revision,prior.rule_spec,prior.created_at::text
+    FROM signal_topic_contract_draft_versions prior
+    WHERE prior.workspace_id=$1::uuid AND prior.run_id=$2::uuid AND prior.candidate_id=$3::uuid AND prior.snapshot_id=$4::uuid
+      AND prior.revision<(SELECT max(current.revision) FROM signal_topic_contract_draft_versions current
+        WHERE current.workspace_id=$1::uuid AND current.run_id=$2::uuid AND current.candidate_id=$3::uuid AND current.snapshot_id=$4::uuid)
+    ORDER BY prior.revision DESC LIMIT 1`,[args.workspace_id,receipt.run_id,receipt.candidate_id,receipt.snapshot_id])).rows[0];
+  if(!row)return null;
+  const spec=parseSignalTopicRuleSpecV1(row.rule_spec);
+  return{draft_id:row.draft_id,revision:row.revision,lexical:spec.lexical,filters:spec.filters,
+    created_at:new Date(row.created_at).toISOString()};
 }
 async function project(client:Client,args:Scope,row:ReceiptRow,replayed:boolean):Promise<SignalTopicRuleSuggestionReceiptV1>{
   const bound=await source(client,args),prior=await currentDraft(client,bound.candidate_id);
