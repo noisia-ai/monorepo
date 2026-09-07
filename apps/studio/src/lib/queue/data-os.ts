@@ -8,6 +8,7 @@ import {
   SIGNAL_MATERIALIZE_JOB_NAME,
   SIGNAL_SEMANTIC_RESOLUTION_QUEUE_NAME,
   SIGNAL_TAXONOMY_INSIGHT_JOB_NAME,
+  SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME,
   type DataOsShadowRunJobData,
   type SignalMonthlyInsightJobDataV1,
   type SignalMaterializeJobDataV1,
@@ -111,6 +112,20 @@ export async function enqueueSignalTaxonomyInsights(
       attempts: 1,
       removeOnComplete: { age: 86_400, count: 100 },
       removeOnFail: { age: 604_800, count: 200 }
+    }
+  );
+}
+
+export async function enqueueSignalTopicClassification(executionId: string) {
+  return getDataOsQueue().add(
+    SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME,
+    { execution_id: executionId },
+    {
+      jobId: `signal-topic-classification:${executionId}`,
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: { age: 86_400, count: 200 },
+      removeOnFail: { age: 604_800, count: 500 }
     }
   );
 }

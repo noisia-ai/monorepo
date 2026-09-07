@@ -80,6 +80,15 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
             <div className="admin-settings-list">
               <AdminSettingsRow
                 action={(
+                  <Link className="admin-button admin-button--compact" href={`/studio/brands/${id}/topics`} prefetch={false}>
+                    {t("data.destinations.open")}<ArrowRight aria-hidden size={14} />
+                  </Link>
+                )}
+                description={t("data.destinations.topicsDescription")}
+                title={t("data.destinations.topicsTitle")}
+              />
+              <AdminSettingsRow
+                action={(
                   <Link className="admin-button admin-button--compact" href={`/studio/brands/${id}/data/mentions`} prefetch={false}>
                     {t("data.destinations.open")}<ArrowRight aria-hidden size={14} />
                   </Link>
@@ -95,15 +104,6 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
                 )}
                 description={t("data.destinations.reviewDescription")}
                 title={t("data.semanticReview.title")}
-              />
-              <AdminSettingsRow
-                action={(
-                  <Link className="admin-button admin-button--compact" href={`/studio/brands/${id}/data/discovery-review`} prefetch={false}>
-                    {t("data.destinations.open")}<ArrowRight aria-hidden size={14} />
-                  </Link>
-                )}
-                description={t("data.destinations.discoveryReviewDescription")}
-                title={t("data.discoveryReview.title")}
               />
               <AdminSettingsRow
                 action={(

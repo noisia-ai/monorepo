@@ -55,6 +55,7 @@ export * from "./signal-semantic-context-proposal-v1";
 export * from "./signal-topic-evaluation-v1";
 export * from "./signal-topic-evaluation-v2";
 export * from "./signal-topic-rule-spec-v1";
+export * from "./signal-topic-catalog-v1";
 export * from "./signal-topic-rule-cohort-v1";
 export * from "./signal-topic-rule-suggestion-v1";
 export * from "./signal-topics-narratives-v1";

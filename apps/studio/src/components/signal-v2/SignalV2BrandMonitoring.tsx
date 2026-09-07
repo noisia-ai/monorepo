@@ -139,6 +139,7 @@ export function SignalV2BrandMonitoring({
   brandName,
   canRefreshInsights,
   emptyWorkspace = false,
+  emptyWorkspaceReason = "source_missing",
   initialData,
   initialMention,
   initialMentions,
@@ -146,6 +147,7 @@ export function SignalV2BrandMonitoring({
   initialTopicsNarratives,
   initialTriggersBarriers,
   legacyOutputId,
+  manageTopicsHref,
   strategicStudies,
   userName,
   workspaceOptions,
@@ -157,6 +159,7 @@ export function SignalV2BrandMonitoring({
   brandName: string;
   canRefreshInsights: boolean;
   emptyWorkspace?: boolean;
+  emptyWorkspaceReason?: "source_missing" | "population_unavailable" | "empty_result";
   initialData: SignalBrandMonitoringV1;
   initialMention: SignalMentionRecordV1 | null;
   initialMentions: SignalMentionsViewData | null;
@@ -164,6 +167,7 @@ export function SignalV2BrandMonitoring({
   initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
+  manageTopicsHref: string | null;
   strategicStudies: SignalStrategicStudyNavigationItem[];
   userName: string;
   workspaceOptions: SignalWorkspaceOption[];
@@ -1122,7 +1126,9 @@ export function SignalV2BrandMonitoring({
         ) : emptyWorkspace ? (
           <SignalV2EmptyWorkspace
             brandName={brandName}
-            canManage={canRefreshInsights}
+            canManage={Boolean(manageTopicsHref) || canRefreshInsights}
+            manageTopicsHref={manageTopicsHref}
+            reason={emptyWorkspaceReason}
             workspaceSubjectId={workspaceSubjectId}
           />
         ) : currentModule === "study" && currentStudy && triggersBarriersData ? (
@@ -1156,6 +1162,7 @@ export function SignalV2BrandMonitoring({
             data={topicsNarrativesData}
             filter={data.filter}
             loading={loading}
+            manageTopicsHref={manageTopicsHref}
             onApplyFilter={loadFilter}
             onOpenControls={() => setControlsOpen(true)}
             onOpenMentions={goToCorpus}
@@ -1560,34 +1567,42 @@ export function SignalV2BrandMonitoring({
 function SignalV2EmptyWorkspace({
   brandName,
   canManage,
+  manageTopicsHref,
+  reason,
   workspaceSubjectId
 }: {
   brandName: string;
   canManage: boolean;
+  manageTopicsHref: string | null;
+  reason: "source_missing" | "population_unavailable" | "empty_result";
   workspaceSubjectId: string;
 }) {
   const t = useTranslations("SignalV2");
+  const contentKey = reason === "source_missing" ? "source" : reason === "empty_result" ? "empty" : "population";
+  const actionHref = reason === "population_unavailable" && manageTopicsHref
+    ? manageTopicsHref
+    : `/studio/brands/${workspaceSubjectId}`;
   return (
     <div className="signal-v2-empty-workspace">
       <SignalV2ModuleHeader
         icon={<Gauge size={20} weight="fill" />}
-        status={t("emptyWorkspace.status")}
+        status={t(`emptyWorkspace.${contentKey}.status`)}
         subtitle={t("emptyWorkspace.subtitle", { brand: brandName })}
         title={t("title")}
       />
       <section className="signal-v2-empty-workspace__body">
         <div className="signal-v2-empty-workspace__lead">
           <Database aria-hidden="true" size={22} weight="duotone" />
-          <small>{t("emptyWorkspace.eyebrow")}</small>
-          <h2>{t("emptyWorkspace.title")}</h2>
-          <p>{t("emptyWorkspace.body")}</p>
+          <small>{t(`emptyWorkspace.${contentKey}.eyebrow`)}</small>
+          <h2>{t(`emptyWorkspace.${contentKey}.title`)}</h2>
+          <p>{t(`emptyWorkspace.${contentKey}.body`)}</p>
           {canManage ? (
             <Link
               className="signal-v2-primary-link"
-              href={`/studio/brands/${workspaceSubjectId}`}
+              href={actionHref}
               prefetch={false}
             >
-              {t("emptyWorkspace.action")}
+              {t(`emptyWorkspace.${contentKey}.action`)}
               <ArrowRight aria-hidden="true" size={15} weight="bold" />
             </Link>
           ) : null}
@@ -1596,15 +1611,15 @@ function SignalV2EmptyWorkspace({
           <li>
             <span>1</span>
             <div>
-              <strong>{t("emptyWorkspace.sourceTitle")}</strong>
-              <p>{t("emptyWorkspace.sourceBody")}</p>
+              <strong>{t(`emptyWorkspace.${contentKey}.firstTitle`)}</strong>
+              <p>{t(`emptyWorkspace.${contentKey}.firstBody`)}</p>
             </div>
           </li>
           <li>
             <span>2</span>
             <div>
-              <strong>{t("emptyWorkspace.scopeTitle")}</strong>
-              <p>{t("emptyWorkspace.scopeBody")}</p>
+              <strong>{t(`emptyWorkspace.${contentKey}.secondTitle`)}</strong>
+              <p>{t(`emptyWorkspace.${contentKey}.secondBody`)}</p>
             </div>
           </li>
         </ol>

@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import type { QueryResult } from "pg";
+import type { PoolClient, QueryResult } from "pg";
 
 import {
   buildSignalMetricMaterializationPlanV1,
@@ -50,18 +50,26 @@ type WatermarkRow = {
 
 const MATERIALIZATION_WRITE_BATCH_SIZE = 100;
 
-export async function signalMaterializationJob(job: Job<SignalMaterializeJobDataV1>) {
-  const client = await pool.connect();
+export async function signalMaterializationJob(
+  job: Job<SignalMaterializeJobDataV1>,
+  transactionClient?: PoolClient
+) {
+  const client = transactionClient ?? await pool.connect();
+  const ownsClient = transactionClient === undefined;
   const requestedScopeId = job.data.population_id ?? job.data.study_corpus_id;
   const lockKey = `signal-materialize:${job.data.workspace_id}:${requestedScopeId}`;
   let locked = false;
   try {
-    const lock = await client.query<{ locked: boolean }>(
-      `SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked`,
-      [lockKey]
-    );
-    locked = lock.rows[0]?.locked === true;
-    if (!locked) throw new Error("signal_materialization_lock_unavailable");
+    if (ownsClient) {
+      const lock = await client.query<{ locked: boolean }>(
+        `SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked`,
+        [lockKey]
+      );
+      locked = lock.rows[0]?.locked === true;
+      if (!locked) throw new Error("signal_materialization_lock_unavailable");
+    } else {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [lockKey]);
+    }
 
     const scopeResult = job.data.population_id
       ? await client.query<WorkspaceScope>(`
@@ -271,7 +279,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
           generated_filters: generatedFilters
         });
 
-    await client.query("BEGIN");
+    if (ownsClient) await client.query("BEGIN");
     let rowsWritten = 0;
     let plansExecuted = 0;
     const interpretationScopes = new Map<string, { metricGroupKey: string; filter: SignalFilterV1; filtersHash: string }>();
@@ -463,7 +471,7 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
         WHERE id = $1::uuid
       `, [job.data.invalidation_id, plansExecuted, rowsWritten, watermarkHash]);
     }
-    await client.query("COMMIT");
+    if (ownsClient) await client.query("COMMIT");
     if (
       scope.scope_kind === "legacy_corpus"
       && process.env.NOISIA_SIGNAL_INTERPRETATIONS_ENABLED === "true"
@@ -505,11 +513,13 @@ export async function signalMaterializationJob(job: Job<SignalMaterializeJobData
     }
     return { state: freshness, plans_executed: plansExecuted, rows_written: rowsWritten, watermark_hash: watermarkHash };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (ownsClient) await client.query("ROLLBACK").catch(() => undefined);
     throw error;
   } finally {
-    if (locked) await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey]).catch(() => undefined);
-    client.release();
+    if (ownsClient && locked) {
+      await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey]).catch(() => undefined);
+    }
+    if (ownsClient) client.release();
   }
 }
 

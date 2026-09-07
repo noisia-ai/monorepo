@@ -42,7 +42,8 @@ const emptyDatabase = {
     return { rows: [{
       strategic_run_claimable: 0,
       strategic_step_claimable: 0,
-      workspace_import_claimable: 0
+      workspace_import_claimable: 0,
+      topic_classification_claimable: 0
     }] };
   }
 };

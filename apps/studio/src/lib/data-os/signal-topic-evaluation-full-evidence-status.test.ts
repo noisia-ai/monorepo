@@ -66,11 +66,12 @@ test("full-evidence status rejects execution, provider, aggregate and shape drif
   }
 });
 
-test("Brand OS status uses only the provider-disabled preflight GET and retains Discovery Review separation", async () => {
-  const [component, projection, page, route, es, en] = await Promise.all([
+test("full-evidence stays as technical history outside the daily Brand OS flow", async () => {
+  const [component, projection, page, topicsManager, route, es, en] = await Promise.all([
     readFile(new URL("../../components/brands/FullEvidenceTopicEvaluationStatus.tsx", import.meta.url), "utf8"),
     readFile(new URL("./signal-topic-evaluation-full-evidence-status.ts", import.meta.url), "utf8"),
     readFile(new URL("../../app/studio/brands/[id]/brand-os/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../components/brands/TopicsManager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topic-evaluation/full-evidence/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../messages/es-MX.json", import.meta.url), "utf8"),
     readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8")
@@ -79,9 +80,15 @@ test("Brand OS status uses only the provider-disabled preflight GET and retains 
   assert.match(component, /method: "GET"/u);
   assert.doesNotMatch(component, /method:\s*"POST"|topic-evaluation\/full-evidence\/evidence/u);
   assert.match(projection, /execution_enabled !== false|provider_calls_allowed !== 0/u);
-  assert.match(page, /BrandTopicEvaluationPanels/u);
+  assert.doesNotMatch(page, /BrandTopicEvaluationPanels/u);
+  assert.match(page, /\/topics/u);
   const panels=await readFile(new URL("../../components/brands/BrandTopicEvaluationPanels.tsx",import.meta.url),"utf8");
   assert.ok(panels.indexOf("<FullEvidenceTopicEvaluationStatus") > panels.indexOf("<TopicEvaluationManager"));
+  assert.match(topicsManager, /data\.discovered/u);
+  assert.match(topicsManager, /<TopicCandidateEvidence/u);
+  assert.match(topicsManager, /resultsStatus === "error"/u);
+  assert.match(topicsManager, /crypto\.subtle\.digest/u);
+  assert.doesNotMatch(topicsManager, /crypto\.randomUUID/u);
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(route, /topic_evaluation_v2_disabled/u);

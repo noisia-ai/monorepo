@@ -8,6 +8,7 @@ import {
   SIGNAL_MATERIALIZE_JOB_NAME,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
   SIGNAL_TOPIC_EVALUATION_JOB_NAME,
+  SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME,
   SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME,
@@ -27,6 +28,7 @@ import { signalTaxonomyInsightJob } from "../workers/signal-taxonomy-insights";
 import { assertSignalTaxonomyJobNotRetiredV1 } from "../workers/signal-taxonomy-enrichment-runtime";
 import { signalSemanticContextProposalJob } from "../workers/signal-semantic-context-proposal";
 import { signalTopicEvaluationJob } from "../workers/signal-topic-evaluation";
+import { signalTopicClassificationJob } from "../workers/signal-topic-classification";
 import { SIGNAL_TOPIC_RULE_SUGGESTION_JOB_NAME, signalTopicRuleSuggestionJob } from "../workers/signal-topic-rule-suggestion";
 import { redisConnection } from "./query-engine";
 
@@ -60,6 +62,7 @@ export function startDataOsWorker() {
       }
       if (job.name === SIGNAL_TOPIC_RULE_SUGGESTION_JOB_NAME) return signalTopicRuleSuggestionJob(job);
       if (job.name === SIGNAL_TOPIC_EVALUATION_JOB_NAME) return signalTopicEvaluationJob(job);
+      if (job.name === SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME) return signalTopicClassificationJob(job);
       throw new Error(`Unsupported Data OS job: ${job.name}`);
     },
     {

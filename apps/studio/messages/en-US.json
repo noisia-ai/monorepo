@@ -583,16 +583,40 @@
     "subtitle": "What people are saying, how it changes, and which conversations explain it.",
     "status": { "beta": "V2 beta" },
     "emptyWorkspace": {
-      "status": "Workspace ready",
       "subtitle": "Signal for {brand}, without requiring a study.",
-      "eyebrow": "First setup",
-      "title": "Connect a source to start listening.",
-      "body": "Accepted mentions will live once in this workspace. The same governed population can then power Monitoring, Mentions, Topics and Narratives, and strategic studies.",
-      "action": "Configure brand data",
-      "sourceTitle": "Register a source",
-      "sourceBody": "Upload a CSV or connect a source directly to the brand.",
-      "scopeTitle": "Define who it represents",
-      "scopeBody": "Separate the primary brand, competitors, category, and references before calculating metrics."
+      "source": {
+        "status": "Workspace ready",
+        "eyebrow": "First setup",
+        "title": "Connect a source to start listening.",
+        "body": "Accepted mentions will live once in this workspace. The same governed population can then power Monitoring, Mentions, Topics and Narratives, and strategic studies.",
+        "action": "Configure brand data",
+        "firstTitle": "Register a source",
+        "firstBody": "Upload a CSV or connect a source directly to the brand.",
+        "secondTitle": "Define who it represents",
+        "secondBody": "Separate the primary brand, competitors, category, and references before calculating metrics."
+      },
+      "population": {
+        "status": "Classification pending",
+        "eyebrow": "Data is already connected",
+        "title": "Signal does not have a published population for this view yet.",
+        "body": "You do not need to upload the source again. Review topics and publish a complete classification; Signal keeps the latest stable version visible until the replacement completes.",
+        "action": "Manage topics",
+        "firstTitle": "Source preserved",
+        "firstBody": "The operational corpus remains registered and is not treated as missing.",
+        "secondTitle": "Coherent publication",
+        "secondBody": "The new classification appears when the full compatible population is ready."
+      },
+      "empty": {
+        "status": "Empty result",
+        "eyebrow": "Source registered",
+        "title": "The current population has no visible mentions.",
+        "body": "The source exists, but this scope and period do not produce a publishable result. Review the import and included population without registering the brand again.",
+        "action": "Review brand data",
+        "firstTitle": "Verify the population",
+        "firstBody": "Confirm that the import completed and that the operational scope contains included mentions.",
+        "secondTitle": "Keep scope explicit",
+        "secondBody": "Brand, competitor, and category views use their approved attributions."
+      }
     },
     "a11y": { "skip": "Skip to content" },
     "nav": {
@@ -1056,6 +1080,7 @@
       "title": "Topics and narratives",
       "status": "Live intelligence",
       "subtitle": "See what people discuss, which narratives gain ground, and open the evidence to decide where to investigate or act.",
+      "manage": "Manage topics",
       "states": {
         "fresh": "Up to date",
         "stale": "Update pending",
@@ -2124,6 +2149,7 @@
     "brandOs": {
       "eyebrow": "Brand workspace", "title": "{brand} Brand OS", "subtitle": "Edit brand context without losing the existing assisted setup, competitors or Knowledge Base.", "back": "Back to overview",
       "compatibility": { "title": "Studies and Engine compatibility", "subtitle": "Existing corpora remain available as execution and compatibility surfaces.", "newStudy": "New study", "emptyTitle": "No studies", "emptyBody": "This brand can operate Signal without creating a study.", "study": "Study", "method": "Method", "status": "Status", "open": "Open Engine", "unnamed": "Untitled study" },
+      "topics": { "title": "Topics", "subtitle": "The brand supplies context; topics are managed in their own flow.", "body": "Create topics, add discoveries, test membership, and publish verifiable results to Signal.", "action": "Manage topics" },
       "semanticContext": {
         "eyebrow": "Semantic context", "title": "Brand vocabulary and boundaries", "subtitle": "Turn Brand OS and Knowledge into a ready, editable vocabulary. Deterministic exceptions remain visible; publication is always separate.",
         "actions": { "close": "Close", "cancel": "Cancel", "refresh": "Refresh", "retry": "Retry", "retrySafe": "Retry safely", "prepare": "Prepare draft", "preparing": "Preparing…", "newVersion": "New version", "reconcile": "Reconcile context", "reconciling": "Reconciling…", "prepareSuccessor": "Prepare new generation", "generate": "Generate vocabulary", "calculate": "Calculate preflight", "confirmGenerate": "Generate editable result", "review": "Review", "approve": "Approve", "reject": "Reject", "edit": "Edit", "cancelEdit": "Cancel", "saveCorrection": "Save", "undo": "Undo", "archive": "Archive", "restore": "Restore", "preserveApplicability": "Keep applicability", "inheritedApplicability": "Inherits {markets}", "explicitGlobal": "Explicit global", "publish": "Publish pack" },
@@ -2495,6 +2521,34 @@
         "errors": { "title": "Candidate review is unavailable", "load": "The candidate review could not be loaded.", "command": "The candidate change could not be saved." }
       }
     },
+    "topics": {
+      "eyebrow": "Topics",
+      "title": "Followed topics",
+      "subtitle": "Define the conversation you want to find, review real mentions, and decide what reaches Signal.",
+      "back": "Back to Brand OS",
+      "search": "Search topics",
+      "tabs": { "label": "Topic views", "topics": "My topics", "discovered": "Discovered", "archived": "Archived" },
+      "actions": { "create": "Create topic", "saveDraft": "Save draft", "cancel": "Cancel", "save": "Save changes", "search": "Find mentions", "retry": "Retry", "follow": "Follow in Signal", "updateSignal": "Update Signal", "archive": "Archive", "restore": "Restore" },
+      "states": { "draft": "Draft", "searching": "Searching", "ready": "Ready to follow", "updating": "Updating", "in_signal": "In Signal", "archived": "Archived", "failed": "Recoverable error" },
+      "origin": { "manual": "Team-created topic", "discovered": "Added from discovery" },
+      "scopes": { "primary_brand": "Primary brand", "competitor": "Competitors", "category": "Category" },
+      "list": { "title": "Catalog", "body": "One stable definition per topic.", "mentions": "{count} relevant", "notSearched": "Not searched yet", "updated": "Updated {date}", "empty": "No topics yet. Create one without depending on a previous analysis." },
+      "archived": { "title": "Archived", "empty": "No archived topics." },
+      "editor": { "select": "Choose a topic or create a new one.", "newEyebrow": "New definition", "newTitle": "Create topic", "source": "Source: candidate {candidate}. The definition is now independent from the snapshot." },
+      "fields": { "name": "Name", "definition": "What conversation should it find", "scope": "Population", "inclusion": "Helpful inclusion signals — one per line", "exclusion": "Boundaries and exclusions — one per line", "positive": "Positive examples — optional", "negative": "Negative examples — optional" },
+      "advanced": { "title": "Optional examples and boundaries" },
+      "start": { "title": "Search the real mentions", "body": "Search combines the definition with embeddings from the same model as the mentions. Nothing is published to Signal yet." },
+      "scopeNotice": "Signal UAT currently publishes Primary brand topics only. Archive Competitor or Category topics before following this catalog; their searches and corrections remain available.",
+      "cost": { "notice": "This search will create {count} definition embeddings with an authorized cap of {amount}. The actual charge cannot exceed that amount.", "editNotice": "Saving this meaning change will reclassify and, if the topic is already followed, replace Signal when complete. It authorizes up to {amount} for new embeddings; if the exact estimate is higher, the run stops before contacting the provider." },
+      "progress": { "searching": "Evaluating the complete catalog", "publishing": "Updating Signal atomically" },
+      "discovered": { "title": "Available discoveries", "body": "Evidence-backed BERTopic proposals. Using one creates the same topic object as the manual entry.", "evidence": "{count} evidence items", "openEvidence": "Review supporting evidence", "legacyExamples": "Historical examples", "legacyExclusions": "Historical exclusions", "legacyEvidenceUnavailable": "This historical proposal does not retain exact mention evidence.", "use": "Use as topic", "used": "Already added", "empty": "No discoveries are available in this workspace." },
+      "results": { "eyebrow": "Test on mentions", "title": "Definition results", "body": "Relevant and doubtful are search results. Only a human correction or validated policy authorizes a result for Signal.", "filters": "Result states", "relevant": "Relevant", "doubt": "Doubtful", "excluded": "Excluded", "belongs": "Belongs", "notBelongs": "Does not belong", "loading": "Loading results…", "error": "Results could not be loaded. Retry by refreshing this view.", "empty": "No results in this state." },
+      "methods": { "semantic": "Semantic retrieval", "lexical": "Vocabulary rule", "semantic_lexical": "Semantic and vocabulary", "human": "Team correction" },
+      "feedback": { "created": "Draft created.", "saved": "Definition saved.", "adopted": "Discovery added as a topic.", "searching": "Search continues in the background.", "following": "Signal is being updated.", "archiveUpdating": "Removal started. The topic remains Updating until Signal stops serving it.", "archived": "Topic archived in the new catalog.", "restored": "Topic restored as a draft.", "belongs": "The mention is confirmed for this topic.", "excluded": "The mention is excluded from this topic." },
+      "errors": { "load": "Topics could not be refreshed.", "command": "The action could not be completed.", "execution": "The execution stopped" },
+      "requestErrors": { "busy": "A search or update is already running. Wait for it to finish.", "population": "This workspace does not have an operational population ready for search yet.", "searchNotReady": "Complete a valid search for this definition first.", "revision": "The definition changed in another session. Refresh and try again.", "queue": "The processing queue did not receive the job. You can retry without losing the draft.", "forbidden": "Your user cannot manage topics in this workspace.", "notFound": "This topic is no longer available.", "invalidCandidate": "This historical proposal is incomplete. Create the topic manually and use its evidence as a reference.", "costConfirmation": "The search needs explicit authorization for the displayed embedding cap.", "costExceeded": "The estimated cost now exceeds the authorized cap. Refresh before searching.", "preflight": "The model, population, and cost could not be verified before searching.", "scopeUnsupported": "Signal UAT currently supports Primary brand topics only. You can keep testing this scope, but archive it before publishing the catalog.", "unknown": "The action could not be completed. Refresh and try again." },
+      "executionErrors": { "topic_mention_embeddings_incomplete": "Some population mentions do not have embeddings from the same model.", "topic_definition_embedding_unavailable": "The definition needs a compatible embedding; the provider is missing or uses another model.", "topic_embedding_hard_cap_missing": "The definition embedding budget cap is not configured.", "topic_embedding_hard_cap_invalid": "The definition embedding budget cap is invalid.", "topic_embedding_cost_confirmation_required": "The paid call had no authorized cap and stopped before contacting the provider.", "topic_embedding_hard_cap_exceeded": "The estimate exceeds the authorized cap; the run stopped before contacting the provider.", "topic_embedding_pricing_changed": "The pricing version changed after authorization. Refresh and search again.", "topic_embedding_estimate_changed": "The inputs or their cost changed after authorization. Refresh and search again.", "topic_embedding_outcome_unknown": "The provider outcome is uncertain. The run stopped without repeating the paid call.", "topic_definition_changed": "The topic or Brand OS context changed during execution. Retry against the current definition.", "topic_corrections_changed": "Membership corrections changed during execution. Retry against the current corrections.", "topic_population_changed": "The population changed during execution. Retry against the current cut.", "topic_publication_source_is_incomplete": "The result selected for publication is no longer valid.", "topic_signal_scope_unsupported": "Signal UAT currently supports Primary brand topics only. Archive Competitor or Category topics before publishing.", "topic_queue_unavailable": "The queue did not receive the job. Retry without losing the draft.", "unknown": "Retry without losing the draft or its corrections." }
+    },
     "data": {
       "eyebrow": "Data & sources", "title": "Workspace data", "subtitle": "Register sources and import mentions directly into the brand workspace.",
       "actions": { "addSource": "Add source", "create": "Create source", "history": "History", "import": "Import CSV", "openMentions": "Open mentions", "openReview": "Open semantic review" },
@@ -2591,6 +2645,8 @@
       "destinations": {
         "title": "Manage workspace data",
         "subtitle": "Open each resource in its own workspace; this overview retains sources, imports, and governance.",
+        "topicsTitle": "Topics",
+        "topicsDescription": "Create topics, add discoveries, and correct which mentions reach Signal.",
         "mentionsDescription": "Browse the complete canonical record, filter it, and open enriched detail.",
         "reviewDescription": "Review or correct classifications that determine the operational population.",
         "discoveryReviewDescription": "Evaluate blind discovery proposals without approving contracts, propagation, or serving.",

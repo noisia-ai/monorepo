@@ -20,7 +20,8 @@ type DiscoveryContextRow = {
 
 export type SignalTaxonomyDraftInsertClient={query<T=Record<string,unknown>>(sql:string,values?:unknown[]):
   Promise<{rows:T[];rowCount:number|null}>};
-export type SignalTaxonomyDraftInsertTerm={term_key:string;label:string;definition:string;metadata:Record<string,unknown>};
+export type SignalTaxonomyDraftInsertTerm={term_key:string;label:string;definition:string;
+  metadata:Record<string,unknown>;status?:"candidate"|"archived"};
 
 /** Low-level insertion only. Caller owns context validation, deduplication and its transaction.
  * Both legacy and cohort paths acquire the SAME global allocator lock before MAX(version)+1. */
@@ -333,7 +334,7 @@ async function insertCandidateTerms(
         taxonomy_id, term_key, label, description,
         sort_order, metadata, status
       ) VALUES (
-        $1::uuid, $2, $3, $4, $5, $6::jsonb, 'candidate'
+        $1::uuid, $2, $3, $4, $5, $6::jsonb, $7
       )
     `, [
       taxonomyId,
@@ -341,7 +342,8 @@ async function insertCandidateTerms(
       term.label,
       term.definition,
       index + 1,
-      JSON.stringify(term.metadata)
+      JSON.stringify(term.metadata),
+      term.status ?? "candidate"
     ]);
   }
 }

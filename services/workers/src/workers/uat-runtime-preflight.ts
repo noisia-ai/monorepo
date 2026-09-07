@@ -19,6 +19,7 @@ type PreflightCounts = {
   strategic_run_claimable: number;
   strategic_step_claimable: number;
   workspace_import_claimable: number;
+  topic_classification_claimable: number;
 };
 
 export type UatWorkerStartupEvidence = {
@@ -174,7 +175,14 @@ async function loadClaimableDatabaseRows(database: Pick<Pool, "query">) {
          AND outbox.attempt_count < 8
          AND ((outbox.status IN ('pending','failed') AND outbox.available_at <= now())
            OR (outbox.status='dispatching' AND outbox.lease_expires_at <= now())))
-        AS workspace_import_claimable
+        AS workspace_import_claimable,
+      (SELECT count(*)::int FROM signal_topic_classification_outbox outbox
+       JOIN signal_topic_catalog_executions execution ON execution.id=outbox.execution_id
+       WHERE execution.status IN ('queued','running')
+         AND outbox.attempt_count < 8
+         AND ((outbox.status IN ('pending','failed') AND outbox.available_at <= now())
+           OR (outbox.status='dispatching' AND outbox.lease_expires_at <= now())))
+        AS topic_classification_claimable
   `);
   const row = result.rows[0];
   if (!row) throw new Error("uat_database_preflight_unavailable");

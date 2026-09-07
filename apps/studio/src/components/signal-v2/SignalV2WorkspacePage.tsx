@@ -65,6 +65,10 @@ export async function SignalV2WorkspacePage({
       ? await resolveLegacyOutputSignalWorkspaceForUser(session.appUser, legacyOutputId)
       : null;
   if (!workspace || workspace.status !== "active") notFound();
+  const manageTopicsHref = session.appUser.userType === "noisia_internal"
+    && workspace.subject.type === "brand"
+    ? `/studio/brands/${workspace.subject.id}/topics`
+    : null;
   const query = await searchParams;
   let viewKey;
   try {
@@ -93,6 +97,7 @@ export async function SignalV2WorkspacePage({
         initialTopicsNarratives={null}
         initialTriggersBarriers={null}
         legacyOutputId={null}
+        manageTopicsHref={manageTopicsHref}
         strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
         userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}
         workspaceOptions={workspaceOptions}
@@ -136,6 +141,9 @@ export async function SignalV2WorkspacePage({
         brandName={workspace.name}
         canRefreshInsights={canManageCorpus(session.appUser.primaryRole)}
         emptyWorkspace
+        emptyWorkspaceReason={workspace.corpora.some((corpus) => corpus.role === "operational")
+          ? "population_unavailable"
+          : "source_missing"}
         initialData={buildEmptySignalBrandMonitoringV1(workspace)}
         initialMention={null}
         initialMentions={null}
@@ -143,6 +151,7 @@ export async function SignalV2WorkspacePage({
         initialTopicsNarratives={null}
         initialTriggersBarriers={null}
         legacyOutputId={null}
+        manageTopicsHref={manageTopicsHref}
         strategicStudies={[]}
         userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}
         workspaceOptions={workspaceOptions}
@@ -175,6 +184,9 @@ export async function SignalV2WorkspacePage({
         brandName={workspace.name}
         canRefreshInsights={false}
         emptyWorkspace
+        emptyWorkspaceReason={workspace.corpora.some((corpus) => corpus.role === "operational")
+          ? "empty_result"
+          : "source_missing"}
         initialData={buildEmptySignalBrandMonitoringV1(workspace)}
         initialMention={null}
         initialMentions={null}
@@ -182,6 +194,7 @@ export async function SignalV2WorkspacePage({
         initialTopicsNarratives={null}
         initialTriggersBarriers={null}
         legacyOutputId={null}
+        manageTopicsHref={manageTopicsHref}
         strategicStudies={[]}
         userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}
         workspaceOptions={workspaceOptions}
@@ -356,6 +369,7 @@ export async function SignalV2WorkspacePage({
       initialTopicsNarratives={scopedInitialTopicsNarratives}
       initialTriggersBarriers={initialTriggersBarriers}
       legacyOutputId={primaryOutputId}
+      manageTopicsHref={manageTopicsHref}
       strategicStudies={strategicStudies}
       userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}
         workspaceOptions={workspaceOptions}

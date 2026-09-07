@@ -22,7 +22,8 @@ export type SignalTaxonomyContextRefV1 = {
     | "brand_os_audience"
     | "knowledge_assertion"
     | "knowledge_chunk"
-    | "mention_sample";
+    | "mention_sample"
+    | "semantic_context_element";
   source_id: string;
   version: string;
   content_hash: string;
@@ -575,7 +576,8 @@ function normalizeContextRef(input: unknown): SignalTaxonomyContextRefV1 {
     "brand_os_audience",
     "knowledge_assertion",
     "knowledge_chunk",
-    "mention_sample"
+    "mention_sample",
+    "semantic_context_element"
   ]);
   if (typeof sourceType !== "string" || !validSourceTypes.has(sourceType)) {
     throw new Error("Unsupported taxonomy context source_type.");

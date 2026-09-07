@@ -206,10 +206,18 @@ test("Topic Evaluation accepts successor authority only when its predecessor key
     successor:{eligible:true,predecessor_run_key:null}}),/topic_evaluation_management_invalid/u);
 });
 
-test("Brand OS mounts the normal launch and reversible review surface without touching Discovery Review", async () => {
-  const [component, page, drawer, css, es, en, openapi] = await Promise.all([
+test("legacy Topic Evaluation stays available while Brand OS routes daily work to Topics", async () => {
+  const [component, page, topicsPage, topicsManager, topicsApi, topicCommands, topicResults,
+    topicsProduct, topicsStore, drawer, css, es, en, openapi] = await Promise.all([
     readFile(new URL("../../components/brands/TopicEvaluationManager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../app/studio/brands/[id]/brand-os/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../app/studio/brands/[id]/topics/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../components/brands/TopicsManager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/[termKey]/commands/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/executions/[executionId]/results/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("./signal-topics-management.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../../../../infrastructure/db/signal-topic-catalog.ts", import.meta.url), "utf8"),
     readFile(new URL("../../components/workspace/WorkspaceShell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../../../messages/es-MX.json", import.meta.url), "utf8"),
@@ -245,7 +253,30 @@ test("Brand OS mounts the normal launch and reversible review surface without to
   assert.match(component,/run\.providerOutcomeClass==="ambiguous_after_send"\?t\("run\.outcomeUnknownBody"\)/u);
   assert.match(component,/run\.providerOutcomeClass==="definitely_not_sent"/u);
   assert.match(component,/run\.providerOutcomeClass==="known_response_invalid"/u);
-  assert.ok(page.indexOf("<BrandTopicEvaluationPanels") > page.indexOf("<SemanticContextPackManager"));
+  assert.doesNotMatch(page, /BrandTopicEvaluationPanels/u);
+  assert.match(page, /\/topics/u);
+  assert.match(topicsPage, /<TopicsManager/u);
+  assert.match(topicsManager, /action: "adopt"/u);
+  assert.match(topicsManager, /"retry" : "search"/u);
+  assert.match(topicsManager, /command\("follow"\)/u);
+  assert.match(topicsManager, /selected\.lifecycle === "archived"[\s\S]*selected\.status === "failed"/u);
+  assert.match(topicsManager, /feedback\.archiveUpdating/u);
+  assert.match(topicsManager, /hasUnsupportedSignalScope/u);
+  assert.match(topicsManager, /scopeNotice/u);
+  assert.match(topicsApi, /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(topicsApi, /requireIdempotencyKey/u);
+  assert.match(topicCommands, /latest\.topics\.some/u);
+  assert.match(topicCommands, /latest\.execution\?\.publish_when_ready === true \|\| retriesArchivedReplacement/u);
+  assert.match(topicResults, /loadSignalTopicExecutionResultsProductV1/u);
+  assert.doesNotMatch(topicsProduct, /enqueueSignalTopicClassification/u);
+  assert.match(topicsStore, /INSERT INTO signal_topic_classification_outbox/u);
+  assert.match(topicsStore, /replacementPending && \(!execution \|\| execution\.status === "failed"\)/u);
+  assert.match(topicsStore, /topic_signal_scope_unsupported/u);
+  assert.match(topicsStore, /context_refs: refs/u);
+  assert.match(topicsStore, /contextItems\.slice\(0, 64\)/u);
+  assert.match(topicsProduct, /updated\.prior_profile_status === "active"/u);
+  assert.match(JSON.parse(es).AdminWorkspace.topics.feedback.archiveUpdating, /Actualizando/u);
+  assert.match(JSON.parse(en).AdminWorkspace.topics.feedback.archiveUpdating, /Updating/u);
   assert.doesNotMatch(page, /TopicDiscoveryReviewWorkbench/u);
   assert.ok(JSON.parse(es).AdminWorkspace.brandOs.topicEvaluation.boundary.authorityUnavailableBody);
   assert.ok(JSON.parse(en).AdminWorkspace.brandOs.topicEvaluation.boundary.authorityUnavailableBody);

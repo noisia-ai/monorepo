@@ -4,12 +4,12 @@ import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import {
+  AdminResourceSection,
   AdminStatus,
   AdminWorkspaceHeader
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
-import { BrandTopicEvaluationPanels } from "@/components/brands/BrandTopicEvaluationPanels";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
 import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -59,7 +59,15 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       {workspace.summary.workspaceId ? (
         <>
           <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
-          <BrandTopicEvaluationPanels key={workspace.summary.workspaceId} workspaceId={workspace.summary.workspaceId} />
+          <AdminResourceSection
+            actions={<Link className="admin-button admin-button--primary" href={`/studio/brands/${brand.id}/topics`} prefetch={false}>
+              {t("brandOs.topics.action")}<ArrowRight aria-hidden size={14} />
+            </Link>}
+            subtitle={t("brandOs.topics.subtitle")}
+            title={t("brandOs.topics.title")}
+          >
+            <p className="admin-drawer-form__hint">{t("brandOs.topics.body")}</p>
+          </AdminResourceSection>
         </>
       ) : null}
 

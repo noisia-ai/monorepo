@@ -405,6 +405,7 @@ test("governed classification SQL excludes unreviewed evidence and marks provisi
   });
   const plan = governedPlan;
   assert.match(plan.sql, /tag\.review_status = 'approved'/u);
+  assert.match(plan.sql, /count\(DISTINCT feature\.subject_id\)::int AS processed_mentions/u);
   assert.match(plan.sql, /signal_taxonomy_profiles profile/u);
   assert.match(plan.sql, /'included_mentions'/u);
   assert.match(plan.sql, /'classified_mentions'/u);

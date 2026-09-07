@@ -164,6 +164,7 @@ test("core preserves multiple terms, full1500-character definition and exact met
     assert.deepEqual(row.values.slice(0, 5), [result.taxonomyId, args.terms[index]!.term_key,
       args.terms[index]!.label, args.terms[index]!.definition, index + 1]);
     assert.deepEqual(valueJson(row.values[5]), args.terms[index]!.metadata);
+    assert.equal(row.values[6], "candidate");
   });
   assert.equal(String(terms[0]!.values[3]).length, 1500);
   assert.deepEqual(valueJson(inserts(f, "tagging_rule_sets")[0]!.values[3]), args.rules);
@@ -172,7 +173,7 @@ test("core preserves multiple terms, full1500-character definition and exact met
   assert.deepEqual(valueJson(model.values[5]), {execution_kind: "deterministic", provider_calls: 0, cost_micro_usd: 0});
   const statements = f.queries.map((row) => row.sql).join("\n");
   assert.doesNotMatch(statements, /activate_signal|INSERT INTO (?:signal_classification|record_tags|.*outbox)|'active'/u);
-  assert.match(statements, /'candidate'/u); assert.match(statements, /'draft'/u);
+  assert.match(statements, /status/u); assert.match(statements, /'draft'/u);
   assert.equal(inserts(f, "lineage_edges").length, 3, "no fabricated source examples/context when none were supplied");
 });
 

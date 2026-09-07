@@ -581,16 +581,40 @@
     "subtitle": "Qué se está diciendo, cómo cambia y qué conversaciones lo explican.",
     "status": { "beta": "V2 beta" },
     "emptyWorkspace": {
-      "status": "Workspace listo",
       "subtitle": "Signal para {brand}, sin depender de un estudio.",
-      "eyebrow": "Primer ingreso",
-      "title": "Conecta una fuente para empezar a escuchar.",
-      "body": "Las menciones aceptadas vivirán una sola vez en este workspace. Después podrás usar la misma población gobernada en Monitoreo, Menciones, Tópicos y Narrativas, y estudios estratégicos.",
-      "action": "Configurar datos de la marca",
-      "sourceTitle": "Registra una fuente",
-      "sourceBody": "Carga un CSV o conecta una fuente directamente a la marca.",
-      "scopeTitle": "Define a quién pertenece",
-      "scopeBody": "Separa marca principal, competidores, categoría y referencias antes de calcular métricas."
+      "source": {
+        "status": "Workspace listo",
+        "eyebrow": "Primer ingreso",
+        "title": "Conecta una fuente para empezar a escuchar.",
+        "body": "Las menciones aceptadas vivirán una sola vez en este workspace. Después podrás usar la misma población gobernada en Monitoreo, Menciones, Tópicos y Narrativas, y estudios estratégicos.",
+        "action": "Configurar datos de la marca",
+        "firstTitle": "Registra una fuente",
+        "firstBody": "Carga un CSV o conecta una fuente directamente a la marca.",
+        "secondTitle": "Define a quién pertenece",
+        "secondBody": "Separa marca principal, competidores, categoría y referencias antes de calcular métricas."
+      },
+      "population": {
+        "status": "Clasificación pendiente",
+        "eyebrow": "Los datos ya están conectados",
+        "title": "Signal todavía no tiene una población publicada para esta vista.",
+        "body": "No necesitas volver a cargar la fuente. Revisa los tópicos y publica una clasificación completa; Signal seguirá mostrando la última versión estable mientras termina el reemplazo.",
+        "action": "Gestionar tópicos",
+        "firstTitle": "Fuente conservada",
+        "firstBody": "El corpus operativo sigue registrado y no se interpreta como ausente.",
+        "secondTitle": "Publicación coherente",
+        "secondBody": "La nueva clasificación aparecerá cuando toda la población compatible esté lista."
+      },
+      "empty": {
+        "status": "Resultado vacío",
+        "eyebrow": "Fuente registrada",
+        "title": "La población actual no contiene menciones visibles.",
+        "body": "La fuente existe, pero este alcance y periodo no producen un resultado publicable. Revisa la importación y la población incluida sin volver a registrar la marca.",
+        "action": "Revisar datos de la marca",
+        "firstTitle": "Verifica la población",
+        "firstBody": "Confirma que la importación terminó y que hay menciones incluidas en el alcance operativo.",
+        "secondTitle": "Mantén el alcance explícito",
+        "secondBody": "Marca, competencia y categoría se calculan con sus atribuciones aprobadas."
+      }
     },
     "a11y": { "skip": "Saltar al contenido" },
     "nav": {
@@ -1054,6 +1078,7 @@
       "title": "Tópicos y narrativas",
       "status": "Inteligencia viva",
       "subtitle": "Detecta de qué se habla, qué relatos ganan espacio y abre la evidencia para decidir dónde investigar o actuar.",
+      "manage": "Gestionar tópicos",
       "states": {
         "fresh": "Actualizado",
         "stale": "Actualización pendiente",
@@ -2124,6 +2149,7 @@
     "brandOs": {
       "eyebrow": "Workspace de marca", "title": "Brand OS de {brand}", "subtitle": "Edita el contexto de marca sin perder el setup asistido, competidores ni Knowledge Base existentes.", "back": "Volver al overview",
       "compatibility": { "title": "Compatibilidad con Studies y Engine", "subtitle": "Los corpora existentes siguen disponibles como superficies de ejecución y compatibilidad.", "newStudy": "Nuevo estudio", "emptyTitle": "Sin estudios", "emptyBody": "Esta marca puede operar Signal sin crear un estudio.", "study": "Estudio", "method": "Método", "status": "Estado", "open": "Abrir Engine", "unnamed": "Estudio sin título" },
+      "topics": { "title": "Topics", "subtitle": "La marca aporta contexto; los tópicos se gestionan en su propio flujo.", "body": "Crea, incorpora descubrimientos, prueba pertenencia y publica resultados verificables en Signal.", "action": "Gestionar tópicos" },
       "semanticContext": {
         "eyebrow": "Contexto semántico", "title": "Vocabulario y límites de la marca", "subtitle": "Convierte Brand OS y Knowledge en vocabulario listo y editable. Las excepciones determinísticas permanecen visibles; publicar siempre es una acción separada.",
         "actions": { "close": "Cerrar", "cancel": "Cancelar", "refresh": "Actualizar", "retry": "Reintentar", "retrySafe": "Reintentar de forma segura", "prepare": "Preparar borrador", "preparing": "Preparando…", "newVersion": "Nueva versión", "reconcile": "Reconciliar contexto", "reconciling": "Reconciliando…", "prepareSuccessor": "Preparar nueva generación", "generate": "Generar vocabulario", "calculate": "Calcular preflight", "confirmGenerate": "Generar resultado editable", "review": "Revisar", "approve": "Aprobar", "reject": "Rechazar", "edit": "Editar", "cancelEdit": "Cancelar", "saveCorrection": "Guardar", "undo": "Deshacer", "archive": "Archivar", "restore": "Restaurar", "preserveApplicability": "Conservar aplicabilidad", "inheritedApplicability": "Hereda {markets}", "explicitGlobal": "Global explícito", "publish": "Publicar pack" },
@@ -2495,6 +2521,34 @@
         "errors": { "title": "La revisión de candidatos no está disponible", "load": "No se pudo cargar la revisión de candidatos.", "command": "No se pudo guardar el cambio del candidato." }
       }
     },
+    "topics": {
+      "eyebrow": "Topics",
+      "title": "Tópicos seguidos",
+      "subtitle": "Define qué conversación quieres encontrar, revisa menciones reales y decide qué llega a Signal.",
+      "back": "Volver a Brand OS",
+      "search": "Buscar tópicos",
+      "tabs": { "label": "Vistas de tópicos", "topics": "Mis tópicos", "discovered": "Descubiertos", "archived": "Archivados" },
+      "actions": { "create": "Crear tópico", "saveDraft": "Guardar borrador", "cancel": "Cancelar", "save": "Guardar cambios", "search": "Buscar menciones", "retry": "Reintentar", "follow": "Seguir en Signal", "updateSignal": "Actualizar Signal", "archive": "Archivar", "restore": "Restaurar" },
+      "states": { "draft": "Borrador", "searching": "Buscando", "ready": "Listo para seguir", "updating": "Actualizando", "in_signal": "En Signal", "archived": "Archivado", "failed": "Error recuperable" },
+      "origin": { "manual": "Tópico creado por el equipo", "discovered": "Incorporado desde descubrimiento" },
+      "scopes": { "primary_brand": "Marca principal", "competitor": "Competencia", "category": "Categoría" },
+      "list": { "title": "Catálogo", "body": "Una definición estable por tópico.", "mentions": "{count} relevantes", "notSearched": "Sin búsqueda todavía", "updated": "Actualizado {date}", "empty": "Aún no hay tópicos. Crea uno sin depender de un análisis previo." },
+      "archived": { "title": "Archivados", "empty": "No hay tópicos archivados." },
+      "editor": { "select": "Elige un tópico o crea uno nuevo.", "newEyebrow": "Definición nueva", "newTitle": "Crear tópico", "source": "Procedencia: candidato {candidate}. La definición ya es independiente del snapshot." },
+      "fields": { "name": "Nombre", "definition": "Qué conversación debe encontrar", "scope": "Población", "inclusion": "Señales que ayudan a incluir — una por línea", "exclusion": "Límites y exclusiones — una por línea", "positive": "Ejemplos positivos — opcional", "negative": "Ejemplos negativos — opcional" },
+      "advanced": { "title": "Ejemplos y límites opcionales" },
+      "start": { "title": "Busca sobre las menciones reales", "body": "La búsqueda combina la definición con embeddings del mismo modelo que las menciones. Nada se publica en Signal todavía." },
+      "scopeNotice": "Signal UAT publica por ahora sólo tópicos de Marca principal. Archiva los tópicos de Competencia o Categoría antes de seguir este catálogo; sus búsquedas y correcciones se conservan.",
+      "cost": { "notice": "Esta búsqueda creará {count} embeddings de definición con un tope autorizado de {amount}. El cargo real no puede superar ese monto.", "editNotice": "Guardar este cambio de significado volverá a clasificar y, si el tópico ya está seguido, reemplazará Signal al completar. Autoriza hasta {amount} para los embeddings nuevos; si el cálculo exacto supera ese monto, se detendrá antes de llamar al proveedor." },
+      "progress": { "searching": "Evaluando el catálogo completo", "publishing": "Actualizando Signal de forma atómica" },
+      "discovered": { "title": "Descubrimientos disponibles", "body": "Propuestas de BERTopic interpretadas con evidencia. Usarlas crea el mismo tipo de tópico que la entrada manual.", "evidence": "{count} evidencias", "openEvidence": "Revisar evidencia que lo sustenta", "legacyExamples": "Ejemplos históricos", "legacyExclusions": "Exclusiones históricas", "legacyEvidenceUnavailable": "Esta propuesta histórica no conserva evidencia exacta de menciones.", "use": "Usar como tópico", "used": "Ya incorporado", "empty": "No hay descubrimientos disponibles en este workspace." },
+      "results": { "eyebrow": "Prueba sobre menciones", "title": "Resultados de la definición", "body": "Relevante y dudoso son resultados de búsqueda. Sólo una corrección humana o una política validada autoriza su paso a Signal.", "filters": "Estados de resultados", "relevant": "Relevantes", "doubt": "Dudosos", "excluded": "Excluidos", "belongs": "Pertenece", "notBelongs": "No pertenece", "loading": "Cargando resultados…", "error": "No se pudieron cargar los resultados. Reintenta actualizando esta vista.", "empty": "No hay resultados en este estado." },
+      "methods": { "semantic": "Recuperación semántica", "lexical": "Regla de vocabulario", "semantic_lexical": "Semántica y vocabulario", "human": "Corrección del equipo" },
+      "feedback": { "created": "Borrador creado.", "saved": "Definición guardada.", "adopted": "Descubrimiento incorporado como tópico.", "searching": "La búsqueda continúa en segundo plano.", "following": "Signal se está actualizando.", "archiveUpdating": "Retiro iniciado. El tópico seguirá como Actualizando hasta que Signal deje de servirlo.", "archived": "Tópico archivado en el nuevo catálogo.", "restored": "Tópico restaurado como borrador.", "belongs": "La mención queda confirmada para este tópico.", "excluded": "La mención queda excluida de este tópico." },
+      "errors": { "load": "No se pudo actualizar Topics.", "command": "No se pudo completar la acción.", "execution": "La ejecución se detuvo" },
+      "requestErrors": { "busy": "Hay una búsqueda o actualización en curso. Espera a que termine.", "population": "Este workspace todavía no tiene una población operativa lista para buscar.", "searchNotReady": "Primero completa una búsqueda válida sobre esta definición.", "revision": "La definición cambió en otra sesión. Actualiza la página y vuelve a intentarlo.", "queue": "La cola de procesamiento no recibió el trabajo. Puedes reintentarlo sin perder el borrador.", "forbidden": "Tu usuario no puede gestionar tópicos en este workspace.", "notFound": "Este tópico ya no está disponible.", "invalidCandidate": "Esta propuesta histórica está incompleta. Crea el tópico manualmente y usa su evidencia como referencia.", "costConfirmation": "La búsqueda necesita una autorización explícita para el tope de embeddings mostrado.", "costExceeded": "El costo estimado ya supera el tope autorizado. Actualiza la vista antes de buscar.", "preflight": "No se pudo comprobar el modelo, la población y el costo antes de buscar.", "scopeUnsupported": "Signal UAT sólo admite por ahora tópicos de Marca principal. Puedes seguir probando este alcance, pero archívalo antes de publicar el catálogo.", "unknown": "No se pudo completar la acción. Actualiza y vuelve a intentarlo." },
+      "executionErrors": { "topic_mention_embeddings_incomplete": "Faltan embeddings del mismo modelo para parte de la población.", "topic_definition_embedding_unavailable": "La definición necesita un embedding compatible; el proveedor no está configurado o usa otro modelo.", "topic_embedding_hard_cap_missing": "Falta configurar el tope de gasto para los embeddings de definiciones.", "topic_embedding_hard_cap_invalid": "El tope de gasto para embeddings no es válido.", "topic_embedding_cost_confirmation_required": "La llamada pagada no tenía un tope autorizado y se detuvo antes de contactar al proveedor.", "topic_embedding_hard_cap_exceeded": "El costo estimado supera el tope autorizado; se detuvo antes de contactar al proveedor.", "topic_embedding_pricing_changed": "La versión de precios cambió desde la autorización. Actualiza y vuelve a buscar.", "topic_embedding_estimate_changed": "Las entradas o su costo cambiaron desde la autorización. Actualiza y vuelve a buscar.", "topic_embedding_outcome_unknown": "El resultado del proveedor es incierto. La ejecución se detuvo sin repetir la llamada pagada.", "topic_definition_changed": "El tópico o el contexto de Brand OS cambió durante la ejecución. Reintenta con la definición actual.", "topic_corrections_changed": "Las correcciones cambiaron durante la ejecución. Reintenta con las correcciones actuales.", "topic_population_changed": "La población cambió durante la ejecución. Reintenta sobre el corte actual.", "topic_publication_source_is_incomplete": "El resultado que se intentó publicar ya no es válido.", "topic_signal_scope_unsupported": "Signal UAT sólo admite por ahora tópicos de Marca principal. Archiva los tópicos de Competencia o Categoría antes de publicar.", "topic_queue_unavailable": "La cola no recibió el trabajo. Reintenta sin perder el borrador.", "unknown": "Puedes reintentar sin perder el borrador ni las correcciones." }
+    },
     "data": {
       "eyebrow": "Datos y fuentes", "title": "Datos del workspace", "subtitle": "Registra fuentes e importa menciones directamente al workspace de marca.",
       "actions": { "addSource": "Agregar fuente", "create": "Crear fuente", "history": "Historial", "import": "Importar CSV", "openMentions": "Abrir menciones", "openReview": "Abrir revisión semántica" },
@@ -2591,6 +2645,8 @@
       "destinations": {
         "title": "Gestionar los datos del workspace",
         "subtitle": "Abre cada recurso en su espacio de trabajo; esta vista conserva fuentes, imports y gobernanza.",
+        "topicsTitle": "Topics",
+        "topicsDescription": "Crea tópicos, incorpora descubrimientos y corrige qué menciones llegan a Signal.",
         "mentionsDescription": "Consulta el registro canónico completo, filtra y abre el detalle enriquecido.",
         "reviewDescription": "Revisa o corrige las clasificaciones que determinan la población operativa.",
         "discoveryReviewDescription": "Evalúa propuestas ciegas de discovery sin aprobar contratos, propagación ni serving.",

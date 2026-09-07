@@ -1565,7 +1565,7 @@ function signalTaxonomyVolumeSql(args: {
      AND tag.signal_taxonomy_profile_id = profile.id
     GROUP BY b.period_start
   ), processed AS (
-    SELECT b.period_start, count(DISTINCT b.id)::int AS processed_mentions
+    SELECT b.period_start, count(DISTINCT feature.subject_id)::int AS processed_mentions
     FROM base_mentions b
     JOIN active_profile profile ON true
     LEFT JOIN mentions processed_mention

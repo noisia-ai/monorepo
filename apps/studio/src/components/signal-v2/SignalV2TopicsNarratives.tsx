@@ -10,6 +10,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { EChartsCoreOption } from "echarts/core";
@@ -70,6 +71,7 @@ export function SignalV2TopicsNarratives({
   data,
   filter,
   loading,
+  manageTopicsHref,
   onApplyFilter,
   onOpenControls,
   onOpenMentions,
@@ -82,6 +84,7 @@ export function SignalV2TopicsNarratives({
   data: SignalTopicsNarrativesOverviewV1;
   filter: SignalFilterV1;
   loading: boolean;
+  manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onOpenControls: () => void;
   onOpenMentions: () => void;
@@ -538,6 +541,12 @@ export function SignalV2TopicsNarratives({
             <Funnel size={15} />
             {common("filters.more")}
           </button>
+          {manageTopicsHref ? (
+            <Link className="signal-v2-filter" href={manageTopicsHref} prefetch={false}>
+              {t("manage")}
+              <ArrowRight size={15} />
+            </Link>
+          ) : null}
           {canRefreshInsights ? (
             <button
               className="signal-v2-filter signal-v2-filter--insights"

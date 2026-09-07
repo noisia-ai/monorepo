@@ -20,3 +20,4 @@ export * from "./signal-topic-rule-suggestions";
 export * from "./sentione-csv-ingest";
 
 export * from "./signal-topic-rule-suggestion-execution";
+export * from "./signal-topic-catalog";
