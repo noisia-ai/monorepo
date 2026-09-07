@@ -138,7 +138,10 @@ export function calibrateSignalTopicThresholdV1(
   if (calibrationCounts.positives < 2 || calibrationCounts.negatives < 2) {
     return unavailable("insufficient_calibration", calibrationCounts, validationCounts);
   }
-  if (validationCounts.positives < 1 || validationCounts.negatives < 1) {
+  // A single positive and negative can report perfect validation by chance and authorize a
+  // broad automatic threshold. Require at least two unseen examples of each class before a
+  // labeling function may publish without an operator decision.
+  if (validationCounts.positives < 2 || validationCounts.negatives < 2) {
     return unavailable("insufficient_validation", calibrationCounts, validationCounts);
   }
 

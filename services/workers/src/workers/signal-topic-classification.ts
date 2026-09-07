@@ -74,7 +74,6 @@ type PublicationReceipt = {
   signal_population_definition_hash: string;
 };
 
-const RELEVANT_RETRIEVAL_SCORE = 0.62;
 const DOUBT_RETRIEVAL_SCORE = 0.45;
 const WRITE_BATCH_SIZE = 2_000;
 
@@ -573,8 +572,7 @@ function classifySuggestion(args: {
   if (args.correction === "belongs") disposition = "relevant";
   else if (args.correction === "excluded" || lexical.excluded || args.semantic?.excluded_by_negative) disposition = "excluded";
   else if (score !== null && args.calibratedThreshold !== null && score >= args.calibratedThreshold) disposition = "relevant";
-  else if (lexical.matched || (score !== null && score >= RELEVANT_RETRIEVAL_SCORE)) disposition = "relevant";
-  else if (score !== null && score >= DOUBT_RETRIEVAL_SCORE) disposition = "doubt";
+  else if (lexical.matched || (score !== null && score >= DOUBT_RETRIEVAL_SCORE)) disposition = "doubt";
   const method = args.correction ? "human" : lexical.matched && score !== null
     ? "semantic_lexical" : lexical.matched ? "lexical" : "semantic";
   const evidenceDigest = sha256(stableJson({ execution_id: args.execution.id, root_id: args.root.id,

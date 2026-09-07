@@ -73,6 +73,15 @@ test("calibrated publication versions authorities when their governed definition
   assert.match(source, /priorPolicy\.labeling_function_version_id === labelingFunction\.labeling_function_version_id/u);
 });
 
+test("unvalidated semantic and lexical retrieval stays doubtful until an operator or policy approves it", async () => {
+  const source = await readFile(new URL("./signal-topic-classification.ts", import.meta.url), "utf8");
+  const classify = source.slice(source.indexOf("function classifySuggestion"),
+    source.indexOf("async function claimExecution"));
+  assert.match(classify, /calibratedThreshold !== null && score >= args\.calibratedThreshold\) disposition = "relevant"/u);
+  assert.match(classify, /lexical\.matched \|\| \(score !== null && score >= DOUBT_RETRIEVAL_SCORE\)\) disposition = "doubt"/u);
+  assert.doesNotMatch(classify, /RELEVANT_RETRIEVAL_SCORE\)\) disposition = "relevant"/u);
+});
+
 test("publication revalidates the exact snapshot and supersedes same-profile generations", async () => {
   const source = await readFile(new URL("./signal-topic-classification.ts", import.meta.url), "utf8");
   assert.match(source, /BEGIN ISOLATION LEVEL SERIALIZABLE/u);

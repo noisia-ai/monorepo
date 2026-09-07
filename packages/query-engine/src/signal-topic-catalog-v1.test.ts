@@ -92,6 +92,45 @@ test("semantic results stay pending until a separate validation split supports a
     excluded_by_rule: false, calibration: unavailable }).disposition, "pending");
 });
 
+test("one unseen positive and negative cannot authorize broad automatic publication", () => {
+  const unavailable = calibrateSignalTopicThresholdV1([
+    { mention_id: "id-1", score: 0.90, disposition: "belongs" },
+    { mention_id: "id-3", score: 0.85, disposition: "belongs" },
+    { mention_id: "id-4", score: 0.80, disposition: "belongs" },
+    { mention_id: "id-5", score: 0.40, disposition: "excluded" },
+    { mention_id: "id-6", score: 0.30, disposition: "excluded" },
+    { mention_id: "id-7", score: 0.20, disposition: "excluded" },
+    { mention_id: "id-0", score: 0.88, disposition: "belongs" },
+    { mention_id: "id-9", score: 0.42, disposition: "excluded" }
+  ]);
+  assert.equal(unavailable.available, false);
+  assert.equal(unavailable.reason, "insufficient_validation");
+  assert.deepEqual(unavailable.validation, {
+    positives: 1, negatives: 1, precision: null, recall: null,
+    false_positives: 0, false_negatives: 0
+  });
+});
+
+test("two unseen positives and negatives can validate a precise threshold", () => {
+  const ready = calibrateSignalTopicThresholdV1([
+    { mention_id: "id-1", score: 0.90, disposition: "belongs" },
+    { mention_id: "id-3", score: 0.85, disposition: "belongs" },
+    { mention_id: "id-4", score: 0.80, disposition: "belongs" },
+    { mention_id: "id-5", score: 0.40, disposition: "excluded" },
+    { mention_id: "id-6", score: 0.30, disposition: "excluded" },
+    { mention_id: "id-7", score: 0.20, disposition: "excluded" },
+    { mention_id: "id-0", score: 0.88, disposition: "belongs" },
+    { mention_id: "id-2", score: 0.82, disposition: "belongs" },
+    { mention_id: "id-9", score: 0.42, disposition: "excluded" },
+    { mention_id: "id-10", score: 0.31, disposition: "excluded" }
+  ]);
+  assert.equal(ready.available, true);
+  assert.equal(ready.reason, "ready");
+  assert.equal(ready.threshold, 0.8);
+  assert.equal(ready.validation.precision, 1);
+  assert.equal(ready.validation.recall, 1);
+});
+
 test("human corrections override model scores and multilabel item state remains aggregate", () => {
   const approved = decideSignalTopicCandidateV1({ score: 0.1, lexical_match: false,
     excluded_by_rule: false, correction: "belongs" });
