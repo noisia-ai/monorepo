@@ -28,7 +28,7 @@ import {
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
-import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, replaceMonitoredImport } from "@/lib/data-os/workspace-import-monitor";
+import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure } from "@/lib/data-os/workspace-import-monitor";
 import { acquisitionSlotActions, buildAcquisitionSlotViews, groupAcquisitionBlockers } from "@/lib/data-os/workspace-acquisition-slot-view";
 import { buildAdminWorkspaceConnectorInput } from "@/lib/data-os/admin-workspace-source-contract";
 
@@ -240,13 +240,14 @@ export function AcquisitionPlanManager({
   const requestRef = useRef<AbortController | null>(null);
   const previousRefreshRevision = useRef(refreshRevision);
   const uploadRef = useRef<XMLHttpRequest | null>(null);
+  const planLoadError = t("errors.load"), sourceLoadError = t("errors.sources"), briefLoadError = t("errors.briefLoad"), statusReadError = t("errors.statusRead");
 
   const loadState = useCallback(async (quiet = false) => {
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
     if (!quiet) setLoading(true);
-    setError(null);
+    if (!quiet) setError(null);
     try {
       const [planResponse,sourceResponse] = await Promise.all([
         fetch(`/api/data-os/signal/${workspaceId}/acquisition-plan`,{
@@ -258,8 +259,8 @@ export function AcquisitionPlanManager({
       ]);
       const planPayload = await planResponse.json() as PlanPayload & { message?: string };
       const sourcePayload = await sourceResponse.json() as { sources?: Connector[];message?: string };
-      if (!planResponse.ok) throw new Error(planPayload.message ?? t("errors.load"));
-      if (!sourceResponse.ok) throw new Error(sourcePayload.message ?? t("errors.sources"));
+      if (!planResponse.ok) throw new Error(planPayload.message ?? planLoadError);
+      if (!sourceResponse.ok) throw new Error(sourcePayload.message ?? sourceLoadError);
       setPlan(planPayload);
       setConnectors((sourcePayload.sources ?? []).filter((source) => (
         source.source_contract_version === "signal-data-source-connector-v1"
@@ -269,25 +270,27 @@ export function AcquisitionPlanManager({
           cache:"no-store",signal:controller.signal
         });
         const briefPayload=await briefResponse.json() as AcquisitionBriefContext&{message?:string};
-        if(!briefResponse.ok)throw new Error(briefPayload.message??t("errors.briefLoad"));
+        if(!briefResponse.ok)throw new Error(briefPayload.message??briefLoadError);
         setBrief(briefPayload);
       }else setBrief(null);
     } catch (loadError) {
-      if (!isAbort(loadError)) setError(message(loadError,t("errors.load")));
+      if (!isAbort(loadError)) setError(message(loadError,planLoadError));
     } finally {
       if (!quiet) setLoading(false);
     }
-  },[t,workspaceId]);
+  },[planLoadError,sourceLoadError,briefLoadError,workspaceId]);
 
   useEffect(() => {
-    const uploadRequest = uploadRef;
     void loadState();
-    return () => {
-      uploadCancelled.current = true;
-      requestRef.current?.abort();
-      uploadRequest.current?.abort();
-    };
+    return () => { requestRef.current?.abort(); };
   },[loadState]);
+
+  // Transfer ownership lasts until this component unmounts. Read refreshes and
+  // replacement translation contexts must never cancel an in-flight upload.
+  useEffect(() => {
+    const uploadRequest = uploadRef;
+    return () => { uploadCancelled.current = true; uploadRequest.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     if (previousRefreshRevision.current === refreshRevision) return;
@@ -348,12 +351,16 @@ export function AcquisitionPlanManager({
     const controller = new AbortController();
     void pollWorkspaceImport<ImportItem>({ url: `${importEndpoint}/${monitorImportId}`, importId: monitorImportId,
       signal: controller.signal, onProgress: (next) => setImportResult((current) => replaceMonitoredImport(current, next)) })
-      .then(async () => {
+      .then(async (terminal) => {
         if (controller.signal.aborted) return;
-        setHistoryRevision((value) => value + 1); await loadState(true); router.refresh();
-      }).catch(() => { if (!controller.signal.aborted) setError(t("errors.statusRead")); });
+        setHistoryRevision((value) => value + 1);
+        await refreshAfterImportCompletion({ signal: controller.signal, refreshState: () => loadState(true), refreshPage: () => {
+          setMonitorImportId((current) => current === terminal.id ? null : current);
+          router.refresh();
+        } });
+      }).catch(() => { if (!controller.signal.aborted) setError(statusReadError); });
     return () => controller.abort();
-  }, [drawer?.mode, monitorImportId, monitorRevision, importEndpoint, loadState, router, t]);
+  }, [drawer?.mode, monitorImportId, monitorRevision, importEndpoint, loadState, router, statusReadError]);
 
   const slotViews = useMemo(() => buildSlotViews(plan?.slots ?? [], plan?.current_slots),[plan?.slots, plan?.current_slots]);
   const activeConnectors = useMemo(
@@ -651,6 +658,7 @@ export function AcquisitionPlanManager({
     }
     setBusy("import");setError(null);setImportResult(null);
     let pollingUrl:string|null=null;
+    let trackedImportId: string | null = null;
     let transferComplete = false;
     uploadCancelled.current = false; setUploadTransferActive(true);
     setMonitorImportId(null);
@@ -664,6 +672,7 @@ export function AcquisitionPlanManager({
         },key
       );
       pollingUrl=created.polling_url;
+      trackedImportId=created.import.id;
       setImportResult(created.import);
       setHistoryRevision((value) => value + 1);
       if (uploadCancelled.current) throw new DOMException("Upload aborted", "AbortError");
@@ -677,7 +686,12 @@ export function AcquisitionPlanManager({
       setMonitorImportId(created.import.id);
       setHistoryRevision((value) => value + 1);
     } catch (operationError) {
-      if(pollingUrl && !transferComplete)await reportUploadFailure(pollingUrl,key,isAbort(operationError)?"upload_aborted":"upload_transport_failed");
+      if(pollingUrl && trackedImportId && !transferComplete) {
+        const failed = await reportWorkspaceImportUploadFailure<ImportItem>({ url: pollingUrl, importId: trackedImportId,
+          key, code: isAbort(operationError) ? "upload_aborted" : "upload_transport_failed" }).catch(() => null);
+        if (failed) setImportResult((current) => replaceMonitoredImport(current, failed));
+        setMonitorImportId(trackedImportId);
+      }
       if(!isAbort(operationError))setError(transferComplete ? t("errors.finalizeUncertain") : message(operationError,t("errors.import")));
       else setError(t("errors.uploadCancelled"));
       setHistoryRevision((value) => value + 1);
@@ -1066,10 +1080,6 @@ async function uploadMultipart(file:File,authority:NonNullable<ImportCreatePaylo
     offset+=part.expected_size_bytes;onProgress(Math.min(99,Math.floor((offset/file.size)*100)));
   }
   requestRef.current=null;if(offset!==file.size)throw new Error("Multipart upload size mismatch.");
-}
-
-async function reportUploadFailure(url:string,key:string,code:"upload_aborted"|"upload_transport_failed"){
-  try{await postJson(url,{action:"fail-upload",failure_code:code},`${key}:failed`);}catch{return;}
 }
 
 function mergeHistory(current: ImportItem[] | null, next: ImportItem[]) {

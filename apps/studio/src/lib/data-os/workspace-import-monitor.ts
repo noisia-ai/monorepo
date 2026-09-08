@@ -27,6 +27,27 @@ export async function confirmWorkspaceImportUpload<T extends ImportStatusSnapsho
   if (payload.import.id !== args.importId) throw new Error("import_status_identity_mismatch");
   return payload.import;
 }
+export async function reportWorkspaceImportUploadFailure<T extends ImportStatusSnapshot>(args: {
+  url: string; importId: string; key: string; code: "upload_aborted" | "upload_transport_failed"; transport?: typeof fetch;
+}) {
+  const response = await (args.transport ?? fetch)(args.url, {
+    method: "POST", cache: "no-store",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": `${args.key}:failed` },
+    body: JSON.stringify({ action: "fail-upload", failure_code: args.code })
+  });
+  const payload = await response.json() as { import?: T };
+  if (!response.ok || !payload.import) throw new Error("import_status_unavailable");
+  if (payload.import.id !== args.importId) throw new Error("import_status_identity_mismatch");
+  return payload.import;
+}
+export async function refreshAfterImportCompletion(args: {
+  signal: AbortSignal; refreshState: () => Promise<void>; refreshPage: () => void;
+}) {
+  if (args.signal.aborted) return;
+  await args.refreshState();
+  // Closing the completed file can happen while its state read is still pending.
+  if (!args.signal.aborted) args.refreshPage();
+}
 export async function pollWorkspaceImport<T extends ImportStatusSnapshot>(args: {
   url: string;
   importId: string;

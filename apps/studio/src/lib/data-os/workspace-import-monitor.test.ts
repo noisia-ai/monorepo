@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canConfirmImportUpload, confirmWorkspaceImportUpload, pollWorkspaceImport, replaceMonitoredImport } from "./workspace-import-monitor";
+import { canConfirmImportUpload, confirmWorkspaceImportUpload, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure } from "./workspace-import-monitor";
 
 test("a prior file cannot replace the visible result of a later upload", () => {
   const first = { id: "first", status: "completed" }, second = { id: "second", status: "processing" };
@@ -85,4 +85,24 @@ test("a response for a different file is rejected instead of displayed", async (
   await assert.rejects(pollWorkspaceImport({ url: "/imports/one", importId: "one", signal: new AbortController().signal,
     onProgress: () => assert.fail("wrong file was displayed"),
     transport: async () => Response.json({ import: { id: "two", status: "completed" } }) }), /identity_mismatch/);
+});
+test("closing a completed import suppresses its delayed page refresh while the next file starts", async () => {
+  const firstReader = new AbortController(); let finishState!: () => void; let refreshes = 0;
+  const pending = refreshAfterImportCompletion({ signal: firstReader.signal,
+    refreshState: () => new Promise<void>((resolve) => { finishState = resolve; }), refreshPage: () => { refreshes++; } });
+  firstReader.abort(); // Close completed Localiza before its state read finishes.
+  const second = { id: "second", status: "queued", phase: "uploading" };
+  finishState(); await pending;
+  assert.equal(refreshes, 0);
+  assert.equal(second.phase, "uploading");
+});
+test("a reported transport cancellation replaces the queued UI receipt with the actual failed server receipt", async () => {
+  const queued = { id: "second", status: "queued", phase: "uploading" };
+  const failed = await reportWorkspaceImportUploadFailure({ url: "/imports/second", importId: "second", key: "creation-key", code: "upload_aborted",
+    transport: async (_url, init) => {
+      assert.deepEqual(JSON.parse(String(init?.body)), { action: "fail-upload", failure_code: "upload_aborted" });
+      return Response.json({ import: { id: "second", status: "failed", phase: "failed" } });
+    } });
+  assert.deepEqual(replaceMonitoredImport(queued, failed), { id: "second", status: "failed", phase: "failed" });
+  assert.equal(canConfirmImportUpload(failed), false);
 });
