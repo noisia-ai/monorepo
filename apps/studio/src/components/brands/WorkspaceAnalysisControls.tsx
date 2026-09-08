@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisErrorKey, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
@@ -18,6 +18,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const status = analysis.data;
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
+  const interpretedComplete = workspaceAnalysisInterpretedComplete(complete);
+  const noGroups = interpretedComplete && complete?.expected_interpretation_units === 0;
   const onComplete = useRef(onCompleted); onComplete.current = onCompleted;
   const notified = useRef<string | null>(null);
   const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
@@ -43,7 +45,13 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <progress aria-label={t(`phases.${status.active_run.phase}`)} max={100} value={status.active_run.progress} />
         <strong>{status.active_run.progress}%</strong>
       </div> : null}
-      {complete ? <p role="status"><strong>{t(complete.result_kind === "insufficient_population" ? "insufficient" : "computed")}</strong>{" "}{t(complete.result_kind === "insufficient_population" ? "insufficientBody" : "computedBody")}
+      {run?.fit_completed && run.status !== "ready" ? <p role="status" className="admin-drawer-form__hint">
+        {t("fitCompletePending")}{run.expected_interpretation_units > 0 ? <> {t("interpretationProgress", {
+          done: run.interpreted_units, total: run.expected_interpretation_units
+        })}</> : null}
+      </p> : null}
+      {complete ? <p role="status"><strong>{t(complete.result_kind === "insufficient_population" ? "insufficient" : noGroups ? "noGroups" : interpretedComplete ? "completed" : "computed")}</strong>{" "}{t(complete.result_kind === "insufficient_population" ? "insufficientBody" : noGroups ? "noGroupsBody" : interpretedComplete ? "completedBody" : "computedBody")}
+        {interpretedComplete && complete.result_kind !== "insufficient_population" ? <> {t("catalogTopics", { count: complete.materialized_topics })}</> : null}
         {status?.active_run ? <> {t("previous")}</> : !complete.is_current ? <> {t("outdated")}</> : null}
       </p> : null}
       {analysis.error === "load" && status ? <p role="status">{t("unverified")}</p> : null}
@@ -53,10 +61,15 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         })}
         {run.claude_cost.unknown_reserved_micro_usd > 0 ? <> {t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</> : null}
       </p> : null}
-      {preflight?.state === "ready" && !analysis.pending && !status?.active_run ? <>
-        <p className="admin-drawer-form__hint">{t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
+      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown ? <>
+        <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
+          ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
+          : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
           {!preflight.cost.claude.provider_available ? <> {t("noInterpretation")}</> : null}
         </p>
+        {preflight.cost.voyage.estimated_upper_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("voyageEstimate", {
+          amount: money(preflight.cost.voyage.estimated_upper_micro_usd)
+        })}</p> : null}
         {preflight.cost.claude.provider_available ? <details><summary>{t("changeCap")}</summary>
           <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</span>
             <input inputMode="decimal" value={analysis.cap} disabled={disabled || analysis.submitting}
@@ -74,7 +87,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
             <ArrowClockwise aria-hidden size={15} />{t("resend")}</button>
             : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
-                : preflight?.state === "ready" && capNumber !== null ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}
+                : !unknown && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>

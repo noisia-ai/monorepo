@@ -11,6 +11,10 @@ import { TopicCandidateEvidence } from "@/components/brands/TopicCandidateEviden
 import { useWorkspaceTopicComputation } from "./useWorkspaceTopicComputation";
 import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
 import type { WorkspaceTopicComputationStatus } from "@/lib/data-os/signal-workspace-topic-computation-ui";
+import { SIGNAL_TOPIC_EDITOR_SCOPES_V1, emptyTopicEditorV1 as emptyEditor,
+  topicEditorFromDefinitionV1 as editorFromTopic, topicEditorPayloadV1 as editorPayload,
+  topicDefinitionEditorPayloadV1 as topicPayload, type SignalTopicEditorV1 as Editor
+} from "@/lib/data-os/signal-topic-editor-ui";
 
 type Management = SignalTopicsManagementProductV1;
 type Topic = Management["topics"][number];
@@ -19,8 +23,6 @@ type ResultItem = { canonical_root_id: string; text: string; platform: string; p
   term_key: string; term_label: string; disposition: "relevant" | "doubt" | "excluded";
   method: string; semantic_score: number | null; correction: "belongs" | "excluded" | null;
   correction_updated_at: string | null; definition_revision: number };
-type Editor = { label: string; definition: string; scope: Topic["scope"];
-  inclusion: string; exclusion: string; positive_examples: string; negative_examples: string };
 const EDIT_RECLASSIFICATION_CAP_MICRO_USD = 5_000;
 
 export function TopicsManager({ brandId, initial, workspaceId, initialComputation = null }: {
@@ -32,6 +34,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const [data, setData] = useState(initial);
   const [tab, setTab] = useState<"topics" | "discovered" | "archived">("topics");
   const [query, setQuery] = useState("");
+  const [discoveryLimit, setDiscoveryLimit] = useState(20);
   const [candidateScopes, setCandidateScopes] = useState<Record<string, Topic["scope"]>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(initial.topics.find((item) => item.lifecycle !== "archived")?.term_key ?? null);
   const [creating, setCreating] = useState(false);
@@ -58,9 +61,13 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
     const needle = query.trim().toLocaleLowerCase();
     return !needle || `${item.label} ${item.definition}`.toLocaleLowerCase().includes(needle);
   }), [data.topics, query, tab]);
+  const workspaceDiscoveries = useMemo(() => data.topics.filter((item) => item.origin === "workspace_discovery"
+    && (!query.trim() || `${item.label} ${item.definition}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))), [data.topics, query]);
+  const visibleCandidates = useMemo(() => data.discovered.items.filter((item) => !query.trim()
+    || `${item.title} ${item.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [data.discovered.items, query]);
   const canEdit = data.capabilities.can_edit;
   const canExecute = data.capabilities.can_execute;
-  const canSearch = legacySearch && canExecute && data.readiness.state === "ready";
+  const canSearch = legacySearch && selected?.origin !== "workspace_discovery" && canExecute && data.readiness.state === "ready";
   const awaitingImport = data.readiness.state === "awaiting_import";
   const running = legacySearch && data.execution && ["queued", "running"].includes(data.execution.status);
   const hasUnsupportedSignalScope = data.topics.some((item) => item.lifecycle !== "archived"
@@ -122,9 +129,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
 
   function editTopic(topic: Topic) {
     setCreating(false); setSelectedKey(topic.term_key);
-    setEditor({ label: topic.label, definition: topic.definition, scope: topic.scope,
-      inclusion: topic.inclusion.join("\n"), exclusion: topic.exclusion.join("\n"),
-      positive_examples: topic.positive_examples.join("\n"), negative_examples: topic.negative_examples.join("\n") });
+    setEditor(editorFromTopic(topic));
   }
 
   async function createTopic() {
@@ -237,7 +242,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
       </div>
       <label className="topics-manager__search"><MagnifyingGlass aria-hidden size={16} />
         <span className="sr-only">{t("search")}</span>
-        <input onChange={(event) => setQuery(event.target.value)} placeholder={t("search")} value={query} />
+        <input onChange={(event) => { setQuery(event.target.value); setDiscoveryLimit(20); }} placeholder={t("search")} value={query} />
       </label>
       <button className="admin-button admin-button--primary" disabled={!canEdit || busy !== null} onClick={() => {
         if (!canLeaveEditor()) return;
@@ -261,10 +266,22 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
 
     {tab === "discovered" ? <section className="admin-section topics-manager__discovered">
       <header><div><h2>{t("discovered.title")}</h2><p>{t("discovered.body")}</p></div>
-        <span>{data.discovered.items.length}</span></header>
-      {data.discovered.items.length ? <div className="topics-manager__candidate-grid">
-        {data.discovered.items.filter((item) => !query || `${item.title} ${item.description}`.toLowerCase().includes(query.toLowerCase()))
-          .map((candidate) => <article key={candidate.candidate_key}>
+        <span>{workspaceDiscoveries.length + visibleCandidates.length}</span></header>
+      {workspaceDiscoveries.length ? <>
+        <div className="topics-manager__candidate-grid">{workspaceDiscoveries.slice(0, discoveryLimit).map((topic) => <article key={topic.term_key}>
+          <div><small>{t("origin.workspace_discovery")} · {t(`scopes.${topic.scope}`)}</small>
+            <h3>{topic.label}</h3><p>{topic.definition}</p>
+            <AdminStatus state={topicStatusTone(topic)}>{topicStatusLabel(topic)}</AdminStatus></div>
+          <button className="admin-button" disabled={busy !== null} onClick={() => {
+            if (!canLeaveEditor()) return;
+            editTopic(topic); setTab(topic.lifecycle === "archived" ? "archived" : "topics");
+          }} type="button">{t("discovered.editTopic")}</button>
+        </article>)}</div>
+        {workspaceDiscoveries.length > discoveryLimit ? <button className="admin-button"
+          onClick={() => setDiscoveryLimit((limit) => limit + 20)} type="button">{t("discovered.moreTopics")}</button> : null}
+      </> : null}
+      {visibleCandidates.length ? <div className="topics-manager__candidate-grid">
+        {visibleCandidates.map((candidate) => <article key={candidate.candidate_key}>
             <div><small>{t(`origin.${candidate.origin}`)} · {t("discovered.evidence", { count: candidate.evidence_count })}</small>
               <h3>{candidate.title}</h3><p>{candidate.description}</p>
               {candidate.evidence_source === "v2" && data.discovered.run_key ? <details>
@@ -279,7 +296,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
                 onChange={(event) => setCandidateScopes({ ...candidateScopes, [candidate.candidate_key]: event.target.value as Topic["scope"] })}
                 value={candidateScopes[candidate.candidate_key] ?? ""}>
                 <option value="" disabled>{t("discovered.scopePlaceholder")}</option>
-                {(["primary_brand", "competitor", "category"] as const).map((scope) => <option key={scope} value={scope}>{t(`scopes.${scope}`)}</option>)}
+                {SIGNAL_TOPIC_EDITOR_SCOPES_V1.map((scope) => <option key={scope} value={scope}>{t(`scopes.${scope}`)}</option>)}
               </select></label>}
             <button className="admin-button" disabled={!data.capabilities.can_adopt || candidate.used_as_topic || busy !== null || (!candidate.scope && !candidateScopes[candidate.candidate_key])}
               onClick={() => void adoptCandidate(candidate)} type="button">
@@ -287,7 +304,8 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
               {candidate.used_as_topic ? t("discovered.used") : t("discovered.use")}
             </button>
           </article>)}
-      </div> : <div className="admin-empty"><strong>{t("discovered.empty")}</strong><p>{t("discovered.emptyBody")}</p></div>}
+      </div> : null}
+      {!workspaceDiscoveries.length && !visibleCandidates.length ? <div className="admin-empty"><strong>{t("discovered.empty")}</strong><p>{t("discovered.emptyBody")}</p></div> : null}
     </section> : <div className="topics-manager__layout">
       <aside className="admin-section topics-manager__list">
         <header><div><h2>{tab === "archived" ? t("archived.title") : t("list.title")}</h2>
@@ -299,7 +317,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
               date: new Date(topic.updated_at).toLocaleDateString(locale, { timeZone: data.workspace.timezone ?? "UTC" })
             })}</time></span>
           <span><AdminStatus state={topicStatusTone(topic)}>{topicStatusLabel(topic)}</AdminStatus>
-            {workspaceSearch ? null : topic.status === "searching" || topic.status === "updating" ? <small>…</small>
+            {workspaceSearch || topic.origin === "workspace_discovery" ? null : topic.status === "searching" || topic.status === "updating" ? <small>…</small>
               : topic.status === "draft" ? <small>{t("list.notSearched")}</small>
                 : workspaceSearch ? null : <small>{t("list.mentions", { count: topic.counts.relevant })}</small>}</span>
         </button>) : <div className="admin-empty admin-empty--compact"><strong>{t(tab === "archived" ? "archived.empty" : "list.empty")}</strong></div>}
@@ -309,16 +327,19 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
         {creating || selected ? <>
           <header><div><small>{creating ? t("editor.newEyebrow") : t(`origin.${selected?.origin ?? "manual"}`)}</small>
             <h2>{creating ? t("editor.newTitle") : selected?.label}</h2>
-            {!creating && selected?.source ? <p>{t("editor.source", { candidate: selected.source.candidate_key })}</p> : null}</div>
+            {!creating && selected?.source ? <p>{selected.origin === "workspace_discovery"
+              ? t("editor.workspaceSource") : t("editor.source", { candidate: selected.source.candidate_key })}</p> : null}</div>
             {!creating && selected ? <AdminStatus state={topicStatusTone(selected)}>{topicStatusLabel(selected)}</AdminStatus> : null}
           </header>
           <fieldset className="topics-manager__form" disabled={!canEdit || busy !== null}>
             <label>{t("fields.name")}<input maxLength={160} onChange={(event) => setEditor({ ...editor, label: event.target.value })} value={editor.label} /></label>
             <label>{t("fields.definition")}<textarea maxLength={1500} onChange={(event) => setEditor({ ...editor, definition: event.target.value })} rows={4} value={editor.definition} /></label>
             <label>{t("fields.scope")}<select onChange={(event) => setEditor({ ...editor, scope: event.target.value as Topic["scope"] })} value={editor.scope}>
-              <option value="primary_brand">{t("scopes.primary_brand")}</option><option value="competitor">{t("scopes.competitor")}</option>
-              <option value="category">{t("scopes.category")}</option></select></label>
+              {SIGNAL_TOPIC_EDITOR_SCOPES_V1.map((scope) => <option key={scope} value={scope}>{t(`scopes.${scope}`)}</option>)}</select></label>
             <details><summary>{t("advanced.title")}</summary><div className="topics-manager__advanced">
+              <label className="topics-manager__guidance"><input type="checkbox" checked={editor.discovery_guidance}
+                onChange={(event) => setEditor({ ...editor, discovery_guidance: event.target.checked })} />
+                <span>{t("fields.discoveryGuidance")}<small>{t("fields.discoveryGuidanceHelp")}</small></span></label>
               <LineField label={t("fields.inclusion")} onChange={(value) => setEditor({ ...editor, inclusion: value })} value={editor.inclusion} />
               <LineField label={t("fields.exclusion")} onChange={(value) => setEditor({ ...editor, exclusion: value })} value={editor.exclusion} />
               <LineField label={t("fields.positive")} onChange={(value) => setEditor({ ...editor, positive_examples: value })} value={editor.positive_examples} />
@@ -345,7 +366,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
                     {t(computation.pending && !computation.data?.active_run ? "computation.recover" : "actions.search")}</button>
                     : selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
                     <MagnifyingGlass aria-hidden size={15} />{data.execution?.status === "failed" ? t("actions.retry") : t("actions.search")}</button> : null}
-                  {legacySearch && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
+                  {legacySearch && selected.origin !== "workspace_discovery" && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
                     disabled={!canExecute || busy !== null || Boolean(running) || !data.search_execution_id || editorDirty
                       || hasUnsupportedSignalScope} onClick={() => void command("follow")} type="button">
                     <Check aria-hidden size={15} />{t("actions.follow")}</button> : null}
@@ -407,7 +428,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
             {computation.results?.next_cursor || computation.resultsStatus === "error" ? <button className="admin-button"
               disabled={computation.resultsStatus === "loading"} onClick={() => void computation.readResults(computation.results?.next_cursor ?? null)}
               type="button">{t(computation.resultsStatus === "error" ? "computation.retryResults" : "computation.more")}</button> : null}
-          </section> : legacySearch && !creating && selected && data.search_execution_id ? <section className="topics-manager__results">
+          </section> : legacySearch && !creating && selected && selected.origin !== "workspace_discovery" && data.search_execution_id ? <section className="topics-manager__results">
             <header><div><small>{t("results.eyebrow")}</small><h3>{t("results.title")}</h3><p>{t("results.body")}</p></div>
               <nav aria-label={t("results.filters")}>
                 {(["relevant", "doubt", "excluded"] as const).map((state) => <button className={resultState === state ? "is-active" : ""}
@@ -455,18 +476,6 @@ function CandidateRules({ candidate, t }: { candidate: Candidate; t: ReturnType<
       {candidate.exclusion.map((item) => <li key={item}>{item}</li>)}</ul></> : null}
   </details>;
 }
-function emptyEditor(): Editor { return { label: "", definition: "", scope: "primary_brand",
-  inclusion: "", exclusion: "", positive_examples: "", negative_examples: "" }; }
-function editorFromTopic(topic: Topic): Editor { return { label: topic.label, definition: topic.definition,
-  scope: topic.scope, inclusion: topic.inclusion.join("\n"), exclusion: topic.exclusion.join("\n"),
-  positive_examples: topic.positive_examples.join("\n"), negative_examples: topic.negative_examples.join("\n") }; }
-function editorPayload(editor: Editor) { const lines = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
-  return { label: editor.label.trim(), definition: editor.definition.trim(), scope: editor.scope,
-    inclusion: lines(editor.inclusion), exclusion: lines(editor.exclusion),
-    positive_examples: lines(editor.positive_examples), negative_examples: lines(editor.negative_examples) }; }
-function topicPayload(topic: Topic) { return { label: topic.label, definition: topic.definition,
-  scope: topic.scope, inclusion: topic.inclusion, exclusion: topic.exclusion,
-  positive_examples: topic.positive_examples, negative_examples: topic.negative_examples }; }
 function semanticEditorPayload(editor: Editor) { const payload = editorPayload(editor); return {
   definition: payload.definition, scope: payload.scope, inclusion: payload.inclusion,
   exclusion: payload.exclusion, positive_examples: payload.positive_examples,

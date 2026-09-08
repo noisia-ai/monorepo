@@ -9,6 +9,7 @@ import {
   estimateSignalTopicEmbeddingCostMicroUsdV1,
   signalTopicContrastScoreV1,
   signalTopicDefinitionDigestV1,
+  signalTopicGuidesDiscoveryV1,
   signalTopicEmbeddingCacheDigestV1,
   signalTopicItemStateV1,
   signalTopicLexicalMatchV1,
@@ -88,6 +89,11 @@ test("definition digest changes with meaning but not display label", () => {
   };
   assert.equal(signalTopicDefinitionDigestV1(base), signalTopicDefinitionDigestV1({ ...base, label: "Privacy" }));
   assert.notEqual(signalTopicDefinitionDigestV1(base), signalTopicDefinitionDigestV1({ ...base, definition: "Precio" }));
+  assert.equal(signalTopicDefinitionDigestV1(base), signalTopicDefinitionDigestV1({ ...base, discovery_guidance: true }));
+  assert.notEqual(signalTopicDefinitionDigestV1(base), signalTopicDefinitionDigestV1({ ...base, discovery_guidance: false }));
+  assert.equal(signalTopicGuidesDiscoveryV1(base), true);
+  assert.equal(signalTopicGuidesDiscoveryV1({ origin: "workspace_discovery" }), false);
+  assert.equal(signalTopicGuidesDiscoveryV1({ origin: "workspace_discovery", discovery_guidance: true }), true);
 });
 
 test("lexical rules normalize accents and keep exclusions separate", () => {

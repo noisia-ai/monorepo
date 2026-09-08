@@ -12,11 +12,11 @@ export type SignalTopicClassificationJobDataV1 = {
   execution_id: string;
 };
 
-export const signalTopicScopeSchemaV1 = z.enum(["primary_brand", "competitor", "category"]);
+export const signalTopicScopeSchemaV1 = z.enum(["primary_brand", "competitor", "category", "all_conversations"]);
 export const signalTopicLifecycleSchemaV1 = z.enum(["draft", "archived"]);
 // "discovered" is accepted only to read pre-compass definitions without rewriting their digest.
-export const signalTopicOriginSchemaV1 = z.enum(["manual", "historical_taxonomy", "corpus_discovery", "evidence_candidate", "discovered"]);
-export type SignalTopicPublicOriginV1 = "manual" | "historical_taxonomy" | "corpus_discovery" | "evidence_candidate";
+export const signalTopicOriginSchemaV1 = z.enum(["manual", "historical_taxonomy", "corpus_discovery", "evidence_candidate", "discovered", "workspace_discovery"]);
+export type SignalTopicPublicOriginV1 = "manual" | "historical_taxonomy" | "corpus_discovery" | "evidence_candidate" | "workspace_discovery";
 
 export function signalTopicPublicOriginV1(origin: z.infer<typeof signalTopicOriginSchemaV1>,
   source: { run_key: string } | null): SignalTopicPublicOriginV1 {
@@ -46,6 +46,7 @@ export const signalTopicDefinitionSchemaV1 = z.object({
   negative_examples: z.array(line).max(16).default([]),
   lifecycle: signalTopicLifecycleSchemaV1,
   origin: signalTopicOriginSchemaV1,
+  discovery_guidance: z.boolean().optional(),
   source: z.object({
     run_key: z.string().min(1).max(200),
     candidate_key: z.string().min(1).max(200),
@@ -60,6 +61,11 @@ export const signalTopicDefinitionSchemaV1 = z.object({
 export type SignalTopicScopeV1 = z.infer<typeof signalTopicScopeSchemaV1>;
 export type SignalTopicDefinitionV1 = z.infer<typeof signalTopicDefinitionSchemaV1>;
 
+/** Generated Topics are outputs until explicitly chosen as future interests. */
+export function signalTopicGuidesDiscoveryV1(topic: Pick<SignalTopicDefinitionV1, "origin" | "discovery_guidance">) {
+  return topic.discovery_guidance ?? topic.origin !== "workspace_discovery";
+}
+
 export type SignalTopicEverydayStatusV1 =
   | "draft"
   | "searching"
@@ -73,6 +79,7 @@ export const createSignalTopicInputSchemaV1 = z.object({
   label: z.string().trim().min(1).max(160),
   definition: z.string().trim().min(1).max(1500),
   scope: signalTopicScopeSchemaV1.default("primary_brand"),
+  discovery_guidance: z.boolean().optional(),
   inclusion: z.array(line).max(16).default([]),
   exclusion: z.array(line).max(16).default([]),
   positive_examples: z.array(line).max(16).default([]),
@@ -243,6 +250,7 @@ export function signalTopicDefinitionDigestV1(input: Omit<SignalTopicDefinitionV
     negative_examples: normalizedLines(input.negative_examples),
     lifecycle: input.lifecycle,
     origin: input.origin,
+    ...(signalTopicGuidesDiscoveryV1(input) ? {} : { discovery_guidance: false }),
     source: input.source
   }));
 }

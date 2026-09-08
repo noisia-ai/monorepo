@@ -3,8 +3,9 @@ import type { Pool } from "pg";
 import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
-  type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
-import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 } from "@noisia/query-engine";
+  loadSignalWorkspaceEngineInterpretationBudgetV1,
+  type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
+import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
@@ -24,16 +25,27 @@ async function authorize(args: Access, execute: boolean) {
   if (!capabilities.can_view || execute && !capabilities.can_execute_topics) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
   return { database, capabilities, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
-export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"]): WorkspaceAnalysisRun | null {
+export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env) {
+  const maximum = Number(env.NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD ?? 0);
+  const daily = Number(env.NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD ?? 0);
+  const timezone = env.NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE ?? "UTC";
+  let validTimezone = false;
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); validTimezone = true; } catch { /* Invalid config disables sends. */ }
+  const available = env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY)
+    && [maximum, daily].every(value => Number.isSafeInteger(value) && value > 0) && validTimezone;
+  return { available, maximum_cap_micro_usd: available ? Math.min(maximum, daily) : 0,
+    daily_cap_micro_usd: daily, budget_timezone: timezone };
+}
+export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"], budget?: SignalWorkspaceEngineInterpretationBudgetV1): WorkspaceAnalysisRun | null {
   if (!run) return null;
-  // This producer only fits local computational models. No Claude request or
-  // reservation is made here; interpretation must add its own real receipt.
-  const unknown = Boolean(run.error_code && /outcome_unknown/u.test(run.error_code));
+  if (run.claude_cap_micro_usd > 0 && !budget) throw new SignalWorkspaceEngineError("workspace_analysis_budget_unavailable", 503);
+  const unknown = Boolean(run.error_code && /outcome_unknown/u.test(run.error_code)) || (budget?.unknown_reserved_micro_usd ?? 0) > 0;
   return { ...run, outcome_unknown: unknown,
     retryable: run.status === "failed" && !unknown && run.is_current
       && isSignalWorkspaceEngineRetryableErrorV1(run.error_code),
     claude_cost: { hard_cap_micro_usd: run.claude_cap_micro_usd,
-      settled_micro_usd: 0, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 } };
+      settled_micro_usd: budget?.confirmed_micro_usd ?? 0, reserved_micro_usd: budget?.reserved_micro_usd ?? 0,
+      unknown_reserved_micro_usd: budget?.unknown_reserved_micro_usd ?? 0 } };
 }
 export function workspaceAnalysisPreflightStateV1(args: {
   received: boolean; prepared: boolean; embeddingRunId: string | null; missingGuides: number;
@@ -51,17 +63,24 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const received = (await access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
     WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])).rows[0]?.received === true;
   const preflight = await loadSignalWorkspaceEnginePreflightV1(access);
-  const latest = workspaceAnalysisRunViewV1(raw.latest_run);
+  const policy = workspaceAnalysisInterpretationPolicyV1();
+  const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
+  const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd > 0);
+  await Promise.all([...new Set(runs.map(run => run!.execution_id))].map(async execution_id => {
+    budgets.set(execution_id, await loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id }));
+  }));
+  const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
+  const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
     latest_run: latest, active_run: latest && ["queued", "running"].includes(latest.status) ? latest : null,
-    latest_complete: workspaceAnalysisRunViewV1(raw.latest_complete), request_run: workspaceAnalysisRunViewV1(raw.request_run),
+    latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
       state: workspaceAnalysisPreflightStateV1({ received, prepared: preparation.is_current,
         embeddingRunId: preflight.embedding_run_id, missingGuides: preflight.missing_guides }),
       embedding_run_id: preflight.embedding_run_id, context_digest: preflight.expected_context_digest,
       catalog_digest: preflight.expected_catalog_digest,
-      cost: { claude: { estimated_upper_micro_usd: 0, maximum_cap_micro_usd: 0, provider_available: false },
+      cost: { claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
         voyage: { estimated_upper_micro_usd: 0 } }
     } };
   if (!validWorkspaceAnalysisStatus(result)) throw new SignalWorkspaceEngineError("workspace_analysis_status_invalid", 503);
@@ -71,13 +90,17 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   if (!requestKeyPattern.test(args.idempotencyKey) || !validateWorkspaceAnalysisRequestV1(args.body)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, true);
   if (args.body.action === "start") {
-    // A nonzero cap would imply an interpretation reservation this fit-only
-    // producer cannot honor. Never silently accept or charge it.
-    if (args.body.claude_cap_micro_usd !== 0) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+    const policy = workspaceAnalysisInterpretationPolicyV1();
+    if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+    if (args.body.claude_cap_micro_usd <= 0 || args.body.claude_cap_micro_usd > policy.maximum_cap_micro_usd) {
+      throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid", 422);
+    }
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
-      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: 0,
-      engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 });
+      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd,
+      engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
+        call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+        budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else {
     await retrySignalWorkspaceEngineV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });
   }

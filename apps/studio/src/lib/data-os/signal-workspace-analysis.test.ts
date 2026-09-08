@@ -3,7 +3,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
-  workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
+  workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
 const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
 const body = { action: "start", embedding_run_id: id, expected_context_digest: hash, expected_catalog_digest: hash, claude_cap_micro_usd: 0 };
@@ -41,7 +41,7 @@ test("analysis request is sealed to saved context and server engine config; retr
     { ...body, expected_context_digest: "bad" }, { action: "retry", run_id: id, claude_cap_micro_usd: 0 }])
     assert.equal(validateWorkspaceAnalysisRequestV1(value), false);
 });
-test("fit-only endpoint rejects a nonzero interpretation cap before any queue write", async () => {
+test("disabled interpretation cannot enqueue a paid run", async () => {
   await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase({ ...granted,
     user_type: "noisia_internal", primary_role: "noisia_admin" }), workspaceId: id, actorUserId: "actor",
     idempotencyKey: "analysis-test-request", body: { ...body, claude_cap_micro_usd: 1 } }),
@@ -61,7 +61,8 @@ test("run view does not fabricate a Claude reservation and only exposes retry fo
   const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
     progress: 25, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 25, processed_chunks: 30,
     error_code: "workspace_engine_worker_failed", is_current: true, model_version_id: null, artifact_count: 0,
-    claude_cap_micro_usd: 0, result_kind: null };
+    claude_cap_micro_usd: 0, result_kind: null, fit_completed: false,
+    expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0 };
   assert.equal(workspaceAnalysisRunViewV1(run)?.retryable, true);
   assert.deepEqual(workspaceAnalysisRunViewV1(run)?.claude_cost, { hard_cap_micro_usd: 0, settled_micro_usd: 0,
     reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 });
@@ -73,7 +74,8 @@ test("UI recovery matches storage transport failures but never authorizes retry 
   const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
     progress: 30, expected_roots: 3, expected_chunks: 133, expected_guides: 6, processed_roots: 3, processed_chunks: 133,
     error_code: "workspace_engine_storage_transport_failed", is_current: true, model_version_id: null, artifact_count: 1,
-    claude_cap_micro_usd: 0, result_kind: null };
+    claude_cap_micro_usd: 0, result_kind: null, fit_completed: false,
+    expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0 };
   for (const error_code of ["workspace_engine_storage_transport_failed", "workspace_engine_storage_unavailable", "topic_queue_unavailable"]) {
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code })?.retryable, true);
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code, is_current: false })?.retryable, false);
@@ -82,4 +84,19 @@ test("UI recovery matches storage transport failures but never authorizes retry 
   for (const error_code of ["workspace_engine_storage_digest_invalid", "workspace_engine_storage_part_invalid",
     "workspace_engine_storage_reference_invalid", "workspace_engine_storage_bucket_not_private", "workspace_engine_forbidden"])
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code })?.retryable, false);
+});
+
+
+test("provider availability requires explicit complete budget policy and a current configured key", () => {
+  const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "test_not_real",
+    NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "30000000",
+    NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD: "20000000",
+    NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE: "America/Mexico_City" };
+  assert.equal(workspaceAnalysisInterpretationPolicyV1(env).available, true);
+  assert.equal(workspaceAnalysisInterpretationPolicyV1(env).maximum_cap_micro_usd, 20_000_000);
+  for (const change of [{ ANTHROPIC_API_KEY: "" }, { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "false" },
+    { NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "-1" }, { NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD: "NaN" },
+    { NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE: "not/a/timezone" }]) {
+    assert.equal(workspaceAnalysisInterpretationPolicyV1({ ...env, ...change }).available, false);
+  }
 });

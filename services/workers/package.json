@@ -17,7 +17,7 @@
     "signal:discover-topics-narratives": "tsx scripts/discover-signal-topics-narratives.ts",
     "signal:run-topics-narratives-backfill": "tsx scripts/run-signal-taxonomy-backfill.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/workers/*.test.ts",
+    "test": "node --test --import tsx src/workers/*.test.ts src/providers/*.test.ts",
     "test:integration:signal-operational-serving": "node --test --import tsx src/workers/signal-materialization.postgres.test.ts",
     "test:integration:signal-strategic-outbox": "node --test --import tsx src/workers/signal-strategic-run-outbox.postgres.test.ts"
   },

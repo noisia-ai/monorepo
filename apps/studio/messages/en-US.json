@@ -2524,6 +2524,14 @@
     "monitoringJourney": {"label": "Monitoring journey", "title": "Prepare your brand monitoring", "body": "Add context, define your interests and import the conversations to analyze.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
     "topics": {
       "analysis": {
+        "spendingLimit": "Spending limit for this execution: {amount}.",
+        "estimateUnknown": "The interpretation cost will be known after discovering the groups.",
+        "noGroups": "No stable groups found",
+        "noGroupsBody": "This run did not create new Topics. Your existing Topics are preserved.",
+        "fitCompletePending": "Computational grouping is complete. Interpretation and catalog creation still need to finish; this is not yet a complete result for Signal.",
+        "interpretationProgress": "Interpretation: {done} of {total} groups.",
+        "catalogTopics": "{count, plural, one {# topic in the catalog} other {# topics in the catalog}}.",
+        "voyageEstimate": "Pending Voyage preparation: up to {amount}. It is requested separately from Data.",
         "title": "Analyze conversations",
         "body": "Find new topics in your conversations and use saved interests when available. You can start without defining interests.",
         "loading": "Checking analysis status…",
@@ -2540,7 +2548,7 @@
         "saveFirst": "Save or discard editor changes before starting the analysis.",
         "readOnly": "Your access allows you to view this analysis, but not run it.",
         "cost": "Interpretation cap: {amount}. Costs are recorded with the request.",
-        "noInterpretation": "Computation finds groups of conversations. Claude interpretation is not yet available for this request.",
+        "noInterpretation": "Claude interpretation is unavailable. The complete analysis cannot start yet.",
         "receipt": "Recorded: {settled} · Reserved: {reserved}.",
         "unknownAmount": "Amount awaiting confirmation: {amount}.",
         "pending": "Checking whether the request was saved. Refreshing status does not start another analysis.",
@@ -2561,7 +2569,7 @@
         "missing_context": "Prepare the saved Brand OS context and any interests you have defined.",
         "prepareContext": "Prepare context and interests",
         "openData": "View data and preparation",
-        "phases": { "queued": "Queued", "exporting": "Preparing conversations", "fitting": "Discovering topics", "persisting": "Saving results", "interpreting": "Interpreting topics", "classifying": "Classifying conversations", "complete": "Process finished", "failed": "Process interrupted" },
+        "phases": { "materializing": "Saving editable topics", "queued": "Queued", "exporting": "Preparing conversations", "fitting": "Discovering topics", "persisting": "Saving results", "interpreting": "Interpreting topics", "classifying": "Classifying conversations", "complete": "Process finished", "failed": "Process interrupted" },
         "errors": { "load": "Analysis status could not be loaded. Try refreshing it again.", "request": "The request could not be confirmed. Check its status before submitting it again.", "storage": "The request could not be saved in this browser. Analysis has not started.", "forbidden": "This analysis is no longer available with your current access.", "changed": "Data or context changed. Refresh status before starting another request.", "failed": "Analysis could not finish. Previously recorded work is preserved.", "blocked": "Resolve the indicated condition before continuing the analysis." }
       },
       "preparation": {
@@ -2681,12 +2689,14 @@
         "failed": "Recoverable error"
       },
       "origin": {
+        "workspace_discovery": "Topic discovered in the analysis",
         "evidence_candidate": "Evidence-based candidate",
         "manual": "Defined interest",
         "historical_taxonomy": "Historical taxonomy",
         "corpus_discovery": "Corpus discovery"
       },
       "scopes": {
+        "all_conversations": "All conversations",
         "primary_brand": "Primary brand",
         "competitor": "Competitors",
         "category": "Category"
@@ -2704,12 +2714,15 @@
         "empty": "No archived topics."
       },
       "editor": {
+        "workspaceSource": "Discovered in the corpus analysis. Edit it here and choose separately whether it appears in Signal.",
         "select": "Choose a topic or create a new one.",
         "newEyebrow": "New definition",
         "newTitle": "Create topic",
         "source": "Added from candidate {candidate}. Its definition is editable."
       },
       "fields": {
+        "discoveryGuidance": "Use as an interest in future analyses",
+        "discoveryGuidanceHelp": "Guide future analyses with this definition. This does not start an analysis or select the topic for Signal.",
         "name": "Name",
         "definition": "What conversation should it find",
         "scope": "Conversations to analyze",
@@ -2719,7 +2732,7 @@
         "negative": "Negative examples — optional"
       },
       "advanced": {
-        "title": "Optional examples and boundaries"
+        "title": "Topic options — optional"
       },
       "start": {
         "title": "Search the real mentions",
@@ -2735,8 +2748,10 @@
         "publishing": "Updating Signal atomically"
       },
       "discovered": {
+        "editTopic": "Edit topic",
+        "moreTopics": "View more topics",
         "title": "Available discoveries",
-        "body": "Each proposal keeps its source: corpus discovery or historical taxonomy. Review its definition and evidence before adding it.",
+        "body": "Topics from the analysis are already in your catalog and can be edited. Earlier proposals retain their source and evidence.",
         "evidence": "{count} evidence items",
         "openEvidence": "Review supporting evidence",
         "legacyExamples": "Historical examples",

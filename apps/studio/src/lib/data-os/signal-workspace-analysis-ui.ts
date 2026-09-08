@@ -11,7 +11,7 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
   request_scope: string; can_execute: boolean;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
-    cost: { claude: { estimated_upper_micro_usd: number; maximum_cap_micro_usd: number; provider_available: boolean };
+    cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number; provider_available: boolean };
       voyage: { estimated_upper_micro_usd: number } } };
   active_run: WorkspaceAnalysisRun | null; latest_run: WorkspaceAnalysisRun | null;
   latest_complete: WorkspaceAnalysisRun | null; request_run: WorkspaceAnalysisRun | null;
@@ -30,15 +30,21 @@ const nullable = (value: unknown, predicate: (item: unknown) => boolean) => valu
 export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAnalysisRun | null {
   return value === null || object(value) && uuid(value.execution_id)
     && ["queued", "running", "ready", "failed"].includes(String(value.status))
-    && ["queued", "exporting", "fitting", "persisting", "complete", "failed"].includes(String(value.phase))
+    && ["queued", "exporting", "fitting", "persisting", "interpreting", "materializing", "complete", "failed"].includes(String(value.phase))
     && integer(value.progress) && value.progress <= 100
-    && ["expected_roots", "expected_chunks", "expected_guides", "processed_roots", "processed_chunks", "artifact_count"].every((key) => integer(value[key]))
+    && ["expected_roots", "expected_chunks", "expected_guides", "processed_roots", "processed_chunks", "artifact_count",
+      "expected_interpretation_units", "interpreted_units", "materialized_topics"].every((key) => integer(value[key]))
     && Number(value.processed_roots) <= Number(value.expected_roots) && Number(value.processed_chunks) <= Number(value.expected_chunks)
+    && typeof value.fit_completed === "boolean" && Number(value.interpreted_units) <= Number(value.expected_interpretation_units)
     && typeof value.is_current === "boolean" && typeof value.retryable === "boolean" && typeof value.outcome_unknown === "boolean"
     && integer(value.claude_cap_micro_usd) && [null, "computational_grouping", "insufficient_population"].includes(value.result_kind as null | string)
     && nullable(value.error_code, (code) => typeof code === "string") && nullable(value.model_version_id, uuid)
     && object(value.claude_cost) && ["hard_cap_micro_usd", "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd"]
       .every((key) => integer((value.claude_cost as Record<string, unknown>)[key]));
+}
+export function workspaceAnalysisInterpretedComplete(run: WorkspaceAnalysisRun | null) {
+  return Boolean(run?.status === "ready" && run.phase === "complete" && run.fit_completed
+    && run.interpreted_units === run.expected_interpretation_units);
 }
 export function validWorkspaceAnalysisStatus(value: unknown): value is WorkspaceAnalysisStatus {
   if (!object(value) || value.contract_version !== "signal-workspace-analysis-v1" || typeof value.workspace_id !== "string"
@@ -49,7 +55,7 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
   return ["ready", "awaiting_import", "needs_preparation", "missing_embeddings", "missing_context"].includes(String(preflight.state))
     && nullable(preflight.embedding_run_id, uuid) && nullable(preflight.context_digest, digest) && nullable(preflight.catalog_digest, digest)
     && (preflight.state !== "ready" || uuid(preflight.embedding_run_id) && digest(preflight.context_digest) && digest(preflight.catalog_digest))
-    && integer(claude.estimated_upper_micro_usd) && integer(claude.maximum_cap_micro_usd)
+    && nullable(claude.estimated_upper_micro_usd, integer) && integer(claude.maximum_cap_micro_usd)
     && typeof claude.provider_available === "boolean" && integer(voyage.estimated_upper_micro_usd)
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
@@ -77,13 +83,18 @@ export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null)
   return [status?.active_run, status?.latest_run, status?.request_run].some((run) => run
     && (run.outcome_unknown || run.claude_cost.unknown_reserved_micro_usd > 0));
 }
+export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | null) {
+  const cost = status?.preflight.cost.claude;
+  return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
+}
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
   if (!status || !cap || !status.can_execute || status.active_run || workspaceAnalysisUnknown(status)
     || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
-  return (cost.provider_available || cost.estimated_upper_micro_usd === 0)
-    && BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd) && BigInt(cap) <= BigInt(cost.maximum_cap_micro_usd);
+  return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
+    && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
+    && BigInt(cap) <= BigInt(cost.maximum_cap_micro_usd);
 }
 export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)

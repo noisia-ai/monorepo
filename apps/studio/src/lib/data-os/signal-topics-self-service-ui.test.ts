@@ -7,6 +7,8 @@ import test from "node:test";
 import { TopicsManager } from "../../components/brands/TopicsManager";
 import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJourney";
 import type { SignalTopicsManagementProductV1 } from "./signal-topics-management";
+import { emptyTopicEditorV1, topicEditorFromDefinitionV1, topicEditorPayloadV1,
+  topicDefinitionEditorPayloadV1, SIGNAL_TOPIC_EDITOR_SCOPES_V1 } from "./signal-topic-editor-ui";
 
 // Next compiles JSX automatically; the standalone tsx runner uses the classic runtime.
 Object.assign(globalThis, { React });
@@ -24,10 +26,39 @@ const base = {
 const savedTopic = {
   taxonomy_term_id: "term-test", definition_digest: "sha256:test", created_at: "2026-09-07T00:00:00.000Z",
   term_key: "purchase-friction", label: "Purchase friction", definition: "Difficulty completing a purchase",
-  scope: "category", inclusion: [], exclusion: [], positive_examples: [], negative_examples: [],
+  scope: "category", discovery_guidance: true, inclusion: [], exclusion: [], positive_examples: [], negative_examples: [],
   lifecycle: "draft", origin: "manual", source: null, definition_revision: 1, updated_at: "2026-09-07T00:00:00.000Z",
   status: "draft", counts: { relevant: 0, doubt: 0, excluded: 0 }
 } as SignalTopicsManagementProductV1["topics"][number];
+const emergentTopic = { ...savedTopic, scope: "all_conversations", origin: "workspace_discovery", discovery_guidance: false,
+  source: { run_key: "engine:local-fixture", candidate_key: "open:cluster-17", candidate_digest: null }
+} as SignalTopicsManagementProductV1["topics"][number];
+
+test("topic editing preserves mixed scope and output-only guidance through ordinary edits", () => {
+  const editor = topicEditorFromDefinitionV1(emergentTopic);
+  assert.deepEqual(topicEditorPayloadV1(editor), topicDefinitionEditorPayloadV1(emergentTopic));
+  const renamed = topicEditorPayloadV1({ ...editor, label: " Revised title ", definition: "Revised definition" });
+  assert.equal(renamed.scope, "all_conversations");
+  assert.equal(renamed.discovery_guidance, false);
+  assert.equal(renamed.label, "Revised title");
+  assert.equal("origin" in renamed, false, "editing does not rewrite provenance");
+  assert.equal("lifecycle" in renamed, false, "editing does not select, publish, or archive");
+  assert.equal(topicEditorPayloadV1({ ...editor, discovery_guidance: true }).discovery_guidance, true);
+  assert.equal(topicEditorPayloadV1({ ...editor, discovery_guidance: false }).discovery_guidance, false);
+});
+
+test("manual and previous interests default to guidance, while emergent defaults remain output-only", () => {
+  assert.equal(emptyTopicEditorV1().discovery_guidance, true);
+  const withoutGuidance = (topic: typeof savedTopic) => {
+    const copy = { ...topic } as Partial<typeof savedTopic>; delete copy.discovery_guidance;
+    return copy as typeof savedTopic;
+  };
+  assert.equal(topicEditorFromDefinitionV1(withoutGuidance(savedTopic)).discovery_guidance, true);
+  assert.equal(topicEditorFromDefinitionV1(withoutGuidance(emergentTopic)).discovery_guidance, false);
+  assert.equal(topicEditorFromDefinitionV1({ ...savedTopic, discovery_guidance: false }).discovery_guidance, false);
+  assert.equal(topicEditorFromDefinitionV1({ ...emergentTopic, discovery_guidance: true }).discovery_guidance, true);
+  assert.deepEqual(SIGNAL_TOPIC_EDITOR_SCOPES_V1, ["primary_brand", "competitor", "category", "all_conversations"]);
+});
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
@@ -49,6 +80,21 @@ for (const locale of ["es-MX", "en-US"]) {
     const searchButton = html.match(new RegExp(`<button[^>]*disabled[^>]*>[^<]*(?:<svg[^]*?<\\/svg>)?${searchLabel}<\\/button>`, "u"));
     assert.ok(searchButton, "search must be disabled before data is available");
     assert.match(html, /Difficulty completing a purchase/u);
+  });
+  test(`${locale}: an emergent mixed-scope draft uses the same editor without adopting, guiding, or following automatically`, () => {
+    const html = render({ ...base, topics: [emergentTopic] });
+    assert.match(html, /<option value="all_conversations" selected=""/u);
+    assert.ok(html.includes(messages.AdminWorkspace.topics.origin.workspace_discovery));
+    assert.ok(html.includes(messages.AdminWorkspace.topics.editor.workspaceSource));
+    assert.ok(html.includes(messages.AdminWorkspace.topics.fields.discoveryGuidance));
+    const checkbox = html.match(/<input\b[^>]*type="checkbox"[^>]*>/u)?.[0];
+    assert.ok(checkbox); assert.doesNotMatch(checkbox, /checked|\brequired\b/u);
+    assert.doesNotMatch(html, /<fieldset[^>]*disabled/u);
+    assert.doesNotMatch(html, /open:cluster-17/u, "internal cluster identity is not exposed as instructions");
+    const buttons = html.match(/<button\b[^]*?<\/button>/gu) ?? [];
+    assert.equal(buttons.some((button) => button.includes(messages.AdminWorkspace.topics.actions.follow)), false);
+    assert.equal(buttons.some((button) => button.includes(messages.AdminWorkspace.topics.discovered.use)), false);
+    assert.match(render({ ...base, topics: [{ ...emergentTopic, discovery_guidance: true }] }), /<input\b[^>]*type="checkbox"[^>]*checked/u);
   });
   test(`${locale}: read-only access disables editing, independently of the presence of data`, () => {
     const html = render({ ...base, topics: [savedTopic], capabilities: { ...base.capabilities, can_edit: false } });

@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { embeddingCapUsdInput, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
+import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
 export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = false, initial = null }: {
@@ -17,7 +17,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const [checkedKey, setCheckedKey] = useState<string | null>(null);
   const [reading, setReading] = useState(!data), [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cap, setCap] = useState(() => embeddingCapUsdInput(String(data?.preflight.cost.claude.estimated_upper_micro_usd ?? 0)));
+  const [cap, setCap] = useState(() => workspaceAnalysisDefaultCap(data));
   const capIdentity = useRef<string | null>(null);
   const version = useRef(catalogVersion); version.current = catalogVersion;
   const [verifiedVersion, setVerifiedVersion] = useState<string | null>(data ? catalogVersion : null);
@@ -47,7 +47,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     const identity = JSON.stringify([next.preflight.embedding_run_id, next.preflight.context_digest, next.preflight.catalog_digest,
       next.preflight.cost.claude.estimated_upper_micro_usd, next.preflight.cost.claude.maximum_cap_micro_usd, next.request_scope]);
     if (capIdentity.current !== identity) {
-      capIdentity.current = identity; setCap(embeddingCapUsdInput(String(next.preflight.cost.claude.estimated_upper_micro_usd)));
+      capIdentity.current = identity; setCap(workspaceAnalysisDefaultCap(next));
     }
     if (confirmedKey && confirmedKey === pendingRef.current?.key) {
       setCheckedKey(confirmedKey);

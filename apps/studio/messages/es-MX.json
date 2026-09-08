@@ -2524,6 +2524,14 @@
     "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Prepara la monitorización de tu marca", "body": "Completa el contexto, define tus intereses e importa las conversaciones que vas a analizar.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
     "topics": {
       "analysis": {
+        "spendingLimit": "Límite de gasto para esta ejecución: {amount}.",
+        "estimateUnknown": "El costo de interpretación se conocerá después de descubrir los grupos.",
+        "noGroups": "No se encontraron grupos estables",
+        "noGroupsBody": "Esta ejecución no generó Topics nuevos. Tus Topics existentes se conservan.",
+        "fitCompletePending": "El agrupamiento computacional terminó. Falta completar la interpretación y guardar el catálogo; todavía no es un resultado completo para Signal.",
+        "interpretationProgress": "Interpretación: {done} de {total} grupos.",
+        "catalogTopics": "{count, plural, one {# tópico en el catálogo} other {# tópicos en el catálogo}}.",
+        "voyageEstimate": "Preparación con Voyage pendiente: hasta {amount}. Se solicita por separado desde Datos.",
         "title": "Analizar conversaciones",
         "body": "Encuentra temas nuevos en las conversaciones y utiliza tus intereses guardados cuando existan. Puedes empezar sin definir intereses.",
         "loading": "Consultando el estado del análisis…",
@@ -2540,7 +2548,7 @@
         "saveFirst": "Guarda o descarta los cambios del editor antes de iniciar el análisis.",
         "readOnly": "Tu acceso permite consultar este análisis, pero no ejecutarlo.",
         "cost": "Tope de interpretación: {amount}. El costo se registra en la solicitud.",
-        "noInterpretation": "El cómputo encuentra grupos de conversaciones. La interpretación con Claude todavía no está disponible para esta solicitud.",
+        "noInterpretation": "La interpretación con Claude no está disponible. El análisis completo no puede iniciarse todavía.",
         "receipt": "Registrado: {settled} · Reservado: {reserved}.",
         "unknownAmount": "Importe pendiente de confirmación: {amount}.",
         "pending": "Estamos comprobando si la solicitud se guardó. Actualizar el estado no inicia otro análisis.",
@@ -2561,7 +2569,7 @@
         "missing_context": "Prepara el contexto guardado de Brand OS y los intereses que hayas definido.",
         "prepareContext": "Preparar contexto e intereses",
         "openData": "Ver datos y preparación",
-        "phases": { "queued": "En cola", "exporting": "Preparando conversaciones", "fitting": "Descubriendo temas", "persisting": "Guardando resultados", "interpreting": "Interpretando temas", "classifying": "Clasificando conversaciones", "complete": "Proceso terminado", "failed": "Proceso interrumpido" },
+        "phases": { "materializing": "Guardando tópicos editables", "queued": "En cola", "exporting": "Preparando conversaciones", "fitting": "Descubriendo temas", "persisting": "Guardando resultados", "interpreting": "Interpretando temas", "classifying": "Clasificando conversaciones", "complete": "Proceso terminado", "failed": "Proceso interrumpido" },
         "errors": { "load": "No se pudo consultar el análisis. Vuelve a actualizar el estado.", "request": "No se pudo confirmar la solicitud. Consulta su estado antes de volver a enviarla.", "storage": "No se pudo conservar la solicitud en este navegador. No se ha iniciado el análisis.", "forbidden": "El análisis ya no está disponible con tu acceso actual.", "changed": "Los datos o el contexto cambiaron. Actualiza el estado antes de iniciar otra solicitud.", "failed": "El análisis no pudo terminar. Se conserva el trabajo ya registrado.", "blocked": "El análisis requiere resolver la condición indicada antes de continuar." }
       },
       "preparation": {
@@ -2681,12 +2689,14 @@
         "failed": "Error recuperable"
       },
       "origin": {
+        "workspace_discovery": "Tópico descubierto en el análisis",
         "evidence_candidate": "Candidato con evidencia",
         "manual": "Interés definido",
         "historical_taxonomy": "Taxonomía histórica",
         "corpus_discovery": "Descubrimiento de corpus"
       },
       "scopes": {
+        "all_conversations": "Todas las conversaciones",
         "primary_brand": "Marca principal",
         "competitor": "Competencia",
         "category": "Categoría"
@@ -2704,12 +2714,15 @@
         "empty": "No hay tópicos archivados."
       },
       "editor": {
+        "workspaceSource": "Descubierto en el análisis del corpus. Puedes editarlo aquí y elegir por separado si aparece en Signal.",
         "select": "Elige un tópico o crea uno nuevo.",
         "newEyebrow": "Definición nueva",
         "newTitle": "Crear tópico",
         "source": "Incorporado del candidato {candidate}. Puedes editar su definición."
       },
       "fields": {
+        "discoveryGuidance": "Usar como interés en próximos análisis",
+        "discoveryGuidanceHelp": "Orienta análisis futuros con esta definición. No inicia un análisis ni selecciona el tópico para Signal.",
         "name": "Nombre",
         "definition": "Qué conversación debe encontrar",
         "scope": "Conversaciones a analizar",
@@ -2719,7 +2732,7 @@
         "negative": "Ejemplos negativos — opcional"
       },
       "advanced": {
-        "title": "Ejemplos y límites opcionales"
+        "title": "Opciones del tópico — opcional"
       },
       "start": {
         "title": "Busca sobre las menciones reales",
@@ -2735,8 +2748,10 @@
         "publishing": "Actualizando Signal de forma atómica"
       },
       "discovered": {
+        "editTopic": "Editar tópico",
+        "moreTopics": "Ver más tópicos",
         "title": "Descubrimientos disponibles",
-        "body": "Cada propuesta conserva su origen: descubrimiento de corpus o taxonomía histórica. Revisa su definición y evidencia antes de incorporarla.",
+        "body": "Los tópicos del análisis ya forman parte de tu catálogo y puedes editarlos. Las propuestas anteriores conservan su origen y evidencia.",
         "evidence": "{count} evidencias",
         "openEvidence": "Revisar evidencia que lo sustenta",
         "legacyExamples": "Ejemplos históricos",

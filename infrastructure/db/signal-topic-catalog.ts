@@ -11,6 +11,9 @@ import {
   getEmbeddingProvider,
   hashEmbeddingChunk,
   signalTopicDefinitionDigestV1,
+  buildSignalWorkspaceInterpretationBatchV1, validateSignalWorkspaceInterpretationResultV1,
+  signalWorkspaceInterpretationUniverseDigestV1, mergeSignalWorkspaceTopicMaterializationV1,
+  type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationV1,
   signalTopicDefinitionSchemaV1,
   signalTopicTermKeyV1,
   type AdoptSignalTopicCandidateInputV1,
@@ -100,7 +103,7 @@ export type SignalTopicInheritedContextStoreV1 = {
   context_digest: string;
   embedding_text: string;
   negative_embedding_text: string;
-  embedding_contexts: Record<"primary_brand" | "competitor" | "category", {
+  embedding_contexts: Record<SignalTopicScopeV1, {
     context_digest: string;
     positive_text: string;
     negative_text: string;
@@ -271,13 +274,13 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     ...contextRows(brandContext, 16).map((item) => `${item.title}: ${item.content}`),
     ...contextRows(contextItems, 64).map((item) => `${item.source_type}: ${item.content}`)
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-  const embeddingContexts = Object.fromEntries((["primary_brand", "competitor", "category"] as const)
+  const embeddingContexts = Object.fromEntries((["primary_brand", "competitor", "category", "all_conversations"] as const)
     .map((scope) => {
-      const scopedIdentities = identities.filter((item) => item.scope === scope);
+      const scopedIdentities = identities.filter((item) => scope === "all_conversations" || item.scope === scope);
       const scopedPositive = positiveSemanticElements.filter((item) =>
-        !item.scope || item.scope === "workspace" || item.scope === scope);
+        scope === "all_conversations" || !item.scope || item.scope === "workspace" || item.scope === scope);
       const scopedNegative = negativeSemanticElements.filter((item) =>
-        !item.scope || item.scope === "workspace" || item.scope === scope);
+        scope === "all_conversations" || !item.scope || item.scope === "workspace" || item.scope === scope);
       const scopedContext = {
         scope,
         identities: scopedIdentities,
@@ -572,6 +575,7 @@ export async function createSignalTopicStoreV1(args: {
       negative_examples: args.input.negative_examples,
       lifecycle: "draft" as const,
       origin: "manual" as const,
+      discovery_guidance: args.input.discovery_guidance ?? true,
       source: null
     };
     definitions.push(signalTopicDefinitionSchemaV1.parse({
@@ -725,6 +729,7 @@ export async function updateSignalTopicStoreV1(args: {
       negative_examples: nextBase.negative_examples,
       lifecycle: nextBase.lifecycle,
       origin: nextBase.origin,
+      ...(nextBase.discovery_guidance === undefined ? {} : { discovery_guidance: nextBase.discovery_guidance }),
       source: nextBase.source
     };
     const digest = signalTopicDefinitionDigestV1(nextSemantic);
@@ -1209,9 +1214,105 @@ export async function ensureSignalTopicCatalogStoreV1(args: {
   return { taxonomy_profile_id: created.profileId, created: true };
 }
 
+/** Worker-only batch write. The immutable, paid interpretation checkpoints are
+ * the source of proposals; a request cannot submit arbitrary browser definitions.
+ * All groups produce one catalog version, preserving existing editable objects. */
+export async function materializeSignalWorkspaceEngineTopicsV1(args: {
+  database: Pick<Pool, "connect" | "query">;
+  lease: import("./signal-workspace-engine").SignalWorkspaceEngineLeaseV1;
+  proposals: AsyncIterable<{ artifact_id: string; body: string }>;
+}) {
+  const client = await args.database.connect(), lease = args.lease;
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${lease.workspace_id}:topic`]);
+    await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE", [lease.workspace_id]);
+    const run = (await client.query<{ actor_user_id: string; input_snapshot: import("./signal-workspace-engine").SignalWorkspaceEngineSnapshotV1;
+      result_summary: { fit_checkpoint?: import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1 } }>(`
+      SELECT execution.actor_user_id,execution.input_snapshot,execution.result_summary
+      FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
+      WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1'
+        AND execution.input_digest=$3 AND execution.execution_token=$4::uuid AND execution.status='running'
+        AND execution.execution_expires_at>clock_timestamp() AND execution.input_revision=state.input_revision
+        AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) FOR UPDATE OF execution`,
+    [lease.execution_id,lease.workspace_id,lease.input_digest,lease.execution_token])).rows[0];
+    if (!run) throw new SignalTopicCatalogError("workspace_engine_lease_conflict");
+    await assertActor(client, lease.workspace_id, run.actor_user_id, "can_execute_topics");
+    const fit = run.result_summary.fit_checkpoint;
+    if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
+    const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");
+    const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id });
+    if (current.catalog_digest !== run.input_snapshot.catalog_digest || current.context_digest !== run.input_snapshot.context_digest) {
+      throw new SignalTopicCatalogError("workspace_engine_inputs_stale");
+    }
+    const proposals: Array<{ result: SignalWorkspaceInterpretationV1; artifact_id: string }> = [];
+    const seen = new Set<string>();
+    for await (const source of args.proposals) {
+      if (Buffer.byteLength(source.body) > 2 * 1024 * 1024 || seen.has(source.artifact_id)) throw new SignalTopicCatalogError("workspace_engine_proposal_invalid");
+      seen.add(source.artifact_id);
+      const artifact = (await client.query<{ request_digest: string; content: { sha256: string; size_bytes: number }; metadata: { unit_keys: string[]; fit_checkpoint_digest: string } }>(`
+        SELECT artifact.content,artifact.metadata,call.request_digest FROM analysis_artifacts artifact
+        JOIN engine_cost_events call ON call.id=(artifact.metadata->>'call_id')::uuid
+          AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
+        WHERE artifact.id=$1::uuid AND artifact.workspace_id=$2::uuid AND artifact.engine_execution_id=$3::uuid
+          AND artifact.artifact_type='engine_proposals'
+          AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
+          AND call.call_state='settled' AND call.response_sha256=artifact.metadata->>'response_sha256'`,
+      [source.artifact_id,lease.workspace_id,lease.execution_id])).rows[0];
+      if (!artifact || artifact.content.sha256 !== sha256(source.body) || artifact.content.size_bytes !== Buffer.byteLength(source.body)
+        || artifact.metadata.fit_checkpoint_digest !== fit.checkpoint_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_receipt_invalid");
+      const packet = JSON.parse(source.body) as { contract_version: string; execution_id: string;
+        context: SignalWorkspaceInterpretationBatchV1["context"]; clusters: SignalWorkspaceInterpretationBatchV1["clusters"]; interpretations: unknown };
+      if (packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
+        || packet.context.workspace_id !== lease.workspace_id || packet.context.execution_id !== lease.execution_id
+        || packet.context.context_digest !== current.context_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_identity_invalid");
+      const batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters);
+      if (batch.request_digest !== artifact.request_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_request_mismatch");
+      const results = validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
+      if (JSON.stringify(results.map(item => item.cluster_id)) !== JSON.stringify(artifact.metadata.unit_keys)) throw new SignalTopicCatalogError("workspace_engine_proposal_coverage_invalid");
+      proposals.push(...results.map(result => ({ result, artifact_id: source.artifact_id })));
+    }
+    proposals.sort((a,b) => a.result.cluster_id < b.result.cluster_id ? -1 : a.result.cluster_id > b.result.cluster_id ? 1 : 0);
+    const universe = signalWorkspaceInterpretationUniverseDigestV1(proposals.map(item => item.result.cluster_id));
+    if (proposals.length !== fit.interpretation_manifest.unit_count || universe !== fit.interpretation_manifest.unit_digest) {
+      throw new SignalTopicCatalogError("workspace_engine_analysis_incomplete");
+    }
+    const prior = await loadLatestProfile(client, lease.workspace_id);
+    const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
+    const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true });
+    const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
+      execution_id: lease.execution_id, now: new Date().toISOString(), locale: inherited.locale.primary_locale?.startsWith("en") ? "en-US" : "es-MX" });
+    const mappingDigest = sha256(stableJson(merged.mapping));
+    const replay = (await client.query<{ id: string; version: number; metadata: { source_mapping_digest: string } }>(`
+      SELECT id,version,metadata FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
+        AND metadata->>'source_engine_execution_id'=$2 ORDER BY version DESC LIMIT 1`, [lease.workspace_id,lease.execution_id])).rows[0];
+    let profileId: string, version: number;
+    if (replay) {
+      if (replay.id !== prior?.id || replay.metadata.source_mapping_digest !== mappingDigest) throw new SignalTopicCatalogError("workspace_engine_materialization_conflict");
+      profileId = replay.id; version = replay.version;
+    } else {
+      if (prior && prior.status !== "active") {
+        await client.query("UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now() WHERE id=$1::uuid", [prior.id]);
+        await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid", [prior.taxonomy_id]);
+      }
+      const inserted = await insertTopicCatalogDraft(client, lease.workspace_id, merged.definitions,
+        classificationDefinitionDigest(merged.definitions, inherited.context_digest), inherited, {
+          source_engine_execution_id: lease.execution_id, source_interpretation_units_digest: universe, source_mapping_digest: mappingDigest });
+      profileId = inserted.profileId; version = inserted.version;
+    }
+    await client.query("COMMIT");
+    return { contract_version: "workspace-topic-materialization-v1" as const, execution_id: lease.execution_id,
+      interpretation_units_digest: universe, output_catalog_profile_id: profileId, output_catalog_revision: version,
+      topic_count: merged.topic_count, discovered_topic_count: merged.discovered_topic_count,
+      mapping_digest: mappingDigest, mapping: merged.mapping, replayed: Boolean(replay) };
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
+}
+
 async function insertTopicCatalogDraft(client: PoolClient, workspaceId: string,
   definitions: SignalTopicDefinitionV1[], contextHash: string,
-  inherited: SignalTopicInheritedContextStoreV1) {
+  inherited: SignalTopicInheritedContextStoreV1, profileMetadata: Record<string, unknown> = {}) {
   return insertSignalTaxonomyDraftCoreV1({
     client,
     workspace_id: workspaceId,
@@ -1235,7 +1336,7 @@ async function insertTopicCatalogDraft(client: PoolClient, workspaceId: string,
     profile_metadata: { contract_version: SIGNAL_TOPIC_CATALOG_CONTRACT_V1,
       catalog_definition_digest: contextHash,
       inherited_context_digest: inherited.context_digest,
-      locale: inherited.locale },
+      locale: inherited.locale, ...profileMetadata },
     context_refs: inherited.context_refs
   });
 }

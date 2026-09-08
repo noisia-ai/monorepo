@@ -13,6 +13,8 @@ import {
 import { type SignalWorkspaceEngineChunkV1 as WireChunk, type SignalWorkspaceEngineGuideV1 as WireGuide } from "@noisia/query-engine";
 import { hashWorkspaceEngineFileV1, spoolSignalWorkspaceEngineInputV1 } from "./signal-workspace-engine-files";
 import { runWorkspaceEngineProcessV1, validateWorkspaceEngineOutputV1 } from "./signal-workspace-engine-process";
+import { readWorkspaceEngineInterpretationEvidenceV1 } from "./signal-workspace-engine-evidence";
+import { interpretWorkspaceEngineV1 } from "./signal-workspace-engine-interpret";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
 const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspaceEngineChunksV1,
@@ -22,7 +24,7 @@ const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspac
   finish: finishSignalWorkspaceEngineFitV1, fail: failSignalWorkspaceEngineV1 };
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: typeof stores; storage?: WorkspaceEngineStorageV1;
   python?: string; module_root?: string; storage_root?: string; timeout_ms?: number;
-  process?: typeof runWorkspaceEngineProcessV1 };
+  process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1 };
 const name = /^[a-z][a-z0-9_.-]{0,100}$/u;
 const safe = (error: unknown) => error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
   ? error.message : "workspace_engine_worker_failed";
@@ -37,7 +39,7 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
   if (!lease) return { execution_id: job.data.execution_id, replayed: true };
   let heartbeatPromise: Promise<void> | null = null, heartbeatError: unknown = null;
   let attemptDirectory: string | null = null;
-  let phase: "exporting" | "fitting" | "persisting" = "exporting";
+  let phase: "exporting" | "fitting" | "persisting" | "interpreting" | "materializing" = "exporting";
   const heartbeat = async () => {
     if (heartbeatError) throw heartbeatError;
     if (!heartbeatPromise) heartbeatPromise = store.heartbeat({ database, lease, phase })
@@ -105,7 +107,7 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
     for (const file of bundle) {
       const isModel = file.name.endsWith(".joblib") || file.name === "model-manifest.json";
       const artifact = await store.persist({ database, lease, artifact: { artifact_key: file.name,
-        artifact_type: isModel ? "engine_model" : file.name.startsWith("clusters.") ? "engine_proposals" : "engine_output",
+        artifact_type: isModel ? "engine_model" : "engine_output",
         title: file.name, storage_key: file.storage_key, sha256: file.sha256, size_bytes: file.size_bytes, media_type: file.media_type,
         metadata: { filename: file.name, ...(file.name === "manifest.json" ? { bundle } : {}),
           quality: "uncalibrated", semantic_approval: "none" } } });
@@ -114,11 +116,16 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
     }
     if (!outputId || (output.status === "completed" && !modelId)) throw new Error("workspace_engine_artifacts_incomplete");
     await heartbeat();
-    const finished = await store.finish({ database, lease, model_artifact_id: modelId, output_artifact_id: outputId,
+    const fit = { model_artifact_id: modelId, output_artifact_id: outputId,
       coverage: { roots: input.records.roots, chunks: input.records.rows, guides: input.guides.rows },
-      result_kind: output.status === "completed" ? "computational_grouping" : "insufficient_population",
+      result_kind: output.status === "completed" ? "computational_grouping" as const : "insufficient_population" as const,
       model_configuration: { ...output.config, versions: output.versions, input_identity: output.input_identity },
-      runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null });
+      runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null };
+    const finished = lease.snapshot.interpretation_config
+      ? await (options.interpret ?? interpretWorkspaceEngineV1)({ database, lease, fit,
+        clusters: await readWorkspaceEngineInterpretationEvidenceV1({ input_directory: inputDir, output_directory: outputDir, output }),
+        directory: attempt, storage, heartbeat: async next => { phase = next; await heartbeat(); } })
+      : await store.finish({ database, lease, ...fit });
     await job.updateProgress(100).catch(() => undefined); return finished;
   } catch (error) { const code = safe(error);
     await store.fail({ database, lease, error_code: code }).catch(() => undefined); throw new Error(code);

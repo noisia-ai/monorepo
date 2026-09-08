@@ -1239,3 +1239,7 @@ function briefArray(value: unknown, limit: number) {
     ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim().slice(0, 500)).filter(Boolean).slice(0, limit)
     : [];
 }
+
+export * from "./signal-workspace-interpretation-v1";
+
+export * from "./signal-workspace-topic-materialization-v1";

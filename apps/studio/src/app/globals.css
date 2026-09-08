@@ -21035,6 +21035,7 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__list, .topics-manager__detail, .topics-manager__discovered { padding: 18px; min-width: 0; }
 .topics-manager__list > header, .topics-manager__detail > header, .topics-manager__discovered > header,
 .topics-manager__results > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.topics-manager__detail > header { flex-wrap: wrap; }
 .topics-manager__list h2, .topics-manager__detail h2, .topics-manager__discovered h2,
 .topics-manager__results h3 { margin: 0; }
 .topics-manager__list header p, .topics-manager__detail header p, .topics-manager__discovered header p,
@@ -21059,6 +21060,9 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__form details { padding: 12px 0; border-top: 1px solid var(--neutral-04); }
 .topics-manager__form summary { cursor: pointer; color: var(--neutral-10); font-size: 13px; font-weight: 650; }
 .topics-manager__advanced { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; padding-top: 14px; }
+.topics-manager__form label.topics-manager__guidance { grid-column: 1 / -1; grid-template-columns: auto minmax(0,1fr); align-items: start; }
+.topics-manager__guidance input[type="checkbox"] { width: 16px; height: 16px; margin-top: 2px; padding: 0; accent-color: var(--signal); }
+.topics-manager__guidance small { display: block; margin-top: 5px; color: var(--neutral-09); font-weight: 400; line-height: 1.5; }
 .topics-manager__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--neutral-04); }
 .topics-manager__cost-notice { margin: 10px 0 0; max-width: 68ch; color: var(--neutral-09); font-size: 12px; line-height: 1.5; }
 .admin-button--danger { color: #9d1837; border-color: rgba(202,57,83,.2); }

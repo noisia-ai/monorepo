@@ -6,8 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisStorageKey,
-  workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
+  workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 Object.assign(globalThis, { React });
 const id = "00000000-0000-4000-8000-000000000001";
@@ -24,6 +24,7 @@ const ready: WorkspaceAnalysisRun = { execution_id: id, status: "ready", phase: 
   expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
   error_code: null, is_current: true, model_version_id: id, artifact_count: 3, retryable: false, outcome_unknown: false,
   claude_cap_micro_usd: 0, result_kind: "computational_grouping",
+  fit_completed: false, expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0,
   claude_cost: { hard_cap_micro_usd: 0, settled_micro_usd: 0, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 } };
 const pending: PendingWorkspaceAnalysis = { version: 1, workspace_id: id, request_scope: status.request_scope,
   key: "analysis-request-1", body: { action: "start", embedding_run_id: id, expected_context_digest: hash,
@@ -39,12 +40,28 @@ test("full analysis can start without topic counts; complete inputs and exact mo
   assert.equal(workspaceAnalysisCanStart({ ...status, can_execute: false }, "0.002001"), false);
   assert.equal(workspaceAnalysisCanStart({ ...status, active_run: { ...ready, status: "running", phase: "fitting" } }, "0.002001"), false);
 });
-test("no provider does not silently approve a paid interpretation; zero-cost computation is separate", () => {
+test("complete analysis requires an available provider and a positive cap; historical fit receipts stay readable", () => {
   const unavailable = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,
     claude: { ...status.preflight.cost.claude, provider_available: false } } } };
   assert.equal(workspaceAnalysisCanStart(unavailable, "0.002001"), false);
   assert.equal(workspaceAnalysisCanStart({ ...unavailable, preflight: { ...unavailable.preflight,
-    cost: { ...unavailable.preflight.cost, claude: { ...unavailable.preflight.cost.claude, estimated_upper_micro_usd: 0 } } } }, "0"), true);
+    cost: { ...unavailable.preflight.cost, claude: { ...unavailable.preflight.cost.claude, estimated_upper_micro_usd: 0 } } } }, "0"), false);
+  assert.equal(workspaceAnalysisCanStart({ ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,
+    claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: 0, provider_available: true } } } }, "0"), false);
+  assert.equal(validWorkspaceAnalysisStatus({ ...status, latest_run: ready, latest_complete: ready }), true);
+});
+test("unknown estimate defaults to the server limit without inventing a lower bound or zero estimate", () => {
+  const unknown = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,
+    claude: { ...status.preflight.cost.claude, estimated_upper_micro_usd: null } } } };
+  assert.equal(validWorkspaceAnalysisStatus(unknown), true);
+  assert.equal(workspaceAnalysisDefaultCap(unknown), "0.01");
+  assert.equal(workspaceAnalysisDefaultCap(status), "0.002001");
+  assert.equal(workspaceAnalysisCanStart(unknown, "0.000001"), true);
+  assert.equal(workspaceAnalysisCanStart(unknown, "0.01"), true);
+  assert.equal(workspaceAnalysisCanStart(unknown, "0"), false);
+  assert.equal(workspaceAnalysisCanStart(unknown, "0.010001"), false);
+  assert.equal(validWorkspaceAnalysisStatus({ ...unknown, preflight: { ...unknown.preflight, cost: { ...unknown.preflight.cost,
+    claude: { ...unknown.preflight.cost.claude, estimated_upper_micro_usd: undefined } } } }), false);
 });
 test("unknown outcome/reserve blocks new starts, replay and retry even when a latest failure says retryable", () => {
   const failed = { ...ready, status: "failed" as const, phase: "failed" as const, retryable: true };
@@ -83,6 +100,18 @@ test("saved intent has exact start/retry body and scoped key; server receipt is 
   assert.equal(workspaceAnalysisCanReplay({ ...status, request_run: ready }, pending), false);
   assert.equal(workspaceAnalysisCanReplay({ ...status, preflight: { ...status.preflight, context_digest: `sha256:${"2".repeat(64)}` } }, pending), false);
 });
+test("interpretation stages retain exact counters; fitting alone and partial materialization never become complete", () => {
+  const fit = { ...ready, fit_completed: true, expected_interpretation_units: 12, interpreted_units: 4, status: "running" as const, phase: "interpreting" as const };
+  assert.equal(validWorkspaceAnalysisStatus({ ...status, active_run: fit }), true);
+  assert.equal(workspaceAnalysisInterpretedComplete(fit), false);
+  const materializing = { ...fit, interpreted_units: 12, phase: "materializing" as const, materialized_topics: 3 };
+  assert.equal(validWorkspaceAnalysisStatus({ ...status, active_run: materializing }), true);
+  assert.equal(workspaceAnalysisInterpretedComplete(materializing), false);
+  assert.equal(workspaceAnalysisInterpretedComplete({ ...materializing, status: "ready", phase: "complete" }), true);
+  assert.equal(workspaceAnalysisInterpretedComplete(ready), false);
+  for (const patch of [{ interpreted_units: 13 }, { expected_interpretation_units: -1 }, { fit_completed: undefined }, { materialized_topics: NaN }])
+    assert.equal(validWorkspaceAnalysisStatus({ ...status, active_run: { ...fit, ...patch } }), false);
+});
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const t = messages.AdminWorkspace.topics.analysis;
@@ -105,5 +134,38 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(insufficient.includes(t.insufficientBody)); assert.ok(!insufficient.includes(t.computedBody));
     const running = render({ ...status, active_run: { ...ready, status: "running", phase: "fitting", progress: 40 } });
     assert.ok(running.includes(t.phases.fitting)); assert.ok(!running.includes(t.phases.classifying));
+  });
+  test(`${locale}: fit completion, interpretation and catalog creation remain distinct from a complete result or Signal selection`, () => {
+    const interpreting: WorkspaceAnalysisRun = { ...ready, fit_completed: true, expected_interpretation_units: 12, interpreted_units: 4,
+      status: "running", phase: "interpreting", progress: 75,
+      claude_cost: { hard_cap_micro_usd: 500_000, settled_micro_usd: 100_000, reserved_micro_usd: 50_000, unknown_reserved_micro_usd: 0 } };
+    const html = render({ ...status, active_run: interpreting, latest_run: interpreting });
+    assert.ok(html.includes(t.phases.interpreting)); assert.ok(html.includes(t.fitCompletePending));
+    assert.ok(!html.includes(t.completedBody)); assert.ok(!html.includes(t.phases.classifying));
+    assert.match(html, /4[^]*12/u);
+    assert.ok(html.includes("0.10") && html.includes("0.05"), "confirmed and reserved costs remain separately visible");
+    const materializing = render({ ...status, active_run: { ...interpreting, phase: "materializing", interpreted_units: 12, materialized_topics: 3 } });
+    assert.ok(materializing.includes(t.phases.materializing)); assert.ok(!materializing.includes(t.completedBody));
+    const complete = { ...interpreting, phase: "complete" as const, status: "ready" as const, interpreted_units: 12, materialized_topics: 3 };
+    const completed = render({ ...status, latest_complete: complete, latest_run: complete, latest_complete_execution_id: id });
+    assert.ok(completed.includes(t.completedBody)); assert.ok(!completed.includes(t.computedBody));
+    assert.ok(!completed.includes(t.phases.classifying));
+    const uncertain = render({ ...status, latest_run: { ...interpreting, status: "failed", phase: "failed", outcome_unknown: true,
+      claude_cost: { ...interpreting.claude_cost, unknown_reserved_micro_usd: 75_000 } } });
+    assert.ok(uncertain.replace(/&#x27;/gu, "'").includes(t.unknown)); assert.ok(uncertain.includes("0.075"));
+    assert.ok(!uncertain.includes(t.estimate.split("{amount}")[0]), "a new estimate must not compete with an unresolved receipt");
+    assert.ok(!uncertain.includes(t.startWithCap.split("{amount}")[0]), "the disabled action does not suggest a new cap while cost is uncertain");
+  });
+  test(`${locale}: unknown estimate is explained as a spending limit and no-provider blocks complete analysis`, () => {
+    const unknown = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,
+      claude: { ...status.preflight.cost.claude, estimated_upper_micro_usd: null } } } };
+    const html = render(unknown);
+    assert.ok(html.includes(t.estimateUnknown)); assert.ok(html.includes(t.spendingLimit.split("{amount}")[0]));
+    assert.ok(!html.includes(t.estimate.split("{amount}")[0]));
+    const blocked = render({ ...unknown, preflight: { ...unknown.preflight, cost: { ...unknown.preflight.cost,
+      claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: 0, provider_available: false } } } });
+    assert.ok(blocked.includes(t.noInterpretation));
+    const start = (blocked.match(/<button\b[^]*?<\/button>/gu) ?? []).find((button) => button.includes(t.start));
+    assert.ok(start); assert.match(start, /^<button[^>]*disabled/u);
   });
 }
