@@ -103,17 +103,16 @@ export async function loadSignalWorkspaceCorpusReadinessStoreV1(args: {
         AND authorized.data_source_id=link.data_source_id
       WHERE root.inclusion_status='included'
     ), eligible AS MATERIALIZED (
-      SELECT root.id,EXISTS(
-        SELECT 1 FROM signal_mention_attributions assertion
-        JOIN authorized_paths path ON path.import_batch_id=assertion.import_batch_id
-          AND path.data_source_id=assertion.data_source_id AND path.root_id=assertion.mention_id
-        WHERE assertion.workspace_id=$1::uuid AND assertion.mention_id=root.id
-          AND assertion.attribution_basis='mention_semantic' AND assertion.is_current=true
-          AND assertion.review_status='approved' AND assertion.eligibility_status='eligible'
-      ) semantic_eligible
-      FROM roots root
-      WHERE root.inclusion_status='included'
-        AND EXISTS(SELECT 1 FROM authorized_paths path WHERE path.root_id=root.id)
+      -- Paths already contain included roots with complete rights. Aggregate them once;
+      -- a correlated EXISTS here can repeatedly scan the entire materialized path set.
+      SELECT path.root_id id,bool_or(assertion.id IS NOT NULL) semantic_eligible
+      FROM authorized_paths path
+      LEFT JOIN signal_mention_attributions assertion ON assertion.workspace_id=$1::uuid
+        AND assertion.mention_id=path.root_id AND assertion.import_batch_id=path.import_batch_id
+        AND assertion.data_source_id=path.data_source_id
+        AND assertion.attribution_basis='mention_semantic' AND assertion.is_current=true
+        AND assertion.review_status='approved' AND assertion.eligibility_status='eligible'
+      GROUP BY path.root_id
     ) SELECT
       to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at,
       (SELECT count(*) FROM accepted) accepted_files,
