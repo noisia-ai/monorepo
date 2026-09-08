@@ -1,3 +1,4 @@
+import type { SignalBrandPolicyQueryable } from "./signal-governed-brand-policy";
 import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash,randomUUID } from "node:crypto";
 
@@ -506,7 +507,7 @@ export async function retryWorkspaceImportFromStorageV1(args: {
   if (!failed || failed.data_source_id!==args.sourceId) {
     throw new WorkspaceAsyncImportError("import_not_found",404);
   }
-  if (failed.status!=="failed" || failed.ingestion_phase!=="failed"
+  if (!safeFailure(failed.failure_code).recoverable || failed.status!=="failed" || failed.ingestion_phase!=="failed"
       || !failed.storage_bucket || !failed.storage_object_key
       || !failed.storage_part_count || !failed.storage_part_size_bytes
       || !failed.expected_file_size_bytes) {
@@ -628,10 +629,11 @@ export async function loadWorkspaceImportV1(args: {
 }
 
 export async function listWorkspaceImportsV1(args: {
-  workspaceId: string;sourceId: string;slotKey?: string | null;
+  workspaceId: string;sourceId: string | null;slotKey?: string | null;
+  cursor?: string | null;limit?: number;acquisitionOnly?: boolean;queryable?: SignalBrandPolicyQueryable;
 }) {
-  const result = await pool.query<WorkspaceImportRow>(`
-    SELECT batch.*,batch.capture_period_start::text AS capture_period_start,
+  const result = await (args.queryable ?? pool).query<WorkspaceImportRow>(`
+    SELECT batch.*,source.source_key,source.name AS source_name,batch.capture_period_start::text AS capture_period_start,
       batch.capture_period_end::text AS capture_period_end,
       outbox.status AS outbox_status,outbox.attempt_count AS outbox_attempt_count,
       slot.slot_key AS acquisition_slot_key,query.query_version AS acquisition_query_version,
@@ -641,6 +643,7 @@ export async function listWorkspaceImportsV1(args: {
       COALESCE(plan.acquisition_brief->'countries','[]'::jsonb) AS declared_countries,
       COALESCE(plan.acquisition_brief->'languages','[]'::jsonb) AS declared_languages
     FROM import_batches batch
+    JOIN data_sources source ON source.id=batch.data_source_id AND source.workspace_id=batch.workspace_id
     LEFT JOIN signal_workspace_import_outbox outbox ON outbox.import_batch_id=batch.id
     LEFT JOIN signal_acquisition_slots slot ON slot.id=batch.acquisition_slot_id
       AND slot.workspace_id=batch.workspace_id
@@ -662,10 +665,15 @@ export async function listWorkspaceImportsV1(args: {
         SELECT 1 FROM signal_provider_mention_observations successor
         WHERE successor.supersedes_observation_id=observation.id)
     ) observed ON batch.status='completed'
-    WHERE batch.workspace_id=$1::uuid AND batch.data_source_id=$2::uuid
+    WHERE batch.workspace_id=$1::uuid AND ($2::uuid IS NULL OR batch.data_source_id=$2::uuid)
       AND ($3::text IS NULL OR slot.slot_key=$3)
-    ORDER BY batch.created_at DESC,batch.id DESC LIMIT 100
-  `,[args.workspaceId,args.sourceId,args.slotKey ?? null]);
+      AND ($4::boolean=false OR (batch.acquisition_contract_version IN ('signal-acquisition-import-v1','signal-acquisition-import-v2')
+        AND source.source_contract_version='signal-data-source-connector-v1'))
+      AND ($5::uuid IS NULL OR (batch.created_at,batch.id)<(
+        SELECT boundary.created_at,boundary.id FROM import_batches boundary
+        WHERE boundary.workspace_id=$1::uuid AND boundary.id=$5::uuid))
+    ORDER BY batch.created_at DESC,batch.id DESC LIMIT $6
+  `,[args.workspaceId,args.sourceId,args.slotKey ?? null,args.acquisitionOnly ?? false,args.cursor ?? null,args.limit ?? 100]);
   return result.rows.map(operatorImport);
 }
 
@@ -710,6 +718,7 @@ async function loadWorkspaceImportInternalV1(workspaceId: string,importBatchId: 
 
 type WorkspaceImportRow = {
   id: string;workspace_id: string;data_source_id: string;status: WorkspaceAsyncImportStatusV1;
+  source_key?: string;source_name?: string;
   ingestion_phase: string;source_file_name: string | null;source_file_hash: string | null;
   storage_bucket: string | null;storage_object_key: string | null;
   storage_part_count: number | null;storage_part_size_bytes: string | number | null;
@@ -755,6 +764,7 @@ function operatorImport(row: WorkspaceImportRow) {
   return {
     id: row.id,
     data_source_id: row.data_source_id,
+    ...(row.source_key ? { source_key: row.source_key, source_name: row.source_name ?? null } : {}),
     status: row.status,
     phase: row.ingestion_phase,
     source_file_name: row.source_file_name,
@@ -804,9 +814,10 @@ function operatorImport(row: WorkspaceImportRow) {
       platforms:row.observed_platforms??[],warnings:observedWarnings
     }:null,
     failure: row.status==="failed" ? safeFailure(row.failure_code) : null,
+    duplicate_of_import_id: duplicateAcceptedImportId(row.failure_code, row.failure_detail),
     recovery: {
       storage_reused: row.storage_source_import_batch_id!==null,
-      recoverable_from_storage: row.status==="failed"
+      recoverable_from_storage: row.status==="failed" && safeFailure(row.failure_code).recoverable
         && row.storage_bucket!==null && row.storage_object_key!==null
         && row.storage_part_count!==null && row.storage_part_size_bytes!==null
     },
@@ -822,6 +833,12 @@ function operatorImport(row: WorkspaceImportRow) {
     completed_at: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     failed_at: row.failed_at ? new Date(row.failed_at).toISOString() : null
   };
+}
+
+function duplicateAcceptedImportId(code: string | null, detail: unknown) {
+  if (code !== "content_already_accepted" || !detail || typeof detail !== "object" || !("accepted_batch_id" in detail)) return null;
+  const id = detail.accepted_batch_id;
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(id) ? id : null;
 }
 
 function safeFailure(code: string | null) {

@@ -504,9 +504,18 @@ async function loadTopicImportReadiness(queryable: Queryable, workspaceId: strin
       AND membership.valid_to IS NULL
     ORDER BY membership.study_corpus_id
   `, [workspaceId])).rows;
+  const importedMentions = corpora.reduce((sum, row) => sum + Number(row.imported_mentions), 0);
+  // Receiving a file and preparing its operational corpus are separate stages.
+  // An accepted upload must not send the operator back to upload it again.
+  const hasReceivedImport = importedMentions > 0 || Boolean((await queryable.query<{ has_received_import: boolean }>(`
+    SELECT EXISTS(SELECT 1 FROM import_batches batch
+      WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
+        AND batch.record_count>0) has_received_import
+  `, [workspaceId])).rows[0]?.has_received_import);
   return { operational_corpus_id: corpora.length === 1 ? corpora[0]!.id : null,
     canonical_mentions: corpora.reduce((sum, row) => sum + Number(row.canonical_mentions), 0),
-    imported_mentions: corpora.reduce((sum, row) => sum + Number(row.imported_mentions), 0),
+    imported_mentions: importedMentions,
+    has_received_import: hasReceivedImport,
     ambiguous: corpora.length > 1 };
 }
 
@@ -516,8 +525,10 @@ function topicReadiness(imports: Awaited<ReturnType<typeof loadTopicImportReadin
     canonical_mentions: imports.canonical_mentions };
   if (imports.ambiguous) return { ...counts, state: "needs_preparation",
     next_action: "prepare_mentions", reason_code: "topic_operational_corpus_ambiguous" };
-  if (imports.imported_mentions === 0) return { ...counts, state: "awaiting_import",
+  if (!imports.has_received_import) return { ...counts, state: "awaiting_import",
     next_action: "import_mentions", reason_code: null };
+  if (imports.imported_mentions === 0) return { ...counts, state: "needs_preparation",
+    next_action: "prepare_mentions", reason_code: "topic_operational_preparation_required" };
   if (imports.canonical_mentions === 0) return { ...counts, state: "needs_preparation",
     next_action: "prepare_mentions", reason_code: "topic_canonicalization_required" };
   if (topicCount === 0) return { ...counts, state: "awaiting_topics",

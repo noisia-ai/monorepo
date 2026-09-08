@@ -21131,3 +21131,13 @@ body:has(.signal-report)::before { display: none; }
 .self-service-import-fields { display: grid; gap: 16px; }
 .admin-acquisition__slots--import .admin-acquisition__slots-head, .admin-acquisition__slots--import .admin-acquisition-slot { grid-template-columns: minmax(0, 1fr) auto; }
 @media (max-width: 600px) { .admin-acquisition__slots--import .admin-acquisition-slot { grid-template-columns: minmax(0, 1fr); } }
+
+.admin-acquisition__import-summary { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--neutral-04); border-radius: 10px; background: var(--neutral-02); }
+.admin-acquisition__import-summary p { margin: 5px 0 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.admin-acquisition-slot__identity .admin-acquisition-slot__imports { color: var(--neutral-11); line-height: 1.5; }
+
+.admin-acquisition-history .admin-acquisition-history__item { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.admin-acquisition-history .admin-acquisition-history__item > div:last-child { justify-items: start; }
+.admin-acquisition-history .admin-acquisition-history__item strong,
+.admin-acquisition-history .admin-acquisition-history__item small,
+.admin-acquisition-history .admin-acquisition-history__item span { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }

@@ -122,6 +122,9 @@ test("new brand manual setup is atomic, scoped, repeatable and accepts a real up
     idempotencyKey: randomUUID() }), /existing_acquisition_draft_requires_resolution/u);
   assert.equal((await pool.query<{ count: number }>(
     "SELECT count(*)::int count FROM data_sources WHERE workspace_id=$1::uuid", [workspace.id])).rows[0]!.count, beforeRejectedSetup);
-  assert.equal((await loadWorkspaceManualImportSetupV1({ ...context, queryable: pool })).ready_for_import, false);
+  const withDraft = await loadWorkspaceManualImportSetupV1({ ...context, queryable: pool });
+  assert.equal(withDraft.ready_for_import, true);
+  assert.equal(withDraft.needs_plan_update, false);
+  assert.deepEqual(withDraft.slots, prepared.slots);
   await pool.end();
 });

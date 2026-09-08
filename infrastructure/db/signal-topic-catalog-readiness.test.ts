@@ -7,11 +7,14 @@ import { createSignalTopicStoreV1, createSignalTopicCatalogExecutionStoreV1,
 import { createSignalTopicInputSchemaV1 } from "@noisia/query-engine";
 
 function catalogStore(corpora: Array<{ id: string; canonical_mentions: number; imported_mentions: number }>,
-  hasProfile = false) {
+  hasProfile = false, receivedRecords = 0) {
   const queries: string[] = [];
   const queryable = { query: async (sql: string) => {
     queries.push(sql);
     if (sql.includes("SELECT membership.study_corpus_id::text id,")) return { rows: corpora };
+    if (sql.includes("FROM import_batches batch") && sql.includes("has_received_import")) return {
+      rows: [{ has_received_import: receivedRecords > 0 }]
+    };
     if (sql.includes("SELECT id::text,taxonomy_id::text,version,status")) return { rows: hasProfile
       ? [{ id: "profile", taxonomy_id: "taxonomy", version: 1, status: "draft" }] : [] };
     if (sql.includes("FROM signal_taxonomy_profiles") || sql.includes("FROM taxonomy_terms")
@@ -44,6 +47,17 @@ test("imported records awaiting canonicalization ask for preparation, never anot
   const result = await loadSignalTopicCatalogStoreV1({ queryable: store.queryable, workspace_id: "workspace" });
   assert.equal(result.readiness.state, "needs_preparation");
   assert.equal(result.readiness.next_action, "prepare_mentions");
+});
+
+test("completed uploads without an operational corpus ask for preparation instead of another upload", async () => {
+  for (const corpora of [[], [{ id: "corpus", canonical_mentions: 0, imported_mentions: 0 }]]) {
+    const store = catalogStore(corpora, false, 904);
+    const result = await loadSignalTopicCatalogStoreV1({ queryable: store.queryable, workspace_id: "workspace" });
+    assert.equal(result.readiness.state, "needs_preparation");
+    assert.equal(result.readiness.next_action, "prepare_mentions");
+    assert.equal(result.readiness.canonical_mentions, 0);
+    assert.equal(result.embedding_preflight.requires_paid_call, false);
+  }
 });
 
 test("ambiguous operational corpus mapping is not advertised as ready or guessed", async () => {

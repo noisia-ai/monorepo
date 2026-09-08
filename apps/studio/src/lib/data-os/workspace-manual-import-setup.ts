@@ -85,14 +85,26 @@ export async function loadWorkspaceManualImportSetupV1(args: Context) {
   const plan = await loadSignalAcquisitionPlanV1(args);
   let storageReady = false;
   try { resolveWorkspaceImportStorageV1(); storageReady = true; } catch { /* Expose configuration state, never credentials. */ }
-  const configured = plan.state === "current" && plan.readiness.ready_for_import && sources.rows.length > 0;
+  // A draft is an editing surface; it does not revoke an otherwise valid current plan.
+  const currentSlots = await args.queryable.query<{ slot_key: string; scope: "primary_brand" | "competitor" | "category" | "reference"; label: string }>(`
+    SELECT slot_key,scope,label FROM (
+      SELECT DISTINCT ON (slot.slot_key) slot.slot_key,slot.scope,slot.label,slot.desired_state,slot.position
+      FROM signal_acquisition_slots slot JOIN signal_acquisition_plans plan ON plan.id=slot.plan_id
+        AND plan.workspace_id=slot.workspace_id
+      WHERE slot.workspace_id=$1::uuid AND plan.status='current'
+      ORDER BY slot.slot_key,slot.slot_version DESC
+    ) latest WHERE desired_state='active' ORDER BY position,slot_key
+  `, [args.workspace.id]);
+  const configured = Boolean(plan.current_plan) && plan.readiness.ready_for_import && sources.rows.length > 0;
   return {
     contract_version: WORKSPACE_MANUAL_IMPORT_SETUP_VERSION,
     category_name: identity.rows[0]?.category_name ?? null,
     category_name_suggested: identity.rows[0]?.suggested ?? null,
     sources: sources.rows,
-    slots: plan.slots.filter(slot => slot.desired_state === "active")
-      .map(slot => ({ slot_key: slot.slot_key, scope: slot.scope, label: slot.label })),
+    slots: currentSlots.rows,
+    plan_state: plan.state,
+    needs_plan_update: !plan.current_plan || plan.current_plan.blockers.length > 0,
+    plan_blockers: plan.current_plan?.blockers ?? plan.readiness.blockers,
     configured,
     storage_ready: storageReady,
     ready_for_import: configured && storageReady,

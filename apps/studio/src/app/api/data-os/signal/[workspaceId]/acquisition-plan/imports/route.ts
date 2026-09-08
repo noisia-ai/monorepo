@@ -7,11 +7,11 @@ import {
 import { loadSignalWorkspaceContextForImport } from "@/app/api/data-os/_lib/load-import";
 import {
   createWorkspaceImportUploadV1,
-  listWorkspaceImportsV1,
   resolveWorkspaceConnectorByKeyV1,
   WorkspaceAsyncImportError,
   WORKSPACE_ASYNC_IMPORT_CONTRACT_VERSION
 } from "@/lib/data-os/workspace-async-import";
+import { loadWorkspaceAcquisitionImportHistoryV1, parseWorkspaceImportHistoryPageV1 } from "@/lib/data-os/workspace-import-history";
 import { WorkspaceImportStorageError } from "@/lib/data-os/workspace-import-storage";
 
 export const runtime = "nodejs";
@@ -26,24 +26,31 @@ export async function GET(
   const { workspaceId } = await context.params;
   const loaded = await loadSignalWorkspaceContextForImport(workspaceId);
   if ("response" in loaded) return loaded.response;
-  const sourceKey = new URL(request.url).searchParams.get("source_key") ?? "";
-  const requestedSlotKey = new URL(request.url).searchParams.get("slot_key");
+  const params = new URL(request.url).searchParams;
+  const sourceKey = params.get("source_key");
+  const requestedSlotKey = params.get("slot_key");
   let slotKey: string | null = null;
   if (requestedSlotKey) {
     try { slotKey = validateSignalAcquisitionSlotKeyV1(requestedSlotKey); }
     catch { return operatorError("invalid_slot_key",422); }
   }
-  const source = await resolveWorkspaceConnectorByKeyV1(loaded.workspace.id,sourceKey);
-  if (!source) return operatorError("connector_not_found",404);
-  const imports = await listWorkspaceImportsV1({
-    workspaceId: loaded.workspace.id,sourceId: source.id,slotKey
-  });
-  return Response.json({
-    contract_version: WORKSPACE_ASYNC_IMPORT_CONTRACT_VERSION,
-    acquisition_contract_version: SIGNAL_ACQUISITION_IMPORT_CONTRACT_VERSION,
-    source_key: source.source_key,slot_key: slotKey,
-    imports: imports.map(publicImport)
-  },{ headers: PRIVATE_HEADERS });
+  try {
+    const source = sourceKey === null ? null : await resolveWorkspaceConnectorByKeyV1(loaded.workspace.id,sourceKey);
+    if (sourceKey !== null && !source) return operatorError("connector_not_found",404);
+    const history = await loadWorkspaceAcquisitionImportHistoryV1({
+      workspaceId: loaded.workspace.id,sourceId: source?.id ?? null,slotKey,
+      ...parseWorkspaceImportHistoryPageV1(params)
+    });
+    return Response.json({
+      contract_version: WORKSPACE_ASYNC_IMPORT_CONTRACT_VERSION,
+      acquisition_contract_version: SIGNAL_ACQUISITION_IMPORT_CONTRACT_VERSION,
+      source_key: source?.source_key ?? null,slot_key: slotKey,
+      ...history, imports: history.imports.map(publicImport)
+    },{ headers: PRIVATE_HEADERS });
+  } catch (error) {
+    if (error instanceof WorkspaceAsyncImportError) return operatorError(error.code,error.status);
+    return operatorError("import_history_unavailable",503);
+  }
 }
 
 export async function POST(

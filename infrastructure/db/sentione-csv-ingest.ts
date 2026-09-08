@@ -234,7 +234,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     let cell = "";
     let row: string[] = [];
     let inQuotes = false;
-    let heldQuote = false; // saw a `"`, deferring escaped-vs-toggle decision
+    let heldQuote = false; // quote inside a quoted field: escaped or closing
     let lastWasCR = false;
     let bomStripped = false;
     let processedBytes = 0;
@@ -318,7 +318,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
             cell += '"'; // escaped quote ("")
             continue;
           }
-          inQuotes = !inQuotes; // the held quote was a real toggle
+          inQuotes = false; // the held quote closed the quoted field
         }
 
         if (lastWasCR) {
@@ -327,7 +327,11 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
         }
 
         if (char === '"') {
-          heldQuote = true;
+          // Opening quotes take effect immediately. Deferring them mistakes an
+          // empty quoted field ("") for a literal quote and corrupts leading
+          // escaped quotes. Only quotes inside a field need look-ahead.
+          if (inQuotes) heldQuote = true;
+          else inQuotes = true;
           continue;
         }
 
@@ -392,7 +396,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       // Resolve a deferred trailing quote and emit the final row if present.
       if (heldQuote) {
         heldQuote = false;
-        inQuotes = !inQuotes;
+        inQuotes = false;
       }
       if (cell.length > 0 || row.length > 0) {
         row.push(cell);
