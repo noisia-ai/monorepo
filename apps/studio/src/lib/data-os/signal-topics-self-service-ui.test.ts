@@ -55,6 +55,20 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html, /<fieldset[^>]*disabled/u);
     assert.match(html, new RegExp(messages.AdminWorkspace.topics.permissions.readOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
   });
+  test(`${locale}: received data awaiting preparation links to its receipt while preserving interests and blocking search`, () => {
+    const html = render({ ...base, topics: [savedTopic], capabilities: { ...base.capabilities, can_execute: true },
+      readiness: { ...base.readiness, state: "needs_preparation", next_action: "prepare_mentions", reason_code: "topic_mentions_not_prepared" }
+    });
+    assert.match(html, /href="\/studio\/brands\/new-brand-id\/data#corpus-readiness"/u);
+    assert.ok(html.includes(messages.AdminWorkspace.topics.actions.viewReceived));
+    assert.doesNotMatch(html, /href="\/studio\/brands\/new-brand-id\/data"/u);
+    assert.match(html, /Difficulty completing a purchase/u);
+    assert.doesNotMatch(html, /<fieldset[^>]*disabled/u);
+    const buttons = html.match(/<button\b[^]*?<\/button>/gu) ?? [];
+    const search = buttons.find((button) => button.includes(messages.AdminWorkspace.topics.actions.search));
+    assert.ok(search);
+    assert.match(search, /^<button[^>]*disabled/u);
+  });
   test(`${locale}: journey links preserve brand scope and distinguish current step from completion`, () => {
     const html = renderToStaticMarkup(createElement(NextIntlClientProvider, { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
       createElement(BrandMonitoringJourney, { brandId: "other-brand", current: "topics" })));

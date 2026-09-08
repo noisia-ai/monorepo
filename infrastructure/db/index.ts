@@ -23,3 +23,4 @@ export * from "./sentione-timestamps";
 export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";
 export * from "./signal-workspace-capabilities";
+export * from "./signal-workspace-corpus-readiness";

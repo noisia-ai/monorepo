@@ -2545,7 +2545,8 @@
         "updateSignal": "Actualizar Signal",
         "archive": "Archivar",
         "restore": "Restaurar",
-        "import": "Importar menciones"
+        "import": "Importar menciones",
+        "viewReceived": "Ver datos recibidos"
       },
       "states": {
         "draft": "Borrador",
@@ -2706,7 +2707,7 @@
         },
         "needs_preparation": {
           "title": "Las menciones necesitan preparación",
-          "body": "Tus definiciones están guardadas. Revisa el estado de la importación antes de buscar resultados."
+          "body": "Consulta las filas y menciones recibidas y su disponibilidad para análisis. Tus intereses siguen guardados."
         }
       },
       "permissions": {
@@ -2718,7 +2719,45 @@
       }
     },
     "data": {
-      "selfService": {"title":"Importar conversaciones","body":"Carga exportaciones CSV de SentiOne para marca, competencia y categoría. Primero identifica su origen y los permisos de uso.","loading":"Comprobando preparación para importar…","source":"Nombre de la fuente","sourceDefault":"Exportaciones de SentiOne","sourceHelp":"Identifica quién proporciona estos archivos. La misma fuente puede recibir nuevas cargas.","category":"Categoría a monitorizar","categoryHelp":"Usamos el contexto de la marca como sugerencia. Ajusta la categoría si necesitas mayor precisión.","storageRights":"Confirmo que tengo permiso para almacenar y analizar los datos de esta fuente y mostrar sus menciones y métricas a los usuarios autorizados de la marca.","aiRights":"Esta fuente permite procesar su contenido con proveedores de inteligencia artificial.","aiRightsHelp":"Necesario para interpretar evidencia con Claude. Esto declara un permiso de uso; no inicia un análisis ni autoriza un cargo.","retention":{"title":"Límite de conservación · Opcional","date":"Conservar hasta","help":"Si tu permiso vence, indica su último día de vigencia. Deja vacío si no tiene fecha de vencimiento."},"saving":"Preparando…","prepare":"Continuar a la carga","cancel":"Cancelar","retry":"Reintentar","ready":"Lista para cargar archivos","readyBody":"Elige abajo si cada archivo contiene conversación de marca, competencia o categoría. El ámbito de captura no determina por sí solo de quién habla cada mención.","addSource":"Agregar otra fuente","next":{"title":"Después de importar","body":"El historial mostrará cuándo terminó la carga. En Topics podrás consultar la preparación del análisis y tus intereses guardados.","action":"Ir a Topics"},"errors":{"load":"No pudimos comprobar la preparación de esta marca. Reintenta para consultar su estado.","save":"No se pudo confirmar la preparación. Reintenta con los mismos datos; la solicitud conservará su identidad.","forbidden":"Tu acceso no permite preparar esta fuente.","rights":"Revisa los permisos de uso de esta fuente.","category":"Revisa la categoría de la marca antes de continuar."},"format":"Formato admitido: exportación original de SentiOne con sus 47 columnas, separadas por coma, punto y coma o tabulación. Conserva los encabezados del archivo.","storageBlocked":{"title":"La fuente está guardada; la carga aún no está disponible","body":"El almacenamiento de archivos no está disponible en este entorno. Puedes conservar tus intereses y volver a comprobar la carga más tarde."},"contextChanged":{"title":"Los ámbitos de la marca necesitan actualizarse","body":"Tus fuentes, permisos y archivos se conservan. Actualiza los ámbitos para incorporar los cambios de Brand OS antes de cargar en ellos.","action":"Actualizar ámbitos"}},
+      "corpusReadiness": {
+        "title": "Datos recibidos",
+        "body": "Archivos, filas y menciones únicas de esta marca.",
+        "states": {
+          "awaiting_import": "Sin archivos recibidos",
+          "received": "Datos recibidos",
+          "needs_attention": "Recepción con diferencias"
+        },
+        "refresh": "Actualizar",
+        "retry": "Reintentar",
+        "loading": "Consultando los datos recibidos…",
+        "counts": {
+          "files": "Archivos importados",
+          "rows": "Filas leídas",
+          "unique": "Menciones únicas",
+          "text": "Con texto disponible"
+        },
+        "countsHelp": "Una mención puede aparecer en varios archivos. Las filas leídas y las menciones únicas no tienen que coincidir; el desglose incluye las exclusiones.",
+        "empty": "Aquí aparecerá el resumen cuando termine una importación.",
+        "reconciliation": "Hay diferencias entre los recibos de importación y las menciones registradas. Estos conteos todavía requieren verificación.",
+        "errors": {
+          "load": "No pudimos consultar los datos recibidos. Reintenta para comprobar su estado.",
+          "refresh": "No pudimos actualizar los datos recibidos. Se conserva el último resumen disponible.",
+          "forbidden": "Tu acceso no permite consultar este resumen."
+        },
+        "details": {
+          "title": "Desglose y disponibilidad",
+          "included": "Filas incluidas",
+          "excluded": "Filas excluidas",
+          "duplicates": "Filas duplicadas",
+          "observations": "Observaciones registradas",
+          "eligibilityHelp": "Los permisos corresponden al análisis con servicios de IA externa de las menciones incluidas. La atribución indica si se ha identificado de quién o de qué habla cada mención, y se cuenta sólo entre las que tienen ese permiso.",
+          "rightsEligible": "Con permiso para IA externa",
+          "rightsBlocked": "Sin permiso vigente para IA externa",
+          "semanticEligible": "Con atribución verificada",
+          "semanticPending": "Con atribución pendiente"
+        }
+      },
+      "selfService": {"title":"Importar conversaciones","body":"Carga exportaciones CSV de SentiOne para marca, competencia y categoría. Primero identifica su origen y los permisos de uso.","loading":"Comprobando preparación para importar…","source":"Nombre de la fuente","sourceDefault":"Exportaciones de SentiOne","sourceHelp":"Identifica quién proporciona estos archivos. La misma fuente puede recibir nuevas cargas.","category":"Categoría a monitorizar","categoryHelp":"Usamos el contexto de la marca como sugerencia. Ajusta la categoría si necesitas mayor precisión.","storageRights":"Confirmo que tengo permiso para almacenar y analizar los datos de esta fuente y mostrar sus menciones y métricas a los usuarios autorizados de la marca.","aiRights":"Esta fuente permite procesar su contenido con proveedores de inteligencia artificial.","aiRightsHelp":"Necesario para interpretar evidencia con Claude. Esto declara un permiso de uso; no inicia un análisis ni autoriza un cargo.","retention":{"title":"Límite de conservación · Opcional","date":"Conservar hasta","help":"Si tu permiso vence, indica su último día de vigencia. Deja vacío si no tiene fecha de vencimiento."},"saving":"Preparando…","prepare":"Continuar a la carga","cancel":"Cancelar","retry":"Reintentar","ready":"Lista para cargar archivos","readyBody":"Elige abajo si cada archivo contiene conversación de marca, competencia o categoría. El ámbito de captura no determina por sí solo de quién habla cada mención.","addSource":"Agregar otra fuente","next":{"title":"Después de importar","body":"Consulta el resumen de Datos recibidos arriba. En Topics puedes editar tus intereses guardados.","action":"Ir a Topics"},"errors":{"load":"No pudimos comprobar la preparación de esta marca. Reintenta para consultar su estado.","save":"No se pudo confirmar la preparación. Reintenta con los mismos datos; la solicitud conservará su identidad.","forbidden":"Tu acceso no permite preparar esta fuente.","rights":"Revisa los permisos de uso de esta fuente.","category":"Revisa la categoría de la marca antes de continuar."},"format":"Formato admitido: exportación original de SentiOne con sus 47 columnas, separadas por coma, punto y coma o tabulación. Conserva los encabezados del archivo.","storageBlocked":{"title":"La fuente está guardada; la carga aún no está disponible","body":"El almacenamiento de archivos no está disponible en este entorno. Puedes conservar tus intereses y volver a comprobar la carga más tarde."},"contextChanged":{"title":"Los ámbitos de la marca necesitan actualizarse","body":"Tus fuentes, permisos y archivos se conservan. Actualiza los ámbitos para incorporar los cambios de Brand OS antes de cargar en ellos.","action":"Actualizar ámbitos"}},
       "eyebrow": "Datos y fuentes", "title": "Datos del workspace", "subtitle": "Registra fuentes e importa menciones directamente al workspace de marca.",
       "actions": { "addSource": "Agregar fuente", "create": "Crear fuente", "history": "Historial", "import": "Importar CSV", "openMentions": "Abrir menciones", "openReview": "Abrir revisión semántica" },
       "summary": { "sources": "Fuentes activas", "sourcesHint": "Fuentes propiedad del workspace", "mentions": "Menciones de marca clasificadas", "mentionsHint": "Después de preparar y clasificar los archivos", "coverage": "Cobertura de marca", "freshness": "Recepción de datos", "freshnessHint": "Últimos datos aceptados del workspace" },

@@ -199,8 +199,10 @@ export function TopicsManager({ brandId, initial, workspaceId }: {
   return <div className="topics-manager">
     {data.readiness.state !== "ready" ? <section className="topics-manager__preparation">
       <div><strong>{t(`readiness.${data.readiness.state}.title`)}</strong><p>{t(`readiness.${data.readiness.state}.body`)}</p></div>
-      {data.readiness.next_action === "import_mentions" || data.readiness.next_action === "prepare_mentions"
-        ? <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/data`} prefetch={false}>{t("actions.import")}</Link> : null}
+      {data.readiness.next_action === "prepare_mentions"
+        ? <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link>
+        : data.readiness.next_action === "import_mentions"
+          ? <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/data`} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
     <section className="admin-section topics-manager__toolbar">

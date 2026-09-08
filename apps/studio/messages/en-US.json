@@ -2545,7 +2545,8 @@
         "updateSignal": "Update Signal",
         "archive": "Archive",
         "restore": "Restore",
-        "import": "Import mentions"
+        "import": "Import mentions",
+        "viewReceived": "View received data"
       },
       "states": {
         "draft": "Draft",
@@ -2706,7 +2707,7 @@
         },
         "needs_preparation": {
           "title": "Mentions need preparation",
-          "body": "Your definitions are saved. Review the import status before searching for results."
+          "body": "Review received rows and mentions and their availability for analysis. Your interests are still saved."
         }
       },
       "permissions": {
@@ -2718,7 +2719,45 @@
       }
     },
     "data": {
-      "selfService": {"title":"Import conversations","body":"Upload SentiOne CSV exports for your brand, competitors and category. First identify their source and usage permissions.","loading":"Checking import readiness…","source":"Source name","sourceDefault":"SentiOne exports","sourceHelp":"Identify who provides these files. The same source can receive future uploads.","category":"Category to monitor","categoryHelp":"We suggest a category from your brand context. Adjust it if you need a more specific category.","storageRights":"I confirm permission to store and analyze this source’s data and show its mentions and metrics to authorized brand users.","aiRights":"This source allows its content to be processed by AI providers.","aiRightsHelp":"Required to interpret evidence with Claude. This declares a usage permission; it does not start analysis or authorize a charge.","retention":{"title":"Retention limit · Optional","date":"Retain until","help":"If your permission expires, enter its last valid day. Leave blank if it has no expiration date."},"saving":"Preparing…","prepare":"Continue to upload","cancel":"Cancel","retry":"Retry","ready":"Ready to upload files","readyBody":"Choose below whether each file contains brand, competitor or category conversations. Capture scope alone does not determine whom each mention discusses.","addSource":"Add another source","next":{"title":"After importing","body":"The history shows when each import is complete. In Topics you can review analysis readiness and your saved interests.","action":"Go to Topics"},"errors":{"load":"We could not check this brand’s readiness. Retry to read its current state.","save":"Setup could not be confirmed. Retry with the same details; the request will keep its identity.","forbidden":"Your access does not allow preparing this source.","rights":"Review this source’s usage permissions.","category":"Review the brand category before continuing."},"format":"Supported format: the original 47-column SentiOne export, separated by commas, semicolons or tabs. Keep the file’s original headers.","storageBlocked":{"title":"The source is saved; upload is not available yet","body":"File storage is not available in this environment. You can keep your interests and check upload readiness again later."},"contextChanged":{"title":"The brand’s conversation scopes need updating","body":"Your sources, permissions and files are preserved. Update the scopes to include your Brand OS changes before uploading to them.","action":"Update scopes"}},
+      "corpusReadiness": {
+        "title": "Received data",
+        "body": "Files, rows and unique mentions for this brand.",
+        "states": {
+          "awaiting_import": "No files received",
+          "received": "Data received",
+          "needs_attention": "Receipt discrepancies"
+        },
+        "refresh": "Refresh",
+        "retry": "Retry",
+        "loading": "Loading received data…",
+        "counts": {
+          "files": "Imported files",
+          "rows": "Rows read",
+          "unique": "Unique mentions",
+          "text": "With available text"
+        },
+        "countsHelp": "A mention can appear in multiple files. Rows read and unique mentions do not have to match; the breakdown includes exclusions.",
+        "empty": "The summary will appear here when an import finishes.",
+        "reconciliation": "Import receipts and registered mentions do not fully reconcile. These counts still need verification.",
+        "errors": {
+          "load": "We could not load received data. Retry to check its status.",
+          "refresh": "We could not refresh received data. The last available summary is preserved.",
+          "forbidden": "Your access does not allow viewing this summary."
+        },
+        "details": {
+          "title": "Breakdown and availability",
+          "included": "Included rows",
+          "excluded": "Excluded rows",
+          "duplicates": "Duplicate rows",
+          "observations": "Registered observations",
+          "eligibilityHelp": "Permissions cover external AI analysis of included mentions. Attribution indicates whether whom or what each mention discusses has been identified, and is counted only among mentions with that permission.",
+          "rightsEligible": "Permitted for external AI analysis",
+          "rightsBlocked": "Without current permission for external AI analysis",
+          "semanticEligible": "With verified attribution",
+          "semanticPending": "With pending attribution"
+        }
+      },
+      "selfService": {"title":"Import conversations","body":"Upload SentiOne CSV exports for your brand, competitors and category. First identify their source and usage permissions.","loading":"Checking import readiness…","source":"Source name","sourceDefault":"SentiOne exports","sourceHelp":"Identify who provides these files. The same source can receive future uploads.","category":"Category to monitor","categoryHelp":"We suggest a category from your brand context. Adjust it if you need a more specific category.","storageRights":"I confirm permission to store and analyze this source’s data and show its mentions and metrics to authorized brand users.","aiRights":"This source allows its content to be processed by AI providers.","aiRightsHelp":"Required to interpret evidence with Claude. This declares a usage permission; it does not start analysis or authorize a charge.","retention":{"title":"Retention limit · Optional","date":"Retain until","help":"If your permission expires, enter its last valid day. Leave blank if it has no expiration date."},"saving":"Preparing…","prepare":"Continue to upload","cancel":"Cancel","retry":"Retry","ready":"Ready to upload files","readyBody":"Choose below whether each file contains brand, competitor or category conversations. Capture scope alone does not determine whom each mention discusses.","addSource":"Add another source","next":{"title":"After importing","body":"Check the Received data summary above. In Topics you can edit your saved interests.","action":"Go to Topics"},"errors":{"load":"We could not check this brand’s readiness. Retry to read its current state.","save":"Setup could not be confirmed. Retry with the same details; the request will keep its identity.","forbidden":"Your access does not allow preparing this source.","rights":"Review this source’s usage permissions.","category":"Review the brand category before continuing."},"format":"Supported format: the original 47-column SentiOne export, separated by commas, semicolons or tabs. Keep the file’s original headers.","storageBlocked":{"title":"The source is saved; upload is not available yet","body":"File storage is not available in this environment. You can keep your interests and check upload readiness again later."},"contextChanged":{"title":"The brand’s conversation scopes need updating","body":"Your sources, permissions and files are preserved. Update the scopes to include your Brand OS changes before uploading to them.","action":"Update scopes"}},
       "eyebrow": "Data & sources", "title": "Workspace data", "subtitle": "Register sources and import mentions directly into the brand workspace.",
       "actions": { "addSource": "Add source", "create": "Create source", "history": "History", "import": "Import CSV", "openMentions": "Open mentions", "openReview": "Open semantic review" },
       "summary": { "sources": "Active sources", "sourcesHint": "Workspace-owned sources", "mentions": "Classified brand mentions", "mentionsHint": "After preparing and classifying uploaded files", "coverage": "Brand coverage", "freshness": "Data received", "freshnessHint": "Latest accepted workspace data" },

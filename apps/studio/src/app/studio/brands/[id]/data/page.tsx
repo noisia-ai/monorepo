@@ -14,12 +14,14 @@ import {
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
+import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpusReadinessPanel";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { GovernancePreparationManager } from "@/components/admin/GovernancePreparationManager";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
 import { loadSignalGovernancePreparationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
+import { loadWorkspaceCorpusReadinessForActorV1 } from "@/lib/data-os/workspace-corpus-readiness";
 import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +41,11 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
     : null;
   const governance = resolvedWorkspace
     ? await loadSignalGovernancePreparationV1({ queryable: pool, workspace: resolvedWorkspace })
+    : null;
+  const corpusReadiness = summary.workspaceId
+    ? await loadWorkspaceCorpusReadinessForActorV1({
+      queryable: pool, workspaceId: summary.workspaceId, actorUserId: session.appUser.id
+    }).catch(() => null)
     : null;
 
   return (
@@ -65,6 +72,7 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
 
       {summary.workspaceId ? (
         <>
+          <WorkspaceCorpusReadinessPanel initial={corpusReadiness} workspaceId={summary.workspaceId} />
           <SelfServiceImportManager
             brandId={id}
             timezone={summary.timezone ?? "America/Mexico_City"}
