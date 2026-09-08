@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { ArrowRight, IdentificationCard } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -45,6 +46,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
         subtitle={t("brandOs.subtitle")}
         title={t("brandOs.title", { brand: brand.displayName ?? brand.name })}
       />
+      <BrandMonitoringJourney brandId={id} current="brand-os" />
 
       <BrandEditForm
         brand={{ ...brand, timezone: workspace.summary.timezone ?? "UTC" }}
@@ -71,10 +73,11 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
         </>
       ) : null}
 
-      <section className="admin-section workspace-resource-section">
+      <details className="admin-section workspace-resource-section brand-monitoring-advanced">
+        <summary>{t("brandOs.compatibility.title")}</summary>
         <header className="admin-section__head">
           <div>
-            <h2>{t("brandOs.compatibility.title")}</h2>
+
             <p>{t("brandOs.compatibility.subtitle")}</p>
           </div>
           <Link className="admin-button" href={`/studio/corpora/new?brand=${brand.id}`} prefetch={false}>
@@ -98,7 +101,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
             </table>
           </div>
         )}
-      </section>
+      </details>
     </div>
   );
 }

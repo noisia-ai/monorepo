@@ -14,7 +14,23 @@ export type SignalTopicClassificationJobDataV1 = {
 
 export const signalTopicScopeSchemaV1 = z.enum(["primary_brand", "competitor", "category"]);
 export const signalTopicLifecycleSchemaV1 = z.enum(["draft", "archived"]);
-export const signalTopicOriginSchemaV1 = z.enum(["manual", "discovered"]);
+// "discovered" is accepted only to read pre-compass definitions without rewriting their digest.
+export const signalTopicOriginSchemaV1 = z.enum(["manual", "historical_taxonomy", "corpus_discovery", "evidence_candidate", "discovered"]);
+export type SignalTopicPublicOriginV1 = "manual" | "historical_taxonomy" | "corpus_discovery" | "evidence_candidate";
+
+export function signalTopicPublicOriginV1(origin: z.infer<typeof signalTopicOriginSchemaV1>,
+  source: { run_key: string } | null): SignalTopicPublicOriginV1 {
+  if (origin !== "discovered") return origin;
+  return source?.run_key.startsWith("taxonomy-profile:") ? "historical_taxonomy" : "evidence_candidate";
+}
+
+export type SignalTopicReadinessV1 = {
+  state: "awaiting_import" | "awaiting_topics" | "needs_preparation" | "ready";
+  canonical_mentions: number;
+  operational_corpus_id: string | null;
+  next_action: "import_mentions" | "define_topics" | "prepare_mentions" | "search_topics";
+  reason_code: string | null;
+};
 
 const line = z.string().trim().min(1).max(240);
 const termKey = z.string().regex(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u);
@@ -70,7 +86,7 @@ export const updateSignalTopicInputSchemaV1 = createSignalTopicInputSchemaV1.par
 export const adoptSignalTopicCandidateInputSchemaV1 = z.object({
   run_key: z.string().trim().min(1).max(200),
   candidate_key: z.string().trim().min(1).max(200),
-  scope: signalTopicScopeSchemaV1.default("primary_brand")
+  scope: signalTopicScopeSchemaV1.optional()
 }).strict();
 
 export const signalTopicCommandSchemaV1 = z.object({

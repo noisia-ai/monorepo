@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { ArrowRight, Pulse } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -27,7 +28,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
   return (
     <div className="admin-workspace-page topics-workspace-page">
       <AdminWorkspaceHeader
-        actions={<Link className="admin-button" href={`/studio/brands/${id}/brand-os`} prefetch={false}>
+        actions={<Link className="admin-button" href={`/studio/brands/${id}/data`} prefetch={false}>
           {t("back")}<ArrowRight aria-hidden size={14} />
         </Link>}
         eyebrow={`${admin.summary.brandName} · ${t("eyebrow")}`}
@@ -35,7 +36,8 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
         subtitle={t("subtitle")}
         title={t("title")}
       />
-      <TopicsManager initial={initial} workspaceId={workspace.id} />
+      <BrandMonitoringJourney brandId={id} current="topics" />
+      <TopicsManager brandId={id} initial={initial} workspaceId={workspace.id} />
     </div>
   );
 }

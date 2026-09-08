@@ -1,3 +1,4 @@
+import { assertWorkspaceImportActorV1 } from "./workspace-import-authority";
 import { createHash } from "node:crypto";
 
 import {
@@ -65,9 +66,11 @@ function assertInternalActor(actor: SignalWorkspaceUser) {
 async function assertActorWorkspace(
   queryable: SignalBrandPolicyQueryable,
   workspaceId: string,
-  actor: SignalWorkspaceUser
+  actor: SignalWorkspaceUser,
+  access?: "manual-import"
 ) {
-  assertInternalActor(actor);
+  if (access === "manual-import") await assertWorkspaceImportActorV1(queryable, workspaceId, actor);
+  else assertInternalActor(actor);
   const result = await queryable.query<{ allowed: boolean }>(`
     SELECT signal_data_governance_actor_is_valid($1::uuid, $2::uuid) AS allowed
   `, [workspaceId, actor.id]);
@@ -78,12 +81,13 @@ export async function ensureSignalQualityPolicyDraftV1(args: {
   queryable: SignalBrandPolicyQueryable;
   organizationId: string;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   definition: SignalQualityPolicyDefinitionV1;
   idempotencyKey: string;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
 }) {
-  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor);
+  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor, args.access);
   const definitionHash = signalQualityPolicyDefinitionHashV1(args.definition);
   const inserted = await args.queryable.query<{ object_id: string; object_status: string; created: boolean }>(`
     SELECT object_id::text, object_status, created
@@ -107,12 +111,13 @@ export async function ensureSignalRetentionPolicyDraftV1(args: {
   queryable: SignalBrandPolicyQueryable;
   organizationId: string;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   definition: SignalRetentionPolicyDefinitionV1;
   idempotencyKey: string;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
 }) {
-  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor);
+  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor, args.access);
   const definitionHash = signalRetentionPolicyDefinitionHashV1(args.definition);
   const inserted = await args.queryable.query<{ object_id: string; object_status: string; created: boolean }>(`
     SELECT object_id::text, object_status, created
@@ -136,12 +141,13 @@ export async function ensureSignalLicensingPolicyDraftV1(args: {
   queryable: SignalBrandPolicyQueryable;
   organizationId: string;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   definition: SignalLicensingPolicyDefinitionV1;
   idempotencyKey: string;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
 }) {
-  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor);
+  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor, args.access);
   const definitionHash = signalLicensingPolicyDefinitionHashV1(args.definition);
   const usages = [...args.definition.usages].sort((a, b) => a.usage_purpose.localeCompare(b.usage_purpose));
   const inserted = await args.queryable.query<{ object_id: string; object_status: string; created: boolean }>(`
@@ -164,12 +170,13 @@ export async function ensureSignalLicensingPolicyDraftV1(args: {
 export async function ensureSignalProvenancePolicyBindingDraftV1(args: {
   queryable: SignalBrandPolicyQueryable;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   definition: SignalProvenancePolicyBindingDefinitionV1;
   idempotencyKey: string;
   effectiveFrom?: string | null;
   effectiveTo?: string | null;
 }) {
-  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor);
+  await assertActorWorkspace(args.queryable, args.definition.workspace_id, args.actor, args.access);
   const definitionHash = signalProvenancePolicyBindingDefinitionHashV1(args.definition);
   const inserted = await args.queryable.query<{ object_id: string; object_status: string; created: boolean }>(`
     SELECT object_id::text, object_status, created
@@ -192,11 +199,12 @@ export async function activateSignalDataGovernanceObjectV1(args: {
   queryable: SignalBrandPolicyQueryable;
   workspaceId: string;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   objectKind: SignalDataGovernancePolicyKindV1;
   objectId: string;
   idempotencyKey: string;
 }) {
-  await assertActorWorkspace(args.queryable, args.workspaceId, args.actor);
+  await assertActorWorkspace(args.queryable, args.workspaceId, args.actor, args.access);
   const inputHash = hash([
     "signal-data-governance-activation-v1", args.workspaceId, args.objectKind,
     args.objectId, args.actor.id

@@ -97,7 +97,7 @@
       "crumb": "New brand",
       "eyebrow": "Control plane",
       "title": "New brand",
-      "subtitle": "Create the base entity: organization, aliases, competitors, and initial knowledge for future studies.",
+      "subtitle": "Create your brand, add its context and define the interests you want to monitor. Then import real mentions.",
       "back": "Brands"
     },
     "form": {
@@ -116,7 +116,7 @@
       "timezone": "Workspace timezone",
       "timezoneHelp": "Use a valid IANA timezone. Signal periods and strategic reports inherit it.",
       "description": "Strategic description",
-      "seedsEyebrow": "Knowledge seeds",
+      "seedsEyebrow": "Additional context",
       "seedsTitle": "Aliases, competitors, and base context",
       "countries": "Countries / markets",
       "countryPlaceholder": "Search country: Mexico, United States...",
@@ -126,10 +126,10 @@
       "competitorsHint": "Competitor names only, one per line. Do not paste rankings, links, tables, or ChatGPT bullets here; that belongs in Knowledge Base notes.",
       "notes": "Knowledge Base notes",
       "notesPlaceholder": "What it sells, what it promises, known friction, important channels, recent campaigns, legal or operational constraints...",
-      "aiEyebrow": "Smart fields",
+      "aiEyebrow": "AI assistance · Optional",
       "aiGenerating": "Researching brand...",
       "aiReady": "Smart drafts ready",
-      "aiStartTitle": "When category is ready, research and prepare suggested fields",
+      "aiStartTitle": "Optional research to help complete your context",
       "aiStart": "Research brand",
       "aiRefineTitle": "Refine drafts",
       "aiRegenerate": "Refine",
@@ -140,9 +140,9 @@
       "aiDescriptionTitle": "Suggested strategic description",
       "aiAliasesTitle": "Suggested aliases / handles",
       "aiCompetitorsTitle": "Suggested competitors",
-      "aiKnowledgeTitle": "Suggested KB notes",
+      "aiKnowledgeTitle": "Suggested additional context",
       "creating": "Creating...",
-      "create": "Create Brand OS",
+      "create": "Create brand and continue",
       "fallbackCreateError": "Could not create brand.",
       "fieldFallback": "field",
       "invalidFallback": "invalid"
@@ -407,7 +407,7 @@
       "countries": "Countries",
       "window": "Window",
       "months": "{count} months",
-      "aiEyebrow": "Smart fields",
+      "aiEyebrow": "AI assistance · Optional",
       "aiStartTitle": "Use Brand OS, sources, and Knowledge Base to draft the objective",
       "aiStart": "Prepare objective",
       "aiGenerating": "Preparing objective...",
@@ -2060,7 +2060,7 @@
     "roles": { "admin": "Noisia admin", "analyst": "Analyst" },
     "context": {
       "label": "Brand workspace navigation", "eyebrow": "Brand", "title": "Workspace", "compactLabel": "Brand view",
-      "items": { "overview": "Overview", "data": "Data & sources", "data-mentions": "Mentions", "data-review": "Semantic review", "data-discovery-review": "Discovery review", "brand-os": "Brand OS", "reports": "Reports", "settings": "Access & settings" }
+      "items": { "overview": "Overview", "data": "Data & sources", "data-mentions": "Mentions", "data-review": "Semantic review", "data-discovery-review": "Discovery diagnostics", "brand-os": "Brand OS", "topics": "Topics", "reports": "Reports", "settings": "Access & settings" }
     },
     "studyContext": {
       "label": "Study navigation", "eyebrow": "Study", "title": "Analysis workspace", "compactLabel": "Study view",
@@ -2147,20 +2147,20 @@
       "brandOs": { "title": "Brand OS", "subtitle": "Brand context and reusable knowledge.", "open": "Open Brand OS", "aliases": "Aliases", "competitors": "Competitors", "knowledge": "Knowledge sources", "profiles": "Active profiles", "summary": "{aliases} aliases · {competitors} competitors · {knowledge} knowledge sources", "profilesCount": "{count} active profiles" }
     },
     "brandOs": {
-      "eyebrow": "Brand workspace", "title": "{brand} Brand OS", "subtitle": "Edit brand context without losing the existing assisted setup, competitors or Knowledge Base.", "back": "Back to overview",
-      "compatibility": { "title": "Studies and Engine compatibility", "subtitle": "Existing corpora remain available as execution and compatibility surfaces.", "newStudy": "New study", "emptyTitle": "No studies", "emptyBody": "This brand can operate Signal without creating a study.", "study": "Study", "method": "Method", "status": "Status", "open": "Open Engine", "unnamed": "Untitled study" },
+      "eyebrow": "Brand workspace", "title": "{brand} Brand OS", "subtitle": "Identity, competitors and context that help interpret your brand’s conversations.", "back": "Back to overview",
+      "compatibility": { "title": "Studies · Advanced", "subtitle": "Access independent studies when you need them.", "newStudy": "New study", "emptyTitle": "No studies", "emptyBody": "This brand can operate Signal without creating a study.", "study": "Study", "method": "Method", "status": "Status", "open": "Open Engine", "unnamed": "Untitled study" },
       "topics": { "title": "Topics", "subtitle": "The brand supplies context; topics are managed in their own flow.", "body": "Create topics, add discoveries, test membership, and publish verifiable results to Signal.", "action": "Manage topics" },
       "semanticContext": {
-        "eyebrow": "Semantic context", "title": "Brand vocabulary and boundaries", "subtitle": "Turn Brand OS and Knowledge into a ready, editable vocabulary. Deterministic exceptions remain visible; publication is always separate.",
-        "actions": { "close": "Close", "cancel": "Cancel", "refresh": "Refresh", "retry": "Retry", "retrySafe": "Retry safely", "prepare": "Prepare draft", "preparing": "Preparing…", "newVersion": "New version", "reconcile": "Reconcile context", "reconciling": "Reconciling…", "prepareSuccessor": "Prepare new generation", "generate": "Generate vocabulary", "calculate": "Calculate preflight", "confirmGenerate": "Generate editable result", "review": "Review", "approve": "Approve", "reject": "Reject", "edit": "Edit", "cancelEdit": "Cancel", "saveCorrection": "Save", "undo": "Undo", "archive": "Archive", "restore": "Restore", "preserveApplicability": "Keep applicability", "inheritedApplicability": "Inherits {markets}", "explicitGlobal": "Explicit global", "publish": "Publish pack" },
+        "eyebrow": "Semantic context", "title": "Brand vocabulary and boundaries", "subtitle": "Organize your brand’s concepts, names and boundaries. Edit the result and resolve only the exceptions that need attention.",
+        "actions": { "close": "Close", "cancel": "Cancel", "refresh": "Refresh", "retry": "Retry", "retrySafe": "Retry safely", "prepare": "Prepare context", "preparing": "Preparing…", "newVersion": "New version", "reconcile": "Reconcile context", "reconciling": "Reconciling…", "prepareSuccessor": "Prepare new generation", "generate": "Generate vocabulary", "calculate": "Review cost and prepare", "confirmGenerate": "Generate editable result", "review": "Review", "approve": "Approve", "reject": "Reject", "edit": "Edit", "cancelEdit": "Cancel", "saveCorrection": "Save", "undo": "Undo", "archive": "Archive", "restore": "Restore", "preserveApplicability": "Keep applicability", "inheritedApplicability": "Inherits {markets}", "explicitGlobal": "Explicit global", "publish": "Publish pack" },
         "uninitialized": { "title": "Structured vocabulary is not prepared yet", "body": "First define the governed markets and languages in the acquisition plan. Then return here to prepare the vocabulary. No generation has run." },
-        "empty": { "title": "Prepare a governed generation", "body": "The draft will seal the current Brand OS, Knowledge, markets, and languages. Preparing it does not execute a paid generation or publish context." },
-        "draftEmpty": { "title": "The draft is ready to build its vocabulary", "body": "Calculate the free preflight. You will see the model, one-call maximum, bounded cost, and Worker health before authorizing spend." },
+        "empty": { "title": "Prepare your brand context", "body": "We will use the brand’s identity, documents and markets. You can review the cost before generating suggestions." },
+        "draftEmpty": { "title": "The draft is ready to build its vocabulary", "body": "Review the maximum cost before generating editable suggestions. Exceptions will appear separately." },
         "terminalSuccessor": { "title": "Prepare new generation", "message": "The previous run remains fully preserved. A fresh draft leaf will be created with current authority and no attached run.", "body": "This transition makes no paid call, does not reuse the previous response, and does not copy results. You can inspect a new free preflight before authorizing any spend.", "confirm": "Prepare without a paid call" },
         "summary": { "state": "State", "version": "Generation v{version}", "pending": "Exceptions", "pendingHint": "Require focused review", "approved": "Ready", "approvedHint": "Editable governed vocabulary", "coverage": "Primary language", "markets": "{count} governed markets" },
         "states": { "missing": "Not prepared", "draft": "Draft", "published": "Published", "pending": "Pending", "approved": "Approved", "rejected": "Rejected", "merged": "Merged", "archived": "Archived", "ready": "Ready", "exception": "Needs review", "resolved": "Resolved" },
         "drift": { "title": "The authority changed", "body": "Brand OS, Knowledge, or market context no longer matches this draft. Generation and publication remain blocked until a new generation is reconciled." },
-        "generation": { "title": "Generate structured context", "body": "The service receives only a compact Brand OS and Knowledge pack, with no mentions. The server makes ordinary governed results ready and leaves genuine exceptions for review.", "model": "Model", "calls": "Maximum calls", "minimumUseful": "Useful minimum", "targetProposals": "Target proposals", "maximumProposals": "Maximum proposals", "outputTokenBudget": "Output token budget", "pricingVersion": "Pricing version", "inputRate": "Input rate", "outputRate": "Output rate", "perMillionTokens": "{rate} per 1M tokens", "estimate": "Maximum estimated cost", "hardCap": "Authorized cap", "runtime": "Execution and recovery", "runtimeReady": "Worker and recovery ready", "runtimeBlocked": "Runtime unavailable", "loadingPreflight": "Calculating the free preflight…", "capacityExplanation": "Capacity is calculated from {aliases} aliases, {products} products, {competitors} competitors, {locales} language variants, {markets} markets, {structured} structured terms, and {knowledge} Knowledge blocks. The target is not a quota: outputs without evidence must be omitted.", "blocked": "Resolve before generating", "confirmation": "I authorize one call with a maximum estimated cost of {estimate} and a {hardCap} cap. I understand only results that pass the server policy become ready; exceptions remain for review." },
+        "generation": { "title": "Generate structured context", "body": "The service receives only a compact Brand OS and Knowledge pack, with no mentions. The server makes ordinary governed results ready and leaves genuine exceptions for review.", "model": "Model", "calls": "Maximum calls", "minimumUseful": "Useful minimum", "targetProposals": "Target proposals", "maximumProposals": "Maximum proposals", "outputTokenBudget": "Output token budget", "pricingVersion": "Pricing version", "inputRate": "Input rate", "outputRate": "Output rate", "perMillionTokens": "{rate} per 1M tokens", "estimate": "Maximum estimated cost", "hardCap": "Authorized cap", "runtime": "Execution and recovery", "runtimeReady": "Worker and recovery ready", "runtimeBlocked": "Runtime unavailable", "loadingPreflight": "Calculating the free preflight…", "capacityExplanation": "Capacity is calculated from {aliases} aliases, {products} products, {competitors} competitors, {locales} language variants, {markets} markets, {structured} structured terms, and {knowledge} Knowledge blocks. The target is not a quota: outputs without evidence must be omitted.", "blocked": "Resolve before generating", "confirmation": "I authorize this generation with a maximum estimated cost of {estimate} and a cap of {hardCap}." },
         "blockers": { "semantic_context_draft_required": "Prepare a draft first.", "semantic_context_generation_run_exists": "This generation already has a run. Prepare a new generation before calculating another spend.", "provider_lineage_required": "This draft has no current model lineage and needs reconciliation.", "provider_lineage_drift": "The model or pricing changed after this draft was prepared.", "semantic_context_draft_stale": "Brand OS, Knowledge, or locale changed after this draft was prepared.", "provider_configuration_unavailable": "The server-owned generation configuration is incomplete.", "proposal_queue_unavailable": "The proposal queue is unavailable.", "proposal_worker_unavailable": "The proposal Worker is not ready.", "proposal_recovery_unavailable": "The recovery drainer is not ready.", "semantic_context_input_token_budget_exceeded": "The sealed context exceeds the input bound.", "semantic_context_capacity_contract_insufficient": "The complexity exceeds the closed proposal contract; coverage will not be reduced silently.", "semantic_context_model_output_capacity_unsupported": "The configured model does not support the calculated output budget.", "semantic_context_configured_output_capacity_insufficient": "The server-owned output limit does not cover the calculated capacity.", "platform_hard_cap_insufficient": "The platform cap does not cover the maximum reservation.", "hard_cap_insufficient": "The configured cap does not cover the estimate.", "unknown": "Generation requires another operational decision." },
         "run": { "queued": "Generation queued", "processing": "Building structured vocabulary", "validating": "Validating the contract and authority", "completed": "Vocabulary result ready", "failed": "Generation failed", "stale": "Context changed during generation", "dead_letter": "Ambiguous outcome; manual review required", "progress": "Operational progress: {progress}%", "proposals": "{count} results", "ready": "{count} ready", "exceptions": "{count} exceptions", "completedDetail": "Governed results are ready; only genuine exceptions require review.", "staleDetail": "No results were saved because the context authority changed.", "deadLetterDetail": "The call will not be repeated automatically. The result requires technical review.", "truncatedDetail": "The response reached the output limit and was incomplete. No results were saved and the call will not be repeated.", "validationFailedDetail": "The response did not satisfy the contract. No results were saved and the call will not be repeated automatically.", "retryableFailedDetail": "The paid call did not start. You can retry without duplicating cost.", "revalidationCompleted": "Response recovered", "revalidationCompletedDetail": "The paid response was revalidated without another call and left {count} exceptions for review.", "revalidationRejected": "Revalidation rejected", "revalidationRejectedDetail": "The paid response contained {received} results; revalidation safely retained and normalized {retained}, then appended {appended}. No second provider call was made.", "badges": { "queued": "Queued", "processing": "Processing", "validating": "Validating", "completed": "Completed", "failed": "Failed", "stale": "Out of date", "dead_letter": "Manual review" } },
         "filters": { "search": "Search elements", "searchPlaceholder": "Search term or canonical key", "status": "Status", "allStatuses": "All statuses", "type": "Type", "allTypes": "All types", "results": "{count} results", "emptyTitle": "No elements match these filters", "emptyBody": "Clear the search or change the filters." },
@@ -2521,35 +2521,204 @@
         "errors": { "title": "Candidate review is unavailable", "load": "The candidate review could not be loaded.", "command": "The candidate change could not be saved." }
       }
     },
+    "monitoringJourney": {"label": "Monitoring journey", "title": "Prepare your brand monitoring", "body": "Add context, define your interests and import the conversations to analyze.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
     "topics": {
       "eyebrow": "Topics",
-      "title": "Followed topics",
-      "subtitle": "Define the conversation you want to find, review real mentions, and decide what reaches Signal.",
-      "back": "Back to Brand OS",
+      "title": "Topics and interests",
+      "subtitle": "Define the conversations that matter, add discovered topics and choose what to follow in Signal.",
+      "back": "Import mentions",
       "search": "Search topics",
-      "tabs": { "label": "Topic views", "topics": "My topics", "discovered": "Discovered", "archived": "Archived" },
-      "actions": { "create": "Create topic", "saveDraft": "Save draft", "cancel": "Cancel", "save": "Save changes", "search": "Find mentions", "retry": "Retry", "follow": "Follow in Signal", "updateSignal": "Update Signal", "archive": "Archive", "restore": "Restore" },
-      "states": { "draft": "Draft", "searching": "Searching", "ready": "Ready to follow", "updating": "Updating", "in_signal": "In Signal", "archived": "Archived", "failed": "Recoverable error" },
-      "origin": { "manual": "Team-created topic", "discovered": "Added from discovery" },
-      "scopes": { "primary_brand": "Primary brand", "competitor": "Competitors", "category": "Category" },
-      "list": { "title": "Catalog", "body": "One stable definition per topic.", "mentions": "{count} relevant", "notSearched": "Not searched yet", "updated": "Updated {date}", "empty": "No topics yet. Create one without depending on a previous analysis." },
-      "archived": { "title": "Archived", "empty": "No archived topics." },
-      "editor": { "select": "Choose a topic or create a new one.", "newEyebrow": "New definition", "newTitle": "Create topic", "source": "Source: candidate {candidate}. The definition is now independent from the snapshot." },
-      "fields": { "name": "Name", "definition": "What conversation should it find", "scope": "Population", "inclusion": "Helpful inclusion signals — one per line", "exclusion": "Boundaries and exclusions — one per line", "positive": "Positive examples — optional", "negative": "Negative examples — optional" },
-      "advanced": { "title": "Optional examples and boundaries" },
-      "start": { "title": "Search the real mentions", "body": "Search combines the definition with embeddings from the same model as the mentions. Nothing is published to Signal yet." },
+      "tabs": {
+        "label": "Topic views",
+        "topics": "My topics",
+        "discovered": "Discovered",
+        "archived": "Archived"
+      },
+      "actions": {
+        "create": "Create topic",
+        "saveDraft": "Save interest",
+        "cancel": "Cancel",
+        "save": "Save changes",
+        "search": "Find mentions",
+        "retry": "Retry",
+        "follow": "Follow in Signal",
+        "updateSignal": "Update Signal",
+        "archive": "Archive",
+        "restore": "Restore",
+        "import": "Import mentions"
+      },
+      "states": {
+        "draft": "Draft",
+        "searching": "Searching",
+        "ready": "Ready to follow",
+        "updating": "Updating",
+        "in_signal": "In Signal",
+        "archived": "Archived",
+        "failed": "Recoverable error"
+      },
+      "origin": {
+        "evidence_candidate": "Evidence-based candidate",
+        "manual": "Defined interest",
+        "historical_taxonomy": "Historical taxonomy",
+        "corpus_discovery": "Corpus discovery"
+      },
+      "scopes": {
+        "primary_brand": "Primary brand",
+        "competitor": "Competitors",
+        "category": "Category"
+      },
+      "list": {
+        "title": "Catalog",
+        "body": "One stable definition per topic.",
+        "mentions": "{count} relevant",
+        "notSearched": "Not searched yet",
+        "updated": "Updated {date}",
+        "empty": "No topics yet. Create one without depending on a previous analysis."
+      },
+      "archived": {
+        "title": "Archived",
+        "empty": "No archived topics."
+      },
+      "editor": {
+        "select": "Choose a topic or create a new one.",
+        "newEyebrow": "New definition",
+        "newTitle": "Create topic",
+        "source": "Added from candidate {candidate}. Its definition is editable."
+      },
+      "fields": {
+        "name": "Name",
+        "definition": "What conversation should it find",
+        "scope": "Conversations to analyze",
+        "inclusion": "Helpful inclusion signals — one per line",
+        "exclusion": "Boundaries and exclusions — one per line",
+        "positive": "Positive examples — optional",
+        "negative": "Negative examples — optional"
+      },
+      "advanced": {
+        "title": "Optional examples and boundaries"
+      },
+      "start": {
+        "title": "Search the real mentions",
+        "body": "Search combines the definition with embeddings from the same model as the mentions. Nothing is published to Signal yet."
+      },
       "scopeNotice": "Signal UAT currently publishes Primary brand topics only. Archive Competitor or Category topics before following this catalog; their searches and corrections remain available.",
-      "cost": { "notice": "This search will create {count} definition embeddings with an authorized cap of {amount}. The actual charge cannot exceed that amount.", "editNotice": "Saving this meaning change will reclassify and, if the topic is already followed, replace Signal when complete. It authorizes up to {amount} for new embeddings; if the exact estimate is higher, the run stops before contacting the provider." },
-      "progress": { "searching": "Evaluating the complete catalog", "publishing": "Updating Signal atomically" },
-      "discovered": { "title": "Available discoveries", "body": "Evidence-backed BERTopic proposals. Using one creates the same topic object as the manual entry.", "evidence": "{count} evidence items", "openEvidence": "Review supporting evidence", "legacyExamples": "Historical examples", "legacyExclusions": "Historical exclusions", "legacyEvidenceUnavailable": "This historical proposal does not retain exact mention evidence.", "use": "Use as topic", "used": "Already added", "empty": "No discoveries are available in this workspace." },
-      "results": { "eyebrow": "Test on mentions", "title": "Definition results", "body": "Relevant and doubtful are search results. Only a human correction or validated policy authorizes a result for Signal.", "filters": "Result states", "relevant": "Relevant", "doubt": "Doubtful", "excluded": "Excluded", "belongs": "Belongs", "notBelongs": "Does not belong", "loading": "Loading results…", "error": "Results could not be loaded. Retry by refreshing this view.", "empty": "No results in this state." },
-      "methods": { "semantic": "Semantic retrieval", "lexical": "Vocabulary rule", "semantic_lexical": "Semantic and vocabulary", "human": "Team correction" },
-      "feedback": { "created": "Draft created.", "saved": "Definition saved.", "adopted": "Discovery added as a topic.", "searching": "Search continues in the background.", "following": "Signal is being updated.", "archiveUpdating": "Removal started. The topic remains Updating until Signal stops serving it.", "archived": "Topic archived in the new catalog.", "restored": "Topic restored as a draft.", "belongs": "The mention is confirmed for this topic.", "excluded": "The mention is excluded from this topic." },
-      "errors": { "load": "Topics could not be refreshed.", "command": "The action could not be completed.", "execution": "The execution stopped" },
-      "requestErrors": { "busy": "A search or update is already running. Wait for it to finish.", "population": "This workspace does not have an operational population ready for search yet.", "searchNotReady": "Complete a valid search for this definition first.", "revision": "The definition changed in another session. Refresh and try again.", "queue": "The processing queue did not receive the job. You can retry without losing the draft.", "forbidden": "Your user cannot manage topics in this workspace.", "notFound": "This topic is no longer available.", "invalidCandidate": "This historical proposal is incomplete. Create the topic manually and use its evidence as a reference.", "costConfirmation": "The search needs explicit authorization for the displayed embedding cap.", "costExceeded": "The estimated cost now exceeds the authorized cap. Refresh before searching.", "preflight": "The model, population, and cost could not be verified before searching.", "scopeUnsupported": "Signal UAT currently supports Primary brand topics only. You can keep testing this scope, but archive it before publishing the catalog.", "unknown": "The action could not be completed. Refresh and try again." },
-      "executionErrors": { "topic_mention_embeddings_incomplete": "Some population mentions do not have embeddings from the same model.", "topic_definition_embedding_unavailable": "The definition needs a compatible embedding; the provider is missing or uses another model.", "topic_embedding_hard_cap_missing": "The definition embedding budget cap is not configured.", "topic_embedding_hard_cap_invalid": "The definition embedding budget cap is invalid.", "topic_embedding_cost_confirmation_required": "The paid call had no authorized cap and stopped before contacting the provider.", "topic_embedding_hard_cap_exceeded": "The estimate exceeds the authorized cap; the run stopped before contacting the provider.", "topic_embedding_pricing_changed": "The pricing version changed after authorization. Refresh and search again.", "topic_embedding_estimate_changed": "The inputs or their cost changed after authorization. Refresh and search again.", "topic_embedding_outcome_unknown": "The provider outcome is uncertain. The run stopped without repeating the paid call.", "topic_definition_changed": "The topic or Brand OS context changed during execution. Retry against the current definition.", "topic_corrections_changed": "Membership corrections changed during execution. Retry against the current corrections.", "topic_population_changed": "The population changed during execution. Retry against the current cut.", "topic_publication_source_is_incomplete": "The result selected for publication is no longer valid.", "topic_signal_scope_unsupported": "Signal UAT currently supports Primary brand topics only. Archive Competitor or Category topics before publishing.", "topic_queue_unavailable": "The queue did not receive the job. Retry without losing the draft.", "unknown": "Retry without losing the draft or its corrections." }
+      "cost": {
+        "notice": "This search will create {count} definition embeddings with an authorized cap of {amount}. The actual charge cannot exceed that amount.",
+        "editNotice": "Saving this meaning change will reclassify and, if the topic is already followed, replace Signal when complete. It authorizes up to {amount} for new embeddings; if the exact estimate is higher, the run stops before contacting the provider."
+      },
+      "progress": {
+        "searching": "Evaluating the complete catalog",
+        "publishing": "Updating Signal atomically"
+      },
+      "discovered": {
+        "title": "Available discoveries",
+        "body": "Each proposal keeps its source: corpus discovery or historical taxonomy. Review its definition and evidence before adding it.",
+        "evidence": "{count} evidence items",
+        "openEvidence": "Review supporting evidence",
+        "legacyExamples": "Historical examples",
+        "legacyExclusions": "Historical exclusions",
+        "legacyEvidenceUnavailable": "This historical proposal does not retain exact mention evidence.",
+        "use": "Use as topic",
+        "used": "Already added",
+        "empty": "No discoveries are available in this workspace.",
+        "emptyBody": "This brand has no discovery results yet. You can define interests before importing mentions.",
+        "chooseScope": "Choose this proposal’s scope",
+        "scopePlaceholder": "Select a scope"
+      },
+      "results": {
+        "eyebrow": "Test on mentions",
+        "title": "Definition results",
+        "body": "Relevant and doubtful are search results. Only a human correction or validated policy authorizes a result for Signal.",
+        "filters": "Result states",
+        "relevant": "Relevant",
+        "doubt": "Doubtful",
+        "excluded": "Excluded",
+        "belongs": "Belongs",
+        "notBelongs": "Does not belong",
+        "loading": "Loading results…",
+        "error": "Results could not be loaded. Retry by refreshing this view.",
+        "empty": "No results in this state."
+      },
+      "methods": {
+        "semantic": "Semantic retrieval",
+        "lexical": "Vocabulary rule",
+        "semantic_lexical": "Semantic and vocabulary",
+        "human": "Team correction"
+      },
+      "feedback": {
+        "created": "Draft created.",
+        "saved": "Definition saved.",
+        "adopted": "Discovery added as a topic.",
+        "searching": "Search continues in the background.",
+        "following": "Signal is being updated.",
+        "archiveUpdating": "Removal started. The topic remains Updating until Signal stops serving it.",
+        "archived": "Topic archived in the new catalog.",
+        "restored": "Topic restored as a draft.",
+        "belongs": "The mention is confirmed for this topic.",
+        "excluded": "The mention is excluded from this topic."
+      },
+      "errors": {
+        "load": "Topics could not be refreshed.",
+        "command": "The action could not be completed.",
+        "execution": "The execution stopped"
+      },
+      "requestErrors": {
+        "busy": "A search or update is already running. Wait for it to finish.",
+        "population": "This workspace does not have an operational population ready for search yet.",
+        "searchNotReady": "Complete a valid search for this definition first.",
+        "revision": "The definition changed in another session. Refresh and try again.",
+        "queue": "The processing queue did not receive the job. You can retry without losing the draft.",
+        "forbidden": "Your user cannot manage topics in this workspace.",
+        "notFound": "This topic is no longer available.",
+        "invalidCandidate": "This historical proposal is incomplete. Create the topic manually and use its evidence as a reference.",
+        "costConfirmation": "The search needs explicit authorization for the displayed embedding cap.",
+        "costExceeded": "The estimated cost now exceeds the authorized cap. Refresh before searching.",
+        "preflight": "The model, population, and cost could not be verified before searching.",
+        "scopeUnsupported": "Signal UAT currently supports Primary brand topics only. You can keep testing this scope, but archive it before publishing the catalog.",
+        "unknown": "The action could not be completed. Refresh and try again."
+      },
+      "executionErrors": {
+        "topic_mention_embeddings_incomplete": "Some population mentions do not have embeddings from the same model.",
+        "topic_definition_embedding_unavailable": "The definition needs a compatible embedding; the provider is missing or uses another model.",
+        "topic_embedding_hard_cap_missing": "The definition embedding budget cap is not configured.",
+        "topic_embedding_hard_cap_invalid": "The definition embedding budget cap is invalid.",
+        "topic_embedding_cost_confirmation_required": "The paid call had no authorized cap and stopped before contacting the provider.",
+        "topic_embedding_hard_cap_exceeded": "The estimate exceeds the authorized cap; the run stopped before contacting the provider.",
+        "topic_embedding_pricing_changed": "The pricing version changed after authorization. Refresh and search again.",
+        "topic_embedding_estimate_changed": "The inputs or their cost changed after authorization. Refresh and search again.",
+        "topic_embedding_outcome_unknown": "The provider outcome is uncertain. The run stopped without repeating the paid call.",
+        "topic_definition_changed": "The topic or Brand OS context changed during execution. Retry against the current definition.",
+        "topic_corrections_changed": "Membership corrections changed during execution. Retry against the current corrections.",
+        "topic_population_changed": "The population changed during execution. Retry against the current cut.",
+        "topic_publication_source_is_incomplete": "The result selected for publication is no longer valid.",
+        "topic_signal_scope_unsupported": "Signal UAT currently supports Primary brand topics only. Archive Competitor or Category topics before publishing.",
+        "topic_queue_unavailable": "The queue did not receive the job. Retry without losing the draft.",
+        "unknown": "Retry without losing the draft or its corrections."
+      },
+      "readiness": {
+        "awaiting_import": {
+          "title": "Prepare interests before adding data",
+          "body": "Save the conversations you want to follow. Import real mentions to start analyzing them."
+        },
+        "awaiting_topics": {
+          "title": "Define your first interest",
+          "body": "Create a Topic with a name and the conversation you want to find. Examples are optional."
+        },
+        "needs_preparation": {
+          "title": "Mentions need preparation",
+          "body": "Your definitions are saved. Review the import status before searching for results."
+        }
+      },
+      "permissions": {
+        "readOnly": "You can view these Topics. Your access does not allow editing their definitions."
+      },
+      "unsaved": {
+        "notice": "Unsaved changes",
+        "confirm": "You have unsaved changes. Discard them and continue?"
+      }
     },
     "data": {
+      "selfService": {"title": "Import conversations", "body": "Upload SentiOne CSV exports for your brand, competitors and category. First identify their source and usage permissions.", "loading": "Checking import readiness…", "source": "Source name", "sourceDefault": "SentiOne exports", "sourceHelp": "Identify who provides these files. The same source can receive future uploads.", "category": "Category to monitor", "categoryHelp": "We suggest a category from your brand context. Adjust it if you need a more specific category.", "storageRights": "I confirm permission to store and analyze this source’s data and show its mentions and metrics to authorized brand users.", "aiRights": "This source allows its content to be processed by AI providers.", "aiRightsHelp": "Required to interpret evidence with Claude. This declares a usage permission; it does not start analysis or authorize a charge.", "retention": {"title": "Retention limit · Optional", "date": "Retain until", "help": "If your permission expires, enter its last valid day. Leave blank if it has no expiration date."}, "saving": "Preparing…", "prepare": "Continue to upload", "cancel": "Cancel", "retry": "Retry", "ready": "Ready to upload files", "readyBody": "Choose below whether each file contains brand, competitor or category conversations. Capture scope alone does not determine whom each mention discusses.", "addSource": "Add another source", "next": {"title": "After importing", "body": "The history shows when each import is complete. In Topics you can review analysis readiness and your saved interests.", "action": "Go to Topics"}, "errors": {"load": "We could not check this brand’s readiness. Retry to read its current state.", "save": "Setup could not be confirmed. Retry with the same details; the request will keep its identity.", "forbidden": "Your access does not allow preparing this source.", "rights": "Review this source’s usage permissions.", "category": "Review the brand category before continuing."}, "format": "Supported format: the original 47-column SentiOne export, separated by commas, semicolons or tabs. Keep the file’s original headers.", "storageBlocked": {"title": "The source is saved; upload is not available yet", "body": "File storage is not available in this environment. You can keep your interests and check upload readiness again later."}},
       "eyebrow": "Data & sources", "title": "Workspace data", "subtitle": "Register sources and import mentions directly into the brand workspace.",
       "actions": { "addSource": "Add source", "create": "Create source", "history": "History", "import": "Import CSV", "openMentions": "Open mentions", "openReview": "Open semantic review" },
       "summary": { "sources": "Active sources", "sourcesHint": "Workspace-owned sources", "mentions": "Governed mentions", "mentionsHint": "Accepted primary-brand records", "coverage": "Coverage", "freshness": "Freshness", "freshnessHint": "Latest accepted workspace data" },
@@ -2561,6 +2730,7 @@
       "history": { "title": "{source} history", "loading": "Loading imports…", "empty": "No imports for this source.", "file": "File", "unnamed": "Unnamed import", "counts": "{records} records · {included} included · {excluded} excluded · {duplicates} duplicates" },
       "errors": { "create": "The source could not be created.", "fileRequired": "Choose a non-empty CSV file.", "import": "The import could not be processed.", "history": "Import history could not be loaded." },
       "acquisition": {
+        "manualImport": {"title": "Files by scope", "body": "Select the conversation source and upload your CSV. Each scope has its own import history.", "configuration": "Advanced configuration", "conversations": "Conversations", "intro": "Select your SentiOne CSV and enter the period covered by its conversations.", "source": "Source", "optionalQuery": "Search query · Optional", "confirmUnavailable": "I will import this file without attaching its search query.", "fileHelp": "Use the original 47-column SentiOne export and keep its headers. Upload continues in the background."},
         "eyebrow": "Acquisition plan",
         "title": "Acquisition plan",
         "subtitle": "Organize primary brand, category, and competitors. Every file retains graduated query evidence, its period, and observed lineage.",
@@ -2587,7 +2757,7 @@
         "fields": { "connectorName": "Connector name", "connectorPlaceholder": "E.g. SentiOne · brand project", "provider": "Provider", "providerHelp": "Closed connector catalog.", "connection": "Connection", "connectionHelp": "Durable manual upload.", "connector": "Connector", "connectorHelp": "The same connector can feed multiple slots without duplicating sources.", "queryText": "Provider query", "queryTextHelp": "Stored privately and versioned; never exposed in Signal.", "includeTerms": "Included terms", "excludeTerms": "Excluded terms", "aliases": "Aliases", "termsHelp": "Separate terms with commas or line breaks.", "cadence": "Cadence", "periodStart": "Default period start", "periodEnd": "Default period end", "captureStart": "File coverage start", "captureEnd": "File coverage end", "timezone": "Timezone", "evidence": "Reason or evidence", "evidenceHelp": "Activation is recorded with actor, date, and evidence.", "referenceDecision": "Decision", "file": "CSV file", "fileHelp": "Use the original export from the selected query; upload continues in the background." },
         "drawers": { "brief": { "title": "Prepare acquisition brief", "body": "These decisions guide proposals. The server seals Brand OS, identities, Knowledge, timezone, and the connector contract." }, "connector": { "title": "Add connector", "body": "The connector describes how data arrives. Brand, category, or competition are defined in plan slots." }, "query": { "title": "Configure {slot}", "body": "Advanced editing: create a new private, append-only version. It remains pending review and never approves semantics." }, "generate": { "title": "Generate acquisition queries", "body": "Query Composer uses Brand OS, Knowledge, and governed slots to propose SentiOne searches. It does not run queries, import data, or activate the plan." }, "review": { "title": "Review {slot}" }, "promote": { "title": "Activate acquisition plan", "body": "You will activate version {version} with {slots} slots as one auditable transition." }, "reference": { "title": "Decide {reference}", "body": "Explicitly include or exclude this reference. The change prepares a new draft and does not modify previous imports." }, "import": { "title": "Import into {slot}", "body": "The file will be sealed against query v{version}, period, timezone, and the active plan.", "bodyV2": "Declare honestly what query evidence exists. The slot and file remain auditable even when the query is unavailable." }, "history": { "title": "{slot} history" } },
         "history": { "empty": "There are no imports in this slot yet.", "unnamed": "Unnamed import", "counts": "{records} records · {included} included · {duplicates} duplicates", "progress": "{count} records processed" },
-        "generation": { "hardCap": "Hard cap", "hardCapHelp": "Maximum authorized for this generation. The preflight is free.", "calculate": "Calculate preflight", "calculating": "Calculating…", "emptyTitle": "Calculate before generating", "emptyBody": "Review slots, model, pricing, and maximum cost before authorizing calls.", "ready": "Ready to generate", "blocked": "Blocked", "freePreflight": "No calls or writes", "slots": "Proposed queries", "calls": "Maximum calls", "estimate": "Maximum estimated cost", "model": "Model", "pricing": "Pricing", "provider": "Provider", "available": "Available", "notAvailable": "Unavailable", "blockersTitle": "Resolve before generating", "confirmation": "I authorize generating {slots} queries with a maximum cap of {cap}. Proposals will remain pending review.", "confirm": "Generate proposals", "generating": "Generating…", "slotStates": { "not_generated": "Not generated", "generated": "Generated", "generated_with_fallback": "With fallback" }, "blockers": { "hard_cap_insufficient": "The cap is below the maximum estimated cost.", "connector_unavailable": "The selected connector is unavailable.", "primary_slot_required": "The primary-brand slot is missing.", "category_slot_required": "A governed category is missing.", "competitor_slot_drift": "Competitors changed; update the plan.", "retired_competitor_slot_present": "The draft retains a retired competitor.", "acquisition_brief_required": "The acquisition brief has not been prepared.", "acquisition_brief_drift": "Brand OS changed after the brief was prepared.", "acquisition_provider_contract_unavailable": "The required SentiOne contract is unavailable.", "knowledge_context_drift": "Knowledge changed; update the plan.", "provider_unavailable": "Claude is not configured on the server.", "unknown": "Generation needs another operator decision." } },
+        "generation": { "hardCap": "Hard cap", "hardCapHelp": "Maximum authorized for this generation. The preflight is free.", "calculate": "Review cost and prepare", "calculating": "Calculating…", "emptyTitle": "Calculate before generating", "emptyBody": "Review slots, model, pricing, and maximum cost before authorizing calls.", "ready": "Ready to generate", "blocked": "Blocked", "freePreflight": "No calls or writes", "slots": "Proposed queries", "calls": "Maximum calls", "estimate": "Maximum estimated cost", "model": "Model", "pricing": "Pricing", "provider": "Provider", "available": "Available", "notAvailable": "Unavailable", "blockersTitle": "Resolve before generating", "confirmation": "I authorize generating {slots} queries with a maximum cap of {cap}. Proposals will remain pending review.", "confirm": "Generate proposals", "generating": "Generating…", "slotStates": { "not_generated": "Not generated", "generated": "Generated", "generated_with_fallback": "With fallback" }, "blockers": { "hard_cap_insufficient": "The cap is below the maximum estimated cost.", "connector_unavailable": "The selected connector is unavailable.", "primary_slot_required": "The primary-brand slot is missing.", "category_slot_required": "A governed category is missing.", "competitor_slot_drift": "Competitors changed; update the plan.", "retired_competitor_slot_present": "The draft retains a retired competitor.", "acquisition_brief_required": "The acquisition brief has not been prepared.", "acquisition_brief_drift": "Brand OS changed after the brief was prepared.", "acquisition_provider_contract_unavailable": "The required SentiOne contract is unavailable.", "knowledge_context_drift": "Knowledge changed; update the plan.", "provider_unavailable": "Claude is not configured on the server.", "unknown": "Generation needs another operator decision." } },
         "review": { "states": { "pending": "Pending review", "approved": "Approved", "rejected": "Rejected" }, "version": "Version {version}", "manual": "Operator version", "fallbackTitle": "Needs attention", "fallbackBody": "The provider did not pass every validation and this slot uses the safe deterministic fallback. Review it before approval.", "proposal": "Proposed query", "generatedAt": "Generated {date}", "operatorVersion": "Created by the operator", "comparePrevious": "Compare with active version", "none": "No declared terms", "decision": "Acquisition decision", "decisionHelp": "Approval allows this slot to activate; rejection requires another version.", "evidenceHelp": "Record why this search correctly represents the slot.", "actions": { "approve": "Approve query", "reject": "Reject query", "save": "Save decision" } },
         "importStates": { "uploading": "Uploading", "queued": "Queued", "processing": "Processing", "completed": "Completed", "failed": "Failed" },
         "importProgress": { "records": "{count} records processed", "percent": "{percent}% · {count} records processed" },
@@ -2694,7 +2864,7 @@
         "hardCap": "Hard cap",
         "hardCapPlaceholder": "For example, 75.00",
         "hardCapInvalid": "Enter a non-negative USD amount with no more than six decimal places.",
-        "calculate": "Calculate preflight",
+        "calculate": "Review cost and prepare",
         "calculating": "Calculating…",
         "preflightError": "The semantic resolution preflight could not be calculated.",
         "ready": "Ready for confirmation",

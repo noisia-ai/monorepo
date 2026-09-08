@@ -1,3 +1,4 @@
+import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash } from "node:crypto";
 
 import {
@@ -241,10 +242,13 @@ export async function executeSignalGovernanceControlCommandV1(args: {
   queryable: SignalBrandPolicyQueryable;
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   idempotencyKey: string;
   command: SignalGovernanceControlCommandV1;
 }) {
-  assertWriterAuthority(args.workspace, args.actor);
+  if (args.access === "manual-import" && args.command.action === "upsert-identity"
+      && args.command.entity_type === "category") await assertWorkspaceImportAuthorityV1(args);
+  else assertWriterAuthority(args.workspace, args.actor);
   const idempotencyKey = normalizeIdempotencyKey(args.idempotencyKey);
   await args.queryable.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
     `governance-control:${args.workspace.id}:${commandIdentity(args.command)}`

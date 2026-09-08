@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import React, { createElement, type ComponentProps } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NextIntlClientProvider } from "next-intl";
+import test from "node:test";
+import { TopicsManager } from "../../components/brands/TopicsManager";
+import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJourney";
+import type { SignalTopicsManagementProductV1 } from "./signal-topics-management";
+
+// Next compiles JSX automatically; the standalone tsx runner uses the classic runtime.
+Object.assign(globalThis, { React });
+
+const base = {
+  workspace: { id: "workspace-test", slug: "new-brand", name: "New brand", timezone: "UTC", operational_corpus: null },
+  profile: null, active_profile_id: null, topics: [], execution: null, search_execution_id: null, search_is_current: false,
+  capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false },
+  readiness: { state: "awaiting_import", canonical_mentions: 0, operational_corpus_id: null,
+    next_action: "import_mentions", reason_code: "topic_mentions_required" },
+  embedding_preflight: { status: "blocked", requires_paid_call: false, missing_inputs: 0, estimated_micro_usd: 0,
+    embedding_model: null, pricing_version: null, error_code: "topic_mentions_required" },
+  discovered: { run_key: null, items: [], available: false }
+} as unknown as SignalTopicsManagementProductV1;
+const savedTopic = {
+  taxonomy_term_id: "term-test", definition_digest: "sha256:test", created_at: "2026-09-07T00:00:00.000Z",
+  term_key: "purchase-friction", label: "Purchase friction", definition: "Difficulty completing a purchase",
+  scope: "category", inclusion: [], exclusion: [], positive_examples: [], negative_examples: [],
+  lifecycle: "draft", origin: "manual", source: null, definition_revision: 1, updated_at: "2026-09-07T00:00:00.000Z",
+  status: "draft", counts: { relevant: 0, doubt: 0, excluded: 0 }
+} as SignalTopicsManagementProductV1["topics"][number];
+
+for (const locale of ["es-MX", "en-US"]) {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const render = (data = base) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", initial: data })));
+  test(`${locale}: an empty authorized brand can define interests without implying mentions or execution`, () => {
+    const html = render();
+    assert.match(html, /href="\/studio\/brands\/new-brand-id\/data"/u);
+    assert.match(html, new RegExp(messages.AdminWorkspace.topics.readiness.awaiting_import.title, "u"));
+    assert.doesNotMatch(html, /<progress|topics-manager__results/u);
+    const create = html.match(/<button[^>]*>[^]*?Create topic<\/button>/u);
+    if (locale === "en-US" && create) assert.doesNotMatch(create[0].slice(create[0].lastIndexOf("<button")), /disabled/u);
+  });
+  test(`${locale}: saved category interests remain editable before import while search stays disabled`, () => {
+    const html = render({ ...base, topics: [savedTopic] });
+    assert.match(html, /<option value="category" selected=""/u);
+    assert.doesNotMatch(html, /<fieldset[^>]*disabled/u);
+    const searchLabel = messages.AdminWorkspace.topics.actions.search;
+    const searchButton = html.match(new RegExp(`<button[^>]*disabled[^>]*>[^<]*(?:<svg[^]*?<\\/svg>)?${searchLabel}<\\/button>`, "u"));
+    assert.ok(searchButton, "search must be disabled before data is available");
+    assert.match(html, /Difficulty completing a purchase/u);
+  });
+  test(`${locale}: read-only access disables editing, independently of the presence of data`, () => {
+    const html = render({ ...base, topics: [savedTopic], capabilities: { ...base.capabilities, can_edit: false } });
+    assert.match(html, /<fieldset[^>]*disabled/u);
+    assert.match(html, new RegExp(messages.AdminWorkspace.topics.permissions.readOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
+  });
+  test(`${locale}: journey links preserve brand scope and distinguish current step from completion`, () => {
+    const html = renderToStaticMarkup(createElement(NextIntlClientProvider, { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
+      createElement(BrandMonitoringJourney, { brandId: "other-brand", current: "topics" })));
+    for (const path of ["brand-os", "topics", "data"]) assert.match(html, new RegExp(`href="/studio/brands/other-brand/${path}"`, "u"));
+    assert.equal((html.match(/aria-current="step"/gu) ?? []).length, 1);
+    assert.doesNotMatch(html, /complete|completed|completado/u);
+  });
+}

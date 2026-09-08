@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 
 import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
 import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
@@ -47,6 +48,7 @@ export async function beginSignalProductOperationV1<T>(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
   action: SignalProductOperationActionV1;
+  access?: "manual-import";
   idempotencyKey: string;
   input: unknown;
   semanticContextDecisionInput?: { payload: unknown; digest: string };
@@ -69,7 +71,10 @@ export async function beginSignalProductOperationV1<T>(args: {
     FROM signal_workspaces workspace WHERE workspace.id=$1::uuid
   `, [args.workspace.id,args.workspace.organizationId,
     args.workspace.subject.type === "brand" ? args.workspace.subject.id : null,args.actor.id]);
-  if (authority.rows[0]?.allowed !== true || args.actor.userType !== "noisia_internal") {
+  const manualImport = args.access === "manual-import"
+    && ["create-source", "reconcile-acquisition-plan", "promote-acquisition-plan"].includes(args.action);
+  if (manualImport) await assertWorkspaceImportAuthorityV1(args);
+  if (authority.rows[0]?.allowed !== true || (!manualImport && args.actor.userType !== "noisia_internal")) {
     throw new Error("Product operation is cross-workspace or unauthorized.");
   }
   const decisionInputRequired = args.action === "decide-semantic-context-element"

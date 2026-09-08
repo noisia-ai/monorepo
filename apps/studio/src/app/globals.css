@@ -21103,3 +21103,31 @@ body:has(.signal-report)::before { display: none; }
   .topics-manager__progress progress { grid-column: 1 / -1; grid-row: 2; }
   .topics-manager__list, .topics-manager__detail, .topics-manager__discovered { padding: 14px; }
 }
+
+/* Brand monitoring continuity: navigation, never inferred completion. */
+.brand-monitoring-journey { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 18px; border: 1px solid var(--neutral-04); border-radius: 12px; background: #fff; }
+.brand-monitoring-journey > div { max-width: 480px; }
+.brand-monitoring-journey p { margin: 5px 0 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.brand-monitoring-journey ol { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.brand-monitoring-journey a { display: flex; align-items: center; gap: 8px; border: 1px solid var(--neutral-04); border-radius: 8px; padding: 10px 12px; color: var(--neutral-11); text-decoration: none; font-size: 13px; }
+.brand-monitoring-journey a[aria-current="step"] { border-color: var(--signal); background: rgba(0,138,138,.06); color: var(--signal-dark); }
+.brand-monitoring-journey a:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.brand-monitoring-journey a > span { color: var(--neutral-09); font-size: 12px; }
+.brand-monitoring-advanced { padding: 18px; }
+.brand-monitoring-advanced > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.brand-monitoring-advanced[open] > summary { margin-bottom: 16px; }
+.topics-manager__preparation { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid var(--neutral-04); border-radius: 12px; background: #fff; }
+.topics-manager__preparation > div { flex: 1; min-width: min(100%, 260px); }
+.topics-manager__preparation p { margin: 5px 0 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.topics-manager__candidate-scope { display: grid; gap: 6px; margin: 12px 0; font-size: 12px; }
+.topics-manager__candidate-scope select { padding: 8px; border: 1px solid var(--neutral-04); border-radius: 8px; background: #fff; font: inherit; }
+.topics-manager__unsaved { color: var(--neutral-09); font-size: 12px; }
+@media (max-width: 600px) {
+  .brand-monitoring-journey ol, .brand-monitoring-journey li, .brand-monitoring-journey a { width: 100%; }
+  .brand-monitoring-journey a { box-sizing: border-box; }
+}
+
+.self-service-import-fields, fieldset.topics-manager__form { margin: 0; padding: 0; border: 0; min-width: 0; }
+.self-service-import-fields { display: grid; gap: 16px; }
+.admin-acquisition__slots--import .admin-acquisition__slots-head, .admin-acquisition__slots--import .admin-acquisition-slot { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 600px) { .admin-acquisition__slots--import .admin-acquisition-slot { grid-template-columns: minmax(0, 1fr); } }

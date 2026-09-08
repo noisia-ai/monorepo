@@ -12,8 +12,27 @@ import {
   signalTopicEmbeddingCacheDigestV1,
   signalTopicItemStateV1,
   signalTopicLexicalMatchV1,
-  signalTopicTermKeyV1
+  signalTopicTermKeyV1,
+  signalTopicPublicOriginV1,
+  adoptSignalTopicCandidateInputSchemaV1,
+  createSignalTopicInputSchemaV1
 } from "./signal-topic-catalog-v1";
+
+test("public provenance distinguishes historical taxonomy from candidates without computational lineage", () => {
+  assert.equal(signalTopicPublicOriginV1("manual", null), "manual");
+  assert.equal(signalTopicPublicOriginV1("discovered", { run_key: "taxonomy-profile:historical" }),
+    "historical_taxonomy");
+  assert.equal(signalTopicPublicOriginV1("discovered", { run_key: "corpus-run:new" }), "evidence_candidate");
+});
+
+test("adoption never defaults an unknown candidate scope to the primary brand", () => {
+  const candidate = { run_key: "run", candidate_key: "candidate" };
+  assert.equal(adoptSignalTopicCandidateInputSchemaV1.parse(candidate).scope, undefined);
+  assert.equal(adoptSignalTopicCandidateInputSchemaV1.parse({ ...candidate, scope: "competitor" }).scope,
+    "competitor");
+  assert.equal(createSignalTopicInputSchemaV1.safeParse({ label: "Interest", definition: "Meaning",
+    origin: "corpus_discovery", source: { run_key: "fabricated" } }).success, false);
+});
 
 test("topic keys are stable serving keys rather than candidate labels", () => {
   assert.equal(signalTopicTermKeyV1("Audio en Español / México"), "audio_en_espanol_mexico");

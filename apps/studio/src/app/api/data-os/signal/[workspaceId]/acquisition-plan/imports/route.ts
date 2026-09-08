@@ -4,7 +4,7 @@ import {
   validateSignalAcquisitionSlotKeyV1
 } from "@noisia/query-engine";
 
-import { loadSignalWorkspaceContextForManagement } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceContextForImport } from "@/app/api/data-os/_lib/load-import";
 import {
   createWorkspaceImportUploadV1,
   listWorkspaceImportsV1,
@@ -24,7 +24,7 @@ export async function GET(
   context: { params: Promise<{ workspaceId: string }> }
 ) {
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForManagement(workspaceId);
+  const loaded = await loadSignalWorkspaceContextForImport(workspaceId);
   if ("response" in loaded) return loaded.response;
   const sourceKey = new URL(request.url).searchParams.get("source_key") ?? "";
   const requestedSlotKey = new URL(request.url).searchParams.get("slot_key");
@@ -51,7 +51,7 @@ export async function POST(
   context: { params: Promise<{ workspaceId: string }> }
 ) {
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForManagement(workspaceId);
+  const loaded = await loadSignalWorkspaceContextForImport(workspaceId);
   if ("response" in loaded) return loaded.response;
   const idempotencyKey = request.headers.get("Idempotency-Key")?.trim() ?? "";
   if (idempotencyKey.length<8 || idempotencyKey.length>500) {
@@ -71,7 +71,7 @@ export async function POST(
     const source = await resolveWorkspaceConnectorByKeyV1(loaded.workspace.id,input.source_key);
     if (!source) return operatorError("connector_not_found",404);
     const created = await createWorkspaceImportUploadV1({
-      workspace: loaded.workspace,actor: loaded.session.appUser,sourceId: source.id,
+      workspace: loaded.workspace,actor: loaded.session.appUser,access:"manual-import",sourceId: source.id,
       fileName: input.file_name,fileSizeBytes: input.file_size_bytes,contentType: input.content_type,
       contributedByStudyCorpusId: null,supersedesImportBatchId: null,idempotencyKey,
       acquisition: {

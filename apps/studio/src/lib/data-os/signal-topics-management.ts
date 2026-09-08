@@ -7,6 +7,8 @@ import {
   loadSignalTopicCatalogStoreV1,
   loadSignalTopicEvaluationV2CandidateManagement,
   loadSignalTopicExecutionResultsStoreV1,
+  loadSignalWorkspaceCapabilitiesStoreV1,
+  type SignalWorkspaceCapabilitiesV1,
   setSignalTopicLifecycleStoreV1,
   updateSignalTopicStoreV1
 } from "@noisia/db";
@@ -14,42 +16,74 @@ import {
   adoptSignalTopicCandidateInputSchemaV1,
   createSignalTopicInputSchemaV1,
   signalTopicCorrectionSchemaV1,
+  signalTopicPublicOriginV1,
   updateSignalTopicInputSchemaV1
 } from "@noisia/query-engine";
 
 import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "./signal-workspace";
 
-function requireInternalActor(value: SignalWorkspaceUser) {
-  if (value.userType !== "noisia_internal") throw Object.assign(new Error("topic_catalog_forbidden"), {
+async function requireTopicCapability(workspaceId: string, actor: SignalWorkspaceUser,
+  capability: keyof SignalWorkspaceCapabilitiesV1) {
+  const { pool } = await import("@/lib/db");
+  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: pool,
+    workspace_id: workspaceId, actor_user_id: actor.id });
+  if (!capabilities[capability]) throw Object.assign(new Error("topic_catalog_forbidden"), {
     code: "topic_catalog_forbidden", status: 403
   });
-  return value.id;
+  return capabilities;
+}
+
+export type SignalTopicsManagementProductV1 = Awaited<ReturnType<typeof loadSignalTopicsManagementProductV1>>;
+
+export async function loadSignalTopicCandidatesForAccessV1(args: {
+  canAdopt: boolean;
+  loadCurrent: () => ReturnType<typeof loadSignalTopicEvaluationV2CandidateManagement>;
+  loadLegacy: () => ReturnType<typeof loadLegacySignalTopicDiscoveryCandidatesStoreV1>;
+}) {
+  // Historical candidate examples can contain excerpts. Do not read or project them through
+  // the client catalogue until their reader has the same current-rights policy as client evidence.
+  if (!args.canAdopt) return { current: null, legacy: { run_key: null, items: [] } };
+  const [current, legacy] = await Promise.all([args.loadCurrent(), args.loadLegacy()]);
+  return { current, legacy };
 }
 
 export async function loadSignalTopicsManagementProductV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  const capabilities = await requireTopicCapability(args.workspace.id, args.actor, "can_view");
   const { pool } = await import("@/lib/db");
-  const [catalog, currentDiscovered, legacyDiscovered] = await Promise.all([
+  const [catalog, candidates] = await Promise.all([
     loadSignalTopicCatalogStoreV1({ queryable: pool, workspace_id: args.workspace.id }),
-    loadSignalTopicEvaluationV2CandidateManagement({ queryable: pool, workspace_id: args.workspace.id,
-      actor: { id: actorId, user_type: "noisia_internal" }, limit: 50 }),
-    loadLegacySignalTopicDiscoveryCandidatesStoreV1({ queryable: pool, workspace_id: args.workspace.id })
+    loadSignalTopicCandidatesForAccessV1({ canAdopt: capabilities.can_adopt_topics,
+      loadCurrent: () => loadSignalTopicEvaluationV2CandidateManagement({ queryable: pool,
+        workspace_id: args.workspace.id, actor: { id: args.actor.id, user_type: "noisia_internal" }, limit: 50 }),
+      loadLegacy: () => loadLegacySignalTopicDiscoveryCandidatesStoreV1({ queryable: pool,
+        workspace_id: args.workspace.id }) })
   ]);
-  const useCurrent = currentDiscovered.items.length > 0;
-  const discovered = useCurrent ? currentDiscovered : legacyDiscovered;
+  const { current: currentDiscovered, legacy: legacyDiscovered } = candidates;
+  const useCurrent = Boolean(currentDiscovered?.items.length);
+  const discovered = useCurrent && currentDiscovered ? currentDiscovered : legacyDiscovered;
   const used = new Set(catalog.topics.map((topic) => topic.source
     ? `${topic.source.run_key}:${topic.source.candidate_key}` : ""));
   return {
     ...catalog,
+    topics: catalog.topics.map((topic) => ({ ...topic,
+      origin: signalTopicPublicOriginV1(topic.origin, topic.source) })),
+    capabilities: { can_view: capabilities.can_view,
+      can_edit: capabilities.can_edit_topics && (capabilities.can_execute_topics
+        || (!catalog.active_profile_id && !catalog.search_execution_id)),
+      can_execute: capabilities.can_execute_topics,
+      can_adopt: capabilities.can_adopt_topics },
     workspace: { id: args.workspace.id, slug: args.workspace.slug, name: args.workspace.name,
       timezone: args.workspace.timezone, operational_corpus: args.workspace.corpora.find((item) => item.role === "operational") ?? null },
-    discovered: { ...discovered, items: discovered.items.map((item) => ({ ...item,
-      inclusion: stringArray(item.inclusion), exclusion: stringArray(item.exclusion),
-      evidence_source: useCurrent ? "v2" as const : "legacy" as const,
-      used_as_topic: used.has(`${discovered.run_key}:${item.candidate_key}`) })) }
+    discovered: { ...discovered, available: capabilities.can_adopt_topics,
+      items: discovered.items.map((item) => ({ ...item,
+        inclusion: stringArray(item.inclusion), exclusion: stringArray(item.exclusion),
+        origin: useCurrent ? "evidence_candidate" as const : "historical_taxonomy" as const,
+        scope: "scope" in item ? item.scope : null,
+        evidence_source: useCurrent ? "v2" as const : "legacy" as const,
+        used_as_topic: used.has(`${discovered.run_key}:${item.candidate_key}`) })) }
   };
 }
 
@@ -60,7 +94,8 @@ function stringArray(value: unknown) {
 export async function createSignalTopicProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string; input: unknown;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_edit_topics");
+  const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
   return createSignalTopicStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, input: createSignalTopicInputSchemaV1.parse(args.input) });
@@ -69,7 +104,8 @@ export async function createSignalTopicProductV1(args: {
 export async function adoptSignalTopicProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string; input: unknown;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_adopt_topics");
+  const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
   return adoptSignalTopicCandidateStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, input: adoptSignalTopicCandidateInputSchemaV1.parse(args.input) });
@@ -79,7 +115,8 @@ export async function updateSignalTopicProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
   termKey: string; input: unknown; embeddingCostCapMicroUsd?: number;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_edit_topics");
+  const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
   const updated = await updateSignalTopicStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, term_key: args.termKey,
@@ -110,7 +147,8 @@ export async function setSignalTopicLifecycleProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
   termKey: string; lifecycle: "draft" | "archived";
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_edit_topics");
+  const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
   const updated = await setSignalTopicLifecycleStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, term_key: args.termKey, lifecycle: args.lifecycle });
@@ -131,7 +169,8 @@ export async function startSignalTopicCatalogExecutionProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
   intent: "search" | "publish"; publishWhenReady?: boolean; embeddingCostCapMicroUsd?: number;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_execute_topics");
+  const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
   const execution = await createSignalTopicCatalogExecutionStoreV1({ pool,
     workspace_id: args.workspace.id, actor_user_id: actorId,
@@ -145,7 +184,8 @@ export async function correctSignalTopicMembershipProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
   executionId: string; termKey: string; rootId: string; input: unknown;
 }) {
-  const actorId = requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_execute_topics");
+  const actorId = args.actor.id;
   const parsed = signalTopicCorrectionSchemaV1.parse(args.input);
   const { pool } = await import("@/lib/db");
   const corrected = await correctSignalTopicMembershipStoreV1({ pool, workspace_id: args.workspace.id,
@@ -168,7 +208,7 @@ export async function loadSignalTopicExecutionResultsProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; executionId: string;
   termKey?: string | null; state?: "relevant" | "doubt" | "excluded" | null; limit?: number;
 }) {
-  requireInternalActor(args.actor);
+  await requireTopicCapability(args.workspace.id, args.actor, "can_execute_topics");
   const { pool } = await import("@/lib/db");
   return loadSignalTopicExecutionResultsStoreV1({ queryable: pool, workspace_id: args.workspace.id,
     execution_id: args.executionId, term_key: args.termKey, state: args.state, limit: args.limit });

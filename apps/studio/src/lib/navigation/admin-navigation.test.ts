@@ -18,11 +18,12 @@ test("admin manifest exposes team only to Noisia admins", () => {
 test("brand context navigation uses semantic deep links", () => {
   assert.deepEqual(buildBrandContextNavigation("brand-1").map((item) => item.href), [
     "/studio/brands/brand-1",
+    "/studio/brands/brand-1/brand-os",
+    "/studio/brands/brand-1/topics",
     "/studio/brands/brand-1/data",
     "/studio/brands/brand-1/data/mentions",
     "/studio/brands/brand-1/data/review",
     "/studio/brands/brand-1/data/discovery-review",
-    "/studio/brands/brand-1/brand-os",
     "/studio/brands/brand-1/reports",
     "/studio/brands/brand-1/settings"
   ]);

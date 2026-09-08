@@ -1,6 +1,6 @@
 import { SIGNAL_ACQUISITION_IMPORT_CONTRACT_VERSION } from "@noisia/query-engine";
 
-import { loadSignalWorkspaceContextForManagement } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceContextForImport } from "@/app/api/data-os/_lib/load-import";
 import {
   failWorkspaceImportUploadV1,
   finalizeWorkspaceImportUploadV1,
@@ -19,7 +19,7 @@ export async function GET(
   context: { params: Promise<{ workspaceId: string;importBatchId: string }> }
 ) {
   const { workspaceId,importBatchId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForManagement(workspaceId);
+  const loaded = await loadSignalWorkspaceContextForImport(workspaceId);
   if ("response" in loaded) return loaded.response;
   const source = await resolveWorkspaceImportConnectorV1(loaded.workspace.id,importBatchId);
   if (!source) return operatorError("not_found",404);
@@ -39,7 +39,7 @@ export async function POST(
   context: { params: Promise<{ workspaceId: string;importBatchId: string }> }
 ) {
   const { workspaceId,importBatchId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForManagement(workspaceId);
+  const loaded = await loadSignalWorkspaceContextForImport(workspaceId);
   if ("response" in loaded) return loaded.response;
   const source = await resolveWorkspaceImportConnectorV1(loaded.workspace.id,importBatchId);
   if (!source) return operatorError("not_found",404);
@@ -52,17 +52,17 @@ export async function POST(
     let result: { batch: Record<string,unknown>;replayed: boolean;jobId?: string };
     if (body.action==="complete-upload") {
       result = await finalizeWorkspaceImportUploadV1({
-        workspace: loaded.workspace,actor: loaded.session.appUser,sourceId: source.id,
+        workspace: loaded.workspace,actor: loaded.session.appUser,access:"manual-import",sourceId: source.id,
         importBatchId,idempotencyKey
       });
     } else if (body.action==="retry-from-storage") {
       result = await retryWorkspaceImportFromStorageV1({
-        workspace: loaded.workspace,actor: loaded.session.appUser,sourceId: source.id,
+        workspace: loaded.workspace,actor: loaded.session.appUser,access:"manual-import",sourceId: source.id,
         importBatchId,idempotencyKey
       });
     } else if (body.action==="fail-upload") {
       result = await failWorkspaceImportUploadV1({
-        workspace: loaded.workspace,actor: loaded.session.appUser,sourceId: source.id,
+        workspace: loaded.workspace,actor: loaded.session.appUser,access:"manual-import",sourceId: source.id,
         importBatchId,failureCode: body.failure_code==="upload_aborted"
           ? "upload_aborted" : "upload_transport_failed"
       });

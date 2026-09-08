@@ -1,3 +1,4 @@
+import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash,randomUUID } from "node:crypto";
 
 import {
@@ -55,6 +56,7 @@ export async function resolveWorkspaceImportConnectorV1(workspaceId:string,impor
 export async function createWorkspaceImportUploadV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   sourceId: string;
   fileName: string;
   fileSizeBytes: number;
@@ -100,6 +102,7 @@ export async function createWorkspaceImportUploadV1(args: {
   let replayed = false;
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
       `workspace-import:${args.workspace.id}:${idempotencyHash}`
     ]);
@@ -125,7 +128,7 @@ export async function createWorkspaceImportUploadV1(args: {
     }
     if(targetAcquisition){
       const readiness=await loadSignalAcquisitionPlanV1({
-        queryable:client,workspace:args.workspace,actor:args.actor
+        queryable:client,workspace:args.workspace,actor:args.actor,access:args.access
       });
       if(readiness.state!=="current")throw new WorkspaceAsyncImportError("acquisition_plan_stale",409);
     }
@@ -346,6 +349,7 @@ export async function createWorkspaceImportUploadV1(args: {
 export async function uploadWorkspaceImportRequestBodyV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   sourceId: string;
   fileName: string;
   fileSizeBytes: number;
@@ -366,6 +370,7 @@ export async function uploadWorkspaceImportRequestBodyV1(args: {
 export async function finalizeWorkspaceImportUploadV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   sourceId: string;
   importBatchId: string;
   idempotencyKey: string;
@@ -398,6 +403,7 @@ export async function finalizeWorkspaceImportUploadV1(args: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
       `workspace-import-finalize:${args.importBatchId}`
     ]);
@@ -429,6 +435,7 @@ export async function finalizeWorkspaceImportUploadV1(args: {
 export async function failWorkspaceImportUploadV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   sourceId: string;
   importBatchId: string;
   failureCode: "upload_aborted" | "upload_transport_failed";
@@ -437,6 +444,7 @@ export async function failWorkspaceImportUploadV1(args: {
   let replayed = false;
   try {
     await client.query("BEGIN");
+    if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
       `workspace-import-upload-failure:${args.importBatchId}`
     ]);
@@ -489,6 +497,7 @@ export async function failWorkspaceImportUploadV1(args: {
 export async function retryWorkspaceImportFromStorageV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   sourceId: string;
   importBatchId: string;
   idempotencyKey: string;
@@ -534,6 +543,7 @@ export async function retryWorkspaceImportFromStorageV1(args: {
   let operation:{import_batch_id:string;outbox_id:string;worker_job_id:string;created:boolean}|undefined;
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
     let controlOperation:{id:string;action:string;request_digest:string;actor_user_id:string;status:string}|undefined;
     if(["signal-acquisition-import-v1","signal-acquisition-import-v2"]
       .includes(failed.acquisition_contract_version??"")){

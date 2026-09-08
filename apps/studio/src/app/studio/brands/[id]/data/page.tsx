@@ -13,7 +13,8 @@ import {
   formatAdminDate,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
-import { AcquisitionPlanManager } from "@/components/admin/AcquisitionPlanManager";
+import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
+import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { GovernancePreparationManager } from "@/components/admin/GovernancePreparationManager";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
@@ -53,6 +54,7 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
         subtitle={t("data.subtitle")}
         title={t("data.title")}
       />
+      <BrandMonitoringJourney brandId={id} current="data" />
 
       <dl className="admin-summary-strip">
         <div><dt>{t("data.summary.sources")}</dt><dd>{summary.activeSources}</dd><small>{t("data.summary.sourcesHint")}</small></div>
@@ -63,7 +65,8 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
 
       {summary.workspaceId ? (
         <>
-          <AcquisitionPlanManager
+          <SelfServiceImportManager
+            brandId={id}
             timezone={summary.timezone ?? "America/Mexico_City"}
             workspaceId={summary.workspaceId}
           />

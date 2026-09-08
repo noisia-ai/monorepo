@@ -159,7 +159,7 @@ export function BrandOsForm() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackCreateError"), t("fieldFallback"), t("invalidFallback")));
-      router.push(`/studio/brands/${json.data.id}`);
+      router.push(`/studio/brands/${json.data.id}/brand-os`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackCreateError"));

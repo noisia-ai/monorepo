@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, FileText, Gauge, Plus } from "@phosphor-icons/react/dist/ssr";
+import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
+import { ArrowRight, Gauge, Plus, Tag } from "@phosphor-icons/react/dist/ssr";
 import { getLocale, getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
@@ -49,9 +50,8 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
             <Link className="admin-button" href={`/studio/brands/${summary.brandId}/data?action=add-source`} prefetch={false}>
               <Plus aria-hidden size={15} weight="bold" />{t("brand.actions.addData")}
             </Link>
-            <Link className="admin-button admin-button--primary" href={`/studio/brands/${summary.brandId}/reports`} prefetch={false}>
-              <FileText aria-hidden size={15} />
-              {currentReport?.currentRevision ? t("brand.actions.updateReport") : t("brand.actions.runAnalysis")}
+            <Link className="admin-button admin-button--primary" href={`/studio/brands/${summary.brandId}/topics`} prefetch={false}>
+              <Tag aria-hidden size={15} />{t("topics.title")}
             </Link>
           </>
         )}
@@ -61,6 +61,7 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
         subtitle={summary.industry ?? t("brand.noIndustry")}
         title={summary.brandName}
       />
+      <BrandMonitoringJourney brandId={id} />
 
       <dl className="admin-summary-strip">
         <div>

@@ -21,3 +21,4 @@ export * from "./sentione-csv-ingest";
 
 export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";
+export * from "./signal-workspace-capabilities";

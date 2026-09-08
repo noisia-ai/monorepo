@@ -180,10 +180,14 @@ type DrawerState =
 
 export function AcquisitionPlanManager({
   timezone,
-  workspaceId
+  workspaceId,
+  importsOnly = false,
+  preparedSourceKeys
 }: {
   timezone: string;
   workspaceId: string;
+  importsOnly?: boolean;
+  preparedSourceKeys?: string[];
 }) {
   const t = useTranslations("AdminWorkspace.data.acquisition");
   const common = useTranslations("AdminWorkspace");
@@ -192,6 +196,7 @@ export function AcquisitionPlanManager({
   const [plan,setPlan] = useState<PlanPayload | null>(null);
   const [brief,setBrief] = useState<AcquisitionBriefContext | null>(null);
   const [connectors,setConnectors] = useState<Connector[]>([]);
+  const [showConfiguration,setShowConfiguration] = useState(!importsOnly);
   const [loading,setLoading] = useState(true);
   const [busy,setBusy] = useState<string | null>(null);
   const [error,setError] = useState<string | null>(null);
@@ -255,8 +260,8 @@ export function AcquisitionPlanManager({
 
   const slotViews = useMemo(() => buildSlotViews(plan?.slots ?? []),[plan?.slots]);
   const activeConnectors = useMemo(
-    () => connectors.filter((source) => source.status === "active"),
-    [connectors]
+    () => connectors.filter((source) => source.status === "active" && (!preparedSourceKeys || preparedSourceKeys.includes(source.source_key))),
+    [connectors, preparedSourceKeys]
   );
 
   const closeDrawer = () => {
@@ -614,7 +619,8 @@ export function AcquisitionPlanManager({
         <button aria-label={t("actions.refresh")} className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void loadState()} type="button">
           <ArrowsClockwise aria-hidden size={14}/>{t("actions.refresh")}
         </button>
-        <button className="admin-button" disabled={Boolean(busy)} onClick={()=>void reconcile()} type="button">
+        {importsOnly ? <button className="admin-button" onClick={() => setShowConfiguration((value) => !value)} type="button">{t("manualImport.configuration")}</button> : null}
+        {showConfiguration ? <><button className="admin-button" disabled={Boolean(busy)} onClick={()=>void reconcile()} type="button">
           {plan?.draft_plan?t("actions.sync"):plan?.current_plan?t("actions.newDraft"):t("actions.prepare")}
         </button>
         {plan?.draft_plan?<button className="admin-button" disabled={Boolean(busy)||!activeConnectors.length} onClick={()=>void openGeneration()} type="button">
@@ -622,16 +628,16 @@ export function AcquisitionPlanManager({
         </button>:null}
         {plan?.draft_plan?<button className="admin-button admin-button--primary" disabled={!plan.readiness.ready_to_promote||Boolean(busy)} onClick={()=>setDrawer({mode:"promote"})} type="button">
           <CheckCircle aria-hidden size={15}/>{t("actions.promote")}
-        </button>:null}
+        </button>:null}</> : null}
       </div>}
       className="admin-acquisition"
-      subtitle={t("subtitle")}
-      title={t("title")}
+      subtitle={t(importsOnly ? "manualImport.body" : "subtitle")}
+      title={t(importsOnly ? "manualImport.title" : "title")}
     >
       {loading?<AcquisitionSkeleton/>:null}
       {!loading&&error&&!plan?<AdminFeedbackState actions={<button className="admin-button" onClick={()=>void loadState()} type="button">{t("actions.retry")}</button>} body={error} icon={<WarningCircle size={22}/>} title={t("errors.title")} tone="danger"/>:null}
       {!loading&&plan?<>
-        <div className="admin-acquisition__overview">
+        {showConfiguration ? <><div className="admin-acquisition__overview">
           <div><span>{t("overview.current")}</span><strong>{plan.current_plan?t("overview.version",{version:plan.current_plan.version}):t("states.none")}</strong></div>
           <div><span>{t("overview.draft")}</span><strong>{plan.draft_plan?t("overview.revision",{version:plan.draft_plan.version,revision:plan.draft_plan.draft_revision}):t("states.none")}</strong></div>
           <div><span>{t("overview.slots")}</span><strong>{draftSlots||currentSlots}</strong></div>
@@ -662,13 +668,14 @@ export function AcquisitionPlanManager({
           </div>
         </div>:null}
 
+        </> : null}
         {error&&!drawer?<div className="admin-acquisition__operation-error" role="alert"><WarningCircle aria-hidden size={17}/><span>{error}</span></div>:null}
 
         {blockers.length?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("blockers.title",{count:blockers.length})}</strong><ul>{blockers.slice(0,6).map((blocker)=><li key={blocker}>{blockerLabel(t,blocker)}</li>)}</ul></div></div>:null}
-        {!plan.readiness.query_playbook_complete?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("queryPlaybook.incompleteTitle")}</strong><p>{t("queryPlaybook.incompleteBody")}</p></div></div>:null}
+        {showConfiguration&&!plan.readiness.query_playbook_complete?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("queryPlaybook.incompleteTitle")}</strong><p>{t("queryPlaybook.incompleteBody")}</p></div></div>:null}
 
-        {slotViews.length===0?<div className="admin-empty"><Target aria-hidden size={24}/><strong>{t("empty.title")}</strong><p>{t("empty.body")}</p><button className="admin-button admin-button--primary" onClick={()=>void reconcile()} type="button">{t("actions.prepare")}</button></div>:<div className="admin-acquisition__slots">
-          <div className="admin-acquisition__slots-head"><span>{t("columns.slot")}</span><span>{t("columns.query")}</span><span>{t("columns.state")}</span><span aria-label={t("columns.actions")}/></div>
+        {slotViews.length===0?<div className="admin-empty"><Target aria-hidden size={24}/><strong>{t("empty.title")}</strong><p>{t("empty.body")}</p><button className="admin-button admin-button--primary" onClick={()=>void reconcile()} type="button">{t("actions.prepare")}</button></div>:<div className={`admin-acquisition__slots${importsOnly && !showConfiguration ? " admin-acquisition__slots--import" : ""}`}>
+          <div className="admin-acquisition__slots-head"><span>{t(importsOnly && !showConfiguration ? "manualImport.conversations" : "columns.slot")}</span>{showConfiguration ? <><span>{t("columns.query")}</span><span>{t("columns.state")}</span></> : null}<span aria-label={t("columns.actions")}/></div>
           {slotViews.map((slot)=>{
             const working=slot.draft??slot.current;
             const draftQuery=activeQuery(slot.draft);
@@ -677,11 +684,12 @@ export function AcquisitionPlanManager({
             const isRetired=working?.desired_state==="retired";
             return <div className="admin-acquisition-slot" data-retired={isRetired||undefined} key={slot.slotKey}>
               <div className="admin-acquisition-slot__identity">{scopeIcon(slot.scope)}<div><strong>{slot.label}</strong><small>{t(`scopes.${slot.scope}`)}</small></div></div>
-              <div className="admin-acquisition-slot__query">{draftQuery??currentQuery?<><strong>{connector?.name??t("connectors.unavailable")}</strong><small>{t("query.summary",{version:(draftQuery??currentQuery)!.version,cadence:t(`cadence.${(draftQuery??currentQuery)!.cadence}`)})}</small>{(draftQuery??currentQuery)?.origin==="engine-generated"?<small>{(draftQuery??currentQuery)?.fallback?.used?t("query.generatedFallback"):t("query.generated")}</small>:null}</>:<><strong>{t("query.missing")}</strong><small>{t("query.missingHelp")}</small></>}</div>
+              {showConfiguration ? <><div className="admin-acquisition-slot__query">{draftQuery??currentQuery?<><strong>{connector?.name??t("connectors.unavailable")}</strong><small>{t("query.summary",{version:(draftQuery??currentQuery)!.version,cadence:t(`cadence.${(draftQuery??currentQuery)!.cadence}`)})}</small>{(draftQuery??currentQuery)?.origin==="engine-generated"?<small>{(draftQuery??currentQuery)?.fallback?.used?t("query.generatedFallback"):t("query.generated")}</small>:null}</>:<><strong>{t("query.missing")}</strong><small>{t("query.missingHelp")}</small></>}</div>
               <div className="admin-acquisition-slot__state"><AdminStatus state={isRetired?"not_available":draftQuery?.review.status==="approved"?"good":draftQuery?.review.status==="rejected"?"danger":draftQuery?"warning":currentQuery?"good":"warning"}>{isRetired?t("states.retired"):draftQuery?t(`review.states.${draftQuery.review.status}`):currentQuery?t("states.current"):t("states.pending")}</AdminStatus>{slot.draft&&slot.current?<small>{t("states.currentPreserved",{version:slot.current.plan_version})}</small>:null}</div>
+              </> : null}
               <div className="admin-acquisition-slot__actions">
-                {slot.draft&&draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openReview(slot,draftQuery)} type="button"><CheckCircle aria-hidden size={14}/>{t("actions.review")}</button>:null}
-                {slot.draft&&!draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openQuery(slot)} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.manualQuery")}</button>:null}
+                {showConfiguration&&slot.draft&&draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openReview(slot,draftQuery)} type="button"><CheckCircle aria-hidden size={14}/>{t("actions.review")}</button>:null}
+                {showConfiguration&&slot.draft&&!draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openQuery(slot)} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.manualQuery")}</button>:null}
                 {slot.current&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)||plan.state==="stale"||!activeConnectors.length} onClick={()=>{setImportResult(null);setDrawer({mode:"import",slot});}} type="button"><UploadSimple aria-hidden size={14}/>{t("actions.import")}</button>:null}
                 {slot.current&&activeConnectors[0]?<button aria-label={t("actions.history")} className="admin-button admin-button--plain" disabled={Boolean(busy)} onClick={()=>void openHistory(slot,currentQuery?.source_key??activeConnectors[0]!.source_key)} type="button"><ClockCounterClockwise aria-hidden size={15}/></button>:null}
               </div>
@@ -689,7 +697,7 @@ export function AcquisitionPlanManager({
           })}
         </div>}
 
-        {plan.reference_candidates.length?<div className="admin-acquisition__references"><header><div><h3>{t("references.title")}</h3><p>{t("references.subtitle")}</p></div></header>{plan.reference_candidates.map((reference)=><div className="admin-acquisition-reference" key={reference.identity_key}><div><strong>{reference.label}</strong><small>{t(`references.states.${reference.decision}`)}</small></div><AdminStatus state={reference.decision==="include"?"good":reference.decision==="exclude"?"not_available":"warning"}>{t(`references.states.${reference.decision}`)}</AdminStatus><button className="admin-button admin-button--compact" onClick={()=>setDrawer({mode:"reference",reference})} type="button">{t("actions.decide")}</button></div>)}</div>:null}
+        {showConfiguration&&plan.reference_candidates.length?<div className="admin-acquisition__references"><header><div><h3>{t("references.title")}</h3><p>{t("references.subtitle")}</p></div></header>{plan.reference_candidates.map((reference)=><div className="admin-acquisition-reference" key={reference.identity_key}><div><strong>{reference.label}</strong><small>{t(`references.states.${reference.decision}`)}</small></div><AdminStatus state={reference.decision==="include"?"good":reference.decision==="exclude"?"not_available":"warning"}>{t(`references.states.${reference.decision}`)}</AdminStatus><button className="admin-button admin-button--compact" onClick={()=>setDrawer({mode:"reference",reference})} type="button">{t("actions.decide")}</button></div>)}</div>:null}
       </>:null}
     </AdminResourceSection>
 
@@ -725,7 +733,7 @@ export function AcquisitionPlanManager({
 
     {drawer?.mode==="reference"?<WorkspaceDrawer ariaLabel={t("drawers.reference.title",{reference:drawer.reference.label})} closeLabel={common("actions.close")} eyebrow={t("references.title")} onClose={closeDrawer} title={drawer.reference.label}><form className="admin-drawer-form" onSubmit={(event)=>{event.preventDefault();void decideReference(drawer.reference,new FormData(event.currentTarget));}}><p className="admin-drawer-form__intro">{t("drawers.reference.body")}</p><label className="workspace-field"><span>{t("fields.referenceDecision")}</span><select className="workspace-control" defaultValue={drawer.reference.decision==="undecided"?"include":drawer.reference.decision} name="action"><option value="include">{t("references.actions.include")}</option><option value="exclude">{t("references.actions.exclude")}</option><option value="revert">{t("references.actions.revert")}</option></select></label><label className="workspace-field"><span>{t("fields.evidence")}</span><textarea className="workspace-control" maxLength={500} name="evidence" required rows={4}/></label>{error?<p className="workspace-form__error" role="alert">{error}</p>:null}<button className="admin-button admin-button--primary" disabled={busy==="reference"} type="submit">{busy==="reference"?t("actions.saving"):t("actions.saveDecision")}</button></form></WorkspaceDrawer>:null}
 
-    {drawer?.mode==="import"?<WorkspaceDrawer ariaLabel={t("drawers.import.title",{slot:drawer.slot.label})} closeLabel={common("actions.close")} eyebrow={`${t(`scopes.${drawer.slot.scope}`)} · ${drawer.slot.label}`} onClose={closeDrawer} title={t("drawers.import.title",{slot:drawer.slot.label})}><ImportForm busy={busy==="import"||busy==="query-draft"} connectors={activeConnectors} error={error} locale={locale} onRegisterQuery={()=>void registerExecutedQuery(drawer.slot)} onSubmit={(form)=>void importCsv(drawer.slot,form)} queries={(drawer.slot.current?.query_versions??[]).filter((query)=>query.status==="current"&&query.review.status==="approved")} readyForImport={plan?.readiness.ready_for_import??false} result={importResult} t={t} timezone={timezone}/></WorkspaceDrawer>:null}
+    {drawer?.mode==="import"?<WorkspaceDrawer ariaLabel={t("drawers.import.title",{slot:drawer.slot.label})} closeLabel={common("actions.close")} eyebrow={`${t(`scopes.${drawer.slot.scope}`)} · ${drawer.slot.label}`} onClose={closeDrawer} title={t("drawers.import.title",{slot:drawer.slot.label})}><ImportForm simple={importsOnly && !showConfiguration} busy={busy==="import"||busy==="query-draft"} connectors={activeConnectors} error={error} locale={locale} onRegisterQuery={()=>void registerExecutedQuery(drawer.slot)} onSubmit={(form)=>void importCsv(drawer.slot,form)} queries={(drawer.slot.current?.query_versions??[]).filter((query)=>query.status==="current"&&query.review.status==="approved")} readyForImport={plan?.readiness.ready_for_import??false} result={importResult} t={t} timezone={timezone}/></WorkspaceDrawer>:null}
 
     {drawer?.mode==="history"?<WorkspaceDrawer ariaLabel={t("drawers.history.title",{slot:drawer.slot.label})} closeLabel={common("actions.close")} eyebrow={`${t(`scopes.${drawer.slot.scope}`)} · ${drawer.slot.label}`} onClose={closeDrawer} title={t("drawers.history.title",{slot:drawer.slot.label})}>{busy==="history"&&!imports?<AcquisitionSkeleton compact/>:null}{error?<p className="workspace-form__error" role="alert">{error}</p>:null}{imports?.length===0?<div className="admin-empty"><FileCsv aria-hidden size={22}/><strong>{t("history.empty")}</strong></div>:null}{imports&&imports.length?<div className="admin-acquisition-history">{imports.map((item)=><div className="admin-acquisition-history__item" key={item.id}><div><strong>{item.source_file_name??t("history.unnamed")}</strong><small>{formatAdminDate(item.created_at,locale)} · {t(`importStates.${item.status}`)}</small>{item.acquisition?.query_evidence?<AdminStatus state={item.acquisition.query_evidence.class==="unavailable"?"warning":"good"}>{t(`queryEvidence.badges.${item.acquisition.query_evidence.class}`)}</AdminStatus>:null}{item.observed?<small>{observedSummary(item,locale,t)}</small>:null}{item.observed?.warnings.map((warning)=><small key={warning}>{t(`observed.warnings.${warning}`)}</small>)}</div><div>{item.final_counts?<span>{t("history.counts",{records:formatAdminNumber(item.final_counts.record_count,locale),included:formatAdminNumber(item.final_counts.included_count,locale),duplicates:formatAdminNumber(item.final_counts.duplicate_count,locale)})}</span>:<span>{t("history.progress",{count:formatAdminNumber(item.progress.records_processed,locale)})}</span>}{item.status==="failed"&&item.recovery?.recoverable_from_storage?<button className="admin-button admin-button--plain" disabled={Boolean(busy)} onClick={()=>void retryImport(item)} type="button">{t("actions.retryStorage")}</button>:null}</div></div>)}</div>:null}</WorkspaceDrawer>:null}
   </>;
@@ -794,34 +802,34 @@ function QueryReview({busy,detail,error,locale,onAdvancedEdit,onSubmit,t}:{
 }
 
 function QueryForm({busy,connectors,error,initial,onSubmit,t,timezone}:{
-  busy:boolean;connectors:Connector[];error:string|null;initial:QueryDetail|null;onSubmit:(form:FormData)=>void;
+  simple?:boolean;busy:boolean;connectors:Connector[];error:string|null;initial:QueryDetail|null;onSubmit:(form:FormData)=>void;
   t:ReturnType<typeof useTranslations<"AdminWorkspace.data.acquisition">>;timezone:string;
 }){
   return <form className="admin-drawer-form" onSubmit={(event)=>{event.preventDefault();onSubmit(new FormData(event.currentTarget));}}><p className="admin-drawer-form__intro">{t("drawers.query.body")}</p>{connectors.length?<><label className="workspace-field"><span>{t("fields.connector")}</span><select className="workspace-control" name="source_key" required>{connectors.map((source)=><option key={source.source_key} value={source.source_key}>{source.name}</option>)}</select><small>{t("fields.connectorHelp")}</small></label><label className="workspace-field"><span>{t("fields.queryText")}</span><textarea className="workspace-control admin-acquisition__query-text" defaultValue={initial?.query_text??""} maxLength={50000} name="query_text" required rows={7}/><small>{t("fields.queryTextHelp")}</small></label><div className="admin-acquisition__term-grid"><label className="workspace-field"><span>{t("fields.includeTerms")}</span><textarea className="workspace-control" defaultValue={initial?.structured_terms.include.join("\n")??""} name="include_terms" rows={3}/></label><label className="workspace-field"><span>{t("fields.excludeTerms")}</span><textarea className="workspace-control" defaultValue={initial?.structured_terms.exclude.join("\n")??""} name="exclude_terms" rows={3}/></label></div><label className="workspace-field"><span>{t("fields.aliases")}</span><textarea className="workspace-control" defaultValue={initial?.structured_terms.aliases.join("\n")??""} name="aliases" rows={2}/><small>{t("fields.termsHelp")}</small></label><label className="workspace-field"><span>{t("fields.cadence")}</span><select className="workspace-control" defaultValue={initial?.cadence??"manual"} name="cadence"><option value="manual">{t("cadence.manual")}</option><option value="ad-hoc">{t("cadence.ad-hoc")}</option><option value="weekly">{t("cadence.weekly")}</option><option value="monthly">{t("cadence.monthly")}</option></select></label><div className="admin-acquisition__period-grid"><label className="workspace-field"><span>{t("fields.periodStart")}</span><input className="workspace-control" defaultValue={initial?.default_period?.start??""} name="period_start" type="date"/></label><label className="workspace-field"><span>{t("fields.periodEnd")}</span><input className="workspace-control" defaultValue={initial?.default_period?.end??""} name="period_end" type="date"/></label></div><div className="admin-acquisition__timezone"><span>{t("fields.timezone")}</span><strong>{timezone}</strong></div></>:<div className="admin-empty"><Plug aria-hidden size={22}/><strong>{t("connectors.required")}</strong><p>{t("connectors.requiredHelp")}</p></div>}{error?<p className="workspace-form__error" role="alert">{error}</p>:null}<button className="admin-button admin-button--primary" disabled={busy||!connectors.length} type="submit">{busy?t("actions.saving"):t("actions.saveQuery")}</button></form>;
 }
 
-function ImportForm({busy,connectors,error,locale,onRegisterQuery,onSubmit,queries,readyForImport,result,t,timezone}:{
-  busy:boolean;connectors:Connector[];error:string|null;locale:string;onRegisterQuery:()=>void;
+function ImportForm({simple=false,busy,connectors,error,locale,onRegisterQuery,onSubmit,queries,readyForImport,result,t,timezone}:{
+  simple?:boolean;busy:boolean;connectors:Connector[];error:string|null;locale:string;onRegisterQuery:()=>void;
   onSubmit:(form:FormData)=>void;queries:QuerySummary[];readyForImport:boolean;result:ImportItem|null;
   t:ReturnType<typeof useTranslations<"AdminWorkspace.data.acquisition">>;timezone:string;
 }){
   const [evidenceClass,setEvidenceClass]=useState<"operator_attested"|"unavailable">(
-    queries.length?"operator_attested":"unavailable");
+    !simple && queries.length?"operator_attested":"unavailable");
   const selected=queries[0]??null;
   const defaults=selected?.default_period;
   return <form className="admin-drawer-form" onSubmit={(event)=>{event.preventDefault();onSubmit(new FormData(event.currentTarget));}}>
-    <p className="admin-drawer-form__intro">{t("drawers.import.bodyV2")}</p>
-    <label className="workspace-field"><span>{t("fields.connector")}</span><select className="workspace-control" defaultValue={selected?.source_key??connectors[0]?.source_key} name="source_key" required>{connectors.map((source)=><option key={source.source_key} value={source.source_key}>{source.name}</option>)}</select></label>
-    <fieldset className="workspace-field admin-acquisition__evidence"><legend>{t("queryEvidence.title")}</legend>
+    <p className="admin-drawer-form__intro">{t(simple ? "manualImport.intro" : "drawers.import.bodyV2")}</p>
+    <label className="workspace-field"><span>{t(simple ? "manualImport.source" : "fields.connector")}</span><select className="workspace-control" defaultValue={selected?.source_key??connectors[0]?.source_key} name="source_key" required>{connectors.map((source)=><option key={source.source_key} value={source.source_key}>{source.name}</option>)}</select></label>
+    <details open={!simple}><summary>{t(simple ? "manualImport.optionalQuery" : "queryEvidence.title")}</summary><fieldset className="workspace-field admin-acquisition__evidence"><legend className="sr-only">{t("queryEvidence.title")}</legend>
       <label className="semantic-resolution-flight__confirmation"><input checked={evidenceClass==="operator_attested"} disabled={!queries.length} name="query_evidence_class" onChange={()=>setEvidenceClass("operator_attested")} type="radio" value="operator_attested"/><span><strong>{t("queryEvidence.attested")}</strong><small>{t("queryEvidence.attestedHelp")}</small></span></label>
       {evidenceClass==="operator_attested"&&queries.length?<label className="workspace-field"><span>{t("queryEvidence.registeredQuery")}</span><select className="workspace-control" name="query_ref" required>{queries.map((query)=><option key={`${query.source_key}:${query.version}`} value={`${query.source_key}:${query.version}`}>{t("queryEvidence.queryVersion",{version:query.version})}</option>)}</select></label>:null}
       <button className="admin-button admin-button--compact" onClick={onRegisterQuery} type="button"><PencilSimple aria-hidden size={14}/>{t("queryEvidence.registerExecuted")}</button>
       <label className="semantic-resolution-flight__confirmation"><input checked={evidenceClass==="unavailable"} name="query_evidence_class" onChange={()=>setEvidenceClass("unavailable")} type="radio" value="unavailable"/><span><strong>{t("queryEvidence.unavailable")}</strong><small>{t("queryEvidence.unavailableHelp")}</small></span></label>
-      {evidenceClass==="unavailable"?<label className="workspace-field"><span>{t("queryEvidence.reason")}</span><select className="workspace-control" defaultValue="historical_export" name="unavailable_reason" required><option value="historical_export">{t("queryEvidence.reasons.historical_export")}</option><option value="provider_did_not_embed_query">{t("queryEvidence.reasons.provider_did_not_embed_query")}</option><option value="source_context_unavailable">{t("queryEvidence.reasons.source_context_unavailable")}</option><option value="other">{t("queryEvidence.reasons.other")}</option></select></label>:null}
-      <label className="semantic-resolution-flight__confirmation"><input name="operator_confirmed" required type="checkbox"/><span>{evidenceClass==="unavailable"?t("queryEvidence.confirmUnavailable"):t("queryEvidence.confirmAttested")}</span></label>
-    </fieldset>
+      {evidenceClass==="unavailable"?<label className="workspace-field"><span>{t("queryEvidence.reason")}</span><select className="workspace-control" defaultValue={simple ? "source_context_unavailable" : "provider_did_not_embed_query"} name="unavailable_reason" required><option value="historical_export">{t("queryEvidence.reasons.historical_export")}</option><option value="provider_did_not_embed_query">{t("queryEvidence.reasons.provider_did_not_embed_query")}</option><option value="source_context_unavailable">{t("queryEvidence.reasons.source_context_unavailable")}</option><option value="other">{t("queryEvidence.reasons.other")}</option></select></label>:null}
+    </fieldset></details>
+    <label className="semantic-resolution-flight__confirmation"><input name="operator_confirmed" required type="checkbox"/><span>{evidenceClass==="unavailable"?t(simple ? "manualImport.confirmUnavailable" : "queryEvidence.confirmUnavailable"):t("queryEvidence.confirmAttested")}</span></label>
     {!readyForImport?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("importReadiness.blockedTitle")}</strong><p>{t("importReadiness.blockedBody")}</p></div></div>:null}
-    <label className="workspace-field"><span>{t("fields.file")}</span><input accept=".csv,text/csv" className="workspace-control workspace-control--file" disabled={!readyForImport} name="file" required type="file"/><small>{t("fields.fileHelp")}</small></label>
+    <label className="workspace-field"><span>{t("fields.file")}</span><input accept=".csv,text/csv" className="workspace-control workspace-control--file" disabled={!readyForImport} name="file" required type="file"/><small>{t(simple ? "manualImport.fileHelp" : "fields.fileHelp")}</small></label>
     <div className="admin-acquisition__period-grid"><label className="workspace-field"><span>{t("fields.captureStart")}</span><input className="workspace-control" defaultValue={defaults?.start??""} name="period_start" required type="date"/></label><label className="workspace-field"><span>{t("fields.captureEnd")}</span><input className="workspace-control" defaultValue={defaults?.end??""} name="period_end" required type="date"/></label></div>
     <div className="admin-acquisition__timezone"><span>{t("fields.timezone")}</span><strong>{timezone}</strong></div>
     {result?<div className="admin-acquisition-import" aria-live="polite"><div><AdminStatus state={result.status==="completed"?"good":result.status==="failed"?"danger":"warning"}>{t(`importStates.${result.status}`)}</AdminStatus><span>{result.progress.percent==null?t("importProgress.records",{count:formatAdminNumber(result.progress.records_processed,locale)}):t("importProgress.percent",{percent:result.progress.percent,count:formatAdminNumber(result.progress.records_processed,locale)})}</span></div>{result.final_counts?<dl><div><dt>{t("importCounts.records")}</dt><dd>{formatAdminNumber(result.final_counts.record_count,locale)}</dd></div><div><dt>{t("importCounts.included")}</dt><dd>{formatAdminNumber(result.final_counts.included_count,locale)}</dd></div><div><dt>{t("importCounts.duplicates")}</dt><dd>{formatAdminNumber(result.final_counts.duplicate_count,locale)}</dd></div></dl>:null}{result.observed?<small>{observedSummary(result,locale,t)}</small>:null}</div>:null}

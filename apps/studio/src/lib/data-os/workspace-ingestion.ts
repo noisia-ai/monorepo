@@ -326,6 +326,7 @@ export async function createWorkspaceConnectorSourceProductV1(args: {
   queryable: SignalBrandPolicyQueryable;
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
+  access?: "manual-import";
   idempotencyKey: string;
   input: {
     contract_version: "signal-data-source-connector-v1";
@@ -342,7 +343,7 @@ export async function createWorkspaceConnectorSourceProductV1(args: {
     connection_method: string; status: "active"; readiness: "governance_pending";
   }>({
     queryable: args.queryable, workspace: args.workspace, actor: args.actor,
-    action: "create-source", idempotencyKey: args.idempotencyKey, input: args.input
+    action: "create-source", access: args.access, idempotencyKey: args.idempotencyKey, input: args.input
   });
   if (operation.replay !== null) return operation.replay;
   const sourceId = randomUUID();

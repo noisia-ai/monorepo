@@ -16,11 +16,14 @@ import {
   type AdoptSignalTopicCandidateInputV1,
   type CreateSignalTopicInputV1,
   type SignalTopicDefinitionV1,
+  type SignalTopicReadinessV1,
+  type SignalTopicScopeV1,
   type UpdateSignalTopicInputV1
 } from "@noisia/query-engine";
 import { insertSignalTaxonomyDraftCoreV1 } from "./signal-taxonomy-profile";
 import { loadSignalSemanticResolutionGovernedContextV1 } from "./signal-semantic-resolution";
 import { loadSignalTopicEvaluationV2CandidateDetail } from "./signal-topic-evaluation-v2";
+import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 
 export class SignalTopicCatalogError extends Error {
   constructor(public readonly code: string, public readonly status = 409) {
@@ -80,6 +83,7 @@ export type SignalTopicCatalogStoreV1 = {
   search_execution_id: string | null;
   search_is_current: boolean;
   embedding_preflight: SignalTopicEmbeddingPreflightStoreV1;
+  readiness: SignalTopicReadinessV1;
 };
 
 export type SignalTopicEmbeddingPreflightStoreV1 = {
@@ -420,6 +424,8 @@ export async function loadLegacySignalTopicDiscoveryCandidatesStoreV1(args: {
         inclusion: stringArray(metadata.examples),
         exclusion: stringArray(metadata.exclusions),
         evidence_count: Number(row.evidence_count),
+        origin: "historical_taxonomy" as const,
+        scope: readCandidateScope(metadata.scope),
         review_state: "historical"
       };
     })
@@ -430,7 +436,10 @@ export async function loadSignalTopicCatalogStoreV1(args: {
   queryable: Queryable;
   workspace_id: string;
 }): Promise<SignalTopicCatalogStoreV1> {
-  const profile = await loadLatestProfile(args.queryable, args.workspace_id);
+  const [profile, imports] = await Promise.all([
+    loadLatestProfile(args.queryable, args.workspace_id),
+    loadTopicImportReadiness(args.queryable, args.workspace_id)
+  ]);
   const active = (await args.queryable.query<{ id: string }>(`
     SELECT id::text FROM signal_taxonomy_profiles
     WHERE workspace_id=$1::uuid AND kind='topic' AND status='active'
@@ -446,6 +455,7 @@ export async function loadSignalTopicCatalogStoreV1(args: {
     execution: null,
     search_execution_id: null,
     search_is_current: false,
+    readiness: topicReadiness(imports, 0, null),
     embedding_preflight: { status: "ready", embedding_model: null, missing_inputs: 0,
       estimated_micro_usd: 0, pricing_version: null, requires_paid_call: false, error_code: null }
   };
@@ -454,8 +464,12 @@ export async function loadSignalTopicCatalogStoreV1(args: {
     loadLatestExecution(args.queryable, profile.id),
     loadLatestCounts(args.queryable, profile.id),
     loadLatestReadySearch(args.queryable, args.workspace_id, profile.id),
-    loadSignalTopicEmbeddingPreflightStoreV1({ queryable: args.queryable,
-      workspace_id: args.workspace_id, taxonomy_profile_id: profile.id })
+    imports.canonical_mentions === 0 || !imports.operational_corpus_id
+      ? Promise.resolve<SignalTopicEmbeddingPreflightStoreV1>({ status: "blocked", embedding_model: null,
+          missing_inputs: 0, estimated_micro_usd: 0, pricing_version: null, requires_paid_call: false,
+          error_code: "topic_mentions_required" })
+      : loadSignalTopicEmbeddingPreflightStoreV1({ queryable: args.queryable,
+          workspace_id: args.workspace_id, taxonomy_profile_id: profile.id })
   ]);
   return {
     contract_version: SIGNAL_TOPIC_CATALOG_CONTRACT_V1,
@@ -466,6 +480,8 @@ export async function loadSignalTopicCatalogStoreV1(args: {
     search_execution_id: search.id,
     search_is_current: search.is_current,
     embedding_preflight: embeddingPreflight,
+    readiness: topicReadiness(imports, terms.filter((term) => term.status !== "archived").length,
+      embeddingPreflight.error_code),
     topics: terms.map((term) => ({
       ...readDefinition(term),
       taxonomy_term_id: term.id,
@@ -473,6 +489,42 @@ export async function loadSignalTopicCatalogStoreV1(args: {
       counts: counts.get(term.term_key) ?? { relevant: 0, doubt: 0, excluded: 0 }
     }))
   };
+}
+
+async function loadTopicImportReadiness(queryable: Queryable, workspaceId: string) {
+  const corpora = (await queryable.query<{ id: string; canonical_mentions: number; imported_mentions: number }>(`
+    SELECT membership.study_corpus_id::text id,
+      (SELECT count(*)::int FROM mentions mention
+        WHERE mention.study_corpus_id=membership.study_corpus_id) imported_mentions,
+      (SELECT count(*)::int FROM mentions mention
+        WHERE mention.study_corpus_id=membership.study_corpus_id
+          AND mention.canonical_mention_id=mention.id) canonical_mentions
+    FROM signal_workspace_corpora membership
+    WHERE membership.workspace_id=$1::uuid AND membership.role='operational'
+      AND membership.valid_to IS NULL
+    ORDER BY membership.study_corpus_id
+  `, [workspaceId])).rows;
+  return { operational_corpus_id: corpora.length === 1 ? corpora[0]!.id : null,
+    canonical_mentions: corpora.reduce((sum, row) => sum + Number(row.canonical_mentions), 0),
+    imported_mentions: corpora.reduce((sum, row) => sum + Number(row.imported_mentions), 0),
+    ambiguous: corpora.length > 1 };
+}
+
+function topicReadiness(imports: Awaited<ReturnType<typeof loadTopicImportReadiness>>,
+  topicCount: number, preparationError: string | null): SignalTopicReadinessV1 {
+  const counts = { operational_corpus_id: imports.operational_corpus_id,
+    canonical_mentions: imports.canonical_mentions };
+  if (imports.ambiguous) return { ...counts, state: "needs_preparation",
+    next_action: "prepare_mentions", reason_code: "topic_operational_corpus_ambiguous" };
+  if (imports.imported_mentions === 0) return { ...counts, state: "awaiting_import",
+    next_action: "import_mentions", reason_code: null };
+  if (imports.canonical_mentions === 0) return { ...counts, state: "needs_preparation",
+    next_action: "prepare_mentions", reason_code: "topic_canonicalization_required" };
+  if (topicCount === 0) return { ...counts, state: "awaiting_topics",
+    next_action: "define_topics", reason_code: null };
+  if (preparationError) return { ...counts, state: "needs_preparation",
+    next_action: "prepare_mentions", reason_code: preparationError };
+  return { ...counts, state: "ready", next_action: "search_topics", reason_code: null };
 }
 
 export async function createSignalTopicStoreV1(args: {
@@ -515,6 +567,7 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
   idempotency_key: string;
   input: AdoptSignalTopicCandidateInputV1;
 }) {
+  await assertActor(args.pool, args.workspace_id, args.actor_user_id, "can_adopt_topics");
   const existing = await findTopicBySource(args.pool, args.workspace_id, args.input.run_key, args.input.candidate_key);
   if (existing) return { ...(await loadSignalTopicCatalogStoreV1({ queryable: args.pool,
     workspace_id: args.workspace_id })), term_key: existing, reused: true };
@@ -528,13 +581,13 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
       term_key: termKey,
       label: candidate.title,
       definition: candidate.description,
-      scope: args.input.scope,
+      scope: args.input.scope ?? candidate.scope ?? requireCandidateScope(),
       inclusion: stringArray(candidate.inclusion),
       exclusion: stringArray(candidate.exclusion),
       positive_examples: candidate.positive_examples,
       negative_examples: candidate.negative_examples,
       lifecycle: "draft" as const,
-      origin: "discovered" as const,
+      origin: candidate.origin,
       source: {
         run_key: args.input.run_key,
         candidate_key: args.input.candidate_key,
@@ -586,7 +639,9 @@ async function loadAdoptionCandidate(args: {
       positive_examples: stringArray(metadata.examples),
       negative_examples: [] as string[],
       candidate_digest: sha256(stableJson({ profile_id: legacyProfileId,
-        context_hash: row.context_hash, candidate_key: args.input.candidate_key, metadata }))
+        context_hash: row.context_hash, candidate_key: args.input.candidate_key, metadata })),
+      origin: "historical_taxonomy" as const,
+      scope: readCandidateScope(metadata.scope)
     };
   }
   const detail = await loadSignalTopicEvaluationV2CandidateDetail({
@@ -603,8 +658,18 @@ async function loadAdoptionCandidate(args: {
     exclusion: stringArray(detail.candidate.exclusion),
     positive_examples: [] as string[],
     negative_examples: [] as string[],
-    candidate_digest: detail.candidate.candidate_digest
+    candidate_digest: detail.candidate.candidate_digest,
+    origin: "evidence_candidate" as const,
+    scope: readCandidateScope(objectValue(detail.candidate.base_model_payload).scope)
   };
+}
+
+function readCandidateScope(value: unknown): SignalTopicScopeV1 | null {
+  return value === "primary_brand" || value === "competitor" || value === "category" ? value : null;
+}
+
+function requireCandidateScope(): never {
+  throw new SignalTopicCatalogError("topic_candidate_scope_required", 422);
 }
 
 export async function updateSignalTopicStoreV1(args: {
@@ -684,7 +749,7 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
-    await assertActor(client, args.workspace_id, args.actor_user_id);
+    await assertActor(client, args.workspace_id, args.actor_user_id, "can_execute_topics");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
       [`signal-taxonomy:${args.workspace_id}:topic`]);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`topic-execution:${args.workspace_id}`]);
@@ -852,7 +917,7 @@ export async function correctSignalTopicMembershipStoreV1(args: {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
-    await assertActor(client, args.workspace_id, args.actor_user_id);
+    await assertActor(client, args.workspace_id, args.actor_user_id, "can_execute_topics");
     const requestDigest = sha256(stableJson({
       execution_id: args.execution_id,
       term_key: args.term_key,
@@ -1042,6 +1107,15 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
       SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
         WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready') available
     `, [prior.id])).rows[0]?.available) : false;
+    const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client,
+      workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
+    if (!capabilities.can_execute_topics && (priorHadReadySearch || (await client.query<{ active: boolean }>(`
+      SELECT EXISTS(SELECT 1 FROM signal_taxonomy_profiles
+        WHERE workspace_id=$1::uuid AND kind='topic' AND status='active'
+          AND metadata->>'contract_version'='signal-topic-catalog-v1') active
+    `, [args.workspace_id])).rows[0]?.active)) {
+      throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
+    }
     const outcome = mutate({ definitions, now: new Date().toISOString() });
     const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client,
       workspace_id: args.workspace_id });
@@ -1340,11 +1414,11 @@ async function findTopicBySource(queryable: Queryable, workspaceId: string, runK
   `, [workspaceId, runKey, candidateKey])).rows[0]?.term_key ?? null;
 }
 
-async function assertActor(queryable: Queryable, workspaceId: string, actorUserId: string) {
-  const valid = (await queryable.query<{ valid: boolean }>(`
-    SELECT signal_data_governance_actor_is_valid($1::uuid,$2::uuid) valid
-  `, [workspaceId, actorUserId])).rows[0]?.valid;
-  if (!valid) throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
+async function assertActor(queryable: Queryable, workspaceId: string, actorUserId: string,
+  capability: "can_edit_topics" | "can_execute_topics" | "can_adopt_topics" = "can_edit_topics") {
+  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable,
+    workspace_id: workspaceId, actor_user_id: actorUserId });
+  if (!capabilities[capability]) throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
 }
 
 function readDefinition(term: CatalogTermRow): SignalTopicDefinitionV1 {

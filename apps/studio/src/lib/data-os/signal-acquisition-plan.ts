@@ -1,3 +1,4 @@
+import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash } from "node:crypto";
 
 import {
@@ -72,8 +73,10 @@ export class SignalAcquisitionPlanError extends Error {
 
 export async function loadSignalAcquisitionPlanV1(args: {
   queryable: SignalBrandPolicyQueryable; workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser;
+  access?: "manual-import";
 }) {
-  assertAuthority(args.workspace, args.actor);
+  if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1(args);
+  else assertAuthority(args.workspace, args.actor);
   const plans = await args.queryable.query<PlanRow>(`
     SELECT id::text,plan_version,status,brand_os_profile_id::text,brand_os_profile_version,
       brand_os_digest,identity_catalog_digest,acquisition_brief_contract_version,
@@ -180,9 +183,11 @@ export async function loadSignalAcquisitionPlanV1(args: {
 
 export async function reconcileSignalAcquisitionPlanDraftV1(args: {
   queryable: SignalBrandPolicyQueryable; workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser;
+  access?: "manual-import";
   idempotencyKey: string; expectedCurrentVersion: number | null; expectedBrandOsRevision: number | null;
 }) {
-  assertAuthority(args.workspace,args.actor);
+  if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1(args);
+  else assertAuthority(args.workspace,args.actor);
   const operation = await beginSignalProductOperationV1<Awaited<ReturnType<typeof loadSignalAcquisitionPlanV1>>>({
     ...args, action: "reconcile-acquisition-plan", input: {
       expected_current_version: args.expectedCurrentVersion,
@@ -501,6 +506,7 @@ async function createSignalAcquisitionQueryVersionInternalV1(args: {
 
 export async function promoteSignalAcquisitionPlanV1(args: {
   queryable: SignalBrandPolicyQueryable; workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser;
+  access?: "manual-import";
   idempotencyKey: string; expectedDraftVersion: number; expectedDraftRevision: number;
   expectedDraftDigest: string; effectiveFrom: string; evidence: string;
 }) {
