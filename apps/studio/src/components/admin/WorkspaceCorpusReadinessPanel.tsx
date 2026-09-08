@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { ArrowClockwise } from "@phosphor-icons/react";
 import type { SignalWorkspaceCorpusReadinessV1 } from "@noisia/db";
 import { AdminResourceSection, AdminStatus, formatAdminNumber } from "./AdminWorkspacePrimitives";
+import { WorkspaceCorpusPreparationPanel } from "./WorkspaceCorpusPreparationPanel";
 
 export function latestCorpusReadinessSnapshot(
   current: SignalWorkspaceCorpusReadinessV1 | null,
@@ -83,6 +84,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
         <div className="admin-section__body admin-drawer-form">
         <p className="admin-drawer-form__hint">{t(data.state === "awaiting_import" ? "empty" : "countsHelp")}</p>
         {data.reconciliation_errors.length ? <p className="workspace-form__error" role="alert">{t("reconciliation")}</p> : null}
+        <WorkspaceCorpusPreparationPanel workspaceId={workspaceId} hasReceivedFiles={data.accepted_files > 0} receiptObservedAt={data.observed_at} />
         <details>
           <summary>{t("details.title")}</summary>
           <dl className="admin-summary-strip admin-summary-strip--compact">

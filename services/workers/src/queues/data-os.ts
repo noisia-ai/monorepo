@@ -31,6 +31,7 @@ import { signalTopicEvaluationJob } from "../workers/signal-topic-evaluation";
 import { signalTopicClassificationJob } from "../workers/signal-topic-classification";
 import { SIGNAL_TOPIC_RULE_SUGGESTION_JOB_NAME, signalTopicRuleSuggestionJob } from "../workers/signal-topic-rule-suggestion";
 import { redisConnection } from "./query-engine";
+import { SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME, signalWorkspaceCorpusPreparationJobV1 } from "../workers/signal-workspace-corpus-preparation";
 
 export { redisConnection };
 
@@ -47,6 +48,7 @@ export function startDataOsWorker() {
     dataOsQueueName,
     async (job) => {
       assertSignalTaxonomyJobNotRetiredV1(job.name);
+      if (job.name === SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME) return signalWorkspaceCorpusPreparationJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

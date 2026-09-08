@@ -2719,6 +2719,68 @@
       }
     },
     "data": {
+      "corpusPreparation": {
+        "title": "Preparación del texto",
+        "loading": "Consultando preparación…",
+        "states": {
+          "awaiting_import": "Sin archivos recibidos",
+          "pending": "Texto pendiente de preparación",
+          "queued": "Preparación en cola",
+          "running": "Preparando texto",
+          "completed": "Texto preparado",
+          "failed": "Preparación interrumpida",
+          "outdated": "Hay nuevos datos pendientes"
+        },
+        "body": {
+          "awaiting_import": "Importa conversaciones para preparar su texto.",
+          "pending": "Prepara el texto completo de las menciones recibidas para su análisis posterior.",
+          "queued": "El trabajo está guardado. Puedes salir de esta página y volver a consultar su avance.",
+          "running": "La preparación continúa en segundo plano. Puedes salir de esta página sin interrumpirla.",
+          "completed": "El texto está preparado. Aún no se ha analizado: faltan clasificación, descubrimiento de Topics e interpretación.",
+          "failed": "Se conservan los avances guardados de esta preparación.",
+          "outdated": "La preparación anterior sigue disponible. Las nuevas cargas todavía necesitan incorporarse.",
+          "lastKnown": "Estos son los últimos avances recibidos. Consulta el estado para verificar si la preparación sigue vigente.",
+          "blocked": "La preparación requiere resolver su causa antes de continuar; reintentar los mismos datos no la corregirá."
+        },
+        "actions": {
+          "prepare": "Preparar texto",
+          "update": "Actualizar preparación",
+          "resume": "Reanudar preparación",
+          "confirm": "Reintentar solicitud",
+          "requesting": "Confirmando solicitud…",
+          "refresh": "Consultar estado",
+          "restart": "Preparar de nuevo"
+        },
+        "phases": {
+          "queued": "En cola",
+          "snapshotting": "Reuniendo las menciones de esta corrida",
+          "chunking": "Preparando el texto completo",
+          "complete": "Texto preparado"
+        },
+        "progressLabel": "Progreso de preparación del texto",
+        "progress": "{processed} de {total} menciones recorridas",
+        "counting": "Calculando el total de esta corrida…",
+        "lastCompleted": "Última preparación completa: {prepared} menciones preparadas · {excluded} excluidas.",
+        "newInputs": "Llegaron nuevas menciones. No están incluidas en el avance de esta corrida.",
+        "preserved": "Avance guardado: {count} menciones recorridas.",
+        "cost": "Noisia prepara el texto sin llamadas ni cargos de modelos de IA.",
+        "readOnly": "Puedes consultar el avance. Tu acceso no permite iniciar la preparación.",
+        "errors": {
+          "load": "No pudimos consultar la preparación. Reintenta para comprobar su estado.",
+          "refresh": "No pudimos actualizar la preparación. Se conserva el último estado disponible.",
+          "request": "No pudimos confirmar la solicitud. Consulta el estado o reintenta; se conservará la misma solicitud.",
+          "forbidden": "Tu acceso no permite consultar o iniciar esta preparación."
+        },
+        "lastKnown": "Último estado recibido",
+        "unprepared": "Sin preparar: {rights} por permisos de uso · {missing} sin texto completo disponible.",
+        "failures": {
+          "permissions": "La preparación se detuvo porque cambió el permiso de acceso a esta marca.",
+          "integrity": "No pudimos verificar el texto completo o el avance guardado. Revisa la integridad de los archivos antes de iniciar otra preparación.",
+          "import": "Primero debe completarse una importación de conversaciones para esta marca.",
+          "conflict": "La solicitud ya corresponde a otra preparación. Consulta el estado antes de intentarlo de nuevo."
+        },
+        "inclusionPending": "{count} con inclusión pendiente."
+      },
       "corpusReadiness": {
         "title": "Datos recibidos",
         "body": "Archivos, filas y menciones únicas de esta marca.",

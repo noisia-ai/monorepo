@@ -36,7 +36,8 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html, /id="corpus-readiness"/u);
     assert.match(html, /<details><summary>/u);
     assert.doesNotMatch(html, /<details[^>]+open|<form|<progress|<input|BERTopic|Claude|workspace-receipt-test|2026-09-08T/u);
-    assert.equal((html.match(/<button\b/gu) ?? []).length, 1, "refresh is the only action");
+    assert.ok(!html.includes(`>${messages.AdminWorkspace.data.corpusPreparation.actions.prepare}</button>`),
+      "the separate preparation reader has not confirmed an executable action yet");
     assert.ok(html.includes(copy.refresh));
     assert.ok(html.includes(copy.details.eligibilityHelp));
     assert.ok(html.includes(`<dt>${copy.details.semanticPending}</dt><dd>2</dd>`));
@@ -54,7 +55,7 @@ for (const locale of ["es-MX", "en-US"]) {
     });
     assert.ok(empty.includes(copy.empty));
     assert.ok(empty.includes(`<dt>${copy.counts.files}</dt><dd>0</dd>`));
-    assert.doesNotMatch(empty, /aria-busy="true"/u);
+    assert.match(empty, /^<div id="corpus-readiness" aria-busy="false"/u);
   });
 
   test(`${locale}: reconciliation warning preserves the receipt without exposing raw internal errors`, () => {

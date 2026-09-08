@@ -2719,6 +2719,68 @@
       }
     },
     "data": {
+      "corpusPreparation": {
+        "title": "Text preparation",
+        "loading": "Loading preparation status…",
+        "states": {
+          "awaiting_import": "No files received",
+          "pending": "Text preparation pending",
+          "queued": "Preparation queued",
+          "running": "Preparing text",
+          "completed": "Text prepared",
+          "failed": "Preparation interrupted",
+          "outdated": "New data is pending"
+        },
+        "body": {
+          "awaiting_import": "Import conversations to prepare their text.",
+          "pending": "Prepare the full text of received mentions for later analysis.",
+          "queued": "The job is saved. You can leave this page and return to check its progress.",
+          "running": "Preparation continues in the background. You can leave this page without interrupting it.",
+          "completed": "Text is prepared. It has not been analyzed yet: classification, Topic discovery and interpretation are still pending.",
+          "failed": "Saved progress from this preparation is preserved.",
+          "outdated": "The previous preparation is still available. New uploads still need to be incorporated.",
+          "lastKnown": "These are the last received results. Check status to verify whether preparation is still current.",
+          "blocked": "The cause must be resolved before preparation can continue; retrying the same data will not fix it."
+        },
+        "actions": {
+          "prepare": "Prepare text",
+          "update": "Update preparation",
+          "resume": "Resume preparation",
+          "confirm": "Retry request",
+          "requesting": "Confirming request…",
+          "refresh": "Check status",
+          "restart": "Prepare again"
+        },
+        "phases": {
+          "queued": "Queued",
+          "snapshotting": "Gathering mentions for this run",
+          "chunking": "Preparing full text",
+          "complete": "Text prepared"
+        },
+        "progressLabel": "Text preparation progress",
+        "progress": "{processed} of {total} mentions reviewed",
+        "counting": "Calculating this run’s total…",
+        "lastCompleted": "Last complete preparation: {prepared} mentions prepared · {excluded} excluded.",
+        "newInputs": "New mentions have arrived. They are not included in this run’s progress.",
+        "preserved": "Saved progress: {count} mentions reviewed.",
+        "cost": "Noisia prepares the text without AI model calls or charges.",
+        "readOnly": "You can view progress. Your access does not allow starting preparation.",
+        "errors": {
+          "load": "We could not load preparation. Retry to check its status.",
+          "refresh": "We could not refresh preparation. The last available status is preserved.",
+          "request": "We could not confirm the request. Check status or retry; the same request will be preserved.",
+          "forbidden": "Your access does not allow viewing or starting this preparation."
+        },
+        "lastKnown": "Last received status",
+        "unprepared": "Not prepared: {rights} due to usage permissions · {missing} without available full text.",
+        "failures": {
+          "permissions": "Preparation stopped because access permission for this brand changed.",
+          "integrity": "We could not verify the full text or saved progress. Check file integrity before starting another preparation.",
+          "import": "A conversation import for this brand must finish first.",
+          "conflict": "This request already belongs to another preparation. Check status before trying again."
+        },
+        "inclusionPending": "{count} with pending inclusion."
+      },
       "corpusReadiness": {
         "title": "Received data",
         "body": "Files, rows and unique mentions for this brand.",
