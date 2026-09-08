@@ -10,14 +10,20 @@ const headers = { "Cache-Control": "private, no-store" };
 
 export async function GET(_request: Request, context: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await context.params;
+  const accessStarted = performance.now();
   const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
+  const corpusStarted = performance.now();
   try {
     const result = await loadWorkspaceCorpusReadinessForActorV1({
       workspaceId: loaded.workspace.id,
       actorUserId: loaded.session.appUser.id
     });
-    return Response.json(result, { headers });
+    return Response.json(result, { headers: {
+      ...headers,
+      // Aggregate timings only, after authorization; never include actor or source data.
+      "Server-Timing": `access;dur=${(corpusStarted - accessStarted).toFixed(1)}, corpus;dur=${(performance.now() - corpusStarted).toFixed(1)}`
+    } });
   } catch (error) {
     if (error instanceof WorkspaceCorpusReadinessError) {
       return Response.json({ error: error.code }, { status: error.status, headers });

@@ -71,8 +71,8 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
         <ArrowClockwise aria-hidden size={15}/>{t(error ? "retry" : "refresh")}
       </button>
     </>}>
-      {loading && !data ? <p role="status">{t("loading")}</p> : null}
-      {error ? <p className="workspace-form__error" role="alert">{t(error === "forbidden" ? "errors.forbidden" : data ? "errors.refresh" : "errors.load")}</p> : null}
+      {loading && !data ? <p className="admin-section__body" role="status">{t("loading")}</p> : null}
+      {error ? <div className="admin-section__body"><p className="workspace-form__error" role="alert">{t(error === "forbidden" ? "errors.forbidden" : data ? "errors.refresh" : "errors.load")}</p></div> : null}
       {data ? <>
         <dl className="admin-summary-strip admin-summary-strip--compact">
           <div><dt>{t("counts.files")}</dt><dd>{number(data.accepted_files)}</dd></div>
@@ -80,6 +80,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
           <div><dt>{t("counts.unique")}</dt><dd>{number(data.projection.linked_roots)}</dd></div>
           <div><dt>{t("counts.text")}</dt><dd>{number(data.projection.roots_with_text)}</dd></div>
         </dl>
+        <div className="admin-section__body admin-drawer-form">
         <p className="admin-drawer-form__hint">{t(data.state === "awaiting_import" ? "empty" : "countsHelp")}</p>
         {data.reconciliation_errors.length ? <p className="workspace-form__error" role="alert">{t("reconciliation")}</p> : null}
         <details>
@@ -98,6 +99,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
             <div><dt>{t("details.semanticPending")}</dt><dd>{number(data.eligibility.semantic_pending_roots)}</dd></div>
           </dl>
         </details>
+        </div>
       </> : null}
     </AdminResourceSection>
   </div>;
