@@ -12,6 +12,7 @@ import {
 import { pool } from "../db/client";
 import { advanceCorpusRevision } from "./corpus-revision";
 import { reconcileListeningDataOs } from "./listening-data-os";
+import { completePreviouslyAcceptedWorkspaceImport } from "./workspace-import-duplicate";
 
 type IngestMentionsCsvJobData = {
   workspaceId?: string;
@@ -51,6 +52,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
     processed_bytes: string | number;
     worker_job_id: string | null;
     supersedes_import_batch_id: string | null;
+    storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
   }>(
     `
@@ -58,7 +60,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
         status, record_count, included_count, excluded_count, duplicate_count,
         ingestion_phase,storage_bucket,storage_object_key,expected_file_size_bytes,
         storage_part_count,storage_part_size_bytes,processed_bytes,worker_job_id,
-        supersedes_import_batch_id,storage_content_hash
+        supersedes_import_batch_id,storage_source_import_batch_id,storage_content_hash
       FROM import_batches
       WHERE id = $1::uuid
       LIMIT 1
@@ -230,6 +232,7 @@ async function ingestWorkspaceAsyncImportJob(
     storage_part_count: number | null;storage_part_size_bytes: string | number | null;
     worker_job_id: string | null;
     supersedes_import_batch_id: string | null;
+    storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
   },
   ingestion: { workspaceId: string;dataSourceId: string;corpusId: string | null }
@@ -255,25 +258,35 @@ async function ingestWorkspaceAsyncImportJob(
   let parserMetrics: Record<string,unknown> | null=null;
   const processingStartedAt=performance.now();
   try {
-    let storageVerificationMs: number | null=null;
-    if (existing.supersedes_import_batch_id && !existing.storage_content_hash) {
-      const verificationStartedAt=performance.now();
-      const verified=await hashWorkspaceImportObjects(openWorkspaceImportObjects({
-        bucket: job.data.storageBucket ?? existing.storage_bucket,
-        objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
-        partCount: job.data.storagePartCount ?? existing.storage_part_count
-      }));
+    const verificationStartedAt=performance.now();
+    const verified=await hashWorkspaceImportObjects(openWorkspaceImportObjects({
+      bucket: job.data.storageBucket ?? existing.storage_bucket,
+      objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
+      partCount: job.data.storagePartCount ?? existing.storage_part_count
+    }));
+    const expectedBytes = Number(existing.expected_file_size_bytes ?? 0);
+    if (verified.sizeBytes !== expectedBytes) throw new Error("Workspace import storage verification size mismatch.");
+    if (existing.storage_source_import_batch_id) {
       await pool.query(`
         SELECT seal_signal_workspace_import_storage_hash_v1($1::uuid,$2,$3,$4)
       `,[job.data.importBatchId,workerJobId,verified.contentHash,verified.sizeBytes]);
-      storageVerificationMs=Math.round((performance.now()-verificationStartedAt)*1000)/1000;
+    }
+    const storageVerificationMs=Math.round((performance.now()-verificationStartedAt)*1000)/1000;
+    const duplicate = await completePreviouslyAcceptedWorkspaceImport({ pool,
+      importBatchId: job.data.importBatchId, workerJobId,
+      verifiedHash: verified.contentHash, verifiedBytes: verified.sizeBytes });
+    if (duplicate) {
+      // SQL has durably resolved this replay; transient progress transport cannot turn it back into a retryable failure.
+      await job.updateProgress(100).catch(() => undefined);
+      return { import_batch_id: job.data.importBatchId, ...duplicate,
+        corpus_revision: null, data_os: null, signal_data_acceptances: 0,
+        workspace_data_acceptance: false };
     }
     const stream = openWorkspaceImportObjects({
       bucket: job.data.storageBucket ?? existing.storage_bucket,
       objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
       partCount: job.data.storagePartCount ?? existing.storage_part_count
     });
-    const expectedBytes = Number(existing.expected_file_size_bytes ?? 0);
     const { stats,fileHash,metrics } = await ingestSentioneCsvStream({
       ...ingestion,
       importBatchId: job.data.importBatchId,
@@ -302,6 +315,9 @@ async function ingestWorkspaceAsyncImportJob(
       }
     });
     parserMetrics=metrics;
+    if (fileHash !== verified.contentHash || lastBytes !== verified.sizeBytes) {
+      throw new Error("Workspace import storage changed during ingestion.");
+    }
     const closureStartedAt=performance.now();
     const completion = await pool.query<{
       import_batch_id: string;accepted: boolean;accepted_batch_id: string;

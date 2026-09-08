@@ -495,6 +495,49 @@ export async function failWorkspaceImportUploadV1(args: {
   return { batch: operatorImport(failed),replayed };
 }
 
+/** Resolve only a DB-verified storage chain; each recovery points to its immediate predecessor. */
+export async function resolveWorkspaceImportStorageRootV1(args: {
+  queryable: SignalBrandPolicyQueryable;
+  workspaceId: string;
+  sourceId: string;
+  importBatchId: string;
+}) {
+  const result=await args.queryable.query<{id:string;storage_object_key:string}>(`
+    WITH RECURSIVE storage_chain AS (
+      SELECT batch.id,batch.workspace_id,batch.data_source_id,batch.storage_source_import_batch_id,
+        batch.supersedes_import_batch_id,batch.storage_bucket,batch.storage_object_key,
+        batch.expected_file_size_bytes,batch.storage_part_count,batch.storage_part_size_bytes,
+        batch.upload_protocol,batch.source_file_name,ARRAY[batch.id] AS visited
+      FROM import_batches batch
+      WHERE batch.id=$1::uuid AND batch.workspace_id=$2::uuid AND batch.data_source_id=$3::uuid
+        AND batch.status='failed' AND batch.ingestion_phase='failed'
+      UNION ALL
+      SELECT parent.id,parent.workspace_id,parent.data_source_id,parent.storage_source_import_batch_id,
+        parent.supersedes_import_batch_id,parent.storage_bucket,parent.storage_object_key,
+        parent.expected_file_size_bytes,parent.storage_part_count,parent.storage_part_size_bytes,
+        parent.upload_protocol,parent.source_file_name,child.visited||parent.id
+      FROM storage_chain child JOIN import_batches parent ON parent.id=child.storage_source_import_batch_id
+        AND parent.id=child.supersedes_import_batch_id
+        AND parent.workspace_id=child.workspace_id AND parent.data_source_id=child.data_source_id
+        AND parent.status='failed' AND parent.ingestion_phase='failed'
+        AND parent.storage_bucket IS NOT DISTINCT FROM child.storage_bucket
+        AND parent.storage_object_key IS NOT DISTINCT FROM child.storage_object_key
+        AND parent.expected_file_size_bytes IS NOT DISTINCT FROM child.expected_file_size_bytes
+        AND parent.storage_part_count IS NOT DISTINCT FROM child.storage_part_count
+        AND parent.storage_part_size_bytes IS NOT DISTINCT FROM child.storage_part_size_bytes
+        AND parent.upload_protocol IS NOT DISTINCT FROM child.upload_protocol
+        AND parent.source_file_name IS NOT DISTINCT FROM child.source_file_name
+      WHERE NOT parent.id=ANY(child.visited)
+    )
+    SELECT id::text,storage_object_key FROM storage_chain WHERE storage_source_import_batch_id IS NULL
+  `,[args.importBatchId,args.workspaceId,args.sourceId]);
+  const root=result.rows[0];
+  if(result.rows.length!==1 || !root?.storage_object_key?.startsWith(`workspace-imports/${args.workspaceId}/${root.id}/`)) {
+    throw new WorkspaceAsyncImportError("storage_authority_mismatch",409);
+  }
+  return root.id;
+}
+
 export async function retryWorkspaceImportFromStorageV1(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
@@ -513,10 +556,8 @@ export async function retryWorkspaceImportFromStorageV1(args: {
       || !failed.expected_file_size_bytes) {
     throw new WorkspaceAsyncImportError("storage_recovery_unavailable",409);
   }
-  const expectedPrefix=`workspace-imports/${args.workspace.id}/${failed.id}/`;
-  if (!failed.storage_object_key.startsWith(expectedPrefix)) {
-    throw new WorkspaceAsyncImportError("storage_authority_mismatch",409);
-  }
+  await resolveWorkspaceImportStorageRootV1({queryable:pool,workspaceId:args.workspace.id,
+    sourceId:args.sourceId,importBatchId:failed.id});
   const parts=await Promise.all(Array.from(
     { length: Number(failed.storage_part_count) },async (_,index)=>
       statWorkspaceImportObjectV1({

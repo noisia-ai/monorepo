@@ -50,16 +50,17 @@ test("exact-file replay closes without losing accepted rows; workspace history p
     const csv = `id,text,date,platform,language,country\nfixture-${suffix},This isolated fixture contains enough text to be included.,2026-08-01,web,es,MX\nfixture-${suffix},This isolated fixture contains enough text to be included.,2026-08-01,web,es,MX\n`;
     const bytes = new TextEncoder().encode(csv);
     const upload = (key: string, id: string,
-      uploadActor: Parameters<typeof createWorkspaceImportUploadV1>[0]["actor"] = actor
+      uploadActor: Parameters<typeof createWorkspaceImportUploadV1>[0]["actor"] = actor,
+      fileBytes = bytes
     ) => createWorkspaceImportUploadV1({ ...context, actor: uploadActor, sourceId: id,
-      fileName: "repeated-fixture.csv", fileSizeBytes: bytes.length, contentType: "text/csv", idempotencyKey: randomUUID(),
+      fileName: "repeated-fixture.csv", fileSizeBytes: fileBytes.length, contentType: "text/csv", idempotencyKey: randomUUID(),
       contributedByStudyCorpusId: null, supersedesImportBatchId: null,
       acquisition: { sourceKey: key, slotKey: "primary-brand",
         queryEvidence: { class: "unavailable", queryVersion: null, reason: "provider_did_not_embed_query" },
         period: { start: "2026-08-01", end: "2026-08-31", timezone: workspace.timezone } },
       storage: { resolve: () => ({ bucket: "isolated-test" }), createSignedUploads: async () => ({
-        bucket: "isolated-test", objectPrefix: "test", partSizeBytes: bytes.length, expiresInSeconds: 60,
-        parts: [{ partNumber: 1, expectedSizeBytes: bytes.length, objectKey: "test.part-00001", uploadUrl: "http://localhost/fixture" }]
+        bucket: "isolated-test", objectPrefix: "test", partSizeBytes: fileBytes.length, expiresInSeconds: 60,
+        parts: [{ partNumber: 1, expectedSizeBytes: fileBytes.length, objectKey: "test.part-00001", uploadUrl: "http://localhost/fixture" }]
       }) }
     });
     const ingest = async (batchId: string) => {
@@ -218,5 +219,139 @@ test("exact-file replay closes without losing accepted rows; workspace history p
     assert.equal(refreshed.configured, true);
     assert.equal(refreshed.slots.length, setup.slots.length + 1);
     assert.deepEqual(refreshed.sources, withDraft.sources);
+
+    // Exercise the real Worker recovery path with private storage transport replaced by local bytes.
+    // A known accepted raw file must finish before a second GET could reach canonical parsing.
+    Object.assign(globalThis, { noisiaWorkerPgPool: pool });
+    const { ingestMentionsCsvJob } = await import("../../../../../services/workers/src/workers/mentions-csv-ingest");
+    process.env.SUPABASE_STORAGE_BUCKET_IMPORTS = "isolated-test";
+    const originalFetch = globalThis.fetch;
+    let storedBytes = bytes;
+    let objectReads = 0;
+    let prohibitParserRead = false;
+    let secondReadBytes: Uint8Array | null = null;
+    globalThis.fetch = async (_request, init) => {
+      if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": String(storedBytes.length) } });
+      objectReads++;
+      if (prohibitParserRead && objectReads > 1) throw new Error("Canonical parser must not run for a verified accepted file.");
+      const responseBytes = objectReads === 2 && secondReadBytes ? secondReadBytes : storedBytes;
+      return new Response(Uint8Array.from(responseBytes).buffer);
+    };
+    const recover = async (key: string, source: string) => {
+      const failed = await upload(key, source);
+      const job = (await pool.query<{ worker_job_id: string }>(
+        "SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1::uuid,$2::uuid)", [failed.batch.id, actorId])).rows[0]!.worker_job_id;
+      await pool.query("SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2)", [failed.batch.id, job]);
+      await pool.query("SELECT fail_signal_workspace_import_v1($1::uuid,$2,'processing_failed','{}'::jsonb,0,0)", [failed.batch.id, job]);
+      return retryWorkspaceImportFromStorageV1({ ...context, sourceId: source, importBatchId: failed.batch.id, idempotencyKey: randomUUID() });
+    };
+    const primary = async (key: string, source: string, fileBytes = bytes) => {
+      const created = await upload(key, source, actor, fileBytes);
+      const job = (await pool.query<{ worker_job_id: string }>(
+        "SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1::uuid,$2::uuid)", [created.batch.id, actorId])).rows[0]!.worker_job_id;
+      return { ...created.batch, worker: { ...created.batch.worker, job_id: job } };
+    };
+    const executeRecovery = async (batch: Awaited<ReturnType<typeof recover>>["batch"], failTerminalProgress = false) => ingestMentionsCsvJob({
+      id: batch.worker.job_id, data: { importBatchId: batch.id, sourceFileName: "repeated-fixture.csv" },
+      updateProgress: async (value: number) => { if (value === 100 && failTerminalProgress) throw new Error("Transient progress transport failure"); }
+    } as unknown as Parameters<typeof ingestMentionsCsvJob>[0]);
+    try {
+      prohibitParserRead = true;
+      const replay = await recover(setup.source_key, firstSource);
+      const beforeMentions = (await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM mentions WHERE workspace_id=$1::uuid", [workspace.id])).rows[0]!.count;
+      const replayResult = await executeRecovery(replay.batch, true);
+      assert.equal("accepted" in replayResult && replayResult.accepted, false);
+      assert.equal(objectReads, 1);
+      const replayPublic = await loadWorkspaceImportV1({ workspaceId: workspace.id, sourceId: firstSource, importBatchId: replay.batch.id });
+      assert.equal(replayPublic?.duplicate_of_import_id, first.batch.id);
+      assert.equal(replayPublic?.failure?.code, "content_already_accepted");
+      assert.equal((await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM signal_mention_import_memberships WHERE import_batch_id=$1::uuid", [replay.batch.id])).rows[0]!.count, 0);
+      assert.equal((await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM mentions WHERE workspace_id=$1::uuid", [workspace.id])).rows[0]!.count, beforeMentions);
+
+      objectReads = 0;
+      const primaryDuplicate = await primary(setup.source_key, firstSource);
+      const primaryResult = await executeRecovery(primaryDuplicate);
+      assert.equal("accepted" in primaryResult && primaryResult.accepted, false);
+      assert.equal(objectReads, 1);
+      assert.equal((await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM signal_mention_import_memberships WHERE import_batch_id=$1::uuid", [primaryDuplicate.id])).rows[0]!.count, 0,
+        "a direct exact-file upload must close before canonical parsing writes any provenance");
+
+      prohibitParserRead = false; objectReads = 0;
+      const crossSource = await recover(other.source_key, secondSource);
+      const crossResult = await executeRecovery(crossSource.batch);
+      assert.equal("accepted" in crossResult && crossResult.accepted, true);
+      assert.equal(objectReads, 2, "the same hash in another source must still ingest and acquire its own acceptance");
+
+      objectReads = 0;
+      const changed = await recover(setup.source_key, firstSource);
+      await pool.query("SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2)", [changed.batch.id, changed.batch.worker.job_id]);
+      await pool.query("SELECT seal_signal_workspace_import_storage_hash_v1($1::uuid,$2,$3,$4)",
+        [changed.batch.id, changed.batch.worker.job_id, firstResult.fileHash, bytes.length]);
+      storedBytes = new TextEncoder().encode(csv.replace("enough", "ENOUGH"));
+      prohibitParserRead = true;
+      await assert.rejects(executeRecovery(changed.batch), /storage hash conflicts with durable history/u);
+      assert.equal(objectReads, 1, "a changed object must be rejected before parsing or duplicate closure");
+
+      const newCsv = `id,text,date,platform,language,country\nnew-${suffix},A distinct new primary file for ${suffix} must go through real parsing.,2026-08-01,web,es,MX\n`;
+      storedBytes = new TextEncoder().encode(newCsv);
+      prohibitParserRead = false; objectReads = 0;
+      const newPrimary = await primary(setup.source_key, firstSource, storedBytes);
+      const newResult = await executeRecovery(newPrimary);
+      assert.equal("accepted" in newResult && newResult.accepted, true);
+      assert.equal(objectReads, 2, "a new primary file is verified first, then parsed");
+      objectReads = 0;
+      const crossPrimary = await primary(other.source_key, secondSource, storedBytes);
+      const crossPrimaryResult = await executeRecovery(crossPrimary);
+      assert.equal("accepted" in crossPrimaryResult && crossPrimaryResult.accepted, true);
+      assert.equal(objectReads, 2, "a primary upload cannot reuse an acceptance from another source");
+
+      // The storage contract also permits a fresh object to supersede a failed batch.
+      // This is distinct from reusing that failed batch's private object and must not call recovery sealing.
+      storedBytes = bytes; objectReads = 0; prohibitParserRead = true;
+      const replacementPredecessor = await recover(setup.source_key, firstSource);
+      await pool.query("SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2)",
+        [replacementPredecessor.batch.id, replacementPredecessor.batch.worker.job_id]);
+      await pool.query("SELECT fail_signal_workspace_import_v1($1::uuid,$2,'processing_failed','{}'::jsonb,0,0)",
+        [replacementPredecessor.batch.id, replacementPredecessor.batch.worker.job_id]);
+      const replacementId = randomUUID();
+      const replacementKey = `sha256:${"d".repeat(64)}`;
+      await pool.query(`INSERT INTO import_batches SELECT replacement.* FROM import_batches prior,
+        LATERAL jsonb_populate_record(NULL::import_batches,to_jsonb(prior)||jsonb_build_object(
+          'id',$2::uuid,'supersedes_import_batch_id',prior.id,'storage_source_import_batch_id',NULL,
+          'storage_content_hash',NULL,'source_file_hash',NULL,'status','queued','ingestion_phase','uploading',
+          'storage_object_key',$3::text,'product_idempotency_key',$4::text,'product_request_digest',$4::text,
+          'worker_job_id',NULL,'failed_at',NULL,'failure_code',NULL,'failure_detail','{}'::jsonb,
+          'processed_bytes',0,'progress_record_count',0,'created_at',clock_timestamp(),'updated_at',clock_timestamp()
+        )) replacement WHERE prior.id=$1::uuid`, [replacementPredecessor.batch.supersedes_import_batch_id, replacementId,
+        `workspace-imports/${workspace.id}/${replacementId}/repeated-fixture.csv`, replacementKey]);
+      const replacementJob = (await pool.query<{ worker_job_id: string }>(
+        "SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1::uuid,$2::uuid)", [replacementId, actorId])).rows[0]!.worker_job_id;
+      const replacementResult = await executeRecovery({ ...replacementPredecessor.batch, id: replacementId,
+        worker: { ...replacementPredecessor.batch.worker, job_id: replacementJob } });
+      assert.equal("accepted" in replacementResult && replacementResult.accepted, false);
+      assert.equal(objectReads, 1);
+      const replacementStorage = (await pool.query<{ storage_source_import_batch_id: string | null; storage_content_hash: string | null }>(
+        "SELECT storage_source_import_batch_id,storage_content_hash FROM import_batches WHERE id=$1::uuid", [replacementId])).rows[0]!;
+      assert.deepEqual(replacementStorage, { storage_source_import_batch_id: null, storage_content_hash: null });
+      prohibitParserRead = false;
+
+      const mutatingCsv = `id,text,date,platform,language,country\nmutating-${suffix},The original object ${suffix} changes between verification and canonical ingestion.,2026-08-01,web,es,MX\n`;
+      storedBytes = new TextEncoder().encode(mutatingCsv);
+      secondReadBytes = new TextEncoder().encode(mutatingCsv.replace("original", "modified"));
+      assert.equal(storedBytes.length, secondReadBytes.length);
+      objectReads = 0;
+      const mutating = await primary(setup.source_key, firstSource, storedBytes);
+      const acceptedBefore = (await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM import_batches WHERE workspace_id=$1::uuid AND status='completed'", [workspace.id])).rows[0]!.count;
+      await assert.rejects(executeRecovery(mutating), /storage changed during ingestion/u);
+      assert.equal(objectReads, 2);
+      assert.equal((await pool.query<{ count: number }>(
+        "SELECT count(*)::int count FROM import_batches WHERE workspace_id=$1::uuid AND status='completed'", [workspace.id])).rows[0]!.count, acceptedBefore,
+        "a file changed between the two reads must not receive any acceptance");
+    } finally { globalThis.fetch = originalFetch; }
   } finally { await pool.end(); }
 });
