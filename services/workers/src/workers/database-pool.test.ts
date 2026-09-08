@@ -2,21 +2,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-process.env.DATABASE_URL ??= "postgres://unit:test@localhost:5432/noisia_test";
-
-const { resolveDatabaseSsl } = await import("./db");
-
-test("database SSL can be disabled for local smoke databases", () => {
-  assert.equal(resolveDatabaseSsl("false"), false);
-  assert.equal(resolveDatabaseSsl("0"), false);
-  assert.equal(resolveDatabaseSsl("disable"), false);
-  assert.deepEqual(resolveDatabaseSsl(undefined), { rejectUnauthorized: false });
-  assert.deepEqual(resolveDatabaseSsl("true"), { rejectUnauthorized: false });
-});
-
-test("production module evaluations share one bounded Studio pool", () => {
-  const first = new URL("./db.ts?production-pool-first", import.meta.url).href;
-  const second = new URL("./db.ts?production-pool-second", import.meta.url).href;
+test("production Worker module evaluations share a bounded pool and preserve the analysis timeout", () => {
+  const first = new URL("../db/client.ts?production-pool-first", import.meta.url).href;
+  const second = new URL("../db/client.ts?production-pool-second", import.meta.url).href;
   const script = `
     import assert from 'node:assert/strict';
     const first = await import(${JSON.stringify(first)});
@@ -26,6 +14,7 @@ test("production module evaluations share one bounded Studio pool", () => {
       assert.equal(first.pool.options.max, 3);
       assert.equal(first.pool.options.connectionTimeoutMillis, 10000);
       assert.equal(first.pool.options.idleTimeoutMillis, 10000);
+      assert.equal(first.pool.options.statement_timeout, 600000);
     } finally {
       await first.pool.end();
       if (second.pool !== first.pool) await second.pool.end();

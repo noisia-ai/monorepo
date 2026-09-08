@@ -1,5 +1,9 @@
 import pg from "pg";
 
+declare global {
+  var noisiaWorkerPgPool: pg.Pool | undefined;
+}
+
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required.");
 }
@@ -22,8 +26,12 @@ function databaseSslConfig() {
 // pool.query() — no connect-event race needed. NOTE: this option is silently
 // dropped by the Supabase POOLER (pooler.supabase.com), so it only works because
 // the worker uses the direct host.
-export const pool = new pg.Pool({
+export const pool = globalThis.noisiaWorkerPgPool ??= new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: databaseSslConfig(),
+  // Keep the Worker and Studio budgets below the shared session pool limit.
+  max: 3,
+  connectionTimeoutMillis: 10_000,
+  idleTimeoutMillis: 10_000,
   statement_timeout: 600_000
 });

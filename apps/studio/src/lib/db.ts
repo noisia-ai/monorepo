@@ -14,7 +14,11 @@ function createPool() {
 
   return new pg.Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: resolveDatabaseSsl(process.env.DATABASE_SSL)
+    ssl: resolveDatabaseSsl(process.env.DATABASE_SSL),
+    // This is a per-process budget shared by all Next route/RSC module evaluations.
+    max: 3,
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis: 10_000
   });
 }
 
@@ -28,10 +32,7 @@ export function resolveDatabaseSsl(value: string | undefined) {
 
 // TODO mejora-futura: mover a un db client compartido con retry, tracing y
 // health metrics cuando Studio y workers compartan observabilidad.
-export const pool = globalThis.noisiaStudioPgPool ?? createPool();
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.noisiaStudioPgPool = pool;
-}
+// Production bundles can evaluate this module independently, just like development reloads.
+export const pool = globalThis.noisiaStudioPgPool ??= createPool();
 
 export const db = drizzle(pool, { schema });
