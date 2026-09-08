@@ -118,8 +118,12 @@ export type SignalTopicInheritedContextStoreV1 = {
 export async function loadSignalTopicInheritedContextStoreV1(args: {
   queryable: Queryable;
   workspace_id: string;
+  complete_context?: boolean;
 }): Promise<SignalTopicInheritedContextStoreV1> {
-  const governed = await loadSignalSemanticResolutionGovernedContextV1(args.queryable, args.workspace_id);
+  const governed = await loadSignalSemanticResolutionGovernedContextV1(args.queryable, args.workspace_id,
+    { complete_brand_context: args.complete_context });
+  const contextRows = <T>(rows: T[], limit: number) => args.complete_context ? rows : rows.slice(0, limit);
+  const contextText = (text: string) => args.complete_context ? text : text.slice(0, 4_000);
   const acquisition = (await args.queryable.query<{ acquisition_brief: unknown; timezone: string | null }>(`
     SELECT plan.acquisition_brief,workspace.timezone
     FROM signal_workspaces workspace
@@ -254,8 +258,8 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     brand.industry_sub,
     markets.length ? `Markets: ${markets.join(", ")}` : "",
     languages.length ? `Languages: ${languages.join(", ")}` : "",
-    ...brandContext.slice(0, 16).map((item) => `${item.title}: ${item.content}`),
-    ...contextItems.slice(0, 64).map((item) => `${item.source_type}: ${item.content}`)
+    ...contextRows(brandContext, 16).map((item) => `${item.title}: ${item.content}`),
+    ...contextRows(contextItems, 64).map((item) => `${item.source_type}: ${item.content}`)
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   const embeddingContexts = Object.fromEntries((["primary_brand", "competitor", "category"] as const)
     .map((scope) => {
@@ -276,16 +280,16 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
       };
       return [scope, {
         context_digest: sha256(stableJson(scopedContext)),
-        positive_text: [
+        positive_text: contextText([
           ...commonLines,
           ...scopedIdentities.map((item) =>
             `${scope} identity: ${item.entity_label}; aliases: ${item.aliases.join(", ")}`),
-          ...scopedPositive.slice(0, 80).map((item) =>
+          ...contextRows(scopedPositive, 80).map((item) =>
             `Brand ${item.kind}: ${item.display_text}${item.relation_target_key
               ? ` (${item.relation_kind ?? "related"}: ${item.relation_target_key})` : ""}`)
-        ].join("\n").slice(0, 4_000),
-        negative_text: scopedNegative.slice(0, 80)
-          .map((item) => `Brand ${item.kind}: ${item.display_text}`).join("\n").slice(0, 4_000)
+        ].join("\n")),
+        negative_text: contextText(contextRows(scopedNegative, 80)
+          .map((item) => `Brand ${item.kind}: ${item.display_text}`).join("\n"))
       }];
     })) as SignalTopicInheritedContextStoreV1["embedding_contexts"];
   return {
@@ -765,10 +769,10 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
       [`signal-taxonomy:${args.workspace_id}:topic`]);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`topic-execution:${args.workspace_id}`]);
     const existing = (await client.query<{
-      id: string; actor_user_id: string; intent: "search" | "publish"; publish_when_ready: boolean;
+      id: string; actor_user_id: string; input_contract: string; intent: "search" | "publish"; publish_when_ready: boolean;
       embedding_cost_cap_micro_usd: number | null;
     }>(`
-      SELECT id::text,actor_user_id::text,intent,publish_when_ready,embedding_cost_cap_micro_usd
+      SELECT id::text,actor_user_id::text,input_contract,intent,publish_when_ready,embedding_cost_cap_micro_usd
       FROM signal_topic_catalog_executions
       WHERE workspace_id=$1::uuid AND idempotency_key=$2
     `, [args.workspace_id, args.idempotency_key])).rows[0];
@@ -777,7 +781,7 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
         : Number(existing.embedding_cost_cap_micro_usd);
       const capConflict = existingCap !== null
         && existingCap !== (args.embedding_cost_cap_micro_usd ?? null);
-      if (existing.actor_user_id !== args.actor_user_id
+      if (existing.input_contract !== "legacy-topic-catalog-v1" || existing.actor_user_id !== args.actor_user_id
         || existing.intent !== args.intent
         || existing.publish_when_ready !== (args.intent === "search" && args.publish_when_ready === true)
         || capConflict) {
@@ -858,6 +862,7 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
           identity_catalog_digest,definition_digest,denominator
         FROM signal_topic_catalog_executions
         WHERE workspace_id=$1::uuid AND taxonomy_profile_id=$2::uuid
+          AND input_contract='legacy-topic-catalog-v1'
           AND intent='search' AND status='ready'
           AND result_summary->>'correction_digest'=
             signal_topic_membership_override_digest_v1(workspace_id,taxonomy_profile_id)
@@ -964,7 +969,7 @@ export async function correctSignalTopicMembershipStoreV1(args: {
       const profile = (await client.query<{ active: boolean }>(`
         SELECT profile.status='active' active FROM signal_topic_catalog_executions execution
         JOIN signal_taxonomy_profiles profile ON profile.id=execution.taxonomy_profile_id
-        WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid
+        WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='legacy-topic-catalog-v1'
       `, [args.execution_id, args.workspace_id])).rows[0];
       return { contract_version: SIGNAL_TOPIC_CATALOG_CONTRACT_V1, term_key: args.term_key,
         canonical_root_id: args.canonical_root_id, disposition: args.disposition,
@@ -980,7 +985,7 @@ export async function correctSignalTopicMembershipStoreV1(args: {
       JOIN taxonomy_terms term ON term.id=suggestion.taxonomy_term_id
       WHERE suggestion.execution_id=$1::uuid AND suggestion.workspace_id=$2::uuid
         AND suggestion.canonical_root_id=$3::uuid AND suggestion.term_key=$4
-        AND execution.status='ready'
+        AND execution.status='ready' AND execution.input_contract='legacy-topic-catalog-v1'
     `, [args.execution_id, args.workspace_id, args.canonical_root_id, args.term_key])).rows[0];
     if (!anchor) throw new SignalTopicCatalogError("topic_result_not_found", 404);
     if (anchor.definition_revision !== args.expected_definition_revision) {
@@ -1058,7 +1063,8 @@ export async function loadSignalTopicExecutionResultsStoreV1(args: {
     JOIN signal_topic_catalog_executions execution ON execution.id=suggestion.execution_id
     JOIN mentions mention ON mention.id=suggestion.canonical_root_id
     JOIN taxonomy_terms term ON term.id=suggestion.taxonomy_term_id
-    WHERE execution.status='ready' AND ($3::text IS NULL OR suggestion.term_key=$3)
+    WHERE execution.status='ready' AND execution.input_contract='legacy-topic-catalog-v1'
+      AND ($3::text IS NULL OR suggestion.term_key=$3)
       AND ($4::text IS NULL OR suggestion.effective_disposition=$4)
       AND suggestion.effective_disposition<>'none'
     ORDER BY CASE suggestion.effective_disposition WHEN 'relevant' THEN 0 WHEN 'doubt' THEN 1 ELSE 2 END,
@@ -1116,7 +1122,8 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
     const definitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const priorHadReadySearch = prior ? Boolean((await client.query<{ available: boolean }>(`
       SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
-        WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready') available
+        WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
+          AND input_contract='legacy-topic-catalog-v1') available
     `, [prior.id])).rows[0]?.available) : false;
     const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client,
       workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
@@ -1216,6 +1223,7 @@ async function cloneReadySearchExecution(client: PoolClient, args: {
       identity_catalog_digest,denominator,embedding_model,result_summary
     FROM signal_topic_catalog_executions
     WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
+      AND input_contract='legacy-topic-catalog-v1'
       AND definition_digest=$2
       AND watermark_digest=signal_classification_watermark_digest_v1(workspace_id,study_corpus_id)
       AND result_summary->>'correction_digest'=
@@ -1332,7 +1340,7 @@ async function loadLatestExecution(queryable: Queryable, profileId: string): Pro
       embedding_cost_estimate_micro_usd,embedding_cost_cap_micro_usd,embedding_pricing_version,
       error_code,result_summary,
       created_at::text,updated_at::text FROM signal_topic_catalog_executions
-    WHERE taxonomy_profile_id=$1::uuid ORDER BY created_at DESC,id DESC LIMIT 1
+    WHERE taxonomy_profile_id=$1::uuid AND input_contract='legacy-topic-catalog-v1' ORDER BY created_at DESC,id DESC LIMIT 1
   `, [profileId])).rows[0];
   return row ? { ...row, denominator: Number(row.denominator), progress: Number(row.progress),
     embedding_cost_estimate_micro_usd: row.embedding_cost_estimate_micro_usd === null ? null
@@ -1347,7 +1355,8 @@ async function loadExecutionById(queryable: Queryable, executionId: string) {
       publish_when_ready,
       embedding_cost_estimate_micro_usd,embedding_cost_cap_micro_usd,embedding_pricing_version,
       error_code,result_summary,
-      created_at::text,updated_at::text FROM signal_topic_catalog_executions WHERE id=$1::uuid
+      created_at::text,updated_at::text FROM signal_topic_catalog_executions
+    WHERE id=$1::uuid AND input_contract='legacy-topic-catalog-v1'
   `, [executionId])).rows[0];
   if (!row) throw new SignalTopicCatalogError("topic_execution_not_found", 404);
   return { ...row, denominator: Number(row.denominator), progress: Number(row.progress),
@@ -1360,7 +1369,7 @@ async function loadExecutionById(queryable: Queryable, executionId: string) {
 async function loadLatestCounts(queryable: Queryable, profileId: string) {
   const rows = (await queryable.query<{ term_key: string; relevant: number; doubt: number; excluded: number }>(`
     WITH latest AS(SELECT id FROM signal_topic_catalog_executions
-      WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
+      WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready' AND input_contract='legacy-topic-catalog-v1'
       ORDER BY completed_at DESC,id DESC LIMIT 1)
     SELECT suggestion.term_key,
       count(*) FILTER(WHERE CASE override.disposition WHEN 'belongs' THEN 'relevant'
@@ -1392,7 +1401,7 @@ async function loadLatestReadySearch(queryable: Queryable, workspaceId: string, 
         WHERE publication.source_execution_id=signal_topic_catalog_executions.id
           AND publication.intent='publish' AND publication.status='completed') published
     FROM signal_topic_catalog_executions
-    WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
+    WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready' AND input_contract='legacy-topic-catalog-v1'
     ORDER BY completed_at DESC,id DESC LIMIT 1
   `, [profileId])).rows[0];
   if (!source) return { id: null, is_current: false, published: false };

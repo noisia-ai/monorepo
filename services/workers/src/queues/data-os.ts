@@ -33,6 +33,7 @@ import { SIGNAL_TOPIC_RULE_SUGGESTION_JOB_NAME, signalTopicRuleSuggestionJob } f
 import { redisConnection } from "./query-engine";
 import { SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME, signalWorkspaceCorpusPreparationJobV1 } from "../workers/signal-workspace-corpus-preparation";
 import { SIGNAL_WORKSPACE_EMBEDDINGS_JOB_NAME, signalWorkspaceEmbeddingsJobV1 } from "../workers/signal-workspace-embeddings";
+import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME, signalWorkspaceTopicComputationJobV1 } from "../workers/signal-workspace-topic-computation";
 
 export { redisConnection };
 
@@ -51,6 +52,7 @@ export function startDataOsWorker() {
       assertSignalTaxonomyJobNotRetiredV1(job.name);
       if (job.name === SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME) return signalWorkspaceCorpusPreparationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_EMBEDDINGS_JOB_NAME) return signalWorkspaceEmbeddingsJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME) return signalWorkspaceTopicComputationJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

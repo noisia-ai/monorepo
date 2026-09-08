@@ -827,7 +827,8 @@ export async function loadSignalSemanticResolutionChildRuntimeV2(
 
 export async function loadSignalSemanticResolutionGovernedContextV1(
   queryable: SignalSemanticResolutionQueryable,
-  workspaceId: string
+  workspaceId: string,
+  options: { complete_brand_context?: boolean } = {}
 ): Promise<SignalSemanticResolutionGovernedContextV1> {
   const workspaceResult = await queryable.query<{
     workspace_id: string;
@@ -909,8 +910,8 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
     JOIN brand_os_profiles profile ON profile.id = claim.brand_os_profile_id
     WHERE profile.brand_id = $1::uuid AND profile.status = 'active' AND claim.status = 'active'
     ORDER BY kind, title
-    LIMIT 24
-  `, [workspace.brand_id]);
+    LIMIT $2
+  `, [workspace.brand_id, options.complete_brand_context ? null : 24]);
   return {
     workspace: {
       ...workspace,

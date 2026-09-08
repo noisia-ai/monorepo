@@ -606,7 +606,7 @@ async function claimExecution(executionId: string, recoverInterruptedAttempt = f
         watermark_digest,identity_catalog_digest,definition_digest,publish_when_ready,
         embedding_cost_estimate_micro_usd,embedding_cost_cap_micro_usd,embedding_pricing_version,
         generation_id::text,result_summary
-      FROM signal_topic_catalog_executions WHERE id=$1::uuid FOR UPDATE
+      FROM signal_topic_catalog_executions WHERE id=$1::uuid AND input_contract='legacy-topic-catalog-v1' FOR UPDATE
     `, [executionId])).rows[0];
     if (!row) throw new Error("topic_execution_not_found");
     if (["ready", "completed"].includes(row.status)) { await client.query("COMMIT"); return null; }

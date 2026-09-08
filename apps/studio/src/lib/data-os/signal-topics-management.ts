@@ -8,6 +8,7 @@ import {
   loadSignalTopicEvaluationV2CandidateManagement,
   loadSignalTopicExecutionResultsStoreV1,
   loadSignalWorkspaceCapabilitiesStoreV1,
+  isSignalWorkspaceTopicSearchModeV1,
   type SignalWorkspaceCapabilitiesV1,
   setSignalTopicLifecycleStoreV1,
   updateSignalTopicStoreV1
@@ -121,6 +122,7 @@ export async function updateSignalTopicProductV1(args: {
   const updated = await updateSignalTopicStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, term_key: args.termKey,
     input: updateSignalTopicInputSchemaV1.parse(args.input) });
+  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) return updated;
   if (updated.semantic_changed) {
     if (!updated.prior_had_ready_search) return updated;
     const execution = await startSignalTopicCatalogExecutionProductV1({
@@ -152,6 +154,7 @@ export async function setSignalTopicLifecycleProductV1(args: {
   const { pool } = await import("@/lib/db");
   const updated = await setSignalTopicLifecycleStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, term_key: args.termKey, lifecycle: args.lifecycle });
+  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) return updated;
   const wasPublished = updated.prior_profile_status === "active"
     || (updated.active_profile_id !== null && updated.profile?.id !== updated.active_profile_id);
   if (!wasPublished || args.lifecycle !== "archived") return updated;
@@ -172,6 +175,9 @@ export async function startSignalTopicCatalogExecutionProductV1(args: {
   await requireTopicCapability(args.workspace.id, args.actor, "can_execute_topics");
   const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
+  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) throw Object.assign(new Error("workspace_topic_computation_required"), {
+    code: "workspace_topic_computation_required", status: 409
+  });
   const execution = await createSignalTopicCatalogExecutionStoreV1({ pool,
     workspace_id: args.workspace.id, actor_user_id: actorId,
     intent: args.intent, idempotency_key: args.idempotencyKey,
@@ -188,6 +194,9 @@ export async function correctSignalTopicMembershipProductV1(args: {
   const actorId = args.actor.id;
   const parsed = signalTopicCorrectionSchemaV1.parse(args.input);
   const { pool } = await import("@/lib/db");
+  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) throw Object.assign(new Error("workspace_topic_approval_unavailable"), {
+    code: "workspace_topic_approval_unavailable", status: 409
+  });
   const corrected = await correctSignalTopicMembershipStoreV1({ pool, workspace_id: args.workspace.id,
     actor_user_id: actorId, execution_id: args.executionId, term_key: args.termKey,
     canonical_root_id: args.rootId, disposition: parsed.disposition,
