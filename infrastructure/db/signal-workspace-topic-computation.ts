@@ -161,14 +161,14 @@ export async function readSignalWorkspaceTopicRootChunksV1(args:{database:Signal
  });
 }
 
-async function snapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1){
+async function snapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1,allowEmpty=false){
  const current=await contextSnapshot(client,workspace),texts:Record<string,string>={};
  const topics=current.topics.map(topic=>{
   const compiled=compileSignalWorkspaceTopicInputsV1({topic:topic.definition,
    context:{...current.context.embedding_contexts[topic.definition.scope],context_refs:current.context.context_refs},profile});
   return{...topic,compiled:{...compiled,inputs:compiled.inputs.map(({text,...input})=>{texts[input.text_sha256]=text;return input;})}};
  });
- if(topics.length===0)return fail("workspace_topic_catalog_empty");
+ if(topics.length===0&&!allowEmpty)return fail("workspace_topic_catalog_empty");
  return{profile_id:current.profile.id,input:{contract_version:"workspace-topic-computation-v1" as const,
   embedding_profile:profile,context_digest:current.context.context_digest,definition_digest:current.definition_digest,
   correction_digest:current.correction_digest,algorithm_profile:SIGNAL_WORKSPACE_TOPIC_SEARCH_PROFILE_V1,topics,texts}};
@@ -185,10 +185,10 @@ export async function loadSignalWorkspaceTopicInputSnapshotV1(args:{database:Sig
  return transaction(args.database,client=>loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,queryable:client}));
 }
 /** Caller owns transaction/snapshot consistency. This read never creates a run or another pool. */
-export async function loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args:{queryable:SignalWorkspaceTopicQueryableV1;workspace_id:string;actor_user_id:string}){
+export async function loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args:{queryable:SignalWorkspaceTopicQueryableV1;workspace_id:string;actor_user_id:string;allow_empty?:boolean}){
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:args.queryable,
   workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_view)return fail("workspace_topic_forbidden",403);
- return snapshot(args.queryable,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1);
+ return snapshot(args.queryable,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,args.allow_empty);
 }
 export async function requestSignalWorkspaceTopicComputationV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string;
  idempotency_key:string;embedding_run_id:string;algorithm_profile?:SignalWorkspaceTopicSearchProfileV1}):Promise<{execution_id:string;replayed:boolean}>{
@@ -390,18 +390,20 @@ export async function failSignalWorkspaceTopicComputationV1(args:{database:Signa
  });
 }
 export async function scheduleSignalWorkspaceTopicComputationsV1(args:{database:SignalWorkspaceTopicDatabaseV1;limit?:number}):Promise<{requeued:number}>{
- return transaction(args.database,async client=>{const rows=(await client.query<{id:string;status:string;dispatch_generation:number;worker_job_id:string}>(`
-  SELECT execution.id,execution.status,execution.dispatch_generation,outbox.worker_job_id FROM signal_topic_catalog_executions execution
+ return transaction(args.database,async client=>{const rows=(await client.query<{id:string;status:string;input_contract:string;dispatch_generation:number;worker_job_id:string}>(`
+  SELECT execution.id,execution.status,execution.input_contract,execution.dispatch_generation,outbox.worker_job_id FROM signal_topic_catalog_executions execution
   JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
-  WHERE execution.input_contract='workspace-topic-computation-v1' AND ((execution.status='running' AND execution.execution_expires_at<=clock_timestamp())
+  WHERE execution.input_contract IN('workspace-topic-computation-v1','workspace-topic-engine-v1') AND ((execution.status='running' AND execution.execution_expires_at<=clock_timestamp())
    OR (execution.status='queued' AND outbox.status='dispatched' AND outbox.updated_at<clock_timestamp()-interval '30 seconds'))
   ORDER BY execution.updated_at,execution.id FOR UPDATE OF execution SKIP LOCKED LIMIT $1`,[pageLimit(args.limit,20)])).rows;
   for(const row of rows){const generation=row.dispatch_generation+(row.status==="running"?1:0);
    await client.query(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,execution_token=NULL,
-    execution_expires_at=NULL,dispatch_generation=$2,updated_at=clock_timestamp() WHERE id=$1::uuid`,[row.id,generation]);
+    execution_expires_at=NULL,dispatch_generation=$2,
+    result_summary=CASE WHEN input_contract='workspace-topic-engine-v1' THEN result_summary||'{"phase":"queued"}'::jsonb ELSE result_summary END,
+    updated_at=clock_timestamp() WHERE id=$1::uuid`,[row.id,generation]);
    await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
     lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
-    [row.id,row.status==="running"?`workspace-topic-${row.id}-${generation}`:row.worker_job_id]);
+    [row.id,row.status==="running"?`${row.input_contract==='workspace-topic-engine-v1'?'workspace-engine':'workspace-topic'}-${row.id}-${generation}`:row.worker_job_id]);
   }return{requeued:rows.length};
  });
 }

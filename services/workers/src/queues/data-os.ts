@@ -9,6 +9,7 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
   SIGNAL_TOPIC_EVALUATION_JOB_NAME,
   SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME,
+  SIGNAL_WORKSPACE_ENGINE_JOB_V1,
   SIGNAL_MONTHLY_INSIGHT_JOB_NAME,
   SIGNAL_REFRESH_RUN_JOB_NAME,
   SIGNAL_REFRESH_TICK_JOB_NAME,
@@ -34,6 +35,7 @@ import { redisConnection } from "./query-engine";
 import { SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME, signalWorkspaceCorpusPreparationJobV1 } from "../workers/signal-workspace-corpus-preparation";
 import { SIGNAL_WORKSPACE_EMBEDDINGS_JOB_NAME, signalWorkspaceEmbeddingsJobV1 } from "../workers/signal-workspace-embeddings";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME, signalWorkspaceTopicComputationJobV1 } from "../workers/signal-workspace-topic-computation";
+import { signalWorkspaceEngineJobV1 } from "../workers/signal-workspace-engine";
 
 export { redisConnection };
 
@@ -53,6 +55,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_WORKSPACE_CORPUS_PREPARATION_JOB_NAME) return signalWorkspaceCorpusPreparationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_EMBEDDINGS_JOB_NAME) return signalWorkspaceEmbeddingsJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME) return signalWorkspaceTopicComputationJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_ENGINE_JOB_V1) return signalWorkspaceEngineJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

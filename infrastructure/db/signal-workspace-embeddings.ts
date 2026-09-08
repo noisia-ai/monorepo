@@ -345,7 +345,10 @@ async function prototypeCoverage(client:PoolClient,run:Run):Promise<Pick<SignalW
   LEFT JOIN input_state input ON input.input_digest=reference.input_digest WHERE run.id=$1::uuid GROUP BY topic->>'taxonomy_term_id'
  ) SELECT count(*) FILTER(WHERE expected=covered)::int completed_topics,
   count(*) FILTER(WHERE covered>0 AND covered<expected)::int partial_topics,
-  count(*) FILTER(WHERE covered=0)::int pending_topics,COALESCE(sum(covered),0)::text processed_input_references FROM topic_state`,[run.id])).rows[0]!;
+  count(*) FILTER(WHERE covered=0)::int pending_topics,(COALESCE(sum(covered),0) + (SELECT count(*) FROM signal_workspace_embedding_runs run,
+    jsonb_array_elements(COALESCE(run.topic_input_snapshot->'context_inputs','[]'::jsonb)) context
+    JOIN input_state input ON input.input_digest=context->>'input_digest' AND input.covered
+    WHERE run.id=$1::uuid))::text processed_input_references FROM topic_state`,[run.id])).rows[0]!;
  return{...row,processed_input_references:Number(row.processed_input_references)};
 }
 export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1;

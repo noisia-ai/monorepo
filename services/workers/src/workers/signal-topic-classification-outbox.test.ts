@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { drainSignalTopicClassificationOutboxV1 } from "./signal-topic-classification-outbox";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
+import { SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 
 const claimed = {
   outbox_id: "10000000-0000-4000-8000-000000000001",
@@ -90,6 +91,27 @@ test("authorized outbox redelivery resumes retained completed jobs without addin
   const result = await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule });
   assert.equal(result.dispatched, 1);
   assert.deepEqual(retries, ["completed"]);
+});
+
+test("workspace engine routes to the Python worker with one attempt and resumes its retained job", async () => {
+  const database = { query: async (sql: string) => sql.includes("RETURNING outbox.id::text")
+    ? { rows: [{ ...claimed, input_contract: "workspace-topic-engine-v1" }], rowCount: 1 }
+    : { rows: [], rowCount: 1 } };
+  let added = 0;
+  const queue = { getJob: async () => null, add: async (name: string, data: unknown, options: Record<string, unknown>) => {
+    assert.equal(name, SIGNAL_WORKSPACE_ENGINE_JOB_V1);
+    assert.equal(options.attempts, 1);
+    assert.equal(options.jobId, claimed.worker_job_id);
+    assert.deepEqual(data, { execution_id: claimed.execution_id }); added++;
+  } };
+  assert.equal((await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule })).dispatched, 1);
+  assert.equal(added, 1);
+  const retries: string[] = [];
+  const retained = { getJob: async () => ({ name: SIGNAL_WORKSPACE_ENGINE_JOB_V1,
+    getState: async () => "failed", retry: async (state: string) => { retries.push(state); } }),
+  add: async () => assert.fail("must resume durable engine job") };
+  assert.equal((await drainSignalTopicClassificationOutboxV1({ database: database as never, queue: retained, schedule })).dispatched, 1);
+  assert.deepEqual(retries, ["failed"]);
 });
 
 test("unknown contracts and mismatched retained job names cannot reach either classifier", async () => {

@@ -52,6 +52,7 @@ export * from "./signal-workspace-topic-inputs-v1";
 export * from "./signal-workspace-topic-prototypes-v1";
 export * from "./signal-workspace-topic-search-v1";
 export * from "./signal-workspace-classification-v1";
+export * from "./signal-workspace-engine-v1";
 export * from "./signal-workspace-data-plane-v1";
 export * from "./signal-governed-views-v1";
 export * from "./signal-strategic-gate-d-v1";

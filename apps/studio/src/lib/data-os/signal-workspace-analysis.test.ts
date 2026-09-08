@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { Pool } from "pg";
+import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
+import { loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
+  workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
+
+const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
+const body = { action: "start", embedding_run_id: id, expected_context_digest: hash, expected_catalog_digest: hash, claude_cap_micro_usd: 0 };
+const granted = { workspace_status: "active", brand_status: "active", actor_status: "active", user_type: "client",
+  primary_role: "client_admin", same_organization: true, brand_access_level: "admin" };
+function authorityDatabase(authority: unknown) {
+  let queries = 0;
+  return { async query(_sql: string, params: unknown[]) {
+    assert.equal(++queries, 1, "Denied access stops before context, run, imports or queue reads");
+    assert.deepEqual(params, [id, "actor"]); return { rows: authority ? [authority] : [] };
+  }, async connect() { throw new Error("Denied before transaction"); } } as unknown as Pick<Pool, "query" | "connect">;
+}
+test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
+  for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
+    { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
+    for (const action of ["load", "start", "retry"]) {
+      const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
+      await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
+        idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action: "retry", run_id: id } }),
+      (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
+    }
+  }
+});
+test("import-capable client does not gain engine permission from a zero cost cap", async () => {
+  await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase(granted), workspaceId: id,
+    actorUserId: "actor", idempotencyKey: "analysis-test-request", body }),
+  (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
+});
+test("analysis request is sealed to saved context and server engine config; retry only targets a run", () => {
+  assert.equal(validateWorkspaceAnalysisRequestV1(body), true);
+  assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry", run_id: id }), true);
+  for (const value of [null, [], {}, { ...body, engine_config: { seed: 2 } }, { ...body, actor_user_id: "other" },
+    { ...body, texts: ["injected"] }, { ...body, publish: true }, { ...body, claude_cap_micro_usd: "0" },
+    { ...body, claude_cap_micro_usd: -1 }, { ...body, claude_cap_micro_usd: 0.5 }, { ...body, claude_cap_micro_usd: NaN },
+    { ...body, expected_context_digest: "bad" }, { action: "retry", run_id: id, claude_cap_micro_usd: 0 }])
+    assert.equal(validateWorkspaceAnalysisRequestV1(value), false);
+});
+test("fit-only endpoint rejects a nonzero interpretation cap before any queue write", async () => {
+  await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase({ ...granted,
+    user_type: "noisia_internal", primary_role: "noisia_admin" }), workspaceId: id, actorUserId: "actor",
+    idempotencyKey: "analysis-test-request", body: { ...body, claude_cap_micro_usd: 1 } }),
+  (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_analysis_interpretation_unavailable");
+});
+test("preflight distinguishes accepted files, complete preparation, embedding cache and context without requiring interests", () => {
+  const inputs = { received: true, prepared: true, embeddingRunId: id, missingGuides: 0 };
+  assert.equal(workspaceAnalysisPreflightStateV1(inputs), "ready");
+  assert.equal(workspaceAnalysisPreflightStateV1({ ...inputs, received: false }), "awaiting_import");
+  assert.equal(workspaceAnalysisPreflightStateV1({ ...inputs, prepared: false }), "needs_preparation");
+  assert.equal(workspaceAnalysisPreflightStateV1({ ...inputs, embeddingRunId: null }), "missing_embeddings");
+  assert.equal(workspaceAnalysisPreflightStateV1({ ...inputs, missingGuides: 3 }), "missing_context");
+  assert.notEqual(workspaceAnalysisRequestScopeV1(id, "a"), workspaceAnalysisRequestScopeV1(id, "b"));
+  assert.notEqual(workspaceAnalysisRequestScopeV1(id, "a"), workspaceAnalysisRequestScopeV1("other", "a"));
+});
+test("run view does not fabricate a Claude reservation and only exposes retry for a current transient failure", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 25, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 25, processed_chunks: 30,
+    error_code: "workspace_engine_worker_failed", is_current: true, model_version_id: null, artifact_count: 0,
+    claude_cap_micro_usd: 0, result_kind: null };
+  assert.equal(workspaceAnalysisRunViewV1(run)?.retryable, true);
+  assert.deepEqual(workspaceAnalysisRunViewV1(run)?.claude_cost, { hard_cap_micro_usd: 0, settled_micro_usd: 0,
+    reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 });
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, is_current: false })?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_chunk_integrity_failed" })?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_outcome_unknown" })?.outcome_unknown, true);
+});
+test("UI recovery matches storage transport failures but never authorizes retry for corrupt or unauthorized artifacts", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 30, expected_roots: 3, expected_chunks: 133, expected_guides: 6, processed_roots: 3, processed_chunks: 133,
+    error_code: "workspace_engine_storage_transport_failed", is_current: true, model_version_id: null, artifact_count: 1,
+    claude_cap_micro_usd: 0, result_kind: null };
+  for (const error_code of ["workspace_engine_storage_transport_failed", "workspace_engine_storage_unavailable", "topic_queue_unavailable"]) {
+    assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code })?.retryable, true);
+    assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code, is_current: false })?.retryable, false);
+    assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code, status: "running" })?.retryable, false);
+  }
+  for (const error_code of ["workspace_engine_storage_digest_invalid", "workspace_engine_storage_part_invalid",
+    "workspace_engine_storage_reference_invalid", "workspace_engine_storage_bucket_not_private", "workspace_engine_forbidden"])
+    assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code })?.retryable, false);
+});

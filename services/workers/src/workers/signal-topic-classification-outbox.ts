@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME } from "@noisia/query-engine";
+import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME, SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 import { scheduleSignalWorkspaceTopicComputationsV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
 
@@ -58,7 +58,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
         if (state === "completed" || state === "failed") await prior.retry(state);
       } else await queue.add(jobName, { execution_id: row.execution_id }, {
         jobId: row.worker_job_id,
-        attempts: row.input_contract === "workspace-topic-computation-v1" ? 1 : 2,
+        attempts: row.input_contract === "legacy-topic-catalog-v1" ? 2 : 1,
         backoff: { type: "exponential", delay: 5_000 },
         removeOnComplete: { age: 86_400, count: 200 },
         removeOnFail: { age: 604_800, count: 500 }
@@ -98,6 +98,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
 export function topicExecutionJobNameV1(inputContract: string) {
   if (inputContract === "legacy-topic-catalog-v1") return SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME;
   if (inputContract === "workspace-topic-computation-v1") return SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME;
+  if (inputContract === "workspace-topic-engine-v1") return SIGNAL_WORKSPACE_ENGINE_JOB_V1;
   throw new Error("topic_dispatch_contract_unknown");
 }
 

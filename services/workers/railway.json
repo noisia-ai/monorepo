@@ -1,8 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "RAILPACK",
-    "buildCommand": "pnpm --filter @noisia/workers build",
+    "builder": "DOCKERFILE",
     "watchPatterns": [
       "services/workers/**",
       "packages/**",
@@ -10,8 +9,10 @@
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
       "package.json",
-      "tsconfig.base.json"
-    ]
+      "tsconfig.base.json",
+      "tools/signal-semantic-lab/src/**"
+    ],
+    "dockerfilePath": "services/workers/Dockerfile"
   },
   "deploy": {
     "startCommand": "pnpm --filter @noisia/workers start",

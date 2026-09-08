@@ -86,7 +86,7 @@ test("prototypes prepare complete pre-import context with physical dedupe and re
   const requested = await f.ask(), result = await complete(f, await f.claim(requested.run_id));
   assert.equal(result.physicalInputs, Object.keys(plan.texts).length);
   const current = await status(f.scope); assert.equal(current.is_current, true); assert.equal(current.latest_completed?.counts.completed_topics, 2);
-  assert.equal(current.latest_completed?.counts.processed_input_references, plan.topics.reduce((sum, topic) => sum + topic.input_digests.length, 0));
+  assert.equal(current.latest_completed?.counts.processed_input_references, plan.topics.reduce((sum, topic) => sum + topic.input_digests.length, 0) + (plan.context_inputs?.length ?? 0));
   assert.equal(current.latest_completed?.counts.embedded_unique_inputs, result.physicalInputs);
   const row = (await f.query("SELECT preparation_run_id,input_revision,input_contract,cursor_asset_sha256 FROM signal_workspace_embedding_runs WHERE id=$1::uuid", [requested.run_id])).rows[0];
   assert.deepEqual(row, { preparation_run_id: null, input_revision: null, input_contract: "topic_prototypes", cursor_asset_sha256: null });

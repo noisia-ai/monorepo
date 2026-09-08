@@ -9,7 +9,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
 import { TopicCandidateEvidence } from "@/components/brands/TopicCandidateEvidence";
 import { useWorkspaceTopicComputation } from "./useWorkspaceTopicComputation";
-import { TopicPreparationControls } from "./TopicPreparationControls";
+import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
 import type { WorkspaceTopicComputationStatus } from "@/lib/data-os/signal-workspace-topic-computation-ui";
 
 type Management = SignalTopicsManagementProductV1;
@@ -245,6 +245,10 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
       }} type="button"><Plus aria-hidden size={15} />{t("actions.create")}</button>
     </section>
 
+    <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
+      catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
+      disabled={editorDirty || busy !== null} onCompleted={refresh} onContextPrepared={computation.read} />
+
     {running ? <div className="topics-manager__progress" role="status">
       <span>{data.execution?.intent === "publish" ? t("progress.publishing") : t("progress.searching")}</span>
       <progress max="100" value={data.execution?.progress ?? 0} />
@@ -350,9 +354,6 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
             {!creating ? <button className="admin-button" disabled={computation.reading || computation.submitting}
               onClick={() => void computation.read()} type="button"><ArrowClockwise aria-hidden size={15} />{t("computation.refresh")}</button> : null}
           </div>
-          {!creating && selected && !legacySearch ? <TopicPreparationControls workspaceId={workspaceId}
-            catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
-            disabled={editorDirty || busy !== null} onCompleted={computation.read} /> : null}
           {!creating && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {!creating && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">

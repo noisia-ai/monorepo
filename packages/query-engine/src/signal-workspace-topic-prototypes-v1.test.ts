@@ -52,8 +52,12 @@ test("reject text substitution, unreferenced text, duplicate topics and conflict
   conflict.topics[1]!.compiled.inputs[3]!.input_digest = first.input_digest;
   assert.throws(() => buildSignalWorkspaceTopicPrototypePlanV1(conflict), /workspace_topic_prototype_plan_invalid/u);
 });
-test("empty catalog and incompatible complete profile cannot masquerade as ready prototypes", () => {
-  assert.throws(() => buildSignalWorkspaceTopicPrototypePlanV1({ ...args(), topics: [], texts: {} }), /workspace_topic_catalog_empty/u);
+test("empty catalog is valid and autonomous Brand OS inputs retain aliases without fake Topics", () => {
+  assert.equal(buildSignalWorkspaceTopicPrototypePlanV1({ ...args(), topics: [], texts: {} }).topics.length, 0);
+  const text = "Contexto autónomo 😀";
+  const plan = buildSignalWorkspaceTopicPrototypePlanV1({ ...args(), topics: [], texts: { [hash(text)]: text },
+    context_inputs: [{ guide_key: "scope:primary_brand", role: "scope_positive", input_digest: hash("context-alias"), text_sha256: hash(text) }] });
+  assert.equal(plan.topics.length, 0); assert.equal(plan.inputs.length, 1); assert.equal(plan.context_inputs?.length, 1);
   const invalid = args(); invalid.topics[0]!.compiled.embedding_config_digest = hash("legacy-query-profile");
   assert.throws(() => buildSignalWorkspaceTopicPrototypePlanV1(invalid), /workspace_topic_prototype_plan_invalid/u);
 });

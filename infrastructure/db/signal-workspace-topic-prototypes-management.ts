@@ -138,7 +138,7 @@ async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, args: Acce
   const cost = quoteSignalWorkspaceEmbeddingCostV1({ input_bytes: inputBytes, chunk_count: unsent.length });
   const sealed = { contract_version: "signal-workspace-topic-prototypes-quote-v1" as const,
     workspace_id: args.workspace_id, plan_digest: plan.plan_digest, profile: plan.embedding_profile,
-    total_topics: plan.topics.length, total_input_references: plan.topics.reduce((sum, topic) => sum + topic.input_digests.length, 0),
+    total_topics: plan.topics.length, total_input_references: plan.topics.reduce((sum, topic) => sum + topic.input_digests.length, 0) + (plan.context_inputs?.length ?? 0),
     total_unique_inputs: hashes.length, cached_unique_inputs: cached.size, missing_unique_inputs: missing.length,
     recoverable_receipt_inputs: missing.length - unsent.length, requires_provider: unsent.length > 0,
     input_bytes: inputBytes, tokens_upper: cost.token_upper_bound, estimated_upper_micro_usd: cost.estimated_max_cost_micro_usd,
