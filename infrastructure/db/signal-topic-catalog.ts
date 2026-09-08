@@ -116,7 +116,7 @@ export type SignalTopicInheritedContextStoreV1 = {
 };
 
 export async function loadSignalTopicInheritedContextStoreV1(args: {
-  queryable: Queryable;
+  queryable: {query<Row extends Record<string,unknown>>(sql:string,params?:unknown[]):Promise<{rows:Row[]}>};
   workspace_id: string;
   complete_context?: boolean;
 }): Promise<SignalTopicInheritedContextStoreV1> {
@@ -160,22 +160,32 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
         concat_ws(' — ',brief.title,brief.summary)
       FROM brand_os_briefs brief JOIN active_profile profile ON profile.id=brief.brand_os_profile_id
       WHERE brief.status='active'
+        AND (NOT $2::boolean OR brief.knowledge_source_id IS NULL OR EXISTS(
+          SELECT 1 FROM brand_knowledge_sources source JOIN signal_workspaces workspace ON workspace.id=$1::uuid
+          WHERE source.id=brief.knowledge_source_id AND source.brand_id=workspace.brand_id
+            AND (source.organization_id IS NULL OR source.organization_id=workspace.organization_id)
+            AND source.status IN('processed','profiled','active')))
       UNION ALL
       SELECT 'brand_os_audience',audience.id::text,'created:'||audience.created_at::text,
         concat_ws(' — ',audience.name,audience.description)
       FROM brand_os_audiences audience JOIN active_profile profile ON profile.id=audience.brand_os_profile_id
       WHERE audience.status='active'
       UNION ALL
-      SELECT 'knowledge_assertion',assertion.id::text,'updated:'||assertion.updated_at::text,
+      SELECT 'knowledge_assertion',assertion.id::text,'updated:'||assertion.updated_at::text||CASE WHEN $2::boolean
+        THEN ';source:'||source.updated_at::text||';valid:'||COALESCE(assertion.valid_from::text,'')||'/'||COALESCE(assertion.valid_to::text,'') ELSE '' END,
         assertion.assertion_text
       FROM knowledge_assertions assertion
       JOIN brand_knowledge_sources source ON source.id=assertion.knowledge_source_id
       JOIN signal_workspaces workspace ON workspace.brand_id=source.brand_id
       WHERE workspace.id=$1::uuid AND assertion.status='active'
+        AND (NOT $2::boolean OR ((source.organization_id IS NULL OR source.organization_id=workspace.organization_id)
+          AND source.status IN('processed','profiled','active')
+          AND (assertion.valid_from IS NULL OR assertion.valid_from<=(statement_timestamp() AT TIME ZONE 'UTC')::date)
+          AND (assertion.valid_to IS NULL OR assertion.valid_to>=(statement_timestamp() AT TIME ZONE 'UTC')::date)))
     ) SELECT source_type,source_id,version,content,
       'sha256:'||encode(digest(content,'sha256'),'hex') content_hash
     FROM context_items WHERE btrim(content)<>'' ORDER BY source_type,source_id,version
-  `, [args.workspace_id])).rows;
+  `, [args.workspace_id, args.complete_context === true])).rows;
   const refs = contextItems.map((item) => ({ source_type: item.source_type, source_id: item.source_id,
     version: item.version, content_hash: item.content_hash }));
   const semanticRows = (await args.queryable.query<{

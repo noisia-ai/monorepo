@@ -10,6 +10,7 @@ import {
   failSignalWorkspaceEmbeddingCallV1,
   type SignalWorkspaceEmbeddingsDatabaseV1,
   type SignalWorkspaceEmbeddingCursorV1,
+  type SignalWorkspaceEmbeddingInputContractV1,
   type SignalWorkspaceEmbeddingCallV1,
   type SignalWorkspaceEmbeddingLeaseV1,
   type SignalWorkspaceEmbeddingTextCacheV1
@@ -65,10 +66,16 @@ export async function signalWorkspaceEmbeddingsJobV1(
   let batches = 0;
   try {
     assertSignalWorkspaceEmbeddingProfileV1(lease.profile);
+    const contract = inputContract(lease.input_contract);
+    if (!sameCursor(lease.cursor, lease.cursor, contract)) throw new Error("workspace_embedding_cursor_mismatch");
     for (;;) {
       call = null; transportStarted = false; responsePersisted = false;
       const batch = await store.readBatch({ database, lease, text_cache: textCache });
-      if (!sameCursor(batch.cursor, lease.cursor)) throw new Error("workspace_embedding_cursor_mismatch");
+      if (inputContract(batch.input_contract) !== contract || !sameCursor(batch.cursor, lease.cursor, contract)
+        || !sameCursor(batch.next_cursor, batch.next_cursor, contract)
+        || batch.items.length > 0 && sameCursor(batch.next_cursor, lease.cursor, contract)) {
+        throw new Error("workspace_embedding_cursor_mismatch");
+      }
       if (!batch.items.length) {
         if (!batch.done) throw new Error("workspace_embedding_batch_stalled");
         break;
@@ -102,7 +109,8 @@ export async function signalWorkspaceEmbeddingsJobV1(
       }
       const next = await store.commit({ database, lease, batch, call_id: call?.call_id ?? null,
         attempt_token: call?.attempt_token, validated });
-      if (!sameCursor(next.cursor, batch.next_cursor) || sameCursor(next.cursor, lease.cursor)) {
+      if (inputContract(next.input_contract) !== contract || !sameCursor(next.cursor, batch.next_cursor, contract)
+        || sameCursor(next.cursor, lease.cursor, contract)) {
         throw new Error("workspace_embedding_checkpoint_invalid");
       }
       lease = next;
@@ -126,8 +134,29 @@ export async function signalWorkspaceEmbeddingsJobV1(
   }
 }
 
-function sameCursor(left: SignalWorkspaceEmbeddingCursorV1, right: SignalWorkspaceEmbeddingCursorV1) {
-  return left === null ? right === null : right !== null
+function inputContract(value: unknown): SignalWorkspaceEmbeddingInputContractV1 {
+  // Older corpus-only store injections omit the discriminator. No other implicit
+  // conversion is allowed; job.data never chooses a run's input authority.
+  if (value === undefined || value === "corpus") return "corpus";
+  if (value === "topic_prototypes") return value;
+  throw new Error("workspace_embedding_input_contract_invalid");
+}
+
+function sameCursor(left: SignalWorkspaceEmbeddingCursorV1, right: SignalWorkspaceEmbeddingCursorV1,
+  contract: SignalWorkspaceEmbeddingInputContractV1) {
+  const valid = (value: SignalWorkspaceEmbeddingCursorV1) => {
+    if (value === null) return true;
+    if (!value || typeof value !== "object") return false;
+    if (contract === "topic_prototypes") return Object.keys(value).join(",") === "input_sha256"
+      && "input_sha256" in value && typeof value.input_sha256 === "string" && value.input_sha256.length > 0;
+    return Object.keys(value).sort().join(",") === "asset_sha256,chunk_index"
+      && "asset_sha256" in value && typeof value.asset_sha256 === "string" && value.asset_sha256.length > 0
+      && "chunk_index" in value && Number.isSafeInteger(value.chunk_index) && value.chunk_index >= 0;
+  };
+  if (!valid(left) || !valid(right)) return false;
+  if (left === null || right === null) return left === right;
+  if ("input_sha256" in left && "input_sha256" in right) return left.input_sha256 === right.input_sha256;
+  return "asset_sha256" in left && "asset_sha256" in right
     && left.asset_sha256 === right.asset_sha256 && left.chunk_index === right.chunk_index;
 }
 

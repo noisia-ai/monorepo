@@ -826,7 +826,7 @@ export async function loadSignalSemanticResolutionChildRuntimeV2(
 }
 
 export async function loadSignalSemanticResolutionGovernedContextV1(
-  queryable: SignalSemanticResolutionQueryable,
+  queryable: {query<R extends Record<string,unknown>>(text:string,values?:unknown[]):Promise<{rows:R[]}>},
   workspaceId: string,
   options: { complete_brand_context?: boolean } = {}
 ): Promise<SignalSemanticResolutionGovernedContextV1> {
@@ -891,6 +891,11 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
     FROM brand_os_briefs brief
     JOIN brand_os_profiles profile ON profile.id = brief.brand_os_profile_id
     WHERE profile.brand_id = $1::uuid AND profile.status = 'active' AND brief.status = 'active'
+      AND ($2::int IS NOT NULL OR brief.knowledge_source_id IS NULL OR EXISTS(
+        SELECT 1 FROM brand_knowledge_sources source JOIN brands brand ON brand.id=profile.brand_id
+        WHERE source.id=brief.knowledge_source_id AND source.brand_id=brand.id
+          AND (source.organization_id IS NULL OR source.organization_id=brand.organization_id)
+          AND source.status IN('processed','profiled','active')))
     UNION ALL
     SELECT 'brand_audience', audience.name,
       concat_ws(E'\n', audience.description, audience.attributes::text)
@@ -1869,7 +1874,7 @@ function estimateFromRun(run: SignalSemanticResolutionRunV1) {
   };
 }
 
-function requiredRow<T>(result: QueryResult<T & QueryResultRow>): T {
+function requiredRow<T>(result: {rows:Array<T & QueryResultRow>}): T {
   const row = result.rows[0];
   if (!row) throw new SignalSemanticResolutionContractError("not_found", "Semantic resolution record was not found.");
   return row;

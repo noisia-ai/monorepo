@@ -9,6 +9,7 @@ import { WorkspaceEmbeddingProviderErrorV1, type WorkspaceEmbeddingProviderV1 } 
 type Options = NonNullable<Parameters<typeof signalWorkspaceEmbeddingsJobV1>[1]>;
 type Stores = NonNullable<Options["stores"]>;
 type Lease = Awaited<ReturnType<Stores["claim"]>> & object;
+type CorpusLease = Extract<Lease, { input_contract?: "corpus" }>;
 type Call = Awaited<ReturnType<Stores["reserve"]>> & object;
 const database = {} as NonNullable<Options["database"]>;
 const input = (text: string) => ({ text, chunk_sha256: `sha256:${createHash("sha256").update(text).digest("hex")}` });
@@ -17,17 +18,18 @@ const job = { id: "job", data: { run_id: "run" }, updateProgress: async () => un
 const vector = [1, ...Array.from({ length: 1023 }, () => 0)];
 
 function fixture() {
-  let cursor: Lease["cursor"] = null;
+  let cursor: CorpusLease["cursor"] = null;
   let blocked = false, ended = false, sends = 0;
   const ledger = new Map<string, Call>();
   const cache = new Set<string>();
   const outcomes: string[] = [];
   const events: string[] = [];
-  const makeLease = (): Lease => ({ run_id: "run", workspace_id: "workspace", execution_token: "token",
+  const makeLease = (): CorpusLease => ({ run_id: "run", workspace_id: "workspace", execution_token: "token",
     profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, cursor });
   const store: Stores = {
     claim: async () => blocked || ended ? null : makeLease(),
     readBatch: async ({ lease }) => {
+      if (lease.input_contract === "topic_prototypes") throw new Error("corpus fixture received prototype lease");
       const ordinal = lease.cursor ? 1 : 0;
       const chunk = chunks[ordinal]!;
       const next_cursor = { asset_sha256: "asset", chunk_index: ordinal === 0 ? 80 : 81 };
@@ -51,6 +53,7 @@ function fixture() {
         response_http_status: response.http_status, provider_request_id: response.provider_request_id });
     },
     commit: async ({ batch, call_id, validated }) => {
+      if (batch.input_contract === "topic_prototypes") throw new Error("corpus fixture received prototype batch");
       if (call_id) {
         assert.equal(ledger.get(call_id)?.state, "response_persisted");
         assert.equal(validated?.vectors.length, batch.inputs.length);
@@ -120,6 +123,69 @@ test("cache-only batches complete with provider transport disabled", async () =>
   const result = await signalWorkspaceEmbeddingsJobV1(job, { database, stores: f.store, provider });
   assert.ok("status" in result); assert.equal(result.status, "completed");
   assert.equal(f.ledger.size, 0); assert.deepEqual(f.outcomes, []);
+});
+
+function prototypeFixture() {
+  const f = fixture();
+  type PrototypeLease = Extract<Lease, { input_contract: "topic_prototypes" }>;
+  let cursor: PrototypeLease["cursor"] = null;
+  let commits = 0;
+  const makeLease = (): PrototypeLease => ({ run_id: "run", workspace_id: "workspace", execution_token: "token",
+    profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, input_contract: "topic_prototypes", cursor });
+  const store: Stores = { ...f.store,
+    claim: async () => makeLease(),
+    readBatch: async ({ lease }) => {
+      if (lease.input_contract !== "topic_prototypes") throw new Error("prototype fixture received corpus lease");
+      const ordinal = lease.cursor === null ? 0 : 1;
+      const next_cursor = { input_sha256: chunks[ordinal]!.chunk_sha256 };
+      return { input_contract: "topic_prototypes", cursor: lease.cursor, next_cursor, done: ordinal === 1,
+        batch_digest: `prototype-${ordinal}`, items: [{ input_sha256: next_cursor.input_sha256,
+          chunk_sha256: next_cursor.input_sha256, alias_count: 3, cached: true }],
+        inputs: [], tokens_upper: 0, reserved_micro_usd: 0 };
+    },
+    commit: async ({ batch }) => {
+      if (batch.input_contract !== "topic_prototypes") throw new Error("prototype fixture received corpus batch");
+      cursor = batch.next_cursor; commits++; return makeLease();
+    }
+  };
+  return { ...f, store, commits: () => commits };
+}
+
+test("the same embedding Worker advances prototype text cursors without a corpus or provider call", async () => {
+  const f = prototypeFixture();
+  const result = await signalWorkspaceEmbeddingsJobV1(job, { database, stores: f.store, provider: f.provider });
+  assert.ok("status" in result); assert.equal(result.status, "completed");
+  assert.equal(f.commits(), 2); assert.equal(f.sends(), 0); assert.equal(f.ledger.size, 0);
+});
+
+test("prototype cursor comparisons reject contract conversion and extra cursor fields before reservation", async () => {
+  for (const mutation of ["corpus_batch", "unknown_contract", "extra_cursor", "foreign_next_cursor", "stalled_next_cursor"] as const) {
+    const f = prototypeFixture(); const read = f.store.readBatch; let reservations = 0;
+    f.store.reserve = async () => { reservations++; return null; };
+    f.store.readBatch = async args => {
+      const batch = await read(args);
+      if (mutation === "corpus_batch") return { ...batch, input_contract: "corpus" } as never;
+      if (mutation === "unknown_contract") return { ...batch, input_contract: "untrusted" } as never;
+      if (mutation === "foreign_next_cursor") return { ...batch, next_cursor: { asset_sha256: "foreign", chunk_index: 1 } } as never;
+      if (mutation === "stalled_next_cursor") return { ...batch, next_cursor: batch.cursor } as never;
+      return { ...batch, cursor: { input_sha256: "known", asset_sha256: "foreign", chunk_index: 1 } } as never;
+    };
+    await assert.rejects(signalWorkspaceEmbeddingsJobV1(job, { database, stores: f.store, provider: f.provider }),
+      /workspace_embedding_(cursor_mismatch|input_contract_invalid)/u);
+    assert.equal(reservations, 0); assert.equal(f.commits(), 0); assert.equal(f.sends(), 0);
+  }
+});
+
+test("prototype commit cannot return a corpus lease or a stalled text checkpoint", async () => {
+  for (const mutation of ["corpus_lease", "stalled"] as const) {
+    const f = prototypeFixture(); const commit = f.store.commit;
+    f.store.commit = async args => {
+      const next = await commit(args);
+      return mutation === "corpus_lease" ? { ...next, input_contract: "corpus" } as never : { ...next, cursor: args.lease.cursor } as never;
+    };
+    await assert.rejects(signalWorkspaceEmbeddingsJobV1(job, { database, stores: f.store, provider: f.provider }), /checkpoint_invalid/u);
+    assert.equal(f.commits(), 1); assert.equal(f.sends(), 0);
+  }
 });
 
 test("embedding outbox recovers Redis accept before ACK and uses one-attempt jobs", async () => {

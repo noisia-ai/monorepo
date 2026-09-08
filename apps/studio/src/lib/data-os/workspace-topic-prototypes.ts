@@ -1,0 +1,43 @@
+import { createHash } from "node:crypto";
+import type { Pool } from "pg";
+import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalWorkspaceTopicPrototypesV1,
+  quoteSignalWorkspaceTopicPrototypesV1, requestSignalWorkspaceTopicPrototypesV1 } from "@noisia/db";
+import { WorkspaceCorpusEmbeddingsError, workspaceEmbeddingRuntimeSettingsV1 } from "./workspace-corpus-embeddings";
+
+type Access = { database?: Pick<Pool, "query" | "connect">; workspaceId: string; actorUserId: string };
+export type WorkspaceTopicPrototypeRequestV1 = { plan_digest: string; quote_digest: string; hard_cap_micro_usd: number };
+async function authorize(args: Access, execute: boolean) {
+  const database = args.database ?? (await import("@/lib/db")).pool;
+  const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database, workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
+  if (!caps.can_view || execute && !caps.can_execute_topics) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
+  return { database, flags: { ...workspaceEmbeddingRuntimeSettingsV1(), can_execute: caps.can_execute_topics,
+    request_scope: `sha256:${createHash("sha256").update(JSON.stringify(["workspace-topic-prototypes-v1", args.workspaceId, args.actorUserId])).digest("hex")}` } };
+}
+export async function loadWorkspaceTopicPrototypesForActorV1(args: Access & { idempotencyKey?: string }) {
+  const access = await authorize(args, false);
+  return { ...await loadSignalWorkspaceTopicPrototypesV1({ database: access.database,
+    workspace_id: args.workspaceId, actor_user_id: args.actorUserId, idempotency_key: args.idempotencyKey }), ...access.flags };
+}
+export async function quoteWorkspaceTopicPrototypesForActorV1(args: Access) {
+  const access = await authorize(args, false);
+  return { ...await quoteSignalWorkspaceTopicPrototypesV1({ database: access.database,
+    workspace_id: args.workspaceId, actor_user_id: args.actorUserId }), ...access.flags };
+}
+export async function requestWorkspaceTopicPrototypesForActorV1(args: Access & { idempotencyKey: string; body: WorkspaceTopicPrototypeRequestV1 }) {
+  const access = await authorize(args, true);
+  if (!validateWorkspaceTopicPrototypeRequestV1(args.body)) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_request_invalid", 422);
+  // Availability and limits are checked with the current quote inside the request transaction.
+  // A cache-only run or recovery from a persisted receipt has no external transport to enable.
+  await requestSignalWorkspaceTopicPrototypesV1({ database: access.database, workspace_id: args.workspaceId,
+    actor_user_id: args.actorUserId, idempotency_key: args.idempotencyKey, ...args.body,
+    provider_available: access.flags.provider_available, max_run_cost_micro_usd: access.flags.max_run_cost_micro_usd });
+  return loadWorkspaceTopicPrototypesForActorV1({ ...args, database: access.database });
+}
+export function validateWorkspaceTopicPrototypeRequestV1(value: unknown): value is WorkspaceTopicPrototypeRequestV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  return Object.keys(body).sort().join(",") === "hard_cap_micro_usd,plan_digest,quote_digest"
+    && typeof body.plan_digest === "string" && /^sha256:[0-9a-f]{64}$/u.test(body.plan_digest)
+    && typeof body.quote_digest === "string" && /^sha256:[0-9a-f]{64}$/u.test(body.quote_digest)
+    && typeof body.hard_cap_micro_usd === "number" && Number.isSafeInteger(body.hard_cap_micro_usd) && body.hard_cap_micro_usd >= 0;
+}

@@ -58,7 +58,7 @@ async function lockRun(client:PoolClient,id:string):Promise<Run>{
   execution.input_snapshot->>'context_digest' context_digest,execution.definition_digest,
   execution.input_snapshot->>'correction_digest' correction_digest
  FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
- JOIN signal_workspace_embedding_runs embedding ON embedding.id=execution.embedding_run_id AND embedding.workspace_id=execution.workspace_id
+ JOIN signal_workspace_embedding_runs embedding ON embedding.id=execution.embedding_run_id AND embedding.workspace_id=execution.workspace_id AND embedding.input_contract='corpus'
  JOIN signal_corpus_preparation_runs prep ON prep.id=execution.preparation_run_id AND prep.workspace_id=execution.workspace_id
  JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
  WHERE execution.id=$1::uuid FOR UPDATE OF execution`,[id])).rows[0];
@@ -76,7 +76,7 @@ async function requireLease(client:PoolClient,lease:SignalWorkspaceTopicLeaseV1)
  await client.query("UPDATE signal_topic_catalog_executions SET execution_expires_at=clock_timestamp()+interval '120 seconds',heartbeat_at=clock_timestamp() WHERE id=$1::uuid",[run.id]);
  return run;
 }
-async function contextSnapshot(client:PoolClient,workspace:string,profileId?:string){
+async function contextSnapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profileId?:string){
  const profile=(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
   WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','activating','active')
    AND metadata->>'contract_version'='signal-topic-catalog-v1' AND ($2::uuid IS NULL OR id=$2::uuid)
@@ -161,7 +161,7 @@ export async function readSignalWorkspaceTopicRootChunksV1(args:{database:Signal
  });
 }
 
-async function snapshot(client:PoolClient,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1){
+async function snapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1){
  const current=await contextSnapshot(client,workspace),texts:Record<string,string>={};
  const topics=current.topics.map(topic=>{
   const compiled=compileSignalWorkspaceTopicInputsV1({topic:topic.definition,
@@ -182,9 +182,13 @@ async function missingPrototypes(client:PoolClient,workspace:string,input:Signal
 }
 /** Server-only preparation of the exact immutable definition/context inputs. No vectors or provider calls. */
 export async function loadSignalWorkspaceTopicInputSnapshotV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string}){
- return transaction(args.database,async client=>{if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,
-   workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_view)return fail("workspace_topic_forbidden",403);
-  return snapshot(client,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1);});
+ return transaction(args.database,client=>loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,queryable:client}));
+}
+/** Caller owns transaction/snapshot consistency. This read never creates a run or another pool. */
+export async function loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args:{queryable:SignalWorkspaceTopicQueryableV1;workspace_id:string;actor_user_id:string}){
+ if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:args.queryable,
+  workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_view)return fail("workspace_topic_forbidden",403);
+ return snapshot(args.queryable,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1);
 }
 export async function requestSignalWorkspaceTopicComputationV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string;
  idempotency_key:string;embedding_run_id:string;algorithm_profile?:SignalWorkspaceTopicSearchProfileV1}):Promise<{execution_id:string;replayed:boolean}>{
@@ -204,7 +208,7 @@ export async function requestSignalWorkspaceTopicComputationV1(args:{database:Si
     to_char(run.policy_valid_until AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') policy_valid_until
    FROM signal_workspace_embedding_runs run JOIN signal_corpus_preparation_input_state state USING(workspace_id)
    JOIN signal_corpus_preparation_runs prep ON prep.id=run.preparation_run_id AND prep.workspace_id=run.workspace_id
-   WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.status='completed' AND prep.status='completed'
+   WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.input_contract='corpus' AND run.status='completed' AND prep.status='completed'
     AND run.input_revision=state.input_revision AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())`,
    [args.embedding_run_id,args.workspace_id])).rows[0];
   if(!embedded)return fail("workspace_topic_complete_embeddings_required");assertSignalWorkspaceEmbeddingProfileV1(embedded.profile);

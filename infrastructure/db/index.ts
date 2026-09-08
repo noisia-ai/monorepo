@@ -29,5 +29,7 @@ export * from "./signal-workspace-corpus-preparation-management";
 export * from "./signal-workspace-embeddings";
 
 export * from "./signal-workspace-embeddings-management";
+export * from "./signal-workspace-topic-prototypes-types";
+export * from "./signal-workspace-topic-prototypes-management";
 export * from "./signal-workspace-topic-computation";
 export * from "./signal-workspace-topic-computation-management";

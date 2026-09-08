@@ -62,11 +62,11 @@ export async function loadSignalWorkspaceEmbeddingsStoreV1(args: {
       to_char(run.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at,
       to_char(run.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_at,
       to_char(run.completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') completed_at
-    FROM signal_workspace_embedding_runs run WHERE run.workspace_id=$1::uuid AND run.id IN (
-      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid ORDER BY created_at DESC,id DESC LIMIT 1),
-      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND config_digest=$2 AND status IN('queued','running') LIMIT 1),
-      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND config_digest=$2 AND status='completed' ORDER BY completed_at DESC,id DESC LIMIT 1),
-      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND $3::text IS NOT NULL
+    FROM signal_workspace_embedding_runs run WHERE run.workspace_id=$1::uuid AND run.input_contract='corpus' AND run.id IN (
+      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND input_contract='corpus' ORDER BY created_at DESC,id DESC LIMIT 1),
+      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND input_contract='corpus' AND config_digest=$2 AND status IN('queued','running') LIMIT 1),
+      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND input_contract='corpus' AND config_digest=$2 AND status='completed' ORDER BY completed_at DESC,id DESC LIMIT 1),
+      (SELECT id FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND input_contract='corpus' AND $3::text IS NOT NULL
         AND request_keys->$3->>'actor_user_id'=$4 ORDER BY created_at DESC,id DESC LIMIT 1)
     )
   ), completed AS (SELECT * FROM recent WHERE status='completed' AND config_digest=$2 ORDER BY completed_at DESC,id DESC LIMIT 1)
@@ -121,12 +121,12 @@ async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace:
     COALESCE((SELECT sum(cached_count) FROM sizes),0)::text cached_asset_chunks,
     COALESCE((SELECT sum(full_text_bytes) FILTER(WHERE chunk_count>cached_count) FROM sizes),0)::text full_text_bytes
    ,(SELECT run.id FROM signal_workspace_embedding_runs run WHERE run.workspace_id=$1::uuid
-      AND run.preparation_run_id=prepared.id AND run.input_revision=prepared.input_revision AND run.config_digest=$3
+      AND run.input_contract='corpus' AND run.preparation_run_id=prepared.id AND run.input_revision=prepared.input_revision AND run.config_digest=$3
       AND run.actor_user_id=$4::uuid AND run.status='failed'
       AND run.error_code IN('workspace_embedding_worker_failed','workspace_embedding_queue_unavailable','workspace_embedding_definitely_not_sent')
       ORDER BY run.created_at DESC,run.id DESC LIMIT 1) resume_run_id,
     (SELECT run.hard_cap_micro_usd FROM signal_workspace_embedding_runs run WHERE run.workspace_id=$1::uuid
-      AND run.preparation_run_id=prepared.id AND run.input_revision=prepared.input_revision AND run.config_digest=$3
+      AND run.input_contract='corpus' AND run.preparation_run_id=prepared.id AND run.input_revision=prepared.input_revision AND run.config_digest=$3
       AND run.actor_user_id=$4::uuid AND run.status='failed'
       AND run.error_code IN('workspace_embedding_worker_failed','workspace_embedding_queue_unavailable','workspace_embedding_definitely_not_sent')
       ORDER BY run.created_at DESC,run.id DESC LIMIT 1) required_cap_micro_usd

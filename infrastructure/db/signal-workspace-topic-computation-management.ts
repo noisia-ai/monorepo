@@ -88,7 +88,7 @@ export async function loadSignalWorkspaceTopicComputationStatusV1(args: {
     EXISTS(SELECT 1 FROM signal_corpus_preparation_runs prep WHERE prep.workspace_id=workspace.id
       AND prep.status='completed' AND prep.input_revision=state.input_revision
       AND (prep.policy_valid_until IS NULL OR prep.policy_valid_until>clock_timestamp())) prepared,
-    (SELECT run.id::text FROM signal_workspace_embedding_runs run WHERE run.workspace_id=workspace.id
+    (SELECT run.id::text FROM signal_workspace_embedding_runs run WHERE run.workspace_id=workspace.id AND run.input_contract='corpus'
       AND run.status='completed' AND run.input_revision=state.input_revision AND run.config_digest=$2
       AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())
       ORDER BY run.completed_at DESC,run.id DESC LIMIT 1) embedding_run_id,

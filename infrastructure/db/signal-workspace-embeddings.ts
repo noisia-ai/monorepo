@@ -7,7 +7,10 @@ export type SignalWorkspaceEmbeddingsQueryableV1={query<Row extends Record<strin
 export class SignalWorkspaceEmbeddingsError extends Error {
  constructor(readonly code:string,readonly status=409){super(code);this.name="SignalWorkspaceEmbeddingsError";}
 }
-export type SignalWorkspaceEmbeddingCursorV1={asset_sha256:string;chunk_index:number}|null;
+export type SignalWorkspaceEmbeddingInputContractV1="corpus"|"topic_prototypes";
+export type SignalWorkspaceCorpusEmbeddingCursorV1={asset_sha256:string;chunk_index:number}|null;
+export type SignalWorkspacePrototypeEmbeddingCursorV1={input_sha256:string}|null;
+export type SignalWorkspaceEmbeddingCursorV1=SignalWorkspaceCorpusEmbeddingCursorV1|SignalWorkspacePrototypeEmbeddingCursorV1;
 /** Ephemeral per-Worker cache, never persisted, serialized into a lease, or shared globally. */
 export type SignalWorkspaceEmbeddingTextCacheV1={entry?:{workspace_id:string;asset_sha256:string;chunk_policy_version:string;text:string}};
 export type SignalWorkspaceEmbeddingCountsV1={
@@ -31,13 +34,20 @@ export type SignalWorkspaceEmbeddingsQuoteV1={contract_version:"signal-workspace
  estimated_upper_micro_usd:number;policy_valid_until:string|null;observed_at:string;
  resume_run_id:string|null;required_cap_micro_usd:number|null;
 };
-export type SignalWorkspaceEmbeddingLeaseV1={run_id:string;workspace_id:string;execution_token:string;cursor:SignalWorkspaceEmbeddingCursorV1;profile:SignalWorkspaceEmbeddingProfileV1};
+export type SignalWorkspaceEmbeddingLeaseV1={run_id:string;workspace_id:string;execution_token:string;profile:SignalWorkspaceEmbeddingProfileV1}&(
+ {input_contract?:"corpus";cursor:SignalWorkspaceCorpusEmbeddingCursorV1}|{input_contract:"topic_prototypes";cursor:SignalWorkspacePrototypeEmbeddingCursorV1});
 export type SignalWorkspaceEmbeddingDispatchV1={run_id:string;workspace_id:string;worker_job_id:string;dispatch_token:string};
-export type SignalWorkspaceEmbeddingBatchV1={
- cursor:SignalWorkspaceEmbeddingCursorV1;next_cursor:SignalWorkspaceEmbeddingCursorV1;done:boolean;batch_digest:string;
+export type SignalWorkspaceCorpusEmbeddingBatchV1={
+ input_contract?:"corpus";cursor:SignalWorkspaceCorpusEmbeddingCursorV1;next_cursor:SignalWorkspaceCorpusEmbeddingCursorV1;done:boolean;batch_digest:string;
  items:Array<{asset_sha256:string;chunk_index:number;chunk_sha256:string;root_count:number;asset_chunk_count:number;cached:boolean}>;
  inputs:Array<{chunk_sha256:string;text:string}>;tokens_upper:number;reserved_micro_usd:number;
 };
+export type SignalWorkspacePrototypeEmbeddingBatchV1={
+ input_contract:"topic_prototypes";cursor:SignalWorkspacePrototypeEmbeddingCursorV1;next_cursor:SignalWorkspacePrototypeEmbeddingCursorV1;done:boolean;batch_digest:string;
+ items:Array<{input_sha256:string;chunk_sha256:string;alias_count:number;cached:boolean}>;
+ inputs:Array<{chunk_sha256:string;text:string}>;tokens_upper:number;reserved_micro_usd:number;
+};
+export type SignalWorkspaceEmbeddingBatchV1=SignalWorkspaceCorpusEmbeddingBatchV1|SignalWorkspacePrototypeEmbeddingBatchV1;
 export type SignalWorkspaceEmbeddingCallV1={call_id:string;attempt_token:string;state:"reserved"|"response_persisted"|"settled";
  response_body:string|null;response_http_status:number|null;provider_request_id:string|null};
 export type SignalWorkspaceEmbeddingRawResponseV1={body:string;http_status:number;provider_request_id:string|null};
@@ -48,35 +58,58 @@ import {createHash,randomUUID} from "node:crypto";
 import {assertSignalWorkspaceEmbeddingProfileV1,boundSignalWorkspaceEmbeddingInputTokensV1,
  signalWorkspaceEmbeddingCostMicroUsdV1,signalWorkspaceEmbeddingDigestV1,validateSignalWorkspaceEmbeddingInputsV1} from "@noisia/query-engine";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
+import {SignalWorkspaceTopicComputationError} from "./signal-workspace-topic-computation";
+import {loadSignalWorkspaceTopicPrototypePlanV1} from "./signal-workspace-topic-prototype-inputs";
+import type {SignalWorkspaceTopicPrototypeCountsV1} from "./signal-workspace-topic-prototypes-types";
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEmbeddingsError(code,status);};
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text,"utf8").digest("hex")}`;
 const same=(a:unknown,b:unknown)=>signalWorkspaceEmbeddingDigestV1(a)===signalWorkspaceEmbeddingDigestV1(b);
 async function transaction<T>(database:SignalWorkspaceEmbeddingsDatabaseV1,work:(client:PoolClient)=>Promise<T>):Promise<T>{
- const client=await database.connect();try{await client.query("BEGIN");const result=await work(client);await client.query("COMMIT");return result;}
+ const client=await database.connect();try{await client.query("BEGIN");await client.query("SET LOCAL TIME ZONE 'UTC'");const result=await work(client);await client.query("COMMIT");return result;}
  catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
 }
-type Run={id:string;workspace_id:string;preparation_run_id:string;actor_user_id:string;status:string;profile:SignalWorkspaceEmbeddingProfileV1;
- input_revision:string;current_revision:string;policy_live:boolean;preparation_complete:boolean;execution_live:boolean;execution_token:string|null;
- worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;counts:SignalWorkspaceEmbeddingCountsV1;observed_exception_micro_usd:string};
-function cursor(run:Run):SignalWorkspaceEmbeddingCursorV1{return run.cursor_asset_sha256===null?null:{asset_sha256:run.cursor_asset_sha256,chunk_index:run.cursor_chunk_index!};}
-function leaseView(run:Run,token:string):SignalWorkspaceEmbeddingLeaseV1{return{run_id:run.id,workspace_id:run.workspace_id,execution_token:token,cursor:cursor(run),profile:run.profile};}
+type Run={id:string;workspace_id:string;preparation_run_id:string|null;actor_user_id:string;status:string;profile:SignalWorkspaceEmbeddingProfileV1;
+ input_contract:SignalWorkspaceEmbeddingInputContractV1;taxonomy_profile_id:string|null;topic_input_digest:string|null;cursor_input_sha256:string|null;
+ input_revision:string|null;current_revision:string|null;policy_live:boolean;preparation_complete:boolean;execution_live:boolean;execution_token:string|null;
+ worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;
+ counts:SignalWorkspaceEmbeddingCountsV1|SignalWorkspaceTopicPrototypeCountsV1;observed_exception_micro_usd:string};
+function corpusCursor(run:Run):SignalWorkspaceCorpusEmbeddingCursorV1{return run.cursor_asset_sha256===null?null:{asset_sha256:run.cursor_asset_sha256,chunk_index:run.cursor_chunk_index!};}
+function prototypeCursor(run:Run):SignalWorkspacePrototypeEmbeddingCursorV1{return run.cursor_input_sha256===null?null:{input_sha256:run.cursor_input_sha256};}
+function cursor(run:Run):SignalWorkspaceEmbeddingCursorV1{return run.input_contract==="topic_prototypes"?prototypeCursor(run):corpusCursor(run);}
+function leaseView(run:Run,token:string):SignalWorkspaceEmbeddingLeaseV1{
+ const common={run_id:run.id,workspace_id:run.workspace_id,execution_token:token,profile:run.profile};
+ return run.input_contract==="topic_prototypes"?{...common,input_contract:"topic_prototypes",cursor:prototypeCursor(run)}
+  :{...common,input_contract:"corpus",cursor:corpusCursor(run)};
+}
 async function lockRun(client:PoolClient,id:string):Promise<Run>{
- const scope=(await client.query<{workspace_id:string}>("SELECT workspace_id FROM signal_workspace_embedding_runs WHERE id=$1::uuid",[id])).rows[0];
+ const scope=(await client.query<{workspace_id:string;input_contract:SignalWorkspaceEmbeddingInputContractV1}>("SELECT workspace_id,input_contract FROM signal_workspace_embedding_runs WHERE id=$1::uuid",[id])).rows[0];
  if(!scope)return fail("workspace_embedding_not_found",404);
- await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE",[scope.workspace_id]);
- const run=(await client.query<Run>(`SELECT run.*,run.input_revision::text,state.input_revision::text current_revision,
+ if(scope.input_contract==="corpus")await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE",[scope.workspace_id]);
+ else if(scope.input_contract==="topic_prototypes")await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${scope.workspace_id}:topic`]);
+ else return fail("workspace_embedding_input_contract_invalid");
+ const run=(await client.query<Run>(`SELECT run.id,run.workspace_id,run.preparation_run_id,run.actor_user_id,run.status,run.profile,
+  run.input_contract,run.taxonomy_profile_id,run.topic_input_digest,run.cursor_input_sha256,
+  run.execution_token,run.worker_job_id,run.cursor_asset_sha256,run.cursor_chunk_index,run.counts,run.observed_exception_micro_usd,
+  run.input_revision::text,state.input_revision::text current_revision,
   (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp()) policy_live,
   prep.status='completed' preparation_complete,run.execution_expires_at>clock_timestamp() execution_live
-  FROM signal_workspace_embedding_runs run JOIN signal_corpus_preparation_input_state state USING(workspace_id)
-  JOIN signal_corpus_preparation_runs prep ON prep.id=run.preparation_run_id AND prep.workspace_id=run.workspace_id
+  FROM signal_workspace_embedding_runs run LEFT JOIN signal_corpus_preparation_input_state state USING(workspace_id)
+  LEFT JOIN signal_corpus_preparation_runs prep ON prep.id=run.preparation_run_id AND prep.workspace_id=run.workspace_id
   WHERE run.id=$1::uuid FOR UPDATE OF run`,[id])).rows[0];if(!run)return fail("workspace_embedding_not_found",404);
  assertSignalWorkspaceEmbeddingProfileV1(run.profile);return run;
 }
+async function inputsCurrent(client:PoolClient,run:Run):Promise<boolean>{
+ if(!run.policy_live)return false;
+ if(run.input_contract==="corpus")return run.input_revision===run.current_revision&&run.preparation_complete;
+ try{const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id});
+  return plan.taxonomy_profile_id===run.taxonomy_profile_id&&plan.plan_digest===run.topic_input_digest;}
+ catch(error){if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_empty","workspace_topic_catalog_required"].includes(error.code))return false;throw error;}
+}
 async function requireLease(client:PoolClient,lease:SignalWorkspaceEmbeddingLeaseV1):Promise<Run>{
  const run=await lockRun(client,lease.run_id);
- if(run.workspace_id!==lease.workspace_id||run.status!=="running"||run.execution_token!==lease.execution_token||!run.execution_live)return fail("workspace_embedding_lease_lost");
+ if(run.workspace_id!==lease.workspace_id||run.input_contract!==(lease.input_contract??"corpus")||run.status!=="running"||run.execution_token!==lease.execution_token||!run.execution_live)return fail("workspace_embedding_lease_lost");
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_execute_topics)return fail("workspace_embedding_forbidden",403);
- if(run.input_revision!==run.current_revision||!run.policy_live||!run.preparation_complete)return fail("workspace_embedding_inputs_changed");
+ if(!await inputsCurrent(client,run))return fail("workspace_embedding_inputs_changed");
  if(Number(run.observed_exception_micro_usd)>0)return fail("workspace_embedding_budget_violation");
  if(!same(cursor(run),lease.cursor))return fail("workspace_embedding_checkpoint_conflict");
  await client.query("UPDATE signal_workspace_embedding_runs SET execution_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1::uuid",[run.id]);return run;
@@ -85,7 +118,7 @@ export async function claimSignalWorkspaceEmbeddingRunV1(args:{database:SignalWo
  return transaction(args.database,async client=>{const run=await lockRun(client,args.run_id);
   if(run.worker_job_id!==args.worker_job_id||!["queued","running"].includes(run.status)||run.status==="running"&&run.execution_live)return null;
   const allowed=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_execute_topics;
-  const stale=run.input_revision!==run.current_revision||!run.policy_live||!run.preparation_complete;
+  const stale=allowed?!await inputsCurrent(client,run):false;
   if(!allowed||stale){await client.query(`UPDATE signal_workspace_embedding_runs SET status=$2,error_code=$3,execution_token=NULL,execution_expires_at=NULL,
    updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,stale?"stale":"failed",stale?"workspace_embedding_inputs_changed":"workspace_embedding_forbidden"]);return null;}
   const token=randomUUID();await client.query(`UPDATE signal_workspace_embedding_runs SET status='running',execution_token=$2::uuid,
@@ -108,7 +141,7 @@ async function chunkRows(client:PoolClient,run:Run):Promise<ChunkRow[]>{
  WHERE ($2::text IS NULL OR (item.asset_sha256,chunk.ordinality-1)>($2,$3::int))
  ORDER BY item.asset_sha256,chunk.ordinality LIMIT 128`,[run.preparation_run_id,run.cursor_asset_sha256,run.cursor_chunk_index,run.workspace_id,run.profile.chunk_policy_version,run.profile.config_digest])).rows;
 }
-async function readBatch(client:PoolClient,run:Run,textCache?:SignalWorkspaceEmbeddingTextCacheV1):Promise<SignalWorkspaceEmbeddingBatchV1>{
+async function readCorpusBatch(client:PoolClient,run:Run,textCache?:SignalWorkspaceEmbeddingTextCacheV1):Promise<SignalWorkspaceCorpusEmbeddingBatchV1>{
  const candidates=await chunkRows(client,run),rows:ChunkRow[]=[];let bodyBytes=0,clipped=false;
  const assetKeys=new Set<string>();
  for(const row of candidates){
@@ -128,7 +161,7 @@ async function readBatch(client:PoolClient,run:Run,textCache?:SignalWorkspaceEmb
  const lastAsset=[...assetKeys].at(-1),lastBody=lastAsset?byAsset.get(lastAsset):undefined;
  if(textCache){textCache.entry=lastAsset&&lastBody!==undefined&&Buffer.byteLength(lastBody,"utf8")<=16*1024*1024
   ?{workspace_id:run.workspace_id,asset_sha256:lastAsset,chunk_policy_version:run.profile.chunk_policy_version,text:lastBody}:undefined;}
- const inputs:SignalWorkspaceEmbeddingBatchV1["inputs"]=[],items:SignalWorkspaceEmbeddingBatchV1["items"]=[];
+ const inputs:SignalWorkspaceCorpusEmbeddingBatchV1["inputs"]=[],items:SignalWorkspaceCorpusEmbeddingBatchV1["items"]=[];
  const seen=new Set<string>();let tokens=0;
  for(const row of rows){
   if(!row.cached&&!seen.has(row.chunk_sha256)){
@@ -138,11 +171,11 @@ async function readBatch(client:PoolClient,run:Run,textCache?:SignalWorkspaceEmb
   }
   items.push({asset_sha256:row.asset_sha256,chunk_index:row.chunk_index,chunk_sha256:row.chunk_sha256,root_count:Number(row.root_count),asset_chunk_count:row.asset_chunk_count,cached:row.cached});
  }
- const last=items.at(-1),next=last?{asset_sha256:last.asset_sha256,chunk_index:last.chunk_index}:cursor(run);
- const identity={cursor:cursor(run),next_cursor:next,items:items.map(({cached:_cached,...item})=>item)};
+ const last=items.at(-1),next=last?{asset_sha256:last.asset_sha256,chunk_index:last.chunk_index}:corpusCursor(run);
+ const identity={cursor:corpusCursor(run),next_cursor:next,items:items.map(({cached:_cached,...item})=>item)};
  return{...identity,items,done:!clipped&&candidates.length<128,batch_digest:signalWorkspaceEmbeddingDigestV1(identity),inputs,tokens_upper:tokens,reserved_micro_usd:signalWorkspaceEmbeddingCostMicroUsdV1(tokens)};
 }
-async function verifyBatch(client:PoolClient,run:Run,batch:SignalWorkspaceEmbeddingBatchV1):Promise<SignalWorkspaceEmbeddingBatchV1>{
+async function verifyCorpusBatch(client:PoolClient,run:Run,batch:SignalWorkspaceCorpusEmbeddingBatchV1):Promise<SignalWorkspaceCorpusEmbeddingBatchV1>{
  if(batch.items.length===0||batch.items.length>128||!same(batch.cursor,cursor(run)))return fail("workspace_embedding_checkpoint_conflict");
  const rows=(await chunkRows(client,run)).slice(0,batch.items.length);
  const items=rows.map(row=>({asset_sha256:row.asset_sha256,chunk_index:row.chunk_index,chunk_sha256:row.chunk_sha256,root_count:Number(row.root_count),asset_chunk_count:row.asset_chunk_count,cached:row.cached}));
@@ -156,8 +189,54 @@ async function verifyBatch(client:PoolClient,run:Run,batch:SignalWorkspaceEmbedd
  if(tokens!==batch.tokens_upper||signalWorkspaceEmbeddingCostMicroUsdV1(tokens)!==batch.reserved_micro_usd)return fail("workspace_embedding_input_identity_mismatch");
  return batch;
 }
+type PrototypeRow={input_sha256:string;alias_count:string;cached:boolean;text:string|null};
+async function prototypeRows(client:PoolClient,run:Run,includeText:boolean):Promise<PrototypeRow[]>{
+ return (await client.query<PrototypeRow>(`WITH aliases AS MATERIALIZED (
+  SELECT input.text_sha256,count(*)::text alias_count FROM signal_workspace_embedding_runs run,
+   jsonb_to_recordset(run.topic_input_snapshot->'inputs') input(input_digest text,text_sha256 text)
+  WHERE run.id=$1::uuid AND input.text_sha256>COALESCE($2,'') GROUP BY input.text_sha256
+  ORDER BY input.text_sha256 LIMIT 128
+ ) SELECT aliases.text_sha256 input_sha256,aliases.alias_count,(cache.chunk_sha256 IS NOT NULL) cached,
+  CASE WHEN $5::boolean AND cache.chunk_sha256 IS NULL THEN run.topic_input_snapshot->'texts'->>aliases.text_sha256 ELSE NULL END text
+ FROM aliases JOIN signal_workspace_embedding_runs run ON run.id=$1::uuid
+ LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$3::uuid AND cache.config_digest=$4
+  AND cache.chunk_sha256=aliases.text_sha256 ORDER BY aliases.text_sha256`,
+ [run.id,run.cursor_input_sha256,run.workspace_id,run.profile.config_digest,includeText])).rows;
+}
+async function readPrototypeBatch(client:PoolClient,run:Run):Promise<SignalWorkspacePrototypeEmbeddingBatchV1>{
+ const rows=await prototypeRows(client,run,true),items:SignalWorkspacePrototypeEmbeddingBatchV1["items"]=[],inputs:SignalWorkspacePrototypeEmbeddingBatchV1["inputs"]=[];
+ let tokens=0,clipped=false;
+ for(const row of rows){
+  if(!row.cached){if(row.text===null||sha(row.text)!==row.input_sha256)return fail("workspace_embedding_input_identity_mismatch");
+   const bound=boundSignalWorkspaceEmbeddingInputTokensV1(row.text);if(tokens+bound>120000){clipped=true;break;}
+   inputs.push({chunk_sha256:row.input_sha256,text:row.text});tokens+=bound;}
+  items.push({input_sha256:row.input_sha256,chunk_sha256:row.input_sha256,alias_count:Number(row.alias_count),cached:row.cached});
+ }
+ const last=items.at(-1),next=last?{input_sha256:last.input_sha256}:prototypeCursor(run);
+ const identity={input_contract:"topic_prototypes" as const,cursor:prototypeCursor(run),next_cursor:next,items:items.map(({cached:_cached,...item})=>item)};
+ return{...identity,items,inputs,done:!clipped&&rows.length<128,batch_digest:signalWorkspaceEmbeddingDigestV1(identity),tokens_upper:tokens,reserved_micro_usd:signalWorkspaceEmbeddingCostMicroUsdV1(tokens)};
+}
+async function verifyPrototypeBatch(client:PoolClient,run:Run,batch:SignalWorkspacePrototypeEmbeddingBatchV1):Promise<SignalWorkspacePrototypeEmbeddingBatchV1>{
+ if(batch.items.length===0||batch.items.length>128||!same(batch.cursor,prototypeCursor(run)))return fail("workspace_embedding_checkpoint_conflict");
+ const rows=(await prototypeRows(client,run,false)).slice(0,batch.items.length);
+ const items=rows.map(row=>({input_sha256:row.input_sha256,chunk_sha256:row.input_sha256,alias_count:Number(row.alias_count),cached:row.cached}));
+ if(!same(items,batch.items))return fail("workspace_embedding_checkpoint_conflict");
+ const next={input_sha256:items.at(-1)!.input_sha256};
+ const identity={input_contract:"topic_prototypes" as const,cursor:prototypeCursor(run),next_cursor:next,items:items.map(({cached:_cached,...item})=>item)};
+ if(!same(next,batch.next_cursor)||signalWorkspaceEmbeddingDigestV1(identity)!==batch.batch_digest)return fail("workspace_embedding_checkpoint_conflict");
+ const keys=items.filter(item=>!item.cached).map(item=>item.chunk_sha256);
+ if(!same(keys,batch.inputs.map(input=>input.chunk_sha256)))return fail("workspace_embedding_input_identity_mismatch");
+ const tokens=keys.length?validateSignalWorkspaceEmbeddingInputsV1(batch.inputs):0;
+ if(tokens!==batch.tokens_upper||signalWorkspaceEmbeddingCostMicroUsdV1(tokens)!==batch.reserved_micro_usd)return fail("workspace_embedding_input_identity_mismatch");
+ return batch;
+}
+async function verifyBatch(client:PoolClient,run:Run,batch:SignalWorkspaceEmbeddingBatchV1):Promise<SignalWorkspaceEmbeddingBatchV1>{
+ if(run.input_contract==="topic_prototypes")return batch.input_contract==="topic_prototypes"?verifyPrototypeBatch(client,run,batch):fail("workspace_embedding_input_contract_invalid");
+ return batch.input_contract!=="topic_prototypes"?verifyCorpusBatch(client,run,batch):fail("workspace_embedding_input_contract_invalid");
+}
 export async function readSignalWorkspaceEmbeddingBatchV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1;text_cache?:SignalWorkspaceEmbeddingTextCacheV1}):Promise<SignalWorkspaceEmbeddingBatchV1>{
- return transaction(args.database,async client=>readBatch(client,await requireLease(client,args.lease),args.text_cache));
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
+  return run.input_contract==="topic_prototypes"?readPrototypeBatch(client,run):readCorpusBatch(client,run,args.text_cache);});
 }
 type CallRow={id:string;run_id:string;workspace_id:string;attempt_token:string;status:string;input_keys:string[];batch:Omit<SignalWorkspaceEmbeddingBatchV1,"inputs">;
  response_body_private:string|null;http_status:number|null;provider_request_id:string|null;reserved_micro_usd:string;observed_tokens:string|null;settled_micro_usd:string|null;tokens_upper:string};
@@ -238,6 +317,37 @@ function validateStoredVectors(call:CallRow,validated:SignalWorkspaceEmbeddingVa
    ||expected.some((value,i)=>!Number.isFinite(value)||!Number.isFinite(Math.fround(value))||value!==rawVector[i]))return fail("workspace_embedding_invalid_response");
  }
 }
+async function projectPrototypeAliases(client:PoolClient,run:Run,keys:string[]){
+ await client.query(`INSERT INTO signal_topic_definition_embeddings(workspace_id,definition_digest,embedding_model,provider,embedding,
+  embedding_config_digest,input_text_sha256,source_embedding_call_id)
+ SELECT run.workspace_id,input.input_digest,run.profile->>'model',run.profile->>'provider',cache.embedding,
+  run.config_digest,input.text_sha256,cache.call_id FROM signal_workspace_embedding_runs run,
+  jsonb_to_recordset(run.topic_input_snapshot->'inputs') input(input_digest text,text_sha256 text)
+ JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$2::uuid AND cache.config_digest=$3 AND cache.chunk_sha256=input.text_sha256
+ WHERE run.id=$1::uuid AND run.input_contract='topic_prototypes' AND input.text_sha256=ANY($4::text[])
+ ON CONFLICT DO NOTHING`,[run.id,run.workspace_id,run.profile.config_digest,keys]);
+}
+async function prototypeCoverage(client:PoolClient,run:Run):Promise<Pick<SignalWorkspaceTopicPrototypeCountsV1,"completed_topics"|"partial_topics"|"pending_topics"|"processed_input_references">>{
+ const row=(await client.query<{completed_topics:number;partial_topics:number;pending_topics:number;processed_input_references:string}>(`
+ WITH input_state AS MATERIALIZED (
+  SELECT input.input_digest,(prototype.id IS NOT NULL AND cache.chunk_sha256 IS NOT NULL AND prototype.embedding=cache.embedding) covered
+  FROM signal_workspace_embedding_runs run CROSS JOIN LATERAL
+   jsonb_to_recordset(run.topic_input_snapshot->'inputs') input(input_digest text,text_sha256 text)
+  LEFT JOIN signal_topic_definition_embeddings prototype ON prototype.workspace_id=run.workspace_id
+   AND prototype.embedding_config_digest=run.config_digest AND prototype.definition_digest=input.input_digest
+   AND prototype.input_text_sha256=input.text_sha256 AND prototype.provider=run.profile->>'provider' AND prototype.embedding_model=run.profile->>'model'
+  LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=run.workspace_id AND cache.config_digest=run.config_digest AND cache.chunk_sha256=input.text_sha256
+  WHERE run.id=$1::uuid
+ ), topic_state AS (
+  SELECT topic->>'taxonomy_term_id' topic_id,count(*) expected,count(*) FILTER(WHERE input.covered) covered
+  FROM signal_workspace_embedding_runs run CROSS JOIN LATERAL jsonb_array_elements(run.topic_input_snapshot->'topics') topic
+  CROSS JOIN LATERAL jsonb_array_elements_text(topic->'input_digests') reference(input_digest)
+  LEFT JOIN input_state input ON input.input_digest=reference.input_digest WHERE run.id=$1::uuid GROUP BY topic->>'taxonomy_term_id'
+ ) SELECT count(*) FILTER(WHERE expected=covered)::int completed_topics,
+  count(*) FILTER(WHERE covered>0 AND covered<expected)::int partial_topics,
+  count(*) FILTER(WHERE covered=0)::int pending_topics,COALESCE(sum(covered),0)::text processed_input_references FROM topic_state`,[run.id])).rows[0]!;
+ return{...row,processed_input_references:Number(row.processed_input_references)};
+}
 export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1;
  batch:SignalWorkspaceEmbeddingBatchV1;call_id:string|null;attempt_token?:string;validated?:SignalWorkspaceEmbeddingValidatedResponseV1}):Promise<SignalWorkspaceEmbeddingLeaseV1>{
  // Settle a response before a freshness rejection. Rolling back a stale checkpoint
@@ -264,7 +374,17 @@ export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:Signa
   const keys=[...new Set(batch.items.map(item=>item.chunk_sha256))];
   const covered=(await client.query<{count:string}>("SELECT count(*)::text FROM signal_workspace_chunk_embeddings WHERE workspace_id=$1::uuid AND config_digest=$2 AND chunk_sha256=ANY($3::text[])",[run.workspace_id,run.profile.config_digest,keys])).rows[0]!;
   if(Number(covered.count)!==keys.length)return fail("workspace_embedding_page_incomplete");
-  const counts={...run.counts};
+  if(batch.input_contract==="topic_prototypes"){
+   await projectPrototypeAliases(client,run,keys);
+   const counts={...run.counts as SignalWorkspaceTopicPrototypeCountsV1,...await prototypeCoverage(client,run)};
+   counts.processed_unique_inputs+=batch.items.length;counts.cache_hits+=batch.items.length-inserted;counts.embedded_unique_inputs+=inserted;
+   await client.query(`UPDATE signal_workspace_embedding_runs SET counts=$2::jsonb,cursor_input_sha256=$3,
+    execution_expires_at=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp() WHERE id=$1::uuid`,
+   [run.id,JSON.stringify(counts),batch.next_cursor?.input_sha256??null]);
+   return{run_id:args.lease.run_id,workspace_id:args.lease.workspace_id,execution_token:args.lease.execution_token,
+    profile:args.lease.profile,input_contract:"topic_prototypes",cursor:batch.next_cursor} as SignalWorkspaceEmbeddingLeaseV1;
+  }
+  const counts={...run.counts as SignalWorkspaceEmbeddingCountsV1};
   counts.processed_asset_chunks+=batch.items.length;counts.processed_chunk_references+=batch.items.reduce((sum,item)=>sum+item.root_count,0);
   counts.completed_roots+=batch.items.filter(item=>item.chunk_index===item.asset_chunk_count-1).reduce((sum,item)=>sum+item.root_count,0);
   const last=batch.items.at(-1);counts.partial_roots=last&&last.chunk_index<last.asset_chunk_count-1?last.root_count:0;
@@ -273,20 +393,30 @@ export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:Signa
   await client.query(`UPDATE signal_workspace_embedding_runs SET counts=$2::jsonb,cursor_asset_sha256=$3,cursor_chunk_index=$4,
    execution_expires_at=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp() WHERE id=$1::uuid`,
    [run.id,JSON.stringify(counts),batch.next_cursor?.asset_sha256??null,batch.next_cursor?.chunk_index??null]);
-  return{...args.lease,cursor:batch.next_cursor};
+  return{run_id:args.lease.run_id,workspace_id:args.lease.workspace_id,execution_token:args.lease.execution_token,
+   profile:args.lease.profile,input_contract:"corpus",cursor:batch.next_cursor} as SignalWorkspaceEmbeddingLeaseV1;
  });
 }
 export async function finishSignalWorkspaceEmbeddingsV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1}):Promise<{status:"completed"}>{
  return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
-  if(run.counts.completed_roots!==run.counts.eligible_roots||run.counts.processed_asset_chunks!==run.counts.total_asset_chunks
-   ||run.counts.processed_chunk_references!==run.counts.total_chunk_references)return fail("workspace_embedding_page_incomplete");
-  const missing=(await client.query<{missing:boolean}>(`SELECT EXISTS(SELECT 1 FROM
+  if(run.input_contract==="topic_prototypes"){
+   const counts=run.counts as SignalWorkspaceTopicPrototypeCountsV1,coverage=await prototypeCoverage(client,run);
+   if(counts.completed_topics!==counts.total_topics||counts.processed_unique_inputs!==counts.total_unique_inputs
+    ||counts.processed_input_references!==counts.total_input_references||coverage.completed_topics!==counts.total_topics
+    ||coverage.processed_input_references!==counts.total_input_references||(await prototypeRows(client,run,false)).length)
+    return fail("workspace_embedding_page_incomplete");
+  }else{
+   const counts=run.counts as SignalWorkspaceEmbeddingCountsV1;
+   if(counts.completed_roots!==counts.eligible_roots||counts.processed_asset_chunks!==counts.total_asset_chunks
+    ||counts.processed_chunk_references!==counts.total_chunk_references)return fail("workspace_embedding_page_incomplete");
+   const missing=(await client.query<{missing:boolean}>(`SELECT EXISTS(SELECT 1 FROM
    (SELECT DISTINCT asset_sha256 FROM signal_corpus_preparation_items WHERE run_id=$1::uuid AND disposition='eligible') item
    JOIN signal_corpus_text_assets asset ON asset.workspace_id=$2::uuid AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=$3
    CROSS JOIN LATERAL jsonb_array_elements(asset.chunks->'chunks') chunk
    LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$2::uuid AND cache.config_digest=$4 AND cache.chunk_sha256=chunk->>'sha256'
    WHERE cache.chunk_sha256 IS NULL) missing`,[run.preparation_run_id,run.workspace_id,run.profile.chunk_policy_version,run.profile.config_digest])).rows[0]!.missing;
-  if(missing)return fail("workspace_embedding_page_incomplete");
+   if(missing)return fail("workspace_embedding_page_incomplete");
+  }
   await client.query(`UPDATE signal_workspace_embedding_runs SET status='completed',completed_at=clock_timestamp(),updated_at=clock_timestamp(),error_code=NULL,
    execution_token=NULL,execution_expires_at=NULL,dispatch_status='dispatched',dispatch_token=NULL,dispatch_expires_at=NULL,dispatch_attempts=0 WHERE id=$1::uuid`,[run.id]);return{status:"completed"};
  });
