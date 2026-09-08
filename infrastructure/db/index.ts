@@ -18,6 +18,7 @@ export {createSignalTopicContractDraftV1,loadSignalTopicContractDraftV1,loadSign
 export * from "./signal-topic-rule-cohorts";
 export * from "./signal-topic-rule-suggestions";
 export * from "./sentione-csv-ingest";
+export * from "./sentione-timestamps";
 
 export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";

@@ -23,6 +23,7 @@ import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { ingestSentioneCsvStream } from "@/lib/csv/sentione";
+import { declareSourceTimestampContext, sourceTimestampFailure } from "@/lib/csv/source-timestamp-context";
 import { getCorpusForUser } from "@/lib/data/corpora";
 import { resolveWorkspaceIngestionForCorpus } from "@/lib/data-os/workspace-ingestion";
 import { db, pool } from "@/lib/db";
@@ -56,6 +57,14 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   // lets the server stream the provider-neutral listening export instead of
   // buffering the whole multipart payload in memory, which OOMs on ~0.5GB CSVs.
   const query = new URL(request.url).searchParams;
+  let timestampContext: ReturnType<typeof declareSourceTimestampContext>;
+  try {
+    timestampContext = declareSourceTimestampContext(query.get("source_timezone"));
+  } catch (error) {
+    const failure = sourceTimestampFailure(error);
+    if (!failure) throw error;
+    return Response.json({ error: failure.code, message: failure.code, details: failure.detail }, { status: 422 });
+  }
   const sourceLabel = query.get("source_label") ?? "listening_csv";
   const fileNameRaw = query.get("file_name");
   const fileName = typeof fileNameRaw === "string" && fileNameRaw.trim().length > 0 ? fileNameRaw.trim().slice(0, 300) : sourceLabel;
@@ -220,6 +229,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       sourceFileName: fileName,
       sourceFileHash: "pending",
       importedByUserId: session.appUser.id,
+      processingMetrics: timestampContext.processingMetrics,
       status: shouldQueueIngest ? "queued" : "processing"
     })
     .returning();
@@ -287,6 +297,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       corpusId: corpus.id,
       importBatchId: batch.id,
       sourceFileName: fileName,
+      sourceTimezone: timestampContext.timezone,
       entityLabel,
       stream: request.body
     });
@@ -336,7 +347,14 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[csv-upload] ingest failed:", message);
-    await db.update(importBatches).set({ status: "failed" }).where(eq(importBatches.id, batch.id));
+    const failure = sourceTimestampFailure(error);
+    await db.update(importBatches).set({ status: "failed",
+      ...(failure ? { failureCode: failure.code, failureDetail: failure.detail, failedAt: new Date() } : {})
+    }).where(eq(importBatches.id, batch.id));
+    if (failure) {
+      return Response.json({ import_batch_id: batch.id, error: failure.code, message: failure.code,
+        details: failure.detail }, { status: 422 });
+    }
     return Response.json(
       { error: "import_failed", message },
       { status: 500 }

@@ -884,7 +884,9 @@ function duplicateAcceptedImportId(code: string | null, detail: unknown) {
 
 function safeFailure(code: string | null) {
   const normalized = code || "processing_failed";
-  const recoverable = !["content_already_accepted","cross_workspace"].includes(normalized);
+  const recoverable = !["content_already_accepted","cross_workspace",
+    "source_timezone_required","source_timezone_invalid","source_timestamp_required",
+    "source_timestamp_invalid","source_timestamp_ambiguous","source_timestamp_nonexistent"].includes(normalized);
   return { code: normalized,recoverable };
 }
 

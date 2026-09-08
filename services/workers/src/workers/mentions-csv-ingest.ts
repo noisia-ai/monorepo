@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 
@@ -7,7 +6,8 @@ import type { Job } from "bullmq";
 import {
   createSignalSentioneCsvIngester,
   recordSignalDataAcceptance,
-  recordSignalWorkspaceDataAcceptance
+  recordSignalWorkspaceDataAcceptance,
+  SentioneTimestampError
 } from "@noisia/db";
 import { pool } from "../db/client";
 import { advanceCorpusRevision } from "./corpus-revision";
@@ -30,7 +30,7 @@ type IngestMentionsCsvJobData = {
   testCrashAfterRecords?: number;
 };
 
-const { ingestSentioneCsvStream } = createSignalSentioneCsvIngester(pool);
+const { ingestSentioneCsvStream,inspectSentioneCsvStream } = createSignalSentioneCsvIngester(pool);
 
 export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
   await job.updateProgress(5);
@@ -54,13 +54,16 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
     supersedes_import_batch_id: string | null;
     storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
+    capture_timezone: string | null;
+    processing_metrics: unknown;
   }>(
     `
       SELECT workspace_id, data_source_id, study_corpus_id,
         status, record_count, included_count, excluded_count, duplicate_count,
         ingestion_phase,storage_bucket,storage_object_key,expected_file_size_bytes,
         storage_part_count,storage_part_size_bytes,processed_bytes,worker_job_id,
-        supersedes_import_batch_id,storage_source_import_batch_id,storage_content_hash
+        supersedes_import_batch_id,storage_source_import_batch_id,storage_content_hash,
+        capture_timezone,processing_metrics
       FROM import_batches
       WHERE id = $1::uuid
       LIMIT 1
@@ -148,6 +151,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
       ...ingestion,
       importBatchId: job.data.importBatchId,
       sourceFileName: job.data.sourceFileName,
+      sourceTimezone: legacySourceTimezone(existing.processing_metrics),
       entityLabel: job.data.entityLabel ?? null,
       stream: webStream,
       onProgress: async (progress) => {
@@ -214,8 +218,9 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
     };
   } catch (error) {
     await pool.query(
-      `UPDATE import_batches SET status = 'failed' WHERE id = $1::uuid AND status <> 'completed'`,
-      [job.data.importBatchId]
+      `UPDATE import_batches SET status = 'failed', failure_code=$2, failure_detail=$3::jsonb
+       WHERE id = $1::uuid AND status <> 'completed'`,
+      [job.data.importBatchId, classifyImportFailure(error), JSON.stringify(importFailureDetail(error))]
     );
     throw error;
   }
@@ -234,6 +239,7 @@ async function ingestWorkspaceAsyncImportJob(
     supersedes_import_batch_id: string | null;
     storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
+    capture_timezone: string | null;
   },
   ingestion: { workspaceId: string;dataSourceId: string;corpusId: string | null }
 ) {
@@ -259,22 +265,24 @@ async function ingestWorkspaceAsyncImportJob(
   const processingStartedAt=performance.now();
   try {
     const verificationStartedAt=performance.now();
-    const verified=await hashWorkspaceImportObjects(openWorkspaceImportObjects({
-      bucket: job.data.storageBucket ?? existing.storage_bucket,
-      objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
-      partCount: job.data.storagePartCount ?? existing.storage_part_count
-    }));
+    const verified=await inspectSentioneCsvStream({ sourceTimezone: existing.capture_timezone,
+      stream: openWorkspaceImportObjects({
+        bucket: job.data.storageBucket ?? existing.storage_bucket,
+        objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
+        partCount: job.data.storagePartCount ?? existing.storage_part_count
+      })
+    });
     const expectedBytes = Number(existing.expected_file_size_bytes ?? 0);
     if (verified.sizeBytes !== expectedBytes) throw new Error("Workspace import storage verification size mismatch.");
     if (existing.storage_source_import_batch_id) {
       await pool.query(`
         SELECT seal_signal_workspace_import_storage_hash_v1($1::uuid,$2,$3,$4)
-      `,[job.data.importBatchId,workerJobId,verified.contentHash,verified.sizeBytes]);
+      `,[job.data.importBatchId,workerJobId,verified.fileHash,verified.sizeBytes]);
     }
     const storageVerificationMs=Math.round((performance.now()-verificationStartedAt)*1000)/1000;
     const duplicate = await completePreviouslyAcceptedWorkspaceImport({ pool,
       importBatchId: job.data.importBatchId, workerJobId,
-      verifiedHash: verified.contentHash, verifiedBytes: verified.sizeBytes });
+      verifiedHash: verified.fileHash, verifiedBytes: verified.sizeBytes });
     if (duplicate) {
       // SQL has durably resolved this replay; transient progress transport cannot turn it back into a retryable failure.
       await job.updateProgress(100).catch(() => undefined);
@@ -282,6 +290,9 @@ async function ingestWorkspaceAsyncImportJob(
         corpus_revision: null, data_os: null, signal_data_acceptances: 0,
         workspace_data_acceptance: false };
     }
+    // The full verification read validates dates before any canonical writes. A
+    // late invalid row must not leave old timestamps behind for a corrected upload.
+    if (verified.validationError) throw verified.validationError;
     const stream = openWorkspaceImportObjects({
       bucket: job.data.storageBucket ?? existing.storage_bucket,
       objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
@@ -292,6 +303,7 @@ async function ingestWorkspaceAsyncImportJob(
       importBatchId: job.data.importBatchId,
       supersedesImportBatchId: existing.supersedes_import_batch_id,
       sourceFileName: job.data.sourceFileName,
+      sourceTimezone: existing.capture_timezone,
       entityLabel: job.data.entityLabel ?? null,
       stream,
       onProgress: async (progress,processedBytes) => {
@@ -315,7 +327,7 @@ async function ingestWorkspaceAsyncImportJob(
       }
     });
     parserMetrics=metrics;
-    if (fileHash !== verified.contentHash || lastBytes !== verified.sizeBytes) {
+    if (fileHash !== verified.fileHash || lastBytes !== verified.sizeBytes) {
       throw new Error("Workspace import storage changed during ingestion.");
     }
     const closureStartedAt=performance.now();
@@ -387,23 +399,9 @@ async function ingestWorkspaceAsyncImportJob(
     await pool.query(`
       SELECT fail_signal_workspace_import_v1($1::uuid,$2,$3,$4::jsonb,$5,$6)
     `,[job.data.importBatchId,workerJobId,failureCode,
-      JSON.stringify({ kind: failureCode,recoverable: true }),lastRecords,lastBytes]);
+      JSON.stringify({ ...importFailureDetail(error),kind: failureCode }),lastRecords,lastBytes]);
     throw error;
   }
-}
-
-async function hashWorkspaceImportObjects(stream: ReadableStream<Uint8Array>) {
-  const hash=createHash("sha256");let sizeBytes=0;
-  const reader=stream.getReader();
-  try {
-    while (true) {
-      const { done,value }=await reader.read();
-      if (done) break;
-      if (!value) continue;
-      sizeBytes+=value.byteLength;hash.update(value);
-    }
-  } finally { reader.releaseLock(); }
-  return { sizeBytes,contentHash: hash.digest("hex") };
 }
 
 function openWorkspaceImportObjects(args: {
@@ -452,6 +450,7 @@ function openWorkspaceImportObjects(args: {
 }
 
 function classifyImportFailure(error: unknown) {
+  if (error instanceof SentioneTimestampError) return error.code;
   if (error instanceof Error && /storage|object unavailable/iu.test(error.message)) {
     return "storage_read_failed";
   }
@@ -459,6 +458,26 @@ function classifyImportFailure(error: unknown) {
     return "csv_validation_failed";
   }
   return "processing_failed";
+}
+
+function importFailureDetail(error: unknown) {
+  return error instanceof SentioneTimestampError
+    ? { kind: error.code,recoverable: false,field: error.field ?? null }
+    : { kind: classifyImportFailure(error),recoverable: true };
+}
+
+// Legacy imports have no acquisition seal. Their explicit source declaration is
+// durable batch metadata; a job payload or the machine timezone cannot override it.
+function legacySourceTimezone(metrics: unknown): string | null {
+  if (!metrics || typeof metrics!=="object" || !("source_timestamp_context" in metrics)) return null;
+  const context=metrics.source_timestamp_context;
+  if (!context || typeof context!=="object"
+      || !("contract_version" in context) || context.contract_version!=="source-timestamp-context-v1"
+      || !("origin" in context) || context.origin!=="operator_declared"
+      || !("timezone" in context) || typeof context.timezone!=="string" || !context.timezone.trim()) {
+    throw new SentioneTimestampError("source_timezone_invalid");
+  }
+  return context.timezone;
 }
 
 class IntentionalWorkspaceImportAbort extends Error {

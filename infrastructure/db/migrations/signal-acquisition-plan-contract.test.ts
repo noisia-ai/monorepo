@@ -34,7 +34,8 @@ test("SentiOne typed mapper projects the exact 47-column contract without canoni
   ]);
   const mapper=createSignalSentioneCsvIngester({query:async()=>({rows:[],rowCount:0})} as never);
   const observation=mapper.mapSignalSentioneProviderObservationV1(
-    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>values.get(header)??""));
+    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>values.get(header)??""),
+    {sourceTimezone:"UTC"});
   assert.ok(observation);
   assert.equal(observation.providerSchemaVersion,"sentione-csv-47-v1");
   assert.equal(observation.platform,"facebook");

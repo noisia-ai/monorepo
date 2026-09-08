@@ -75,6 +75,7 @@ test("exact-file replay closes without losing accepted rows; workspace history p
       await pool.query("SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2)", [batchId, job]);
       const result = await createSignalSentioneCsvIngester(pool).ingestSentioneCsvStream({
         workspaceId: workspace.id, dataSourceId: firstSource, importBatchId: batchId, sourceFileName: "repeated-fixture.csv",
+        sourceTimezone: workspace.timezone,
         stream: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } })
       });
       return { job, ...result };

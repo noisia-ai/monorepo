@@ -211,6 +211,9 @@ importers:
       drizzle-orm:
         specifier: ^0.44.0
         version: 0.44.7(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.21.0)
+      luxon:
+        specifier: 3.7.2
+        version: 3.7.2
       pg:
         specifier: ^8.13.0
         version: 8.21.0
@@ -218,6 +221,9 @@ importers:
         specifier: ^2.6.0
         version: 2.9.0
     devDependencies:
+      '@types/luxon':
+        specifier: 3.7.5
+        version: 3.7.5
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
@@ -1554,6 +1560,9 @@ packages:
 
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
+
+  '@types/luxon@3.7.5':
+    resolution: {integrity: sha512-jJ41Q4z6ZVO260MNDdHfW7+7a5iMiX8Mr6ZJHcmgrvhZha6dz5704o/lF2kKl6URjH6ivEL97w9xS/MgpJEphg==}
 
   '@types/node@20.19.39':
     resolution: {integrity: sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw==}
@@ -4528,6 +4537,8 @@ snapshots:
   '@types/json-schema@7.0.15': {}
 
   '@types/json5@0.0.29': {}
+
+  '@types/luxon@3.7.5': {}
 
   '@types/node@20.19.39':
     dependencies:

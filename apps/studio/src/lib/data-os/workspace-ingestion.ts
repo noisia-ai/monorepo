@@ -19,6 +19,7 @@ import {
 
 import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { ingestSentioneCsvStream } from "@/lib/csv/sentione";
+import { declareSourceTimestampContext, sourceTimestampFailure } from "@/lib/csv/source-timestamp-context";
 import type { ResolvedSignalWorkspace } from "@/lib/data-os/signal-workspace";
 import type { SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
 import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
@@ -498,9 +499,11 @@ export async function ingestWorkspaceDataSourceCsv(args: {
   userId: string;
   contributedByStudyCorpusId: string | null;
   fileName: string;
+  sourceTimezone?: string | null;
   stream: ReadableStream<Uint8Array>;
   productOperation?: { idempotencyKey: string; requestDigest: string };
 }) {
+  const timestampContext = declareSourceTimestampContext(args.sourceTimezone);
   const [source] = await db
     .select()
     .from(dataSources)
@@ -542,6 +545,7 @@ export async function ingestWorkspaceDataSourceCsv(args: {
       productIdempotencyKey: args.productOperation?.idempotencyKey,
       productRequestDigest: args.productOperation?.requestDigest,
       importedByUserId: args.userId,
+      processingMetrics: timestampContext.processingMetrics,
       status: "processing"
     })
     .returning();
@@ -554,6 +558,7 @@ export async function ingestWorkspaceDataSourceCsv(args: {
       corpusId: args.contributedByStudyCorpusId,
       importBatchId: batch.id,
       sourceFileName: args.fileName,
+      sourceTimezone: timestampContext.timezone,
       entityLabel,
       stream: args.stream
     });
@@ -619,9 +624,12 @@ export async function ingestWorkspaceDataSourceCsv(args: {
       compatibilityAcceptanceCount
     };
   } catch (error) {
+    const failure = sourceTimestampFailure(error);
     await db
       .update(importBatches)
-      .set({ status: "failed" })
+      .set({ status: "failed",
+        ...(failure ? { failureCode: failure.code, failureDetail: failure.detail, failedAt: new Date() } : {})
+      })
       .where(eq(importBatches.id, batch.id));
     throw error;
   }
@@ -633,9 +641,11 @@ export async function ingestWorkspaceDataSourceCsvProductV1(args: {
   userId: string;
   contributedByStudyCorpusId: string | null;
   fileName: string;
+  sourceTimezone?: string | null;
   stream: ReadableStream<Uint8Array>;
   idempotencyKey: string;
 }) {
+  const timestampContext = declareSourceTimestampContext(args.sourceTimezone);
   const rawKey = args.idempotencyKey.trim();
   if (rawKey.length < 8 || rawKey.length > 500) {
     throw new WorkspaceIngestionValidationError("Idempotency-Key must be between 8 and 500 characters.");
@@ -646,7 +656,8 @@ export async function ingestWorkspaceDataSourceCsvProductV1(args: {
     workspace_id: args.workspace.id,
     source_id: args.sourceId,
     contributed_by_study_corpus_id: args.contributedByStudyCorpusId,
-    file_name: args.fileName
+    file_name: args.fileName,
+    source_timezone: timestampContext.timezone
   }));
   const lockClient = await pool.connect();
   try {

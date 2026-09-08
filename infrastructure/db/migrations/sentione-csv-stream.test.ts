@@ -53,10 +53,10 @@ const fixture = (values: Array<Record<string, string>>, delimiter: string, final
 
 test("SentiOne stream preserves empty quoted fields and literal quotes across byte boundaries", async () => {
   const values: Array<Record<string, string>> = [
-    { id: "synthetic-1", "Content of posts": '"Una opinión"; con separadores,\r\nsaltos y emoji 🚗 suficientemente larga.', Country: "", Title: "", Context: "", Language: "es" },
-    { id: "synthetic-2", "Content of posts": "", Title: "Título de respaldo suficientemente largo para inclusión", Country: "MX", Language: "es-mx" },
-    { id: "synthetic-3", "Content of posts": '"', Title: "", Country: "", Context: '""' },
-    { id: "synthetic-4", "Content of posts": 'Final con comilla literal y contenido largo "', Country: "AZ" }
+    { Created: "2026-08-01T12:00:00Z", id: "synthetic-1", "Content of posts": '"Una opinión"; con separadores,\r\nsaltos y emoji 🚗 suficientemente larga.', Country: "", Title: "", Context: "", Language: "es" },
+    { Created: "2026-08-01T12:00:00Z", id: "synthetic-2", "Content of posts": "", Title: "Título de respaldo suficientemente largo para inclusión", Country: "MX", Language: "es-mx" },
+    { Created: "2026-08-01T12:00:00Z", id: "synthetic-3", "Content of posts": '"', Title: "", Country: "", Context: '""' },
+    { Created: "2026-08-01T12:00:00Z", id: "synthetic-4", "Content of posts": 'Final con comilla literal y contenido largo "', Country: "AZ" }
   ];
   for (const delimiter of [";", ","]) for (const finalNewline of [true, false]) {
     const bytes = fixture(values, delimiter, finalNewline);
@@ -86,9 +86,9 @@ test("SentiOne stream preserves empty quoted fields and literal quotes across by
 test("SentiOne empty content falls back to its title before text deduplication", async () => {
   const text = "Un título que también llega como contenido de otra fila";
   const bytes = fixture([
-    { id: "first", "Content of posts": "", Title: text },
-    { id: "second", "Content of posts": text },
-    { id: "third", "Content of posts": "Un tercer registro completamente independiente y válido" }
+    { Created: "2026-08-01T12:00:00Z", id: "first", "Content of posts": "", Title: text },
+    { Created: "2026-08-01T12:00:00Z", id: "second", "Content of posts": text },
+    { Created: "2026-08-01T12:00:00Z", id: "third", "Content of posts": "Un tercer registro completamente independiente y válido" }
   ], ";", false);
   for (const chunkSize of [1, 5, bytes.length]) {
     const result = await ingest(bytes, chunkSize);

@@ -96,17 +96,19 @@
     "db:verify": "tsx seeds/verify.ts",
     "lint": "echo \"No lint configured for @noisia/db yet\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx signal-workspace-capabilities.test.ts signal-topic-catalog-readiness.test.ts signal-topic-preimport.postgres.test.ts migrations/*.test.ts signal-topic-evaluation-v2-candidate-refinement-reader.test.ts signal-topic-evaluation-v2-candidate-evidence-reader.test.ts signal-topic-evaluation-v2-result-import.test.ts signal-topic-contract-drafts.test.ts signal-topic-contract-drafts.postgres.test.ts signal-taxonomy-draft-core.test.ts signal-topic-rule-cohorts.test.ts signal-topic-rule-cohorts.postgres.test.ts signal-topic-rule-suggestions.test.ts signal-topic-rule-suggestions.postgres.test.ts signal-topic-rule-suggestion-execution.test.ts"
+    "test": "node --test --import tsx sentione-timestamps.test.ts signal-workspace-capabilities.test.ts signal-topic-catalog-readiness.test.ts signal-topic-preimport.postgres.test.ts migrations/*.test.ts signal-topic-evaluation-v2-candidate-refinement-reader.test.ts signal-topic-evaluation-v2-candidate-evidence-reader.test.ts signal-topic-evaluation-v2-result-import.test.ts signal-topic-contract-drafts.test.ts signal-topic-contract-drafts.postgres.test.ts signal-taxonomy-draft-core.test.ts signal-topic-rule-cohorts.test.ts signal-topic-rule-cohorts.postgres.test.ts signal-topic-rule-suggestions.test.ts signal-topic-rule-suggestions.postgres.test.ts signal-topic-rule-suggestion-execution.test.ts"
   },
   "dependencies": {
     "@noisia/query-engine": "workspace:*",
     "@opentelemetry/api": "^1.9.1",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.44.0",
+    "luxon": "3.7.2",
     "pg": "^8.13.0",
     "yaml": "^2.6.0"
   },
   "devDependencies": {
+    "@types/luxon": "3.7.5",
     "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.31.0",
     "tsx": "^4.19.0",

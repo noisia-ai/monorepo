@@ -1,8 +1,25 @@
 import crypto from "node:crypto";
 
 import type { Pool } from "pg";
+import { createSentioneTimestampParser, SentioneTimestampError } from "./sentione-timestamps";
 
 type CsvRow = Record<string, string>;
+type TimestampParser = ReturnType<typeof createSentioneTimestampParser>;
+
+export type SentioneCsvIngestionParams = {
+  workspaceId: string;
+  dataSourceId: string;
+  corpusId?: string | null;
+  importBatchId: string;
+  sourceFileName: string;
+  /** Declared source IANA zone; required for timestamps without their own offset. */
+  sourceTimezone?: string | null;
+  entityLabel?: string | null;
+  supersedesImportBatchId?: string | null;
+  tuning?: { chunkSize?: number;insertConcurrency?: number };
+  stream: ReadableStream<Uint8Array>;
+  onProgress?: (stats: CsvImportStats,processedBytes: number) => void | Promise<void>;
+};
 
 type NormalizedMention = {
   externalId: string;
@@ -189,27 +206,36 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   // server on ~0.5GB exports. This variant consumes the upload as a byte stream,
   // parses row-by-row, and inserts in bounded batches — memory stays flat
   // regardless of file size. It also computes the file hash incrementally.
-  async function ingestSentioneCsvStream(params: {
-    workspaceId: string;
-    dataSourceId: string;
-    corpusId?: string | null;
-    importBatchId: string;
-    sourceFileName: string;
-    entityLabel?: string | null;
-    supersedesImportBatchId?: string | null;
-    tuning?: { chunkSize?: number;insertConcurrency?: number };
-    stream: ReadableStream<Uint8Array>;
-    onProgress?: (stats: CsvImportStats,processedBytes: number) => void | Promise<void>;
-  }): Promise<{ stats: CsvImportStats; fileHash: string;metrics: CsvImportPerformanceMetrics }> {
+  async function ingestSentioneCsvStream(params:SentioneCsvIngestionParams)
+    :Promise<{stats:CsvImportStats;fileHash:string;metrics:CsvImportPerformanceMetrics}> {
+    const {stats,fileHash,metrics}=await processSentioneCsvStream(params,params);
+    return {stats,fileHash,metrics};
+  }
+
+  /** Inspect the existing verification read without SQL, canonicalization or file-wide dedupe sets.
+   * A timestamp error is retained while all bytes are hashed, so an already-accepted file can
+   * still be identified without claiming that a new temporal interpretation was applied. */
+  async function inspectSentioneCsvStream(params:{stream:ReadableStream<Uint8Array>;sourceTimezone?:string|null}) {
+    const {fileHash,sizeBytes,validationError}=await processSentioneCsvStream(params,null);
+    return {fileHash,sizeBytes,validationError};
+  }
+
+  async function processSentioneCsvStream(
+    params:{stream:ReadableStream<Uint8Array>;sourceTimezone?:string|null},ingestion:SentioneCsvIngestionParams|null
+  ) {
     const startedAt = performance.now();
+    let timestamps:TimestampParser|null=null;
+    let validationError:SentioneTimestampError|null=null;
+    try {timestamps=createSentioneTimestampParser(params.sourceTimezone);}
+    catch(error){if(!(error instanceof SentioneTimestampError))throw error;validationError=error;}
     const hash = crypto.createHash("sha256");
     const decoder = new TextDecoder("utf-8");
-    const seenHashes = new Set<string>();
+    const seenHashes = ingestion ? new Set<string>() : null;
     // mentions has TWO unique constraints: (study_corpus_id, text_hash) and
     // (source_system, external_id). ON CONFLICT can only target one, so we also
     // dedup external_id in-file — otherwise a CSV with repeated mention IDs makes
     // the whole batch INSERT fail on uq_mentions_source_external.
-    const seenExternalIds = new Set<string>();
+    const seenExternalIds = ingestion ? new Set<string>() : null;
     const stats: CsvImportStats = {
       record_count: 0,
       included_count: 0,
@@ -242,13 +268,14 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     // Insert batches concurrently — a single connection to the remote pooler tops
     // out near ~600 rows/s (latency-bound); a handful in parallel reaches a few
     // thousand rows/s, which is what makes ~0.5GB files finish in minutes.
-    const insertConcurrency = boundedInteger(params.tuning?.insertConcurrency,6,1,12);
-    const chunkSize = boundedInteger(params.tuning?.chunkSize,STREAM_BATCH_SIZE,1,1000);
+    const insertConcurrency = boundedInteger(ingestion?.tuning?.insertConcurrency,6,1,12);
+    const chunkSize = boundedInteger(ingestion?.tuning?.chunkSize,STREAM_BATCH_SIZE,1,1000);
     let batch: NormalizedMention[] = [];
     const inFlight = new Set<Promise<void>>();
 
     function dispatch(rows: NormalizedMention[]) {
-      const task = insertMentionChunk(rows,params,stats,metrics).finally(() => {
+      if(!ingestion)throw new Error("CSV inspection cannot dispatch persistence.");
+      const task = insertMentionChunk(rows,ingestion,stats,metrics).finally(() => {
         inFlight.delete(task);
       });
       inFlight.add(task);
@@ -263,15 +290,17 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     }
 
     async function emitRow(cells: string[]) {
+      if(!ingestion && validationError)return;
       if (normalizedHeader === null) {
         normalizedHeader = cells.map((cssll) => normalizeKey(cssll));
         providerHeaderContract = resolveSentioneHeaderContractV1(normalizedHeader);
+        if(!ingestion)return;
         await pool.query(`UPDATE import_batches SET provider_observation_projection_state=$4,
           provider_observation_header_hash=$5,provider_observation_count=0
           WHERE id=$1::uuid AND workspace_id=$2::uuid AND data_source_id=$3::uuid
             AND acquisition_contract_version IN ('signal-acquisition-import-v1','signal-acquisition-import-v2')
-            AND status IN ('queued','processing')`,[params.importBatchId,params.workspaceId,
-          params.dataSourceId,providerHeaderContract?"ready":"not_available",
+            AND status IN ('queued','processing')`,[ingestion.importBatchId,ingestion.workspaceId,
+          ingestion.dataSourceId,providerHeaderContract?"ready":"not_available",
           signalSentioneProviderHeaderHashV1(normalizedHeader)]);
         metrics.query_count+=1;
         return;
@@ -283,19 +312,29 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
         acc[key || `column_${index + 1}`] = cells[index]?.trim() ?? "";
         return acc;
       }, {});
-      const mention = normalizeMention(rowObj, params.sourceFileName,providerHeaderContract);
+      if(!ingestion) {
+        try {
+          timestamps!.required(pick(rowObj,dateKeys),"Created");
+          if(providerHeaderContract)timestamps!.optional(pick(rowObj,["Added to system"]),"Added to system");
+        } catch(error) {
+          if(!(error instanceof SentioneTimestampError))throw error;
+          validationError=error;
+        }
+        return;
+      }
+      const mention = normalizeMention(rowObj, ingestion.sourceFileName,providerHeaderContract,timestamps!);
       // Dedup on either unique key before it can blow up a batch insert.
-      if (seenHashes.has(mention.textHash) || seenExternalIds.has(mention.externalId)) {
+      if (seenHashes!.has(mention.textHash) || seenExternalIds!.has(mention.externalId)) {
         stats.duplicate_count += 1;
         metrics.classification.duplicate_inside_file+=1;
         return;
       }
-      seenHashes.add(mention.textHash);
-      seenExternalIds.add(mention.externalId);
+      seenHashes!.add(mention.textHash);
+      seenExternalIds!.add(mention.externalId);
       batch.push(mention);
       if (batch.length>=chunkSize) await dispatchBatch();
       if (stats.record_count % 500 === 0) {
-        try { await params.onProgress?.(stats,processedBytes); }
+        try { await ingestion.onProgress?.(stats,processedBytes); }
         catch (error) {
           await Promise.allSettled(inFlight);
           throw error;
@@ -305,6 +344,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
 
     async function feed(text: string) {
       for (let index = 0; index < text.length; index += 1) {
+        if(!ingestion && validationError){cell="";row=[];return;}
         const char = text[index] as string;
 
         if (!bomStripped) {
@@ -356,12 +396,14 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
 
     const reader = params.stream.getReader();
     try {
+      if(ingestion && validationError)throw validationError;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value || value.length === 0) continue;
         processedBytes += value.byteLength;
         hash.update(value);
+        if(!ingestion && validationError)continue;
         const text = decoder.decode(value, { stream: true });
         if (text.length === 0) continue;
 
@@ -382,7 +424,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       }
 
       // Flush decoder + any buffered head that never hit a newline (single-line file).
-      const tail = decoder.decode();
+      const tail = validationError ? "" : decoder.decode();
       if (!delimiterReady) {
         headBuffer += tail;
         delimiter = detectDelimiter(headBuffer || ",");
@@ -398,10 +440,12 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
         heldQuote = false;
         inQuotes = false;
       }
-      if (cell.length > 0 || row.length > 0) {
+      if (!validationError && (cell.length > 0 || row.length > 0)) {
         row.push(cell);
         await emitRow(row);
       }
+
+      if(!ingestion)return {stats,fileHash:hash.digest("hex"),metrics,sizeBytes:processedBytes,validationError};
 
       if (batch.length > 0) {
         dispatch(batch);
@@ -415,12 +459,12 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
           AND batch.data_source_id=$3::uuid
           AND batch.acquisition_contract_version IN ('signal-acquisition-import-v1','signal-acquisition-import-v2')
           AND batch.status IN ('queued','processing')`,[
-        params.importBatchId,params.workspaceId,params.dataSourceId]);
+        ingestion.importBatchId,ingestion.workspaceId,ingestion.dataSourceId]);
       metrics.query_count+=1;
-      await params.onProgress?.(stats,processedBytes);
+      await ingestion.onProgress?.(stats,processedBytes);
 
       metrics.total_ms=Math.round((performance.now()-startedAt)*1000)/1000;
-      return { stats,fileHash: hash.digest("hex"),metrics };
+      return { stats,fileHash: hash.digest("hex"),metrics,sizeBytes:processedBytes,validationError };
     } catch (error) {
       // Abort the upstream object download when parsing or persistence fails. Without
       // this, a large TUS object can keep occupying the HTTP connection after the
@@ -1049,12 +1093,12 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   }
 
   function normalizeMention(row: CsvRow, sourceFileName: string,
-    headerContract: { version: "sentione-csv-47-v1";hash: string } | null): NormalizedMention {
+    headerContract: { version: "sentione-csv-47-v1";hash: string } | null,timestamps:TimestampParser): NormalizedMention {
     const textRaw = pick(row, textKeys) || pick(row, titleKeys) || "";
     const textClean = cleanText(textRaw);
     const textHash = hashText(textClean);
     const title = pick(row, titleKeys) || null;
-    const publishedAt = parseDate(pick(row, dateKeys)) ?? new Date(0);
+    const publishedAt = timestamps.required(pick(row,dateKeys),"Created");
     const url = pick(row, urlKeys) || null;
     const platform = normalizePlatform(row, url);
     const contentType = normalizeContentType(pick(row, contentTypeKeys));
@@ -1067,7 +1111,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     const externalId=buildExternalId(row,textHash);
     const providerObservation=headerContract
       ? mapSentioneTypedObservationV1(row,{ externalId,platform,publishedAt,
-          sentimentSource,headerHash:headerContract.hash }) : null;
+          sentimentSource,headerHash:headerContract.hash },timestamps) : null;
     return {
       externalId,
       textRaw,
@@ -1207,7 +1251,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
 
   function mapSentioneTypedObservationV1(row:CsvRow,input:{
     externalId:string;platform:string;publishedAt:Date;sentimentSource:string|null;headerHash:string;
-  }):TypedProviderObservation {
+  },timestamps:TimestampParser):TypedProviderObservation {
     const number=(key:string)=>parseProviderNumber(pick(row,[key]));
     const hashPrivate=(value:string)=>value?`sha256:${crypto.createHash("sha256").update(value).digest("hex")}`:null;
     const terms:Array<{kind:"provider-tag"|"provider-keyword";ordinal:number;value:string;hash:string;normalized:string}>=[];
@@ -1227,7 +1271,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       followers_count:number("followers")
     };
     const publicDomain=normalizePublicDomain(pick(row,["Domain"]));
-    const collected=parseDate(pick(row,["Added to system"]));
+    const collected=timestamps.optional(pick(row,["Added to system"]),"Added to system");
     const safePayload={provider_schema_version:"sentione-csv-47-v1",provider_header_hash:input.headerHash,
       provider_record_key_hash:hashPrivate(input.externalId),provider_project_ref_hash:hashPrivate(pick(row,["Project name"])),
       platform:input.platform,public_domain:publicDomain,provider_domain_category:cleanOptional(pick(row,["Domain category"]),200),
@@ -1256,18 +1300,19 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     };
   }
 
-  function mapSignalSentioneProviderObservationV1(header:string[],cells:string[]){
+  function mapSignalSentioneProviderObservationV1(header:string[],cells:string[],options:{sourceTimezone?:string|null}={}){
     const contract=resolveSentioneHeaderContractV1(header);
     if(!contract||cells.length!==header.length)return null;
+    const timestamps=createSentioneTimestampParser(options.sourceTimezone);
     const row=header.reduce<CsvRow>((output,key,index)=>{
       output[normalizeKey(key)]=cells[index]?.trim()??"";return output;
     },{});
     const url=pick(row,urlKeys)||null;
-    const publishedAt=parseDate(pick(row,dateKeys))??new Date(0);
+    const publishedAt=timestamps.required(pick(row,dateKeys),"Created");
     const externalId=pick(row,idKeys)||`fixture-${contract.hash}`;
     return mapSentioneTypedObservationV1(row,{externalId,
       platform:normalizePlatform(row,url),publishedAt,
-      sentimentSource:normalizeSentiment(pick(row,sentimentKeys)),headerHash:contract.hash});
+      sentimentSource:normalizeSentiment(pick(row,sentimentKeys)),headerHash:contract.hash},timestamps);
   }
 
   function parseProviderNumber(value:string){
@@ -1339,15 +1384,6 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   function buildExternalId(row: CsvRow, textHash: string) {
     const sourceId = pick(row, idKeys);
     return sourceId ? sourceId.slice(0, 500) : `csv_${textHash.slice(0, 24)}`;
-  }
-
-  function parseDate(value: string) {
-    if (!value) {
-      return null;
-    }
-
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   function normalizePlatform(row: CsvRow, url: string | null) {
@@ -1463,5 +1499,5 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   }
 
 
-  return { ingestSentioneCsvStream,mapSignalSentioneProviderObservationV1 };
+  return { ingestSentioneCsvStream,inspectSentioneCsvStream,mapSignalSentioneProviderObservationV1 };
 }
