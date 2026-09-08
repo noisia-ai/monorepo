@@ -48,20 +48,25 @@ export async function loadSignalWorkspaceCorpusReadinessStoreV1(args: {
       WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
     ), links AS MATERIALIZED (
       SELECT membership.import_batch_id,membership.data_source_id,membership.mention_id,
-        root.id root_id
+        root.id root_id,root.inclusion_status root_inclusion_status,root.has_text root_has_text
       FROM signal_mention_import_memberships membership
       JOIN accepted batch ON batch.id=membership.import_batch_id
         AND batch.data_source_id=membership.data_source_id
-      LEFT JOIN mentions origin ON origin.id=membership.mention_id AND origin.workspace_id=$1::uuid
-      LEFT JOIN mentions root ON root.id=origin.canonical_mention_id
-        AND root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
+      -- The PK lookup is a planning boundary: stale workspace statistics must not
+      -- turn one lookup into a scan of the entire workspace for every mention.
+      LEFT JOIN LATERAL (
+        SELECT id,workspace_id,canonical_mention_id FROM mentions
+        WHERE id=membership.mention_id OFFSET 0
+      ) origin ON origin.workspace_id=$1::uuid
+      LEFT JOIN LATERAL (
+        SELECT id,workspace_id,canonical_mention_id,inclusion_status,
+          NULLIF(btrim(text_clean),'') IS NOT NULL has_text
+        FROM mentions WHERE id=origin.canonical_mention_id OFFSET 0
+      ) root ON root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
       WHERE membership.workspace_id=$1::uuid
     ), roots AS MATERIALIZED (
-      SELECT root.id,root.inclusion_status,
-        NULLIF(btrim(root.text_clean),'') IS NOT NULL has_text
-      FROM mentions root
-      WHERE root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
-        AND EXISTS(SELECT 1 FROM links WHERE links.root_id=root.id)
+      SELECT DISTINCT root_id id,root_inclusion_status inclusion_status,root_has_text has_text
+      FROM links WHERE root_id IS NOT NULL
     ), observations AS MATERIALIZED (
       SELECT observation.id,observation.import_batch_id,observation.mention_id
       FROM signal_provider_mention_observations observation
@@ -98,21 +103,28 @@ export async function loadSignalWorkspaceCorpusReadinessStoreV1(args: {
           AND usage.usage_purpose='llm-processing' AND usage.decision='allowed')
     ), authorized_paths AS MATERIALIZED (
       SELECT DISTINCT link.root_id,link.import_batch_id,link.data_source_id
-      FROM links link JOIN roots root ON root.id=link.root_id
+      FROM links link
       JOIN authorized_imports authorized ON authorized.import_batch_id=link.import_batch_id
         AND authorized.data_source_id=link.data_source_id
-      WHERE root.inclusion_status='included'
+      WHERE link.root_id IS NOT NULL AND link.root_inclusion_status='included'
+    ), eligibility_keys AS (
+      -- Match authorization and semantic evidence by the complete provenance key,
+      -- without an estimate-sensitive join between large materialized relations.
+      SELECT root_id,import_batch_id,data_source_id,
+        bool_or(authorized) authorized,bool_or(semantic) semantic
+      FROM (
+        SELECT root_id,import_batch_id,data_source_id,true authorized,false semantic
+        FROM authorized_paths
+        UNION ALL
+        SELECT mention_id,import_batch_id,data_source_id,false,true
+        FROM signal_mention_attributions
+        WHERE workspace_id=$1::uuid AND attribution_basis='mention_semantic' AND is_current=true
+          AND review_status='approved' AND eligibility_status='eligible'
+      ) evidence
+      GROUP BY root_id,import_batch_id,data_source_id
     ), eligible AS MATERIALIZED (
-      -- Paths already contain included roots with complete rights. Aggregate them once;
-      -- a correlated EXISTS here can repeatedly scan the entire materialized path set.
-      SELECT path.root_id id,bool_or(assertion.id IS NOT NULL) semantic_eligible
-      FROM authorized_paths path
-      LEFT JOIN signal_mention_attributions assertion ON assertion.workspace_id=$1::uuid
-        AND assertion.mention_id=path.root_id AND assertion.import_batch_id=path.import_batch_id
-        AND assertion.data_source_id=path.data_source_id
-        AND assertion.attribution_basis='mention_semantic' AND assertion.is_current=true
-        AND assertion.review_status='approved' AND assertion.eligibility_status='eligible'
-      GROUP BY path.root_id
+      SELECT root_id id,bool_or(semantic) semantic_eligible
+      FROM eligibility_keys WHERE authorized GROUP BY root_id
     ) SELECT
       to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at,
       (SELECT count(*) FROM accepted) accepted_files,

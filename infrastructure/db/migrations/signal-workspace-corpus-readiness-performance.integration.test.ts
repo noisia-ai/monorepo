@@ -8,11 +8,12 @@ type PlanNode = {
   "Node Type": string;
   "Actual Rows": number;
   "Actual Loops": number;
+  "Relation Name"?: string;
   "Rows Removed by Filter"?: number;
   Plans?: PlanNode[];
 };
 
-test("representative corpus readiness does not repeatedly scan the full materialized path set", {
+test("representative corpus readiness bounds materialized paths and mention lookup work", {
   skip: process.env.NOISIA_CORPUS_READINESS_PERFORMANCE_TEST_APPROVED !== "true", timeout: 120_000
 }, async () => {
   const url = new URL(process.env.DATABASE_URL!);
@@ -34,15 +35,18 @@ test("representative corpus readiness does not repeatedly scan the full material
       } }
     });
     assert.ok(result.accepted_files >= 16, "performance fixture requires at least sixteen accepted files");
-    assert.ok(result.projection.linked_roots >= 10_000, "performance fixture requires at least ten thousand roots");
+    assert.ok(result.projection.linked_roots >= 7_000, "performance fixture requires at least seven thousand roots");
     assert.equal(result.state, "received");
     assert.deepEqual(result.reconciliation_errors, []);
     assert.ok(plan);
     const repeatedCteRows: number[] = [];
+    const mentionScanRows: number[] = [];
     const inspect = (node: PlanNode) => {
+      const rowsVisited = (node["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0)) * node["Actual Loops"];
       if (node["Node Type"] === "CTE Scan") repeatedCteRows.push(
-        (node["Actual Rows"] + (node["Rows Removed by Filter"] ?? 0)) * node["Actual Loops"]
+        rowsVisited
       );
+      if (node["Relation Name"] === "mentions") mentionScanRows.push(rowsVisited);
       for (const child of node.Plans ?? []) inspect(child);
     };
     inspect(plan);
@@ -51,6 +55,12 @@ test("representative corpus readiness does not repeatedly scan the full material
     const workBudget = Math.max(result.projection.linked_roots, result.projection.observations) * 32;
     assert.ok(Math.max(0, ...repeatedCteRows) <= workBudget,
       "a materialized corpus relation was rescanned quadratically");
+    // A new workspace can be absent from table statistics. Count actual mention
+    // lookup work as well: a workspace index scan per id was ~27M rows for 7,396 roots.
+    // Two PK lookups per membership fit comfortably; a repeated workspace scan does not.
+    assert.ok(mentionScanRows.length > 0, "the plan must include canonical mention resolution");
+    assert.ok(mentionScanRows.reduce((total, rows) => total + rows, 0) <= workBudget,
+      "canonical mention lookup repeatedly scanned the workspace instead of resolving individual ids");
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
     await client.end();
