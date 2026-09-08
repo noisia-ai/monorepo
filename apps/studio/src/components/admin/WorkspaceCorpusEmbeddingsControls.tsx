@@ -254,6 +254,8 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
   const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
   const number = (value: number) => formatAdminNumber(value, locale);
   const capMicro = parseEmbeddingCapMicroUsd(cap);
+  const availableCap = quote ? Math.min(quote.max_run_cost_micro_usd, data?.max_run_cost_micro_usd ?? quote.max_run_cost_micro_usd) : 0;
+  const quoteExceedsLimit = Boolean(quote && (quote.required_cap_micro_usd ?? quote.estimated_upper_micro_usd) > availableCap);
   const canStart = !reading && !quoting && !submitting && !pending && !error && !unknown
     && embeddingQuoteCanExecute(quote, data, preparationRunId, cap);
   const displayState = run?.status === "completed" && !current ? "stale" : run?.status;
@@ -286,13 +288,14 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
       <p className="admin-drawer-form__hint">{t("cache", { cached: number(quote.cached_asset_chunks), missing: number(quote.missing_asset_chunks) })}</p>
       <p className="admin-drawer-form__intro"><strong>{t("estimate", { amount: money(quote.estimated_upper_micro_usd) })}</strong>
         {capMicro !== null && BigInt(capMicro) <= BigInt(Number.MAX_SAFE_INTEGER) ? <> · {t("cap", { amount: money(Number(capMicro)) })}</> : null}</p>
+      {quoteExceedsLimit ? <p className="admin-drawer-form__hint" role="status">{t("quoteExceedsLimit", { amount: money(availableCap) })}</p> : null}
       {quote.required_cap_micro_usd !== null ? <p className="admin-drawer-form__hint">{t("resumeBudget")}</p> : <details><summary>{t("changeCap")}</summary>
         <label className="workspace-form__field"><span>{t("capLabel")}</span>
           <input inputMode="decimal" value={cap} onChange={(event) => { setCap(event.target.value); setError((previous) => previous === "cap" ? null : previous); }} disabled={submitting} />
         </label>
         <p className="admin-drawer-form__hint">{t("capHelp", { amount: money(Math.min(quote.max_run_cost_micro_usd, data?.max_run_cost_micro_usd ?? quote.max_run_cost_micro_usd)) })}</p>
       </details>}
-      {capMicro === null || BigInt(capMicro) < BigInt(quote.estimated_upper_micro_usd) || BigInt(capMicro) > BigInt(quote.max_run_cost_micro_usd)
+      {!quoteExceedsLimit && (capMicro === null || BigInt(capMicro) < BigInt(quote.estimated_upper_micro_usd) || BigInt(capMicro) > BigInt(availableCap))
         ? <p className="workspace-form__error" role="alert">{t("errors.cap")}</p> : null}
     </> : null}
     <div className="admin-form-actions">

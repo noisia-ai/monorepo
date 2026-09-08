@@ -135,6 +135,14 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.doesNotMatch(html, /<form|<progress/u);
   });
 
+  test(`${locale}: a quote above the server limit explains the blocked action`, () => {
+    const costly = { ...quote, estimated_upper_micro_usd: 8_328_543 };
+    const html = render(status, costly);
+    assert.ok(html.includes(copy.quoteExceedsLimit.replace("{amount}", formatEmbeddingMicroUsd("5000000", locale))));
+    assert.ok(!html.includes(copy.errors.cap), "An impossible estimate is not an input-format mistake.");
+    assert.match(html, /class="admin-button admin-button--primary"[^>]*disabled/u);
+  });
+
   test(`${locale}: progress uses complete mentions and preserves partial chunks without claiming analysis`, () => {
     const html = render({ ...status, active_run: running, latest_run: running });
     assert.match(html, /<progress[^>]*max="3"[^>]*value="1"/u);
