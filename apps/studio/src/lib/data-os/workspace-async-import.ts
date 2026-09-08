@@ -131,7 +131,7 @@ export async function createWorkspaceImportUploadV1(args: {
       const readiness=await loadSignalAcquisitionPlanV1({
         queryable:client,workspace:args.workspace,actor:args.actor,access:args.access
       });
-      if(readiness.state!=="current")throw new WorkspaceAsyncImportError("acquisition_plan_stale",409);
+      if(!readiness.readiness.ready_for_import)throw new WorkspaceAsyncImportError("acquisition_plan_stale",409);
     }
     const queryVersion=targetAcquisition?.queryEvidence.queryVersion??null;
     const acquisition = targetAcquisition ? await client.query<{

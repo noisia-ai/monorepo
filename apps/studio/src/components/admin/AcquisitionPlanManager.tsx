@@ -29,6 +29,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, replaceMonitoredImport } from "@/lib/data-os/workspace-import-monitor";
+import { acquisitionSlotActions, buildAcquisitionSlotViews, groupAcquisitionBlockers } from "@/lib/data-os/workspace-acquisition-slot-view";
 import { buildAdminWorkspaceConnectorInput } from "@/lib/data-os/admin-workspace-source-contract";
 
 type PlanSummary = {
@@ -97,10 +98,12 @@ type ReferenceCandidate = {
 
 type PlanPayload = {
   contract_version: string;
+  live_brand_os_revision: number;
   state: "missing" | "draft" | "ready" | "current" | "stale" | string;
   current_plan: PlanSummary | null;
   draft_plan: PlanSummary | null;
   slots: PlanSlot[];
+  current_slots?: PlanSlot[];
   reference_candidates: ReferenceCandidate[];
   readiness: { ready_to_promote: boolean;ready_for_import:boolean;
     query_playbook_complete:boolean;blockers: string[];warnings:string[] };
@@ -352,7 +355,7 @@ export function AcquisitionPlanManager({
     return () => controller.abort();
   }, [drawer?.mode, monitorImportId, monitorRevision, importEndpoint, loadState, router, t]);
 
-  const slotViews = useMemo(() => buildSlotViews(plan?.slots ?? []),[plan?.slots]);
+  const slotViews = useMemo(() => buildSlotViews(plan?.slots ?? [], plan?.current_slots),[plan?.slots, plan?.current_slots]);
   const activeConnectors = useMemo(
     () => connectors.filter((source) => source.status === "active" && (!preparedSourceKeys || preparedSourceKeys.includes(source.source_key))),
     [connectors, preparedSourceKeys]
@@ -378,9 +381,7 @@ export function AcquisitionPlanManager({
         `/api/data-os/signal/${workspaceId}/acquisition-plan`,
         {
           expected_current_version: plan?.current_plan?.version ?? null,
-          expected_brand_os_revision:
-            plan?.state==="stale"?null:
-              plan?.draft_plan?.brand_os_revision ?? plan?.current_plan?.brand_os_revision ?? null
+          expected_brand_os_revision: plan?.live_brand_os_revision ?? null
         }
       );
       setPlan(result);
@@ -818,7 +819,7 @@ export function AcquisitionPlanManager({
         </> : null}
         {error&&!drawer?<div className="admin-acquisition__operation-error" role="alert"><WarningCircle aria-hidden size={17}/><span>{error}</span></div>:null}
 
-        {blockers.length?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("blockers.title",{count:blockers.length})}</strong><ul>{blockers.slice(0,6).map((blocker)=><li key={blocker}>{blockerLabel(t,blocker)}</li>)}</ul></div></div>:null}
+        {blockers.length?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("blockers.title",{count:blockers.length})}</strong><ul>{groupAcquisitionBlockers(blockers).slice(0,6).map((blocker)=><li key={blocker.code}>{blockerLabel(t,blocker.code,blocker.count)}</li>)}</ul></div></div>:null}
         {showConfiguration&&!plan.readiness.query_playbook_complete?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("queryPlaybook.incompleteTitle")}</strong><p>{t("queryPlaybook.incompleteBody")}</p></div></div>:null}
 
         {slotViews.length===0?<div className="admin-empty"><Target aria-hidden size={24}/><strong>{t("empty.title")}</strong><p>{t("empty.body")}</p><button className="admin-button admin-button--primary" onClick={()=>void reconcile()} type="button">{t("actions.prepare")}</button></div>:<div className={`admin-acquisition__slots${importsOnly && !showConfiguration ? " admin-acquisition__slots--import" : ""}`}>
@@ -830,6 +831,8 @@ export function AcquisitionPlanManager({
             const connector=activeConnectors.find((source)=>source.source_key===(draftQuery??currentQuery)?.source_key);
             const isRetired=working?.desired_state==="retired";
             const slotImports = importSummary?.slots.find((item) => item.slot_key === slot.slotKey);
+            const actions = acquisitionSlotActions({ current: slot.current, importAttempts: slotImports?.attempt_count ?? 0,
+              readyForImport: plan.readiness.ready_for_import, hasActiveSource: activeConnectors.length > 0 });
             return <div className="admin-acquisition-slot" data-retired={isRetired||undefined} key={slot.slotKey}>
               <div className="admin-acquisition-slot__identity">{scopeIcon(slot.scope)}<div><strong>{slot.label}</strong><small>{t(`scopes.${slot.scope}`)}</small>
                 {importSummary ? <small className="admin-acquisition-slot__imports">{slotImports?.attempt_count
@@ -842,8 +845,8 @@ export function AcquisitionPlanManager({
               <div className="admin-acquisition-slot__actions">
                 {showConfiguration&&slot.draft&&draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openReview(slot,draftQuery)} type="button"><CheckCircle aria-hidden size={14}/>{t("actions.review")}</button>:null}
                 {showConfiguration&&slot.draft&&!draftQuery&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>void openQuery(slot)} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.manualQuery")}</button>:null}
-                {slot.current&&!isRetired?<button className="admin-button admin-button--compact" disabled={Boolean(busy)||plan.state==="stale"||!activeConnectors.length} onClick={()=>{setMonitorImportId(null);setImportResult(null);setDrawer({mode:"import",slot});}} type="button"><UploadSimple aria-hidden size={14}/>{t("actions.import")}</button>:null}
-                {slot.current&&activeConnectors[0]?<button aria-label={t("actions.history")} className="admin-button admin-button--plain" disabled={Boolean(busy)} onClick={()=>openHistory(slot)} type="button"><ClockCounterClockwise aria-hidden size={15}/></button>:null}
+                {actions.showImport?<button className="admin-button admin-button--compact" disabled={Boolean(busy)||!actions.canImport} onClick={()=>{setMonitorImportId(null);setImportResult(null);setDrawer({mode:"import",slot});}} type="button"><UploadSimple aria-hidden size={14}/>{t("actions.import")}</button>:null}
+                {actions.showHistory?<button aria-label={t("actions.history")} className="admin-button admin-button--plain" disabled={Boolean(busy)} onClick={()=>openHistory(slot)} type="button"><ClockCounterClockwise aria-hidden size={15}/>{t("actions.history")}</button>:null}
               </div>
             </div>;
           })}
@@ -994,16 +997,8 @@ function AcquisitionSkeleton({compact=false}:{compact?:boolean}){
   return <div aria-hidden className={`admin-acquisition-skeleton${compact?" admin-acquisition-skeleton--compact":""}`}>{Array.from({length:compact?3:4},(_,index)=><div key={index}><span/><i/><b/></div>)}</div>;
 }
 
-function buildSlotViews(slots:PlanSlot[]):SlotView[]{
-  const views=new Map<string,SlotView>();
-  for(const slot of slots){
-    const current=views.get(slot.slot_key)??{slotKey:slot.slot_key,label:slot.label,scope:slot.scope,current:null,draft:null};
-    current.label=slot.label;current.scope=slot.scope;
-    if(slot.plan_status==="draft")current.draft=slot;
-    if(slot.plan_status==="current")current.current=slot;
-    views.set(slot.slot_key,current);
-  }
-  return [...views.values()].sort((left,right)=>scopeRank(left.scope)-scopeRank(right.scope)||left.label.localeCompare(right.label));
+function buildSlotViews(slots: PlanSlot[], currentSlots: PlanSlot[] = []): SlotView[] {
+  return buildAcquisitionSlotViews(slots, currentSlots);
 }
 
 function activeQuery(slot:PlanSlot|null){
@@ -1012,7 +1007,6 @@ function activeQuery(slot:PlanSlot|null){
     .sort((left,right)=>right.version-left.version)[0]??null;
 }
 
-function scopeRank(scope:PlanSlot["scope"]){return {primary_brand:0,category:1,competitor:2,reference:3}[scope];}
 function scopeIcon(scope:PlanSlot["scope"]){
   if(scope==="primary_brand")return <Target aria-hidden size={19}/>;
   if(scope==="category")return <Stack aria-hidden size={19}/>;
@@ -1021,9 +1015,10 @@ function scopeIcon(scope:PlanSlot["scope"]){
 }
 function planTone(state:string){if(state==="current")return "good" as const;if(state==="ready"||state==="draft")return "warning" as const;if(state==="stale")return "danger" as const;return "not_available" as const;}
 function termList(value:FormDataEntryValue|null){return [...new Set(String(value??"").split(/[\n,]/gu).map((term)=>term.trim()).filter(Boolean))];}
-function blockerLabel(t:ReturnType<typeof useTranslations<"AdminWorkspace.data.acquisition">>,blocker:string){
+function blockerLabel(t:ReturnType<typeof useTranslations<"AdminWorkspace.data.acquisition">>,blocker:string,count=1){
   const [code]=blocker.split(":");
   const known=["draft_required","authority_drift","primary_slot_required","query_required","query_source_unavailable","query_review_required","query_rejected","category_identity_required","category_identity_ambiguous","governance_unavailable"];
+  if(code === "slot_reconcile_required" || code === "slot_authority_stale") return t(`blockers.items.${code}`,{count});
   return known.includes(code!)?t(`blockers.items.${code}`):t("blockers.items.unknown");
 }
 function generationBlockerLabel(t:ReturnType<typeof useTranslations<"AdminWorkspace.data.acquisition">>,blocker:string){

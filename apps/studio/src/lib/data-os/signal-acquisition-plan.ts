@@ -109,7 +109,7 @@ export async function loadSignalAcquisitionPlanV1(args: {
     ? queries.filter((query)=>query.plan_id===selectedPlan.id) : [];
   const playbookWarnings=queryPlaybookWarnings(selectedSlots,selectedQueries);
   const connectorReadiness=await loadConnectorImportReadiness(args.queryable,args.workspace.id);
-  const publicSlots = selectedSlots.map((slot) => {
+  const publicSlot = (slot: SlotRow) => {
     const owner = plans.rows.find((plan) => plan.id === slot.plan_id);
     const slotQueries = queries.filter((query) => query.slot_id === slot.id);
     return {
@@ -156,13 +156,18 @@ export async function loadSignalAcquisitionPlanV1(args: {
         && !slotQueries.some((query) => !["retired","superseded"].includes(query.status))
         ? ["query_playbook_incomplete"] : []
     };
-  });
+  };
+  const publicSlots = selectedSlots.map(publicSlot);
+  const currentSlots = current
+    ? latestSlots(slots.filter((slot) => slot.plan_id === current.id)).map(publicSlot) : [];
   return {
     contract_version: SIGNAL_ACQUISITION_PLAN_CONTRACT_VERSION,
+    live_brand_os_revision: live.profile.version,
     state: draft ? (blockers.length ? "draft" : "ready") : current ? (drift.length ? "stale" : "current") : "missing",
     current_plan: publicPlan(current,drift),
     draft_plan: publicPlan(draft,blockers),
     slots: publicSlots,
+    current_slots: currentSlots,
     reference_candidates: live.entities
       .filter((entity) => entity.entity_type === "reference")
       .map((entity) => ({

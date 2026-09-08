@@ -49,7 +49,9 @@ test("exact-file replay closes without losing accepted rows; workspace history p
     const secondSource = await sourceId(other.source_key);
     const csv = `id,text,date,platform,language,country\nfixture-${suffix},This isolated fixture contains enough text to be included.,2026-08-01,web,es,MX\nfixture-${suffix},This isolated fixture contains enough text to be included.,2026-08-01,web,es,MX\n`;
     const bytes = new TextEncoder().encode(csv);
-    const upload = (key: string, id: string) => createWorkspaceImportUploadV1({ ...context, sourceId: id,
+    const upload = (key: string, id: string,
+      uploadActor: Parameters<typeof createWorkspaceImportUploadV1>[0]["actor"] = actor
+    ) => createWorkspaceImportUploadV1({ ...context, actor: uploadActor, sourceId: id,
       fileName: "repeated-fixture.csv", fileSizeBytes: bytes.length, contentType: "text/csv", idempotencyKey: randomUUID(),
       contributedByStudyCorpusId: null, supersedesImportBatchId: null,
       acquisition: { sourceKey: key, slotKey: "primary-brand",
@@ -161,6 +163,11 @@ test("exact-file replay closes without losing accepted rows; workspace history p
     assert.equal(withDraft.needs_plan_update, false);
     assert.deepEqual(withDraft.slots, setup.slots);
     assert.equal(withDraft.sources.length, 2);
+    const draftUpload = await upload(setup.source_key, firstSource);
+    assert.equal(draftUpload.batch.phase, "uploading");
+    await assert.rejects(upload(setup.source_key, firstSource, {
+      id: viewerId, userType: "client", organizationId: workspace.organizationId
+    }), /unauthorized/u);
     const { POST: addCompetitor } = await import("@/app/api/brands/[id]/competitors/route");
     const addedCompetitor = await addCompetitor(new Request("http://localhost/api/competitors", {
       method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
@@ -172,9 +179,34 @@ test("exact-file replay closes without losing accepted rows; workspace history p
     assert.equal(stale.needs_plan_update, true);
     assert.deepEqual(stale.sources, withDraft.sources);
     assert.deepEqual(stale.slots, withDraft.slots);
+    await assert.rejects(upload(setup.source_key, firstSource), /acquisition_plan_stale/u);
     assert.equal((await readHistory("limit=50")).status, 200);
-    const updatedDraft = await withSignalAcquisitionTransactionV1(queryable => reconcileSignalAcquisitionPlanDraftV1({ ...context,
-      queryable, expectedCurrentVersion: null, expectedBrandOsRevision: null, idempotencyKey: randomUUID() }));
+    const { GET: getPlan, POST: reconcilePlan } = await import("@/app/api/data-os/signal/[workspaceId]/acquisition-plan/route");
+    const planResponse = await getPlan(new Request("http://localhost/api/acquisition-plan"), routeContext);
+    assert.ok(planResponse);
+    assert.equal(planResponse.status, 200);
+    type PlanSnapshot = Awaited<ReturnType<typeof reconcileSignalAcquisitionPlanDraftV1>> & { live_brand_os_revision: number };
+    const stalePlan = await planResponse.json() as PlanSnapshot;
+    assert.equal(stalePlan.state, "draft");
+    assert.equal(stalePlan.current_slots.length, setup.slots.length);
+    assert.ok(stalePlan.current_slots.every(slot => slot.plan_status === "current"));
+    assert.ok(stalePlan.slots.every(slot => slot.plan_status === "draft"));
+    const reconcileRequest = async (revision: number) => {
+      const response = await reconcilePlan(new Request("http://localhost/api/acquisition-plan", {
+        method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+        body: JSON.stringify({ expected_current_version: stalePlan.current_plan!.version, expected_brand_os_revision: revision })
+      }), routeContext);
+      assert.ok(response);
+      return response;
+    };
+    // The previous UI sent the draft snapshot version while state was draft, so the CAS guard correctly rejected it.
+    const obsoleteRevision = stalePlan.draft_plan!.brand_os_revision;
+    assert.equal((await reconcileRequest(obsoleteRevision)).status, 409);
+    // The current UI uses the live Brand OS version returned alongside the historical plan snapshots.
+    const reconciledResponse = await reconcileRequest(stalePlan.live_brand_os_revision);
+    assert.equal(reconciledResponse.status, 200);
+    assert.ok(stalePlan.live_brand_os_revision > obsoleteRevision);
+    const updatedDraft = await reconciledResponse.json() as PlanSnapshot;
     assert.equal(updatedDraft.readiness.ready_to_promote, true);
     const draft = updatedDraft.draft_plan!;
     const { promoteSignalAcquisitionPlanV1 } = await import("./signal-acquisition-plan");
