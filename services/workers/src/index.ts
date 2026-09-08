@@ -32,6 +32,7 @@ import { startSignalSemanticContextProposalOutboxDrainerV1 } from "./workers/sig
 import { startSignalTopicEvaluationOutboxDrainerV1 } from "./workers/signal-topic-evaluation-outbox";
 import { startSignalTopicClassificationOutboxDrainerV1 } from "./workers/signal-topic-classification-outbox";
 import { startSignalWorkspaceCorpusPreparationDrainerV1 } from "./workers/signal-workspace-corpus-preparation-outbox";
+import { startSignalWorkspaceEmbeddingsDrainerV1 } from "./workers/signal-workspace-embeddings-outbox";
 
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
@@ -53,6 +54,7 @@ const topicClassificationOutboxDrainer = dataOsWorker
   ? startSignalTopicClassificationOutboxDrainerV1()
   : null;
 const corpusPreparationDrainer = dataOsWorker ? startSignalWorkspaceCorpusPreparationDrainerV1() : null;
+const workspaceEmbeddingsDrainer = dataOsWorker ? startSignalWorkspaceEmbeddingsDrainerV1() : null;
 const semanticResolutionWorker = isDataOsWorkerEnabled()
   ? startSignalSemanticResolutionWorker()
   : null;
@@ -126,6 +128,7 @@ async function shutdown() {
   await topicEvaluationOutboxDrainer.close();
   await topicClassificationOutboxDrainer?.close();
   await corpusPreparationDrainer?.close();
+  await workspaceEmbeddingsDrainer?.close();
   await workspaceImportOutboxDrainer.close();
   await semanticReviewProjectionOutboxDrainer?.close();
   await semanticResolutionChildOutboxDrainer?.close();

@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { ArrowClockwise } from "@phosphor-icons/react";
 import type { SignalWorkspaceCorpusPreparationStatusV1 } from "@noisia/db";
 import { AdminStatus, formatAdminNumber } from "./AdminWorkspacePrimitives";
+import { WorkspaceCorpusEmbeddingsControls } from "./WorkspaceCorpusEmbeddingsControls";
 
 export type CorpusPreparationView = SignalWorkspaceCorpusPreparationStatusV1 & { can_prepare: boolean };
 type PendingPreparationRequest = { workspaceId: string; key: string; previousRunId: string | null; previousRunUpdatedAt: string | null };
@@ -193,5 +194,7 @@ export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles,
         <ArrowClockwise aria-hidden size={15} />{t("actions.refresh")}
       </button>
     </div>
+    {data?.latest_completed ? <WorkspaceCorpusEmbeddingsControls workspaceId={workspaceId}
+      preparationRunId={data.is_current ? data.latest_completed.id : null} /> : null}
   </section>;
 }

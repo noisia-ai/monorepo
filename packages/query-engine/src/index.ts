@@ -46,6 +46,7 @@ export * from "./data-os-metric-catalog";
 export * from "./signal-backend-v1";
 export * from "./signal-filter-window-v1";
 export * from "./signal-workspace-home-v1";
+export * from "./signal-workspace-embeddings-v1";
 export * from "./signal-workspace-data-plane-v1";
 export * from "./signal-governed-views-v1";
 export * from "./signal-strategic-gate-d-v1";

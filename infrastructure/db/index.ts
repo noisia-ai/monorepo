@@ -26,3 +26,6 @@ export * from "./signal-workspace-capabilities";
 export * from "./signal-workspace-corpus-readiness";
 export * from "./signal-workspace-corpus-preparation";
 export * from "./signal-workspace-corpus-preparation-management";
+export * from "./signal-workspace-embeddings";
+
+export * from "./signal-workspace-embeddings-management";

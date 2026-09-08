@@ -62,7 +62,9 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(html.includes(copy.unprepared.replace("{rights}", "4").replace("{missing}", "1")));
     assert.ok(html.includes(copy.inclusionPending.replace("{count}", "2")));
     assert.doesNotMatch(html, /<progress|<form/u);
-    assert.equal((html.match(/<button\b/gu) ?? []).length, 1, "only a status read remains after preparation");
+    assert.equal((html.match(/<button\b/gu) ?? []).length, 2, "text and embedding readers remain; no embedding request can launch before its status/quote");
+    assert.ok(html.includes(messages.AdminWorkspace.data.corpusEmbeddings.loading));
+    assert.ok(!html.includes(messages.AdminWorkspace.data.corpusEmbeddings.actions.prepare));
     const outdated = render({ ...base, latest_run: complete, latest_completed: complete });
     assert.ok(outdated.includes(copy.states.outdated));
     assert.ok(outdated.includes(copy.actions.update));
