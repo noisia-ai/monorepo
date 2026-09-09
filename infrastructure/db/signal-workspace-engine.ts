@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
+import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1, type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
@@ -625,17 +625,25 @@ export async function failSignalWorkspaceEngineV1(args:{database:SignalWorkspace
     await completeDispatch(client,run.id);
   });
 }
-export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string}):Promise<{execution_id:string;replayed:boolean}>{
+export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;numeric_only?:true}):Promise<{execution_id:string;replayed:boolean}>{
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))return fail('workspace_engine_request_invalid',422);
+  const executionId=args.numeric_only?args.execution_id.toLowerCase():args.execution_id;
   return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
-    const retryDigest=signalWorkspaceEmbeddingDigestV1({action:'retry',execution_id:args.execution_id});
+    const retryDigest=signalWorkspaceEmbeddingDigestV1({action:args.numeric_only?'retry_numeric':'retry',execution_id:executionId});
     const prior=(await client.query<{id:string;alias:{actor_user_id:string;request_digest:string}|null}>("SELECT id,engine_request_keys->$2 alias FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)",[args.workspace_id,args.idempotency_key])).rows[0];
-    if(prior&&(prior.id!==args.execution_id||prior.alias?.actor_user_id!==args.actor_user_id||prior.alias?.request_digest!==retryDigest))return fail('workspace_engine_idempotency_conflict');
-    const run=await lockedRun(client,args.execution_id);
+    if(prior&&(prior.id!==executionId||prior.alias?.actor_user_id!==args.actor_user_id||prior.alias?.request_digest!==retryDigest))return fail('workspace_engine_idempotency_conflict');
+    const run=await lockedRun(client,executionId);
     if(run.workspace_id!==args.workspace_id||run.actor_user_id!==args.actor_user_id)return fail('workspace_engine_forbidden',403);
+    if(Boolean(run.input_snapshot.numeric_descriptor)!==Boolean(args.numeric_only))return fail('workspace_engine_incremental_retry_unavailable');
+    // A retry key records one accepted dispatch, even if that attempt later
+    // fails or its inputs become stale. Replaying it cannot enqueue again.
+    if(args.numeric_only&&prior)return{execution_id:run.id,replayed:true};
     await current(client,run,true);
-    const alias={actor_user_id:args.actor_user_id,request_digest:signalWorkspaceEmbeddingDigestV1({action:'retry',execution_id:run.id})};
+    const numericRecovery=args.numeric_only?await readSignalWorkspaceNumericRecoveryWithQueryableV1({queryable:client,
+      workspace_id:run.workspace_id,actor_user_id:args.actor_user_id,execution_id:run.id}):null;
+    if(args.numeric_only&&(!numericRecovery?.valid||run.status==='failed'&&!numericRecovery.retry_available))return fail('workspace_engine_incremental_retry_unavailable');
+    const alias={actor_user_id:args.actor_user_id,request_digest:args.numeric_only?retryDigest:signalWorkspaceEmbeddingDigestV1({action:'retry',execution_id:run.id})};
     if(!prior)await client.query("UPDATE signal_topic_catalog_executions SET engine_request_keys=engine_request_keys||jsonb_build_object($2::text,$3::jsonb) WHERE id=$1::uuid",[run.id,args.idempotency_key,JSON.stringify(alias)]);
     if(run.status==='ready'||run.status==='queued'||run.status==='running')return{execution_id:run.id,replayed:true};
     const storageRecovery=run.error_code==='workspace_engine_storage_verification_failed'
@@ -650,8 +658,8 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const transportRecovery=run.error_code==='workspace_engine_interpretation_transport_terminal_confirmed'
       && (await client.query<{eligible:boolean}>(`SELECT (${transportRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
-    if(run.status!=='failed'||!isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
-      interpretation_evidence_recovery_eligible:evidenceRecovery,editorial_repair_recovery_eligible:editorialRecovery,transport_recovery_eligible:transportRecovery}))return fail('workspace_engine_retry_unavailable');
+    if(run.status!=='failed'||!(args.numeric_only?numericRecovery?.retry_available:isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
+      interpretation_evidence_recovery_eligible:evidenceRecovery,editorial_repair_recovery_eligible:editorialRecovery,transport_recovery_eligible:transportRecovery})))return fail('workspace_engine_retry_unavailable');
     const generation=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,
       execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
       result_summary=result_summary||'{"phase":"queued"}'::jsonb||$2::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,

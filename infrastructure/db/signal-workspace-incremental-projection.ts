@@ -8,6 +8,7 @@ import {loadSignalWorkspaceEngineInputIdentityV1,withSignalWorkspaceEngineTransa
  persistSignalWorkspaceEngineArtifactWithClientV1,
  type SignalWorkspaceEngineDatabaseV1,type SignalWorkspaceEngineArtifactV1,type SignalWorkspaceEngineSnapshotV1} from './signal-workspace-engine';
 import type {SignalWorkspaceIncrementalCheckpointV1,SignalWorkspaceIncrementalArtifactRefV1} from './signal-workspace-engine-incremental';
+import {readSignalWorkspaceNumericRecoveryWithQueryableV1} from './signal-workspace-engine-incremental';
 import {loadSignalWorkspaceClassificationInputV1,beginSignalWorkspaceClassificationWithClientV1,claimSignalWorkspaceClassificationV1,failSignalWorkspaceClassificationV1,SignalWorkspaceClassificationError,
  type SignalWorkspaceClassificationLeaseV1} from './signal-workspace-classification';
 
@@ -288,7 +289,8 @@ export async function scheduleSignalWorkspaceIncrementalProjectionsV1(args:{data
 }
 
 export type SignalWorkspaceAnalysisUpdateV1={desired_revision:string;input_revision:string;has_pending_work:boolean;
- numeric:{execution_id:string;status:'queued'|'running'|'ready'|'failed';phase:string;progress:number;expected_roots:number;processed_roots:number;is_current:boolean;error_code:string|null};
+ numeric:{execution_id:string;status:'queued'|'running'|'ready'|'failed';phase:string;progress:number;expected_roots:number;processed_roots:number;is_current:boolean;error_code:string|null;retry_available:boolean};
+ request_numeric:{action:'retry_numeric';execution_id:string;idempotency_key:string}|null;
  derivation:{status:string;error_code:string|null}|null;
  projection:{execution_id:string;generation_id:string;status:'queued'|'running'|'ready'|'failed';expected_roots:number;processed_roots:number;is_current:boolean;error_code:string|null}|null;
  serving:{generation_id:string;input_revision:string;is_current:boolean;
@@ -296,7 +298,8 @@ export type SignalWorkspaceAnalysisUpdateV1={desired_revision:string;input_revis
   discovery_coverage:SignalWorkspaceIncrementalProjectionSourceV1['discovery_coverage']|null}|null};
 /** Read-only status for the existing analysis GET. Ready numeric evidence is
  * pending before dispatch exists; terminal derivation failures stop polling. */
-export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string}):Promise<SignalWorkspaceAnalysisUpdateV1|null>{
+export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;idempotency_key?:string}):Promise<SignalWorkspaceAnalysisUpdateV1|null>{
+ if(args.idempotency_key!==undefined&&!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))return fail('request_invalid',422);
  const client=await args.database.connect();
  try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   const capabilities=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args});if(!capabilities.can_view)return fail('forbidden',403);
@@ -310,8 +313,19 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
    FROM signal_topic_catalog_executions engine JOIN signal_corpus_preparation_input_state state USING(workspace_id)
    WHERE engine.workspace_id=$1::uuid AND engine.input_snapshot ? 'numeric_descriptor' ORDER BY engine.created_at DESC,engine.id DESC LIMIT 1`,[args.workspace_id])).rows[0];
   if(!row){await client.query('COMMIT');return null;}
+  // Acceptance is historical evidence: a later input revision or failed retry
+  // cannot erase the receipt or turn it into permission for another dispatch.
+  const accepted=args.idempotency_key?(await client.query<{id:string;alias:{actor_user_id:string;request_digest:string}|null}>(`
+   SELECT id,engine_request_keys->$3 alias FROM signal_topic_catalog_executions
+   WHERE workspace_id=$1::uuid AND actor_user_id=$2::uuid AND input_snapshot ? 'numeric_descriptor'
+    AND engine_request_keys ? $3`,[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0]:null;
+  const requestNumeric:SignalWorkspaceAnalysisUpdateV1['request_numeric']=accepted?.alias?.actor_user_id===args.actor_user_id
+   &&accepted.alias.request_digest===digest({action:'retry_numeric',execution_id:accepted.id})
+   ?{action:'retry_numeric',execution_id:accepted.id,idempotency_key:args.idempotency_key!}:null;
   const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
   const current=row.is_current&&identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
+  const numericRecovery=current&&row.status==='failed'&&capabilities.can_execute_topics
+   ?await readSignalWorkspaceNumericRecoveryWithQueryableV1({queryable:client,...args,execution_id:row.execution_id}):null;
   const {loadSignalWorkspaceTopicProjectionStatusWithQueryableV1}=await import('./signal-workspace-topic-projection');
   const status=await loadSignalWorkspaceTopicProjectionStatusWithQueryableV1({queryable:client,...args});
   const latest=status.latest_run?.source_engine_execution_id===row.execution_id?status.latest_run:null;
@@ -330,7 +344,8 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
   const pending=current&&row.history_current&&(row.status==='queued'||row.status==='running'||row.status==='ready'&&
    (latest?.status==='queued'||latest?.status==='running'||recoverable||(!latest||!dispatch?.profile_current)&&(!dispatch||dispatch.status!=='dead_letter'&&dispatch.attempt_count<8)));
   const result:SignalWorkspaceAnalysisUpdateV1={desired_revision:row.desired_revision,input_revision:row.input_revision,has_pending_work:pending,
-   numeric:{execution_id:row.execution_id,status:row.status,phase:row.phase,progress:row.progress,expected_roots:row.expected_roots,processed_roots:row.processed_roots,is_current:current,error_code:row.error_code},
+   numeric:{execution_id:row.execution_id,status:row.status,phase:row.phase,progress:row.progress,expected_roots:row.expected_roots,processed_roots:row.processed_roots,is_current:current,error_code:row.error_code,retry_available:numericRecovery?.retry_available===true},
+   request_numeric:requestNumeric,
    derivation:!row.history_current?{status:'blocked',error_code:'workspace_incremental_projection_history_changed'}:dispatch?{status:dispatch.status,error_code:dispatch.error_code}:null,
    projection:latest?{execution_id:latest.execution_id,generation_id:latest.generation_id,status:latest.status,expected_roots:latest.denominator,processed_roots:latest.processed_roots,is_current:latest.is_current,error_code:latest.error_code}:null,
    serving:complete&&served?{generation_id:complete.generation_id,input_revision:served.input_revision,is_current:complete.is_current,

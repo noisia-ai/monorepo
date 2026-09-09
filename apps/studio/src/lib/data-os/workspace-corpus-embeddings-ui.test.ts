@@ -116,6 +116,23 @@ test("malformed recovery quote cannot reach BigInt or enable paid execution", ()
   }
 });
 
+const cacheQuote: CorpusEmbeddingsQuote = { ...quote, cached_asset_chunks: quote.total_asset_chunks,
+  missing_asset_chunks: 0, full_text_bytes: 0, tokens_upper: 0, estimated_upper_micro_usd: 0 };
+test('cache-only requires the complete zero-input plan and zero cap, not a displayed zero price', () => {
+  const can = (q = cacheQuote, s = status, cap = '0') => embeddingQuoteCanExecute(q, s, request.body.preparation_run_id, cap);
+  assert.equal(can(), true);
+  assert.equal(can(cacheQuote, status, '0.000001'), false);
+  for (const change of [{missing_asset_chunks:1,cached_asset_chunks:7}, {full_text_bytes:1}, {tokens_upper:1},
+    {total_asset_chunks:0,cached_asset_chunks:0}, {cached_asset_chunks:7}, {estimated_upper_micro_usd:1},
+    {resume_run_id:running.id,required_cap_micro_usd:1}]) assert.equal(can({...cacheQuote,...change}), false);
+  assert.equal(can({...quote,estimated_upper_micro_usd:0}), false, 'rounded price cannot claim a free request');
+  for (const change of [{reserved_micro_usd:1}, {unknown_reserved_micro_usd:1}, {observed_exception_micro_usd:1}])
+    assert.equal(can(cacheQuote,{...status,latest_run:{...running,status:'failed',retryable:true,
+      hard_cap_micro_usd:0,reserved_micro_usd:0,settled_micro_usd:0,...change}}), false);
+  assert.equal(can(cacheQuote,{...status,can_execute:false}), false);
+  assert.equal(can(cacheQuote,{...status,request_scope:'other-actor'}), false);
+});
+
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const copy = messages.AdminWorkspace.data.corpusEmbeddings;
@@ -133,6 +150,14 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(html.includes(copy.actions.quote));
     assert.ok(!html.includes(copy.complete));
     assert.doesNotMatch(html, /<form|<progress/u);
+  });
+
+  test(`${locale}: a current complete cache quote enables reuse with the provider disabled`, () => {
+    const html = render(status, cacheQuote);
+    assert.ok(html.includes(copy.cacheOnly));
+    assert.ok(!html.includes(copy.disabled));
+    assert.doesNotMatch(html, /class="admin-button admin-button--primary"[^>]*disabled/u);
+    assert.doesNotMatch(html, /<progress/u);
   });
 
   test(`${locale}: a quote above the server limit explains the blocked action`, () => {

@@ -11,7 +11,7 @@ import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, parseSignalWorkspaceIncrementalO
 import { isSignalWorkspaceEngineRetryableErrorV1, type SignalWorkspaceEngineLeaseV1 as Lease,
   type SignalWorkspaceEngineArtifactV1 as Artifact, type SignalWorkspaceIncrementalArtifactRefV1 as ArtifactRef,
   type SignalWorkspaceIncrementalDescriptorV1 as Descriptor } from "@noisia/db";
-import { runSignalWorkspaceIncrementalJobV1 as run, type WorkspaceIncrementalJobOptionsV1 as Options } from "./signal-workspace-engine-incremental";
+import { runSignalWorkspaceIncrementalJobV1 as run, safeWorkspaceIncrementalErrorV1, type WorkspaceIncrementalJobOptionsV1 as Options } from "./signal-workspace-engine-incremental";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
 type Stores = NonNullable<Options["stores"]>;
@@ -112,20 +112,20 @@ async function harness(wave = 2) {
       assert.equal(args.roots_count, roots.length); assert.equal(args.chunks_count, chunks.length); assert.equal(args.input_files.length, 6);
       for (const file of args.input_files) assert.equal(sha(objects.get(file.storage_key)!), file.sha256);
       const saved = save(args.artifact, { input: args.input, input_files: args.input_files }); checkpoint.input_artifact = saved.stored;
-      if (failInputAck) { failInputAck = false; throw new Error("local COMMIT acknowledgement lost"); } return saved.result; },
+      if (failInputAck) { failInputAck = false; throw Object.assign(new Error("local COMMIT acknowledgement lost"), { code: "ECONNRESET" }); } return saved.result; },
     index: async args => { counts.index++; events.push("index:durable"); assert.ok(checkpoint.input_artifact); assert.equal(args.input_artifact_id, checkpoint.input_artifact.artifact_id);
       const body = JSON.parse(objects.get(args.artifact.storage_key)!.toString());
       assert.equal(body.input_artifact_id, args.input_artifact_id); assert.equal(body.files.length, args.file_count);
       for (const file of body.files as Stored[]) assert.equal(sha(objects.get(file.storage_key)!), file.sha256);
       assert.equal(ledger.size, 1, "output file rows must not precede durable output index");
       const saved = save(args.artifact, { file_count: args.file_count, output_manifest: args.output_manifest }); checkpoint.output_index_artifact = saved.stored;
-      if (failIndexAck) { failIndexAck = false; throw new Error("local index COMMIT acknowledgement lost"); } return saved.result; },
+      if (failIndexAck) { failIndexAck = false; throw Object.assign(new Error("local index COMMIT acknowledgement lost"), { code: "ECONNRESET" }); } return saved.result; },
     persist: async args => { assert.ok(checkpoint.output_index_artifact); events.push(`persist:${args.artifact.artifact_key}`);
       const file = indexJson().files.find(ref => ref.name === args.artifact.artifact_key); assert.ok(file);
       assert.equal(args.artifact.sha256, file.sha256); assert.equal(args.artifact.size_bytes, file.size_bytes);
       assert.equal(args.artifact.artifact_type, args.artifact.artifact_key.endsWith(".joblib") || args.artifact.artifact_key === "model-manifest.json" ? "engine_model" : "engine_output");
       const saved = save(args.artifact);
-      if (failPersistAfter !== null && --failPersistAfter === 0) { failPersistAfter = null; throw new Error("local partial output COMMIT acknowledgement lost"); }
+      if (failPersistAfter !== null && --failPersistAfter === 0) { failPersistAfter = null; throw Object.assign(new Error("local partial output COMMIT acknowledgement lost"), { code: "ECONNRESET" }); }
       return saved.result; },
     bank: async args => { events.push("bank"); assert.equal(args.model_bank_artifact_id, ledger.get("model-manifest.json")?.artifact_id);
       assert.equal(args.output_artifact_id, ledger.get("manifest.json")?.artifact_id); return { model_version_id: id(700) }; },
@@ -151,7 +151,7 @@ async function harness(wave = 2) {
         population_digest: output.population_digest, roots: output.counts.roots, occurrences: output.counts.occurrences, components: output.components.length,
         component_digest: digest(output.components), model_bank_bytes: output.counts.model_bank_bytes, discovery_status: output.discovery_status,
         relations_status: output.relations_status, history_artifact_id: args.history_artifact_id, numeric_complete: true, analysis_complete: false };
-      if (failNumericAck) { failNumericAck = false; throw new Error("local numeric COMMIT acknowledgement lost"); } return checkpoint.numeric_checkpoint; },
+      if (failNumericAck) { failNumericAck = false; throw Object.assign(new Error("local numeric COMMIT acknowledgement lost"), { code: "ECONNRESET" }); } return checkpoint.numeric_checkpoint; },
     finish: async args => { counts.finish++; events.push("finish"); assert.ok(checkpoint.numeric_checkpoint);
       assert.equal(args.checkpoint_digest, checkpoint.numeric_checkpoint.checkpoint_digest);
       return { execution_id: lease.execution_id, numeric_complete: true, analysis_complete: false, checkpoint: checkpoint.numeric_checkpoint }; }
@@ -194,8 +194,8 @@ test("incremental Worker persists input, validates all computed files, seals ind
 for (const fault of ["indexAck", "inputAck", "partialPersist"] as const) test(`incremental Worker recovers ${fault} using durable bytes without duplicate export or refit`, { skip: !available }, async () => {
   const h = await harness(); try {
     if (fault === "partialPersist") h.faults.persist(3); else h.faults[fault]();
-    await assert.rejects(h.invoke(), /workspace_engine_worker_failed/u);
-    assert.equal(h.failures.at(-1), "workspace_engine_worker_failed"); assert.equal(isSignalWorkspaceEngineRetryableErrorV1(h.failures.at(-1)!), true);
+    await assert.rejects(h.invoke(), /workspace_engine_incremental_transport_unavailable/u);
+    assert.equal(h.failures.at(-1), "workspace_engine_incremental_transport_unavailable"); assert.equal(isSignalWorkspaceEngineRetryableErrorV1(h.failures.at(-1)!), false, "numeric transport does not expand legacy retry authority");
     const before = { ...h.counts }, ids = new Map([...h.ledger].map(([key, value]) => [key, value.artifact_id]));
     assert.ok(h.checkpoint.input_artifact); assert.equal(h.counts.process, fault === "inputAck" ? 0 : 1);
     if (fault !== "inputAck") assert.ok(h.checkpoint.output_index_artifact);
@@ -209,7 +209,7 @@ for (const fault of ["indexAck", "inputAck", "partialPersist"] as const) test(`i
 
 for (const target of ["index", "membership"] as const) for (const fault of ["missing", "tampered"] as const) test(`durable output ${target} with ${fault} bytes fails closed and cannot fall back to export/process`, { skip: !available }, async () => {
   const h = await harness(); try {
-    h.faults.indexAck(); await assert.rejects(h.invoke(), /workspace_engine_worker_failed/u);
+    h.faults.indexAck(); await assert.rejects(h.invoke(), /workspace_engine_incremental_transport_unavailable/u);
     const stored = target === "index" ? h.checkpoint.output_index_artifact! : h.indexJson().files.find(ref => ref.name === "memberships.jsonl")!;
     if (fault === "missing") h.objects.delete(stored.storage_key); else h.objects.set(stored.storage_key, Buffer.from("changed bytes"));
     const before = { ...h.counts };
@@ -221,7 +221,7 @@ for (const target of ["index", "membership"] as const) for (const fault of ["mis
 
 test("durable numeric checkpoint resumes finish without storage configuration, export, process or artifact IO", { skip: !available }, async () => {
   const h = await harness(); try {
-    h.faults.numericAck(); await assert.rejects(h.invoke(), /workspace_engine_worker_failed/u); assert.ok(h.checkpoint.numeric_checkpoint);
+    h.faults.numericAck(); await assert.rejects(h.invoke(), /workspace_engine_incremental_transport_unavailable/u); assert.ok(h.checkpoint.numeric_checkpoint);
     const before = { ...h.counts };
     const result = await h.invoke({ storage: undefined, process: async () => { throw new Error("Process must not run"); }, storage_root: "/path/that/must/not/be/created" });
     assert.equal(result.numeric_complete, true); assert.equal(result.analysis_complete, false);
@@ -238,4 +238,14 @@ for (const wave of [3, 4]) test(`incremental Worker consumes computed wave ${wav
     if (wave === 4) { assert.equal(h.expected.counts.removed_roots, 401); assert.deepEqual(h.expected.operations, { fit: [], transform: [] }); }
     assert.deepEqual(await readdir(h.scratch), []);
   } finally { await h.cleanup(); }
+});
+
+// Only explicit transport codes may make a numerical request retryable.
+test("incremental error classification preserves integrity errors and distinguishes real transport failures", () => {
+  for (const code of ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND", "57P01", "57P02", "57P03", "08000", "08003", "08006", "40001", "40P01"])
+    assert.equal(safeWorkspaceIncrementalErrorV1(Object.assign(new Error("private driver details"), {code})), "workspace_engine_incremental_transport_unavailable");
+  for (const error of [new Error("connection problem"), Object.assign(new Error("private SQL details"), {code:"23514"}), {cause:{code:"ECONNRESET"}}, null])
+    assert.equal(safeWorkspaceIncrementalErrorV1(error), "workspace_engine_worker_failed");
+  assert.equal(safeWorkspaceIncrementalErrorV1(new Error("workspace_engine_incremental_history_invalid")), "workspace_engine_incremental_history_invalid");
+  assert.equal(safeWorkspaceIncrementalErrorV1(new Error("workspace_engine_storage_verification_failed")), "workspace_engine_storage_verification_failed");
 });

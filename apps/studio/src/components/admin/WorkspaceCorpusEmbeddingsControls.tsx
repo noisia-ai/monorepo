@@ -15,13 +15,23 @@ type ErrorKey = "load" | "quote" | "forbidden" | "storage" | "cap" | "stale" | "
 export function embeddingQuoteCanExecute(quote: CorpusEmbeddingsQuote | null, status: CorpusEmbeddingsStatus | null,
   preparationRunId: string | null, capUsd: string) {
   const cap = parseEmbeddingCapMicroUsd(capUsd);
-  return Boolean(quote && validCorpusEmbeddingQuote(quote) && status && quote.can_execute && status.can_execute && quote.provider_available && status.provider_available
+  const provider = Boolean(quote?.provider_available && status?.provider_available);
+  const reuse = Boolean(quote && embeddingQuoteIsCacheOnly(quote) && cap === "0"
+    && !status?.latest_run?.reserved_micro_usd && !status?.latest_run?.observed_exception_micro_usd);
+  return Boolean(quote && validCorpusEmbeddingQuote(quote) && status && quote.can_execute && status.can_execute && (provider || reuse)
     && quote.request_scope === status.request_scope && quote.preparation_run_id === preparationRunId
     && !status.active_run && status.latest_run?.status !== "outcome_unknown" && !status.latest_run?.unknown_reserved_micro_usd
     && !(status.latest_run?.status === "failed" && !status.latest_run.retryable && status.latest_run.preparation_run_id === preparationRunId)
     && cap !== null && BigInt(cap) >= BigInt(quote.estimated_upper_micro_usd)
     && (quote.required_cap_micro_usd === null || BigInt(cap) === BigInt(quote.required_cap_micro_usd))
     && BigInt(cap) <= BigInt(Math.min(quote.max_run_cost_micro_usd, status.max_run_cost_micro_usd)));
+}
+
+export function embeddingQuoteIsCacheOnly(quote: CorpusEmbeddingsQuote) {
+  return validCorpusEmbeddingQuote(quote) && quote.total_asset_chunks > 0
+    && quote.missing_asset_chunks === 0 && quote.cached_asset_chunks === quote.total_asset_chunks
+    && quote.full_text_bytes === 0 && quote.tokens_upper === 0 && quote.estimated_upper_micro_usd === 0
+    && (quote.required_cap_micro_usd === null || quote.required_cap_micro_usd === 0);
 }
 
 function validAccess(value: Access) {
@@ -39,7 +49,8 @@ export function validCorpusEmbeddingQuote(value: unknown): value is CorpusEmbedd
     && typeof quote.preparation_run_id === "string" && uuid.test(quote.preparation_run_id)
     && typeof quote.quote_digest === "string" && /^sha256:[0-9a-f]{64}$/u.test(quote.quote_digest)
     && [quote.estimated_upper_micro_usd, quote.eligible_roots, quote.total_chunk_references,
-      quote.total_asset_chunks, quote.cached_asset_chunks, quote.missing_asset_chunks].every(safeCount)
+      quote.total_asset_chunks, quote.cached_asset_chunks, quote.missing_asset_chunks, quote.full_text_bytes, quote.tokens_upper].every(safeCount)
+    && quote.cached_asset_chunks + quote.missing_asset_chunks === quote.total_asset_chunks
     && (quote.required_cap_micro_usd === null || safeCount(quote.required_cap_micro_usd))
     && (quote.resume_run_id === null || typeof quote.resume_run_id === "string" && uuid.test(quote.resume_run_id))
     && (quote.resume_run_id === null) === (quote.required_cap_micro_usd === null);
@@ -197,10 +208,12 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
   }
 
   async function start(recover = false) {
-    if (mutation.current || !data || !data.can_execute || !data.provider_available || active
-      || data.latest_run?.status === "outcome_unknown") return;
+    if (mutation.current || !data || !data.can_execute || active
+      || data.latest_run?.status === "outcome_unknown" || data.latest_run?.unknown_reserved_micro_usd) return;
     let retained = pendingRef.current;
-    if (recover) { if (!retained || !pendingChecked.current || retained.request_scope !== data.request_scope) return; }
+    if (recover) { if (!retained || !pendingChecked.current || retained.request_scope !== data.request_scope
+      || !data.provider_available && (retained.body.hard_cap_micro_usd !== 0
+        || data.latest_run?.reserved_micro_usd || data.latest_run?.observed_exception_micro_usd)) return; }
     else {
       if (retained || !quote) return;
       if (!embeddingQuoteCanExecute(quote, data, preparationRunId, cap)) { setError("cap"); return; }
@@ -281,7 +294,7 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
     {unknown ? <p className="workspace-form__error" role="alert">{t("unknown")}</p> : null}
     {run?.status === "failed" && !unknown ? <p className="workspace-form__error" role="alert">{t(run.error_code?.includes("forbidden") ? "errors.permissions" : "errors.failed")}</p> : null}
     {pending && !submitting ? <p className="workspace-form__error" role="alert">{t("requestUnknown")}</p> : null}
-    {data && !data.provider_available ? <p className="admin-drawer-form__hint">{t("disabled")}</p> : null}
+    {data && !data.provider_available ? <p className="admin-drawer-form__hint">{t(quote && embeddingQuoteIsCacheOnly(quote) ? "cacheOnly" : "disabled")}</p> : null}
     {data && !data.can_execute ? <p className="admin-drawer-form__hint">{t("readOnly")}</p> : null}
     {quote && !pending ? <>
       <p className="admin-drawer-form__intro">{t("quoteCoverage", { roots: number(quote.eligible_roots), chunks: number(quote.total_chunk_references) })}</p>
@@ -303,7 +316,9 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
         onClick={() => void calculateQuote()}>{t(quoting ? "actions.quoting" : "actions.quote")}</button> : null}
       {quote && !pending ? <button className="admin-button admin-button--primary" type="button" disabled={!canStart} onClick={() => void start()}>
         {t(submitting ? "actions.requesting" : quote.resume_run_id ? "actions.resume" : quote.missing_asset_chunks === 0 && quote.estimated_upper_micro_usd === 0 ? "actions.reuse" : "actions.prepare", { amount: money(capMicro !== null && BigInt(capMicro) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(capMicro) : quote.estimated_upper_micro_usd) })}</button> : null}
-      {pending ? <button className="admin-button" type="button" disabled={reading || submitting || !pendingChecked.current || !data?.can_execute || !data?.provider_available || Boolean(active) || unknown}
+      {pending ? <button className="admin-button" type="button" disabled={reading || submitting || !pendingChecked.current || !data?.can_execute
+        || !data?.provider_available && (pending.body.hard_cap_micro_usd !== 0
+          || Boolean(data?.latest_run?.reserved_micro_usd) || Boolean(data?.latest_run?.observed_exception_micro_usd)) || Boolean(active) || unknown}
         onClick={() => void start(true)}>{t(submitting ? "actions.requesting" : "actions.confirm")}</button> : null}
       <button className="admin-button admin-button--compact" type="button" disabled={reading || submitting} onClick={() => void read()}>{t("actions.refresh")}</button>
     </div>

@@ -22,7 +22,8 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
 export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: string;
   expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number }
   | { action: "retry"; run_id: string }
-  | { action: "retry_progress"; run_id: string };
+  | { action: "retry_progress"; run_id: string }
+  | { action: "retry_numeric"; run_id: string };
 export type PendingWorkspaceAnalysis = { version: 1; workspace_id: string; request_scope: string;
   key: string; body: WorkspaceAnalysisRequest };
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -110,7 +111,7 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
   const body = value.body;
   if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
-    : !["retry", "retry_progress"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
+    : !["retry", "retry_progress", "retry_numeric"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;
 }
 export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null) {
@@ -158,9 +159,25 @@ export function workspaceAnalysisProgressRequestConfirmed(status: WorkspaceAnaly
   return request.body.action === "retry_progress" && status.workspace_id === request.workspace_id
     && status.request_scope === request.request_scope && status.request_run?.execution_id === request.body.run_id;
 }
+/** Numeric recovery never borrows editorial authorization or provider availability. */
+export function workspaceAnalysisCanRetryNumeric(status: WorkspaceAnalysisStatus | null) {
+  const numeric = status?.update?.numeric;
+  return Boolean(status?.can_execute && numeric?.status === "failed" && numeric.is_current && numeric.retry_available === true);
+}
+const sameNumericExecution = (left: unknown, right: unknown) => uuid(left) && uuid(right)
+  && left.toLowerCase() === right.toLowerCase();
+export function workspaceAnalysisNumericRequestConfirmed(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
+  const receipt = status.update?.request_numeric;
+  return request.body.action === "retry_numeric" && status.workspace_id === request.workspace_id
+    && status.request_scope === request.request_scope && receipt?.action === "retry_numeric"
+    && sameNumericExecution(receipt.execution_id, request.body.run_id) && receipt.idempotency_key === request.key;
+}
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
   if (status.workspace_id !== request.workspace_id || status.request_scope !== request.request_scope
-    || !status.can_execute || status.request_run) return false;
+    || !status.can_execute) return false;
+  if (request.body.action === "retry_numeric") return !status.update?.request_numeric
+    && sameNumericExecution(status.update?.numeric.execution_id, request.body.run_id) && workspaceAnalysisCanRetryNumeric(status);
+  if (status.request_run) return false;
   if (request.body.action === "retry_progress") return status.latest_run?.execution_id === request.body.run_id
     && workspaceAnalysisCanRetryProgress(status, status.latest_run);
   if (status.active_run || workspaceAnalysisUnknown(status)) return false;

@@ -19,7 +19,7 @@ function authorityDatabase(authority: unknown) {
 test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
   for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
     { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
-    for (const action of ["load", "start", "retry", "retry_progress"]) {
+    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric"]) {
       const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
       await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
         idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action, run_id: id } }),
@@ -36,6 +36,8 @@ test("analysis request is sealed to saved context and server engine config; retr
   assert.equal(validateWorkspaceAnalysisRequestV1(body), true);
   assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry", run_id: id }), true);
   assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_progress", run_id: id }), true);
+  assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_numeric", run_id: id }), true);
+  assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_numeric", run_id: id, claude_cap_micro_usd: 0 }), false);
   assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_progress", run_id: id, claude_cap_micro_usd: 30_000_000 }), false);
   for (const value of [null, [], {}, { ...body, engine_config: { seed: 2 } }, { ...body, actor_user_id: "other" },
     { ...body, texts: ["injected"] }, { ...body, publish: true }, { ...body, claude_cap_micro_usd: "0" },
@@ -227,4 +229,28 @@ test("the configured admission deadline disables new starts at expiry without ch
   }
   assert.equal(workspaceAnalysisInterpretationPolicyV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL: undefined }, expiry).available, true,
     "absence keeps the existing unbounded-date policy; configured invalid or expired values never do");
+});
+
+
+test("numeric recovery reaches the dedicated DB discriminator and rejects an editorial run before any update or paid preflight", async () => {
+  const numericId = "00000000-0000-4000-8000-000000000002";
+  const queries: string[] = []; let released = false, locked = false;
+  const authority = { ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" };
+  const query = async (sql: string, params?: unknown[]) => {
+    queries.push(sql);
+    if (sql.includes("workspace.status workspace_status")) return { rows: [authority] };
+    if (/^(BEGIN|SET LOCAL|ROLLBACK)/u.test(sql) || sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+    if (sql.includes("engine_request_keys->$2 alias")) { assert.deepEqual(params, [id, "numeric-exact-request"]); return { rows: [] }; }
+    if (sql.startsWith("SELECT workspace_id FROM signal_topic_catalog_executions")) { assert.deepEqual(params, [numericId]); return { rows: [{ workspace_id: id }] }; }
+    if (sql.startsWith("SELECT workspace_id FROM signal_corpus_preparation_input_state")) { assert.deepEqual(params, [id]); return { rows: [{ workspace_id: id }] }; }
+    if (sql.includes("FOR UPDATE")) { locked = true; assert.deepEqual(params, [numericId]);
+      return { rows: [{ id: numericId, workspace_id: id, actor_user_id: "actor", input_snapshot: {}, status: "failed" }] }; }
+    throw new Error("Unexpected SQL before numeric discriminator");
+  };
+  const database = { query, connect: async () => ({ query, release() { released = true; } }) } as unknown as Pick<Pool, "query" | "connect">;
+  await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: id, actorUserId: "actor",
+    idempotencyKey: "numeric-exact-request", body: { action: "retry_numeric", run_id: numericId } }),
+  (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_engine_incremental_retry_unavailable");
+  assert.equal(locked, true); assert.equal(released, true);
+  assert.ok(queries.includes("ROLLBACK")); assert.ok(!queries.some(sql => /^(INSERT|UPDATE)/u.test(sql)));
 });

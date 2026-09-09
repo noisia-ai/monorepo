@@ -6,6 +6,7 @@ import { beginSignalWorkspaceEngineV1, SignalWorkspaceEngineError,
   withSignalWorkspaceEngineLeaseV1, withSignalWorkspaceEngineTransactionV1,
   persistSignalWorkspaceEngineArtifactWithClientV1,
   loadSignalWorkspaceEngineInputIdentityV1,
+  retrySignalWorkspaceEngineV1,
   type SignalWorkspaceEngineArtifactV1, type SignalWorkspaceEngineDatabaseV1,
   type SignalWorkspaceEngineLeaseV1 } from './signal-workspace-engine';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
@@ -45,6 +46,39 @@ const hash=/^sha256:[0-9a-f]{64}$/u;
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_engine_incremental_${code}`,status);};
 const limitOf=(limit=128)=>{if(!Number.isSafeInteger(limit)||limit<1||limit>128)return fail('page_invalid',422);return limit;};
 const count=(value:unknown)=>{const n=Number(value);if(!Number.isSafeInteger(n)||n<0)return fail('count_invalid');return n;};
+export const SIGNAL_WORKSPACE_NUMERIC_RETRY_ERRORS_V1=[
+ 'workspace_engine_incremental_transport_unavailable','workspace_engine_storage_transport_failed',
+ 'workspace_engine_storage_unavailable','workspace_engine_queue_unavailable','topic_queue_unavailable',
+] as const;
+export const isSignalWorkspaceNumericRetryableErrorV1=(code:string|null)=>
+ (SIGNAL_WORKSPACE_NUMERIC_RETRY_ERRORS_V1 as readonly string[]).includes(code??'');
+/** Shared by the locked retry and read-only status. No provider authorization is
+ * inherited from the parent; persisted checkpoints are retained for recovery. */
+export async function readSignalWorkspaceNumericRecoveryWithQueryableV1(args:{queryable:Queryable;workspace_id:string;actor_user_id:string;execution_id:string}){
+ const row=(await args.queryable.query<{status:string;error_code:string|null;valid:boolean}>(`SELECT execution.status,execution.error_code,
+  COALESCE(execution.actor_user_id=$3::uuid AND execution.input_snapshot ? 'numeric_descriptor'
+   AND execution.input_snapshot->>'claude_cap_micro_usd'='0'
+   AND execution.input_snapshot->'interpretation_config' IS NULL AND execution.interpretation_revision IS NULL
+   AND execution.input_revision=state.input_revision AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp())
+   AND signal_workspace_classification_actor_v1(execution.workspace_id,$3::uuid)
+   AND signal_workspace_incremental_execution_current_v1(execution.id)
+   AND signal_workspace_incremental_projection_history_current_v1(execution.id)
+   AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id)
+   AND (inventory.id IS NULL OR input.id IS NOT NULL AND inventory.metadata->>'input_artifact_id'=input.id::text)
+   AND (NOT execution.result_summary ? 'numeric_checkpoint' OR
+    input.id::text=execution.result_summary->'numeric_checkpoint'->>'input_artifact_id'
+    AND inventory.id::text=execution.result_summary->'numeric_checkpoint'->>'output_index_artifact_id'
+    AND execution.result_summary->'numeric_checkpoint'->>'descriptor_digest'=execution.input_snapshot->'numeric_descriptor'->>'descriptor_digest'),false) valid
+  FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
+  LEFT JOIN analysis_artifacts input ON input.engine_execution_id=execution.id AND input.workspace_id=execution.workspace_id AND input.artifact_key='incremental-input.json'
+  LEFT JOIN analysis_artifacts inventory ON inventory.engine_execution_id=execution.id AND inventory.workspace_id=execution.workspace_id AND inventory.artifact_key='incremental-output-index.json'
+  WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1'`,
+  [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
+ return{valid:row?.valid===true,retry_available:row?.valid===true&&row.status==='failed'&&isSignalWorkspaceNumericRetryableErrorV1(row.error_code)};
+}
+export async function retrySignalWorkspaceNumericUpdateV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string}){
+ return retrySignalWorkspaceEngineV1({...args,numeric_only:true});
+}
 const refSql=`artifact.id artifact_id,artifact.engine_execution_id owner_execution_id,artifact.artifact_key,
  artifact.content->>'storage_key' storage_key,artifact.content->>'sha256' sha256,
  (artifact.content->>'size_bytes')::bigint size_bytes,artifact.content->>'media_type' media_type,artifact.metadata`;

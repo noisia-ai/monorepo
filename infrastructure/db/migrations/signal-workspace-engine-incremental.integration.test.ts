@@ -147,8 +147,9 @@ test('incremental numeric child accepts paid partial parent without changing its
   const nextFiles=await incremental.readSignalWorkspaceIncrementalParentArtifactsV1({database:f.database,lease:nextLease});
   assert.equal(nextFiles.items.length,files.length+1);assert.ok(nextFiles.items.some(file=>file.artifact_key==='manifest.json'));
   assert.ok(!nextFiles.items.some(file=>file.artifact_key.startsWith('component-')||file.artifact_key==='incremental-history.json'));
-  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:nextLease,error_code:'workspace_engine_worker_failed'});
-  const retry=await engine.retrySignalWorkspaceEngineV1({...f.access,execution_id:next.execution_id,idempotency_key:randomUUID()});
+  await f.query(await readFile(new URL('./0146_signal_workspace_incremental_projection.sql',import.meta.url),'utf8'));
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:nextLease,error_code:'workspace_engine_incremental_transport_unavailable'});
+  const retry=await incremental.retrySignalWorkspaceNumericUpdateV1({...f.access,execution_id:next.execution_id,idempotency_key:randomUUID()});
   await f.query('BEGIN');try{
    await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.access.actor_user_id]);
    assert.equal(await engine.claimSignalWorkspaceEngineV1({database:f.database,execution_id:retry.execution_id,worker_job_id:'revoked-claim'}),null);

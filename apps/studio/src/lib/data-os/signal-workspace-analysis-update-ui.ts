@@ -1,7 +1,10 @@
 /** Read-only update descriptor. Editorial requests and their monetary receipts
  * remain in the original analysis contract, never inferred from this stage. */
 import type { SignalWorkspaceAnalysisUpdateV1, SignalWorkspaceNumericReadinessV1 } from "@noisia/db";
-export type WorkspaceAnalysisUpdate = SignalWorkspaceAnalysisUpdateV1;
+export type WorkspaceAnalysisUpdate = Omit<SignalWorkspaceAnalysisUpdateV1, "numeric" | "request_numeric"> & {
+  numeric: Omit<SignalWorkspaceAnalysisUpdateV1["numeric"], "retry_available"> & { retry_available?: boolean };
+  request_numeric?: { action: "retry_numeric"; execution_id: string; idempotency_key: string } | null;
+};
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === "object" && !Array.isArray(v));
 const uuid = (v: unknown) => typeof v === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(v);
 const integer = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
@@ -14,7 +17,11 @@ const progress = (v: unknown): v is Record<string, unknown> => object(v) && uuid
 export function validWorkspaceAnalysisUpdate(value: unknown): value is WorkspaceAnalysisUpdate | null | undefined {
   if (value === undefined || value === null) return true;
   if (!object(value) || !revision(value.desired_revision) || !revision(value.input_revision) || typeof value.has_pending_work !== "boolean"
-    || !progress(value.numeric) || typeof value.numeric.phase !== "string" || !integer(value.numeric.progress) || value.numeric.progress > 100
+    || !progress(value.numeric) || (value.numeric.retry_available !== undefined && typeof value.numeric.retry_available !== "boolean")
+    || !(value.request_numeric === undefined || value.request_numeric === null || object(value.request_numeric)
+      && value.request_numeric.action === "retry_numeric" && uuid(value.request_numeric.execution_id)
+      && typeof value.request_numeric.idempotency_key === "string" && /^[A-Za-z0-9._:-]{8,200}$/u.test(value.request_numeric.idempotency_key))
+    || typeof value.numeric.phase !== "string" || !integer(value.numeric.progress) || value.numeric.progress > 100
     || !(value.projection === null || progress(value.projection) && uuid(value.projection.generation_id))
     || !(value.derivation === null || object(value.derivation) && typeof value.derivation.status === "string" && error(value.derivation.error_code))) return false;
   const serving = value.serving;

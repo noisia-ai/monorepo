@@ -149,17 +149,20 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         </details> : null}
       </> : null}
       {unknown ? <p role="status">{t("unknown")}</p> : run?.status === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(run.error_code ?? "failed")}`)}</p> : null}
-      {analysis.pending && !status?.request_run ? <p role="status">{t("pending")}</p> : null}
+      {analysis.pending && (analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
       {analysis.error ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(analysis.error)}`)}</p> : null}
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
       {analysis.canRetry && run?.transport_recovery_eligible ? <p className="admin-drawer-form__hint">{t("transportRetry")}</p> : null}
+      {analysis.canRetryNumeric || analysis.canReplay && analysis.pending?.body.action === "retry_numeric" ? <p className="admin-drawer-form__hint">{t("update.retryBody")}</p> : null}
       <div className="admin-form-actions">
+        {analysis.canRetryNumeric ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retryNumeric()}>
+          <ArrowClockwise aria-hidden size={15} />{t("update.retry")}</button> : null}
         {analysis.canRetryProgress ? <button className="admin-button" type="button" onClick={() => void analysis.retryProgress()}>
           <ArrowClockwise aria-hidden size={15} />{t("retryCatalogSave")}</button> : null}
         {analysis.canRetry ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
           <ArrowClockwise aria-hidden size={15} />{t("retry")}</button>
           : analysis.canReplay ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
-            <ArrowClockwise aria-hidden size={15} />{t(analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
+            <ArrowClockwise aria-hidden size={15} />{t(analysis.pending?.body.action === "retry_numeric" ? "update.retry" : analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
             : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
                 : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}

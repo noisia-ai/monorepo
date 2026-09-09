@@ -47,6 +47,14 @@ type Stored = z.infer<typeof stored>;
 const inputNames = ["manifest.json", "chunks.jsonl", "vectors.npy", "guides.jsonl", "guide-vectors.npy", "current-roots.jsonl"];
 const maxMetadata = 8 * 1024 * 1024;
 function fail(code: string): never { throw new Error(`workspace_engine_incremental_${code}`); }
+export function safeWorkspaceIncrementalErrorV1(error: unknown): string {
+  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  if (typeof code === "string" && ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND",
+    "57P01", "57P02", "57P03", "08000", "08003", "08006", "40001", "40P01"].includes(code))
+    return "workspace_engine_incremental_transport_unavailable";
+  return error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
+    ? error.message : "workspace_engine_worker_failed";
+}
 const mediaType = (file: string) => file.endsWith(".json") ? "application/json"
   : file.endsWith(".jsonl") ? "application/x-ndjson" : "application/octet-stream";
 async function readJson(path: string): Promise<unknown> {
@@ -222,8 +230,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
     const result = await store.finish({ database, lease, checkpoint_digest: finished.checkpoint_digest });
     await job.updateProgress(100).catch(() => undefined); return result;
   } catch (error) {
-    const code = error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
-      ? error.message : "workspace_engine_worker_failed";
+    const code = safeWorkspaceIncrementalErrorV1(error);
     await store.fail({ database, lease, error_code: code }).catch(() => undefined); throw new Error(code);
   } finally {
     clearInterval(timer); await Promise.resolve(pending).catch(() => undefined);

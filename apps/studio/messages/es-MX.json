@@ -2629,6 +2629,8 @@
           "openSignal": "Ver resultados disponibles en Signal",
           "newAnalysis": "Para iniciar otro análisis:",
           "editorial": "Interpretación anterior · progreso y recibos",
+          "retry": "Reintentar actualización",
+          "retryBody": "Reanuda esta actualización con los datos preparados, sin nuevas llamadas de pago.",
           "failureNumeric": "El cálculo de la actualización se interrumpió.",
           "failureProjection": "No se completó el guardado de las asociaciones.",
           "failureDerivation": "No se pudieron preparar las asociaciones para guardarlas."
@@ -3076,6 +3078,7 @@
         "capHelp": "Usa punto decimal, por ejemplo 0.50. El máximo permitido es {amount}.",
         "quoteExceedsLimit": "Esta preparación requiere un límite superior al máximo disponible de {amount}. Revisa el presupuesto antes de ejecutar.",
         "freeQuote": "Calcular el costo no realiza llamadas al proveedor.",
+        "cacheOnly": "Se reutilizarán los embeddings existentes. No se harán llamadas al proveedor ni se generará un nuevo cargo.",
         "disabled": "La ejecución con el proveedor todavía está deshabilitada. Puedes consultar la cobertura y calcular el costo.",
         "readOnly": "Tu acceso permite consultar esta preparación; no autoriza su ejecución.",
         "settled": "Costo confirmado: {amount}",

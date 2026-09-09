@@ -159,6 +159,7 @@ export async function quoteSignalWorkspaceEmbeddingsStoreV1(args: {
 export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
   database: SignalWorkspaceEmbeddingsDatabaseV1; workspace_id: string; actor_user_id: string; idempotency_key: string;
   preparation_run_id: string; quote_digest: string; hard_cap_micro_usd: number; profile: SignalWorkspaceEmbeddingProfileV1;
+  provider_available?: boolean;
 }): Promise<{ run_id: string; replayed: boolean }> {
   if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)) return fail("workspace_embedding_idempotency_key_required", 400);
   if (!Number.isSafeInteger(args.hard_cap_micro_usd) || args.hard_cap_micro_usd < 0) return fail("workspace_embedding_budget_invalid", 422);
@@ -189,6 +190,24 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
       WHERE workspace_id=$1::uuid AND config_digest=$2 AND status IN('in_flight','outcome_unknown') LIMIT 1`,
     [args.workspace_id, args.profile.config_digest])).rows.length > 0;
     if (unknown) return fail("workspace_embedding_outcome_unknown");
+    if (args.provider_available === false) {
+      // This is a server-owned admission mode, outside the immutable request
+      // digest. Recompute the whole plan: a rounded zero price is not proof
+      // that no inputs or physical requests remain.
+      if (args.hard_cap_micro_usd !== 0 || current.missing_asset_chunks !== 0
+        || current.total_asset_chunks <= 0 || current.cached_asset_chunks !== current.total_asset_chunks
+        || current.full_text_bytes !== 0 || current.tokens_upper !== 0 || current.estimated_upper_micro_usd !== 0
+        || current.required_cap_micro_usd !== null && current.required_cap_micro_usd !== 0)
+        return fail("workspace_embedding_provider_unavailable", 503);
+      const outstanding = (await client.query(`SELECT 1 FROM signal_workspace_embedding_runs run
+        WHERE run.workspace_id=$1::uuid AND run.config_digest=$2 AND
+          (run.reserved_micro_usd>0 OR run.unknown_reserved_micro_usd>0 OR run.observed_exception_micro_usd>0)
+        UNION ALL SELECT 1 FROM signal_workspace_embedding_calls call
+        WHERE call.workspace_id=$1::uuid AND call.config_digest=$2 AND
+          (call.status IN('reserved','in_flight','response_persisted','outcome_unknown') OR call.run_id=$3::uuid)
+        LIMIT 1`, [args.workspace_id, args.profile.config_digest, current.resume_run_id])).rows.length > 0;
+      if (outstanding) return fail("workspace_embedding_cache_only_unavailable");
+    }
     if (current.resume_run_id) {
       if (args.hard_cap_micro_usd !== current.required_cap_micro_usd) return fail("workspace_embedding_resume_budget_changed", 422);
       const resumed = await client.query(`UPDATE signal_workspace_embedding_runs SET status='queued',error_code=NULL,completed_at=NULL,

@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJourney";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, validWorkspaceNumericReadiness, workspaceNumericAdmissionPoll, workspaceNumericReadinessMessage, type WorkspaceNumericReadiness, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
@@ -287,6 +287,73 @@ test("incremental decoder rejects malformed coverage; nullable receipt and stale
   assert.equal(workspaceAnalysisAssociationReceipt(id, status.request_scope, { ...incrementalUpdate, serving: null }), null);
 });
 
+const numericFailure: WorkspaceAnalysisStatus = { ...status, latest_run: { ...ready, status: "failed", phase: "failed", retryable: true },
+  update: { ...incrementalUpdate, has_pending_work: false, request_numeric: null,
+    numeric: { ...incrementalUpdate.numeric, execution_id: "00000000-0000-4000-8000-000000000002", status: "failed",
+      error_code: "workspace_engine_incremental_transport_unavailable", retry_available: true } } };
+const numericRequest: PendingWorkspaceAnalysis = { ...pending, key: "numeric-retry-request",
+  body: { action: "retry_numeric", run_id: numericFailure.update!.numeric.execution_id } };
+test("numeric retry uses only explicit server eligibility and its own current execution, regardless of old editorial spending", () => {
+  assert.equal(workspaceAnalysisCanRetryNumeric(numericFailure), true);
+  assert.equal(workspaceAnalysisCanRetryNumeric({ ...numericFailure, can_execute: false }), false);
+  assert.equal(workspaceAnalysisCanRetryNumeric({ ...numericFailure, latest_run: { ...ready, outcome_unknown: true },
+    preflight: { ...status.preflight, cost: { ...status.preflight.cost, claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: 0, provider_available: false } } } }), true);
+  for (const patch of [{ retry_available: false }, { retry_available: undefined }, { is_current: false }, { status: "ready" as const }, { status: "running" as const }])
+    assert.equal(workspaceAnalysisCanRetryNumeric({ ...numericFailure, update: { ...numericFailure.update!, numeric: { ...numericFailure.update!.numeric, ...patch } } }), false);
+});
+test("numeric retry body and scoped receipt are exact; editorial ready never acknowledges the numeric request", () => {
+  assert.deepEqual(parsePendingWorkspaceAnalysis(numericRequest, id, status.request_scope), numericRequest);
+  assert.equal(parsePendingWorkspaceAnalysis({ ...numericRequest, body: { ...numericRequest.body, claude_cap_micro_usd: 1 } }, id, status.request_scope), null);
+  assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...numericFailure, request_run: ready }, numericRequest), false);
+  const receipt = { action: "retry_numeric" as const, execution_id: numericFailure.update!.numeric.execution_id, idempotency_key: numericRequest.key };
+  const accepted = { ...numericFailure, update: { ...numericFailure.update!, request_numeric: receipt } };
+  assert.equal(workspaceAnalysisNumericRequestConfirmed(accepted, numericRequest), true, "accepted receipt closes an intention even if the same execution has failed again");
+  assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...accepted, update: { ...accepted.update, numeric: { ...accepted.update.numeric, is_current: false } } }, numericRequest), true);
+  for (const patch of [{ execution_id: id }, { idempotency_key: "another-request" }])
+    assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...accepted, update: { ...accepted.update, request_numeric: { ...receipt, ...patch } } }, numericRequest), false);
+  for (const patch of [{ workspace_id: "other" }, { request_scope: "another-actor" }])
+    assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...accepted, ...patch }, numericRequest), false);
+});
+test("lost numeric ACK may replay only the exact pending request, never the latest editorial run or a newer numeric run", () => {
+  assert.equal(workspaceAnalysisCanReplay(numericFailure, numericRequest), true);
+  assert.equal(workspaceAnalysisCanReplay({ ...numericFailure, request_run: ready }, numericRequest), true,
+    "an unrelated editorial receipt is not authority for numeric recovery");
+  assert.equal(workspaceAnalysisCanReplay(numericFailure, { ...numericRequest, body: { action: "retry_numeric", run_id: id } }), false);
+  assert.equal(workspaceAnalysisCanReplay({ ...numericFailure, update: { ...numericFailure.update!, request_numeric: {
+    action: "retry_numeric", execution_id: numericFailure.update!.numeric.execution_id, idempotency_key: numericRequest.key } } }, numericRequest), false);
+  assert.equal(workspaceAnalysisCanReplay({ ...numericFailure, update: { ...numericFailure.update!, numeric: { ...numericFailure.update!.numeric, is_current: false } } }, numericRequest), false);
+});
+test("numeric retry UUID identity is case-insensitive while its original body, key and actor scope remain sealed", () => {
+  const execution = "aabbccdd-eeff-4aab-8ccd-aabbccddeeff";
+  const retained: PendingWorkspaceAnalysis = { ...numericRequest, body: { action: "retry_numeric", run_id: execution.toUpperCase() } };
+  const before = JSON.stringify(retained);
+  const current = { ...numericFailure, update: { ...numericFailure.update!, numeric: { ...numericFailure.update!.numeric, execution_id: execution } } };
+  const accepted = { ...current, update: { ...current.update, request_numeric: {
+    action: "retry_numeric" as const, execution_id: execution, idempotency_key: retained.key } } };
+  assert.deepEqual(parsePendingWorkspaceAnalysis(retained, id, status.request_scope), retained);
+  assert.equal(workspaceAnalysisNumericRequestConfirmed(accepted, retained), true);
+  assert.equal(workspaceAnalysisCanReplay(current, retained), true);
+  assert.equal(workspaceAnalysisCanReplay(accepted, retained), false);
+  for (const patch of [{ execution_id: id }, { idempotency_key: "another-key" }])
+    assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...accepted, update: { ...accepted.update,
+      request_numeric: { ...accepted.update.request_numeric, ...patch } } }, retained), false);
+  assert.equal(workspaceAnalysisCanReplay({ ...current, update: { ...current.update,
+    numeric: { ...current.update.numeric, execution_id: id } } }, retained), false);
+  for (const patch of [{ workspace_id: "another-workspace" }, { request_scope: "another-actor" }]) {
+    assert.equal(workspaceAnalysisNumericRequestConfirmed({ ...accepted, ...patch }, retained), false);
+    assert.equal(workspaceAnalysisCanReplay({ ...current, ...patch }, retained), false);
+  }
+  assert.equal(JSON.stringify(retained), before, "comparison never rewrites the persisted request or creates a replacement key");
+});
+test("numeric recovery decoder rejects malformed flags and receipts without invalidating additive older responses", () => {
+  assert.equal(validWorkspaceAnalysisStatus(numericFailure), true);
+  for (const patch of [{ numeric: { ...numericFailure.update!.numeric, retry_available: "true" } },
+    { request_numeric: { action: "retry", execution_id: id, idempotency_key: "request-1" } },
+    { request_numeric: { action: "retry_numeric", execution_id: "bad", idempotency_key: "request-1" } },
+    { request_numeric: { action: "retry_numeric", execution_id: id, idempotency_key: "bad" } }])
+    assert.equal(validWorkspaceAnalysisStatus({ ...numericFailure, update: { ...numericFailure.update!, ...patch } }), false);
+});
+
 const numericReadiness: WorkspaceNumericReadiness = { contract_version: "workspace-numeric-readiness-v1", workspace_id: id,
   desired_revision: "9007199254740993", state: "blocked", reason_code: "corpus_embeddings_required",
   has_pending_work: false, execution_id: null, embedding_run_id: null };
@@ -317,6 +384,15 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initial: WorkspaceAnalysisStatus, disabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     providerProps, createElement(WorkspaceAnalysisControls, { brandId: "new-brand", workspaceId: id,
       catalogVersion: "empty:0", initial, disabled })));
+  test(`${locale}: numeric recovery stays next to the retained update while paid interpretation history remains readable`, () => {
+    const html = render({ ...numericFailure, latest_run: progressiveRun });
+    assert.ok(html.includes(t.update.retry)); assert.ok(html.includes(t.update.retryBody));
+    assert.ok(html.includes(t.errors.authorizationExpired));
+    assert.ok(html.includes(t.update.previousServing));
+    for (const value of [render({ ...numericFailure, can_execute: false }), render(numericFailure, true),
+      render({ ...numericFailure, update: { ...numericFailure.update!, numeric: { ...numericFailure.update!.numeric, is_current: false } } })])
+      assert.ok(!value.includes(`>${t.update.retry}</button>`));
+  });
   test(`${locale}: admission distinguishes missing preparation, real queued work and eligibility without claiming execution`, () => {
     for (const state of ["not_enabled", "blocked", "waiting_preparation", "waiting_embeddings", "ready_to_schedule", "already_handled"] as const) {
       const readiness = { ...numericReadiness, state, has_pending_work: ["waiting_preparation", "waiting_embeddings", "ready_to_schedule"].includes(state) };

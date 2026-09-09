@@ -11,7 +11,11 @@ import {signalWorkspaceTopicProjectionJobV1} from '../../../services/workers/src
 import {type WorkspaceProjectionCheckpointFixtureV1,fixtureSha} from './signal-workspace-topic-projection.fixture';
 /** Genuine local ledger/fit/checkpoint APIs with explicit synthetic numerical
  * bytes. No model is loaded and no provider is called by this fixture. */
-export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckpointFixtureV1,clusterIds:readonly[string,string]){
+export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckpointFixtureV1,clusterIds:readonly[string,string],options:{
+ onInputCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
+ onOutputIndex?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
+ onNumericCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;checkpoint:numeric.SignalWorkspaceIncrementalCheckpointV1})=>Promise<void>;
+}={}){
  const {database,query,access,bodies}=f,workspace_id=access.workspace_id,source=f.lease,parentId=source.execution_id;
  await query(await readFile(new URL('./0145_signal_workspace_incremental_numeric.sql',import.meta.url),'utf8'));
  await query(await readFile(new URL('./0146_signal_workspace_incremental_projection.sql',import.meta.url),'utf8'));
@@ -43,7 +47,8 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  await engine.failSignalWorkspaceEngineV1({database,lease:source,error_code:'workspace_engine_interpretation_daily_authority_expired'});
  const request=await numeric.beginSignalWorkspaceIncrementalEngineV1({...access,idempotency_key:randomUUID(),embedding_run_id:source.snapshot.embedding_run_id,
   expected_context_digest:source.snapshot.context_digest,expected_catalog_digest:source.snapshot.catalog_digest,engine_config:source.snapshot.engine_config,close_requested:false});
- const lease=await engine.claimSignalWorkspaceEngineV1({database,...request,worker_job_id:`workspace-engine-${request.execution_id}-1`});if(!lease)throw Error('numeric fixture lease missing');
+ const claimed=await engine.claimSignalWorkspaceEngineV1({database,...request,worker_job_id:`workspace-engine-${request.execution_id}-1`});if(!claimed)throw Error('numeric fixture lease missing');
+ let lease:engine.SignalWorkspaceEngineLeaseV1=claimed;
  const descriptor=lease.snapshot.numeric_descriptor!,roots=(await numeric.readSignalWorkspaceIncrementalRootsV1({database,lease,after_root_id:null})).items;
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];
  let after:Parameters<typeof engine.readSignalWorkspaceEngineChunksV1>[0]['after']=null;
@@ -59,6 +64,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
   size_bytes:name==='manifest.json'?input.current_input_manifest.bytes:name==='current-roots.jsonl'?input.current_roots.bytes:1,media_type:'application/octet-stream'}));
  const savedInput=await numeric.persistSignalWorkspaceIncrementalInputV1({database,lease,input,roots_count:roots.length,chunks_count:chunks.length,input_files:inputFiles,
   artifact:artifact(lease,'incremental-input.json','engine_output',JSON.stringify(input))});
+ if(options.onInputCheckpoint)lease=await options.onInputCheckpoint({lease,artifact_id:savedInput.artifact_id});
  const modelRefs=(['open','guided'] as const).map(lane=>({file:`model.${lane}.joblib`,sha256:fixtureSha(modelBodies[lane]),bytes:Buffer.byteLength(modelBodies[lane])}));
  const center={file:'guide-center.npy',sha256:fixtureSha(centerBody),bytes:Buffer.byteLength(centerBody)};
  const components=(['open','guided'] as const).map((lane,index)=>({component_key:digest([parentId,modelRefs[index]!.sha256,lane]),lane,
@@ -90,6 +96,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  const outputBody=JSON.stringify(output),manifest={file:'manifest.json',sha256:fixtureSha(outputBody),bytes:Buffer.byteLength(outputBody)};
  const index=await numeric.persistSignalWorkspaceIncrementalOutputIndexV1({database,lease,input_artifact_id:savedInput.artifact_id,output_manifest:{sha256:manifest.sha256,size_bytes:manifest.bytes},file_count:files.length+3,
   artifact:artifact(lease,'incremental-output-index.json','engine_output','local inventory')});
+ if(options.onOutputIndex)lease=await options.onOutputIndex({lease,artifact_id:index.artifact_id});
  const stored=new Map<string,string>();for(const [name,body] of numericBodies)stored.set(name,(await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,
   artifact:artifact(lease,name,name.endsWith('.joblib')||name==='guide-center.npy'?'engine_model':'engine_output',body)})).artifact_id);
  const outputArtifact=await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:artifact(lease,'manifest.json','engine_output',outputBody)});
@@ -105,6 +112,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
    origin_digest:digest(components.map(component=>({component_key:component.component_key,lane:component.lane,model_origin:component.model_origin,
     model:{sha256:component.model.sha256,bytes:component.model.bytes},center:component.center?{sha256:component.center.sha256,bytes:component.center.bytes}:null,units:component.units}))),
    roots:roots.length,occurrences:chunks.length,memberships:memberships.length,pending_occurrences:pending.length,relations_scope:'new_candidates_in_this_execution'}});
+ await options.onNumericCheckpoint?.({lease,checkpoint});
  await numeric.finishSignalWorkspaceIncrementalNumericV1({database,lease,checkpoint_digest:checkpoint.checkpoint_digest});
  return{...f,lease,roots,chunks,components,checkpoint,old,storage,artifact,output};
 }

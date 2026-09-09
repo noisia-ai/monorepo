@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { workspaceNumericAdmissionPoll } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
 export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = false, initial = null }: {
@@ -52,10 +52,11 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     }
     if (confirmedKey && confirmedKey === pendingRef.current?.key) {
       setCheckedKey(confirmedKey);
-      if ((pendingRef.current.body.action === "retry_progress"
-        ? workspaceAnalysisProgressRequestConfirmed(next, pendingRef.current)
+      const numericRequest = pendingRef.current.body.action === "retry_numeric";
+      if ((numericRequest ? workspaceAnalysisNumericRequestConfirmed(next, pendingRef.current)
+        : pendingRef.current.body.action === "retry_progress" ? workspaceAnalysisProgressRequestConfirmed(next, pendingRef.current)
         : next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedRequest(next))
-        || !next.request_run && rejectedKey.current === confirmedKey) forget();
+        || (numericRequest ? !next.update?.request_numeric : !next.request_run) && rejectedKey.current === confirmedKey) forget();
     }
     if (!pendingRef.current) {
       try {
@@ -152,12 +153,15 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   }, [accept, disabled, endpoint, error, read, revoke, verifiedVersion, workspaceId]);
 
   const confirmed = pending && checkedKey === pending.key;
-  const retryRun = confirmed ? data?.request_run ?? null : !pending ? data?.latest_run ?? null : null;
+  const retryRun = pending?.body.action === "retry_numeric" ? null : confirmed ? data?.request_run ?? null : !pending ? data?.latest_run ?? null : null;
   const canRetry = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanRetry(data, retryRun);
   const canRetryProgress = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
-    && (!pending || Boolean(confirmed && data?.request_run))
+    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && data?.request_run))
     && workspaceAnalysisCanRetryProgress(data, data?.latest_run ?? null);
+  const canRetryNumeric = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
+    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && data?.request_run))
+    && workspaceAnalysisCanRetryNumeric(data);
   const canStart = !disabled && !submitting && !reading && !pending && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanStart(data, cap);
   const canReplay = !disabled && !submitting && !reading && Boolean(confirmed && data && pending && error !== "load"
@@ -174,9 +178,12 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const retryProgress = useCallback(async () => {
     if (canRetryProgress && data?.latest_run) await submit({ action: "retry_progress", run_id: data.latest_run.execution_id });
   }, [canRetryProgress, data, submit]);
+  const retryNumeric = useCallback(async () => {
+    if (canRetryNumeric && data?.update) await submit({ action: "retry_numeric", run_id: data.update.numeric.execution_id });
+  }, [canRetryNumeric, data, submit]);
   const replay = useCallback(async () => {
     if (canReplay && pending) await submit(pending.body, pending);
   }, [canReplay, pending, submit]);
-  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canRetryProgress, canReplay,
-    read, start, retry, retryProgress, replay, verified: verifiedVersion === catalogVersion };
+  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canRetryProgress, canRetryNumeric, canReplay,
+    read, start, retry, retryProgress, retryNumeric, replay, verified: verifiedVersion === catalogVersion };
 }

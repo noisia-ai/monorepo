@@ -2629,6 +2629,8 @@
           "openSignal": "View available results in Signal",
           "newAnalysis": "To start another analysis:",
           "editorial": "Earlier interpretation · progress and receipts",
+          "retry": "Retry update",
+          "retryBody": "Resume this update using the prepared data, with no new paid calls.",
           "failureNumeric": "The update computation was interrupted.",
           "failureProjection": "Saving the associations did not finish.",
           "failureDerivation": "The associations could not be prepared for saving."
@@ -3076,6 +3078,7 @@
         "capHelp": "Use a decimal point, for example 0.50. The allowed maximum is {amount}.",
         "quoteExceedsLimit": "This preparation needs a limit above the available maximum of {amount}. Review the budget before running it.",
         "freeQuote": "Calculating cost makes no provider calls.",
+        "cacheOnly": "Existing embeddings will be reused. No provider calls or new charges will be made.",
         "disabled": "Provider execution is currently disabled. You can check coverage and calculate cost.",
         "readOnly": "Your access allows viewing this preparation, but does not authorize execution.",
         "settled": "Confirmed cost: {amount}",

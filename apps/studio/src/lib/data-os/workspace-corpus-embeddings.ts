@@ -45,11 +45,11 @@ export async function requestWorkspaceCorpusEmbeddingsForActorV1(args: AccessArg
   const access = await authorize(args, true);
   if (!validateWorkspaceCorpusEmbeddingRequestV1(args.body)) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_request_invalid", 422);
   if (args.body.hard_cap_micro_usd > access.flags.max_run_cost_micro_usd) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_budget_exceeds_limit", 422);
-  // Availability is server-owned. No outbox intent or monetary reserve can be created while disabled.
-  if (!access.flags.provider_available) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_provider_unavailable", 503);
+  // The store checks the current complete cache plan inside admission. A zero
+  // cap supplied by the caller cannot authorize a missing input or provider call.
   await requestSignalWorkspaceEmbeddingsStoreV1({ database: access.database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId, idempotency_key: args.idempotencyKey,
-    ...args.body, profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 });
+    ...args.body, profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, provider_available: access.flags.provider_available });
   return loadWorkspaceCorpusEmbeddingsForActorV1({ ...args, database: access.database });
 }
 export function validateWorkspaceCorpusEmbeddingRequestV1(value: unknown): value is WorkspaceCorpusEmbeddingRequestV1 {
