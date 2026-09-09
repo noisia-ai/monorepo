@@ -107,6 +107,29 @@ test("storage verification retry requires server evidence of no committed artifa
 });
 
 
+test("interpretation evidence retry requires its own server eligibility and never reopens unrelated integrity failures", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 80, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
+    error_code: "workspace_engine_interpretation_cluster_invalid", is_current: true, model_version_id: null, artifact_count: 15,
+    claude_cap_micro_usd: 0, result_kind: null, fit_completed: false,
+    expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0 };
+  assert.equal(workspaceAnalysisRunViewV1(run)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, interpretation_evidence_recovery_eligible: false })?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, storage_recovery_eligible: true })?.retryable, false,
+    "A storage retry receipt does not authorize recovering interpretation evidence");
+  const recoverable = { ...run, interpretation_evidence_recovery_eligible: true };
+  assert.equal(workspaceAnalysisRunViewV1(recoverable)?.retryable, true);
+  assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, is_current: false })?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, status: "running" })?.retryable, false);
+  for (const error_code of ["workspace_engine_storage_verification_failed", "workspace_engine_interpretation_evidence_invalid",
+    "workspace_engine_storage_digest_invalid", "workspace_engine_forbidden"])
+    assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, error_code })?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, claude_cap_micro_usd: 10 }, {
+    confirmed_micro_usd: 0, reserved_micro_usd: 1, unknown_reserved_micro_usd: 1,
+    observed_exception_micro_usd: 0, hard_cap_micro_usd: 10 })?.retryable, false);
+});
+
+
 test("provider availability requires explicit complete budget policy and a current configured key", () => {
   const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "test_not_real",
     NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "30000000",

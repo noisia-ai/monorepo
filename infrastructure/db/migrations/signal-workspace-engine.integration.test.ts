@@ -342,6 +342,111 @@ test('storage verification retry is explicit, current and confined to zero durab
  }finally{await f.cleanup();}
 });
 
+test('interpretation evidence retry restores only a complete immutable bundle before any fit or paid evidence', {skip:!enabled,timeout:60_000},async()=>{
+ const f=await fixture();try{
+  await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('evidence-prompt'),schema_digest:sha('evidence-schema'),pricing_version:'local-only',
+   input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
+  const startKey=randomUUID(),started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:startKey,
+   expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'evidence-recovery'},claude_cap_micro_usd:5000,
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:5000}});
+  const claim=async()=>{const lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-evidence-recovery'});assert.ok(lease);return lease;};
+  const lease=await claim(),error_code='workspace_engine_interpretation_cluster_invalid';
+  const coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
+  await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'persisting',exported:{...coverage,stream_digest:sha('local-export-receipt')}});
+  const bundle=['manifest.json','model-manifest.json','model.open.joblib','clusters.open.json','assignments.open.jsonl','roots.jsonl'].map(name=>({
+   name,storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/${name}.parts.json`,sha256:sha(name),size_bytes:10,media_type:'application/octet-stream'}));
+  const persist=async(entries= bundle,mode:'all'|'missing'|'mismatch'='all')=>{
+   for(const file of mode==='missing'?entries.slice(0,1):entries){
+    await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:{artifact_key:file.name,
+     artifact_type:file.name==='model-manifest.json'||file.name.endsWith('.joblib')?'engine_model':'engine_output',title:file.name,
+     storage_key:file.storage_key,sha256:mode==='mismatch'&&file.name==='clusters.open.json'?sha('wrong receipt'):file.sha256,
+     size_bytes:file.size_bytes,media_type:file.media_type,metadata:{filename:file.name,...(file.name==='manifest.json'?{bundle:entries}:{} )}}});
+   }
+  };
+  const status=async()=>(await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run!;
+  const retry=(key=randomUUID())=>engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:key});
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1(error_code),false);
+  for(const mode of ['missing','mismatch','duplicate'] as const){
+   await f.query('SAVEPOINT bad_bundle');
+   if(mode==='duplicate'){
+    // Exact replay of the same artifact cannot turn duplicate bundle names into coverage.
+    await persist([...bundle,bundle[1]!]);
+   }else await persist(bundle,mode);
+   if(mode==='missing'){
+    // Simulate an unavailable required checkpoint after an explicit retry;
+    // this reader must throw before the Worker can choose its null/refit path.
+    await f.query(`UPDATE signal_topic_catalog_executions SET result_summary=result_summary||'{"interpretation_evidence_checkpoint_required":true}'::jsonb WHERE id=$1::uuid`,[started.execution_id]);
+    await assert.rejects(engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease}),/workspace_engine_checkpoint_invalid/u);
+   }
+   await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code});
+   assert.equal((await status()).interpretation_evidence_recovery_eligible,false,mode);
+   await assert.rejects(retry(),/retry_unavailable/u);
+   await f.query('ROLLBACK TO SAVEPOINT bad_bundle');await f.query('RELEASE SAVEPOINT bad_bundle');
+  }
+  await persist();await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code});
+  assert.equal((await status()).interpretation_evidence_recovery_eligible,true);
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1(error_code,await status()),true);
+  await assert.rejects(retry(startKey),/idempotency_conflict/u);
+  await assert.rejects(engine.retrySignalWorkspaceEngineV1({...f.access,...started,workspace_id:randomUUID(),idempotency_key:randomUUID()}),/forbidden/u);
+  for(const invalid of ['actor','context'] as const){await f.query('SAVEPOINT no_authority');
+   if(invalid==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
+   else await f.query("UPDATE brands SET description='changed after numerical output' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
+   await assert.rejects(retry(),invalid==='actor'?/forbidden/u:/inputs_stale/u);
+   await f.query('ROLLBACK TO SAVEPOINT no_authority');await f.query('RELEASE SAVEPOINT no_authority');
+  }
+  for(const stage of ['fit','model','reserved','unknown'] as const){await f.query('SAVEPOINT later_evidence');
+   await retry();const active=await claim();
+   const ids=(await f.query('SELECT id,artifact_key FROM analysis_artifacts WHERE engine_execution_id=$1::uuid',[started.execution_id])).rows;
+   const model=stage==='model'?ids.find(row=>row.artifact_key==='model-manifest.json').id:null;
+   await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease:active,coverage,model_artifact_id:model,
+    output_artifact_id:ids.find(row=>row.artifact_key==='manifest.json').id,result_kind:model?'computational_grouping':'insufficient_population',
+    model_configuration:{fixture:'evidence-recovery'},runtime_kind:'python',artifact_format:model?'joblib':'none',license_key:null,
+    interpretation_manifest:{unit_count:0,unit_digest:sha('')}});
+   if(stage==='reserved'||stage==='unknown'){
+    const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:active.execution_token,idempotency_key:randomUUID(),request_digest:sha(stage),
+     configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:5000});
+    if(stage==='unknown'){const token={database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:active.execution_token};
+     await money.markSignalWorkspaceEngineInterpretationSentV1(token);
+     await money.failSignalWorkspaceEngineInterpretationV1({...token,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_outcome_unknown'});}
+   }
+   await engine.failSignalWorkspaceEngineV1({database:f.database,lease:active,error_code});
+   assert.equal((await status()).interpretation_evidence_recovery_eligible,false,stage);await assert.rejects(retry(),/retry_unavailable/u);
+   await f.query('ROLLBACK TO SAVEPOINT later_evidence');await f.query('RELEASE SAVEPOINT later_evidence');
+  }
+  const before=(await f.query('SELECT id,content,metadata FROM analysis_artifacts WHERE engine_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows;
+  const key=randomUUID();assert.equal((await retry(key)).replayed,false);assert.equal((await retry(key)).replayed,true);
+  const active=await claim(),checkpoint=await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:active});
+  assert.deepEqual(checkpoint?.metadata.bundle,bundle);
+  assert.deepEqual((await f.query('SELECT id,content,metadata FROM analysis_artifacts WHERE engine_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows,before);
+  const row=(await f.query('SELECT result_summary,dispatch_generation,input_snapshot FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
+  assert.equal(row.result_summary.interpretation_evidence_checkpoint_required,true);assert.equal(row.dispatch_generation,2);assert.equal(row.input_snapshot.claude_cap_micro_usd,5000);
+  assert.equal((await f.query('SELECT count(*)::int n FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid',[started.execution_id])).rows[0].n,1);
+  assert.equal((await f.query('SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid',[started.execution_id])).rows[0].n,0);
+  // Once restoration succeeds, an editorial checkpoint and its paid receipt
+  // must not invalidate the original numerical bundle on a later safe retry.
+  const model=before.find(item=>item.metadata.filename==='model-manifest.json')!.id;
+  await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease:active,coverage,model_artifact_id:model,
+   output_artifact_id:checkpoint!.artifact_id,result_kind:'computational_grouping',model_configuration:{fixture:'restored-evidence'},
+   runtime_kind:'python',artifact_format:'joblib',license_key:null,interpretation_manifest:{unit_count:1,unit_digest:sha('"open:fixture"\n')}});
+  const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:active.execution_token,idempotency_key:randomUUID(),request_digest:sha('after-restoration'),
+   configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:5000});
+  const token={database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:active.execution_token};
+  await money.markSignalWorkspaceEngineInterpretationSentV1(token);
+  await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/response.parts.json`,
+   sha256:sha('simulated response'),size_bytes:18,http_status:200,provider_request_id:null}});
+  await money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:1,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+  await engine.checkpointSignalWorkspaceEngineInterpretationV1({database:f.database,lease:active,call_id:call.call_id,unit_keys:['open:fixture'],artifact:{
+   artifact_key:'interpretation-1.json',artifact_type:'engine_proposals',title:'Simulated proposal',storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/proposal.parts.json`,
+   sha256:sha('simulated proposal'),size_bytes:18,media_type:'application/json',metadata:{fixture:true}}});
+  assert.deepEqual((await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:active}))?.metadata.bundle,bundle);
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:active,error_code:'workspace_engine_worker_failed'});
+  await retry();const resumed=await claim();
+  assert.deepEqual((await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:resumed}))?.metadata.bundle,bundle);
+  assert.equal((await f.query('SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid',[started.execution_id])).rows[0].n,1);
+ }finally{await f.cleanup();}
+});
+
 test('interpretation single-send, exact settlement after staleness, retained unknown and real budget limits', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();try{
   await prototypes(f);const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);

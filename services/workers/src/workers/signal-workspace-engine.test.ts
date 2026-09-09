@@ -144,7 +144,7 @@ test("real job routes a sealed full bundle to interpretation and resumes without
             end: row.end, chunk_sha256: row.chunk_sha256, local_label: row.ordinal, stable_cluster_id: `group_${row.ordinal}`, strength: 0.9 }));
           files[`assignments.${lane}.jsonl`] = assigned.map(row => JSON.stringify(row) + "\n").join("");
           files[`clusters.${lane}.json`] = JSON.stringify(assigned.map(row => ({ stable_cluster_id: row.stable_cluster_id,
-            local_label: row.local_label, lane, root_count: 1, chunk_count: 1, terms: ["conversation"],
+            local_label: row.local_label, lane, root_count: 1, chunk_count: 1, terms: ["conversation", "", " \t"],
             representative_selection_policy: "distinct-roots-affiliation-boundary-v1", representatives: [{ ...row, selection_reason: "high_affiliation" }] })));
           files[`model.${lane}.joblib`] = "local fixture model marker, never deserialize";
           return { lane, assignments_file: `assignments.${lane}.jsonl`, clusters_file: `clusters.${lane}.json`,
@@ -168,6 +168,7 @@ test("real job routes a sealed full bundle to interpretation and resumes without
         assert.equal(args.fit.artifact_format, "workspace-model-bundle-v1"); assert.ok(args.fit.model_artifact_id); assert.ok(args.fit.output_artifact_id);
         assert.deepEqual(args.fit.model_configuration.versions, { fixture: "no model load" });
         assert.equal(args.clusters.length, 12);
+        assert.ok(args.clusters.every(row => JSON.stringify(row.terms) === '["conversation"]'));
         assert.deepEqual(args.clusters.map(row => row.cluster_id), ["guided", "open"].flatMap(lane => Array.from({ length: 6 }, (_, i) => `${lane}:group_${i}`)));
         assert.ok(args.clusters.every(row => row.representatives.length === 1 && row.representatives[0]!.text.startsWith("Complete local")));
         await args.heartbeat("interpreting");
@@ -181,7 +182,29 @@ test("real job routes a sealed full bundle to interpretation and resumes without
     await assert.rejects(signalWorkspaceEngineJobV1(job, options), /workspace_engine_worker_failed/u);
     const firstPuts = puts; assert.equal(status, "failed"); assert.equal(processes, 1); assert.equal(interpretations, 1);
     assert.deepEqual(await readdir(root), []);
-    await signalWorkspaceEngineJobV1(job, options);
+    const sealedDigests = [...objects].map(([key, bytes]) => [key, sha(bytes)]);
+    await t.test("a required output checkpoint failure never falls back to Python or uploads", async () => {
+      const saved = stores.checkpoint;
+      stores.checkpoint = async () => { throw new Error("workspace_engine_checkpoint_invalid"); };
+      try {
+        await assert.rejects(signalWorkspaceEngineJobV1(job, options), /workspace_engine_checkpoint_invalid/u);
+        assert.equal(processes, 1); assert.equal(puts, firstPuts); assert.equal(gets, 0);
+        assert.equal(interpretations, 1); assert.equal(providerRequests, 0);
+        assert.deepEqual(await readdir(root), []);
+      } finally { stores.checkpoint = saved; }
+    });
+    await t.test("restored padding is normalized without refit, upload or mutation of the sealed raw model and groups", async () => {
+      const before = { processes, puts, providerRequests };
+      await signalWorkspaceEngineJobV1(job, options);
+      assert.deepEqual({ processes, puts, providerRequests }, before);
+      assert.deepEqual([...objects].map(([key, bytes]) => [key, sha(bytes)]), sealedDigests);
+      const rawGroups = [...objects].filter(([key]) => /\/clusters\.(open|guided)\.json\./u.test(key));
+      assert.equal(rawGroups.length, 2);
+      for (const [, bytes] of rawGroups) {
+        const groups = JSON.parse(bytes.toString()) as Array<{ terms: string[] }>;
+        assert.ok(groups.every(group => JSON.stringify(group.terms) === '["conversation",""," \\t"]'));
+      }
+    });
     assert.equal(status, "ready"); assert.equal(processes, 1); assert.equal(interpretations, 2); assert.equal(finishes, 0);
     assert.equal(puts, firstPuts); assert.equal(gets, objects.size); assert.equal(providerRequests, 0);
     assert.deepEqual(await readdir(root), []);

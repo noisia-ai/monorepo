@@ -92,3 +92,19 @@ test("all-outlier population is accounted for without fabricated clusters", asyn
   Object.assign(f.output.lanes[0]!, { outlier_occurrences: f.source.length - 1 });
   await assert.rejects(execute(f), /workspace_engine_evidence_integrity_invalid/u);
 });
+test("BERTopic empty vocabulary padding is omitted without changing real terms, evidence or full membership", async () => {
+  const f = fixture(), original = await execute(f);
+  f.clusters[0]!.terms = ["", " \t\n", "fixture", "\u00a0"];
+  assert.deepEqual(await execute(f), original);
+  f.clusters[0]!.terms = ["  unchanged real term  "];
+  assert.deepEqual((await execute(f))[0]!.terms, ["  unchanged real term  "]);
+  for (const invalid of ["x".repeat(257), 42, null, {}]) {
+    f.clusters[0]!.terms = ["", invalid as string];
+    await assert.rejects(execute(f), /workspace_engine_interpretation_cluster_invalid/u);
+  }
+  f.clusters[0]!.terms = ["", "\t"];
+  const noTerms = await execute(f);
+  assert.deepEqual(noTerms[0]!.terms, []);
+  assert.equal(noTerms[0]!.cluster_digest, original[0]!.cluster_digest);
+  assert.deepEqual(noTerms[0]!.representatives, original[0]!.representatives);
+});

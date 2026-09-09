@@ -89,7 +89,12 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
       if (roots !== cluster.root_count || chunks !== cluster.chunk_count || refs.size !== cluster.representatives.length) fail();
       result.push(parseSignalWorkspaceInterpretationClusterV1({ cluster_id: `${lane.lane}:${cluster.stable_cluster_id}`,
         lane: lane.lane, cluster_digest: `sha256:${hash.digest("hex")}`, root_count: roots, chunk_count: chunks,
-        terms: cluster.terms, representatives: cluster.representatives.map(rep => refs.get(rep.ordinal)) }));
+        // BERTopic pads a short vocabulary with empty terms. Keep the sealed
+        // raw artifact and every nonempty term, citation and census unchanged.
+        terms: Array.isArray(cluster.terms)
+          ? cluster.terms.filter(term => typeof term !== "string" || term.trim().length > 0)
+          : cluster.terms,
+        representatives: cluster.representatives.map(rep => refs.get(rep.ordinal)) }));
     }
   }
   if (!lanes.has("open")) fail();

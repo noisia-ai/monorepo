@@ -15,9 +15,10 @@ export const SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 = [
   "workspace_engine_storage_transport_failed", "workspace_engine_storage_unavailable", "topic_queue_unavailable"
 ] as const;
 export const isSignalWorkspaceEngineRetryableErrorV1 = (code: string | null,
-  evidence?: { storage_recovery_eligible?: boolean }) =>
+  evidence?: { storage_recovery_eligible?: boolean; interpretation_evidence_recovery_eligible?: boolean }) =>
   (SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 as readonly string[]).includes(code ?? "")
-  || code === "workspace_engine_storage_verification_failed" && evidence?.storage_recovery_eligible === true;
+  || code === "workspace_engine_storage_verification_failed" && evidence?.storage_recovery_eligible === true
+  || code === "workspace_engine_interpretation_cluster_invalid" && evidence?.interpretation_evidence_recovery_eligible === true;
 export type SignalWorkspaceEngineDatabaseV1 = Pick<Pool, "query" | "connect">;
 export class SignalWorkspaceEngineError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceEngineError"; }
@@ -74,6 +75,7 @@ export type SignalWorkspaceEngineStatusV1 = {
     model_version_id: string | null; artifact_count: number; claude_cap_micro_usd: number; result_kind: "computational_grouping" | "insufficient_population" | null;
     fit_completed: boolean; expected_interpretation_units: number; interpreted_units: number; materialized_topics: number;
     storage_recovery_eligible?: boolean;
+    interpretation_evidence_recovery_eligible?: boolean;
   }; latest_complete_execution_id: string | null; latest_complete: SignalWorkspaceEngineStatusV1["latest_run"];
 };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEngineError(code, status); };
@@ -90,6 +92,36 @@ const storageRecoveryPredicate = `execution.status='failed' AND execution.error_
  AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id)
  AND NOT EXISTS(SELECT 1 FROM tagging_model_versions model WHERE model.configuration->>'execution_id'=execution.id::text)
  AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id)`;
+// This checkpoint is the already-uploaded numerical output, before model
+// registration or interpretation. Every bundle reference must have its exact
+// immutable, workspace-scoped DB receipt. Object bytes are verified on download.
+const outputBundlePredicate = `EXISTS(SELECT 1 FROM analysis_artifacts manifest
+ CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(manifest.metadata->'bundle')='array'
+   THEN manifest.metadata->'bundle' ELSE '[]'::jsonb END entries) bundle
+ WHERE manifest.engine_execution_id=execution.id AND manifest.workspace_id=execution.workspace_id
+ AND manifest.artifact_type='engine_output' AND manifest.artifact_key='manifest.json'
+ AND jsonb_array_length(bundle.entries) BETWEEN 5 AND 34
+ AND (SELECT count(DISTINCT entry->>'name') FROM jsonb_array_elements(bundle.entries) entry)=jsonb_array_length(bundle.entries)
+ AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY['manifest.json','model-manifest.json','clusters.open.json','assignments.open.jsonl','roots.jsonl']) required(name)
+   WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(bundle.entries) entry WHERE entry->>'name'=required.name))
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(bundle.entries) entry WHERE NOT EXISTS(
+   SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id
+    AND artifact.workspace_id=execution.workspace_id AND artifact.artifact_key=entry->>'name'
+    AND artifact.artifact_type=CASE WHEN entry->>'name'='model-manifest.json' OR entry->>'name' LIKE '%.joblib' THEN 'engine_model' ELSE 'engine_output' END
+    AND artifact.content->>'contract_version'='workspace-engine-private-artifact-v1'
+    AND artifact.content-'contract_version'=entry-'name'))
+ AND (SELECT count(*) FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id
+   AND artifact.artifact_type IN('engine_output','engine_model'))=jsonb_array_length(bundle.entries))`;
+const interpretationEvidenceRecoveryPredicate = `execution.status='failed'
+ AND execution.error_code='workspace_engine_interpretation_cluster_invalid'
+ AND execution.input_snapshot ? 'interpretation_config'
+ AND NOT (execution.result_summary ? 'fit_checkpoint') AND NOT (execution.result_summary ? 'analysis_checkpoint')
+ AND execution.result_summary->>'model_version_id' IS NULL
+ AND NOT EXISTS(SELECT 1 FROM tagging_model_versions model WHERE model.configuration->>'execution_id'=execution.id::text)
+ AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id)
+ AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id
+   AND artifact.artifact_type NOT IN('engine_output','engine_model'))
+ AND (${outputBundlePredicate})`;
 async function transaction<T>(database: SignalWorkspaceEngineDatabaseV1, work: (client: PoolClient) => Promise<T>, repeatableRead = false): Promise<T> {
   const client = await database.connect();
   try { await client.query(repeatableRead ? "BEGIN ISOLATION LEVEL REPEATABLE READ" : "BEGIN"); await client.query("SET LOCAL search_path=public,extensions,pg_temp"); await client.query("SET LOCAL TIME ZONE 'UTC'");
@@ -526,10 +558,15 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const storageRecovery=run.error_code==='workspace_engine_storage_verification_failed'
       && (await client.query<{eligible:boolean}>(`SELECT (${storageRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
-    if(run.status!=='failed'||!isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery}))return fail('workspace_engine_retry_unavailable');
+    const evidenceRecovery=run.error_code==='workspace_engine_interpretation_cluster_invalid'
+      && (await client.query<{eligible:boolean}>(`SELECT (${interpretationEvidenceRecoveryPredicate}) eligible
+        FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
+    if(run.status!=='failed'||!isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
+      interpretation_evidence_recovery_eligible:evidenceRecovery}))return fail('workspace_engine_retry_unavailable');
     const generation=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,
       execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
-      result_summary=result_summary||'{"phase":"queued"}'::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,[run.id])).rows[0]!.dispatch_generation;
+      result_summary=result_summary||'{"phase":"queued"}'::jsonb||$2::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,
+      [run.id,JSON.stringify(evidenceRecovery?{interpretation_evidence_checkpoint_required:true}:{})])).rows[0]!.dispatch_generation;
     await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
       completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
       [run.id,`workspace-engine-${run.id}-${generation}`]);
@@ -543,7 +580,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
     await authorize(client,args.workspace_id,args.actor_user_id,false);
     const rows=(await client.query<{id:string;status:'queued'|'running'|'ready'|'failed';progress:number;denominator:number;expected_chunks:string;
       processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];
-      revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean}>(`
+      revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean}>(`
       WITH selected AS MATERIALIZED (
        (SELECT id,true is_latest,false is_request FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' ORDER BY created_at DESC,id DESC LIMIT 1)
        UNION ALL (SELECT id,false,true FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1'
@@ -554,7 +591,8 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         execution.processed_roots,execution.processed_chunks::text,execution.error_code,execution.result_summary,execution.input_snapshot-'guides' input_snapshot,execution.actor_user_id,
         execution.input_revision=state.input_revision revision_live,(execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
         (SELECT count(*)::text FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id) artifact_count,
-        (${storageRecoveryPredicate}) storage_recovery_eligible,selected.is_latest,selected.is_request
+        (${storageRecoveryPredicate}) storage_recovery_eligible,
+        (${interpretationEvidenceRecoveryPredicate}) interpretation_evidence_recovery_eligible,selected.is_latest,selected.is_request
         FROM selected JOIN signal_topic_catalog_executions execution USING(id) JOIN signal_corpus_preparation_input_state state USING(workspace_id)`,
       [args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows;
     let inputIdentity:{context_digest:string;catalog_digest:string}|null=null;
@@ -568,6 +606,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         is_current:row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute,
         model_version_id:typeof row.result_summary.model_version_id==='string'?row.result_summary.model_version_id:null,artifact_count:natural(row.artifact_count),
         storage_recovery_eligible:row.storage_recovery_eligible,
+        interpretation_evidence_recovery_eligible:row.interpretation_evidence_recovery_eligible,
         fit_completed:!!row.result_summary.fit_checkpoint,
         expected_interpretation_units:natural((row.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined)?.interpretation_manifest.unit_count??0),
         interpreted_units:natural(row.result_summary.interpreted_units??0),materialized_topics:natural(row.result_summary.materialized_topics??0),
@@ -627,6 +666,10 @@ export async function readSignalWorkspaceEngineCheckpointV1(args:{database:Signa
   artifact_id:string;artifact_key:string;content:Record<string,unknown>;metadata:Record<string,unknown>;
 }|null>{
   return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+    if(run.result_summary.interpretation_evidence_checkpoint_required===true
+      && (await client.query<{valid:boolean}>(`SELECT (${outputBundlePredicate}) valid
+        FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.valid!==true)
+      return fail('workspace_engine_checkpoint_invalid');
     return(await client.query<{artifact_id:string;artifact_key:string;content:Record<string,unknown>;metadata:Record<string,unknown>}>(`
       SELECT id artifact_id,artifact_key,content,metadata FROM analysis_artifacts WHERE engine_execution_id=$1::uuid
        AND workspace_id=$2::uuid AND artifact_type='engine_output' AND artifact_key='manifest.json' LIMIT 1`,[run.id,run.workspace_id])).rows[0]??null;
