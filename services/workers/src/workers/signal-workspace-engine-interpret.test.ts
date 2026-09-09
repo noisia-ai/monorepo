@@ -14,6 +14,7 @@ import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLe
 import { SignalWorkspaceEngineInterpretationError } from "@noisia/db";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
 import { interpretWorkspaceEngineV1 } from "./signal-workspace-engine-interpret";
+import { executeWorkspaceInterpretationBatchV1 } from "./signal-workspace-interpretation-batch";
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const hash = (value: string | Uint8Array) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -160,9 +161,19 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       return { artifact_id: uuid(10) }; },
     complete: async () => { completed++; states.push("complete"); return { execution_id: lease.execution_id }; },
   } as unknown as NonNullable<Args["stores"]>;
-  const execute = async (authorization_expires_at?: string) => {
+  const execute = async (authorization_expires_at?: string, batchOnly=false) => {
+    const run=batchOnly ? async (args:Args)=>{
+      const context=await stores.context({database:args.database,lease});
+      return executeWorkspaceInterpretationBatchV1({database:args.database,
+        execution:{execution_id:lease.execution_id,workspace_id:lease.workspace_id,execution_token:lease.execution_token,
+          interpretation_revision_digest:lease.interpretation_revision_digest,interpretation_admission:lease.interpretation_admission},
+        actor_user_id:context.actor_user_id,config:lease.snapshot.interpretation_config!,
+        batch:buildSignalWorkspaceInterpretationBatchV1(context.context,[cluster],configuration),
+        directory:args.directory,storage:args.storage,stores,send:args.send,api_key:args.api_key,
+        provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at});
+    } : interpretWorkspaceEngineV1;
     const attempt = await mkdtemp(join(directory, "attempt-"));
-    return interpretWorkspaceEngineV1({ database: {} as Args["database"], lease, stores, directory: attempt,
+    return run({ database: {} as Args["database"], lease, stores, directory: attempt,
       fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
         model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
         result_kind: "computational_grouping" }, clusters: [cluster], heartbeat: async () => undefined,
@@ -188,7 +199,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       } }); },
     });
   };
-  return { execute, cleanup: () => rm(directory, { recursive: true, force: true }),
+  return { execute, executeBatchOnly:(expires?:string)=>execute(expires,true), cleanup: () => rm(directory, { recursive: true, force: true }),
     admission: (receipt: SignalWorkspaceEngineLeaseV1["interpretation_admission"]) => { lease.interpretation_admission = receipt; },
     callAdmission: (receipt: SignalWorkspaceEngineInterpretationCallV1["admission"]) => { callAdmission = receipt; },
     providerEnabled: (value: boolean) => { providerEnabled = value; },
@@ -235,6 +246,32 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     mode: (mode: typeof responseMode) => { responseMode = mode; },
     repairMode: (mode: typeof responseMode) => { repairMode = mode; } };
 }
+
+test("standalone batch execution needs no fit snapshot or catalog actions and restores its paid receipt without another send", async()=>{
+ const s=await scenario();try{
+  await s.executeBatchOnly();const first=s.get();
+  assert.equal(first.sends,1);assert.equal(first.call?.state,"settled");assert.equal(first.fitCount,0);
+  assert.equal(first.checkpointCount,0);assert.equal(first.materializationWrites,0);assert.equal(first.completed,0);
+  s.providerEnabled(false);await s.executeBatchOnly("2000-01-01T00:00:00.000Z");
+  const replay=s.get();assert.equal(replay.sends,1);assert.equal(replay.calls.length,1);assert.equal(replay.totalSettled,first.totalSettled);
+  assert.equal(replay.fitCount,0);assert.equal(replay.completed,0);
+ }finally{await s.cleanup();}
+});
+test("standalone batch returns a metered invalid result without inventing a repair or topic",async()=>{
+ const s=await scenario();try{
+  s.mode("invalid");const result=await s.executeBatchOnly();
+  assert.ok("response" in result);assert.equal(result.response.outcome,"known_response_invalid");
+  const state=s.get();assert.equal(state.sends,1);assert.equal(state.calls.length,1);assert.equal(state.call?.state,"settled");
+  assert.equal(state.call?.editorial_repair,null);assert.equal(state.fitCount,0);assert.equal(state.checkpointCount,0);assert.equal(state.completed,0);
+ }finally{await s.cleanup();}
+});
+test("standalone batch preserves an unknown outcome and refuses another send",async()=>{
+ const s=await scenario();try{
+  s.unknown();await assert.rejects(s.executeBatchOnly(),/outcome_unknown/u);
+  await assert.rejects(s.executeBatchOnly(),/outcome_unknown/u);
+  assert.equal(s.get().sends,1);assert.equal(s.get().calls.length,1);assert.equal(s.get().fitCount,0);assert.equal(s.get().completed,0);
+ }finally{await s.cleanup();}
+});
 
 test("a historical Opus lease consumes its sealed receipt at historical cost with no provider admission", async () => {
   const s = await scenario(legacyConfig); try {

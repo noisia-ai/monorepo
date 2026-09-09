@@ -8,7 +8,6 @@ import {
   failSignalWorkspaceEngineInterpretationV1, checkpointSignalWorkspaceEngineInterpretationV1,
   readSignalWorkspaceEngineInterpretationCheckpointsV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
-  SignalWorkspaceEngineInterpretationError,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
@@ -16,9 +15,8 @@ import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniv
   parseSignalWorkspaceInterpretationConfigurationV1,
   validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
-import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
-  type WorkspaceInterpretationSendDecisionV1,
-  type WorkspaceInterpretationResponseV1 } from "../providers/workspace-interpretation";
+import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
+import { executeWorkspaceInterpretationBatchV1 } from "./signal-workspace-interpretation-batch";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
 const stores = {
@@ -51,6 +49,10 @@ export async function interpretWorkspaceEngineV1(args: {
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });
   await args.heartbeat("interpreting");
   const context = await store.context({ database, lease });
+  const executeBatch=(batch:SignalWorkspaceInterpretationBatchV1)=>executeWorkspaceInterpretationBatchV1({
+    database,execution:lease,config,batch,actor_user_id:context.actor_user_id,directory:args.directory,storage,stores:store,
+    send:args.send,api_key:args.api_key,provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,
+  });
   const proposals: Array<{ artifact_id: string; file: string }> = [];
   const completedUnits = await restoreCheckpoints();
   const remaining = args.clusters.filter(cluster => !completedUnits.has(cluster.cluster_id));
@@ -99,86 +101,6 @@ export async function interpretWorkspaceEngineV1(args: {
     artifact_type: "engine_proposals", title: "Editable topic catalog", metadata } });
   await args.heartbeat("materializing");
   return store.complete({ database, lease, materialization_artifact_id: artifact.artifact_id });
-
-  async function executeBatch(batch: SignalWorkspaceInterpretationBatchV1) {
-    const reservation = { database, workspace_id: lease.workspace_id, execution_id: lease.execution_id,
-      actor_user_id: context.actor_user_id, execution_token: lease.execution_token,
-      idempotency_key: batch.batch_key, request_digest: batch.request_digest, configuration: config.call_configuration,
-      reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
-      ...(lease.interpretation_revision_digest ? { interpretation_revision_digest: lease.interpretation_revision_digest } : {}),
-      ...(lease.interpretation_admission ? { admission_operation_id: lease.interpretation_admission.operation_id } : {}),
-      ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
-    let call = await store.reserve(reservation);
-    let transportAttempts = 0, confirmedTerminals = 0;
-    while (call.state === "definitely_not_sent" || call.state === "terminal_confirmed") {
-      if (++transportAttempts > 128) return fail("workspace_engine_interpretation_retry_unavailable");
-      if (call.state === "terminal_confirmed" && ++confirmedTerminals > 1)
-        return fail("workspace_engine_interpretation_transport_retry_exhausted");
-      // This invocation is a newly claimed job, after the preceding one failed.
-      // The DB verifies terminal evidence, the single-successor limit, current
-      // authority and cumulative caps; neither state releases a terminal's cost.
-      call = await store.reserve({ ...reservation, idempotency_key: `${batch.batch_key}:retry:${call.call_id}`,
-        retry_of_call_id: call.call_id });
-    }
-    if (call.state === "outcome_unknown") return fail("workspace_engine_interpretation_outcome_unknown");
-    const attempt = { database, call_id: call.call_id, attempt_token: call.attempt_token };
-    let response: WorkspaceInterpretationResponseV1;
-    if (call.response) {
-      const path = join(args.directory, `response-${call.call_id}.json`);
-      await storage.get({ workspace_id: lease.workspace_id, execution_id: lease.execution_id,
-        stored: { ...call.response, media_type: "application/json" }, destination: path });
-      response = validateWorkspaceInterpretationReceiptV1(batch, { bytes: await readFile(path), sha256: call.response.sha256,
-        http_status: call.response.http_status, provider_request_id: call.response.provider_request_id, complete: call.response.complete });
-    } else if (call.state === "reserved") {
-      try {
-        response = await (args.send ?? sendWorkspaceInterpretationV1)({ batch,
-          api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
-          provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
-          // A prior reservation keeps its own admission receipt. The current
-          // lease authorizes new reservations, never changes an old call's date.
-          authorization_expires_at: call.admission?.admission_not_after
-            ?? args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
-          authorize_send: async (): Promise<WorkspaceInterpretationSendDecisionV1> => {
-            try { return (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized; }
-            catch (error) {
-              if (error instanceof SignalWorkspaceEngineInterpretationError && error.status === 409) {
-                if (error.code === "workspace_engine_interpretation_daily_authority_expired") return "daily_authority_expired";
-                if (error.code === "workspace_engine_interpretation_admission_revoked") return "admission_revoked";
-                if (error.code === "workspace_engine_interpretation_admission_changed") return "admission_changed";
-              }
-              throw error;
-            }
-          },
-          persist_receipt: async raw => {
-            const stored = await put(`response-${call.call_id}.json`, raw.bytes);
-            call = await store.response({ ...attempt, response: { ...stored, http_status: raw.http_status,
-              provider_request_id: raw.provider_request_id, complete: raw.complete } });
-          },
-        });
-      } catch (error) {
-        const transport = error instanceof WorkspaceInterpretationTransportErrorV1 ? error : null;
-        const reconciled = await store.fail({ ...attempt, outcome: transport?.outcome ?? "outcome_unknown",
-          error_code: transport?.code ?? "workspace_engine_interpretation_outcome_unknown" }).catch(() => null);
-        // A lost commit acknowledgement is recoverable when the DB confirms
-        // that the complete raw receipt is already durable. This never sends.
-        if (transport?.code === "workspace_engine_interpretation_receipt_persistence_unknown"
-          && reconciled?.state === "response_persisted" && reconciled.response?.complete) {
-          return fail("workspace_engine_interpretation_receipt_recovery_required");
-        }
-        throw error;
-      }
-    } else {
-      // A committed send without a receipt is never silently retried.
-      await store.fail({ ...attempt, outcome: "outcome_unknown", error_code: "workspace_engine_interpretation_outcome_unknown" });
-      return fail("workspace_engine_interpretation_outcome_unknown");
-    }
-    if (response.usage && response.outcome !== "outcome_unknown") call = await store.settle({ ...attempt, usage: response.usage });
-    else {
-      await store.fail({ ...attempt, outcome: "outcome_unknown", error_code: response.error_code ?? "workspace_engine_interpretation_outcome_unknown" });
-      return fail("workspace_engine_interpretation_outcome_unknown");
-    }
-    return { call, response };
-  }
 
   async function restoreCheckpoints() {
     const completed = new Set<string>(), known = new Map(args.clusters.map(cluster => [cluster.cluster_id, cluster]));
