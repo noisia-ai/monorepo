@@ -30,7 +30,8 @@ import type { EChartsCoreOption } from "echarts/core";
 import type {
   SignalComparisonV1,
   SignalFilterV1,
-  SignalTopicsNarrativesOverviewV1
+  SignalTopicsNarrativesOverviewV1,
+  SignalWorkspaceTopicsOverviewV1
 } from "@noisia/query-engine";
 
 import type {
@@ -109,6 +110,7 @@ type SignalWorkspaceModulePayload = (
   SignalBrandMonitoringV1
   | SignalMentionsViewData
   | SignalTopicsNarrativesOverviewV1
+  | SignalWorkspaceTopicsOverviewV1
   | SignalTriggersBarriersOverviewV2
 );
 const CHART_TOOLTIP_STYLE = {
@@ -164,7 +166,7 @@ export function SignalV2BrandMonitoring({
   initialMention: SignalMentionRecordV1 | null;
   initialMentions: SignalMentionsViewData | null;
   initialSettings: SignalClientSettingsV1 | null;
-  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | null;
+  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
   manageTopicsHref: string | null;
@@ -172,7 +174,7 @@ export function SignalV2BrandMonitoring({
   userName: string;
   workspaceOptions: SignalWorkspaceOption[];
   workspaceSubjectId: string;
-  viewKey?: "brand" | "competition" | "category" | "all-governed";
+  viewKey?: "brand" | "competition" | "category" | "all-governed" | "all_conversations";
 }) {
   const t = useTranslations("SignalV2");
   const [data, setData] = useState(initialData);
@@ -296,7 +298,7 @@ export function SignalV2BrandMonitoring({
       return;
     }
     if (target === "topics") {
-      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
+      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1);
       return;
     }
     setData(payload as SignalBrandMonitoringV1);
@@ -306,6 +308,14 @@ export function SignalV2BrandMonitoring({
     beginContentArrival();
     setMentionsData(next);
   }, [beginContentArrival]);
+
+  const invalidateNativeTopicEvidence = useCallback(() => {
+    setTopicsNarrativesData(current => current?.contract_version === "signal-workspace-topics-serving-v1"
+      ? { ...current, is_current: false } : current);
+    for (const [key, value] of moduleCacheRef.current) {
+      if (value.contract_version === "signal-workspace-topics-serving-v1") moduleCacheRef.current.delete(key);
+    }
+  }, []);
 
   const loadFilter = useCallback(async (selection: SignalAnalyticsFilterSelection) => {
     filterRequestRef.current?.abort();
@@ -340,19 +350,28 @@ export function SignalV2BrandMonitoring({
         : currentModule === "topics"
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
           : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
-      if (currentModule === "topics") addTaxonomyComparisonParams(params);
+      if (currentModule === "topics") {
+        addTaxonomyComparisonParams(params);
+        if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") {
+          params.set("view", "all_conversations"); params.set("timezone", "UTC"); params.set("granularity", "day"); params.set("compare", "none");
+          params.delete("comparison_start"); params.delete("comparison_end");
+        }
+      }
       const response = await fetch(`${endpoint}?${params}`, {
         cache: "no-store",
         signal: controller.signal
       });
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
       ) & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
       if (filterSequenceRef.current !== sequence) return false;
+      if (!response.ok) {
+        if (currentModule === "topics" && [401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
+        throw new Error(payload.message ?? t("errors.load"));
+      }
       applyModulePayload(currentModule, payload);
       if (currentModule === "topics") {
-        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1);
+        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1);
         const parsed = localSignalAnalyticsSelection({
           comparisonMode: selection.comparisonMode,
           comparisonStart: selection.comparisonStart,
@@ -393,8 +412,9 @@ export function SignalV2BrandMonitoring({
     data.filter.search_query,
     data.workspace.id,
     data.workspace.timezone,
-    legacyOutputId,
-    t
+    invalidateNativeTopicEvidence,
+    t,
+    topicsNarrativesData?.contract_version
   ]);
 
   const navigateToModule = useCallback(async (
@@ -428,6 +448,10 @@ export function SignalV2BrandMonitoring({
     }
 
     const query = requestedQuery ?? buildModuleQuery(window.location.search, data, target);
+    if (!requestedQuery && target === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") {
+      query.set("view", "all_conversations"); query.set("timezone", "UTC"); query.set("granularity", "day"); query.set("compare", "none");
+      query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
+    }
     const cachedPayload = moduleCacheRef.current.get(moduleCacheKey(target, query));
     setPendingModule(target);
     setSidebarOpen(false);
@@ -452,10 +476,13 @@ export function SignalV2BrandMonitoring({
         signal: controller.signal
       });
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
       ) & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
       if (sequence !== navigationSequenceRef.current) return;
+      if (!response.ok) {
+        if (target === "topics" && [401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
+        throw new Error(payload.message ?? t("errors.load"));
+      }
       moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
       applyModulePayload(target, payload);
       setCurrentModule(target);
@@ -478,9 +505,8 @@ export function SignalV2BrandMonitoring({
   }, [
     applyModulePayload,
     currentModule,
-    currentStudy?.id,
     data,
-    legacyOutputId,
+    invalidateNativeTopicEvidence,
     mentionsData,
     pendingModule,
     t,
@@ -972,10 +998,10 @@ export function SignalV2BrandMonitoring({
     };
   }, [data.conversation_drivers.items, t]);
 
-  const viewSuffix = viewKey === "brand" ? "" : `?view=${encodeURIComponent(viewKey)}`;
+  const viewSuffix = viewKey === "brand" || viewKey === "all_conversations" ? "" : `?view=${encodeURIComponent(viewKey)}`;
   const canonicalHome = `/signal/${data.workspace.slug}${viewSuffix}`;
   const canonicalMentions = `/signal/${data.workspace.slug}/mentions${viewSuffix}`;
-  const canonicalTopicsNarratives = `/signal/${data.workspace.slug}/topics-narratives${viewSuffix}`;
+  const canonicalTopicsNarratives = `/signal/${data.workspace.slug}/topics-narratives${viewKey === "all_conversations" ? "?view=all_conversations" : viewSuffix}`;
   const canonicalSettings = `/signal/${data.workspace.slug}/settings${viewSuffix}`;
   const legacyReport = legacyOutputId ? `/signal/${legacyOutputId}` : canonicalHome;
   const firstStrategicStudy = strategicStudies[0] ?? null;
@@ -1788,7 +1814,7 @@ function currentModulePayload(
   module: SignalWorkspaceModule,
   monitoring: SignalBrandMonitoringV1,
   mentions: SignalMentionsViewData | null,
-  topics: SignalTopicsNarrativesOverviewV1 | null,
+  topics: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1 | null,
   triggersBarriers: SignalTriggersBarriersOverviewV2 | null
 ): SignalWorkspaceModulePayload | null {
   if (module === "mentions") return mentions;
@@ -1818,7 +1844,9 @@ function buildModuleQuery(
     if (query.has(`dimension.${dimension}`)) continue;
     for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
   }
-  if (target === "topics") addTaxonomyComparisonParams(query);
+  if (target === "topics") {
+    if (query.get("view") !== "all_conversations") addTaxonomyComparisonParams(query);
+  } else if (query.get("view") === "all_conversations") query.delete("view");
   return query;
 }
 

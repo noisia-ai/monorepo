@@ -106,3 +106,26 @@ test("a thousand memberships are not silently reduced to top32 or128", () => {
   assert.throws(() => parseSignalWorkspaceClassificationOutcomeV1({ identity, root,
     outcome: { ...outcome(), oversized: "x".repeat(SIGNAL_WORKSPACE_CLASSIFICATION_OUTCOME_MAX_BYTES_V1) } }), /capacity_exceeded/);
 });
+test("computed cluster evidence never promotes a model or bypasses human authority", () => {
+  const value = { ...decision(), membership_basis: "computed_cluster" as const, membership_metadata: {
+    contract_version: "workspace-computed-cluster-membership-v1" as const,
+    engine_execution_id: randomUUID(), materialization_artifact_id: randomUUID(),
+    assignment_artifact_ids: [randomUUID(), randomUUID()], unit_keys: ["open:one", "guided:two"],
+    proposal_semantics_digest: sha("6"), materialized_definition_digest: sha("7"),
+    evidence_fragment: { chunk_index: 132, start: 184800, end: 186200, chunk_sha256: sha("8") }, matched_chunks: 133
+  } };
+  assert.equal(signalWorkspaceClassificationDecisionSchemaV1.parse(value).membership_metadata?.matched_chunks, 133);
+  for (const change of [
+    { disposition: "approved", approval_policy_id: randomUUID() },
+    { disposition: "rejected" }, { membership_metadata: undefined },
+    { membership_basis: undefined },
+    { resolution_method: "human", model_version_id: null, decided_by_user_id: randomUUID(), correction_operation_id: randomUUID() },
+    { membership_metadata: { ...value.membership_metadata, unit_keys: ["open:one", "open:one"] } },
+    { membership_metadata: { ...value.membership_metadata, matched_chunks: 0 } },
+    { membership_metadata: { ...value.membership_metadata, evidence_fragment: undefined } },
+    { membership_metadata: { ...value.membership_metadata, evidence_fragment: { ...value.membership_metadata.evidence_fragment, end: 184800 } } },
+    { membership_metadata: { ...value.membership_metadata, evidence_fragment: { ...value.membership_metadata.evidence_fragment, end: 186201 } } }
+  ]) assert.throws(() => signalWorkspaceClassificationDecisionSchemaV1.parse({ ...value, ...change }));
+  // Omitted fields keep all historical decision/approval checks unchanged.
+  assert.deepEqual(signalWorkspaceClassificationDecisionSchemaV1.parse(decision()).membership_basis, undefined);
+});

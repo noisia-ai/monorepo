@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-v1";
+import type { SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
 
 export const SIGNAL_WORKSPACE_CLASSIFICATION_CONTRACT_V1 = "signal-workspace-classification-v1" as const;
 // A transport capacity bound, never a population or top-k membership limit.
@@ -49,9 +50,37 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
   correction_operation_id: z.string().uuid().nullable(),
   score: z.number().finite().nullable(),
   evidence_digest: digest,
-  lineage_digest: digest
+  lineage_digest: digest,
+  // Actual membership in a numerical cluster is reproducible evidence. It is
+  // deliberately not authority to approve the cluster's interpreted meaning.
+  membership_basis: z.literal("computed_cluster").optional(),
+  membership_metadata: z.object({
+    contract_version: z.literal("workspace-computed-cluster-membership-v1"),
+    engine_execution_id: z.string().uuid(),
+    materialization_artifact_id: z.string().uuid(),
+    assignment_artifact_ids: z.array(z.string().uuid()).min(1).max(2),
+    unit_keys: z.array(z.string().regex(/^(open|guided):[A-Za-z0-9_.:-]{1,180}$/u)).min(1),
+    proposal_semantics_digest: digest,
+    materialized_definition_digest: digest,
+    evidence_fragment: z.object({
+      chunk_index: z.number().int().nonnegative(), start: z.number().int().nonnegative(),
+      end: z.number().int().positive(), chunk_sha256: digest
+    }).strict(),
+    matched_chunks: z.number().int().positive()
+  }).strict().optional()
 }).strict().superRefine((value, ctx) => {
   const problem = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  if (value.membership_basis === "computed_cluster") {
+    if (!value.membership_metadata || value.disposition !== "pending" || value.resolution_method !== "model"
+      || value.approval_policy_id !== null) problem("workspace_classification_computed_membership_not_approval");
+    if (value.membership_metadata && (new Set(value.membership_metadata.assignment_artifact_ids).size
+      !== value.membership_metadata.assignment_artifact_ids.length || new Set(value.membership_metadata.unit_keys).size
+      !== value.membership_metadata.unit_keys.length)) problem("workspace_classification_computed_membership_duplicate_ref");
+    const fragment = value.membership_metadata?.evidence_fragment;
+    if (fragment && (fragment.end <= fragment.start || fragment.end - fragment.start > 1400)) {
+      problem("workspace_classification_computed_membership_fragment_invalid");
+    }
+  } else if (value.membership_metadata !== undefined) problem("workspace_classification_membership_basis_required");
   if (value.resolution_method === "human") {
     if (!value.decided_by_user_id || !value.correction_operation_id || value.model_version_id
       || value.labeling_function_version_id || value.approval_policy_id) problem("workspace_classification_human_authority_required");
@@ -68,6 +97,16 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
   }
 });
 export type SignalWorkspaceClassificationDecisionV1 = z.infer<typeof signalWorkspaceClassificationDecisionSchemaV1>;
+
+/** Label, lifecycle and lineage are presentation/selection/provenance. Changing
+ * the actual definition, scope, boundaries or examples changes the meaning
+ * that can truthfully be attributed to an existing computed cluster. */
+export function signalWorkspaceClassificationTopicSemanticsDigestV1(value: Pick<SignalTopicDefinitionV1,
+  "definition" | "scope" | "inclusion" | "exclusion" | "positive_examples" | "negative_examples">) {
+  return signalWorkspaceEmbeddingDigestV1({ definition: value.definition, scope: value.scope,
+    inclusion: value.inclusion, exclusion: value.exclusion,
+    positive_examples: value.positive_examples, negative_examples: value.negative_examples });
+}
 
 export const signalWorkspaceClassificationOutcomeSchemaV1 = z.object({
   contract_version: z.literal(SIGNAL_WORKSPACE_CLASSIFICATION_CONTRACT_V1),

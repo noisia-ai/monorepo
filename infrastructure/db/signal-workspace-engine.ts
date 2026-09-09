@@ -7,6 +7,7 @@ import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1
 import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
 import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1 } from "./signal-workspace-topic-computation";
 import type { SignalWorkspaceEngineInterpretationConfigurationV1 } from "./signal-workspace-engine-interpretation";
+import { requestSignalWorkspaceTopicProjectionWithClientV1 } from "./signal-workspace-topic-projection";
 
 export const SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 = [
   "workspace_engine_worker_failed", "workspace_engine_process_failed", "workspace_engine_queue_unavailable",
@@ -450,7 +451,10 @@ export async function checkpointSignalWorkspaceEngineInterpretationV1(args:{data
 }
 export async function completeSignalWorkspaceEngineAnalysisV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;
   materialization_artifact_id:string}):Promise<{execution_id:string;model_version_id:string|null;output_catalog_profile_id:string;topic_count:number}>{
-  return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+  return transaction(args.database,async client=>{
+    // Match catalog/projection lock order before requireLease locks input state.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`signal-taxonomy:${args.lease.workspace_id}:topic`]);
+    const run=await requireLease(client,args.lease,true);
     const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
     if(!run.input_snapshot.interpretation_config||!fit)return fail('workspace_engine_fit_checkpoint_required');
     const coverage=await interpretationCoverage(client,run);
@@ -476,6 +480,12 @@ export async function completeSignalWorkspaceEngineAnalysisV1(args:{database:Sig
     await client.query(`UPDATE signal_topic_catalog_executions SET status='ready',progress=100,result_summary=$2::jsonb,execution_token=NULL,
       execution_expires_at=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,JSON.stringify(result)]);
     await completeDispatch(client,run.id);
+    // Persist the next computational step with the completed analysis. If this
+    // transaction is retried or its ACK is lost, the same durable outbox survives;
+    // a completed engine job never depends on an ephemeral post-commit enqueue.
+    await requestSignalWorkspaceTopicProjectionWithClientV1(client, { workspace_id: run.workspace_id,
+      actor_user_id: run.actor_user_id, engine_execution_id: run.id,
+      idempotency_key: `workspace-projection:${run.id}` });
     return{execution_id:run.id,model_version_id:fit.model_version_id,output_catalog_profile_id:String(materialization.output_catalog_profile_id),topic_count:natural(profile.topic_count)};
   });
 }

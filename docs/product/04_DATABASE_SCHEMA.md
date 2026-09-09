@@ -2435,3 +2435,27 @@ restaurar `decide-semantic-context-locale-authority` en la allowlist cerrada de 
 `operator_correction`. Esto permite que el writer deliberado de 0100 vuelva a crear un
 successor `pending` con lineage sellada, sin permitir que create/save ordinarios originen
 autoridad Global ni admitir una acción genérica.
+
+### 0140 — Proyección completa de Topics y selección de Signal (local, 8 septiembre)
+
+Se agrega `signal_classification_assignments.membership_basis` (`decision` por defecto
+o `computed_cluster`) y `membership_metadata`. La pertenencia computada sólo admite
+`pending/model`, sin aprobación; sella ejecución, artefactos de asignaciones,
+materialización, semántica y fragmento de evidencia. El fragmento conserva índice,
+offsets UTF16 y SHA del chunk real, sin duplicar texto.
+
+El snapshot de las generaciones0136 añade `source_projection`, con referencias al
+modelo/output/materialización de un análisis completo y al modelo registrado para
+su catálogo resultante. Se verifican raíz, todos sus chunks, modelo, perfil, hashes,
+propuesta y autoridad. No se modifican las reglas de aprobación del camino antiguo.
+
+`signal_workspaces.topic_signal_selection` guarda revisión e items por `term_key`.
+`signal_topic_catalog_operations` admite `select_signal` y su `selection_result`
+inmutable para CAS y recuperación de ACK perdido. La generación del recibo no impide
+actualizar cifras en generaciones semánticamente compatibles. Archivar deselecciona;
+restaurar no selecciona. No se modifica el contexto ni el costo al elegir un Topic.
+
+El final de interpretación crea la proyección y su outbox existente en la misma
+transacción. Signal lee raíces/assignments relacionales con permisos actuales de
+métricas y evidencia; no crea un perfil activo para habilitar serving.
+Ver ADR027 y el recibo local de integración; esto no declara SQL0140 aplicado en UAT.

@@ -34,6 +34,11 @@ export * from "./signal-workspace-topic-prototypes-management";
 export * from "./signal-workspace-topic-computation";
 export * from "./signal-workspace-topic-computation-management";
 export * from "./signal-workspace-classification";
+export * from "./signal-workspace-topics-serving";
 
 export * from "./signal-workspace-engine";
 export * from "./signal-workspace-engine-interpretation";
+
+export * from "./signal-workspace-topic-projection";
+
+export * from "./signal-workspace-topic-selection";

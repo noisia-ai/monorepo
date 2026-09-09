@@ -329,6 +329,7 @@ export const signalWorkspaces = pgTable(
     slug: text("slug").notNull(),
     timezone: text("timezone").notNull().default("UTC"),
     status: text("status").notNull().default("active"),
+    topicSignalSelection: jsonb("topic_signal_selection").notNull().default(sql`'{"revision":0,"items":{}}'::jsonb`),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
     createdAt: now(),
     updatedAt: updatedAt()
@@ -6320,6 +6321,8 @@ export const signalClassificationAssignments = pgTable(
     taxonomyTermId: uuid("taxonomy_term_id").references(() => taxonomyTerms.id, { onDelete: "restrict" }),
     resolutionMethod: text("resolution_method").notNull(),
     disposition: text("disposition").notNull(),
+    membershipBasis: text("membership_basis").notNull().default("decision"),
+    membershipMetadata: jsonb("membership_metadata"),
     labelingFunctionVersionId: uuid("labeling_function_version_id").references(() => signalLabelingFunctionVersions.id, { onDelete: "restrict" }),
     modelVersionId: uuid("model_version_id").references(() => taggingModelVersions.id, { onDelete: "restrict" }),
     approvalPolicyId: uuid("approval_policy_id").references(() => signalClassificationApprovalPolicies.id, { onDelete: "restrict" }),

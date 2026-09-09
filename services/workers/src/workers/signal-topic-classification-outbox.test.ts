@@ -127,3 +127,10 @@ test("unknown contracts and mismatched retained job names cannot reach either cl
     assert.equal(result.dispatched, 0);
   }
 });
+
+
+test("only a sealed source projection routes native classification to the projection worker",async()=>{
+ const {topicExecutionJobNameV1}=await import('./signal-topic-classification-outbox');
+ assert.equal(topicExecutionJobNameV1('workspace-topic-classification-v1',true),'signal_workspace_topic_projection_v1');
+ assert.throws(()=>topicExecutionJobNameV1('workspace-topic-classification-v1',false),/contract_unknown/u);
+});

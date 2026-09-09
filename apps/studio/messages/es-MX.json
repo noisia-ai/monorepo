@@ -577,6 +577,20 @@
     }
   },
   "SignalV2": {
+    "workspaceTopics": {
+      "title": "Tópicos y narrativas", "scope": "Todas las conversaciones recibidas con derechos de consulta. Sin atribución implícita a la marca.",
+      "current": "Actualizado", "stale": "Resultado anterior", "manage": "Gestionar Topics", "refresh": "Actualizar", "utc": "Fechas en UTC",
+      "computed": "Pertenencia calculada", "quality": "Los grupos se calcularon sobre las menciones. Su precisión semántica todavía no está calibrada.",
+      "staleBody": "Se conserva el último resultado completo. La evidencia requiere una generación vigente y permisos actuales.",
+      "denominator": "Menciones del periodo", "assigned": "En Topics seleccionados", "abstained": "Sin grupo estable", "pending": "Sin resolver",
+      "denominatorHelp": "Cada mención se cuenta una vez en el total y puede pertenecer a varios Topics. Los porcentajes por Topic pueden sumar más de 100%.",
+      "withheld": "{count} menciones no están disponibles para esta consulta.", "empty": "No hay Topics seleccionados", "emptyBody": "Elige los Topics que quieres ver en Signal desde el catálogo editable de la marca.",
+      "selectedTopics": "Topics seleccionados", "topic": "Topic", "mentions": "Menciones", "share": "% del corpus", "definition": "Definición",
+      "membership": "{count} menciones con pertenencia calculada.", "evidence": "Ver evidencia", "trend": "Menciones en Topics seleccionados",
+      "noNarratives": "Las narrativas y los insights aún no están disponibles para este análisis.", "close": "Cerrar", "loading": "Cargando…", "noEvidence": "No hay evidencia disponible en este periodo.",
+      "evidenceStale": "La evidencia cambió o ya no tienes acceso. Actualiza el resultado antes de consultarla de nuevo.", "evidenceError": "No pudimos cargar la evidencia. Inténtalo de nuevo.",
+      "more": "Ver más", "original": "Abrir original"
+    },
     "title": "Monitoreo de marca",
     "subtitle": "Qué se está diciendo, cómo cambia y qué conversaciones lo explican.",
     "status": { "beta": "V2 beta" },
@@ -2612,6 +2626,15 @@
         "newQuote": "Calcular nueva versión"
       },
       "eyebrow": "Topics",
+      "signalSelection": {
+        "show": "Mostrar en Signal", "remove": "Quitar de Signal", "saving": "Consultando…", "resend": "Confirmar la misma solicitud",
+        "recover": "Verificar solicitud", "refresh": "Actualizar estado", "basis": "Esta selección muestra la pertenencia calculada al grupo; no valida su precisión semántica.",
+        "selected": "Seleccionado para Signal.", "stale": "El resultado anterior requiere actualización.", "prepare": "Completa el análisis antes de mostrar este Topic.", "noMemberships": "Todavía no hay menciones asociadas a este Topic.",
+        "saveFirst": "Guarda los cambios antes de cambiar su selección.", "pending": "La solicitud está pendiente de confirmar. Se conserva la misma solicitud para evitar duplicados.",
+        "forbidden": "No tienes acceso a esta acción o el Topic ya no está disponible.", "conflict": "El Topic o la selección cambió. Actualiza el estado antes de continuar.",
+        "load": "No pudimos verificar el estado. Actualiza para volver a intentarlo.", "save": "No pudimos confirmar el cambio. Verifica la solicitud antes de continuar.",
+        "processing": "Preparando las menciones asociadas. Esta acción se actualizará al terminar."
+      },
       "computation": {
         "available": "Candidatos disponibles",
         "outdated": "Búsqueda anterior",

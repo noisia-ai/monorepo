@@ -10,6 +10,7 @@ import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
 import { TopicCandidateEvidence } from "@/components/brands/TopicCandidateEvidence";
 import { useWorkspaceTopicComputation } from "./useWorkspaceTopicComputation";
 import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
+import { TopicSignalControls } from "./TopicSignalControls";
 import type { WorkspaceTopicComputationStatus } from "@/lib/data-os/signal-workspace-topic-computation-ui";
 import { SIGNAL_TOPIC_EDITOR_SCOPES_V1, emptyTopicEditorV1 as emptyEditor,
   topicEditorFromDefinitionV1 as editorFromTopic, topicEditorPayloadV1 as editorPayload,
@@ -375,6 +376,9 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
             {!creating ? <button className="admin-button" disabled={computation.reading || computation.submitting}
               onClick={() => void computation.read()} type="button"><ArrowClockwise aria-hidden size={15} />{t("computation.refresh")}</button> : null}
           </div>
+          {!creating && selected?.origin === "workspace_discovery" && selected.lifecycle !== "archived" ? <TopicSignalControls
+            workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
+            definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} /> : null}
           {!creating && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {!creating && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">

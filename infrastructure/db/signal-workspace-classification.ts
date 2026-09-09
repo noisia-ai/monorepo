@@ -18,6 +18,12 @@ export type SignalWorkspaceClassificationChunkPageV1 = {
   items: Array<{chunk_index: number; start: number; end: number; chunk_sha256: string; text: string}>;
   next_chunk_index: number | null; done: boolean;
 };
+export type SignalWorkspaceClassificationProjectionV1 = {
+  contract_version: "workspace-topic-projection-v1";
+  engine_execution_id: string; model_artifact_id: string | null; output_artifact_id: string;
+  materialization_artifact_id: string; mapping_digest: string; policy_digest: string;
+  model_version_id: string | null;
+};
 export class SignalWorkspaceClassificationError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceClassificationError"; }
 }
@@ -26,6 +32,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   signalWorkspaceClassificationIdentitySchemaV1, signalWorkspaceClassificationReuseKeyV1,
   parseSignalWorkspaceClassificationOutcomeV1, signalWorkspaceEmbeddingDigestV1,
+  signalWorkspaceClassificationTopicSemanticsDigestV1,
   type SignalTopicDefinitionV1
 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
@@ -39,9 +46,9 @@ const limitValue = (value: number | undefined, cap: number) => {
   const n = value ?? cap; if (!Number.isSafeInteger(n) || n < 1 || n > cap) return fail("workspace_classification_page_invalid", 422); return n;
 };
 type Queryable = { query<Row extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{rows: Row[]}> };
-type Topic = { taxonomy_term_id: string; definition: SignalTopicDefinitionV1; compiler_digest: string };
+type Topic = { taxonomy_term_id: string; definition: SignalTopicDefinitionV1; compiler_digest: string; projection_semantics_digest?:string };
 type Snapshot = { contract_version: typeof contract; identity: SignalWorkspaceClassificationIdentityV1;
-  context_digest: string; correction_digest: string; topics: Topic[] };
+  context_digest: string; correction_digest: string; topics: Topic[]; source_projection?: SignalWorkspaceClassificationProjectionV1 };
 async function tx<T>(database: SignalWorkspaceClassificationDatabaseV1, work: (client: PoolClient) => Promise<T>, readOnly = false) {
   const client = await database.connect();
   try { await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN"); await client.query("SET LOCAL TIME ZONE 'UTC'"); await client.query("SET LOCAL search_path=public,extensions,pg_temp"); const value = await work(client); await client.query("COMMIT"); return value; }
@@ -63,13 +70,14 @@ async function correctionsDigest(queryable: Queryable, workspace: string) {
 /** Semantic identities deliberately omit profile/term row IDs and ingestion run IDs. */
 export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string}) {
   if (!(await loadSignalWorkspaceCapabilitiesStoreV1(args)).can_view) return fail("workspace_classification_forbidden",403);
-  const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args).catch(error=>{
+  const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,allow_empty:true}).catch(error=>{
     if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_required","workspace_topic_catalog_empty"].includes(error.code))
       return fail("workspace_classification_catalog_unavailable");
     throw error;
   });
   const topics: Topic[] = built.input.topics.map(topic => ({taxonomy_term_id: topic.taxonomy_term_id,
-    definition: topic.definition, compiler_digest: topic.compiled.compiler_digest}));
+    definition: topic.definition, compiler_digest: topic.compiled.compiler_digest,
+    projection_semantics_digest:signalWorkspaceClassificationTopicSemanticsDigestV1(topic.definition)}));
   return {taxonomy_profile_id: built.profile_id, topics,
     embedding_config_digest: built.input.embedding_profile.config_digest, context_digest: built.input.context_digest,
     catalog_digest: digest(topics.map(topic => ({term_key: topic.definition.term_key,
@@ -81,8 +89,9 @@ type Run = {
   id: string; workspace_id: string; actor_user_id: string; taxonomy_profile_id: string; generation_id: string;
   embedding_run_id: string; preparation_run_id: string; input_revision: string; input_digest: string;
   status: string; execution_token: string | null; execution_live: boolean; cursor_root_id: string | null;
-  current_revision: string; policy_live: boolean; sources_complete: boolean; identity: SignalWorkspaceClassificationIdentityV1;
+  current_revision: string; policy_live: boolean; sources_complete: boolean; projection_current:boolean; identity: SignalWorkspaceClassificationIdentityV1;
   context_digest: string; correction_digest: string; denominator: number; expected_chunks: string; processed_roots: number;
+  worker_job_id:string;
 };
 async function lockRun(client: PoolClient, id: string): Promise<Run> {
   const scope = (await client.query<{workspace_id: string}>("SELECT workspace_id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND input_contract=$2", [id, contract])).rows[0];
@@ -93,11 +102,15 @@ async function lockRun(client: PoolClient, id: string): Promise<Run> {
    execution.status,execution.execution_token,execution.execution_expires_at>clock_timestamp() execution_live,execution.cursor_root_id,
    state.input_revision::text current_revision,(execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
    (embedding.input_contract='corpus' AND embedding.status='completed' AND prep.status='completed') sources_complete,
+   (execution.input_snapshot->'source_projection' IS NULL OR (SELECT signal_workspace_projection_source_current_v1(generation)
+    FROM signal_classification_generations generation WHERE generation.id=execution.generation_id)) projection_current,
    execution.input_snapshot->'identity' identity,execution.input_snapshot->>'context_digest' context_digest,
-   execution.input_snapshot->>'correction_digest' correction_digest,execution.denominator,execution.expected_chunks::text,execution.processed_roots
+   execution.input_snapshot->>'correction_digest' correction_digest,execution.denominator,execution.expected_chunks::text,execution.processed_roots,
+   COALESCE(outbox.worker_job_id,'workspace-classification-'||execution.id::text) worker_job_id
    FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
    JOIN signal_workspace_embedding_runs embedding ON embedding.id=execution.embedding_run_id AND embedding.workspace_id=execution.workspace_id
    JOIN signal_corpus_preparation_runs prep ON prep.id=execution.preparation_run_id AND prep.workspace_id=execution.workspace_id
+   LEFT JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
    WHERE execution.id=$1::uuid AND execution.input_contract=$2 FOR UPDATE OF execution`, [id, contract])).rows[0];
   if (!run) return fail("workspace_classification_execution_not_found", 404); return run;
 }
@@ -107,7 +120,7 @@ function view(run: Run, token = run.execution_token!): SignalWorkspaceClassifica
 }
 async function current(client: PoolClient, run: Run, full = true) {
   await authorize(client, run.workspace_id, run.actor_user_id);
-  if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete) return fail("workspace_classification_inputs_changed");
+  if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete || !run.projection_current) return fail("workspace_classification_inputs_changed");
   if (!full) return;
   const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id});
   if (latest.taxonomy_profile_id !== run.taxonomy_profile_id || latest.catalog_digest !== run.identity.catalog_digest
@@ -137,13 +150,16 @@ async function closeOperation(client: PoolClient, id: string, result: unknown) {
    FROM signal_classification_operations WHERE id=$1::uuid`,[id,JSON.stringify(result),digest(result),sha(`${id}:0:${digest(result)}`)]);
   await client.query("UPDATE signal_classification_operations SET status='completed',result=$2::jsonb,completed_at=clock_timestamp() WHERE id=$1::uuid", [id, JSON.stringify(result)]);
 }
-/** Internal/local integration only. This creates no outbox or queue job. */
-export async function beginSignalWorkspaceClassificationV1(args: {database: SignalWorkspaceClassificationDatabaseV1; workspace_id: string;
-  actor_user_id: string; idempotency_key: string; embedding_run_id: string; identity: SignalWorkspaceClassificationIdentityV1}) {
+export type BeginSignalWorkspaceClassificationV1 = {workspace_id:string;actor_user_id:string;idempotency_key:string;
+  embedding_run_id:string;identity:SignalWorkspaceClassificationIdentityV1;source_projection?:SignalWorkspaceClassificationProjectionV1};
+/** Existing low-level producer stays queue-free; the explicit projection request owns dispatch. */
+export async function beginSignalWorkspaceClassificationV1(args: BeginSignalWorkspaceClassificationV1&{database:SignalWorkspaceClassificationDatabaseV1}) {
+  return tx(args.database,client=>beginSignalWorkspaceClassificationWithClientV1(client,args));
+}
+export async function beginSignalWorkspaceClassificationWithClientV1(client:PoolClient,args:BeginSignalWorkspaceClassificationV1) {
   const identity = signalWorkspaceClassificationIdentitySchemaV1.parse(args.identity);
   if (identity.workspace_id !== args.workspace_id || !/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)) return fail("workspace_classification_request_invalid", 422);
-  const requestDigest = digest({embedding_run_id: args.embedding_run_id, identity});
-  return tx(args.database, async client => {
+  const requestDigest = digest({embedding_run_id: args.embedding_run_id, identity,...(args.source_projection?{source_projection:args.source_projection}:{})});
     await authorize(client, args.workspace_id, args.actor_user_id); await lockInputs(client, args.workspace_id);
     const prior = (await client.query<{id: string; generation_id: string; input_contract: string; actor_user_id: string; request_digest: string}>(
       "SELECT id,generation_id,input_contract,actor_user_id,request_digest FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND idempotency_key=$2", [args.workspace_id, args.idempotency_key])).rows[0];
@@ -167,7 +183,8 @@ export async function beginSignalWorkspaceClassificationV1(args: {database: Sign
       AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())`, [args.embedding_run_id, args.workspace_id, identity.embedding_config_digest])).rows[0];
     if (!embedded) return fail("workspace_classification_complete_embeddings_required");
     if ((await client.query("SELECT id FROM signal_topic_catalog_executions WHERE taxonomy_profile_id=$1::uuid AND status IN('queued','running')", [inputs.taxonomy_profile_id])).rows.length) return fail("workspace_classification_execution_active");
-    const snapshot: Snapshot = {contract_version: contract, identity, context_digest: inputs.context_digest, correction_digest: inputs.correction_digest, topics: inputs.topics};
+    const snapshot: Snapshot = {contract_version: contract, identity, context_digest: inputs.context_digest, correction_digest: inputs.correction_digest, topics: inputs.topics,
+      ...(args.source_projection?{source_projection:args.source_projection}:{})};
     const id = randomUUID(), generation = randomUUID();
     const op = await operation(client, args, "create-generation", `classification:${id}`, {requestDigest});
     const base = (await client.query<{id: string}>(`SELECT generation.id FROM signal_classification_generations generation
@@ -191,19 +208,21 @@ export async function beginSignalWorkspaceClassificationV1(args: {database: Sign
      FROM signal_classification_generations WHERE id=$6::uuid`, [id,args.idempotency_key,requestDigest,identity.embedding_config_digest,embedded.chunks,generation]);
     await closeOperation(client, op, {generation_id: generation, execution_id: id});
     return {execution_id: id, generation_id: generation, worker_job_id: `workspace-classification-${id}`, replayed: false};
-  });
 }
 export async function claimSignalWorkspaceClassificationV1(args: {database: SignalWorkspaceClassificationDatabaseV1; execution_id: string; worker_job_id: string}) {
   return tx(args.database, async client => {
     const run = await lockRun(client, args.execution_id);
-    if (args.worker_job_id !== `workspace-classification-${run.id}` || !["queued","running"].includes(run.status)
+    if (args.worker_job_id !== run.worker_job_id || !["queued","running"].includes(run.status)
       || run.status === "running" && run.execution_live) return null;
     try { await current(client, run); }
     catch (error) { if (!(error instanceof SignalWorkspaceClassificationError)) throw error;
-      await client.query("UPDATE signal_topic_catalog_executions SET status='failed',error_code=$2,execution_token=NULL,execution_expires_at=NULL,completed_at=clock_timestamp() WHERE id=$1::uuid", [run.id,error.code]); return null; }
+      await client.query("UPDATE signal_topic_catalog_executions SET status='failed',error_code=$2,execution_token=NULL,execution_expires_at=NULL,completed_at=clock_timestamp() WHERE id=$1::uuid", [run.id,error.code]);
+      await completeProjectionDispatch(client,run.id);return null; }
     const token = randomUUID(); await client.query(`UPDATE signal_topic_catalog_executions SET status='running',execution_token=$2::uuid,
      execution_expires_at=clock_timestamp()+interval '120 seconds',started_at=COALESCE(started_at,clock_timestamp()),completed_at=NULL,
-     error_code=NULL,heartbeat_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`, [run.id, token]); return view(run,token);
+     error_code=NULL,heartbeat_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`, [run.id, token]);
+    await client.query("UPDATE signal_topic_classification_outbox SET status='dispatched',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[run.id]);
+    return view(run,token);
   });
 }
 
@@ -299,13 +318,13 @@ async function persistRoot(client: PoolClient, run: Run, root: SignalWorkspaceCl
   const values=decisions.map(decision=>({...decision,source_assignment_id:source?.assignments.get(decision.term_key)??null}));
   if(values.length) await client.query(`INSERT INTO signal_classification_assignments(workspace_id,generation_id,generation_item_id,canonical_root_id,
    taxonomy_profile_id,taxonomy_term_id,resolution_method,disposition,labeling_function_version_id,model_version_id,approval_policy_id,
-   decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,definition_digest,definition_revision)
+   decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,definition_digest,definition_revision,membership_basis,membership_metadata)
    SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,row.taxonomy_term_id,row.resolution_method,row.disposition,row.labeling_function_version_id,
     row.model_version_id,row.approval_policy_id,row.decided_by_user_id,row.score,row.evidence_digest,row.lineage_digest,$6::uuid,row.source_assignment_id,
-    row.correction_operation_id,row.definition_digest,row.definition_revision
+    row.correction_operation_id,row.definition_digest,row.definition_revision,COALESCE(row.membership_basis,'decision'),row.membership_metadata
    FROM jsonb_to_recordset($7::jsonb) row(taxonomy_term_id uuid,resolution_method text,disposition text,labeling_function_version_id uuid,
     model_version_id uuid,approval_policy_id uuid,decided_by_user_id uuid,score numeric,evidence_digest text,lineage_digest text,source_assignment_id uuid,
-    correction_operation_id uuid,definition_digest text,definition_revision integer)`,
+    correction_operation_id uuid,definition_digest text,definition_revision integer,membership_basis text,membership_metadata jsonb)`,
   [run.workspace_id,run.generation_id,item,root.root_id,run.taxonomy_profile_id,op,JSON.stringify(values)]);
   await client.query(`UPDATE signal_topic_catalog_executions SET cursor_root_id=$2::uuid,processed_roots=processed_roots+1,
    processed_chunks=processed_chunks+$3,progress=LEAST(99,((processed_roots+1)*100/GREATEST(denominator,1))),updated_at=clock_timestamp()
@@ -328,7 +347,8 @@ export async function copySignalWorkspaceClassificationRootV1(args:{database:Sig
       'definition_digest',assignment.definition_digest,'disposition',assignment.disposition,'resolution_method',assignment.resolution_method,
       'model_version_id',assignment.model_version_id,'labeling_function_version_id',assignment.labeling_function_version_id,'approval_policy_id',assignment.approval_policy_id,
       'decided_by_user_id',assignment.decided_by_user_id,'correction_operation_id',assignment.correction_operation_id,'score',assignment.score,
-      'evidence_digest',assignment.evidence_digest,'lineage_digest',assignment.lineage_digest) decision
+      'evidence_digest',assignment.evidence_digest,'lineage_digest',assignment.lineage_digest)
+      ||CASE WHEN assignment.membership_basis='computed_cluster' THEN jsonb_build_object('membership_basis',assignment.membership_basis,'membership_metadata',assignment.membership_metadata) ELSE '{}'::jsonb END decision
      FROM signal_classification_assignments assignment JOIN taxonomy_terms term ON term.id=assignment.taxonomy_term_id
      JOIN signal_topic_catalog_executions execution ON execution.id=$2::uuid
      JOIN LATERAL jsonb_array_elements(execution.input_snapshot->'topics') topic ON topic->'definition'->>'term_key'=term.term_key
@@ -353,21 +373,47 @@ export async function finishSignalWorkspaceClassificationV1(args:{database:Signa
      completed_at=clock_timestamp(),execution_token=NULL,execution_expires_at=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid`,
     [run.id,JSON.stringify({...summary,complete_usable:summary.errors===0})]);
     await closeOperation(client,op,{generation_id:run.generation_id,...summary});
+    await completeProjectionDispatch(client,run.id);
     return {generation_id:run.generation_id,execution_id:run.id,complete_usable:summary.errors===0,summary};});
 }
 /** Failure cleanup preserves a checkpoint even when its acknowledgement was lost. */
 export async function failSignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1;error_code:string}) {
   const code=/^workspace_classification_[a-z_]{1,100}$/u.test(args.error_code)?args.error_code:"workspace_classification_worker_failed";
-  await args.database.query(`UPDATE signal_topic_catalog_executions SET status='failed',error_code=$4,execution_token=NULL,execution_expires_at=NULL,
+  await args.database.query(`WITH failed AS(UPDATE signal_topic_catalog_executions SET status='failed',error_code=$4,execution_token=NULL,execution_expires_at=NULL,
    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid AND workspace_id=$2::uuid AND execution_token=$3::uuid
-    AND input_contract='workspace-topic-classification-v1' AND status='running'`,[args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,code]);
+    AND input_contract='workspace-topic-classification-v1' AND status='running' RETURNING id)
+   UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE execution_id IN(SELECT id FROM failed)`,[args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,code]);
 }
 export async function retrySignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;execution_id:string;actor_user_id:string}) {
   return tx(args.database,async client=>{const run=await lockRun(client,args.execution_id);
     if(run.actor_user_id!==args.actor_user_id)return fail("workspace_classification_forbidden",403);await current(client,run);
     if(["queued","running","ready"].includes(run.status))return {execution_id:run.id,replayed:true};
     await client.query("UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid",[run.id]);
+    await client.query("UPDATE signal_topic_classification_outbox SET status='pending',attempt_count=0,available_at=clock_timestamp(),completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL WHERE execution_id=$1::uuid",[run.id]);
     return {execution_id:run.id,replayed:false};});
+}
+async function completeProjectionDispatch(client:PoolClient,execution_id:string){
+  await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[execution_id]);
+}
+export async function heartbeatSignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1}){
+  return tx(args.database,async client=>{await requireLease(client,args.lease,true);});
+}
+export async function readSignalWorkspaceClassificationCorrectionsV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1;root_id:string}){
+  return tx(args.database,async client=>{const run=await requireLease(client,args.lease),root=(await roots(client,run,1,args.root_id))[0];
+    if(!root)return fail('workspace_classification_root_unavailable');
+    return (await client.query<{decision:SignalWorkspaceClassificationOutcomeV1['decisions'][number]}>(`SELECT jsonb_build_object(
+      'taxonomy_term_id',topic->>'taxonomy_term_id','term_key',correction.term_key,'definition_digest',correction.definition_digest,'definition_revision',correction.definition_revision,
+      'disposition',CASE correction.disposition WHEN 'belongs' THEN 'approved' ELSE 'rejected' END,'resolution_method','human',
+      'model_version_id',NULL,'labeling_function_version_id',NULL,'approval_policy_id',NULL,'decided_by_user_id',operation.actor_user_id,
+      'correction_operation_id',operation.id,'score',NULL,'evidence_digest',operation.request_digest,'lineage_digest',operation.request_digest) decision
+     FROM signal_topic_membership_overrides correction JOIN signal_topic_membership_operations operation ON operation.id=correction.correction_operation_id
+     JOIN signal_topic_catalog_executions execution ON execution.id=$1::uuid
+     JOIN LATERAL jsonb_array_elements(execution.input_snapshot->'topics') topic ON topic->'definition'->>'term_key'=correction.term_key
+     WHERE correction.workspace_id=$2::uuid AND correction.canonical_root_id=$3::uuid AND correction.origin_input_contract=$4
+      AND correction.root_fingerprint=$5 AND correction.context_digest=$6 AND correction.definition_digest=topic->'definition'->>'definition_digest'
+      AND correction.definition_revision=(topic->'definition'->>'definition_revision')::int ORDER BY correction.term_key`,
+      [run.id,run.workspace_id,root.root_id,contract,root.fingerprint,run.context_digest])).rows.map(row=>row.decision);
+  });
 }
 export async function loadSignalWorkspaceClassificationStatusV1(args:{database:SignalWorkspaceClassificationDatabaseV1;workspace_id:string;actor_user_id:string}) {
   return tx(args.database,async client=>{
@@ -393,7 +439,7 @@ export async function loadSignalWorkspaceClassificationStatusV1(args:{database:S
       throw error;
     });
     const views=rows.map(row=>({id:row.id,generation_id:row.generation_id,status:row.status,result_summary:row.result_summary,
-      complete:row.complete,is_current:row.complete&&row.sources_current&&inputs!==null&&row.taxonomy_profile_id===inputs.taxonomy_profile_id
+      complete:row.complete,is_current:row.complete&&row.sources_current&&inputs!==null
        &&row.correction_digest===inputs.correction_digest&&row.identity.catalog_digest===inputs.catalog_digest
        &&row.identity.context_digest===inputs.context_digest&&row.identity.compiler_digest===inputs.compiler_digest
        &&row.identity.embedding_config_digest===inputs.embedding_config_digest}));

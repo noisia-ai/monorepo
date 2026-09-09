@@ -43,6 +43,7 @@ import {
   findSignalStrategicStudy
 } from "@/lib/signal-v2/workspace-navigation";
 import { SignalV2BrandMonitoring } from "@/components/signal-v2/SignalV2BrandMonitoring";
+import { loadNativeSignalTopicsV1 } from "@/lib/data-os/signal-workspace-topics-native";
 
 export async function SignalV2WorkspacePage({
   activeModule = "monitoring",
@@ -72,6 +73,31 @@ export async function SignalV2WorkspacePage({
     ? `/studio/brands/${workspace.subject.id}/topics`
     : null;
   const query = await searchParams;
+  if (activeModule === "topics" && !activeReportKey) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
+    }
+    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id }, params);
+    if (native) {
+      const [workspaceOptions, releases] = await Promise.all([
+        listSignalWorkspaceOptionsForUser(session.appUser),
+        loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
+      ]);
+      const empty = buildEmptySignalBrandMonitoringV1(workspace);
+      const dateFrom = native.filters.date_from ?? native.available_dates.date_from;
+      const dateTo = native.filters.date_to ?? native.available_dates.date_to;
+      const filter = dateFrom && dateTo ? { ...empty.filter, timezone: "UTC", date_range: { start: dateFrom, end: dateTo } } : empty.filter;
+      return <SignalV2BrandMonitoring activeModule="topics" activeStudy={null} brandName={workspace.name}
+        canRefreshInsights={false} initialData={{ ...empty, filter, comparison: resolveSignalComparisonV1({ filter, mode: "none" }),
+          coverage: { date_from: native.available_dates.date_from, date_through: native.available_dates.date_to, mentions: native.denominator } }}
+        initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialTriggersBarriers={null}
+        legacyOutputId={null} manageTopicsHref={manageTopicsHref}
+        strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
+        userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"} workspaceOptions={workspaceOptions}
+        workspaceSubjectId={workspace.subject.id} viewKey="all_conversations" />;
+    }
+  }
   let viewKey;
   try {
     viewKey = normalizeSignalClientGovernedViewKeyV1(firstQueryValue(query.view) ?? "brand");

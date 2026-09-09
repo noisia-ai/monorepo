@@ -3670,6 +3670,12 @@
   scrollbar-width: thin;
 }
 
+/* Native computed Topics reuse the layout with a compact definition and evidence. */
+.signal-v2-tn--workspace .signal-v2-tn__ranking,
+.signal-v2-tn--workspace .signal-v2-tn__detail {
+  block-size: auto;
+}
+
 .signal-v2-tn__detail .signal-v2-card__heading {
   min-height: 34px;
 }

@@ -579,6 +579,20 @@
     }
   },
   "SignalV2": {
+    "workspaceTopics": {
+      "title": "Topics & narratives", "scope": "All received conversations with viewing rights. No implied attribution to the brand.",
+      "current": "Up to date", "stale": "Previous result", "manage": "Manage Topics", "refresh": "Refresh", "utc": "Dates in UTC",
+      "computed": "Computed membership", "quality": "Clusters were computed from the mentions. Their semantic precision has not yet been calibrated.",
+      "staleBody": "The last complete result is retained. Evidence requires a current generation and current permissions.",
+      "denominator": "Mentions in period", "assigned": "In selected Topics", "abstained": "Without a stable cluster", "pending": "Unresolved",
+      "denominatorHelp": "Each mention counts once in the total and may belong to several Topics. Topic percentages may add up to more than 100%.",
+      "withheld": "{count} mentions are unavailable for this query.", "empty": "No Topics selected", "emptyBody": "Choose the Topics you want to see in Signal from the brand’s editable catalogue.",
+      "selectedTopics": "Selected Topics", "topic": "Topic", "mentions": "Mentions", "share": "% of corpus", "definition": "Definition",
+      "membership": "{count} mentions with computed membership.", "evidence": "View evidence", "trend": "Mentions in selected Topics",
+      "noNarratives": "Narratives and insights are not yet available for this analysis.", "close": "Close", "loading": "Loading…", "noEvidence": "No evidence is available in this period.",
+      "evidenceStale": "The evidence changed or access is no longer available. Refresh the result before viewing it again.", "evidenceError": "We could not load the evidence. Try again.",
+      "more": "Show more", "original": "Open original"
+    },
     "title": "Brand monitoring",
     "subtitle": "What people are saying, how it changes, and which conversations explain it.",
     "status": { "beta": "V2 beta" },
@@ -2612,6 +2626,15 @@
         "newQuote": "Calculate new version"
       },
       "eyebrow": "Topics",
+      "signalSelection": {
+        "show": "Show in Signal", "remove": "Remove from Signal", "saving": "Checking…", "resend": "Confirm the same request",
+        "recover": "Check request", "refresh": "Refresh status", "basis": "This selection shows computed cluster membership; it does not validate semantic precision.",
+        "selected": "Selected for Signal.", "stale": "The previous result needs an update.", "prepare": "Complete the analysis before showing this Topic.", "noMemberships": "There are no mentions associated with this Topic yet.",
+        "saveFirst": "Save your changes before changing the selection.", "pending": "The request is awaiting confirmation. The same request is retained to avoid duplicates.",
+        "forbidden": "You do not have access to this action or the Topic is no longer available.", "conflict": "The Topic or selection changed. Refresh its status before continuing.",
+        "load": "We could not verify the status. Refresh to try again.", "save": "We could not confirm the change. Check the request before continuing.",
+        "processing": "Preparing the associated mentions. This action will update when it finishes."
+      },
       "computation": {
         "available": "Candidates available",
         "outdated": "Previous search",

@@ -12,6 +12,8 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SignalV2WorkspaceTopics } from "./SignalV2WorkspaceTopics";
+import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { EChartsCoreOption } from "echarts/core";
 
@@ -63,7 +65,15 @@ type RelationshipMetric = SignalTaxonomyCooccurrenceV1 & {
   lift: number;
 };
 
-export function SignalV2TopicsNarratives({
+export function SignalV2TopicsNarratives(props: Omit<Parameters<typeof LegacySignalV2TopicsNarratives>[0], "data"> & {
+  data: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1;
+}) {
+  if (props.data.contract_version === "signal-workspace-topics-serving-v1") return <SignalV2WorkspaceTopics
+    data={props.data} loading={props.loading} manageTopicsHref={props.manageTopicsHref} onApplyFilter={props.onApplyFilter} />;
+  return <LegacySignalV2TopicsNarratives {...props} data={props.data} />;
+}
+
+function LegacySignalV2TopicsNarratives({
   brandName,
   canRefreshInsights,
   comparison,

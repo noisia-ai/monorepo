@@ -1,4 +1,6 @@
 import { loadSignalWorkspaceModuleContext } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceContextForTopics, topicError, topicResponse } from "../topics/_lib";
+import { loadNativeSignalTopicsV1, nativeTopicsViewV1 } from "@/lib/data-os/signal-workspace-topics-native";
 import {
   signalServingScopeIdentityHashV1,
   signalTopicsNarrativesOverviewContentHashV1
@@ -24,6 +26,15 @@ export async function GET(
 ) {
   const routeStarted = performance.now();
   const { workspaceId } = await context.params;
+  const params = new URL(request.url).searchParams;
+  if (nativeTopicsViewV1(params)) {
+    const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
+    if ("response" in scoped) return scoped.response;
+    try {
+      const native = await loadNativeSignalTopicsV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id }, params);
+      if (native) return topicResponse(native);
+    } catch (error) { return topicError(error, "workspace_topics_unavailable"); }
+  }
   const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);
   if ("response" in loaded) return loaded.response;
   try {
