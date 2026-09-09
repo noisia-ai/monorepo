@@ -12,13 +12,14 @@ import {type WorkspaceProjectionCheckpointFixtureV1,fixtureSha} from './signal-w
 /** Genuine local ledger/fit/checkpoint APIs with explicit synthetic numerical
  * bytes. No model is loaded and no provider is called by this fixture. */
 export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckpointFixtureV1,clusterIds:readonly[string,string],options:{
+ emerging_component?:boolean;migrations_applied?:boolean;
  onInputCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onOutputIndex?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onNumericCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;checkpoint:numeric.SignalWorkspaceIncrementalCheckpointV1})=>Promise<void>;
 }={}){
  const {database,query,access,bodies}=f,workspace_id=access.workspace_id,source=f.lease,parentId=source.execution_id;
- await query(await readFile(new URL('./0145_signal_workspace_incremental_numeric.sql',import.meta.url),'utf8'));
- await query(await readFile(new URL('./0146_signal_workspace_incremental_projection.sql',import.meta.url),'utf8'));
+ if(!options.migrations_applied){await query(await readFile(new URL('./0145_signal_workspace_incremental_numeric.sql',import.meta.url),'utf8'));
+ await query(await readFile(new URL('./0146_signal_workspace_incremental_projection.sql',import.meta.url),'utf8'));}
  const artifact=(lease:engine.SignalWorkspaceEngineLeaseV1,name:string,type:engine.SignalWorkspaceEngineArtifactV1['artifact_type'],body:string,
   metadata:Record<string,unknown>={}):engine.SignalWorkspaceEngineArtifactV1=>{
   const storage_key=`workspace-engine/${workspace_id}/${lease.execution_id}/${name}`;bodies.set(storage_key,body);
@@ -67,9 +68,9 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  if(options.onInputCheckpoint)lease=await options.onInputCheckpoint({lease,artifact_id:savedInput.artifact_id});
  const modelRefs=(['open','guided'] as const).map(lane=>({file:`model.${lane}.joblib`,sha256:fixtureSha(modelBodies[lane]),bytes:Buffer.byteLength(modelBodies[lane])}));
  const center={file:'guide-center.npy',sha256:fixtureSha(centerBody),bytes:Buffer.byteLength(centerBody)};
- const components=(['open','guided'] as const).map((lane,index)=>({component_key:digest([parentId,modelRefs[index]!.sha256,lane]),lane,
-  model_origin:{execution_id:parentId,model_artifact_sha256:modelRefs[index]!.sha256},model:modelRefs[index]!,center:lane==='guided'?center:null,
-  units:[{local_label:0,unit_key:`${lane}:${clusterIds[index]}`,birth_membership_digest:fixtureSha(`synthetic original ${lane} birth`)}]})).sort((a,b)=>a.component_key<b.component_key?-1:1);
+ const components=(['open','guided'] as const).map((lane,index)=>({component_key:digest([options.emerging_component&&index===1?lease.execution_id:parentId,modelRefs[index]!.sha256,lane]),lane,
+  model_origin:{execution_id:options.emerging_component&&index===1?lease.execution_id:parentId,model_artifact_sha256:modelRefs[index]!.sha256},model:modelRefs[index]!,center:lane==='guided'?center:null,
+  units:[{local_label:0,unit_key:`${lane}:${clusterIds[index]}`,birth_membership_digest:fixtureSha(`synthetic original ${lane} birth`)},...(options.emerging_component&&index===1?[{local_label:1,unit_key:'guided:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',birth_membership_digest:fixtureSha('synthetic empty emerging unit')}]:[])]})).sort((a,b)=>options.emerging_component?(a.component_key>b.component_key?-1:1):(a.component_key<b.component_key?-1:1));
  const populations=chunks.map((chunk,ordinal)=>({ordinal,root_id:chunk.root_id,root_fingerprint:chunk.root_fingerprint,
   asset_sha256:roots.find(root=>root.root_id===chunk.root_id)!.asset_sha256,expected_chunks:roots.find(root=>root.root_id===chunk.root_id)!.expected_chunks,
   chunk_index:chunk.chunk_index,start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256}));
@@ -77,7 +78,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  const memberships=chunks.flatMap(chunk=>components.map(component=>({root_id:chunk.root_id,root_fingerprint:chunk.root_fingerprint,chunk_index:chunk.chunk_index,
   start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256,lane:component.lane,unit_key:component.units[0]!.unit_key,model_component_key:component.component_key,strength:0.8,
   model_origin:component.model_origin,evaluation_origin:{execution_id:lease.execution_id,input_population_digest:population,
-   evaluation_key:digest([lease.execution_id,component.component_key,population,'predicted_member']),basis:'predicted_member'},carried_from:null})));
+   evaluation_key:digest([lease.execution_id,component.component_key,population,component.model_origin.execution_id===lease.execution_id?'fitted_member':'predicted_member']),basis:component.model_origin.execution_id===lease.execution_id?'fitted_member':'predicted_member'},carried_from:null})));
  const pendingRoot=roots[0]!.root_id,pending=populations.filter(row=>row.root_id===pendingRoot);
  const numericBodies=new Map<string,string>([
   ['population.jsonl',populations.map(row=>JSON.stringify(row)+'\n').join('')],['memberships.jsonl',memberships.map(row=>JSON.stringify(row)+'\n').join('')],
@@ -90,9 +91,9 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
   previous_manifest_sha256:descriptor.parent.manifest_sha256,compatibility:descriptor.compatibility,policy_version:'workspace-frozen-model-cohort-v1',status:'completed',quality:'uncalibrated',approval_policy:'none',
   discovery_status:'pending_cohort_close',relations_status:'none',population_digest:population,counts:{roots:roots.length,occurrences:chunks.length,added_roots:0,
    content_changed_roots:0,metadata_changed_roots:0,unchanged_roots:roots.length,removed_roots:0,delta_occurrences:0,cohort_occurrences:pending.length,pending_occurrences:pending.length,
-   memberships:memberships.length,components:components.length,new_components:0,model_bank_bytes:modelRefs.reduce((n,row)=>n+row.bytes,center.bytes)},
-  components,artifacts:files,coverage:components.map(component=>({component_key:component.component_key,population_digest:population,expected_occurrences:chunks.length,copied_occurrences:0,transformed_occurrences:chunks.length,fitted_occurrences:0})),
-  operations:{fit:[],transform:components.map(component=>({component_key:component.component_key,occurrences:chunks.length,pages:2,maximum_page_rows:128}))},metrics:{resident_bytes:0,elapsed_seconds:0},limitations:['Explicit local synthetic evidence; no fit or provider.']};
+   memberships:memberships.length,components:components.length,new_components:options.emerging_component?1:0,model_bank_bytes:modelRefs.reduce((n,row)=>n+row.bytes,center.bytes)},
+  components,artifacts:files,coverage:components.map(component=>({component_key:component.component_key,population_digest:population,expected_occurrences:chunks.length,copied_occurrences:0,transformed_occurrences:component.model_origin.execution_id===lease.execution_id?0:chunks.length,fitted_occurrences:component.model_origin.execution_id===lease.execution_id?chunks.length:0})),
+  operations:{fit:components.filter(component=>component.model_origin.execution_id===lease.execution_id).map(component=>({component_key:component.component_key,occurrences:chunks.length,population_digest:population})),transform:components.filter(component=>component.model_origin.execution_id!==lease.execution_id).map(component=>({component_key:component.component_key,occurrences:chunks.length,pages:2,maximum_page_rows:128}))},metrics:{resident_bytes:0,elapsed_seconds:0},limitations:['Explicit local synthetic evidence; no fit or provider.']};
  const outputBody=JSON.stringify(output),manifest={file:'manifest.json',sha256:fixtureSha(outputBody),bytes:Buffer.byteLength(outputBody)};
  const index=await numeric.persistSignalWorkspaceIncrementalOutputIndexV1({database,lease,input_artifact_id:savedInput.artifact_id,output_manifest:{sha256:manifest.sha256,size_bytes:manifest.bytes},file_count:files.length+3,
   artifact:artifact(lease,'incremental-output-index.json','engine_output','local inventory')});

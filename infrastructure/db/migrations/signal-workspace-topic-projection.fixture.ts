@@ -33,7 +33,7 @@ export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migra
  assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
  const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
  try{
- for(const name of options.migrations??[]) {assert.match(name,/^014[1-4]_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));}
+ for(const name of options.migrations??[]) {assert.match(name,/^014[1-7]_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));}
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  const catalog=async(terms:SignalTopicDefinitionV1[]=[],metadata:Record<string,unknown>={})=>insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('projection-catalog'),
   terms:terms.map(topic=>({term_key:topic.term_key,label:topic.label,definition:topic.definition,status:topic.lifecycle==='archived'?'archived':'candidate',metadata:{topic}})),rules:{topics:terms},rule_set_metadata:{},provider:'operator',model_version:'local',

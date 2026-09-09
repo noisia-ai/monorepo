@@ -55,3 +55,5 @@ export * from './signal-workspace-incremental-projection';
 export * from "./signal-workspace-numeric-producer";
 
 export * from './signal-workspace-interpretation-admission';
+
+export * from "./signal-workspace-incremental-editorial";
