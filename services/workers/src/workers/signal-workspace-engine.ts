@@ -16,6 +16,7 @@ import { runWorkspaceEngineProcessV1, validateWorkspaceEngineOutputV1 } from "./
 import { readWorkspaceEngineInterpretationEvidenceV1 } from "./signal-workspace-engine-evidence";
 import { interpretWorkspaceEngineV1 } from "./signal-workspace-engine-interpret";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+import { runSignalWorkspaceIncrementalJobV1, type WorkspaceIncrementalJobOptionsV1 } from "./signal-workspace-engine-incremental";
 
 const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspaceEngineChunksV1,
   guides: readSignalWorkspaceEngineGuidesV1, parent: readSignalWorkspaceEngineParentArtifactsV1,
@@ -24,7 +25,8 @@ const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspac
   finish: finishSignalWorkspaceEngineFitV1, fail: failSignalWorkspaceEngineV1 };
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: typeof stores; storage?: WorkspaceEngineStorageV1;
   python?: string; module_root?: string; storage_root?: string; timeout_ms?: number;
-  process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1 };
+  process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1;
+  incremental?: WorkspaceIncrementalJobOptionsV1 };
 const name = /^[a-z][a-z0-9_.-]{0,100}$/u;
 const safe = (error: unknown) => error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
   ? error.message : "workspace_engine_worker_failed";
@@ -37,6 +39,10 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
   const database = options.database ?? (await import("../db/client")).pool, store = options.stores ?? stores;
   const lease = await store.claim({ database, execution_id: job.data.execution_id, worker_job_id: job.id });
   if (!lease) return { execution_id: job.data.execution_id, replayed: true };
+  if (lease.snapshot.numeric_descriptor) return runSignalWorkspaceIncrementalJobV1({ job, database, lease }, {
+    storage: options.storage, python: options.python, module_root: options.module_root,
+    storage_root: options.storage_root, timeout_ms: options.timeout_ms, process: options.process, ...options.incremental,
+  });
   let heartbeatPromise: Promise<void> | null = null, heartbeatError: unknown = null;
   let attemptDirectory: string | null = null;
   let phase: "exporting" | "fitting" | "persisting" | "interpreting" | "materializing" = "exporting";

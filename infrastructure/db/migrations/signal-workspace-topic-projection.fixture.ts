@@ -16,6 +16,7 @@ export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:str
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
 export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migrations?:string[];
+ model_configuration?:Record<string,unknown>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>}={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
  const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
@@ -73,7 +74,7 @@ export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migra
  const output=await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:artifact('manifest.json','engine_output',outputBody)});
  const keys=options.empty?[]:['open:stable_one','guided:stable_two'],unit_digest=fixtureSha([...keys].sort().map(key=>JSON.stringify(key)+'\n').join(''));
  await engine.checkpointSignalWorkspaceEngineFitV1({database,lease,model_artifact_id:model?.artifact_id??null,output_artifact_id:output.artifact_id,result_kind:options.empty?'insufficient_population':'computational_grouping',coverage,
-  model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'workspace-model-bundle-v1',license_key:'local-only',interpretation_manifest:{unit_count:keys.length,unit_digest}});
+  model_configuration:options.model_configuration??{fixture:true},runtime_kind:'python',artifact_format:'workspace-model-bundle-v1',license_key:'local-only',interpretation_manifest:{unit_count:keys.length,unit_digest}});
  const governed=await engine.readSignalWorkspaceEngineInterpretationContextV1({database,lease});
  const proposals:Array<{artifact_id:string;body:string}>=[];
  for(const key of keys){const row=chunks[0]!,identity={root_id:row.root_id,chunk_index:row.chunk_index,start:row.start,end:row.end,chunk_sha256:row.chunk_sha256};

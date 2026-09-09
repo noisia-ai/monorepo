@@ -66,9 +66,16 @@ export async function validateWorkspaceEngineOutputV1(args: {
  * the numerical subprocess. A failed lease heartbeat stops computation. */
 export async function runWorkspaceEngineProcessV1(args: {
   python: string; module_root: string; storage_root: string; input_directory: string; output_directory: string;
+  mode?: "full_fit" | "incremental_numeric";
   previous?: { directory: string; manifest_sha256: string };
   timeout_ms?: number; heartbeat?: () => Promise<void>;
 }): Promise<void> {
+  const mode = args.mode === undefined ? "full_fit" : args.mode;
+  if (mode !== "full_fit" && mode !== "incremental_numeric") return fail("mode_invalid");
+  if (mode === "incremental_numeric" && (!object(args.previous)
+    || typeof args.previous.directory !== "string" || !isAbsolute(args.previous.directory)
+    || typeof args.previous.manifest_sha256 !== "string"
+    || !/^sha256:[0-9a-f]{64}$/u.test(args.previous.manifest_sha256))) return fail("previous_invalid");
   if (!isAbsolute(args.python) || !isAbsolute(args.module_root)) return fail("runtime_path_invalid");
   // Preserve the venv executable spelling: resolving its symlink before spawn
   // would silently select the base interpreter without the installed runtime.
@@ -80,8 +87,13 @@ export async function runWorkspaceEngineProcessV1(args: {
   const parentRelative = relative(storageRoot, outputParent);
   if (!isAbsolute(args.output_directory) || parentRelative.startsWith("..") || isAbsolute(parentRelative)
     || !namePattern.test(basename(args.output_directory))) return fail("storage_path_invalid");
-  if (args.previous) await assertWorkspaceEngineDirectoryV1(args.previous.directory, storageRoot);
-  const argv = ["-m", "signal_semantic_lab.workspace_engine", "--input-dir", args.input_directory,
+  if (args.previous) {
+    const previousDirectory = await assertWorkspaceEngineDirectoryV1(args.previous.directory, storageRoot);
+    if (mode === "incremental_numeric" && !(await lstat(previousDirectory)).isDirectory()) return fail("previous_invalid");
+  }
+  const moduleName = mode === "incremental_numeric"
+    ? "signal_semantic_lab.workspace_incremental_engine" : "signal_semantic_lab.workspace_engine";
+  const argv = ["-m", moduleName, "--input-dir", args.input_directory,
     "--output-dir", args.output_directory, "--storage-root", storageRoot];
   if (args.previous) argv.push("--previous-dir", args.previous.directory, "--previous-manifest-sha256", args.previous.manifest_sha256);
   const timeout = args.timeout_ms ?? 60 * 60 * 1000;

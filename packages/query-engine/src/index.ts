@@ -1244,3 +1244,4 @@ export * from "./signal-workspace-interpretation-v1";
 
 export * from "./signal-workspace-topic-materialization-v1";
 export * from "./signal-workspace-topics-serving-v1";
+export * from "./signal-workspace-engine-incremental-v1";
