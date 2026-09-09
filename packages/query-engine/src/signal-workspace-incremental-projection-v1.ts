@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signalTopicDefinitionSchemaV1, type SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "./signal-workspace-embeddings-v1";
-import { signalWorkspaceIncrementalMembershipDigestV1,
+import { signalWorkspaceIncrementalDigestV1, signalWorkspaceIncrementalMembershipDigestV1,
   signalWorkspaceIncrementalMembershipSchemaV1, signalWorkspaceIncrementalOutputSchemaV1,
   signalWorkspaceIncrementalRootSchemaV1 } from "./signal-workspace-engine-incremental-v1";
 import { buildSignalWorkspaceInterpretationBatchV1, buildSignalWorkspaceInterpretationRepairBatchV1,
@@ -53,6 +53,22 @@ export const signalWorkspaceIncrementalProjectionRootSchemaV1 = signalWorkspaceI
 export type SignalWorkspaceIncrementalProjectionRootV1 = z.infer<typeof signalWorkspaceIncrementalProjectionRootSchemaV1>;
 const componentSchema = signalWorkspaceIncrementalOutputSchemaV1.innerType().shape.components.element;
 type Component = z.infer<typeof componentSchema>;
+const birthSchema = componentSchema.innerType().shape.units.element;
+const modelOriginSchema = componentSchema.innerType().shape.model_origin;
+const editorialClaimSchema = z.object({ claim_artifact_id: uuid, owner_execution_id: uuid,
+  component_key: hash, unit: birthSchema, model_origin: modelOriginSchema }).strict();
+/** Receipt references supplied by a scoped DB reader, never an authority flag.
+ * The reader must verify 0148 claims and 0149 plan/call/checkpoint joins before
+ * invoking this pure resolver. No current SQL reader exports this branch yet. */
+export const signalWorkspaceIncrementalProposalSourceSchemaV1 = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("full_fit") }).strict(),
+  z.object({ kind: z.literal("incremental_editorial"), numeric_execution_id: uuid, numeric_checkpoint_digest: hash,
+    evidence_plan_artifact_id: uuid, evidence_digest: hash, target_binding_digest: hash,
+    request_plan_artifact_id: uuid, request_plan_digest: hash, response_sha256: hash,
+    claims: z.array(editorialClaimSchema).min(1) }).strict(),
+]);
+export type SignalWorkspaceIncrementalProposalSourceV1 = z.infer<typeof signalWorkspaceIncrementalProposalSourceSchemaV1>;
+type EditorialClaim = z.infer<typeof editorialClaimSchema>;
 type Unit = { unit_key: string; component_key: string; birth_membership_digest: string; model_origin: Component["model_origin"] };
 export type SignalWorkspaceIncrementalProjectionTopicV1 = { taxonomy_term_id: string; definition: SignalTopicDefinitionV1 };
 /** The caller obtains the receipt in workspace/actor scope and verifies settled
@@ -61,12 +77,15 @@ export type SignalWorkspaceIncrementalProjectionTopicV1 = { taxonomy_term_id: st
 export type SignalWorkspaceIncrementalProjectionProposalV1 = {
   artifact_id: string; owner_execution_id: string; artifact_sha256: string; body: string;
   call_id: string; request_digest: string; call_configuration: unknown; context_digest: string;
+  /** Omission is the historical full-fit branch, never inferred from the body. */
+  source?: SignalWorkspaceIncrementalProposalSourceV1;
 };
 export type SignalWorkspaceIncrementalUnitBindingV1 = Unit & {
   term_key: string | null; definition_revision: number | null; definition_digest: string | null;
   proposal: { owner_execution_id: string; artifact_id: string; artifact_sha256: string; call_id: string;
     request_digest: string; configuration_digest: string; cluster_digest: string; proposal_semantics_digest: string;
-    status: "coherent" | "mixed" | "insufficient" };
+    status: "coherent" | "mixed" | "insufficient";
+    source?: { kind: "incremental_editorial"; source_digest: string; claim_artifact_id: string } };
 };
 export type SignalWorkspaceIncrementalBindingsV1 = {
   workspace_id: string; binding_digest: string; editorial_cut_digest: string;
@@ -87,11 +106,13 @@ export function resolveSignalWorkspaceIncrementalBindingsV1(args: {
 }): SignalWorkspaceIncrementalBindingsV1 {
   uuid.parse(args.workspace_id);
   const units = new Map<string, Unit>(), componentKeys = new Set<string>();
+  const births = new Map<string, z.infer<typeof birthSchema>>();
   for (const raw of args.components) {
     const component = componentSchema.parse(raw);
     if (componentKeys.has(component.component_key)) fail("component_duplicate"); componentKeys.add(component.component_key);
     for (const unit of component.units) {
       if (units.has(unit.unit_key)) fail("unit_duplicate");
+      births.set(unit.unit_key, unit);
       units.set(unit.unit_key, { unit_key: unit.unit_key, component_key: component.component_key,
         birth_membership_digest: unit.birth_membership_digest, model_origin: component.model_origin });
     }
@@ -109,15 +130,21 @@ export function resolveSignalWorkspaceIncrementalBindingsV1(args: {
   }
   const byUnit = new Map<string, SignalWorkspaceIncrementalBindingsV1["by_unit"] extends ReadonlyMap<string, infer V> ? V : never>();
   const receipts: Array<Record<string, string>> = [], artifacts = new Set<string>();
+  const editorialUnits = new Set<string>(), claimArtifacts = new Set<string>();
   for (const proposal of args.proposals) {
     uuid.parse(proposal.artifact_id); uuid.parse(proposal.owner_execution_id); uuid.parse(proposal.call_id);
     hash.parse(proposal.artifact_sha256); hash.parse(proposal.request_digest); hash.parse(proposal.context_digest);
     if (artifacts.has(proposal.artifact_id) || Buffer.byteLength(proposal.body) > 2 * 1024 * 1024
       || sha(proposal.body) !== proposal.artifact_sha256) fail("proposal_bytes_invalid");
     artifacts.add(proposal.artifact_id);
-    const packet = z.object({ contract_version: z.literal("workspace-engine-interpretation-result-v1"), execution_id: uuid,
-      context: z.unknown(), clusters: z.array(z.unknown()), interpretations: z.array(z.unknown()), editorial_repair: z.unknown().optional()
-    }).strict().parse(JSON.parse(proposal.body));
+    const source = signalWorkspaceIncrementalProposalSourceSchemaV1.parse(proposal.source === undefined ? { kind: "full_fit" } : proposal.source);
+    const packetFields = { context: z.unknown(), clusters: z.array(z.unknown()), interpretations: z.array(z.unknown()),
+      editorial_repair: z.unknown().optional() };
+    const packet = source.kind === "full_fit"
+      ? z.object({ contract_version: z.literal("workspace-engine-interpretation-result-v1"), execution_id: uuid,
+        ...packetFields }).strict().parse(JSON.parse(proposal.body))
+      : z.object({ contract_version: z.literal("workspace-incremental-editorial-result-v1"),
+        ...packetFields }).strict().parse(JSON.parse(proposal.body));
     let batch = buildSignalWorkspaceInterpretationBatchV1(packet.context as SignalWorkspaceInterpretationContextV1,
       packet.clusters as SignalWorkspaceInterpretationClusterV1[], parseSignalWorkspaceInterpretationConfigurationV1(proposal.call_configuration));
     if (packet.editorial_repair !== undefined) {
@@ -126,17 +153,46 @@ export function resolveSignalWorkspaceIncrementalBindingsV1(args: {
         source_response_sha256: repair.source_response_sha256, diagnostic: repair.diagnostic });
       if (!same(batch.editorial_repair, repair)) fail("proposal_repair_invalid");
     }
-    if (packet.execution_id !== proposal.owner_execution_id || batch.context.execution_id !== proposal.owner_execution_id
+    if (source.kind === "full_fit" && (!("execution_id" in packet) || packet.execution_id !== proposal.owner_execution_id)
+      || batch.context.execution_id !== proposal.owner_execution_id
       || batch.context.workspace_id !== args.workspace_id || batch.context.context_digest !== proposal.context_digest
       || batch.request_digest !== proposal.request_digest) fail("proposal_origin_invalid");
     const results = validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
+    const claims = new Map<string, EditorialClaim>();
+    let sourceDigest: string | undefined;
+    if (source.kind === "incremental_editorial") {
+      // 0149 creates Sonnet editorial owners, never numerical models or Opus calls.
+      if (batch.configuration.model !== "claude-sonnet-4-6") fail("editorial_configuration_invalid");
+      if (source.numeric_execution_id === proposal.owner_execution_id) fail("editorial_owner_invalid");
+      if (source.claims.length !== batch.clusters.length) fail("editorial_claim_coverage_invalid");
+      for (const claim of source.claims) {
+        const key = claim.unit.unit_key;
+        if (claim.owner_execution_id !== proposal.owner_execution_id || claim.model_origin.execution_id === proposal.owner_execution_id
+          || claims.has(key) || editorialUnits.has(key)
+          || claimArtifacts.has(claim.claim_artifact_id)) fail("editorial_claim_invalid");
+        const lane = key.startsWith("open:") ? "open" : "guided";
+        if (claim.component_key !== signalWorkspaceIncrementalDigestV1([claim.model_origin.execution_id,
+          claim.model_origin.model_artifact_sha256, lane])) fail("editorial_claim_origin_invalid");
+        const unit = units.get(key);
+        if (unit && (claim.component_key !== unit.component_key || !same(claim.model_origin, unit.model_origin)
+          || !same(claim.unit, births.get(key)))) fail("editorial_claim_origin_invalid");
+        claims.set(key, claim); editorialUnits.add(key); claimArtifacts.add(claim.claim_artifact_id);
+      }
+      if (claims.size !== batch.clusters.length || batch.clusters.some(cluster => !claims.has(cluster.cluster_id)))
+        fail("editorial_claim_coverage_invalid");
+      // A serving cut seals the claims and their receipt references. It is NOT
+      // the frozen history_cut_digest used to admit the owner in 0148/0149.
+      sourceDigest = digest({ ...source, claims: [...claims.values()].sort((a, b) => ordered(a.unit.unit_key, b.unit.unit_key)) });
+    }
     receipts.push({ artifact_id: proposal.artifact_id, owner_execution_id: proposal.owner_execution_id,
-      artifact_sha256: proposal.artifact_sha256, call_id: proposal.call_id, request_digest: proposal.request_digest });
+      artifact_sha256: proposal.artifact_sha256, call_id: proposal.call_id, request_digest: proposal.request_digest,
+      ...(sourceDigest ? { source_digest: sourceDigest } : {}) });
     for (const result of results) {
       const unit = units.get(result.cluster_id);
       // A verified history packet may also contain units no longer in this bank.
       if (!unit) continue;
-      if (byUnit.has(unit.unit_key) || unit.model_origin.execution_id !== proposal.owner_execution_id) fail("proposal_unit_origin_invalid");
+      if (byUnit.has(unit.unit_key) || source.kind === "full_fit" && unit.model_origin.execution_id !== proposal.owner_execution_id)
+        fail("proposal_unit_origin_invalid");
       const topic = bySource.get(unit.unit_key) ?? null;
       if (topic && (topic.definition.source!.run_key !== `workspace-engine:${proposal.owner_execution_id}`
         || topic.definition.source!.candidate_digest !== result.cluster_digest)) fail("topic_source_invalid");
@@ -145,14 +201,17 @@ export function resolveSignalWorkspaceIncrementalBindingsV1(args: {
       const semantics = signalWorkspaceClassificationTopicSemanticsDigestV1(original);
       // birth_membership_digest seals numerical birth tuples; cluster_digest
       // seals the interpretation evidence census. They use different formats
-      // and are never equated. The DB binds the paid packet to its original fit.
+      // and are never equated. The DB binds full-fit packets to the original
+      // fit; incremental editorial packets require exact claim/plan receipts.
       const binding: SignalWorkspaceIncrementalUnitBindingV1 = { ...unit,
         term_key: topic?.definition.term_key ?? null, definition_revision: topic?.definition.definition_revision ?? null,
         definition_digest: topic?.definition.definition_digest ?? null,
         proposal: { owner_execution_id: proposal.owner_execution_id, artifact_id: proposal.artifact_id,
           artifact_sha256: proposal.artifact_sha256, call_id: proposal.call_id, request_digest: proposal.request_digest,
           configuration_digest: digest(batch.configuration), cluster_digest: result.cluster_digest,
-          proposal_semantics_digest: semantics, status: result.status } };
+          proposal_semantics_digest: semantics, status: result.status,
+          ...(sourceDigest ? { source: { kind: "incremental_editorial" as const, source_digest: sourceDigest,
+            claim_artifact_id: claims.get(unit.unit_key)!.claim_artifact_id } } : {}) } };
       byUnit.set(unit.unit_key, { binding, topic, archived: topic?.definition.lifecycle === "archived",
         semantic_current: topic !== null && result.status !== "insufficient"
           && semantics === signalWorkspaceClassificationTopicSemanticsDigestV1(topic.definition) });

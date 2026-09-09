@@ -7,10 +7,12 @@ import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet,
   buildSignalWorkspaceInterpretationBatchV1, buildSignalWorkspaceInterpretationRepairBatchV1,
   signalWorkspaceInterpretationReferenceIdV1, type SignalWorkspaceInterpretationClusterV1,
   type SignalWorkspaceInterpretationConfigurationV1 } from "./signal-workspace-interpretation-v1";
+import { signalWorkspaceEmbeddingDigestV1 as digest } from "./signal-workspace-embeddings-v1";
 import { mergeSignalWorkspaceTopicMaterializationV1 } from "./signal-workspace-topic-materialization-v1";
 import { signalWorkspaceClassificationDecisionSchemaV1, type SignalWorkspaceClassificationIdentityV1 } from "./signal-workspace-classification-v1";
 import { projectSignalWorkspaceIncrementalRootV1, resolveSignalWorkspaceIncrementalBindingsV1,
   signalWorkspaceIncrementalProjectionSourceSchemaV1, type SignalWorkspaceIncrementalProjectionCorrectionV1,
+  type SignalWorkspaceIncrementalProposalSourceV1, type SignalWorkspaceIncrementalProjectionProposalV1,
   type SignalWorkspaceIncrementalProjectionSourceV1 } from "./signal-workspace-incremental-projection-v1";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -249,4 +251,227 @@ test("incremental metadata remains computed pending and does not make legacy met
     { membership_metadata: { ...decision.membership_metadata, unit_keys: [] } },
     { membership_metadata: { ...decision.membership_metadata, evidence_fragment: { chunk_index: 0, start: 0, end: 1401, chunk_sha256: sha("text") } } } ])
     assert.throws(() => signalWorkspaceClassificationDecisionSchemaV1.parse({ ...decision, ...change }));
+});
+
+
+// Local receipts only: the future DB reader must certify these references.
+function editorialFixture(count = 1, repair = false) {
+  const original = fixture(count, sonnet, repair), owner = id(70000);
+  const proposals = original.proposals.map((prior, index) => {
+    const packet = JSON.parse(prior.body);
+    delete packet.execution_id;
+    packet.contract_version = "workspace-incremental-editorial-result-v1";
+    packet.context.execution_id = owner;
+    let batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters, sonnet);
+    if (repair) {
+      batch = buildSignalWorkspaceInterpretationRepairBatchV1(batch, { source_call_id: id(800 + index),
+        source_response_sha256: sha("raw invalid response"), diagnostic: "output_invalid" });
+      packet.editorial_repair = batch.editorial_repair;
+    }
+    const body = JSON.stringify(packet), component = original.components[index]!;
+    const source: Extract<SignalWorkspaceIncrementalProposalSourceV1, { kind: "incremental_editorial" }> = {
+      kind: "incremental_editorial", numeric_execution_id: id(3), numeric_checkpoint_digest: sha("numeric checkpoint"),
+      evidence_plan_artifact_id: id(71000), evidence_digest: sha("evidence"), target_binding_digest: sha("target bindings"),
+      request_plan_artifact_id: id(72000), request_plan_digest: sha("request plan"), response_sha256: sha(`raw response${index}`),
+      claims: [{ claim_artifact_id: id(73000 + index), owner_execution_id: owner,
+        component_key: component.component_key, unit: structuredClone(component.units[0]!), model_origin: structuredClone(component.model_origin) }],
+    };
+    return { ...prior, body, artifact_sha256: sha(body), owner_execution_id: owner, request_digest: batch.request_digest, source };
+  });
+  const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: [], execution_id: owner,
+    now: "2026-09-09T00:00:00.000Z", locale: "es-MX", interpretations: proposals.map(proposal => ({
+      artifact_id: proposal.artifact_id, result: JSON.parse(proposal.body).interpretations[0],
+    })) });
+  return { ...original, proposals, topics: merged.definitions.map((definition, index) => ({ taxonomy_term_id: id(74000 + index), definition })) };
+}
+
+test("incremental editorial keeps the actual model, numeric source and paid owner distinct", () => {
+  for (const repair of [false, true]) {
+    const input = editorialFixture(2, repair), before = structuredClone(input);
+    const result = resolveSignalWorkspaceIncrementalBindingsV1(input);
+    assert.equal(result.bindings.length, 2);
+    for (const binding of result.bindings) {
+      assert.equal(binding.model_origin.execution_id, id(2));
+      assert.equal(binding.proposal.owner_execution_id, id(70000));
+      assert.equal(binding.proposal.source?.kind, "incremental_editorial");
+      assert.ok(binding.proposal.source?.source_digest.startsWith("sha256:"));
+      assert.equal(result.by_unit.get(binding.unit_key)?.semantic_current, true);
+      assert.notEqual(binding.birth_membership_digest, binding.proposal.cluster_digest);
+    }
+    assert.deepEqual(input, before, "raw packets, claims and operator definitions stay unchanged");
+  }
+});
+
+test("explicit full_fit and omitted provenance retain the exact historical receipt and binding hashes", () => {
+  for (const configuration of [sonnet, opus]) {
+    const input = fixture(2, configuration), old = resolveSignalWorkspaceIncrementalBindingsV1(input);
+    const explicit = resolveSignalWorkspaceIncrementalBindingsV1({ ...input,
+      proposals: input.proposals.map(proposal => ({ ...proposal, source: { kind: "full_fit" } as const })) });
+    const historicalReceipts = input.proposals.map(proposal => ({ artifact_id: proposal.artifact_id,
+      owner_execution_id: proposal.owner_execution_id, artifact_sha256: proposal.artifact_sha256,
+      call_id: proposal.call_id, request_digest: proposal.request_digest })).sort((a, b) => a.artifact_id < b.artifact_id ? -1 : 1);
+    // Recorded by executing the unmodified f35d78c resolver against this fixture.
+    const pinned = configuration.model === "claude-sonnet-4-6"
+      ? { binding: "sha256:6b9644ffe2f523ea0e2cfd074b4422679319b9875b6be35ec5caa5c006bc753c",
+        cut: "sha256:463c444317245836162a96abab6173920d80f42bcf253f507c0fbec73d7856eb" }
+      : { binding: "sha256:38522e87631f08516cbef5be47d45011ad674733ed487042a7d9602fa4faeec2",
+        cut: "sha256:ffe8c33b758d5d60fe3bb40766862925cc390fd3d678c8f23f923a5892cde3e7" };
+    assert.equal(old.binding_digest, pinned.binding); assert.equal(old.editorial_cut_digest, pinned.cut);
+    assert.equal(old.editorial_cut_digest, digest(historicalReceipts));
+    assert.equal(old.binding_digest, digest({ bindings: old.bindings, editorial_cut_digest: old.editorial_cut_digest,
+      interpretation_coverage: old.interpretation_coverage }));
+    assert.equal(explicit.binding_digest, old.binding_digest);
+    assert.ok(old.bindings.every(binding => !Object.hasOwn(binding.proposal, "source")));
+  }
+});
+
+test("new packet never falls through full_fit and a source cannot substitute the other packet contract", () => {
+  const modern = editorialFixture(), prior = fixture(), proposal = modern.proposals[0]!;
+  const { source: _source, ...withoutProof } = proposal;
+  for (const candidate of [withoutProof, { ...proposal, source: { kind: "full_fit" } },
+    { ...proposal, source: { kind: "unexpected" } }, { ...proposal, source: null },
+    { ...proposal, source: { ...proposal.source, verified: true } },
+    { ...prior.proposals[0]!, source: proposal.source }])
+    assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...modern,
+      proposals: [candidate as SignalWorkspaceIncrementalProjectionProposalV1] }));
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...prior,
+    proposals: [{ ...prior.proposals[0]!, owner_execution_id: id(70000) }] }), /proposal_origin_invalid/);
+  const packet = JSON.parse(proposal.body); packet.execution_id = proposal.owner_execution_id;
+  const body = JSON.stringify(packet);
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...modern,
+    proposals: [{ ...proposal, body, artifact_sha256: sha(body) }] }));
+});
+
+test("editorial claims reject foreign owner, self-owned numeric execution, mismatched birth and model identity", () => {
+  const input = editorialFixture();
+  const changes: Array<(source: typeof input.proposals[number]["source"]) => void> = [
+    source => { source.numeric_execution_id = input.proposals[0]!.owner_execution_id; },
+    source => { source.claims[0]!.owner_execution_id = id(999); },
+    source => { source.claims[0]!.component_key = sha("wrong component"); },
+    source => { source.claims[0]!.unit.birth_membership_digest = sha("wrong birth"); },
+    source => { source.claims[0]!.unit.local_label = 99; },
+    source => { source.claims[0]!.model_origin.execution_id = id(999); },
+    source => { source.claims[0]!.model_origin.model_artifact_sha256 = sha("wrong model"); },
+    source => { source.claims[0]!.unit.unit_key = `open:${id(999)}`; },
+    source => { source.claims = []; },
+    source => { source.claims.push(structuredClone(source.claims[0]!)); },
+  ];
+  for (const mutate of changes) {
+    const changed = structuredClone(input); mutate(changed.proposals[0]!.source);
+    assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1(changed));
+  }
+  const duplicate = editorialFixture(2);
+  duplicate.proposals[1]!.source.claims[0]!.claim_artifact_id = duplicate.proposals[0]!.source.claims[0]!.claim_artifact_id;
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1(duplicate), /editorial_claim_invalid/);
+});
+
+test("every editorial receipt reference enters the new serving digest, without rewriting admission history", () => {
+  const input = editorialFixture(), baseline = resolveSignalWorkspaceIncrementalBindingsV1(input);
+  const changes: Array<(source: typeof input.proposals[number]["source"]) => void> = [
+    source => { source.numeric_execution_id = id(4); },
+    source => { source.numeric_checkpoint_digest = sha("another checkpoint"); },
+    source => { source.evidence_plan_artifact_id = id(71001); },
+    source => { source.evidence_digest = sha("another evidence"); },
+    source => { source.target_binding_digest = sha("another target"); },
+    source => { source.request_plan_artifact_id = id(72001); },
+    source => { source.request_plan_digest = sha("another request plan"); },
+    source => { source.response_sha256 = sha("another raw response"); },
+    source => { source.claims[0]!.claim_artifact_id = id(73999); },
+  ];
+  for (const mutate of changes) {
+    const changed = structuredClone(input); mutate(changed.proposals[0]!.source);
+    const result = resolveSignalWorkspaceIncrementalBindingsV1(changed);
+    // Authenticity of changed refs is a DB obligation; the pure layer must seal them, never ignore them.
+    assert.notEqual(result.editorial_cut_digest, baseline.editorial_cut_digest);
+    assert.notEqual(result.binding_digest, baseline.binding_digest);
+  }
+  assert.equal(Object.hasOwn(input.proposals[0]!.source, "history_cut_digest"), false);
+});
+
+test("new editorial results use the existing draft catalog merge and retain edits, archive and stable Topic identity", () => {
+  const input = editorialFixture(3), before = structuredClone(input.topics);
+  input.topics[0]!.definition.label = "Edited by the brand";
+  input.topics[0]!.definition.discovery_guidance = true;
+  input.topics[1]!.definition.definition = "Different semantic meaning";
+  input.topics[1]!.definition.definition_revision++;
+  input.topics[1]!.definition.definition_digest = sha("edited semantics");
+  input.topics[2]!.definition.lifecycle = "archived";
+  const existing = structuredClone(input.topics.map(topic => topic.definition));
+  const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: existing, execution_id: id(70000),
+    now: "2026-09-09T02:00:00.000Z", locale: "en-US", interpretations: input.proposals.map(proposal => ({
+      artifact_id: proposal.artifact_id, result: JSON.parse(proposal.body).interpretations[0],
+    })) });
+  assert.deepEqual(merged.definitions, existing);
+  assert.equal(merged.definitions.length, 3);
+  const result = resolveSignalWorkspaceIncrementalBindingsV1(input);
+  assert.equal(result.by_unit.get(input.components[0]!.units[0]!.unit_key)?.semantic_current, true);
+  assert.equal(result.by_unit.get(input.components[1]!.units[0]!.unit_key)?.semantic_current, false);
+  assert.equal(result.by_unit.get(input.components[2]!.units[0]!.unit_key)?.archived, true);
+  assert.deepEqual(input.topics.map(topic => topic.definition.term_key), before.map(topic => topic.definition.term_key));
+  assert.ok(before.every(topic => topic.definition.lifecycle === "draft" && topic.definition.discovery_guidance === false
+    && topic.definition.scope === "all_conversations" && !Object.hasOwn(topic.definition, "selected")));
+});
+
+test("editorial bindings mix with inherited full-fit coverage and root projection without precision approval", () => {
+  const value = scenario({ count: 3, pending: true }), modern = editorialFixture(3);
+  const input = { ...value.fixtureInput, topics: [value.fixtureInput.topics[0]!, modern.topics[1]!, modern.topics[2]!],
+    proposals: [value.fixtureInput.proposals[0]!, modern.proposals[1]!] };
+  const bindings = resolveSignalWorkspaceIncrementalBindingsV1(input);
+  assert.equal(bindings.interpretation_coverage.interpreted_unit_count, 2);
+  assert.equal(bindings.interpretation_coverage.expected_unit_count, 3);
+  assert.equal(bindings.interpretation_coverage.complete, false);
+  const outcome = projectSignalWorkspaceIncrementalRootV1({ ...value, bindings,
+    source: { ...value.source, binding_digest: bindings.binding_digest, editorial_cut_digest: bindings.editorial_cut_digest,
+      interpretation_coverage: bindings.interpretation_coverage } });
+  assert.equal(outcome.decisions.length, 2); assert.equal(outcome.has_unresolved_topics, true);
+  assert.ok(outcome.decisions.every(decision => decision.disposition === "pending" && decision.approval_policy_id === null));
+  assert.ok(outcome.decisions.some(decision => decision.membership_metadata?.contract_version === "workspace-computed-incremental-membership-v1"
+    && decision.membership_metadata.proposal_owner_execution_id === id(70000)
+    && decision.membership_metadata.model_origin.execution_id === id(2)));
+});
+
+
+test("incremental editorial cannot claim a model created by its own owner or relabel an Opus receipt", () => {
+  const input = editorialFixture(), changed = structuredClone(input);
+  const component = changed.components[0]!, claim = changed.proposals[0]!.source.claims[0]!;
+  component.model_origin.execution_id = changed.proposals[0]!.owner_execution_id;
+  component.component_key = numericalDigest([component.model_origin.execution_id, component.model_origin.model_artifact_sha256, component.lane]);
+  claim.model_origin = structuredClone(component.model_origin); claim.component_key = component.component_key;
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1(changed), /editorial_claim_invalid/);
+  const prior = structuredClone(input), proposal = prior.proposals[0]!, packet = JSON.parse(proposal.body);
+  const batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters, opus);
+  const legacyConfiguration = { ...proposal, call_configuration: opus, request_digest: batch.request_digest };
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...prior, proposals: [legacyConfiguration] }), /editorial_configuration_invalid/);
+  assert.equal(resolveSignalWorkspaceIncrementalBindingsV1(fixture(1, opus)).bindings.length, 1);
+});
+
+test("new editorial packet retains strict bytes, owner, request, context and citation checks", () => {
+  const input = editorialFixture(), proposal = input.proposals[0]!;
+  for (const change of [{ artifact_sha256: sha("wrong bytes") }, { owner_execution_id: id(999) },
+    { request_digest: sha("wrong request") }, { context_digest: sha("wrong context") }, { body: proposal.body + "\n" }])
+    assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [{ ...proposal, ...change }] }));
+  const packet = JSON.parse(proposal.body); packet.interpretations[0].citations = [sha("unrelated citation")];
+  const body = JSON.stringify(packet);
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input,
+    proposals: [{ ...proposal, body, artifact_sha256: sha(body) }] }), /citation_invalid/);
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input, workspace_id: id(999) }), /proposal_origin_invalid/);
+});
+
+test("multi-unit claim order is canonical but missing or repeated units cannot close a packet", () => {
+  const input = editorialFixture(2), first = input.proposals[0]!, second = input.proposals[1]!;
+  const a = JSON.parse(first.body), b = JSON.parse(second.body);
+  const clusters: SignalWorkspaceInterpretationClusterV1[] = [...a.clusters, ...b.clusters];
+  clusters.sort((left, right) => left.cluster_id < right.cluster_id ? -1 : 1);
+  const batch = buildSignalWorkspaceInterpretationBatchV1(a.context, clusters, sonnet);
+  const byUnit = new Map([...a.interpretations, ...b.interpretations].map(result => [result.cluster_id, result]));
+  const body = JSON.stringify({ ...a, clusters, interpretations: clusters.map(cluster => byUnit.get(cluster.cluster_id)) });
+  const proposal = { ...first, body, artifact_sha256: sha(body), request_digest: batch.request_digest,
+    source: { ...first.source, claims: [...first.source.claims, ...second.source.claims] } };
+  const expected = resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [proposal] });
+  const reversed = { ...proposal, source: { ...proposal.source, claims: [...proposal.source.claims].reverse() } };
+  assert.equal(resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [reversed] }).binding_digest, expected.binding_digest);
+  const duplicate = { ...proposal, source: { ...proposal.source, claims: [proposal.source.claims[0]!, proposal.source.claims[0]!] } };
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [duplicate] }), /editorial_claim_invalid/);
+  const foreign = structuredClone(proposal); foreign.source.claims[1]!.unit.unit_key = `guided:${id(999)}`;
+  assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [foreign] }), /editorial_claim_coverage_invalid/);
 });
