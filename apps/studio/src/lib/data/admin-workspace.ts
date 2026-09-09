@@ -1,3 +1,4 @@
+import { adminDashboardCorpusTotals, adminDashboardReceiptPriority } from "./admin-dashboard-presentation";
 import { pool } from "@/lib/db";
 import { loadAdminWorkspaceCorpusSummariesV1, type AdminWorkspaceCorpusSummaryV1 } from "@noisia/db";
 
@@ -165,6 +166,7 @@ export async function getAdminDashboard(user: AdminUser) {
     totals: {
       brands: brands.length,
       governedMentions: brands.reduce((total, brand) => total + brand.governedMentions, 0),
+      ...adminDashboardCorpusTotals(brands),
       sourcesRequiringAttention: brands.reduce(
         (total, brand) => total + brand.staleSources + brand.failedSources,
         0
@@ -481,14 +483,15 @@ function brandPriorities(brand: AdminBrandWorkspaceRow) {
       state: "warning"
     });
   }
-  if (brand.coverageState !== "good") {
+  const receiptPriority = adminDashboardReceiptPriority(brand);
+  if (receiptPriority) {
     items.push({
       brandId: brand.brandId,
       brandName: brand.brandName,
-      code: "coverage_partial",
-      count: brand.governedMentions,
+      code: receiptPriority.code,
+      count: brand.corpus?.received_unique_roots ?? 0,
       href: `/studio/brands/${brand.brandId}/data`,
-      state: brand.coverageState
+      state: receiptPriority.state
     });
   }
   if (brand.reportsNeedingReview > 0) {

@@ -2132,20 +2132,62 @@
     "quality": { "good": "Saludable", "warning": "Requiere revisión", "danger": "Requiere acción", "not_available": "No disponible" },
     "coverage": { "good": "Con cobertura", "warning": "Parcial", "danger": "Requiere acción", "not_available": "No disponible", "notAvailable": "Sin cobertura", "noMentions": "Sin menciones gobernadas", "mentions": "{count} menciones gobernadas" },
     "dashboard": {
-      "eyebrow": "Operación", "title": "Dashboard", "subtitle": "Trabajo priorizado sobre datos y reportes propiedad del workspace.",
-      "actions": { "data": "Abrir datos", "createBrand": "Crear marca", "review": "Revisar", "allBrands": "Todas las marcas" },
+      "eyebrow": "Operación",
+      "title": "Dashboard",
+      "subtitle": "Datos recibidos y seguimiento de la operación de tus marcas.",
+      "actions": {
+        "data": "Abrir datos",
+        "createBrand": "Crear marca",
+        "review": "Revisar",
+        "allBrands": "Todas las marcas"
+      },
       "summary": {
-        "brands": "Marcas", "brandsHint": "Workspaces internos en alcance", "mentions": "Menciones gobernadas", "mentionsHint": "Poblaciones primary-brand actuales",
-        "sources": "Problemas de fuentes", "sourcesHint": "Fuentes desactualizadas o fallidas", "review": "Reportes en Review", "reviewHint": "Corridas esperando decisión"
+        "brands": "Marcas",
+        "brandsHint": "Workspaces internos en alcance",
+        "mentions": "Menciones recibidas",
+        "mentionsHint": "Suma por marca; recibirlas no implica análisis completo.",
+        "sources": "Problemas de fuentes",
+        "sourcesHint": "Fuentes desactualizadas o fallidas",
+        "review": "Reportes en Review",
+        "reviewHint": "Corridas esperando decisión",
+        "receiptCounts": "{files, number} archivos medidos · {rows, number} filas leídas",
+        "partialReceipt": "{count, plural, one {# marca tiene recepción parcial o no disponible.} other {# marcas tienen recepción parcial o no disponible.}}"
       },
-      "priorities": { "title": "Prioridades", "subtitle": "Primero las acciones de mayor impacto.", "emptyTitle": "Sin acciones urgentes", "emptyBody": "Los checks actuales del workspace están saludables." },
+      "priorities": {
+        "title": "Prioridades",
+        "subtitle": "Primero las acciones de mayor impacto.",
+        "emptyTitle": "Sin acciones registradas",
+        "emptyBody": "No hay acciones de recepción, fuentes o reportes registradas. Consulta el análisis y su progreso desde cada marca."
+      },
       "priority": {
-        "workspace_missing": "La inicialización del workspace está incompleta.", "source_failed": "{count} fuentes fallaron.", "source_stale": "{count} fuentes están desactualizadas.",
-        "imports_pending": "{count} imports están pendientes.", "coverage_partial": "La cobertura primary-brand requiere atención.", "reports_needing_review": "{count} corridas requieren Review."
+        "workspace_missing": "La inicialización del workspace está incompleta.",
+        "source_failed": "{count} fuentes fallaron.",
+        "source_stale": "{count} fuentes están desactualizadas.",
+        "imports_pending": "{count} imports están pendientes.",
+        "reports_needing_review": "{count} corridas requieren Review.",
+        "receipt_unavailable": "No se puede comprobar la recepción de datos de esta marca.",
+        "receipt_attention": "La recepción tiene inconsistencias que requieren revisión.",
+        "receipt_partial": "Hay datos recibidos y fuentes cuya recepción aún no se puede comprobar.",
+        "receipt_empty": "Todavía no hay archivos recibidos. Abre Datos para importar menciones."
       },
-      "queue": { "title": "Cola operativa", "subtitle": "Trabajo actual que requiere seguimiento.", "pendingImports": "Imports pendientes", "reportReview": "Reportes en Review", "sourceIssues": "Problemas de fuentes", "workspaceCount": "Workspaces inicializados" },
-      "workspaces": { "title": "Estado de los workspaces", "subtitle": "Todas las marcas, ordenadas para mostrar primero las que requieren atención." },
-      "attention": { "title": "Marcas que requieren atención", "subtitle": "Estado operativo desde datos canónicos, fuentes y registro de reportes.", "emptyTitle": "Todo en orden", "emptyBody": "Ninguna marca cumple actualmente una regla de atención." }
+      "queue": {
+        "title": "Cola operativa",
+        "subtitle": "Trabajo actual que requiere seguimiento.",
+        "pendingImports": "Imports pendientes",
+        "reportReview": "Reportes en Review",
+        "sourceIssues": "Problemas de fuentes",
+        "workspaceCount": "Workspaces inicializados"
+      },
+      "workspaces": {
+        "title": "Estado de los workspaces",
+        "subtitle": "Menciones recibidas, fechas observadas y reportes; el análisis se consulta desde cada marca."
+      },
+      "attention": {
+        "title": "Marcas que requieren atención",
+        "subtitle": "Estado operativo desde datos canónicos, fuentes y registro de reportes.",
+        "emptyTitle": "Aún no hay marcas",
+        "emptyBody": "Crea una marca para empezar a recibir sus datos."
+      }
     },
     "brands": {
       "eyebrow": "Administración de workspaces", "title": "Marcas", "subtitle": "{count} marcas y sus datos recibidos.",

@@ -2132,20 +2132,62 @@
     "quality": { "good": "Healthy", "warning": "Needs review", "danger": "Action required", "not_available": "Not available" },
     "coverage": { "good": "Covered", "warning": "Partial", "danger": "Action required", "not_available": "Not available", "notAvailable": "No coverage", "noMentions": "No governed mentions", "mentions": "{count} governed mentions" },
     "dashboard": {
-      "eyebrow": "Operations", "title": "Dashboard", "subtitle": "Prioritized work across workspace-owned data and reports.",
-      "actions": { "data": "Open data", "createBrand": "Create brand", "review": "Review", "allBrands": "All brands" },
+      "eyebrow": "Operations",
+      "title": "Dashboard",
+      "subtitle": "Received data and operational follow-up for your brands.",
+      "actions": {
+        "data": "Open data",
+        "createBrand": "Create brand",
+        "review": "Review",
+        "allBrands": "All brands"
+      },
       "summary": {
-        "brands": "Brands", "brandsHint": "Internal workspaces in scope", "mentions": "Governed mentions", "mentionsHint": "Current primary-brand populations",
-        "sources": "Source issues", "sourcesHint": "Stale or failed sources", "review": "Reports in Review", "reviewHint": "Runs awaiting a decision"
+        "brands": "Brands",
+        "brandsHint": "Internal workspaces in scope",
+        "mentions": "Received mentions",
+        "mentionsHint": "Sum across brands; receipt does not mean analysis is complete.",
+        "sources": "Source issues",
+        "sourcesHint": "Stale or failed sources",
+        "review": "Reports in Review",
+        "reviewHint": "Runs awaiting a decision",
+        "receiptCounts": "{files, number} measured files · {rows, number} rows read",
+        "partialReceipt": "{count, plural, one {# brand has partial or unavailable receipt data.} other {# brands have partial or unavailable receipt data.}}"
       },
-      "priorities": { "title": "Priorities", "subtitle": "The highest-impact actions first.", "emptyTitle": "No urgent actions", "emptyBody": "Current workspace checks are healthy." },
+      "priorities": {
+        "title": "Priorities",
+        "subtitle": "The highest-impact actions first.",
+        "emptyTitle": "No recorded actions",
+        "emptyBody": "No receipt, source or report actions are recorded. Open a brand to check analysis and its progress."
+      },
       "priority": {
-        "workspace_missing": "Workspace initialization is incomplete.", "source_failed": "{count} sources failed.", "source_stale": "{count} sources are out of date.",
-        "imports_pending": "{count} imports are pending.", "coverage_partial": "Primary-brand coverage needs attention.", "reports_needing_review": "{count} report runs need Review."
+        "workspace_missing": "Workspace initialization is incomplete.",
+        "source_failed": "{count} sources failed.",
+        "source_stale": "{count} sources are out of date.",
+        "imports_pending": "{count} imports are pending.",
+        "reports_needing_review": "{count} report runs need Review.",
+        "receipt_unavailable": "Data receipt cannot be verified for this brand.",
+        "receipt_attention": "Receipt inconsistencies require review.",
+        "receipt_partial": "Some data has been received, while receipt from other sources cannot yet be verified.",
+        "receipt_empty": "No files have been received yet. Open Data to import mentions."
       },
-      "queue": { "title": "Operational queue", "subtitle": "Current work requiring follow-up.", "pendingImports": "Pending imports", "reportReview": "Reports in Review", "sourceIssues": "Source issues", "workspaceCount": "Initialized workspaces" },
-      "workspaces": { "title": "Workspace status", "subtitle": "All brands, ordered to show those requiring attention first." },
-      "attention": { "title": "Brands requiring attention", "subtitle": "Operational state from canonical data, sources and report registry.", "emptyTitle": "All clear", "emptyBody": "No brand currently meets an attention rule." }
+      "queue": {
+        "title": "Operational queue",
+        "subtitle": "Current work requiring follow-up.",
+        "pendingImports": "Pending imports",
+        "reportReview": "Reports in Review",
+        "sourceIssues": "Source issues",
+        "workspaceCount": "Initialized workspaces"
+      },
+      "workspaces": {
+        "title": "Workspace status",
+        "subtitle": "Received mentions, observed dates and reports; open a brand to check its analysis."
+      },
+      "attention": {
+        "title": "Brands requiring attention",
+        "subtitle": "Operational state from canonical data, sources and report registry.",
+        "emptyTitle": "No brands yet",
+        "emptyBody": "Create a brand to start receiving its data."
+      }
     },
     "brands": {
       "eyebrow": "Workspace administration", "title": "Brands", "subtitle": "{count} brands and their received data.",
