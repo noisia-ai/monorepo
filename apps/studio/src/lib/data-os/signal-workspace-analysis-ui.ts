@@ -27,6 +27,7 @@ export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: stri
   | { action: "retry"; run_id: string }
   | { action: "retry_progress"; run_id: string }
   | { action: "retry_numeric"; run_id: string }
+  | { action: "retry_incremental_delivery"; run_id: string }
   | WorkspaceInterpretationAdmissionRequest;
 export type PendingWorkspaceAnalysis = { version: 1; workspace_id: string; request_scope: string;
   key: string; body: WorkspaceAnalysisRequest };
@@ -118,7 +119,7 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     return validWorkspaceAdmissionRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
-    : !["retry", "retry_progress", "retry_numeric"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
+    : !["retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;
 }
 export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null) {
@@ -180,6 +181,18 @@ export function workspaceAnalysisNumericRequestConfirmed(status: WorkspaceAnalys
     && status.request_scope === request.request_scope && receipt?.action === "retry_numeric"
     && sameNumericExecution(receipt.execution_id, request.body.run_id) && receipt.idempotency_key === request.key;
 }
+/** Delivery resumes stored associations only; editorial money/authority is a separate request. */
+export function workspaceAnalysisCanRetryDelivery(status: WorkspaceAnalysisStatus | null) {
+  const update = status?.update;
+  return Boolean(status?.can_execute && update?.numeric.status === "ready" && update.numeric.is_current
+    && !update.has_pending_work && update.delivery?.phase && update.delivery.retry_available === true);
+}
+export function workspaceAnalysisDeliveryRequestConfirmed(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
+  const receipt = status.update?.request_delivery;
+  return request.body.action === "retry_incremental_delivery" && status.workspace_id === request.workspace_id
+    && status.request_scope === request.request_scope && receipt?.action === "retry_incremental_delivery"
+    && sameNumericExecution(receipt.execution_id, request.body.run_id) && receipt.idempotency_key === request.key;
+}
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
   if (status.workspace_id !== request.workspace_id || status.request_scope !== request.request_scope
     || !status.can_execute) return false;
@@ -187,6 +200,8 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
   // body. Expired deadlines or changed CAS must be rejected by the server, never
   // silently replaced with a new authorization or left impossible to resolve.
   if (isWorkspaceAdmissionAction(request.body)) return !status.admission?.request;
+  if (request.body.action === "retry_incremental_delivery") return !status.update?.request_delivery
+    && sameNumericExecution(status.update?.numeric.execution_id, request.body.run_id) && workspaceAnalysisCanRetryDelivery(status);
   if (request.body.action === "retry_numeric") return !status.update?.request_numeric
     && sameNumericExecution(status.update?.numeric.execution_id, request.body.run_id) && workspaceAnalysisCanRetryNumeric(status);
   if (status.request_run) return false;
@@ -200,6 +215,7 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_incremental_projection_delivery_unavailable") return "deliveryUnavailable";
   if (code === "workspace_engine_interpretation_admission_changed" || code === "workspace_engine_interpretation_admission_cap_or_deadline_invalid") return "admissionChanged";
   if (code === "workspace_engine_interpretation_admission_unavailable") return "admissionUnavailable";
   if (code === "workspace_engine_interpretation_daily_authority_expired") return "authorizationExpired";

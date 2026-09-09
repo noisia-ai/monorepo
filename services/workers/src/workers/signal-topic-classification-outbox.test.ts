@@ -89,7 +89,7 @@ test("topic classification outbox makes an exhausted queue failure visible on th
   const result = await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule, max_attempts: 8 });
   assert.equal(result.dead_lettered, 1);
   assert.ok(statements.some((sql) => sql.includes("status='dead_letter'")
-    && sql.includes("error_code='topic_queue_unavailable'")));
+    && sql.includes("ELSE 'topic_queue_unavailable' END")));
 });
 
 test("workspace topic execution is routed to its complete-chunk worker and never the legacy handler", async () => {
@@ -214,4 +214,23 @@ test("incremental classification routes only its explicit source contract and re
   assert.throws(() => route("workspace-topic-classification-v1", true, "execution", "unknown-projection"), /contract_unknown/u);
   for (const contract of ["legacy-topic-catalog-v1", "workspace-topic-computation-v1", "workspace-topic-classification-v1"])
     assert.throws(() => route(contract, true, "incremental_projection"), /contract_unknown/u);
+});
+
+
+test("incremental exhausted dispatch preserves proven transport cause without granting retry to generic errors", async () => {
+  for (const code of ['ECONNRESET', null]) {
+    const queries: Array<{sql:string;params:unknown[]|undefined}> = [];
+    const database = {query:async(sql:string,params?:unknown[])=>{
+      queries.push({sql,params});
+      return sql.includes('RETURNING outbox.id::text')?{rows:[{...claimed,attempt_count:8,input_contract:'workspace-topic-classification-v1',
+        dispatch_kind:'execution',source_projection:true,source_projection_contract:'workspace-topic-incremental-projection-v1'}],rowCount:1}:{rows:[],rowCount:1};
+    }};
+    await drainSignalTopicClassificationOutboxV1({database:database as never,schedule,queue:{getJob:async()=>null,
+      add:async()=>{throw Object.assign(new Error('private transport detail'),{code});}}});
+    const exhausted=queries.find(row=>row.sql.includes('WITH exhausted'))!;
+    assert.equal(exhausted.params?.[2],code?'workspace_classification_transport_unavailable':'Error');
+    assert.ok(exhausted.sql.includes('THEN exhausted.error_code'));
+    assert.ok(queries[0]!.sql.includes("COALESCE(error_code,'dispatch_attempts_exhausted')"));
+    assert.ok(queries.some(row=>row.sql.includes("dispatch_kind<>'incremental_projection' OR status<>'failed' OR error_code IN")));
+  }
 });

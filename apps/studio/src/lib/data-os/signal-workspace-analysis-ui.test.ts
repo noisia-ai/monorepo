@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJourney";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanRetryDelivery, workspaceAnalysisDeliveryRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, validWorkspaceNumericReadiness, workspaceNumericAdmissionPoll, workspaceNumericReadinessMessage, type WorkspaceNumericReadiness, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
@@ -566,5 +566,83 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(blocked.includes(t.noInterpretation));
     const start = (blocked.match(/<button\b[^]*?<\/button>/gu) ?? []).find((button) => button.includes(t.start));
     assert.ok(start); assert.match(start, /^<button[^>]*disabled/u);
+  });
+}
+
+const deliveryFailure: WorkspaceAnalysisStatus = { ...numericFailure, update: { ...incrementalUpdate, has_pending_work: false,
+  numeric: { ...incrementalUpdate.numeric, execution_id: "abcdefab-cdef-4abc-8def-abcdefabcdef" },
+  derivation: { status: "dead_letter", error_code: "workspace_engine_storage_transport_failed" },
+  delivery: { phase: "derivation", retry_available: true, error_code: "workspace_engine_storage_transport_failed" }, request_delivery: null } };
+const deliveryRequest: PendingWorkspaceAnalysis = { ...pending, key: "delivery-retry-request",
+  body: { action: "retry_incremental_delivery", run_id: deliveryFailure.update!.numeric.execution_id } };
+test("incremental delivery retries only ready/current numeric output with server eligibility and no pending work", () => {
+  assert.equal(workspaceAnalysisCanRetryDelivery(deliveryFailure), true);
+  assert.equal(workspaceAnalysisCanRetryNumeric(deliveryFailure), false);
+  assert.equal(workspaceAnalysisCanRetryDelivery({ ...deliveryFailure, can_execute: false }), false);
+  assert.equal(workspaceAnalysisCanRetryDelivery({ ...deliveryFailure, latest_run: { ...ready, outcome_unknown: true },
+    preflight: { ...status.preflight, cost: { ...status.preflight.cost, claude: { estimated_upper_micro_usd: null,
+      maximum_cap_micro_usd: 0, provider_available: false } } } }), true, "numeric delivery does not borrow editorial authority or settle its unknown costs");
+  for (const patch of [{ delivery: undefined }, { delivery: { phase: null, retry_available: true, error_code: null } },
+    { delivery: { phase: "projection" as const, retry_available: false, error_code: "integrity_invalid" } }, { has_pending_work: true }])
+    assert.equal(workspaceAnalysisCanRetryDelivery({ ...deliveryFailure, update: { ...deliveryFailure.update!, ...patch } }), false);
+  for (const patch of [{ status: "failed" as const }, { status: "running" as const }, { is_current: false }])
+    assert.equal(workspaceAnalysisCanRetryDelivery({ ...deliveryFailure, update: { ...deliveryFailure.update!,
+      numeric: { ...deliveryFailure.update!.numeric, ...patch } } }), false);
+});
+test("delivery request has no client phase/cap/generation, and exact receipt confirms historical acceptance without authorizing replay", () => {
+  assert.deepEqual(parsePendingWorkspaceAnalysis(deliveryRequest, id, status.request_scope), deliveryRequest);
+  for (const patch of [{ phase: "projection" }, { generation_id: id }, { claude_cap_micro_usd: 0 }, { binding_artifact_id: id }])
+    assert.equal(parsePendingWorkspaceAnalysis({ ...deliveryRequest, body: { ...deliveryRequest.body, ...patch } }, id, status.request_scope), null);
+  const request = { ...deliveryRequest, body: { action: "retry_incremental_delivery" as const,
+    run_id: deliveryFailure.update!.numeric.execution_id.toUpperCase() } };
+  const before = JSON.stringify(request);
+  const receipt = { action: "retry_incremental_delivery" as const, execution_id: deliveryFailure.update!.numeric.execution_id,
+    idempotency_key: deliveryRequest.key, phase: "projection" as const, projection_execution_id: id, generation_id: id };
+  const accepted = { ...deliveryFailure, update: { ...deliveryFailure.update!, request_delivery: receipt,
+    numeric: { ...deliveryFailure.update!.numeric, execution_id: id, is_current: false },
+    delivery: { phase: "projection" as const, retry_available: false, error_code: "delivery_failed_again" } } };
+  assert.equal(workspaceAnalysisDeliveryRequestConfirmed(accepted, request), true, "accepted operation may already have failed or become stale");
+  assert.equal(workspaceAnalysisCanReplay(accepted, request), false);
+  assert.equal(workspaceAnalysisDeliveryRequestConfirmed({ ...deliveryFailure, request_run: ready }, request), false);
+  assert.equal(workspaceAnalysisDeliveryRequestConfirmed({ ...accepted, request_scope: "another-actor" }, request), false);
+  assert.equal(workspaceAnalysisDeliveryRequestConfirmed({ ...accepted, workspace_id: "another-workspace" }, request), false);
+  for (const patch of [{ execution_id: id }, { idempotency_key: "another-key" }])
+    assert.equal(workspaceAnalysisDeliveryRequestConfirmed({ ...accepted, update: { ...accepted.update,
+      request_delivery: { ...receipt, ...patch } } }, request), false);
+  assert.equal(workspaceAnalysisCanReplay(deliveryFailure, request), true);
+  assert.equal(workspaceAnalysisCanReplay(deliveryFailure, { ...request, body: { ...request.body, run_id: id } }), false,
+    "the old editorial run cannot be sent as the numeric delivery target");
+  assert.equal(JSON.stringify(request), before);
+});
+test("delivery decoder rejects malformed authority and request receipts while preserving absent legacy fields", () => {
+  assert.equal(validWorkspaceAnalysisStatus(deliveryFailure), true);
+  for (const delivery of [{ phase: "fit", retry_available: true, error_code: null },
+    { phase: null, retry_available: true, error_code: null }, { phase: "projection", retry_available: "true", error_code: null },
+    { phase: "derivation", retry_available: false, error_code: 7 }])
+    assert.equal(validWorkspaceAnalysisUpdate({ ...deliveryFailure.update!, delivery }), false);
+  const receipt = { action: "retry_incremental_delivery", execution_id: id, idempotency_key: "delivery-request-key",
+    phase: "derivation", projection_execution_id: null, generation_id: null };
+  assert.equal(validWorkspaceAnalysisUpdate({ ...deliveryFailure.update!, request_delivery: receipt }), true);
+  for (const patch of [{ action: "retry_numeric" }, { execution_id: "wrong" }, { phase: "fitting" }, { generation_id: 3 }, { idempotency_key: "" }])
+    assert.equal(validWorkspaceAnalysisUpdate({ ...deliveryFailure.update!, request_delivery: { ...receipt, ...patch } }), false);
+});
+for (const locale of ["es-MX", "en-US"]) {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const copy = messages.AdminWorkspace.topics.analysis;
+  const provider = { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>;
+  test(`${locale}: exhausted numeric delivery preserves Signal coverage and old editorial receipt without implying another paid run`, () => {
+    for (const phase of ["derivation", "projection"] as const) {
+      const update = { ...deliveryFailure.update!, delivery: { ...deliveryFailure.update!.delivery!, phase },
+        projection: phase === "projection" ? { ...incrementalUpdate.numeric, execution_id: id, generation_id: id, status: "failed" as const } : null };
+      const html = renderToStaticMarkup(createElement(NextIntlClientProvider, provider, createElement(WorkspaceAnalysisControls,
+        { brandId: "example", workspaceId: id, catalogVersion: "1", signalHref: "/signal/example/topics",
+          initial: { ...deliveryFailure, update, latest_run: progressiveRun } })));
+      assert.ok(html.includes(copy.update.retryDelivery)); assert.ok(html.includes(copy.update.retryDeliveryBody));
+      assert.ok(html.indexOf(copy.update.retryDelivery) < html.indexOf(copy.update.editorial), "delivery action stays within its own update before editorial history");
+      assert.ok(html.includes(phase === "derivation" ? copy.update.failureDerivation : copy.update.failureProjection));
+      assert.ok(html.includes(copy.update.previousServing)); assert.ok(html.includes(copy.update.openSignal));
+      assert.ok(html.includes(copy.errors.authorizationExpired), "original error and monetary receipts remain visible");
+      assert.ok(html.includes("13")); assert.ok(html.includes("357"));
+    }
   });
 }

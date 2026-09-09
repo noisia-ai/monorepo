@@ -25,6 +25,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const update = status?.update;
   const admission = status?.numeric_readiness;
   const admissionMessage = admission ? workspaceNumericReadinessMessage(admission) : null;
+  const deliveryReplay = Boolean(analysis.canReplay && analysis.pending?.body.action === "retry_incremental_delivery");
   const updateState = update ? analysis.error === "load" ? "unverified" : workspaceAnalysisUpdateState(update) : null;
   const associations = workspaceAnalysisAssociationReceipt(workspaceId, status?.request_scope ?? "", update);
   const onAssociations = useRef(onAssociationsAvailable); onAssociations.current = onAssociationsAvailable;
@@ -89,7 +90,14 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           {t("update.rootProgress", { done: update.projection.processed_roots, total: update.projection.expected_roots })}
         </p> : null}
         {updateState === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(update.numeric.status === "failed"
-          ? "update.failureNumeric" : update.projection?.status === "failed" ? "update.failureProjection" : "update.failureDerivation")}</p> : null}
+          ? "update.failureNumeric" : update.delivery?.phase === "derivation" ? "update.failureDerivation"
+          : update.delivery?.phase === "projection" || update.projection?.status === "failed" ? "update.failureProjection" : "update.failureDerivation")}</p> : null}
+        {analysis.canRetryDelivery || deliveryReplay ? <>
+          <p className="admin-drawer-form__hint">{t("update.retryDeliveryBody")}</p>
+          <button className="admin-button admin-button--primary" type="button"
+            onClick={() => void (deliveryReplay ? analysis.replay() : analysis.retryDelivery())}>
+            <ArrowClockwise aria-hidden size={15} />{t("update.retryDelivery")}</button>
+        </> : null}
         {update.serving ? <>
           {updateState !== "ready" ? <p className="admin-drawer-form__hint">{t("update.previousServing")}</p> : null}
           {update.serving.interpretation_coverage ? <p className="admin-drawer-form__hint">{t("update.interpretation", {
@@ -154,7 +162,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       {status?.admission ? <WorkspaceInterpretationAdmissionControls status={status} canAuthorize={analysis.canAuthorizeAdmission}
         canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting}
         pendingRequest={analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? analysis.pending.body : null} onSubmit={analysis.submitAdmission} /> : null}
-      {analysis.pending && (isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
+      {analysis.pending && (isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_incremental_delivery" ? !status?.update?.request_delivery : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
       {analysis.error ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(analysis.error)}`)}</p> : null}
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
       {analysis.canRetry && run?.transport_recovery_eligible ? <p className="admin-drawer-form__hint">{t("transportRetry")}</p> : null}
@@ -166,8 +174,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           <ArrowClockwise aria-hidden size={15} />{t("retryCatalogSave")}</button> : null}
         {analysis.canRetry ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
           <ArrowClockwise aria-hidden size={15} />{t("retry")}</button>
-          : analysis.canReplay ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
-            <ArrowClockwise aria-hidden size={15} />{t(analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? "admissionGrant.replay" : analysis.pending?.body.action === "retry_numeric" ? "update.retry" : analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
+          : analysis.canReplay && !deliveryReplay ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
+            <ArrowClockwise aria-hidden size={15} />{t(analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? "admissionGrant.replay" : analysis.pending?.body.action === "retry_incremental_delivery" ? "update.retryDelivery" : analysis.pending?.body.action === "retry_numeric" ? "update.retry" : analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
             : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
                 : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}

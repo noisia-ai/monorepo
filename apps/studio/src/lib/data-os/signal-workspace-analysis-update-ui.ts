@@ -1,8 +1,11 @@
 /** Read-only update descriptor. Editorial requests and their monetary receipts
  * remain in the original analysis contract, never inferred from this stage. */
 import type { SignalWorkspaceAnalysisUpdateV1, SignalWorkspaceNumericReadinessV1 } from "@noisia/db";
-export type WorkspaceAnalysisUpdate = Omit<SignalWorkspaceAnalysisUpdateV1, "numeric" | "request_numeric"> & {
+export type WorkspaceAnalysisUpdate = Omit<SignalWorkspaceAnalysisUpdateV1, "numeric" | "request_numeric" | "delivery" | "request_delivery"> & {
   numeric: Omit<SignalWorkspaceAnalysisUpdateV1["numeric"], "retry_available"> & { retry_available?: boolean };
+  delivery?: { phase: "derivation" | "projection" | null; retry_available: boolean; error_code: string | null };
+  request_delivery?: { action: "retry_incremental_delivery"; execution_id: string; idempotency_key: string;
+    phase: "derivation" | "projection"; projection_execution_id: string | null; generation_id: string | null } | null;
   request_numeric?: { action: "retry_numeric"; execution_id: string; idempotency_key: string } | null;
 };
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === "object" && !Array.isArray(v));
@@ -21,6 +24,15 @@ export function validWorkspaceAnalysisUpdate(value: unknown): value is Workspace
     || !(value.request_numeric === undefined || value.request_numeric === null || object(value.request_numeric)
       && value.request_numeric.action === "retry_numeric" && uuid(value.request_numeric.execution_id)
       && typeof value.request_numeric.idempotency_key === "string" && /^[A-Za-z0-9._:-]{8,200}$/u.test(value.request_numeric.idempotency_key))
+    || !(value.delivery === undefined || object(value.delivery) && [null, "derivation", "projection"].includes(value.delivery.phase as string | null)
+      && typeof value.delivery.retry_available === "boolean" && error(value.delivery.error_code)
+      && (!value.delivery.retry_available || value.delivery.phase !== null))
+    || !(value.request_delivery === undefined || value.request_delivery === null || object(value.request_delivery)
+      && value.request_delivery.action === "retry_incremental_delivery" && uuid(value.request_delivery.execution_id)
+      && typeof value.request_delivery.idempotency_key === "string" && /^[A-Za-z0-9._:-]{8,200}$/u.test(value.request_delivery.idempotency_key)
+      && ["derivation", "projection"].includes(String(value.request_delivery.phase))
+      && (value.request_delivery.projection_execution_id === null || uuid(value.request_delivery.projection_execution_id))
+      && (value.request_delivery.generation_id === null || uuid(value.request_delivery.generation_id)))
     || typeof value.numeric.phase !== "string" || !integer(value.numeric.progress) || value.numeric.progress > 100
     || !(value.projection === null || progress(value.projection) && uuid(value.projection.generation_id))
     || !(value.derivation === null || object(value.derivation) && typeof value.derivation.status === "string" && error(value.derivation.error_code))) return false;

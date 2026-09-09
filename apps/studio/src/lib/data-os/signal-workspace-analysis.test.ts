@@ -19,7 +19,7 @@ function authorityDatabase(authority: unknown) {
 test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
   for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
     { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
-    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric"]) {
+    for (const action of ["load", "start", "retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"]) {
       const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
       await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
         idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action, run_id: id } }),
@@ -294,4 +294,12 @@ test("stopping sends reaches the admin store even while the provider is disabled
       expected_admission_operation_id: id } }), error => error === unavailableDatabase);
     assert.equal(connections, 1);
   } finally { if (prior === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = prior; }
+});
+
+test("incremental delivery accepts only the numeric execution target and rejects client phase, budget or generation overrides", () => {
+  const request = { action: "retry_incremental_delivery", run_id: id };
+  assert.equal(validateWorkspaceAnalysisRequestV1(request), true);
+  for (const patch of [{ phase: "projection" }, { generation_id: id }, { binding_artifact_id: id },
+    { claude_cap_micro_usd: 0 }, { actor_user_id: "other" }, { run_id: "invalid" }])
+    assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, ...patch }), false);
 });

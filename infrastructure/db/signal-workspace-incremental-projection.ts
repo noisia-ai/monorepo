@@ -229,7 +229,7 @@ export async function claimSignalWorkspaceIncrementalProjectionV1(args:{database
   if(derivation.derivation_digest!==binding.metadata.derivation_digest||derivation.completed_projection?.binding_artifact_id!==binding.artifact_id
    ||derivation.completed_projection.projection_execution_id!==lease.execution_id)return fail('inputs_changed');
   return{lease,source:projectionSource,artifacts,derivation};});}
- catch(error){await failSignalWorkspaceClassificationV1({database:args.database,lease,error_code:'workspace_classification_projection_source_invalid'});throw error;}
+ catch(error){await failSignalWorkspaceClassificationV1({database:args.database,lease,error_code:signalWorkspaceIncrementalDeliveryTransportErrorV1(error)??'workspace_classification_projection_source_invalid'});throw error;}
 }
 
 /** The ready numerical checkpoint is the durable producer. Only the latest
@@ -255,6 +255,8 @@ export async function scheduleSignalWorkspaceIncrementalProjectionsV1(args:{data
    SELECT candidate.*,dispatch.worker_job_id observed_job_id FROM candidates candidate
    LEFT JOIN signal_topic_classification_outbox dispatch ON dispatch.execution_id=candidate.execution_id AND dispatch.dispatch_kind='incremental_projection'
    WHERE (dispatch.id IS NULL OR dispatch.worker_job_id<>candidate.worker_job_id OR dispatch.attempt_count<8)
+    AND (dispatch.id IS NULL OR dispatch.worker_job_id<>candidate.worker_job_id OR dispatch.status NOT IN('failed','dead_letter')
+     OR dispatch.error_code IN('workspace_incremental_projection_transport_unavailable','workspace_classification_transport_unavailable'))
     AND NOT EXISTS(SELECT 1 FROM analysis_artifacts binding JOIN signal_topic_catalog_executions projection
      ON projection.workspace_id=binding.workspace_id AND projection.input_snapshot->'source_projection'->>'binding_artifact_id'=binding.id::text
      WHERE binding.engine_execution_id=candidate.execution_id AND binding.metadata->>'contract_version'='workspace-incremental-binding-index-v1'
@@ -288,9 +290,103 @@ export async function scheduleSignalWorkspaceIncrementalProjectionsV1(args:{data
  });
 }
 
+/** Only observed connection failures qualify; no generic/semantic error is a retry grant. */
+export const SIGNAL_WORKSPACE_INCREMENTAL_DELIVERY_TRANSPORT_ERRORS_V1 = [
+ 'workspace_incremental_projection_transport_unavailable', 'workspace_classification_transport_unavailable'
+] as const;
+export function signalWorkspaceIncrementalDeliveryTransportErrorV1(error:unknown):string|null {
+ const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
+ return ['ECONNRESET','ETIMEDOUT','ECONNREFUSED','EPIPE','ENOTFOUND','57P01','57P02','57P03','08000','08003','08006','40001','40P01'].includes(code)
+  ?'workspace_classification_transport_unavailable':null;
+}
+export type SignalWorkspaceIncrementalDeliveryReceiptV1={execution_id:string;phase:'derivation'|'projection';
+ binding_artifact_id:string|null;projection_execution_id:string|null;generation_id:string|null;worker_job_id:string};
+export type SignalWorkspaceIncrementalDeliveryStatusV1={phase:'derivation'|'projection'|null;retry_available:boolean;error_code:string|null};
+type DeliveryArgs={database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string};
+type DeliveryAlias={actor_user_id:string;request_digest:string;delivery_receipt:SignalWorkspaceIncrementalDeliveryReceiptV1;
+ delivery_seal:{numeric_checkpoint_digest:string;derivation_digest:string;projection_input_digest:string|null;cursor_root_id:string|null;prior_worker_job_id:string}};
+const deliveryTransport=(code:string|null)=>SIGNAL_WORKSPACE_INCREMENTAL_DELIVERY_TRANSPORT_ERRORS_V1.some(value=>value===code);
+async function deliveryState(client:PoolClient,args:Omit<DeliveryArgs,'database'|'idempotency_key'>,lock=false){
+ const dispatch=(await client.query<{worker_job_id:string;status:string;error_code:string|null;attempt_count:number}>(`
+  SELECT worker_job_id,status,error_code,attempt_count FROM signal_topic_classification_outbox
+  WHERE execution_id=$1::uuid AND workspace_id=$2::uuid AND dispatch_kind='incremental_projection' ${lock?'FOR UPDATE':''}`,[args.execution_id,args.workspace_id])).rows[0];
+ // A recovery action cannot create the first rollout-gated delivery.
+ if(!dispatch)return fail('delivery_unavailable');
+ const current=await source(client,{...args,worker_job_id:dispatch.worker_job_id},false);
+ const epoch=(await client.query<{epoch:string}>('SELECT signal_workspace_incremental_correction_epoch_v1($1::uuid) epoch',[args.workspace_id])).rows[0]!.epoch;
+ const expectedJob=`workspace-incremental-projection-${current.execution_id}-${digest([current.numeric_checkpoint.checkpoint_digest,current.catalog_profile_id,epoch,current.editorial_cut_digest]).slice(7)}`;
+ if(dispatch.worker_job_id!==expectedJob)return fail('inputs_changed');
+ const projection=current.completed_projection?(await client.query<{id:string;generation_id:string;status:string;error_code:string|null;input_digest:string;
+  cursor_root_id:string|null;worker_job_id:string;dispatch_generation:number;outbox_status:string;source_current:boolean}>(`
+  SELECT engine.id,engine.generation_id,engine.status,engine.error_code,engine.input_digest,engine.cursor_root_id,engine.dispatch_generation,
+   outbox.worker_job_id,outbox.status outbox_status,signal_workspace_projection_source_current_v1(generation) source_current
+  FROM signal_topic_catalog_executions engine JOIN signal_classification_generations generation ON generation.id=engine.generation_id
+   AND generation.workspace_id=engine.workspace_id JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=engine.id AND outbox.dispatch_kind='execution'
+  WHERE engine.id=$1::uuid AND engine.workspace_id=$2::uuid AND engine.actor_user_id=$3::uuid
+   AND engine.input_contract='workspace-topic-classification-v1' AND engine.taxonomy_profile_id=$4::uuid
+   AND engine.input_snapshot->'identity'=$5::jsonb AND engine.input_snapshot->>'correction_digest'=$6
+   AND engine.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
+   AND engine.input_snapshot->'source_projection'->>'engine_execution_id'=$7
+   AND engine.input_snapshot->'source_projection'->>'binding_artifact_id'=$8
+   AND engine.input_snapshot->'source_projection'->>'numeric_checkpoint_digest'=$9
+   AND engine.input_revision=(SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$2::uuid)
+   AND (engine.policy_valid_until IS NULL OR engine.policy_valid_until>clock_timestamp()) ${lock?'FOR UPDATE OF engine,outbox':''}`,
+  [current.completed_projection.projection_execution_id,args.workspace_id,args.actor_user_id,current.catalog_profile_id,JSON.stringify(current.identity),current.correction_digest,
+   current.execution_id,current.completed_projection.binding_artifact_id,current.numeric_checkpoint.checkpoint_digest])).rows[0]:null;
+ if(current.completed_projection&&(!projection||!projection.source_current))return fail('inputs_changed');
+ const error_code=projection?.error_code??dispatch.error_code;
+ const retry_available=projection?projection.status==='failed'&&deliveryTransport(projection.error_code)
+  :['failed','dead_letter'].includes(dispatch.status)&&deliveryTransport(dispatch.error_code);
+ const view:SignalWorkspaceIncrementalDeliveryStatusV1={phase:projection?'projection':'derivation',retry_available,error_code};
+ return{current,dispatch,projection,view};
+}
+/** One accepted key grants one delivery attempt. Numeric, money and checkpoints
+ * stay sealed; ready/busy races record an inert receipt instead of enqueueing. */
+export async function retrySignalWorkspaceIncrementalDeliveryV1(args:DeliveryArgs):Promise<SignalWorkspaceIncrementalDeliveryReceiptV1&{replayed:boolean}>{
+ if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!/^([0-9a-f]{8})(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(args.execution_id))return fail('request_invalid',422);
+ const execution_id=args.execution_id.toLowerCase(),request_digest=digest({action:'retry_incremental_delivery',execution_id});
+ return withSignalWorkspaceEngineTransactionV1(args.database,async client=>{
+  await authority(client,args);
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
+  await client.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE',[args.workspace_id]);
+  const prior=(await client.query<{id:string;alias:DeliveryAlias|null}>(`SELECT id,engine_request_keys->$2 alias FROM signal_topic_catalog_executions
+   WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)`,[args.workspace_id,args.idempotency_key])).rows[0];
+  if(prior){if(prior.id!==execution_id||prior.alias?.actor_user_id!==args.actor_user_id||prior.alias?.request_digest!==request_digest
+   ||prior.alias.delivery_receipt?.execution_id!==execution_id)return fail('idempotency_conflict');
+   return{...prior.alias.delivery_receipt,replayed:true};}
+  const run=(await client.query(`SELECT id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid
+   AND actor_user_id=$3::uuid AND input_snapshot ? 'numeric_descriptor' AND status='ready' FOR UPDATE`,[execution_id,args.workspace_id,args.actor_user_id])).rows[0];
+  if(!run)return fail('delivery_unavailable');
+  const state=await deliveryState(client,{...args,execution_id},true),{current,dispatch,projection}=state;
+  const inert=projection?['queued','running','ready'].includes(projection.status):['pending','dispatching','dispatched'].includes(dispatch.status);
+  if(!state.view.retry_available&&!inert)return fail('delivery_unavailable');
+  let worker_job_id=projection?.worker_job_id??dispatch.worker_job_id;
+  if(!inert){
+   if(projection){worker_job_id=`workspace-classification-${projection.id}-${projection.dispatch_generation+1}`;
+    await client.query(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,execution_token=NULL,execution_expires_at=NULL,
+     dispatch_generation=dispatch_generation+1,updated_at=clock_timestamp() WHERE id=$1::uuid AND status='failed'`,[projection.id]);}
+   const updated=await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$4,attempt_count=0,
+    available_at=clock_timestamp(),completed_at=NULL,dispatched_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp()
+    WHERE execution_id=$1::uuid AND workspace_id=$2::uuid AND dispatch_kind=$3 RETURNING id`,
+    [projection?.id??execution_id,args.workspace_id,projection?'execution':'incremental_projection',worker_job_id]);
+   if(updated.rows.length!==1)return fail('dispatch_lost');
+  }
+  const receipt:SignalWorkspaceIncrementalDeliveryReceiptV1={execution_id,phase:projection?'projection':'derivation',binding_artifact_id:current.completed_projection?.binding_artifact_id??null,
+   projection_execution_id:projection?.id??null,generation_id:projection?.generation_id??null,worker_job_id};
+  const alias:DeliveryAlias={actor_user_id:args.actor_user_id,request_digest,delivery_receipt:receipt,delivery_seal:{numeric_checkpoint_digest:current.numeric_checkpoint.checkpoint_digest,
+   derivation_digest:current.derivation_digest,projection_input_digest:projection?.input_digest??null,cursor_root_id:projection?.cursor_root_id??null,
+   prior_worker_job_id:projection?.worker_job_id??dispatch.worker_job_id}};
+  await client.query('UPDATE signal_topic_catalog_executions SET engine_request_keys=engine_request_keys||jsonb_build_object($2::text,$3::jsonb) WHERE id=$1::uuid',
+   [execution_id,args.idempotency_key,JSON.stringify(alias)]);
+  return{...receipt,replayed:inert};
+ });
+}
+
 export type SignalWorkspaceAnalysisUpdateV1={desired_revision:string;input_revision:string;has_pending_work:boolean;
  numeric:{execution_id:string;status:'queued'|'running'|'ready'|'failed';phase:string;progress:number;expected_roots:number;processed_roots:number;is_current:boolean;error_code:string|null;retry_available:boolean};
  request_numeric:{action:'retry_numeric';execution_id:string;idempotency_key:string}|null;
+ delivery:SignalWorkspaceIncrementalDeliveryStatusV1;
+ request_delivery:({action:'retry_incremental_delivery';idempotency_key:string}&Omit<SignalWorkspaceIncrementalDeliveryReceiptV1,'worker_job_id'|'binding_artifact_id'>)|null;
  derivation:{status:string;error_code:string|null}|null;
  projection:{execution_id:string;generation_id:string;status:'queued'|'running'|'ready'|'failed';expected_roots:number;processed_roots:number;is_current:boolean;error_code:string|null}|null;
  serving:{generation_id:string;input_revision:string;is_current:boolean;
@@ -315,10 +411,14 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
   if(!row){await client.query('COMMIT');return null;}
   // Acceptance is historical evidence: a later input revision or failed retry
   // cannot erase the receipt or turn it into permission for another dispatch.
-  const accepted=args.idempotency_key?(await client.query<{id:string;alias:{actor_user_id:string;request_digest:string}|null}>(`
+  const accepted=args.idempotency_key?(await client.query<{id:string;alias:Partial<DeliveryAlias>|null}>(`
    SELECT id,engine_request_keys->$3 alias FROM signal_topic_catalog_executions
    WHERE workspace_id=$1::uuid AND actor_user_id=$2::uuid AND input_snapshot ? 'numeric_descriptor'
     AND engine_request_keys ? $3`,[args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0]:null;
+  const requestDelivery:SignalWorkspaceAnalysisUpdateV1['request_delivery']=accepted?.alias?.actor_user_id===args.actor_user_id
+   &&accepted.alias.request_digest===digest({action:'retry_incremental_delivery',execution_id:accepted.id})&&accepted.alias.delivery_receipt?.execution_id===accepted.id
+   ?{action:'retry_incremental_delivery',idempotency_key:args.idempotency_key!,execution_id:accepted.id,phase:accepted.alias.delivery_receipt.phase,
+    projection_execution_id:accepted.alias.delivery_receipt.projection_execution_id,generation_id:accepted.alias.delivery_receipt.generation_id}:null;
   const requestNumeric:SignalWorkspaceAnalysisUpdateV1['request_numeric']=accepted?.alias?.actor_user_id===args.actor_user_id
    &&accepted.alias.request_digest===digest({action:'retry_numeric',execution_id:accepted.id})
    ?{action:'retry_numeric',execution_id:accepted.id,idempotency_key:args.idempotency_key!}:null;
@@ -341,11 +441,15 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
     FROM signal_classification_generations WHERE id=$1::uuid AND workspace_id=$2::uuid`,[complete.generation_id,args.workspace_id])).rows[0]:null;
   const recoverable=latest?.status==='failed'&&['workspace_incremental_projection_transport_unavailable','workspace_classification_transport_unavailable'].includes(latest.error_code??'')
    &&(await client.query(`SELECT 1 FROM signal_topic_catalog_executions WHERE id=$1::uuid AND dispatch_generation<8`,[latest.execution_id])).rows.length>0;
+  let delivery:SignalWorkspaceIncrementalDeliveryStatusV1={phase:latest?'projection':dispatch?'derivation':null,retry_available:false,error_code:latest?.error_code??dispatch?.error_code??null};
+  if(current&&row.history_current&&row.status==='ready'&&capabilities.can_execute_topics&&dispatch){try{
+   delivery=(await deliveryState(client,{...args,execution_id:row.execution_id})).view;
+  }catch(error){if(!(error instanceof SignalWorkspaceClassificationError))throw error;delivery={...delivery,error_code:error.code};}}
   const pending=current&&row.history_current&&(row.status==='queued'||row.status==='running'||row.status==='ready'&&
-   (latest?.status==='queued'||latest?.status==='running'||recoverable||(!latest||!dispatch?.profile_current)&&(!dispatch||dispatch.status!=='dead_letter'&&dispatch.attempt_count<8)));
+   (latest?.status==='queued'||latest?.status==='running'||recoverable||(!latest||!dispatch?.profile_current)&&(!dispatch||dispatch.status!=='dead_letter'&&dispatch.attempt_count<8&&(dispatch.status!=='failed'||deliveryTransport(dispatch.error_code)))));
   const result:SignalWorkspaceAnalysisUpdateV1={desired_revision:row.desired_revision,input_revision:row.input_revision,has_pending_work:pending,
    numeric:{execution_id:row.execution_id,status:row.status,phase:row.phase,progress:row.progress,expected_roots:row.expected_roots,processed_roots:row.processed_roots,is_current:current,error_code:row.error_code,retry_available:numericRecovery?.retry_available===true},
-   request_numeric:requestNumeric,
+   request_numeric:requestNumeric,delivery,request_delivery:requestDelivery,
    derivation:!row.history_current?{status:'blocked',error_code:'workspace_incremental_projection_history_changed'}:dispatch?{status:dispatch.status,error_code:dispatch.error_code}:null,
    projection:latest?{execution_id:latest.execution_id,generation_id:latest.generation_id,status:latest.status,expected_roots:latest.denominator,processed_roots:latest.processed_roots,is_current:latest.is_current,error_code:latest.error_code}:null,
    serving:complete&&served?{generation_id:complete.generation_id,input_revision:served.input_revision,is_current:complete.is_current,

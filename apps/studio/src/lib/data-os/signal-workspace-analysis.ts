@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
-  retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
+  retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
   loadSignalWorkspaceInterpretationAdmissionV1, authorizeSignalWorkspaceInterpretationAdmissionV1, revokeSignalWorkspaceInterpretationAdmissionV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
@@ -127,6 +127,9 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   } else if (args.body.action === "revoke_interpretation") {
     await revokeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
       expected_admission_operation_id: args.body.expected_admission_operation_id });
+  } else if (args.body.action === "retry_incremental_delivery") {
+    // The store selects the existing derivation/projection phase; no numeric or editorial execution is restarted.
+    await retrySignalWorkspaceIncrementalDeliveryV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });
   } else if (args.body.action === "retry_numeric") {
     // Resume only this zero-provider numeric execution; editorial receipts stay separate.
     await retrySignalWorkspaceNumericUpdateV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });

@@ -6,7 +6,7 @@ import { isWorkspaceAdmissionAction, workspaceAdmissionCanSubmit, workspaceAdmis
 import { workspaceNumericAdmissionPoll } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanRetryDelivery, workspaceAnalysisDeliveryRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
 export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = false, initial = null }: {
@@ -54,13 +54,15 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     }
     if (confirmedKey && confirmedKey === pendingRef.current?.key) {
       setCheckedKey(confirmedKey);
+      const deliveryRequest = pendingRef.current.body.action === "retry_incremental_delivery";
       const numericRequest = pendingRef.current.body.action === "retry_numeric";
       const admissionRequest = isWorkspaceAdmissionAction(pendingRef.current.body);
       if ((admissionRequest ? workspaceAdmissionRequestConfirmed(next, { ...pendingRef.current, body: pendingRef.current.body as WorkspaceInterpretationAdmissionRequest })
+        : deliveryRequest ? workspaceAnalysisDeliveryRequestConfirmed(next, pendingRef.current)
         : numericRequest ? workspaceAnalysisNumericRequestConfirmed(next, pendingRef.current)
         : pendingRef.current.body.action === "retry_progress" ? workspaceAnalysisProgressRequestConfirmed(next, pendingRef.current)
         : next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedRequest(next))
-        || (admissionRequest ? !next.admission?.request : numericRequest ? !next.update?.request_numeric : !next.request_run) && rejectedKey.current === confirmedKey) forget();
+        || (admissionRequest ? !next.admission?.request : deliveryRequest ? !next.update?.request_delivery : numericRequest ? !next.update?.request_numeric : !next.request_run) && rejectedKey.current === confirmedKey) forget();
     }
     if (!pendingRef.current) {
       try {
@@ -158,15 +160,19 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   }, [accept, disabled, endpoint, error, read, revoke, verifiedVersion, workspaceId]);
 
   const confirmed = pending && checkedKey === pending.key;
-  const retryRun = pending && (pending.body.action === "retry_numeric" || isWorkspaceAdmissionAction(pending.body)) ? null : confirmed ? data?.request_run ?? null : !pending ? data?.latest_run ?? null : null;
+  const retryRun = pending && (pending.body.action === "retry_incremental_delivery" || pending.body.action === "retry_numeric" || isWorkspaceAdmissionAction(pending.body)) ? null : confirmed ? data?.request_run ?? null : !pending ? data?.latest_run ?? null : null;
   const canRetry = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanRetry(data, retryRun);
   const canRetryProgress = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
-    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && !isWorkspaceAdmissionAction(pending.body) && data?.request_run))
+    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && pending.body.action !== "retry_incremental_delivery" && !isWorkspaceAdmissionAction(pending.body) && data?.request_run))
     && workspaceAnalysisCanRetryProgress(data, data?.latest_run ?? null);
   const canRetryNumeric = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
-    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && !isWorkspaceAdmissionAction(pending.body) && data?.request_run))
+    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && pending.body.action !== "retry_incremental_delivery" && !isWorkspaceAdmissionAction(pending.body) && data?.request_run))
     && workspaceAnalysisCanRetryNumeric(data);
+  const canRetryDelivery = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
+    && (!pending || Boolean(confirmed && pending.body.action !== "retry_numeric" && pending.body.action !== "retry_incremental_delivery"
+      && !isWorkspaceAdmissionAction(pending.body) && data?.request_run))
+    && workspaceAnalysisCanRetryDelivery(data);
   const canStart = !disabled && !submitting && !reading && !pending && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanStart(data, cap);
   const canReplay = (!disabled || pending && isWorkspaceAdmissionAction(pending.body)) && !submitting && !reading && Boolean(confirmed && data && pending && error !== "load"
@@ -186,11 +192,14 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const retryNumeric = useCallback(async () => {
     if (canRetryNumeric && data?.update) await submit({ action: "retry_numeric", run_id: data.update.numeric.execution_id });
   }, [canRetryNumeric, data, submit]);
+  const retryDelivery = useCallback(async () => {
+    if (canRetryDelivery && data?.update) await submit({ action: "retry_incremental_delivery", run_id: data.update.numeric.execution_id });
+  }, [canRetryDelivery, data, submit]);
   const replay = useCallback(async () => {
     if (canReplay && pending) await submit(pending.body, pending);
   }, [canReplay, pending, submit]);
   const admissionIntentClear = !pending || Boolean(confirmed && !isWorkspaceAdmissionAction(pending.body)
-    && pending.body.action !== "retry_numeric" && data?.request_run);
+    && pending.body.action !== "retry_numeric" && pending.body.action !== "retry_incremental_delivery" && data?.request_run);
   const admissionAvailable = !submitting && !reading && error !== "load" && admissionIntentClear;
   const canAuthorizeAdmission = admissionAvailable && !disabled && verifiedVersion === catalogVersion;
   const canRevokeAdmission = admissionAvailable && Boolean(data?.admission?.can_revoke);
@@ -199,7 +208,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
       || !workspaceAdmissionCanSubmit(data, body)) return;
     await submit(body);
   }, [canAuthorizeAdmission, canRevokeAdmission, data, submit]);
-  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canRetryProgress, canRetryNumeric, canReplay,
+  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canRetryProgress, canRetryNumeric, canRetryDelivery, canReplay,
     canAuthorizeAdmission, canRevokeAdmission, submitAdmission,
-    read, start, retry, retryProgress, retryNumeric, replay, verified: verifiedVersion === catalogVersion };
+    read, start, retry, retryProgress, retryNumeric, retryDelivery, replay, verified: verifiedVersion === catalogVersion };
 }
