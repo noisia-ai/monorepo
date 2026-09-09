@@ -98,6 +98,53 @@ test("malformed timeouts are rejected before CAS, scheduling, receipt or send", 
   }
   assert.equal(claims, 0); assert.equal(sends, 0); assert.equal(receipts, 0); assert.deepEqual(timer.durations, []);
 });
+test("a dated spending grant blocks sends at expiry, including time spent awaiting CAS", async () => {
+  const expires = "2026-01-02T06:00:00.000Z", deadline = Date.parse(expires);
+  for (const expiresDuringCas of [false, true]) {
+    let now = deadline - (expiresDuringCas ? 1 : 0), claims = 0, sends = 0, receipts = 0;
+    const timer = manualTimeout();
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorization_expires_at: expires,
+      now_milliseconds: () => now, schedule_timeout: timer.schedule_timeout,
+      authorize_send: async () => { claims++; now = deadline; return true; },
+      persist_receipt: async () => { receipts++; },
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }),
+    }), error => error instanceof WorkspaceInterpretationTransportErrorV1
+      && error.code === "workspace_engine_interpretation_daily_authority_expired" && error.outcome === "definitely_not_sent");
+    assert.equal(claims, expiresDuringCas ? 1 : 0); assert.equal(sends, 0); assert.equal(receipts, 0);
+    assert.deepEqual(timer.durations, []);
+  }
+});
+test("an admitted send may finish after grant expiry without losing its response or changing the request", async () => {
+  const expires = "2026-01-02T06:00:00.000Z", deadline = Date.parse(expires);
+  let now = deadline - 1, sends = 0, receipts = 0;
+  const result = await sendWorkspaceInterpretationV1({ ...base, authorization_expires_at: expires,
+    now_milliseconds: () => now, authorize_send: async () => true,
+    persist_receipt: async () => { receipts++; },
+    fetch_impl: fakeFetch((_url, init) => {
+      sends++; assert.equal(init?.body, batch.request_body); now = deadline + 1;
+      assert.equal(init?.signal?.aborted, false); return Response.json(response());
+    }),
+  });
+  assert.equal(sends, 1); assert.equal(receipts, 1); assert.equal(result.outcome, "validated");
+});
+test("malformed dated grants fail before CAS and an ambiguous CAS stays unknown when the date expires", async () => {
+  let claims = 0, sends = 0;
+  for (const value of [null, 123, "", "tomorrow", "2026-02-30T06:00:00.000Z", "2026-01-02", "2026-01-02T06:00:00Z"]) {
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorization_expires_at: value as string,
+      authorize_send: async () => { claims++; return true; }, persist_receipt: async () => undefined,
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }),
+    }), error => error instanceof WorkspaceInterpretationTransportErrorV1
+      && error.code === "workspace_engine_interpretation_provider_configuration_invalid" && error.outcome === "definitely_not_sent");
+  }
+  assert.equal(claims, 0); assert.equal(sends, 0);
+  const expires = "2026-01-02T06:00:00.000Z", deadline = Date.parse(expires); let now = deadline - 1;
+  await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorization_expires_at: expires, now_milliseconds: () => now,
+    authorize_send: async () => { now = deadline; throw new Error("private CAS failure"); },
+    persist_receipt: async () => undefined, fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }),
+  }), error => error instanceof WorkspaceInterpretationTransportErrorV1
+    && error.code === "workspace_engine_interpretation_send_authority_unknown" && error.outcome === "outcome_unknown");
+  assert.equal(sends, 0);
+});
 test("exactly one authorized send persists raw receipt before validation; replay needs zero sends", async () => {
   const events: string[] = []; let receipt: WorkspaceInterpretationRawReceiptV1 | null = null;
   const result = await sendWorkspaceInterpretationV1({ ...base,

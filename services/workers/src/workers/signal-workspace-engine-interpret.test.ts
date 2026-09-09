@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorkspaceInterpretationReferenceIdV1,
   SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
-  signalWorkspaceInterpretationCostV1, type SignalWorkspaceInterpretationEditorialRepairV1,
+  signalWorkspaceInterpretationCostV1,
   type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1 } from "@noisia/db";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
@@ -28,14 +28,18 @@ async function scenario() {
   const files = new Map<string, Buffer>(); let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
   const calls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
   const requestCalls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
+  const terminalReceipts = new Map<string, { provider_request_id: string; evidence_sha256: string }>();
+  const reservations: Array<{ call_id: string; configuration: unknown; reserved_micro_usd: number }> = [];
   let sends = 0, fitCount = 0, completed = 0, checkpointCount = 0, failAfterReceipt = false, outcomeUnknown = false;
   let failAfterCheckpoint = false, failAfterCatalog = false, materializationWrites = 0;
   let failResponseAcknowledgment = false;
   let repairOnlyCrash = false, unknownRepair = false, disableRepair = false, denyRepairCap = false;
   let failRepairReservationAck = false, failSettlementAck = false;
+  let reserveFailure: string | null = null;
   let totalSettled = 0;
   const checkpointCallIds: string[] = [];
   const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
+  const seenAuthorizations: Array<string | undefined> = [];
   let checkpointWritten = false, catalogWritten = false;
   let firstMaterializationArtifact: unknown = null;
   type ResponseMode = "valid" | "invalid" | "partial";
@@ -53,8 +57,10 @@ async function scenario() {
     context: async () => ({ actor_user_id: uuid(5), context: { workspace_id: lease.workspace_id,
       execution_id: lease.execution_id, context_digest: hash("context"), data: { interests: [] } } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
-    reserve: async (args: { idempotency_key: string; request_digest: string; reserved_micro_usd: number;
-      editorial_repair?: SignalWorkspaceInterpretationEditorialRepairV1; retry_of_call_id?: string }) => {
+    reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
+      assert.equal(args.workspace_id, lease.workspace_id); assert.equal(args.execution_id, lease.execution_id);
+      assert.equal(args.execution_token, lease.execution_token); assert.equal(args.actor_user_id, uuid(5));
+      if (reserveFailure) throw new Error(reserveFailure);
       const existing = requestCalls.get(args.idempotency_key);
       if (existing) {
         assert.equal(existing.request_digest, args.request_digest);
@@ -67,17 +73,28 @@ async function scenario() {
         assert.equal(source.response?.complete, true); assert.equal(source.response?.sha256, args.editorial_repair.source_response_sha256);
         assert.equal(source.request_digest, args.editorial_repair.source_request_digest);
         if (denyRepairCap) throw new Error("workspace_engine_interpretation_run_cap_exceeded");
-        assert.ok(![...calls.values()].some(row => row.editorial_repair && row.state !== "definitely_not_sent"));
+        assert.ok(![...calls.values()].some(row => row.editorial_repair && !["definitely_not_sent", "terminal_confirmed"].includes(row.state)));
       }
       if (args.retry_of_call_id) {
-        const previous = calls.get(args.retry_of_call_id)!; assert.equal(previous.state, "definitely_not_sent");
+        const previous = calls.get(args.retry_of_call_id)!;
+        assert.ok(["definitely_not_sent", "terminal_confirmed"].includes(previous.state));
         assert.equal(previous.request_digest, args.request_digest); assert.deepEqual(previous.editorial_repair, args.editorial_repair ?? null);
+        assert.equal(previous.reserved_micro_usd, args.reserved_micro_usd);
+        if (previous.state === "terminal_confirmed") {
+          assert.ok(terminalReceipts.has(previous.call_id)); assert.equal(previous.response, null);
+          assert.equal(previous.settled_micro_usd, null);
+          if ([...calls.values()].some(row => row.request_digest === args.request_digest && row.retry_of_call_id
+            && calls.get(row.retry_of_call_id)?.state === "terminal_confirmed"))
+            throw new Error("workspace_engine_interpretation_transport_retry_exhausted");
+        }
+        assert.ok(![...calls.values()].some(row => row.retry_of_call_id === previous.call_id));
       }
       call = { call_id: calls.size ? uuid(60 + calls.size) : uuid(6), execution_id: lease.execution_id, workspace_id: lease.workspace_id,
         attempt_token: uuid(70 + calls.size), retry_of_call_id: args.retry_of_call_id ?? null, editorial_repair: args.editorial_repair ?? null,
         state: "reserved", request_digest: args.request_digest, reserved_micro_usd: args.reserved_micro_usd,
         settled_micro_usd: null, response: null };
       calls.set(call.call_id, call); requestCalls.set(args.idempotency_key, call);
+      reservations.push({ call_id: call.call_id, configuration: args.configuration, reserved_micro_usd: args.reserved_micro_usd });
       if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
       return { ...call };
     },
@@ -130,13 +147,13 @@ async function scenario() {
       return { artifact_id: uuid(10) }; },
     complete: async () => { completed++; states.push("complete"); return { execution_id: lease.execution_id }; },
   } as unknown as NonNullable<Args["stores"]>;
-  const execute = async () => {
+  const execute = async (authorization_expires_at?: string) => {
     const attempt = await mkdtemp(join(directory, "attempt-"));
     return interpretWorkspaceEngineV1({ database: {} as Args["database"], lease, stores, directory: attempt,
       fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
         model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
         result_kind: "computational_grouping" }, clusters: [cluster], heartbeat: async () => undefined,
-      api_key: "test_key_not_a_real_credential", provider_enabled: true,
+      api_key: "test_key_not_a_real_credential", provider_enabled: true, authorization_expires_at,
       storage: {
         put: async args => { const bytes = await readFile(args.file); assert.equal(hash(bytes), args.sha256);
           const key = `workspace-engine/${lease.workspace_id}/${lease.execution_id}/${args.sha256.slice(7)}.parts.json`;
@@ -145,7 +162,7 @@ async function scenario() {
         get: async args => { const bytes = files.get(args.stored.storage_key)!; assert.equal(hash(bytes), args.stored.sha256);
           await writeFile(args.destination, bytes, { flag: "wx" }); },
       },
-      send: async args => { seenBatches.push(args.batch); return sendWorkspaceInterpretationV1({ ...args,
+      send: async args => { seenBatches.push(args.batch); seenAuthorizations.push(args.authorization_expires_at); return sendWorkspaceInterpretationV1({ ...args,
         provider_enabled: args.batch.editorial_repair && disableRepair ? false : args.provider_enabled, fetch_impl: async () => {
         sends++; if (outcomeUnknown || args.batch.editorial_repair && unknownRepair) throw new Error("simulated socket close");
         const mode = args.batch.editorial_repair ? repairMode ?? responseMode : responseMode;
@@ -160,10 +177,19 @@ async function scenario() {
   };
   return { execute, cleanup: () => rm(directory, { recursive: true, force: true }),
     get: () => ({ sends, fitCount, completed, checkpointCount, materializationWrites, storedObjects: files.size, call, states,
-      calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches }),
+      calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches, seenAuthorizations, terminalReceipts, reservations,
+      retainedExposure: [...calls.values()].reduce((sum, row) => sum + (row.state === "settled" ? row.settled_micro_usd!
+        : row.state === "definitely_not_sent" ? 0 : row.reserved_micro_usd), 0) }),
     crashAfterReceipt: () => { failAfterReceipt = true; }, unknown: () => { outcomeUnknown = true; },
     loseResponseAcknowledgment: () => { failResponseAcknowledgment = true; },
-    targetRepairCrash: () => { repairOnlyCrash = true; }, repairUnknown: () => { unknownRepair = true; },
+    targetRepairCrash: () => { repairOnlyCrash = true; }, repairUnknown: (value = true) => { unknownRepair = value; },
+    confirmTerminal: () => {
+      assert.ok(call); assert.equal(call.state, "outcome_unknown"); assert.equal(call.response, null);
+      assert.equal(call.settled_micro_usd, null);
+      terminalReceipts.set(call.call_id, { provider_request_id: `req_terminal_${call.call_id}`, evidence_sha256: hash(`external terminal ${call.call_id}`) });
+      call.state = "terminal_confirmed";
+    },
+    rejectReserve: (code: string) => { reserveFailure = code; },
     repairDisabled: (value: boolean) => { disableRepair = value; }, repairCapBlocked: () => { denyRepairCap = true; },
     loseRepairReservationAcknowledgment: () => { failRepairReservationAck = true; },
     loseSettlementAcknowledgment: () => { failSettlementAck = true; },
@@ -324,4 +350,99 @@ test("a proven unsent repair uses a successor with the same editorial identity o
     assert.equal(done.calls[2]!.request_digest, before.calls[1]!.request_digest);
     await s.execute(); assert.equal(s.get().sends, 2); assert.equal(s.get().calls.length, 3);
   } finally { await s.cleanup(); }
+});
+
+test("a provider-confirmed terminal repair gets one transport successor preserving its logical request and retained exposure", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid"); s.repairUnknown();
+    await assert.rejects(s.execute(), /outcome_unknown/u);
+    const original = structuredClone(s.get().calls[0]); s.confirmTerminal();
+    const terminal = structuredClone(s.get().calls[1]);
+    const terminalEvidence = structuredClone(s.get().terminalReceipts.get(terminal!.call_id));
+    const authorization = new Date(Date.now() + 3_600_000).toISOString();
+    s.repairUnknown(false); await s.execute(authorization); const done = s.get();
+    assert.equal(done.calls.length, 3); assert.equal(done.sends, 3); assert.equal(done.completed, 1);
+    const successor = done.calls[2]!;
+    assert.equal(successor.retry_of_call_id, terminal!.call_id); assert.equal(successor.request_digest, terminal!.request_digest);
+    assert.deepEqual(successor.editorial_repair, terminal!.editorial_repair);
+    assert.deepEqual(done.calls[0], original); assert.deepEqual(done.calls[1], terminal);
+    assert.deepEqual(done.terminalReceipts.get(terminal!.call_id), terminalEvidence);
+    assert.equal(done.totalSettled, 1500); assert.equal(done.retainedExposure, 1500 + terminal!.reserved_micro_usd);
+    assert.deepEqual(done.reservations[2]!.configuration, done.reservations[1]!.configuration);
+    assert.equal(done.reservations[2]!.reserved_micro_usd, done.reservations[1]!.reserved_micro_usd);
+    assert.deepEqual(done.seenBatches[2], done.seenBatches[1]);
+    assert.equal(done.seenAuthorizations[2], authorization);
+    assert.deepEqual(done.checkpointCallIds, [successor.call_id]);
+    s.repairDisabled(true); await s.execute(); const replay = s.get();
+    assert.equal(replay.sends, 3); assert.equal(replay.calls.length, 3); assert.equal(replay.materializationWrites, 1);
+    assert.equal(replay.retainedExposure, done.retainedExposure); assert.deepEqual(replay.calls[1], terminal);
+  } finally { await s.cleanup(); }
+});
+
+for (const stage of ["reservation", "response"] as const) test(`a terminal successor recovers its lost ${stage} acknowledgment without a duplicate send`, async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid"); s.repairUnknown();
+    await assert.rejects(s.execute(), /outcome_unknown/u); s.confirmTerminal();
+    s.repairUnknown(false);
+    if (stage === "reservation") s.loseRepairReservationAcknowledgment();
+    else { s.targetRepairCrash(); s.loseResponseAcknowledgment(); }
+    await assert.rejects(s.execute(), /workspace_engine_(worker_failed|interpretation_receipt_recovery_required)/u);
+    assert.equal(s.get().calls[2]!.state, stage === "response" ? "response_persisted" : "reserved");
+    assert.equal(s.get().sends, stage === "response" ? 3 : 2);
+    if (stage === "response") s.repairDisabled(true);
+    await s.execute();
+    assert.equal(s.get().sends, 3); assert.equal(s.get().calls.length, 3); assert.equal(s.get().completed, 1);
+    assert.equal(s.get().calls[1]!.state, "terminal_confirmed"); assert.equal(s.get().calls[1]!.settled_micro_usd, null);
+  } finally { await s.cleanup(); }
+});
+
+test("an invalid terminal successor exhausts the same editorial repair instead of creating another logical repair", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairUnknown(); await assert.rejects(s.execute(), /outcome_unknown/u); s.confirmTerminal();
+    const terminal = structuredClone(s.get().calls[1]); s.repairUnknown(false);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
+    assert.equal(s.get().sends, 3); assert.equal(s.get().calls.length, 3); assert.equal(s.get().checkpointCount, 0);
+    assert.equal(s.get().calls[2]!.state, "settled"); assert.equal(s.get().totalSettled, 1500);
+    assert.equal(s.get().retainedExposure, 1500 + terminal!.reserved_micro_usd);
+    assert.deepEqual(s.get().calls[2]!.editorial_repair, terminal!.editorial_repair);
+    assert.deepEqual(s.get().calls[1], terminal);
+  } finally { await s.cleanup(); }
+});
+
+test("an unknown terminal successor cannot be resent or extended, even when a later external terminal receipt is supplied", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairUnknown(); await assert.rejects(s.execute(), /outcome_unknown/u);
+    s.confirmTerminal(); await assert.rejects(s.execute(), /outcome_unknown/u);
+    const before = s.get(); assert.equal(before.sends, 3); assert.equal(before.calls.length, 3);
+    assert.equal(before.calls[2]!.state, "outcome_unknown");
+    await assert.rejects(s.execute(), /outcome_unknown/u);
+    assert.equal(s.get().calls.length, 3); assert.equal(s.get().sends, 3);
+    s.confirmTerminal(); await assert.rejects(s.execute(), /transport_retry_exhausted/u);
+    assert.equal(s.get().calls.length, 3); assert.equal(s.get().sends, 3); assert.equal(s.get().checkpointCount, 0);
+    assert.equal(s.get().totalSettled, 750); assert.equal(s.get().retainedExposure, before.retainedExposure);
+  } finally { await s.cleanup(); }
+});
+
+test("a terminal successor cap rejection retains the confirmed-terminal reservation and the original settled cost", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairUnknown(); await assert.rejects(s.execute(), /outcome_unknown/u); s.confirmTerminal();
+    const before = structuredClone(s.get().calls); const exposure = s.get().retainedExposure;
+    s.repairCapBlocked(); await assert.rejects(s.execute(), /run_cap_exceeded/u);
+    await assert.rejects(s.execute(), /run_cap_exceeded/u);
+    assert.deepEqual(s.get().calls, before); assert.equal(s.get().sends, 2); assert.equal(s.get().totalSettled, 750);
+    assert.equal(s.get().retainedExposure, exposure); assert.equal(s.get().completed, 0);
+  } finally { await s.cleanup(); }
+});
+
+test("terminal evidence never bypasses current actor, input or lease rejection", async () => {
+  for (const code of ["workspace_engine_interpretation_forbidden", "workspace_engine_interpretation_inputs_stale",
+    "workspace_engine_interpretation_lease_conflict"]) {
+    const s = await scenario(); try {
+      s.mode("invalid"); s.repairUnknown(); await assert.rejects(s.execute(), /outcome_unknown/u); s.confirmTerminal();
+      const before = structuredClone(s.get().calls); s.rejectReserve(code);
+      await assert.rejects(s.execute(), error => error instanceof Error && error.message === code);
+      assert.deepEqual(s.get().calls, before); assert.equal(s.get().sends, 2); assert.equal(s.get().completed, 0);
+    } finally { await s.cleanup(); }
+  }
 });

@@ -2466,3 +2466,12 @@ Ver ADR027 y el recibo local de integración; esto no declara SQL0140 aplicado e
 `engine_cost_events.metadata.editorial_repair` vincula una nueva petición al ID, request_digest y SHA de una respuesta completa ya liquidada. También sella versión, diagnóstico fijo y digest del protocolo. No se reutiliza `retry_of_call_id` para un recibo pagado: ese campo conserva exclusivamente sucesores de intentos probadamente no enviados.
 
 `uq_workspace_editorial_repair_source` permite una única reparación lógica raíz por fuente. `guard_workspace_engine_editorial_repair_v1` conserva esa metadata inmutable, exige misma ejecución/workspace/actor/configuración, fuente HTTP200 completa/liquidada/sin propuesta, no permite reparar una reparación y bloquea resultados inciertos. Los límites monetarios de0138/0139 siguen contando ambas llamadas. Ver `DELIVERY_WORKSPACE_EDITORIAL_REPAIR_2026-09-08.md` para la aceptación y sus límites.
+
+
+### Workspace interpretation: confirmed provider termination (SQL0142)
+
+`engine_cost_events.call_state` also admits `terminal_confirmed`: externally confirmed request termination with no API response body and no settled invoice amount. The original `reserved_micro_usd` remains fully exposed. `metadata.provider_terminal_receipt` preserves the provider observation, scope/request/configuration identity, source `anthropic_console`, private evidence reference/SHA, observed usage and internal administrative verifier. A provider request ID cannot attest more than one local call. Terminal evidence, prior response absence and the original monetary fields are immutable.
+
+The request index excludes both definitely-not-sent attempts and confirmed terminals so one exact transport successor can exist. Existing successor uniqueness, actor/lease/input authority and aggregate caps remain enforced. SQL0142 limits traversal to one confirmed terminal per logical request, requires the exact numerical bundle and blocks an additional unresolved call. A successor retains the same editorial repair identity and reserves separately; no second editorial repair is created.
+
+Budget readers expose `terminal_reserved_micro_usd` as a subset of `reserved_micro_usd`. It is neither a settled charge nor added twice to exposure. Confirming terminal transport does not settle an invoice or create an interpretation. See ADR028 and the focal delivery receipt for runtime status.

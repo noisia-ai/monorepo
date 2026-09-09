@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedEditorialRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
 export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = false, initial = null }: {
@@ -51,7 +51,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     }
     if (confirmedKey && confirmedKey === pendingRef.current?.key) {
       setCheckedKey(confirmedKey);
-      if (next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedEditorialRequest(next)
+      if (next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedRequest(next)
         || !next.request_run && rejectedKey.current === confirmedKey) forget();
     }
     if (!pendingRef.current) {

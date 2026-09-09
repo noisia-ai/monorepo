@@ -40,12 +40,13 @@ export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["l
   if (!run) return null;
   if (run.claude_cap_micro_usd > 0 && !budget) throw new SignalWorkspaceEngineError("workspace_analysis_budget_unavailable", 503);
   const unknown = Boolean(run.error_code && /outcome_unknown/u.test(run.error_code)) || (budget?.unknown_reserved_micro_usd ?? 0) > 0;
-  return { ...run, outcome_unknown: unknown,
+  return { ...run, outcome_unknown: unknown, transport_recovery_eligible: run.transport_recovery_eligible === true,
     retryable: run.status === "failed" && !unknown && run.is_current
       && isSignalWorkspaceEngineRetryableErrorV1(run.error_code, run),
     claude_cost: { hard_cap_micro_usd: run.claude_cap_micro_usd,
       settled_micro_usd: budget?.confirmed_micro_usd ?? 0, reserved_micro_usd: budget?.reserved_micro_usd ?? 0,
-      unknown_reserved_micro_usd: budget?.unknown_reserved_micro_usd ?? 0 } };
+      unknown_reserved_micro_usd: budget?.unknown_reserved_micro_usd ?? 0,
+      terminal_reserved_micro_usd: budget?.terminal_reserved_micro_usd ?? 0 } };
 }
 export function workspaceAnalysisPreflightStateV1(args: {
   received: boolean; prepared: boolean; embeddingRunId: string | null; missingGuides: number;

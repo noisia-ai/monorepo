@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedEditorialRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 Object.assign(globalThis, { React });
@@ -22,10 +22,10 @@ const status: WorkspaceAnalysisStatus = {
 };
 const ready: WorkspaceAnalysisRun = { execution_id: id, status: "ready", phase: "complete", progress: 100,
   expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
-  error_code: null, is_current: true, model_version_id: id, artifact_count: 3, retryable: false, outcome_unknown: false,
+  error_code: null, is_current: true, model_version_id: id, artifact_count: 3, retryable: false, outcome_unknown: false, transport_recovery_eligible: false,
   claude_cap_micro_usd: 0, result_kind: "computational_grouping",
   fit_completed: false, expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0,
-  claude_cost: { hard_cap_micro_usd: 0, settled_micro_usd: 0, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 } };
+  claude_cost: { hard_cap_micro_usd: 0, settled_micro_usd: 0, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 0 } };
 const pending: PendingWorkspaceAnalysis = { version: 1, workspace_id: id, request_scope: status.request_scope,
   key: "analysis-request-1", body: { action: "start", embedding_run_id: id, expected_context_digest: hash,
     expected_catalog_digest: hash, claude_cap_micro_usd: 2_001 } };
@@ -90,19 +90,50 @@ test("known editorial failures cannot become a replacement run; eligible recover
   assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_output_invalid"), "editorialInvalid");
   assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_repair_invalid"), "editorialRepairExhausted");
 });
+test("confirmed transport interruption permits only server-eligible resume and keeps its billing reservation", () => {
+  const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", retryable: true,
+    error_code: "workspace_engine_interpretation_transport_terminal_confirmed", transport_recovery_eligible: true,
+    claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415, reserved_micro_usd: 1_681_800,
+      unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 } };
+  const received = { ...status, latest_run: failed };
+  assert.equal(validWorkspaceAnalysisStatus(received), true);
+  assert.equal(workspaceAnalysisUnknown(received), false);
+  assert.equal(workspaceAnalysisCanStart(received, "0.002001"), false);
+  assert.equal(workspaceAnalysisCanReplay(received, pending), false);
+  assert.equal(workspaceAnalysisCanRetry(received, failed), true);
+  for (const change of [{ transport_recovery_eligible: false }, { retryable: false }, { is_current: false }, { outcome_unknown: true }])
+    assert.equal(workspaceAnalysisCanRetry(received, { ...failed, ...change }), false);
+  const anotherUnknown = { ...received, request_run: { ...failed, outcome_unknown: true,
+    claude_cost: { ...failed.claude_cost, reserved_micro_usd: 2_681_800, unknown_reserved_micro_usd: 1_000_000 } } };
+  assert.equal(workspaceAnalysisCanRetry(anotherUnknown, failed), false);
+  assert.equal(workspaceAnalysisCanStart(anotherUnknown, "0.002001"), false);
+  const changed = { ...received, latest_run: { ...failed, is_current: false }, request_run: { ...failed, is_current: false } };
+  assert.equal(workspaceAnalysisCanReleaseChangedRequest(changed), true);
+  assert.equal(workspaceAnalysisCanStart(changed, "0.002001"), true);
+  assert.equal(workspaceAnalysisErrorKey(failed.error_code!), "transportTerminal");
+  const exhausted = { ...failed, error_code: "workspace_engine_interpretation_transport_retry_exhausted", retryable: false, transport_recovery_eligible: false };
+  assert.equal(workspaceAnalysisCanStart({ ...received, latest_run: exhausted }, "0.002001"), false);
+  assert.equal(workspaceAnalysisCanRetry({ ...received, latest_run: exhausted }, exhausted), false);
+  assert.equal(workspaceAnalysisCanRetry({ ...received, latest_run: exhausted }, { ...exhausted, retryable: true, transport_recovery_eligible: true }), false);
+  assert.equal(workspaceAnalysisErrorKey(exhausted.error_code), "transportExhausted");
+  for (const terminal of [undefined, -1, NaN, 1_681_801])
+    assert.equal(validWorkspaceAnalysisStatus({ ...received, latest_run: { ...failed,
+      claude_cost: { ...failed.claude_cost, terminal_reserved_micro_usd: terminal } } }), false);
+  assert.equal(validWorkspaceAnalysisStatus({ ...received, latest_run: { ...failed, transport_recovery_eligible: "true" } }), false);
+});
 test("only a confirmed editorial failure with changed inputs releases the local intent; unknown receipts stay pending", () => {
   for (const code of ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"]) {
     const failed = { ...ready, status: "failed" as const, phase: "failed" as const, error_code: code, is_current: false };
     const changed = { ...status, latest_run: failed, request_run: failed };
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest(changed), true);
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest(changed), true);
     assert.equal(workspaceAnalysisCanStart(changed, "0.002001"), true);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: null }), false);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed, is_current: true } }), false);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed, outcome_unknown: true } }), false);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed,
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, request_run: null }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, request_run: { ...failed, is_current: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, request_run: { ...failed, outcome_unknown: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, request_run: { ...failed,
       claude_cost: { ...failed.claude_cost, unknown_reserved_micro_usd: 1 } } }), false);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, latest_run: { ...failed, outcome_unknown: true } }), false);
-    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed,
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, latest_run: { ...failed, outcome_unknown: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedRequest({ ...changed, request_run: { ...failed,
       error_code: "workspace_engine_storage_verification_failed" } }), false);
   }
 });
@@ -121,6 +152,7 @@ test("saved intent has exact start/retry body and scoped key; server receipt is 
   assert.deepEqual(parsePendingWorkspaceAnalysis(pending, id, status.request_scope), pending);
   assert.equal(parsePendingWorkspaceAnalysis(pending, id, "another-actor"), null);
   assert.equal(parsePendingWorkspaceAnalysis({ ...pending, body: { ...pending.body, publish: true } }, id, status.request_scope), null);
+  assert.equal(parsePendingWorkspaceAnalysis({ ...pending, body: { ...pending.body, terminal_confirmation: { http_status: 499 } } }, id, status.request_scope), null);
   const retry = { ...pending, key: "retry-request-1", body: { action: "retry", run_id: id } };
   assert.deepEqual(parsePendingWorkspaceAnalysis(retry, id, status.request_scope), retry);
   assert.equal(parsePendingWorkspaceAnalysis({ ...retry, body: { ...retry.body, claude_cap_micro_usd: 10_000 } }, id, status.request_scope), null);
@@ -167,7 +199,7 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: fit completion, interpretation and catalog creation remain distinct from a complete result or Signal selection`, () => {
     const interpreting: WorkspaceAnalysisRun = { ...ready, fit_completed: true, expected_interpretation_units: 12, interpreted_units: 4,
       status: "running", phase: "interpreting", progress: 75,
-      claude_cost: { hard_cap_micro_usd: 500_000, settled_micro_usd: 100_000, reserved_micro_usd: 50_000, unknown_reserved_micro_usd: 0 } };
+      claude_cost: { hard_cap_micro_usd: 500_000, settled_micro_usd: 100_000, reserved_micro_usd: 50_000, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 0 } };
     const html = render({ ...status, active_run: interpreting, latest_run: interpreting });
     assert.ok(html.includes(t.phases.interpreting)); assert.ok(html.includes(t.fitCompletePending));
     assert.ok(!html.includes(t.completedBody)); assert.ok(!html.includes(t.phases.classifying));
@@ -188,7 +220,7 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: invalid paid editorial output retains its cost and exhausted repair never advertises a replacement run`, () => {
     const failed = { ...ready, status: "failed" as const, phase: "failed" as const, fit_completed: true,
       expected_interpretation_units: 357, interpreted_units: 0, error_code: "workspace_engine_interpretation_output_invalid", retryable: true,
-      claude_cap_micro_usd: 30_000_000, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 } };
+      claude_cap_micro_usd: 30_000_000, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 0 } };
     const invalid = render({ ...status, latest_run: failed });
     assert.ok(invalid.includes(t.errors.editorialInvalid)); assert.ok(invalid.includes(t.retry));
     assert.match(invalid, /0[.,]147415/u); assert.ok(!invalid.includes(t.unknown));
@@ -197,6 +229,35 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(!exhausted.includes(t.retry)); assert.ok(!exhausted.includes(t.changeCap));
     assert.ok(!exhausted.includes(t.startWithCap.split("{amount}")[0]));
     assert.ok(!exhausted.includes(t.unknown));
+  });
+  test(`${locale}: provider-confirmed interruption retains billing exposure and explains the additional reservation for resume`, () => {
+    const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", retryable: true,
+      error_code: "workspace_engine_interpretation_transport_terminal_confirmed", transport_recovery_eligible: true,
+      claude_cap_micro_usd: 30_000_000, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415,
+        reserved_micro_usd: 1_681_800, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 } };
+    const html = render({ ...status, latest_run: failed });
+    assert.ok(html.includes(t.errors.transportTerminal)); assert.ok(html.includes(t.retry));
+    assert.ok(html.includes(t.transportRetry)); assert.ok(html.includes(t.terminalAmount.split("{amount}")[0]));
+    assert.match(html, /0[.,]147415/u); assert.match(html, /1[.,]6818/u);
+    assert.doesNotMatch(html, /1[.,]829215/u, "the unreconciled reservation is never added to settled cost");
+    assert.ok(!html.includes(t.unknown)); assert.ok(!html.includes(t.changeCap));
+    assert.ok(!html.includes(t.startWithCap.split("{amount}")[0]));
+    const blocked = render({ ...status, latest_run: { ...failed, retryable: false, transport_recovery_eligible: false } });
+    assert.ok(!blocked.includes(t.retry)); assert.ok(!blocked.includes(t.transportRetry));
+    assert.ok(blocked.includes(t.terminalAmount.split("{amount}")[0]));
+    const exhausted = render({ ...status, latest_run: { ...failed, retryable: false, transport_recovery_eligible: false,
+      error_code: "workspace_engine_interpretation_transport_retry_exhausted" } });
+    assert.ok(exhausted.includes(t.errors.transportExhausted)); assert.ok(!exhausted.includes(t.retry));
+    assert.ok(!exhausted.includes(t.changeCap)); assert.ok(!exhausted.includes(t.startWithCap.split("{amount}")[0]));
+    assert.match(exhausted, /1[.,]6818/u);
+    const active = { ...failed, status: "running" as const, phase: "interpreting" as const, error_code: null,
+      retryable: false, transport_recovery_eligible: false,
+      claude_cost: { ...failed.claude_cost, reserved_micro_usd: 3_363_600 } };
+    const resumed = render({ ...status, active_run: active, latest_run: active });
+    assert.match(resumed, /3[.,]3636/u); assert.match(resumed, /1[.,]6818/u);
+    assert.ok(resumed.includes(t.terminalAmount.split("{amount}")[0])); assert.ok(!resumed.includes(t.transportRetry));
+    const uncertain = render({ ...status, latest_run: { ...failed, outcome_unknown: true } });
+    assert.ok(uncertain.replace(/&#x27;/gu, "'").includes(t.unknown)); assert.ok(!uncertain.includes(t.retry));
   });
   test(`${locale}: unknown estimate is explained as a spending limit and no-provider blocks complete analysis`, () => {
     const unknown = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,

@@ -27,15 +27,15 @@ const stores = {
 const sha = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = (code: string): never => { throw new Error(code); };
 
-/** Continue the same leased execution. A durable response is always consumed
- * again on recovery; only an unambiguously unsent attempt can get a successor. */
+/** Continue the same leased execution. Durable responses are consumed again on
+ * recovery. A successor requires the store's unsent or verified-terminal authority. */
 export async function interpretWorkspaceEngineV1(args: {
   database: SignalWorkspaceEngineDatabaseV1; lease: SignalWorkspaceEngineLeaseV1;
   fit: Omit<SignalWorkspaceEngineFitArgsV1, "database" | "lease">;
   clusters: SignalWorkspaceInterpretationClusterV1[]; directory: string; storage: WorkspaceEngineStorageV1;
   heartbeat: (phase: "interpreting" | "materializing") => Promise<void>;
   stores?: typeof stores; send?: typeof sendWorkspaceInterpretationV1;
-  api_key?: string; provider_enabled?: boolean;
+  api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
   const config = lease.snapshot.interpretation_config ?? fail("workspace_engine_interpretation_not_requested");
@@ -97,10 +97,14 @@ export async function interpretWorkspaceEngineV1(args: {
       reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
       ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
     let call = await store.reserve(reservation);
-    let unsentAttempts = 0;
-    while (call.state === "definitely_not_sent") {
-      if (++unsentAttempts > 128) return fail("workspace_engine_interpretation_retry_unavailable");
+    let transportAttempts = 0, confirmedTerminals = 0;
+    while (call.state === "definitely_not_sent" || call.state === "terminal_confirmed") {
+      if (++transportAttempts > 128) return fail("workspace_engine_interpretation_retry_unavailable");
+      if (call.state === "terminal_confirmed" && ++confirmedTerminals > 1)
+        return fail("workspace_engine_interpretation_transport_retry_exhausted");
       // This invocation is a newly claimed job, after the preceding one failed.
+      // The DB verifies terminal evidence, the single-successor limit, current
+      // authority and cumulative caps; neither state releases a terminal's cost.
       call = await store.reserve({ ...reservation, idempotency_key: `${batch.batch_key}:retry:${call.call_id}`,
         retry_of_call_id: call.call_id });
     }
@@ -118,6 +122,7 @@ export async function interpretWorkspaceEngineV1(args: {
         response = await (args.send ?? sendWorkspaceInterpretationV1)({ batch,
           api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
           provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
+          authorization_expires_at: args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
           authorize_send: async () => (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized,
           persist_receipt: async raw => {
             const stored = await put(`response-${call.call_id}.json`, raw.bytes);

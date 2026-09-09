@@ -13,7 +13,7 @@ export type SignalWorkspaceEngineEditorialRepairV1={
 };
 export type SignalWorkspaceEngineInterpretationCallV1={
  call_id:string;execution_id:string;workspace_id:string;attempt_token:string;retry_of_call_id:string|null;
- state:'reserved'|'in_flight'|'response_persisted'|'settled'|'outcome_unknown'|'definitely_not_sent';
+ state:'reserved'|'in_flight'|'response_persisted'|'settled'|'outcome_unknown'|'definitely_not_sent'|'terminal_confirmed';
  reserved_micro_usd:number;settled_micro_usd:number|null;request_digest:string;
  editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null;
  response:null|{storage_key:string;sha256:string;size_bytes:number;http_status:number;provider_request_id:string|null;complete:boolean};
@@ -26,8 +26,9 @@ export type SignalWorkspaceEngineInterpretationConfigurationV1={
 export type SignalWorkspaceEngineInterpretationUsageV1={
  input_tokens:number;output_tokens:number;cache_read_input_tokens:number;cache_creation_input_tokens:number;
 };
+/** Terminal reservations remain a subset of reserved, never settled or invoiced. */
 export type SignalWorkspaceEngineInterpretationBudgetV1={
- confirmed_micro_usd:number;reserved_micro_usd:number;unknown_reserved_micro_usd:number;
+ confirmed_micro_usd:number;reserved_micro_usd:number;unknown_reserved_micro_usd:number;terminal_reserved_micro_usd:number;
  observed_exception_micro_usd:number;hard_cap_micro_usd:number;
 };
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineInterpretationError(code,status);};
@@ -105,13 +106,15 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   if(byKey){if(byKey.actor_user_id!==args.actor_user_id||byKey.request_seal!==seal)return fail('workspace_engine_interpretation_idempotency_conflict');return view(byKey);}
   const attempts=(await c.query<Row>(`${rowSQL} AND workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND request_digest=$3 ORDER BY created_at DESC,id DESC FOR UPDATE`,
    [args.workspace_id,args.execution_id,args.request_digest])).rows;
-  const active=attempts.find(row=>row.call_state!=='definitely_not_sent');
+  const active=attempts.find(row=>!['definitely_not_sent','terminal_confirmed'].includes(row.call_state));
   if(active){if(active.actor_user_id!==args.actor_user_id||active.request_seal!==seal)return fail('workspace_engine_interpretation_idempotency_conflict');return view(active);}
   if(args.retry_of_call_id){const prior=attempts.find(row=>row.id===args.retry_of_call_id);
-   if(!prior||prior.actor_user_id!==args.actor_user_id||prior.call_state!=='definitely_not_sent'||prior.response_storage_key!==null
+   if(!prior||prior.actor_user_id!==args.actor_user_id||!['definitely_not_sent','terminal_confirmed'].includes(prior.call_state)||prior.response_storage_key!==null
     ||natural(prior.reserved_micro_usd)!==args.reserved_micro_usd||signalWorkspaceEmbeddingDigestV1(prior.call_configuration)!==signalWorkspaceEmbeddingDigestV1(config)
     ||signalWorkspaceEmbeddingDigestV1(prior.editorial_repair)!==signalWorkspaceEmbeddingDigestV1(repair??null)
     ||attempts.some(row=>row.retry_of_call_id===prior.id))return fail('workspace_engine_interpretation_retry_unavailable');
+   if(prior.call_state==='terminal_confirmed'&&attempts.filter(row=>row.call_state==='terminal_confirmed').length>1)
+    return fail('workspace_engine_interpretation_transport_retry_exhausted');
   }else if(attempts.length){const prior=attempts[0]!;
    if(prior.actor_user_id!==args.actor_user_id||prior.request_seal!==seal)return fail('workspace_engine_interpretation_idempotency_conflict');return view(prior);}
   const run=await execution(c,args.workspace_id,args.execution_id,args.actor_user_id,true,args.execution_token);
@@ -130,6 +133,12 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
      return fail('workspace_engine_interpretation_outcome_unknown');
    if(!args.retry_of_call_id&&(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND lower(metadata->'editorial_repair'->>'source_call_id')=lower($2::text) AND retry_of_call_id IS NULL LIMIT 1",[args.execution_id,repair.source_call_id])).rows.length)
      return fail('workspace_engine_interpretation_repair_unavailable');
+  }
+  if(attempts.some(row=>row.call_state==='terminal_confirmed')){
+   if(!(await c.query<{valid:boolean}>('SELECT workspace_engine_terminal_checkpoint_v1($1::uuid) valid',[args.execution_id])).rows[0]?.valid)
+    return fail('workspace_engine_checkpoint_invalid');
+   if((await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[args.execution_id])).rows.length)
+    return fail('workspace_engine_interpretation_outcome_unknown');
   }
   if(!(await c.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_timezone_invalid',422);
   const date=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[args.budget_timezone])).rows[0]!.date;
@@ -205,7 +214,7 @@ export async function failSignalWorkspaceEngineInterpretationV1(args:{database:S
  outcome:'definitely_not_sent'|'outcome_unknown';error_code:string}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
  const code=/^workspace_engine_[a-z_]{1,100}$/u.test(args.error_code)?args.error_code:'workspace_engine_interpretation_failed';
  return tx(args.database,async c=>{const row=await lockedCall(c,args.call_id,args.attempt_token);
-  if(['settled','definitely_not_sent'].includes(row.call_state))return view(row);
+  if(['settled','definitely_not_sent','terminal_confirmed'].includes(row.call_state))return view(row);
   if(args.outcome==='outcome_unknown'&&code==='workspace_engine_interpretation_receipt_persistence_unknown'
     &&row.call_state==='response_persisted'&&row.response_storage_key&&row.response_complete)return view(row);
   if(args.outcome==='definitely_not_sent'&&row.response_storage_key)return fail('workspace_engine_interpretation_response_already_received');
@@ -216,11 +225,12 @@ export async function failSignalWorkspaceEngineInterpretationV1(args:{database:S
 }
 export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string}):Promise<SignalWorkspaceEngineInterpretationBudgetV1>{
  return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id,false);
-  const result=(await c.query<{hard_cap_micro_usd:string;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_reserved_micro_usd:string;observed_exception_micro_usd:string}>(`
+  const result=(await c.query<{hard_cap_micro_usd:string;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_reserved_micro_usd:string;terminal_reserved_micro_usd:string;observed_exception_micro_usd:string}>(`
    SELECT execution.input_snapshot->>'claude_cap_micro_usd' hard_cap_micro_usd,
     COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.call_state='settled'),0)::text confirmed_micro_usd,
-    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state IN('reserved','in_flight','response_persisted','outcome_unknown')),0)::text reserved_micro_usd,
+    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state IN('reserved','in_flight','response_persisted','outcome_unknown','terminal_confirmed')),0)::text reserved_micro_usd,
     COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state='outcome_unknown'),0)::text unknown_reserved_micro_usd,
+    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state='terminal_confirmed'),0)::text terminal_reserved_micro_usd,
     COALESCE(sum(GREATEST(call.settled_micro_usd-call.reserved_micro_usd,0)) FILTER(WHERE call.call_state='settled'),0)::text observed_exception_micro_usd
    FROM signal_topic_catalog_executions execution LEFT JOIN engine_cost_events call ON call.catalog_execution_id=execution.id AND call.workspace_id=execution.workspace_id
     AND call.workspace_contract='workspace-engine-interpretation-v1'
@@ -228,5 +238,57 @@ export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{data
    GROUP BY execution.id`,[args.execution_id,args.workspace_id])).rows[0];
   if(!result)return fail('workspace_engine_interpretation_not_found',404);
   return Object.fromEntries(Object.entries(result).map(([key,value])=>[key,natural(value)])) as SignalWorkspaceEngineInterpretationBudgetV1;
+ });
+}
+
+export type SignalWorkspaceEngineTerminalEvidenceV1={
+ source:'anthropic_console';provider_request_id:string;provider_model:string;
+ started_at:string;ended_at:string;http_status:499;reason:'client_disconnected';
+ usage:SignalWorkspaceEngineInterpretationUsageV1;
+ evidence:{storage_key:string;sha256:string;size_bytes:number};
+};
+/** Operational server entry point. Our DB checks the verifier's internal admin
+ * role. Console evidence is a human-audited correlation, not an API response or
+ * invoice. It never releases the original reservation or authorizes a send. */
+export async function reconcileSignalWorkspaceEngineTerminalV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
+ workspace_id:string;execution_id:string;call_id:string;attempt_token:string;expected_request_digest:string;
+ verifier_user_id:string;terminal:SignalWorkspaceEngineTerminalEvidenceV1}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
+ const t=args.terminal,u=t.usage;
+ if(t.source!=='anthropic_console'||t.http_status!==499||t.reason!=='client_disconnected'
+  ||!/^req_[A-Za-z0-9_-]{1,220}$/u.test(t.provider_request_id)||!digest.test(args.expected_request_digest)
+  ||!digest.test(t.evidence.sha256)||!Number.isSafeInteger(t.evidence.size_bytes)||t.evidence.size_bytes<=0
+  ||t.evidence.storage_key.includes('..')||!t.evidence.storage_key.startsWith(`workspace-engine/${args.workspace_id}/${args.execution_id}/`)
+  ||!Number.isFinite(Date.parse(t.started_at))||!Number.isFinite(Date.parse(t.ended_at))||Date.parse(t.ended_at)<Date.parse(t.started_at)
+  ||Object.keys(u).sort().join(',')!=='cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
+  ||!Object.values(u).every(n=>Number.isSafeInteger(n)&&n>=0&&n<=2147483647))return fail('workspace_engine_interpretation_terminal_evidence_invalid',422);
+ return tx(args.database,async c=>{
+  await authorize(c,args.workspace_id,args.verifier_user_id);
+  if(!(await c.query("SELECT 1 FROM users WHERE id=$1::uuid AND status='active' AND user_type='noisia_internal' AND primary_role IN('noisia_admin','admin','founder')",[args.verifier_user_id])).rows.length)
+   return fail('workspace_engine_interpretation_terminal_forbidden',403);
+  const row=await lockedCall(c,args.call_id,args.attempt_token);
+  if(row.workspace_id!==args.workspace_id||row.catalog_execution_id!==args.execution_id||row.request_digest!==args.expected_request_digest
+   ||row.call_configuration.model!==t.provider_model)return fail('workspace_engine_interpretation_terminal_evidence_conflict');
+  const prior=(await c.query<{receipt:Record<string,unknown>|null}>("SELECT metadata->'provider_terminal_receipt' receipt FROM engine_cost_events WHERE id=$1::uuid",[row.id])).rows[0]!.receipt;
+  const config=row.call_configuration;
+  const cost=(BigInt(u.input_tokens)*BigInt(config.input_micro_usd_per_million_tokens)+BigInt(u.output_tokens)*BigInt(config.output_micro_usd_per_million_tokens)
+   +BigInt(u.cache_read_input_tokens)*BigInt(config.cache_read_micro_usd_per_million_tokens)+BigInt(u.cache_creation_input_tokens)*BigInt(config.cache_creation_micro_usd_per_million_tokens)+999999n)/1000000n;
+  if(cost>BigInt(Number.MAX_SAFE_INTEGER))return fail('workspace_engine_interpretation_cost_invalid');
+  const receipt={...t,started_at:new Date(t.started_at).toISOString(),ended_at:new Date(t.ended_at).toISOString(),
+   contract_version:'workspace-provider-terminal-evidence-v1',call_id:row.id,attempt_token:row.attempt_token,workspace_id:row.workspace_id,
+   execution_id:row.catalog_execution_id,request_digest:row.request_digest,configuration_digest:signalWorkspaceEmbeddingDigestV1(config),
+   billing_status:'unreconciled',usage_cost_micro_usd:Number(cost),verified_by_user_id:args.verifier_user_id};
+  if(prior){const sealed={...prior};delete sealed.verified_at;
+   if(signalWorkspaceEmbeddingDigestV1(sealed)!==signalWorkspaceEmbeddingDigestV1(receipt))return fail('workspace_engine_interpretation_terminal_evidence_conflict');
+   return view(row);}
+  if(row.call_state!=='outcome_unknown'||row.response_storage_key)return fail('workspace_engine_interpretation_terminal_evidence_unavailable');
+  await c.query(`UPDATE engine_cost_events SET call_state='terminal_confirmed',failure_code='workspace_engine_interpretation_transport_terminal_confirmed',
+   metadata=metadata||jsonb_build_object('provider_terminal_receipt',$2::jsonb||jsonb_build_object('verified_at',clock_timestamp())) WHERE id=$1::uuid`,[row.id,JSON.stringify(receipt)]);
+  await c.query(`UPDATE signal_topic_catalog_executions SET error_code=CASE WHEN EXISTS(
+    SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=$1::uuid AND call.call_state='terminal_confirmed'
+    GROUP BY call.request_digest HAVING count(*)>1) THEN 'workspace_engine_interpretation_transport_retry_exhausted'
+    ELSE 'workspace_engine_interpretation_transport_terminal_confirmed' END,
+   result_summary=result_summary||'{"interpretation_evidence_checkpoint_required":true}'::jsonb,updated_at=clock_timestamp()
+   WHERE id=$1::uuid AND status='failed'`,[row.catalog_execution_id]);
+  return view({...row,call_state:'terminal_confirmed'});
  });
 }

@@ -2884,3 +2884,12 @@ actuales de Signal se reutilizan sin payloads completos ni aprobación simulada.
 La ruta existente de análisis conserva `action=retry` e idempotencia. `workspace_engine_interpretation_output_invalid` sólo es recuperable cuando el servidor prueba respuesta completa y liquidada, fit/bundle vigente, misma autoridad y ausencia de resultados inciertos. El navegador no envía ni concede `editorial_repair_recovery_eligible`. La misma ejecución recupera su paquete y puede efectuar una única corrección editorial por lote bajo el cap original.
 
 `workspace_engine_interpretation_repair_invalid` es terminal para esa corrección. La UI muestra el fallo y el gasto real; no inicia otra corrida para eludirlo. Los inputs realmente cambiados permiten un nuevo análisis normal, tras resolver cualquier intención o resultado incierto. No se añade endpoint ni formulario.
+
+
+### Workspace analysis recovery after external provider termination
+
+The existing workspace analysis response projects `transport_recovery_eligible` from server evidence and adds `claude_cost.terminal_reserved_micro_usd` (a subset of reserved cost). `workspace_engine_interpretation_transport_terminal_confirmed` may enable the existing resume action when authority and inputs remain current. `workspace_engine_interpretation_transport_retry_exhausted` prevents another attempt on the same current failure. Another unresolved provider call continues to block recovery.
+
+The browser cannot confirm provider termination or submit an evidence assertion through this contract. The operational server function `reconcileSignalWorkspaceEngineTerminalV1` requires a current internal administrator with workspace execution access and a scoped private observation. It records evidence without enqueueing work, inventing response bytes, settling the original charge or reserving a successor. Resume and provider send each revalidate their existing authorities independently.
+
+A dated operational grant can set Worker environment `NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL` to a canonical UTC timestamp with milliseconds. It prevents new sends after expiry and preserves responses from requests already admitted. It is not a browser-controlled budget override and does not modify the provider request body.

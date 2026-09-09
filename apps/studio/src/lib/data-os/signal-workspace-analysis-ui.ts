@@ -2,9 +2,9 @@ import type { SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { embeddingCapUsdInput, latestCorpusEmbeddingSnapshot, parseEmbeddingCapMicroUsd } from "./workspace-corpus-embeddings-ui";
 
 export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> & {
-  retryable: boolean; outcome_unknown: boolean;
+  retryable: boolean; outcome_unknown: boolean; transport_recovery_eligible: boolean;
   claude_cost: { hard_cap_micro_usd: number; settled_micro_usd: number;
-    reserved_micro_usd: number; unknown_reserved_micro_usd: number };
+    reserved_micro_usd: number; unknown_reserved_micro_usd: number; terminal_reserved_micro_usd: number };
 };
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
@@ -37,10 +37,12 @@ export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAna
     && Number(value.processed_roots) <= Number(value.expected_roots) && Number(value.processed_chunks) <= Number(value.expected_chunks)
     && typeof value.fit_completed === "boolean" && Number(value.interpreted_units) <= Number(value.expected_interpretation_units)
     && typeof value.is_current === "boolean" && typeof value.retryable === "boolean" && typeof value.outcome_unknown === "boolean"
+    && typeof value.transport_recovery_eligible === "boolean"
     && integer(value.claude_cap_micro_usd) && [null, "computational_grouping", "insufficient_population"].includes(value.result_kind as null | string)
     && nullable(value.error_code, (code) => typeof code === "string") && nullable(value.model_version_id, uuid)
-    && object(value.claude_cost) && ["hard_cap_micro_usd", "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd"]
-      .every((key) => integer((value.claude_cost as Record<string, unknown>)[key]));
+    && object(value.claude_cost) && ["hard_cap_micro_usd", "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd", "terminal_reserved_micro_usd"]
+      .every((key) => integer((value.claude_cost as Record<string, unknown>)[key]))
+    && Number(value.claude_cost.terminal_reserved_micro_usd) <= Number(value.claude_cost.reserved_micro_usd);
 }
 export function workspaceAnalysisInterpretedComplete(run: WorkspaceAnalysisRun | null) {
   return Boolean(run?.status === "ready" && run.phase === "complete" && run.fit_completed
@@ -87,19 +89,21 @@ export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | nu
   const cost = status?.preflight.cost.claude;
   return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
 }
-export function workspaceAnalysisEditorialFailure(status: WorkspaceAnalysisStatus | null) {
+const recoveryFailureCodes = ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid",
+  "workspace_engine_interpretation_transport_terminal_confirmed", "workspace_engine_interpretation_transport_retry_exhausted"];
+export function workspaceAnalysisRecoveryFailure(status: WorkspaceAnalysisStatus | null) {
   return [status?.latest_run, status?.request_run].some((run) => run?.status === "failed" && run.is_current
-    && ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"].includes(run.error_code ?? ""));
+    && recoveryFailureCodes.includes(run.error_code ?? ""));
 }
-export function workspaceAnalysisCanReleaseChangedEditorialRequest(status: WorkspaceAnalysisStatus) {
+export function workspaceAnalysisCanReleaseChangedRequest(status: WorkspaceAnalysisStatus) {
   const run = status.request_run;
   return Boolean(run?.status === "failed" && !run.is_current && !workspaceAnalysisUnknown(status)
-    && ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"].includes(run.error_code ?? ""));
+    && recoveryFailureCodes.includes(run.error_code ?? ""));
 }
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
   if (!status || !cap || !status.can_execute || status.active_run || workspaceAnalysisUnknown(status)
-    || workspaceAnalysisEditorialFailure(status) || status.preflight.state !== "ready") return false;
+    || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
   return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
     && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
@@ -107,7 +111,9 @@ export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null
 }
 export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)
-    && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown);
+    && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
+    && run.error_code !== "workspace_engine_interpretation_transport_retry_exhausted"
+    && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));
 }
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
   if (status.workspace_id !== request.workspace_id || status.request_scope !== request.request_scope
@@ -119,6 +125,8 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_engine_interpretation_transport_terminal_confirmed") return "transportTerminal";
+  if (code === "workspace_engine_interpretation_transport_retry_exhausted") return "transportExhausted";
   if (code === "workspace_engine_interpretation_output_invalid") return "editorialInvalid";
   if (code === "workspace_engine_interpretation_repair_invalid") return "editorialRepairExhausted";
   if (["load", "request", "storage", "forbidden"].includes(code)) return code;

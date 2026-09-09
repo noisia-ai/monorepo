@@ -118,6 +118,8 @@ export async function sendWorkspaceInterpretationV1(args: {
   persist_receipt: (receipt: WorkspaceInterpretationRawReceiptV1) => Promise<void>;
   fetch_impl?: typeof fetch; timeout_ms?: number;
   schedule_timeout?: (onTimeout: () => void, milliseconds: number) => (() => void);
+  authorization_expires_at?: string;
+  now_milliseconds?: () => number;
 }): Promise<WorkspaceInterpretationResponseV1> {
   let requestBody: string;
   try {
@@ -135,12 +137,30 @@ export async function sendWorkspaceInterpretationV1(args: {
   if (!args.api_key || !/^[A-Za-z0-9_-]{16,512}$/u.test(args.api_key)) throw transportError("provider_configuration_invalid", "definitely_not_sent");
   const timeout = args.timeout_ms === undefined ? requestTimeoutMs : args.timeout_ms;
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > requestTimeoutMs) throw transportError("provider_configuration_invalid", "definitely_not_sent");
+  let authorizationDeadline: number | undefined;
+  if (args.authorization_expires_at !== undefined) {
+    const value = args.authorization_expires_at;
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
+      || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value)
+      throw transportError("provider_configuration_invalid", "definitely_not_sent");
+    authorizationDeadline = Date.parse(value);
+  }
+  const assertAdmission = () => {
+    if (authorizationDeadline === undefined) return;
+    const now = (args.now_milliseconds ?? Date.now)();
+    if (!Number.isFinite(now)) throw transportError("provider_configuration_invalid", "definitely_not_sent");
+    if (now >= authorizationDeadline) throw transportError("daily_authority_expired", "definitely_not_sent");
+  };
+  // A dated operator grant admits new sends only before its deadline. It does
+  // not interrupt an already sent request or change its sealed provider body.
+  assertAdmission();
   let authorized: boolean;
   try { authorized = await args.authorize_send(); }
   catch { throw transportError("send_authority_unknown", "outcome_unknown"); }
   // A failed CAS can mean another process already sent this same attempt.
   // Never let that result release its reservation as definitely-not-sent.
   if (!authorized) throw transportError("send_not_authorized", "outcome_unknown");
+  assertAdmission();
   const controller = new AbortController();
   const cancelTimeout = (args.schedule_timeout ?? scheduleTimeout)(() => controller.abort(), timeout);
   try {

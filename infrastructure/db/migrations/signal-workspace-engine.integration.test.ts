@@ -546,7 +546,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
   assert.equal((await status()).editorial_repair_recovery_eligible,false);await assert.rejects(retry(),/retry_unavailable/u);
   assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0],sourceBefore);
   assert.deepEqual(await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started}),{
-   hard_cap_micro_usd:10_000,confirmed_micro_usd:350,reserved_micro_usd:0,unknown_reserved_micro_usd:0,observed_exception_micro_usd:0});
+   hard_cap_micro_usd:10_000,confirmed_micro_usd:350,reserved_micro_usd:0,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
   assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND metadata ? 'editorial_repair' AND retry_of_call_id IS NULL",[started.execution_id])).rows[0].n,1);
   assert.equal((await f.query('SELECT count(*)::int n FROM analysis_artifacts WHERE engine_execution_id=$1::uuid',[started.execution_id])).rows[0].n,bundle.length);
  }finally{await f.cleanup();}
@@ -584,7 +584,7 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   const notSent=await reserve(randomUUID(),600);await money.failSignalWorkspaceEngineInterpretationV1({database:f.database,call_id:notSent.call_id,attempt_token:notSent.attempt_token,
    outcome:'definitely_not_sent',error_code:'workspace_engine_provider_disabled'});
   const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
-  assert.deepEqual(budget,{hard_cap_micro_usd:5000,confirmed_micro_usd:300,reserved_micro_usd:1000,unknown_reserved_micro_usd:1000,observed_exception_micro_usd:0});
+  assert.deepEqual(budget,{hard_cap_micro_usd:5000,confirmed_micro_usd:300,reserved_micro_usd:1000,unknown_reserved_micro_usd:1000,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
   const secondWorkspace=process.env.NOISIA_WORKSPACE_ENGINE_SECOND_WORKSPACE_ID!,secondEmbedding=process.env.NOISIA_WORKSPACE_ENGINE_SECOND_EMBEDDING_ID!;
   assert.ok(secondWorkspace&&secondEmbedding,'second owned local corpus fixture is required for cross-workspace daily budget');
   const otherAccess={...f.access,workspace_id:secondWorkspace},other={...f,workspace_id:secondWorkspace,embedding_run_id:secondEmbedding,access:otherAccess};
@@ -653,5 +653,140 @@ test('interpretation blocks reserved sends after observed overage and retries on
   assert.deepEqual((await f.query('SELECT call_state FROM engine_cost_events WHERE id=$1::uuid',[original.call_id])).rows,[{call_state:'definitely_not_sent'}]);
   const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
   assert.equal(budget.reserved_micro_usd,1000);assert.equal(budget.unknown_reserved_micro_usd,1000);
+ }finally{await f.cleanup();}
+});
+
+test('external provider terminal evidence retains cost reserves and permits one exact transport successor', {skip:!enabled,timeout:90_000},async()=>{
+ const f=await fixture();try{
+  await f.query(readFileSync(new URL('./0141_signal_workspace_editorial_repair.sql',import.meta.url),'utf8'));
+  await f.query(readFileSync(new URL('./0142_signal_workspace_terminal_transport.sql',import.meta.url),'utf8'));
+  assert.equal((await f.query(`SELECT COALESCE(bool_or(acl.grantee=0 AND acl.privilege_type='EXECUTE'),false) permitted
+   FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
+   WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
+  await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('repair-prompt'),schema_digest:sha('repair-schema'),pricing_version:'local-only',
+   input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
+  const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
+   expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'editorial-repair'},claude_cap_micro_usd:10_000,
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000}});
+  const claim=async()=>{const value=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-editorial-repair'});assert.ok(value);return value;};
+  const lease=await claim(),coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
+  await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'persisting',exported:{...coverage,stream_digest:sha('unchanged numerical export')}});
+  const bundle=['manifest.json','model-manifest.json','model.open.joblib','clusters.open.json','assignments.open.jsonl','roots.jsonl'].map(name=>({
+   name,storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/${name}.parts.json`,sha256:sha(name),size_bytes:10,media_type:'application/octet-stream'}));
+  const ids=new Map<string,string>();for(const file of bundle){const saved=await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:{
+   artifact_key:file.name,artifact_type:file.name==='model-manifest.json'||file.name.endsWith('.joblib')?'engine_model':'engine_output',title:file.name,
+   storage_key:file.storage_key,sha256:file.sha256,size_bytes:file.size_bytes,media_type:file.media_type,metadata:{filename:file.name,...(file.name==='manifest.json'?{bundle}:{})}}});ids.set(file.name,saved.artifact_id);}
+  await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease,coverage,model_artifact_id:ids.get('model-manifest.json')!,output_artifact_id:ids.get('manifest.json')!,
+   result_kind:'computational_grouping',model_configuration:{fixture:'editorial-repair'},runtime_kind:'python',artifact_format:'joblib',license_key:null,
+   interpretation_manifest:{unit_count:1,unit_digest:sha('"open:fixture"\n')}});
+  const reserveBase={...f.access,...started,execution_token:lease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000};
+  const originalRequest={...reserveBase,idempotency_key:randomUUID(),request_digest:sha('original full packet'),reserved_micro_usd:500};
+  const source=await money.reserveSignalWorkspaceEngineInterpretationV1(originalRequest),sourceToken={database:f.database,call_id:source.call_id,attempt_token:source.attempt_token,execution_token:lease.execution_token};
+  const response={storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/source-response.parts.json`,sha256:sha('known invalid editorial answer'),size_bytes:29,http_status:200,provider_request_id:null,complete:true};
+  await money.markSignalWorkspaceEngineInterpretationSentV1(sourceToken);await money.persistSignalWorkspaceEngineInterpretationResponseV1({...sourceToken,response});
+  await money.settleSignalWorkspaceEngineInterpretationV1({...sourceToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+  const sourceBefore=(await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0];
+  const editorial_repair:money.SignalWorkspaceEngineEditorialRepairV1={contract_version:'workspace-editorial-repair-v1',source_call_id:source.call_id,
+   source_request_digest:source.request_digest,source_response_sha256:response.sha256,diagnostic:'output_invalid',protocol_digest:SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1};
+  const request={...reserveBase,idempotency_key:randomUUID(),request_digest:sha('explicit repair packet with full original evidence and receipt binding'),reserved_micro_usd:400,editorial_repair};
+  const original=await money.reserveSignalWorkspaceEngineInterpretationV1(request);
+  const token={database:f.database,call_id:original.call_id,attempt_token:original.attempt_token,execution_token:lease.execution_token};
+  await money.markSignalWorkspaceEngineInterpretationSentV1(token);
+  await money.failSignalWorkspaceEngineInterpretationV1({...token,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  const before=(await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[original.call_id])).rows[0];
+  const startedAt=new Date(before.sent_at).toISOString();
+  const terminal:money.SignalWorkspaceEngineTerminalEvidenceV1={source:'anthropic_console',provider_request_id:`req_${randomUUID().replaceAll('-','')}`,
+   provider_model:configuration.model,started_at:startedAt,ended_at:startedAt,http_status:499,reason:'client_disconnected',
+   usage:{input_tokens:29,output_tokens:44,cache_read_input_tokens:0,cache_creation_input_tokens:0},
+   evidence:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/console-observation.parts.json`,sha256:sha('operator observation, not response bytes'),size_bytes:200}};
+  const reconcile={database:f.database,workspace_id:f.workspace_id,...started,call_id:original.call_id,attempt_token:original.attempt_token,
+   expected_request_digest:original.request_digest,verifier_user_id:f.actor_user_id,terminal};
+  await f.query("UPDATE users SET primary_role='analyst' WHERE id=$1::uuid",[f.actor_user_id]);
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1(reconcile),/terminal_forbidden/u);
+  await f.query("UPDATE users SET primary_role='noisia_admin' WHERE id=$1::uuid",[f.actor_user_id]);
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,expected_request_digest:sha('other packet')}),/evidence_conflict/u);
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,terminal:{...terminal,provider_model:'other-model'}}),/evidence_conflict/u);
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,terminal:{...terminal,evidence:{...terminal.evidence,storage_key:'workspace-engine/wrong/observation'}}}),/evidence_invalid/u);
+  await f.query('SAVEPOINT terminal_transition');
+  const confirmed=await money.reconcileSignalWorkspaceEngineTerminalV1(reconcile);
+  assert.equal(confirmed.state,'terminal_confirmed');assert.equal(confirmed.response,null);assert.equal(confirmed.settled_micro_usd,null);
+  assert.deepEqual(await money.reconcileSignalWorkspaceEngineTerminalV1(reconcile),confirmed,'lost ACK replays without changing the proof');
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,terminal:{...terminal,evidence:{...terminal.evidence,sha256:sha('changed evidence')}}}),/evidence_conflict/u);
+  const after=(await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[original.call_id])).rows[0];
+  for(const field of ['response_storage_key','response_sha256','response_http_status','provider_request_id','settled_micro_usd','settled_at','input_tokens','output_tokens','estimated_cost_usd','reserved_micro_usd'])assert.deepEqual(after[field],before[field]);
+  assert.equal(after.metadata.provider_terminal_receipt.usage_cost_micro_usd,73);
+  assert.equal(after.metadata.provider_terminal_receipt.billing_status,'unreconciled');
+  for(const field of ['started_at','ended_at','verified_at']){
+   await f.query('ROLLBACK TO SAVEPOINT terminal_transition');await f.query('BEGIN');
+   try{const receipt={...after.metadata.provider_terminal_receipt};delete receipt[field];
+    await assert.rejects(f.query("UPDATE engine_cost_events SET call_state='terminal_confirmed',metadata=metadata||jsonb_build_object('provider_terminal_receipt',$2::jsonb) WHERE id=$1::uuid",[original.call_id,JSON.stringify(receipt)]),/External terminal evidence scope is invalid/u);
+   }finally{await f.query('ROLLBACK');}
+  }
+  await money.reconcileSignalWorkspaceEngineTerminalV1(reconcile);await f.query('RELEASE SAVEPOINT terminal_transition');
+
+  assert.equal((await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started})).terminal_reserved_micro_usd,400);
+  const status=(await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run!;
+  assert.equal(status.transport_recovery_eligible,true);assert.equal(status.error_code,'workspace_engine_interpretation_transport_terminal_confirmed');
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1(status.error_code),false);
+  const retryKey=randomUUID();await engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:retryKey});
+  assert.equal((await engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:retryKey})).replayed,true);
+  const recovered=await claim();assert.deepEqual((await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:recovered}))?.metadata.bundle,bundle);
+  const successorRequest={...request,idempotency_key:randomUUID(),retry_of_call_id:original.call_id,execution_token:recovered.execution_token};
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,execution_token:randomUUID()}),/lease_conflict/u);
+  await f.query('SAVEPOINT terminal_cap');
+  const extra=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserveBase,execution_token:recovered.execution_token,idempotency_key:randomUUID(),request_digest:sha('other safe reservation'),reserved_micro_usd:100});
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest),/daily_cap_exceeded/u);
+  await f.query('ROLLBACK TO SAVEPOINT terminal_cap');await f.query('RELEASE SAVEPOINT terminal_cap');
+  assert.ok(extra.call_id);
+  for(const mutation of ['actor','context','bundle'] as const){await f.query('SAVEPOINT terminal_authority');
+   if(mutation==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
+   if(mutation==='context')await f.query("UPDATE brands SET description='stale before terminal retry' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
+   if(mutation==='bundle')await artifact(f,recovered,'engine_output');
+   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest),/forbidden|inputs_stale|checkpoint_invalid/u);
+   await f.query('ROLLBACK TO SAVEPOINT terminal_authority');await f.query('RELEASE SAVEPOINT terminal_authority');
+  }
+  const successor=await money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest);
+  assert.notEqual(successor.call_id,original.call_id);assert.notEqual(successor.attempt_token,original.attempt_token);
+  assert.deepEqual(successor.editorial_repair,editorial_repair);assert.equal(successor.request_digest,original.request_digest);
+  assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID()})).call_id,successor.call_id);
+  let budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+  assert.deepEqual(budget,{confirmed_micro_usd:150,reserved_micro_usd:800,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:400,observed_exception_micro_usd:0,hard_cap_micro_usd:10_000});
+  const successorToken={database:f.database,call_id:successor.call_id,attempt_token:successor.attempt_token,execution_token:recovered.execution_token};
+  await money.failSignalWorkspaceEngineInterpretationV1({...successorToken,outcome:'definitely_not_sent',error_code:'workspace_engine_interpretation_provider_disabled'});
+  const transport=await money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID(),retry_of_call_id:successor.call_id});
+  const transportToken={...successorToken,call_id:transport.call_id,attempt_token:transport.attempt_token};
+  assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(transportToken)).send_authorized,true);
+  await f.query('SAVEPOINT successful_transport');
+  await money.persistSignalWorkspaceEngineInterpretationResponseV1({...transportToken,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/successor-response.parts.json`,sha256:sha('valid successor response'),size_bytes:20,http_status:200,provider_request_id:'req_success',complete:true}});
+  await money.settleSignalWorkspaceEngineInterpretationV1({...transportToken,usage:{input_tokens:100,output_tokens:100,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+  const successfulBudget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+  assert.equal(successfulBudget.confirmed_micro_usd,350);assert.equal(successfulBudget.reserved_micro_usd,400);assert.equal(successfulBudget.terminal_reserved_micro_usd,400);
+  assert.deepEqual((await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:recovered}))?.metadata.bundle,bundle);
+  await f.query('ROLLBACK TO SAVEPOINT successful_transport');await f.query('RELEASE SAVEPOINT successful_transport');
+  await money.failSignalWorkspaceEngineInterpretationV1({...transportToken,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID(),retry_of_call_id:transport.call_id}),/idempotency_conflict|retry_unavailable/u);
+  const other=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserveBase,execution_token:recovered.execution_token,idempotency_key:randomUUID(),request_digest:sha('another logical batch'),reserved_micro_usd:20});
+  const otherToken={database:f.database,call_id:other.call_id,attempt_token:other.attempt_token,execution_token:recovered.execution_token};
+  await money.markSignalWorkspaceEngineInterpretationSentV1(otherToken);
+  await money.failSignalWorkspaceEngineInterpretationV1({...otherToken,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:recovered,error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  await money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,call_id:other.call_id,attempt_token:other.attempt_token,expected_request_digest:other.request_digest,
+   terminal:{...terminal,usage:{...terminal.usage,input_tokens:2,output_tokens:1},provider_request_id:`req_${randomUUID().replaceAll('-','')}`}});
+
+  await assert.rejects(money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,call_id:transport.call_id,attempt_token:transport.attempt_token}),/duplicate key/u,'provider request proof cannot be assigned twice');
+  await money.reconcileSignalWorkspaceEngineTerminalV1({...reconcile,call_id:transport.call_id,attempt_token:transport.attempt_token,
+   terminal:{...terminal,provider_request_id:`req_${randomUUID().replaceAll('-','')}`}});
+  assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run?.transport_recovery_eligible,false);
+  assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run?.error_code,'workspace_engine_interpretation_transport_retry_exhausted');
+  await f.query("UPDATE signal_topic_catalog_executions SET error_code='workspace_engine_interpretation_transport_terminal_confirmed' WHERE id=$1::uuid",[started.execution_id]);
+  assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run?.transport_recovery_eligible,false,'another singly confirmed batch cannot hide an exhausted batch');
+  await assert.rejects(engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:randomUUID()}),/retry_unavailable/u);
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID(),retry_of_call_id:transport.call_id}),/transport_retry_exhausted/u);
+  await assert.rejects(money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:terminal.usage}),/response_required/u);
+  budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.reserved_micro_usd,820);assert.equal(budget.terminal_reserved_micro_usd,820);assert.equal(budget.confirmed_micro_usd,150);
+  assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0],sourceBefore);
+  assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND metadata ? 'editorial_repair' AND retry_of_call_id IS NULL",[started.execution_id])).rows[0].n,1);
  }finally{await f.cleanup();}
 });

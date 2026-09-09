@@ -65,7 +65,7 @@ test("run view does not fabricate a Claude reservation and only exposes retry fo
     expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0 };
   assert.equal(workspaceAnalysisRunViewV1(run)?.retryable, true);
   assert.deepEqual(workspaceAnalysisRunViewV1(run)?.claude_cost, { hard_cap_micro_usd: 0, settled_micro_usd: 0,
-    reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 });
+    reserved_micro_usd: 0, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 0 });
   assert.equal(workspaceAnalysisRunViewV1({ ...run, is_current: false })?.retryable, false);
   assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_chunk_integrity_failed" })?.retryable, false);
   assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_outcome_unknown" })?.outcome_unknown, true);
@@ -102,7 +102,7 @@ test("storage verification retry requires server evidence of no committed artifa
   for (const error_code of ["workspace_engine_storage_digest_invalid", "workspace_engine_storage_reference_invalid", "workspace_engine_forbidden"])
     assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, error_code })?.retryable, false);
   const unknownBudget = { confirmed_micro_usd: 0, reserved_micro_usd: 1, unknown_reserved_micro_usd: 1,
-    observed_exception_micro_usd: 0, hard_cap_micro_usd: 10 };
+    terminal_reserved_micro_usd: 0, observed_exception_micro_usd: 0, hard_cap_micro_usd: 10 };
   assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, claude_cap_micro_usd: 10 }, unknownBudget)?.retryable, false);
 });
 
@@ -126,7 +126,7 @@ test("interpretation evidence retry requires its own server eligibility and neve
     assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, error_code })?.retryable, false);
   assert.equal(workspaceAnalysisRunViewV1({ ...recoverable, claude_cap_micro_usd: 10 }, {
     confirmed_micro_usd: 0, reserved_micro_usd: 1, unknown_reserved_micro_usd: 1,
-    observed_exception_micro_usd: 0, hard_cap_micro_usd: 10 })?.retryable, false);
+    terminal_reserved_micro_usd: 0, observed_exception_micro_usd: 0, hard_cap_micro_usd: 10 })?.retryable, false);
 });
 
 
@@ -137,7 +137,7 @@ test("editorial repair retry requires its exact server eligibility while settled
     claude_cap_micro_usd: 30_000_000, result_kind: "computational_grouping", fit_completed: true,
     expected_interpretation_units: 357, interpreted_units: 0, materialized_topics: 0 };
   const budget = { confirmed_micro_usd: 147_415, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0,
-    observed_exception_micro_usd: 0, hard_cap_micro_usd: 30_000_000 };
+    terminal_reserved_micro_usd: 0, observed_exception_micro_usd: 0, hard_cap_micro_usd: 30_000_000 };
   assert.equal(workspaceAnalysisRunViewV1(run, budget)?.retryable, false);
   const eligible = { ...run, editorial_repair_recovery_eligible: true };
   const view = workspaceAnalysisRunViewV1(eligible, budget)!;
@@ -151,6 +151,29 @@ test("editorial repair retry requires its exact server eligibility while settled
     assert.equal(workspaceAnalysisRunViewV1({ ...eligible, error_code }, budget)?.retryable, false);
 });
 
+
+test("terminal transport recovery is server-derived and preserves the unsettled reservation instead of inventing a confirmed charge", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 80, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
+    error_code: "workspace_engine_interpretation_transport_terminal_confirmed", is_current: true, model_version_id: id, artifact_count: 15,
+    claude_cap_micro_usd: 30_000_000, result_kind: "computational_grouping", fit_completed: true,
+    expected_interpretation_units: 357, interpreted_units: 0, materialized_topics: 0 };
+  const budget = { confirmed_micro_usd: 147_415, reserved_micro_usd: 1_681_800, terminal_reserved_micro_usd: 1_681_800,
+    unknown_reserved_micro_usd: 0, observed_exception_micro_usd: 0, hard_cap_micro_usd: 30_000_000 };
+  assert.equal(workspaceAnalysisRunViewV1(run, budget)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, transport_recovery_eligible: false }, budget)?.retryable, false);
+  const eligible = { ...run, transport_recovery_eligible: true }, view = workspaceAnalysisRunViewV1(eligible, budget)!;
+  assert.equal(view.retryable, true); assert.equal(view.outcome_unknown, false);
+  assert.deepEqual(view.claude_cost, { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415, reserved_micro_usd: 1_681_800,
+    unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 });
+  assert.equal(workspaceAnalysisRunViewV1({ ...eligible, is_current: false }, budget)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...eligible, status: "running" }, budget)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1(eligible, { ...budget, reserved_micro_usd: 1_681_801, unknown_reserved_micro_usd: 1 })?.retryable, false);
+  for (const error_code of ["workspace_engine_interpretation_transport_outcome_unknown", "workspace_engine_interpretation_output_invalid",
+    "workspace_engine_interpretation_repair_invalid", "workspace_engine_interpretation_transport_retry_exhausted",
+    "workspace_engine_storage_verification_failed", "workspace_engine_forbidden"])
+    assert.equal(workspaceAnalysisRunViewV1({ ...eligible, error_code }, budget)?.retryable, false);
+});
 
 test("provider availability requires explicit complete budget policy and a current configured key", () => {
   const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "test_not_real",
