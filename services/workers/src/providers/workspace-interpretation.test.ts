@@ -26,6 +26,78 @@ const base = { batch, api_key: "test_only_not_a_real_api_key", provider_enabled:
 function fakeFetch(handler: (input: string | URL | Request, init?: RequestInit) => Response | Promise<Response>): typeof fetch {
   return (async (input, init) => handler(input, init)) as typeof fetch;
 }
+function manualTimeout() {
+  const durations: number[] = []; let callback: (() => void) | undefined, cancellations = 0;
+  return {
+    durations, get cancellations() { return cancellations; },
+    schedule_timeout: (onTimeout: () => void, milliseconds: number) => {
+      durations.push(milliseconds); callback = onTimeout;
+      return () => { cancellations++; callback = undefined; };
+    },
+    fire: () => { assert.ok(callback); callback(); },
+  };
+}
+test("default ten-minute deadline and supported overrides preserve the sealed request without waiting", async () => {
+  for (const timeout_ms of [undefined, 1, 600_000]) {
+    const timer = manualTimeout(); let claims = 0, sends = 0, receipts = 0;
+    const result = await sendWorkspaceInterpretationV1({ ...base, timeout_ms, schedule_timeout: timer.schedule_timeout,
+      authorize_send: async () => { claims++; return true; },
+      persist_receipt: async () => { receipts++; },
+      fetch_impl: fakeFetch((_url, init) => {
+        sends++; assert.equal(init?.body, batch.request_body); assert.equal(init?.signal?.aborted, false);
+        return Response.json(response());
+      }),
+    });
+    assert.deepEqual(timer.durations, [timeout_ms ?? 600_000]); assert.equal(timer.cancellations, 1);
+    assert.equal(claims, 1); assert.equal(sends, 1); assert.equal(receipts, 1); assert.equal(result.outcome, "validated");
+  }
+});
+test("timeout before response is a distinct unknown after one send and never invents a receipt", async () => {
+  const timer = manualTimeout(); let claims = 0, sends = 0, receipts = 0;
+  await assert.rejects(sendWorkspaceInterpretationV1({ ...base, timeout_ms: 7, schedule_timeout: timer.schedule_timeout,
+    authorize_send: async () => { claims++; return true; }, persist_receipt: async () => { receipts++; },
+    fetch_impl: fakeFetch((_url, init) => {
+      sends++; assert.equal(init?.body, batch.request_body);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException(base.api_key, "AbortError")), { once: true });
+        queueMicrotask(timer.fire);
+      });
+    }),
+  }), error => error instanceof WorkspaceInterpretationTransportErrorV1
+    && error.code === "workspace_engine_interpretation_timeout_outcome_unknown" && error.outcome === "outcome_unknown"
+    && !error.message.includes(base.api_key));
+  assert.deepEqual(timer.durations, [7]); assert.equal(timer.cancellations, 1);
+  assert.equal(claims, 1); assert.equal(sends, 1); assert.equal(receipts, 0);
+});
+test("timeout while reading preserves the partial HTTP receipt and never claims known usage", async () => {
+  const timer = manualTimeout(); let sends = 0, receipt: WorkspaceInterpretationRawReceiptV1 | undefined;
+  const prefix = new TextEncoder().encode('{"type":"message",');
+  const result = await sendWorkspaceInterpretationV1({ ...base, timeout_ms: 5, schedule_timeout: timer.schedule_timeout,
+    authorize_send: async () => true, persist_receipt: async value => { receipt = value; },
+    fetch_impl: fakeFetch((_url, init) => {
+      sends++; let reads = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { init?.signal?.addEventListener("abort", () => controller.error(new DOMException(base.api_key, "AbortError")), { once: true }); },
+        pull(controller) { if (reads++ === 0) controller.enqueue(prefix); else queueMicrotask(timer.fire); },
+      }), { headers: { "request-id": "req_partial_timeout" } });
+    }),
+  });
+  assert.equal(sends, 1); assert.ok(receipt); assert.deepEqual(receipt.bytes, prefix); assert.equal(receipt.complete, false);
+  assert.equal(receipt.provider_request_id, "req_partial_timeout"); assert.equal(result.usage, null);
+  assert.equal(result.outcome, "outcome_unknown"); assert.equal(result.error_code, "workspace_engine_interpretation_timeout_outcome_unknown");
+  assert.equal(timer.cancellations, 1);
+});
+test("malformed timeouts are rejected before CAS, scheduling, receipt or send", async () => {
+  let claims = 0, sends = 0, receipts = 0; const timer = manualTimeout();
+  for (const timeout_ms of [0, -1, 600_001, 1.5, Number.NaN, Number.POSITIVE_INFINITY, null, "600000", {}]) {
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, timeout_ms: timeout_ms as number, schedule_timeout: timer.schedule_timeout,
+      authorize_send: async () => { claims++; return true; }, persist_receipt: async () => { receipts++; },
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }),
+    }), error => error instanceof WorkspaceInterpretationTransportErrorV1
+      && error.code === "workspace_engine_interpretation_provider_configuration_invalid" && error.outcome === "definitely_not_sent");
+  }
+  assert.equal(claims, 0); assert.equal(sends, 0); assert.equal(receipts, 0); assert.deepEqual(timer.durations, []);
+});
 test("exactly one authorized send persists raw receipt before validation; replay needs zero sends", async () => {
   const events: string[] = []; let receipt: WorkspaceInterpretationRawReceiptV1 | null = null;
   const result = await sendWorkspaceInterpretationV1({ ...base,
@@ -141,7 +213,8 @@ test("receipt persistence failure and transport exceptions are unknown and never
     await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorize_send: async () => true,
       persist_receipt: async () => { throw new Error(base.api_key); },
       fetch_impl: fakeFetch(() => { sends++; if (phase === "fetch") throw new Error(base.api_key); return Response.json(response()); }) }),
-    error => error instanceof WorkspaceInterpretationTransportErrorV1 && error.outcome === "outcome_unknown" && !error.message.includes(base.api_key));
+    error => error instanceof WorkspaceInterpretationTransportErrorV1 && error.outcome === "outcome_unknown" && !error.message.includes(base.api_key)
+      && error.code === `workspace_engine_interpretation_${phase === "fetch" ? "transport_outcome_unknown" : "receipt_persistence_unknown"}`);
     assert.equal(sends, 1);
   }
 });

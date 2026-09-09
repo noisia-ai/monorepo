@@ -31,6 +31,13 @@ export class WorkspaceInterpretationTransportErrorV1 extends Error {
 const transportError = (suffix: string, outcome: "definitely_not_sent" | "outcome_unknown") =>
   new WorkspaceInterpretationTransportErrorV1(`workspace_engine_interpretation_${suffix}`, outcome);
 const sha = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+// Matches the documented Anthropic SDK ten-minute default. This transport still
+// performs exactly one send; a deadline is not proof that the provider did no work.
+const requestTimeoutMs = 600_000;
+const scheduleTimeout = (onTimeout: () => void, milliseconds: number): (() => void) => {
+  const timer = setTimeout(onTimeout, milliseconds); timer.unref?.();
+  return () => clearTimeout(timer);
+};
 const object = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 function usageOf(value: unknown): SignalWorkspaceInterpretationUsageV1 | null {
@@ -110,6 +117,7 @@ export async function sendWorkspaceInterpretationV1(args: {
   authorize_send: () => Promise<boolean>;
   persist_receipt: (receipt: WorkspaceInterpretationRawReceiptV1) => Promise<void>;
   fetch_impl?: typeof fetch; timeout_ms?: number;
+  schedule_timeout?: (onTimeout: () => void, milliseconds: number) => (() => void);
 }): Promise<WorkspaceInterpretationResponseV1> {
   let requestBody: string;
   try {
@@ -125,16 +133,16 @@ export async function sendWorkspaceInterpretationV1(args: {
   } catch { throw transportError("request_invalid", "definitely_not_sent"); }
   if (!args.provider_enabled) throw transportError("provider_disabled", "definitely_not_sent");
   if (!args.api_key || !/^[A-Za-z0-9_-]{16,512}$/u.test(args.api_key)) throw transportError("provider_configuration_invalid", "definitely_not_sent");
-  const timeout = args.timeout_ms ?? 120_000;
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 120_000) throw transportError("provider_configuration_invalid", "definitely_not_sent");
+  const timeout = args.timeout_ms === undefined ? requestTimeoutMs : args.timeout_ms;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > requestTimeoutMs) throw transportError("provider_configuration_invalid", "definitely_not_sent");
   let authorized: boolean;
   try { authorized = await args.authorize_send(); }
   catch { throw transportError("send_authority_unknown", "outcome_unknown"); }
   // A failed CAS can mean another process already sent this same attempt.
   // Never let that result release its reservation as definitely-not-sent.
   if (!authorized) throw transportError("send_not_authorized", "outcome_unknown");
-  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeout);
-  timer.unref?.();
+  const controller = new AbortController();
+  const cancelTimeout = (args.schedule_timeout ?? scheduleTimeout)(() => controller.abort(), timeout);
   try {
     let response: Response;
     try {
@@ -142,12 +150,15 @@ export async function sendWorkspaceInterpretationV1(args: {
         method: "POST", redirect: "error", signal: controller.signal,
         headers: { "x-api-key": args.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json" }, body: requestBody,
       });
-    } catch { throw transportError("transport_outcome_unknown", "outcome_unknown"); }
+    } catch { throw transportError(controller.signal.aborted ? "timeout_outcome_unknown" : "transport_outcome_unknown", "outcome_unknown"); }
     const receipt = await readReceipt(response);
+    const receiptTimedOut = !receipt.complete && controller.signal.aborted;
     // Even non-2xx, malformed JSON, usage-only and partial responses are saved
     // before decoding, so an invalid editorial answer does not erase real cost.
     try { await args.persist_receipt(receipt); }
     catch { throw transportError("receipt_persistence_unknown", "outcome_unknown"); }
-    return validateWorkspaceInterpretationReceiptV1(args.batch, receipt);
-  } finally { clearTimeout(timer); }
+    const result = validateWorkspaceInterpretationReceiptV1(args.batch, receipt);
+    return receiptTimedOut
+      ? { ...result, error_code: "workspace_engine_interpretation_timeout_outcome_unknown" } : result;
+  } finally { cancelTimeout(); }
 }
