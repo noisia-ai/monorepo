@@ -80,6 +80,48 @@ async function artifact(f:Awaited<ReturnType<typeof fixture>>,lease:engine.Signa
  const saved=await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:a});
  assert.equal((await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:a})).artifact_id,saved.artifact_id);return saved.artifact_id;
 }
+test('engine chunk export keeps the EOF sentinel after a completed cursor root',
+ {skip:!enabled||process.env.NOISIA_WORKSPACE_ENGINE_EXPORT_TEST_APPROVED!=='true',timeout:120_000},async()=>{
+ const f=await fixture();try{
+  // The large preparation fixture predates these forward migrations. Keep its
+  // schema and all test execution rows inside the same outer rollback.
+  for(const name of ['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql',
+   '0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql'])
+   await f.query(readFileSync(new URL(name,import.meta.url),'utf8'));
+  await prototypes(f);const started=await f.begin();
+  const lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-export-cursor'});assert.ok(lease);
+  assert.ok(lease.snapshot.expected_roots>384,'use the explicit local large-corpus fixture');
+  let after:engine.SignalWorkspaceEngineCursorV1|null=null,chunks=0,afterCompleted=false,sawCompletedBoundary=false;
+  const roots=new Set<string>();
+  // This is a cursor regression, not a full-corpus export benchmark. These
+  // pages must observe the completed-root boundary that caused the early EOF.
+  for(let pageIndex=0;pageIndex<3;pageIndex++){
+   const page=await engine.readSignalWorkspaceEngineChunksV1({database:f.database,lease,after,limit:128});
+   assert.equal(page.done,false,'a full page must not conceal the next root');
+   assert.equal(page.items.length,128);
+   if(afterCompleted&&page.items.every(item=>item.expected_root_chunks===1)
+    &&new Set(page.items.map(item=>item.root_id)).size===128)sawCompletedBoundary=true;
+   for(const item of page.items){
+    assert.ok(after===null||item.root_id>after.root_id||item.root_id===after.root_id&&item.chunk_index>after.chunk_index);
+    assert.equal(sha(item.text),item.chunk_sha256);assert.equal(item.vector.length,1024);
+    roots.add(item.root_id);chunks++;after={root_id:item.root_id,chunk_index:item.chunk_index};
+   }
+   assert.deepEqual(page.next_cursor,after);
+   const tail=page.items.at(-1)!;afterCompleted=tail.chunk_index+1===tail.expected_root_chunks;
+  }
+  assert.equal(chunks,384);assert.ok(roots.size>128);assert.ok(sawCompletedBoundary,'fixture must exercise the old premature-EOF failure');
+  const first=await engine.readSignalWorkspaceEngineChunksV1({database:f.database,lease,after:null,limit:1});
+  assert.equal(first.items.length,1);assert.equal(first.done,false);
+  const last=(await f.query(`SELECT item.root_id,(jsonb_array_length(asset.chunks->'chunks')-1)::int chunk_index
+   FROM signal_corpus_preparation_items item JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id
+    AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
+   WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible'
+   ORDER BY item.root_id DESC LIMIT 1`,[lease.snapshot.preparation_run_id,f.workspace_id])).rows[0] as engine.SignalWorkspaceEngineCursorV1;
+  assert.ok(last);
+  const eof=await engine.readSignalWorkspaceEngineChunksV1({database:f.database,lease,after:last,limit:128});
+  assert.equal(eof.done,true);assert.deepEqual(eof.items,[]);assert.deepEqual(eof.next_cursor,last);
+ }finally{await f.cleanup();}
+});
 test('engine exports every chunk with zero interests, autonomous cached context, private artifact authority and draft model', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();try{
   const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id});

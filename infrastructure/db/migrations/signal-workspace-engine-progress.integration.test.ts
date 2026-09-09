@@ -16,9 +16,8 @@ import {createSignalTopicStoreV1,updateSignalTopicStoreV1,setSignalTopicLifecycl
 const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
 const projectionStores={claim:projection.claimSignalWorkspaceTopicProjectionV1,heartbeat:projection.heartbeatSignalWorkspaceTopicProjectionV1,
  readTopics:projection.readSignalWorkspaceTopicProjectionTopicsV1,readProposals:projection.readSignalWorkspaceTopicProjectionProposalsV1,
- readCorrections:classification.readSignalWorkspaceClassificationCorrectionsV1,readRoots:classification.readSignalWorkspaceClassificationRootPageV1,
- readChunks:classification.readSignalWorkspaceClassificationChunkPageV1,copyRoot:classification.copySignalWorkspaceClassificationRootV1,
- commitRoot:classification.commitSignalWorkspaceClassificationRootV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1};
+ readPage:classification.readSignalWorkspaceClassificationPageV1,
+ readChunksPage:classification.readSignalWorkspaceClassificationChunksPageV1,commitPage:classification.commitSignalWorkspaceClassificationPageV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1};
 async function deriveEditedCatalog(f:Pick<WorkspaceProjectionCheckpointFixtureV1,'database'|'query'|'access'|'bodies'>&{execution_id:string}){
  const {database,query,access,bodies}=f,scope={...access,execution_id:f.execution_id};
  const current=await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);assert.equal(current.needs_materialization,true);
@@ -189,9 +188,8 @@ test('progressive paid checkpoints preserve catalog edits and engine authority, 
   await signalWorkspaceTopicProjectionJobV1({id:projectionDispatch.worker_job_id,data:{execution_id:persisted.projection_execution_id},updateProgress:async()=>{}},{database,
    stores:{claim:projection.claimSignalWorkspaceTopicProjectionV1,heartbeat:projection.heartbeatSignalWorkspaceTopicProjectionV1,
     readTopics:projection.readSignalWorkspaceTopicProjectionTopicsV1,readProposals:projection.readSignalWorkspaceTopicProjectionProposalsV1,
-    readCorrections:classification.readSignalWorkspaceClassificationCorrectionsV1,readRoots:classification.readSignalWorkspaceClassificationRootPageV1,
-    readChunks:classification.readSignalWorkspaceClassificationChunkPageV1,copyRoot:classification.copySignalWorkspaceClassificationRootV1,
-    commitRoot:classification.commitSignalWorkspaceClassificationRootV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1},
+    readPage:classification.readSignalWorkspaceClassificationPageV1,
+    readChunksPage:classification.readSignalWorkspaceClassificationChunksPageV1,commitPage:classification.commitSignalWorkspaceClassificationPageV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1},
    storage:{put:async()=>{throw Error('projection cannot upload');},get:async({stored,destination})=>{const body=bodies.get(stored.storage_key);assert.notEqual(body,undefined);await writeFile(destination,body!);}}});
   const projected=(await projection.loadSignalWorkspaceTopicProjectionStatusV1(access)).latest_complete;
   assert.equal(projected?.generation_id,persisted.generation_id);assert.equal(projected?.is_current,true);assert.equal(projected?.denominator,3);assert.equal(projected?.processed_chunks,133);

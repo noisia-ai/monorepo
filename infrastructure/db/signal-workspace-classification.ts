@@ -18,6 +18,18 @@ export type SignalWorkspaceClassificationChunkPageV1 = {
   items: Array<{chunk_index: number; start: number; end: number; chunk_sha256: string; text: string}>;
   next_chunk_index: number | null; done: boolean;
 };
+export type SignalWorkspaceClassificationPageV1 = {
+  items: Array<{root: SignalWorkspaceClassificationRootV1; corrections: SignalWorkspaceClassificationOutcomeV1["decisions"]}>;
+  done: boolean;
+};
+export type SignalWorkspaceClassificationChunksCursorV1 = {root_id: string; chunk_index: number};
+export type SignalWorkspaceClassificationChunksPageV1 = {
+  items: Array<SignalWorkspaceClassificationChunkPageV1["items"][number] & {
+    root_id: string; asset_sha256: string; expected_chunks: number;
+  }>;
+  next_cursor: SignalWorkspaceClassificationChunksCursorV1 | null;
+  done: boolean;
+};
 export type SignalWorkspaceClassificationProjectionV1 = {
   contract_version: "workspace-topic-projection-v1";
   engine_execution_id: string; model_artifact_id: string | null; output_artifact_id: string;
@@ -268,6 +280,110 @@ export async function readSignalWorkspaceClassificationRootPageV1(args: {databas
   return tx(args.database, async client => { const run = await requireLease(client,args.lease), limit = limitValue(args.limit,100);
     const page = await roots(client,run,limit+1); return {items: page.slice(0,limit),done: page.length<=limit}; });
 }
+
+const classificationPageBytes = 8 * 1024 * 1024;
+async function pageCorrections(client: PoolClient, run: Run, items: SignalWorkspaceClassificationRootV1[]) {
+  const result = new Map<string, SignalWorkspaceClassificationOutcomeV1["decisions"]>();
+  if (!items.length) return result;
+  // Bound rows before node-postgres hydrates them. jsonb text includes whitespace,
+  // so its byte count plus root/envelope bytes conservatively bounds compact JSON.
+  // A root's corrections are indivisible; omitted roots are never treated as empty.
+  const rows = (await client.query<{root_id: string; decisions: SignalWorkspaceClassificationOutcomeV1["decisions"]}>(`
+   WITH requested AS MATERIALIZED (
+    SELECT * FROM jsonb_to_recordset($5::jsonb) requested(root_id uuid,fingerprint text,root_bytes integer)
+   ), decisions AS MATERIALIZED (
+   SELECT requested.root_id::text root_id,jsonb_build_object(
+    'taxonomy_term_id',topic->>'taxonomy_term_id','term_key',correction.term_key,'definition_digest',correction.definition_digest,
+    'definition_revision',correction.definition_revision,'disposition',CASE correction.disposition WHEN 'belongs' THEN 'approved' ELSE 'rejected' END,
+    'resolution_method','human','model_version_id',NULL,'labeling_function_version_id',NULL,'approval_policy_id',NULL,
+    'decided_by_user_id',operation.actor_user_id,'correction_operation_id',operation.id,'score',NULL,
+    'evidence_digest',operation.request_digest,'lineage_digest',operation.request_digest) decision
+   FROM requested
+   JOIN signal_topic_membership_overrides correction ON correction.canonical_root_id=requested.root_id
+    AND correction.workspace_id=$2::uuid AND correction.origin_input_contract=$4 AND correction.root_fingerprint=requested.fingerprint
+    AND correction.context_digest=$3
+   JOIN signal_topic_membership_operations operation ON operation.id=correction.correction_operation_id AND operation.workspace_id=$2::uuid
+   JOIN signal_topic_catalog_executions execution ON execution.id=$1::uuid
+   JOIN LATERAL jsonb_array_elements(execution.input_snapshot->'topics') topic ON topic->'definition'->>'term_key'=correction.term_key
+    AND topic->'definition'->>'definition_digest'=correction.definition_digest
+    AND (topic->'definition'->>'definition_revision')::int=correction.definition_revision
+
+   ), sized AS (
+    SELECT requested.root_id,requested.root_bytes+64+COALESCE(sum(octet_length(decision::text)+1),0) bytes
+    FROM requested LEFT JOIN decisions ON decisions.root_id::uuid=requested.root_id
+    GROUP BY requested.root_id,requested.root_bytes
+   ), bounded AS (
+    SELECT root_id,sum(bytes) OVER(ORDER BY root_id ROWS UNBOUNDED PRECEDING)+2 page_bytes FROM sized
+   )
+   SELECT bounded.root_id::text root_id,
+    COALESCE(jsonb_agg(decisions.decision ORDER BY decisions.decision->>'term_key') FILTER(WHERE decisions.decision IS NOT NULL),'[]'::jsonb) decisions
+   FROM bounded LEFT JOIN decisions ON decisions.root_id::uuid=bounded.root_id
+   WHERE bounded.page_bytes<=$6 GROUP BY bounded.root_id ORDER BY bounded.root_id`,
+  [run.id,run.workspace_id,run.context_digest,contract,JSON.stringify(items.map(root=>({root_id:root.root_id,
+    fingerprint:root.fingerprint,root_bytes:Buffer.byteLength(JSON.stringify(root))}))),classificationPageBytes])).rows;
+  for (const row of rows) result.set(row.root_id,row.decisions);
+  return result;
+}
+
+/** A contiguous metadata/correction page. No cursor is advanced until commitPage. */
+export async function readSignalWorkspaceClassificationPageV1(args: {database: SignalWorkspaceClassificationDatabaseV1;
+  lease: SignalWorkspaceClassificationLeaseV1; limit?: number}): Promise<SignalWorkspaceClassificationPageV1> {
+  const limit=limitValue(args.limit,128);
+  return tx(args.database,async client=>{
+    const run=await requireLease(client,args.lease),rows=await roots(client,run,limit+1);
+    const candidates=rows.slice(0,limit),corrections=await pageCorrections(client,run,candidates);
+    const items: SignalWorkspaceClassificationPageV1["items"]=[];let bytes=2;
+    for (const root of candidates) {
+      if (!corrections.has(root.root_id)) {
+        if (!items.length) return fail("workspace_classification_page_capacity_exceeded",422);
+        break;
+      }
+      const item={root,corrections:corrections.get(root.root_id)!},size=Buffer.byteLength(JSON.stringify(item))+1;
+      if (bytes+size>classificationPageBytes) {
+        if (!items.length) return fail("workspace_classification_page_capacity_exceeded",422);
+        break;
+      }
+      items.push(item);bytes+=size;
+    }
+    return {items,done:rows.length===items.length};
+  });
+}
+
+/** The selected roots must remain the next complete prefix of the durable cursor. */
+export async function readSignalWorkspaceClassificationChunksPageV1(args: {database: SignalWorkspaceClassificationDatabaseV1;
+  lease: SignalWorkspaceClassificationLeaseV1; root_ids: string[]; after: SignalWorkspaceClassificationChunksCursorV1|null;
+  limit?: number}): Promise<SignalWorkspaceClassificationChunksPageV1> {
+  const limit=limitValue(args.limit,128);
+  if (!args.root_ids.length||args.root_ids.length>128||args.root_ids.some((id,index)=>
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(id)||index>0&&id<=args.root_ids[index-1]!))
+    return fail("workspace_classification_root_sequence_invalid",422);
+  return tx(args.database,async client=>{
+    const run=await requireLease(client,args.lease),expected=await roots(client,run,args.root_ids.length);
+    if (expected.length!==args.root_ids.length||expected.some((root,index)=>root.root_id!==args.root_ids[index]))
+      return fail("workspace_classification_root_sequence_invalid");
+    if (args.after) {
+      const root=expected.find(item=>item.root_id===args.after!.root_id);
+      if (!root||!Number.isSafeInteger(args.after.chunk_index)||args.after.chunk_index<0||args.after.chunk_index>=root.expected_chunks)
+        return fail("workspace_classification_chunk_cursor_invalid",422);
+    }
+    const rows=(await client.query<SignalWorkspaceClassificationChunksPageV1["items"][number]>(`
+     SELECT item.root_id,item.asset_sha256,jsonb_array_length(asset.chunks->'chunks') expected_chunks,
+      (chunk.ordinality-1)::int chunk_index,(chunk.value->>'start')::int start,(chunk.value->>'end')::int "end",
+      chunk.value->>'sha256' chunk_sha256,signal_topic_utf16_fragment_v1(asset.full_text,(chunk.value->>'start')::int,(chunk.value->>'end')::int) text
+     FROM signal_corpus_preparation_items item JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id
+      AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
+     CROSS JOIN LATERAL jsonb_array_elements(asset.chunks->'chunks') WITH ORDINALITY chunk
+     WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible' AND item.root_id=ANY($3::uuid[])
+      AND ($4::uuid IS NULL OR (item.root_id,chunk.ordinality-1)>($4::uuid,$5::int))
+     ORDER BY item.root_id,chunk.ordinality LIMIT $6`,
+    [run.preparation_run_id,run.workspace_id,args.root_ids,args.after?.root_id??null,args.after?.chunk_index??-1,limit+1])).rows;
+    const items=rows.slice(0,limit);
+    for (const chunk of items) if (sha(chunk.text)!==chunk.chunk_sha256||chunk.text.length!==chunk.end-chunk.start)
+      return fail("workspace_classification_chunk_integrity_failed");
+    const last=items.at(-1);
+    return {items,next_cursor:last?{root_id:last.root_id,chunk_index:last.chunk_index}:args.after,done:rows.length<=limit};
+  });
+}
 export async function readSignalWorkspaceClassificationChunkPageV1(args: {database: SignalWorkspaceClassificationDatabaseV1; lease: SignalWorkspaceClassificationLeaseV1;
   root_id: string; after_chunk_index: number|null; limit?: number}): Promise<SignalWorkspaceClassificationChunkPageV1> {
   const limit=limitValue(args.limit,128);
@@ -338,6 +454,77 @@ export async function commitSignalWorkspaceClassificationRootV1(args:{database:S
   return tx(args.database,async client=>{const run=await requireLease(client,args.lease,true),root=(await roots(client,run,1))[0];
     if(!root||root.root_id!==args.outcome.root.root_id)return fail("workspace_classification_root_sequence_invalid");
     return persistRoot(client,run,root,args.outcome);});
+}
+
+/** One transaction and durable cursor CAS for a bounded prefix. Every assignment
+ * still passes the existing per-row authority/evidence triggers. */
+export async function commitSignalWorkspaceClassificationPageV1(args:{database:SignalWorkspaceClassificationDatabaseV1;
+  lease:SignalWorkspaceClassificationLeaseV1;outcomes:SignalWorkspaceClassificationOutcomeV1[]}):Promise<SignalWorkspaceClassificationLeaseV1> {
+  if (!args.outcomes.length||args.outcomes.length>128) return fail("workspace_classification_page_invalid",422);
+  if (Buffer.byteLength(JSON.stringify(args.outcomes))>classificationPageBytes) return fail("workspace_classification_page_capacity_exceeded",422);
+  return tx(args.database,async client=>{
+    const run=await requireLease(client,args.lease,true),expected=await roots(client,run,args.outcomes.length);
+    if (expected.length!==args.outcomes.length) return fail("workspace_classification_root_sequence_invalid");
+    const corrections=await pageCorrections(client,run,expected);
+    if (corrections.size!==expected.length) return fail("workspace_classification_page_capacity_exceeded",422);
+    const entries=args.outcomes.map((raw,index)=>{
+      const root=expected[index]!;
+      if (raw.root.root_id!==root.root_id) return fail("workspace_classification_root_sequence_invalid");
+      const outcome=parseSignalWorkspaceClassificationOutcomeV1({identity:run.identity,
+        root:{root_id:root.root_id,fingerprint:root.fingerprint,correction_digest:root.correction_digest},outcome:raw});
+      if (outcome.coverage.expected_chunks!==root.expected_chunks||outcome.coverage.chunk_coverage_digest!==root.chunk_coverage_digest)
+        return fail("workspace_classification_chunk_coverage_incomplete");
+      const provided=new Set(outcome.decisions.map(decision=>decision.correction_operation_id));
+      if ((corrections.get(root.root_id)??[]).some(decision=>!provided.has(decision.correction_operation_id)))
+        return fail("workspace_classification_correction_missing");
+      outcome.decisions.sort((a,b)=>a.term_key<b.term_key?-1:a.term_key>b.term_key?1:0);
+      const {decisions,...metadata}=outcome,operation_id=randomUUID(),item_id=randomUUID();
+      const result={generation_item_id:item_id,root_id:root.root_id,decisions:decisions.length};
+      const result_digest=digest(result);
+      return {root_id:root.root_id,operation_id,item_id,request_key:sha(`classification:${run.id}:${root.root_id}`),
+        request_digest:digest(outcome),item_digest:digest({...metadata,decisions:decisions.map(({taxonomy_term_id:_id,...decision})=>decision)}),
+        root_fingerprint:root.fingerprint,correction_digest:root.correction_digest,reuse_key:outcome.reuse_key,
+        resolution_state:outcome.resolution_state,technical_error_code:outcome.technical_error_code,metadata,decisions,
+        result,result_digest,event_digest:sha(`${operation_id}:0:${result_digest}`)};
+    });
+    const payload=JSON.stringify(entries);
+    await client.query(`INSERT INTO signal_classification_operations(id,workspace_id,actor_user_id,operation_kind,idempotency_key,request_digest)
+     SELECT row.operation_id,$1::uuid,$2::uuid,'append-results',row.request_key,row.request_digest
+     FROM jsonb_to_recordset($3::jsonb) row(operation_id uuid,request_key text,request_digest text)`,[run.workspace_id,run.actor_user_id,payload]);
+    await client.query(`INSERT INTO signal_classification_generation_items(id,workspace_id,generation_id,canonical_root_id,resolution_state,
+     technical_error_code,item_digest,root_fingerprint,correction_digest,reuse_key,outcome_metadata,source_generation_item_id)
+     SELECT row.item_id,$1::uuid,$2::uuid,row.root_id,row.resolution_state,row.technical_error_code,row.item_digest,
+      row.root_fingerprint,row.correction_digest,row.reuse_key,row.metadata,NULL
+     FROM jsonb_to_recordset($3::jsonb) row(item_id uuid,root_id uuid,resolution_state text,technical_error_code text,item_digest text,
+      root_fingerprint text,correction_digest text,reuse_key text,metadata jsonb)`,[run.workspace_id,run.generation_id,payload]);
+    if (entries.some(entry=>entry.decisions.length)) await client.query(`
+     INSERT INTO signal_classification_assignments(workspace_id,generation_id,generation_item_id,canonical_root_id,
+      taxonomy_profile_id,taxonomy_term_id,resolution_method,disposition,labeling_function_version_id,model_version_id,approval_policy_id,
+      decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,
+      definition_digest,definition_revision,membership_basis,membership_metadata)
+     SELECT $1::uuid,$2::uuid,entry.item_id,entry.root_id,$3::uuid,decision.taxonomy_term_id,decision.resolution_method,
+      decision.disposition,decision.labeling_function_version_id,decision.model_version_id,decision.approval_policy_id,
+      decision.decided_by_user_id,decision.score,decision.evidence_digest,decision.lineage_digest,entry.operation_id,NULL,
+      decision.correction_operation_id,decision.definition_digest,decision.definition_revision,COALESCE(decision.membership_basis,'decision'),decision.membership_metadata
+     FROM jsonb_to_recordset($4::jsonb) entry(item_id uuid,root_id uuid,operation_id uuid,decisions jsonb)
+     CROSS JOIN LATERAL jsonb_to_recordset(entry.decisions) decision(taxonomy_term_id uuid,resolution_method text,disposition text,
+      labeling_function_version_id uuid,model_version_id uuid,approval_policy_id uuid,decided_by_user_id uuid,score numeric,
+      evidence_digest text,lineage_digest text,correction_operation_id uuid,definition_digest text,definition_revision integer,
+      membership_basis text,membership_metadata jsonb)`,[run.workspace_id,run.generation_id,run.taxonomy_profile_id,payload]);
+    await client.query(`INSERT INTO signal_classification_events(workspace_id,operation_id,event_index,event_kind,object_type,object_id,
+     previous_state_digest,next_state_digest,event_digest)
+     SELECT $1::uuid,row.operation_id,0,'results-appended','generation-item',row.item_id,NULL,row.result_digest,row.event_digest
+     FROM jsonb_to_recordset($2::jsonb) row(operation_id uuid,item_id uuid,result_digest text,event_digest text)`,[run.workspace_id,payload]);
+    await client.query(`UPDATE signal_classification_operations operation SET status='completed',result=row.result,completed_at=clock_timestamp()
+     FROM jsonb_to_recordset($2::jsonb) row(operation_id uuid,result jsonb) WHERE operation.id=row.operation_id AND operation.workspace_id=$1::uuid`,[run.workspace_id,payload]);
+    const last=entries.at(-1)!;
+    const saved=await client.query(`UPDATE signal_topic_catalog_executions SET cursor_root_id=$2::uuid,processed_roots=processed_roots+$3,
+     processed_chunks=processed_chunks+$4,progress=LEAST(99,((processed_roots+$3)*100/GREATEST(denominator,1))),updated_at=clock_timestamp()
+     WHERE id=$1::uuid AND cursor_root_id IS NOT DISTINCT FROM $5::uuid AND execution_token=$6::uuid AND status='running' RETURNING id`,
+    [run.id,last.root_id,entries.length,entries.reduce((sum,entry)=>sum+entry.metadata.coverage.processed_chunks,0),args.lease.cursor_root_id,args.lease.execution_token]);
+    if (saved.rows.length!==1) return fail("workspace_classification_lease_lost");
+    return {...view(run),cursor_root_id:last.root_id};
+  });
 }
 export async function copySignalWorkspaceClassificationRootV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1;root_id:string;source_item_id:string}) {
   return tx(args.database,async client=>{const run=await requireLease(client,args.lease,true),root=(await roots(client,run,1))[0];

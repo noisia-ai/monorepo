@@ -381,7 +381,10 @@ export async function readSignalWorkspaceEngineChunksV1(args:{database:SignalWor
     const rows=(await client.query<Omit<SignalWorkspaceEngineChunkV1,'vector'>&{vector:string|null}>(`WITH roots AS MATERIALIZED (
       SELECT item.root_id,item.fingerprint,item.asset_sha256,item.chunk_policy_version FROM signal_corpus_preparation_items item
       WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible'
-       AND ($3::uuid IS NULL OR item.root_id>=$3::uuid) ORDER BY item.root_id LIMIT $5
+       AND ($3::uuid IS NULL OR item.root_id>=$3::uuid) ORDER BY item.root_id
+       -- The inclusive cursor root may have no remaining chunks. Preserve one
+       -- extra root so a page of single-chunk mentions still has an EOF sentinel.
+       LIMIT ($5::int + CASE WHEN $3::uuid IS NULL THEN 0 ELSE 1 END)
      ), chunk_page AS MATERIALIZED (
       SELECT root.*, (chunk.ordinality-1)::int chunk_index,(chunk.value->>'start')::int start,(chunk.value->>'end')::int "end",
        chunk.value->>'sha256' chunk_sha256,jsonb_array_length(asset.chunks->'chunks') expected_root_chunks

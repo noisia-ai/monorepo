@@ -16,10 +16,11 @@ import {
 } from "@noisia/query-engine";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
-import { signalWorkspaceClassificationJobV1, safeWorkspaceClassificationErrorV1,
+import { safeWorkspaceClassificationErrorV1,
   type SignalWorkspaceClassificationLeaseV1 as Lease,
-  type SignalWorkspaceClassificationStoresV1 as ClassificationStores,
   type SignalWorkspaceClassificationRootV1 as Root } from "./signal-workspace-classification";
+import { projectWorkspaceClassificationPagesV1,
+  type WorkspaceProjectionPageStoresV1 } from "./signal-workspace-projection-pages";
 
 export const SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_NAME = "signal_workspace_topic_projection_v1";
 const digest = signalWorkspaceEmbeddingDigestV1;
@@ -34,7 +35,7 @@ export type WorkspaceTopicProjectionSourceV1 = { engine_execution_id: string; ma
   mapping_digest: string; model_artifact_id: string | null; artifacts: WorkspaceTopicProjectionArtifactV1[];
   interpretation_coverage?: { interpreted_unit_count: number; expected_unit_count: number;
     unit_digest: string; expected_unit_digest: string; complete: boolean } };
-export type WorkspaceTopicProjectionStoresV1<Database> = Omit<ClassificationStores<Database>, "claim"> & {
+export type WorkspaceTopicProjectionStoresV1<Database> = WorkspaceProjectionPageStoresV1<Database> & {
   claim(args: { database: Database; execution_id: string; worker_job_id: string }): Promise<{
     lease: Lease; source: WorkspaceTopicProjectionSourceV1; model_version_id: string | null
   } | null>;
@@ -46,7 +47,6 @@ export type WorkspaceTopicProjectionStoresV1<Database> = Omit<ClassificationStor
   readProposals(args: { database: Database; lease: Lease; after_artifact_id: string | null; limit: number }): Promise<{
     items: WorkspaceTopicProjectionArtifactV1[]; next_artifact_id: string | null; done: boolean
   }>;
-  readCorrections(args: { database: Database; lease: Lease; root_id: string }): Promise<SignalWorkspaceClassificationDecisionV1[]>;
 };
 type Options<Database> = { database: Database; stores: WorkspaceTopicProjectionStoresV1<Database>;
   storage: WorkspaceEngineStorageV1; scratch_root?: string };
@@ -255,29 +255,15 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
       return { membership, processed };
     };
     const advance = async (promise: Promise<Lease>) => { const next = await promise; activeLease = next; return next; };
-    let pageRoots = new Map<string, Root>();
-    const classification: ClassificationStores<Database> = { ...store,
-      claim: async () => activeLease,
-      readRoots: async args => {
-        const page = await store.readRoots(args); pageRoots = new Map(page.items.map(root => [root.root_id, root])); return page;
+    let pageCorrections = new Map<string, SignalWorkspaceClassificationDecisionV1[]>();
+    const classification: WorkspaceProjectionPageStoresV1<Database> = { ...store,
+      readPage: async args => {
+        const page = await store.readPage(args);
+        pageCorrections = new Map(page.items.map(item => [item.root.root_id, item.corrections])); return page;
       },
-      commitRoot: args => advance(store.commitRoot(args)),
-      copyRoot: async args => {
-        const root = pageRoots.get(args.root_id) ?? invalid(); await skipTo(root.root_id);
-        if (nextRoot.done || nextRoot.value.root_id !== root.root_id || nextRoot.value.root_fingerprint !== root.fingerprint
-          || nextRoot.value.chunk_count !== root.expected_chunks) invalid();
-        const coverage = createHash("sha256");
-        for (let i = 0; i < root.expected_chunks; i++) for (const [lane, stream] of laneRows) {
-          const next = await stream.next(); if (next.done) invalid(); const row = next.value;
-          if (row.root_id !== root.root_id || row.chunk_index !== i) invalid();
-          if (lane === "open") coverage.update(JSON.stringify([i, row.start, row.end, row.chunk_sha256]) + "\n");
-        }
-        if (`sha256:${coverage.digest("hex")}` !== root.chunk_coverage_digest) invalid();
-        nextRoot = await rootRows.next();
-        return advance(store.copyRoot(args));
-      },
+      commitPage: args => advance(store.commitPage(args)),
       finish: async args => {
-        // A copied or pre-checkpoint suffix may not have requested chunks again.
+        // A recovered execution may already have committed the entire stream.
         while (!nextRoot.done && args.lease.cursor_root_id !== null && nextRoot.value.root_id <= args.lease.cursor_root_id) {
           for (let i = 0; i < nextRoot.value.chunk_count; i++) for (const stream of laneRows.values()) if ((await stream.next()).done) invalid();
           nextRoot = await rootRows.next();
@@ -290,7 +276,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
     // Root/chunk stores renew the lease themselves. A concurrent preparation
     // heartbeat must not race an atomic root commit with its preceding cursor.
     clearInterval(timer); await heartbeatPending;
-    return await signalWorkspaceClassificationJobV1(job, { database, stores: classification, engine: {
+    return await projectWorkspaceClassificationPagesV1({ job, database, lease: activeLease, stores: classification, engine: {
       ...activeLease.identity,
       classifyRoot: async ({ identity, root, chunks }) => {
         const { membership, processed } = await readMemberships(root, chunks);
@@ -325,7 +311,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
               materialized_definition_digest: item.definition_digest, evidence_fragment: entry.first, matched_chunks: entry.count
             } });
         }
-        for (const raw of await store.readCorrections({ database, lease: activeLease, root_id: root.root_id })) {
+        for (const raw of pageCorrections.get(root.root_id) ?? invalid()) {
           const correction = signalWorkspaceClassificationDecisionSchemaV1.parse(raw);
           if (correction.resolution_method !== "human" || correction.membership_basis) invalid();
           decisions.set(correction.term_key, correction);
@@ -422,9 +408,8 @@ async function defaultOptions(): Promise<Options<import("@noisia/db").SignalWork
   return { database, storage: createWorkspaceEngineStorageV1(), stores: {
     claim: db.claimSignalWorkspaceTopicProjectionV1, heartbeat: db.heartbeatSignalWorkspaceTopicProjectionV1,
     readTopics: db.readSignalWorkspaceTopicProjectionTopicsV1, readProposals: db.readSignalWorkspaceTopicProjectionProposalsV1,
-    readCorrections: db.readSignalWorkspaceClassificationCorrectionsV1,
-    readRoots: db.readSignalWorkspaceClassificationRootPageV1, readChunks: db.readSignalWorkspaceClassificationChunkPageV1,
-    copyRoot: db.copySignalWorkspaceClassificationRootV1, commitRoot: db.commitSignalWorkspaceClassificationRootV1,
+    readPage: db.readSignalWorkspaceClassificationPageV1, readChunksPage: db.readSignalWorkspaceClassificationChunksPageV1,
+    commitPage: db.commitSignalWorkspaceClassificationPageV1,
     finish: db.finishSignalWorkspaceClassificationV1, fail: db.failSignalWorkspaceClassificationV1
   } };
 }

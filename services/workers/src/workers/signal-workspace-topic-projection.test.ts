@@ -126,15 +126,18 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
       return { items, next_term_key: items.at(-1)?.term_key ?? after_term_key, done: remaining.length <= limit }; },
     readProposals: async ({ after_artifact_id, limit }) => { guard(); const remaining = proposalRefs.filter(item => after_artifact_id === null || item.artifact_id > after_artifact_id), items = remaining.slice(0, limit);
       return { items, next_artifact_id: items.at(-1)?.artifact_id ?? after_artifact_id, done: remaining.length <= limit }; },
-    readRoots: async ({ limit }) => { guard(); const remaining = roots.filter(root => cursor === null || root.root_id > cursor);
-      return { items: remaining.slice(0, limit).map(root => ({ ...root, reuse_item_id: reuseRoot && root.root_id === roots[0]!.root_id ? id(10001) : null })), done: remaining.length <= limit }; },
-    readChunks: async ({ root_id, after_chunk_index, limit }) => { guard(); const index = roots.findIndex(root => root.root_id === root_id), root = roots[index]!;
-      const items = chunks[index]!.slice((after_chunk_index ?? -1) + 1, (after_chunk_index ?? -1) + 1 + limit); chunkReads.push(items.length);
-      return { root_id, asset_sha256: root.asset_sha256, expected_chunks: root.expected_chunks, after_chunk_index, items,
-        next_chunk_index: items.at(-1)?.chunk_index ?? after_chunk_index, done: items.at(-1)?.chunk_index === root.expected_chunks - 1 }; },
-    readCorrections: async () => { guard(); return corrections; },
-    copyRoot: async args => { guard(); cursor = args.root_id; return lease(); },
-    commitRoot: async args => { guard(); commits++; persisted.set(args.outcome.root.root_id, args.outcome); cursor = args.outcome.root.root_id;
+    readPage: async ({ limit }) => { guard(); const remaining = roots.filter(root => cursor === null || root.root_id > cursor);
+      return { items: remaining.slice(0, limit).map(root => ({ root: { ...root,
+        reuse_item_id: reuseRoot && root.root_id === roots[0]!.root_id ? id(10001) : null }, corrections })), done: remaining.length <= limit }; },
+    readChunksPage: async ({ root_ids, after, limit }) => { guard();
+      const remaining = roots.flatMap((root, index) => root_ids.includes(root.root_id)
+        ? chunks[index]!.map(chunk => ({ ...chunk, root_id: root.root_id, asset_sha256: root.asset_sha256, expected_chunks: root.expected_chunks })) : [])
+        .filter(chunk => after === null || chunk.root_id > after.root_id || chunk.root_id === after.root_id && chunk.chunk_index > after.chunk_index);
+      const items = remaining.slice(0, limit), last = items.at(-1); chunkReads.push(items.length);
+      return { items, next_cursor: last ? { root_id: last.root_id, chunk_index: last.chunk_index } : after, done: remaining.length <= limit }; },
+    commitPage: async args => { guard(); commits++;
+      for (const outcome of args.outcomes) { assert.ok(cursor === null || outcome.root.root_id > cursor);
+        persisted.set(outcome.root.root_id, outcome); cursor = outcome.root.root_id; }
       if (failCommit) { failCommit = false; throw new Error("private ambiguous commit response"); } return lease(); },
     finish: async () => { guard(); finishCalls++; finished = true; return { status: "ready" }; },
     fail: async args => { failures.push(args.error_code); }
@@ -170,7 +173,7 @@ test("projects all 70 Topics over 133 fragments and both lanes, with outlier abs
     assert.deepEqual(await run(f.job, f.options), { status: "ready" });
     const first = f.persisted.get(f.roots[0]!.root_id)!;
     assert.equal(first.decisions.length, 70); assert.equal(first.coverage.processed_chunks, 133);
-    assert.deepEqual(f.chunkReads, [128, 5, 1]);
+    assert.deepEqual(f.chunkReads, [128, 6]);
     assert.ok(first.decisions.every(item => item.disposition === "pending" && item.approval_policy_id === null && item.score === null));
     assert.equal(first.decisions.reduce((sum, item) => sum + item.membership_metadata!.matched_chunks, 0), 266);
     assert.equal(f.persisted.get(f.roots[1]!.root_id)!.resolution_state, "abstained");
@@ -178,12 +181,12 @@ test("projects all 70 Topics over 133 fragments and both lanes, with outlier abs
     assert.deepEqual(f.counters(), before, "completed replay never rereads storage or repeats membership writes");
   } finally { await f.close(); }
 });
-test("a persisted root with lost commit acknowledgement resumes its suffix without duplicate writes", async () => {
+test("a persisted page with lost acknowledgement resumes its durable cursor without duplicate writes", async () => {
   const f = await fixture(); try {
     f.failAfterCommit(); await assert.rejects(run(f.job, f.options), /workspace_classification_worker_failed/);
     assert.equal(f.counters().commits, 1); await run(f.job, f.options);
-    assert.equal(f.counters().commits, 2); assert.equal(f.counters().finishCalls, 1);
-    assert.equal(f.persisted.size, 2); assert.deepEqual(f.chunkReads, [128, 5, 1]);
+    assert.equal(f.counters().commits, 1); assert.equal(f.counters().finishCalls, 1);
+    assert.equal(f.persisted.size, 2); assert.deepEqual(f.chunkReads, [128, 6]);
   } finally { await f.close(); }
 });
 test("the Topic and proposal readers paginate beyond 128 definitions and 32 artifact files", async () => {
@@ -197,16 +200,16 @@ test("the Topic and proposal readers paginate beyond 128 definitions and 32 arti
       "evidence is the actual final fragment that belongs, never the first 2000 characters of the document");
   } finally { await f.close(); }
 });
-test("all roots reconcile even when a previous complete root is copied without reading text again", async () => {
+test("projection verifies all saved memberships even when a generic reusable item exists", async () => {
   const f = await fixture(); try { f.useReuse(); await run(f.job, f.options);
-    assert.deepEqual(f.chunkReads, [1]); assert.equal(f.counters().commits, 1); assert.equal(f.counters().finishCalls, 1);
+    assert.deepEqual(f.chunkReads, [128, 6]); assert.equal(f.persisted.size, 2); assert.equal(f.counters().commits, 1); assert.equal(f.counters().finishCalls, 1);
   } finally { await f.close(); }
 });
-test("copy reuse still checks the source root fingerprint and exact fragment coverage", async () => {
+test("a reusable item cannot conceal altered source fingerprint or fragment coverage", async () => {
   for (const field of ["fingerprint", "chunk_coverage_digest"] as const) {
     const f = await fixture(); try { f.useReuse(); f.roots[0]![field] = sha("changed metadata");
-      await assert.rejects(run(f.job, f.options), /workspace_classification_projection_integrity_invalid/);
-      assert.deepEqual(f.chunkReads, []); assert.equal(f.counters().finishCalls, 0);
+      await assert.rejects(run(f.job, f.options), /workspace_classification_(projection_integrity_invalid|chunk_coverage_incomplete)/);
+      assert.equal(f.counters().commits, 0); assert.equal(f.counters().finishCalls, 0);
     } finally { await f.close(); }
   }
 });
@@ -288,7 +291,7 @@ test("meaning identity excludes presentation but includes scope, boundaries and 
 test("partial interpretation projects every root and fragment while leaving uninterpreted groups unresolved", async () => {
   const f = await fixture({ partial: true }); try {
     await run(f.job, f.options);
-    assert.deepEqual(f.chunkReads, [128, 5, 1]);
+    assert.deepEqual(f.chunkReads, [128, 6]);
     const first = f.persisted.get(f.roots[0]!.root_id)!;
     assert.equal(first.decisions.length, 4);
     assert.equal(first.has_unresolved_topics, true);
