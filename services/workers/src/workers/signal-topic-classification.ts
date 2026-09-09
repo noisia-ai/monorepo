@@ -1133,7 +1133,7 @@ async function persistSearch(execution: ExecutionRow,
         execution.definition_digest, execution.denominator])).rows[0]?.id ?? null;
       if (chainedExecutionId) await client.query(`
         INSERT INTO signal_topic_classification_outbox(execution_id,workspace_id,worker_job_id)
-        VALUES($1::uuid,$2::uuid,$3) ON CONFLICT(execution_id) DO NOTHING
+        VALUES($1::uuid,$2::uuid,$3) ON CONFLICT(execution_id,dispatch_kind) DO NOTHING
       `, [chainedExecutionId, execution.workspace_id,
         `signal-topic-classification-${chainedExecutionId}`]);
     }

@@ -5,8 +5,8 @@ import React, { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
-import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 Object.assign(globalThis, { React });
@@ -191,6 +191,59 @@ test("interpretation stages retain exact counters; fitting alone and partial mat
   for (const patch of [{ interpreted_units: 13 }, { expected_interpretation_units: -1 }, { fit_completed: undefined }, { materialized_topics: NaN }])
     assert.equal(validWorkspaceAnalysisStatus({ ...status, active_run: { ...fit, ...patch } }), false);
 });
+
+const progressiveRun: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", fit_completed: true,
+  interpreted_units: 32, expected_interpretation_units: 357, materialized_topics: 7,
+  error_code: "workspace_engine_interpretation_daily_authority_expired", materialization_pending: false,
+  materialization_progress: { artifact_id: id, output_catalog_profile_id: id, mapping_digest: hash,
+    interpreted_unit_count: 32, expected_interpretation_unit_count: 357, interpretation_complete: false,
+    topic_count: 7, discovered_topic_count: 5, projection_execution_id: id, generation_id: id } };
+test("catalog refresh requires an anchored receipt, not an interpreted count or a running phase", () => {
+  const partial = { ...status, latest_run: progressiveRun };
+  assert.equal(validWorkspaceAnalysisStatus(partial), true);
+  assert.equal(workspaceAnalysisInterpretedComplete(progressiveRun), false);
+  const key = workspaceAnalysisCatalogReceiptKey(partial);
+  assert.ok(key?.includes(progressiveRun.materialization_progress!.artifact_id));
+  assert.notEqual(workspaceAnalysisCatalogReceiptKey({ ...partial, request_scope: "other-actor" }), key);
+  assert.notEqual(workspaceAnalysisCatalogReceiptKey({ ...partial, workspace_id: "other-workspace" }), key);
+  assert.equal(workspaceAnalysisCatalogReceiptKey({ ...partial, latest_run: { ...progressiveRun, materialization_progress: null } }), null);
+  assert.equal(workspaceAnalysisCatalogReceiptKey({ ...partial, latest_run: { ...progressiveRun, materialization_progress: undefined, materialization_pending: true } }), null);
+  const complete = { ...progressiveRun, status: "ready" as const, phase: "complete" as const, interpreted_units: 357 };
+  assert.notEqual(workspaceAnalysisCatalogReceiptKey({ ...partial, latest_run: complete, latest_complete: complete }), key,
+    "final catalog must refresh even when the previous partial pointer remains unchanged");
+  const completedStatus = { ...partial, latest_run: complete, latest_complete: complete };
+  assert.notEqual(workspaceAnalysisCatalogReceiptKey({ ...completedStatus, latest_run: { ...complete,
+    materialization_progress: { ...complete.materialization_progress!, artifact_id: "00000000-0000-4000-8000-000000000002" } } }),
+    workspaceAnalysisCatalogReceiptKey(completedStatus), "a later derivation of the same completed engine must refresh its catalog");
+  for (const patch of [{ artifact_id: "not-an-artifact" }, { mapping_digest: "unknown" }, { interpreted_unit_count: 33 },
+    { expected_interpretation_unit_count: 358 }, { interpretation_complete: true }, { discovered_topic_count: 8 }]) {
+    assert.equal(validWorkspaceAnalysisStatus({ ...partial, latest_run: { ...progressiveRun,
+      materialization_progress: { ...progressiveRun.materialization_progress!, ...patch } } }), false);
+  }
+});
+test("progress delivery retries require their own server authority and exact recovered intent, without a provider or editorial retry", () => {
+  const failed = { ...progressiveRun, materialization_error_code: "workspace_engine_progress_dispatch_exhausted", materialization_retry_available: true };
+  const current = { ...status, latest_run: failed, preflight: { ...status.preflight, cost: { ...status.preflight.cost,
+    claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: 0, provider_available: false } } } };
+  const request: PendingWorkspaceAnalysis = { ...pending, body: { action: "retry_progress", run_id: id } };
+  assert.equal(validWorkspaceAnalysisStatus(current), true);
+  assert.deepEqual(parsePendingWorkspaceAnalysis(request, id, status.request_scope), request);
+  assert.equal(parsePendingWorkspaceAnalysis({ ...request, body: { ...request.body, claude_cap_micro_usd: 1 } }, id, status.request_scope), null);
+  assert.equal(workspaceAnalysisCanRetryProgress(current, failed), true);
+  assert.equal(workspaceAnalysisCanRetry(current, failed), false);
+  assert.equal(workspaceAnalysisCanReplay(current, request), true);
+  assert.equal(workspaceAnalysisCanRetryProgress({ ...current, latest_run: { ...failed, outcome_unknown: true } }, failed), true,
+    "saving already paid results cannot resume an uncertain provider request");
+  for (const patch of [{ is_current: false }, { materialization_retry_available: false }, { materialization_pending: true }])
+    assert.equal(workspaceAnalysisCanRetryProgress(current, { ...failed, ...patch }), false);
+  assert.equal(workspaceAnalysisCanRetryProgress({ ...current, can_execute: false }, failed), false);
+  assert.equal(workspaceAnalysisProgressRequestConfirmed(current, request), false, "a conflict without a scoped receipt cannot acknowledge a request");
+  assert.equal(workspaceAnalysisProgressRequestConfirmed({ ...current, request_run: failed }, request), true);
+  assert.equal(workspaceAnalysisProgressRequestConfirmed({ ...current, request_run: { ...failed, execution_id: "00000000-0000-4000-8000-000000000002" } }, request), false);
+  assert.equal(workspaceAnalysisProgressRequestConfirmed({ ...current, request_scope: "other-actor", request_run: failed }, request), false);
+  for (const patch of [{ materialization_error_code: 123 }, { materialization_retry_available: "yes" }])
+    assert.equal(validWorkspaceAnalysisStatus({ ...current, latest_run: { ...failed, ...patch } }), false);
+});
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const t = messages.AdminWorkspace.topics.analysis;
@@ -198,6 +251,38 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initial: WorkspaceAnalysisStatus, disabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     providerProps, createElement(WorkspaceAnalysisControls, { brandId: "new-brand", workspaceId: id,
       catalogVersion: "empty:0", initial, disabled })));
+  test(`${locale}: saved partial topics remain readable through failure and never imply complete classification or automatic Signal selection`, () => {
+    const html = render({ ...status, latest_run: progressiveRun });
+    assert.match(html, /32[^]*357/u);
+    assert.ok(html.includes(t.partialCoverage));
+    assert.ok(!html.includes(t.completedBody));
+    assert.ok(html.includes(t.errors.authorizationExpired));
+    const noReceipt = render({ ...status, latest_run: { ...progressiveRun, materialization_progress: null, materialization_pending: true } });
+    assert.ok(noReceipt.includes(t.catalogUpdating)); assert.ok(!noReceipt.includes(t.partialCoverage));
+    const editing = render({ ...status, latest_run: progressiveRun }, true);
+    assert.ok(editing.includes(t.catalogRefreshDeferred));
+  });
+  test(`${locale}: complete interpretation uses the latest saved catalog count after an edit and hides old counts while delivery is pending`, () => {
+    const run = { ...progressiveRun, status: "ready" as const, phase: "complete" as const, interpreted_units: 357,
+      materialized_topics: 91, materialization_progress: { ...progressiveRun.materialization_progress!,
+        interpreted_unit_count: 357, interpretation_complete: true, topic_count: 4, discovered_topic_count: 4 } };
+    const html = render({ ...status, latest_run: run, latest_complete: run });
+    assert.ok(html.includes(t.completedBody)); assert.ok(!html.includes(t.partialCoverage));
+    assert.ok(!html.includes("91")); assert.match(html, /4/);
+    const pending = render({ ...status, latest_run: { ...run, materialization_pending: true }, latest_complete: run });
+    assert.ok(pending.includes(t.completedBody)); assert.ok(pending.includes(t.catalogUpdating)); assert.ok(!pending.includes("91"));
+  });
+  test(`${locale}: storage failure keeps its partial catalog and offers only a separate save retry even after spending authority expires`, () => {
+    const run = { ...progressiveRun, materialization_error_code: "workspace_engine_progress_storage_failed", materialization_retry_available: true };
+    const html = render({ ...status, latest_run: run });
+    assert.ok(html.includes(t.catalogSaveFailed)); assert.ok(html.includes(t.retryCatalogSave));
+    assert.ok(html.includes(t.errors.authorizationExpired)); assert.ok(html.includes(t.partialCoverage));
+    assert.ok(!html.includes(`>${t.retry}</button>`));
+    assert.ok(!render({ ...status, latest_run: run }, true).includes(t.retryCatalogSave), "editing must remain protected");
+    const automatic = render({ ...status, latest_run: { ...run, materialization_error_code: null,
+      materialization_progress: null, materialization_pending: true, materialization_retry_available: false } });
+    assert.ok(automatic.includes(t.catalogUpdating)); assert.ok(!automatic.includes(t.retryCatalogSave));
+  });
   test(`${locale}: zero interests has an analysis entry and import path; missing context has existing preparation`, () => {
     const html = render({ ...status, preflight: { ...status.preflight, state: "awaiting_import" } });
     assert.ok(html.includes(t.title)); assert.ok(html.includes(t.awaiting_import));

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import pg,{type Pool,type PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,
  type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
@@ -11,7 +12,11 @@ export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf
 /** Local disposable, existing 3-root complete embedding fixture. No provider or fit.
  * Construct genuine metered-receipt/catalog transactions with explicit synthetic
  * numerical memberships, kept in an outer rollback for independent consumers. */
-export async function workspaceProjectionFixtureV1(options:{empty?:boolean}={}){
+export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
+ access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
+ proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
+export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migrations?:string[];
+ onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>}={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
  const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await client.query('SET LOCAL search_path=public,extensions,pg_temp');
@@ -27,6 +32,7 @@ export async function workspaceProjectionFixtureV1(options:{empty?:boolean}={}){
  assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
  const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
  try{
+ for(const name of options.migrations??[]) {assert.match(name,/^014[1-4]_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));}
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  const catalog=async(terms:SignalTopicDefinitionV1[]=[],metadata:Record<string,unknown>={})=>insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('projection-catalog'),
   terms:terms.map(topic=>({term_key:topic.term_key,label:topic.label,definition:topic.definition,status:topic.lifecycle==='archived'?'archived':'candidate',metadata:{topic}})),rules:{topics:terms},rule_set_metadata:{},provider:'operator',model_version:'local',
@@ -85,6 +91,7 @@ export async function workspaceProjectionFixtureV1(options:{empty?:boolean}={}){
   await money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
   const checkpoint=await engine.checkpointSignalWorkspaceEngineInterpretationV1({database,lease,call_id:call.call_id,unit_keys:[key],artifact:artifact(`interpretation-${proposals.length}.json`,'engine_proposals',body)});
   proposals.push({artifact_id:checkpoint.artifact_id,body});
+  await options.onCheckpoint?.({database,query,access,lease,proposals,bodies});
  }
  async function* pages(){yield* proposals;}
  const materialization=await materializeSignalWorkspaceEngineTopicsV1({database,lease,proposals:pages()});

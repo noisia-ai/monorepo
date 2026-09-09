@@ -5,13 +5,13 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
-export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onContextPrepared }: {
+export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onContextPrepared }: {
   brandId: string; workspaceId: string; catalogVersion: string; disabled?: boolean;
-  initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onContextPrepared?: () => unknown;
+  initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>; onContextPrepared?: () => unknown;
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
   const analysis = useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled, initial });
@@ -21,6 +21,16 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const interpretedComplete = workspaceAnalysisInterpretedComplete(complete);
   const noGroups = interpretedComplete && complete?.expected_interpretation_units === 0;
   const onComplete = useRef(onCompleted); onComplete.current = onCompleted;
+  const onCatalog = useRef(onCatalogAvailable); onCatalog.current = onCatalogAvailable;
+  const currentRun = status?.active_run ?? status?.latest_run;
+  const materialization = currentRun?.status === "ready" ? null : currentRun?.materialization_progress;
+  const currentComplete = currentRun?.status === "ready" && currentRun.execution_id === complete?.execution_id;
+  const catalogCount = currentComplete && (currentRun.materialization_pending || currentRun.materialization_error_code) ? null
+    : currentComplete && currentRun.materialization_progress?.interpretation_complete
+      ? currentRun.materialization_progress.topic_count : complete?.materialized_topics ?? null;
+  const catalogReceipt = workspaceAnalysisCatalogReceiptKey(status);
+  const refreshingCatalog = useRef<{ key: string; controller: AbortController } | null>(null);
+  useEffect(() => () => { refreshingCatalog.current?.controller.abort(); refreshingCatalog.current = null; }, [workspaceId, status?.request_scope]);
   const notified = useRef<string | null>(null);
   const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
   const preflight = status?.preflight;
@@ -29,10 +39,19 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const selectedCap = parseEmbeddingCapMicroUsd(analysis.cap);
   const capNumber = selectedCap !== null && BigInt(selectedCap) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(selectedCap) : null;
   useEffect(() => {
-    if (!complete || notified.current === `${workspaceId}:${complete.execution_id}`) return;
-    notified.current = `${workspaceId}:${complete.execution_id}`;
-    void onComplete.current?.();
-  }, [complete, workspaceId]);
+    if (!catalogReceipt || disabled || analysis.error || !analysis.verified
+      || notified.current === catalogReceipt || refreshingCatalog.current?.key === catalogReceipt) return;
+    const callback = onCatalog.current ?? (complete ? onComplete.current : undefined);
+    if (!callback) return;
+    refreshingCatalog.current?.controller.abort();
+    const controller = new AbortController();
+    refreshingCatalog.current = { key: catalogReceipt, controller };
+    void Promise.resolve().then(() => callback(controller.signal)).then(() => {
+      if (!controller.signal.aborted) notified.current = catalogReceipt;
+    })
+      .catch(() => { /* The catalog owner reports failures and keeps the last readable catalog. */ })
+      .finally(() => { if (refreshingCatalog.current?.key === catalogReceipt) refreshingCatalog.current = null; });
+  }, [catalogReceipt, complete, disabled, analysis.error, analysis.verified, status?.observed_at]);
 
   return <div className="admin-section" aria-label={t("title")}>
     <div className="admin-section__body admin-drawer-form">
@@ -47,12 +66,19 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <strong>{status.active_run.progress}%</strong>
       </div> : null}
       {run?.fit_completed && run.status !== "ready" ? <p role="status" className="admin-drawer-form__hint">
-        {t("fitCompletePending")}{run.expected_interpretation_units > 0 ? <> {t("interpretationProgress", {
+        {t(materialization ? "fitCompleteProgressSaved" : "fitCompletePending")}{!materialization && run.expected_interpretation_units > 0 ? <> {t("interpretationProgress", {
           done: run.interpreted_units, total: run.expected_interpretation_units
         })}</> : null}
       </p> : null}
+      {materialization ? <p role="status" className="admin-drawer-form__hint">
+        <strong>{t("partialCatalog", { count: materialization.topic_count })}</strong>{" "}
+        {t("materializedProgress", { done: materialization.interpreted_unit_count, total: materialization.expected_interpretation_unit_count })}{" "}
+        {!materialization.interpretation_complete ? t("partialCoverage") : t("classificationCoverage")}
+        {disabled ? <> {t("catalogRefreshDeferred")}</> : null}
+      </p> : status?.latest_run?.materialization_pending ? <p role="status">{t("catalogUpdating")}</p> : null}
+      {currentRun?.materialization_error_code ? <p role="alert" className="team-msg team-msg--error">{t("catalogSaveFailed")}</p> : null}
       {complete ? <p role="status"><strong>{t(complete.result_kind === "insufficient_population" ? "insufficient" : noGroups ? "noGroups" : interpretedComplete ? "completed" : "computed")}</strong>{" "}{t(complete.result_kind === "insufficient_population" ? "insufficientBody" : noGroups ? "noGroupsBody" : interpretedComplete ? "completedBody" : "computedBody")}
-        {interpretedComplete && complete.result_kind !== "insufficient_population" ? <> {t("catalogTopics", { count: complete.materialized_topics })}</> : null}
+        {interpretedComplete && complete.result_kind !== "insufficient_population" && catalogCount !== null ? <> {t("catalogTopics", { count: catalogCount })}</> : null}
         {status?.active_run ? <> {t("previous")}</> : !complete.is_current ? <> {t("outdated")}</> : null}
       </p> : null}
       {analysis.error === "load" && status ? <p role="status">{t("unverified")}</p> : null}
@@ -84,10 +110,12 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
       {analysis.canRetry && run?.transport_recovery_eligible ? <p className="admin-drawer-form__hint">{t("transportRetry")}</p> : null}
       <div className="admin-form-actions">
+        {analysis.canRetryProgress ? <button className="admin-button" type="button" onClick={() => void analysis.retryProgress()}>
+          <ArrowClockwise aria-hidden size={15} />{t("retryCatalogSave")}</button> : null}
         {analysis.canRetry ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
           <ArrowClockwise aria-hidden size={15} />{t("retry")}</button>
           : analysis.canReplay ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
-            <ArrowClockwise aria-hidden size={15} />{t("resend")}</button>
+            <ArrowClockwise aria-hidden size={15} />{t(analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
             : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
                 : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}

@@ -23,6 +23,7 @@ export type SignalWorkspaceClassificationProjectionV1 = {
   engine_execution_id: string; model_artifact_id: string | null; output_artifact_id: string;
   materialization_artifact_id: string; mapping_digest: string; policy_digest: string;
   model_version_id: string | null;
+  interpretation_coverage?: {interpreted_unit_count:number;expected_unit_count:number;unit_digest:string;expected_unit_digest:string;complete:boolean};
 };
 export class SignalWorkspaceClassificationError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceClassificationError"; }
@@ -110,7 +111,7 @@ async function lockRun(client: PoolClient, id: string): Promise<Run> {
    FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
    JOIN signal_workspace_embedding_runs embedding ON embedding.id=execution.embedding_run_id AND embedding.workspace_id=execution.workspace_id
    JOIN signal_corpus_preparation_runs prep ON prep.id=execution.preparation_run_id AND prep.workspace_id=execution.workspace_id
-   LEFT JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
+   LEFT JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution'
    WHERE execution.id=$1::uuid AND execution.input_contract=$2 FOR UPDATE OF execution`, [id, contract])).rows[0];
   if (!run) return fail("workspace_classification_execution_not_found", 404); return run;
 }
@@ -221,7 +222,7 @@ export async function claimSignalWorkspaceClassificationV1(args: {database: Sign
     const token = randomUUID(); await client.query(`UPDATE signal_topic_catalog_executions SET status='running',execution_token=$2::uuid,
      execution_expires_at=clock_timestamp()+interval '120 seconds',started_at=COALESCE(started_at,clock_timestamp()),completed_at=NULL,
      error_code=NULL,heartbeat_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`, [run.id, token]);
-    await client.query("UPDATE signal_topic_classification_outbox SET status='dispatched',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[run.id]);
+    await client.query("UPDATE signal_topic_classification_outbox SET status='dispatched',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[run.id]);
     return view(run,token);
   });
 }
@@ -255,6 +256,7 @@ async function roots(client: PoolClient, run: Run, limit: number, rootId?: strin
    JOIN LATERAL (SELECT item.id FROM signal_classification_generation_items item JOIN signal_classification_generations source ON source.id=item.generation_id
     WHERE item.canonical_root_id=requested.root_id AND item.reuse_key=requested.reuse_key AND item.resolution_state<>'error'
      AND source.workspace_id=target.workspace_id AND source.input_contract=$3 AND source.status='ready'
+     AND source.input_snapshot->'source_projection' IS NOT DISTINCT FROM target.input_snapshot->'source_projection'
      AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items bad WHERE bad.generation_id=source.id AND bad.resolution_state='error')
      AND NOT EXISTS(SELECT 1 FROM signal_classification_assignments assignment WHERE assignment.generation_item_id=item.id
       AND NOT signal_workspace_classification_assignment_current_v1(assignment,target))
@@ -382,18 +384,18 @@ export async function failSignalWorkspaceClassificationV1(args:{database:SignalW
   await args.database.query(`WITH failed AS(UPDATE signal_topic_catalog_executions SET status='failed',error_code=$4,execution_token=NULL,execution_expires_at=NULL,
    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid AND workspace_id=$2::uuid AND execution_token=$3::uuid
     AND input_contract='workspace-topic-classification-v1' AND status='running' RETURNING id)
-   UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE execution_id IN(SELECT id FROM failed)`,[args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,code]);
+   UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE dispatch_kind='execution' AND execution_id IN(SELECT id FROM failed)`,[args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,code]);
 }
 export async function retrySignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;execution_id:string;actor_user_id:string}) {
   return tx(args.database,async client=>{const run=await lockRun(client,args.execution_id);
     if(run.actor_user_id!==args.actor_user_id)return fail("workspace_classification_forbidden",403);await current(client,run);
     if(["queued","running","ready"].includes(run.status))return {execution_id:run.id,replayed:true};
     await client.query("UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid",[run.id]);
-    await client.query("UPDATE signal_topic_classification_outbox SET status='pending',attempt_count=0,available_at=clock_timestamp(),completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL WHERE execution_id=$1::uuid",[run.id]);
+    await client.query("UPDATE signal_topic_classification_outbox SET status='pending',attempt_count=0,available_at=clock_timestamp(),completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[run.id]);
     return {execution_id:run.id,replayed:false};});
 }
 async function completeProjectionDispatch(client:PoolClient,execution_id:string){
-  await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[execution_id]);
+  await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[execution_id]);
 }
 export async function heartbeatSignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1}){
   return tx(args.database,async client=>{await requireLease(client,args.lease,true);});

@@ -134,3 +134,25 @@ test("only a sealed source projection routes native classification to the projec
  assert.equal(topicExecutionJobNameV1('workspace-topic-classification-v1',true),'signal_workspace_topic_projection_v1');
  assert.throws(()=>topicExecutionJobNameV1('workspace-topic-classification-v1',false),/contract_unknown/u);
 });
+
+test("engine progress dispatch uses workspace and actor scope without reopening the numerical engine", async () => {
+  const actor = "50000000-0000-4000-8000-000000000005";
+  const database = { query: async (sql: string) => sql.includes("RETURNING outbox.id::text")
+    ? { rows: [{ ...claimed, input_contract: "workspace-topic-engine-v1", dispatch_kind: "engine_progress", actor_user_id: actor }], rowCount: 1 }
+    : { rows: [], rowCount: 1 } };
+  let added = 0;
+  const queue = { getJob: async () => null, add: async (name: string, data: unknown, options: Record<string, unknown>) => {
+    assert.equal(name, "signal_workspace_engine_progress_v1");
+    assert.deepEqual(data, { execution_id: claimed.execution_id, workspace_id: claimed.workspace_id, actor_user_id: actor });
+    assert.equal(options.attempts, 1); added++;
+  } };
+  assert.equal((await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule })).dispatched, 1);
+  assert.equal(added, 1);
+});
+
+test("progress dispatch identity never routes other contracts or unknown dispatch kinds", async () => {
+  const { topicExecutionJobNameV1 } = await import("./signal-topic-classification-outbox");
+  for (const input of ["legacy-topic-catalog-v1", "workspace-topic-computation-v1", "workspace-topic-classification-v1"])
+    assert.throws(() => topicExecutionJobNameV1(input, true, "engine_progress"), /contract_unknown/u);
+  assert.throws(() => topicExecutionJobNameV1("workspace-topic-engine-v1", false, "future"), /contract_unknown/u);
+});

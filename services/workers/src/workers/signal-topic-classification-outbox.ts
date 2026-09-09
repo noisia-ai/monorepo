@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
 
 import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME, SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
-import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopicProjectionsV1, SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1 } from "@noisia/db";
+import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopicProjectionsV1,
+  scheduleSignalWorkspaceEngineProgressV1, SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1,
+  SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
 
 type QueueLike = {
@@ -19,7 +21,14 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
   const maxAttempts = options.max_attempts ?? 8;
   // Recovers only workspace execution ledgers, not legacy corpus tables.
   if(options.schedule) await options.schedule({database});
-  else { await scheduleSignalWorkspaceTopicComputationsV1({database}); await scheduleSignalWorkspaceTopicProjectionsV1({database}); }
+  else {
+    await scheduleSignalWorkspaceTopicComputationsV1({database});
+    // Enable once every replica understands dispatch_kind. Older drainers
+    // route by execution contract and cannot safely consume derived jobs.
+    if (process.env.NOISIA_WORKSPACE_TOPIC_PROGRESS_ENABLED === 'true')
+      await scheduleSignalWorkspaceEngineProgressV1({database});
+    await scheduleSignalWorkspaceTopicProjectionsV1({database});
+  }
   await database.query(`
     WITH dead AS(
       UPDATE signal_topic_classification_outbox
@@ -27,13 +36,14 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
       WHERE attempt_count >= $1 AND status IN('pending','failed','dispatching')
         AND (status<>'dispatching' OR lease_expires_at<=now())
-      RETURNING execution_id
+      RETURNING execution_id,dispatch_kind
     ) UPDATE signal_topic_catalog_executions execution
       SET status='failed',error_code='topic_queue_unavailable',completed_at=now(),updated_at=now()
-      WHERE execution.id IN(SELECT execution_id FROM dead) AND execution.status='queued'
+      WHERE execution.id IN(SELECT execution_id FROM dead WHERE dispatch_kind='execution') AND execution.status='queued'
   `, [maxAttempts]);
   const claimed = await database.query<{ outbox_id: string; execution_id: string; workspace_id: string;
-    lease_token: string; worker_job_id: string; attempt_count: number; input_contract: string; source_projection: boolean }>(`
+    lease_token: string; worker_job_id: string; attempt_count: number; input_contract: string;
+    source_projection: boolean; dispatch_kind: string; actor_user_id: string }>(`
     WITH candidates AS(
       SELECT id FROM signal_topic_classification_outbox
       WHERE attempt_count<$1 AND ((status IN('pending','failed') AND available_at<=now())
@@ -46,18 +56,22 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     WHERE outbox.id=candidates.id AND execution.id=outbox.execution_id
     RETURNING outbox.id::text outbox_id,outbox.execution_id::text,
       outbox.workspace_id::text,outbox.lease_token::text,outbox.worker_job_id,outbox.attempt_count,
-      execution.input_contract,execution.input_snapshot->'source_projection' IS NOT NULL source_projection
+      execution.input_contract,execution.input_snapshot->'source_projection' IS NOT NULL source_projection,
+      outbox.dispatch_kind,execution.actor_user_id::text
   `, [maxAttempts, options.batch_size ?? 20, options.lease_seconds ?? 60]);
   const result = { claimed: claimed.rows.length, dispatched: 0, failed: 0, dead_lettered: 0 };
   for (const row of claimed.rows) {
     try {
-      const jobName = topicExecutionJobNameV1(row.input_contract,row.source_projection);
+      const jobName = topicExecutionJobNameV1(row.input_contract,row.source_projection,row.dispatch_kind);
+      const data = row.dispatch_kind === 'engine_progress'
+        ? { execution_id: row.execution_id, workspace_id: row.workspace_id, actor_user_id: row.actor_user_id }
+        : { execution_id: row.execution_id };
       const prior = await queue.getJob(row.worker_job_id);
       if (prior) {
         if (prior.name !== jobName) throw new Error("topic_dispatch_contract_mismatch");
         const state = await prior.getState();
         if (state === "completed" || state === "failed") await prior.retry(state);
-      } else await queue.add(jobName, { execution_id: row.execution_id }, {
+      } else await queue.add(jobName, data, {
         jobId: row.worker_job_id,
         attempts: row.input_contract === "legacy-topic-catalog-v1" ? 2 : 1,
         backoff: { type: "exponential", delay: 5_000 },
@@ -77,10 +91,10 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
           UPDATE signal_topic_classification_outbox SET status='dead_letter',
             lease_token=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
           WHERE id=$1::uuid AND lease_token=$2::uuid AND status='dispatching'
-          RETURNING execution_id
+          RETURNING execution_id,dispatch_kind
         ) UPDATE signal_topic_catalog_executions execution
           SET status='failed',error_code='topic_queue_unavailable',completed_at=now(),updated_at=now()
-          WHERE execution.id IN(SELECT execution_id FROM exhausted) AND execution.status='queued'
+          WHERE execution.id IN(SELECT execution_id FROM exhausted WHERE dispatch_kind='execution') AND execution.status='queued'
       `, [row.outbox_id, row.lease_token, safeError(error)]);
       else await database.query(`
         UPDATE signal_topic_classification_outbox SET status='failed',
@@ -96,7 +110,9 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
   return result;
 }
 
-export function topicExecutionJobNameV1(inputContract: string, sourceProjection = false) {
+export function topicExecutionJobNameV1(inputContract: string, sourceProjection = false, dispatchKind = 'execution') {
+  if (dispatchKind === 'engine_progress' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1;
+  if (dispatchKind !== 'execution') throw new Error("topic_dispatch_contract_unknown");
   if (inputContract === "legacy-topic-catalog-v1") return SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME;
   if (inputContract === "workspace-topic-computation-v1") return SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME;
   if (inputContract === "workspace-topic-engine-v1") return SIGNAL_WORKSPACE_ENGINE_JOB_V1;

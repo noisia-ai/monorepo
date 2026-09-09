@@ -60,7 +60,7 @@ async function lockRun(client:PoolClient,id:string):Promise<Run>{
  FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
  JOIN signal_workspace_embedding_runs embedding ON embedding.id=execution.embedding_run_id AND embedding.workspace_id=execution.workspace_id AND embedding.input_contract='corpus'
  JOIN signal_corpus_preparation_runs prep ON prep.id=execution.preparation_run_id AND prep.workspace_id=execution.workspace_id
- JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
+ JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution'
  WHERE execution.id=$1::uuid FOR UPDATE OF execution`,[id])).rows[0];
  if(!row)return fail("workspace_topic_execution_not_found",404);
  assertSignalWorkspaceEmbeddingProfileV1(row.embedding_profile);assertSignalWorkspaceTopicSearchProfileV1(row.algorithm_profile);return row;
@@ -105,11 +105,11 @@ export async function claimSignalWorkspaceTopicComputationV1(args:{database:Sign
   catch(error){if(!(error instanceof SignalWorkspaceTopicComputationError))throw error;
    await client.query(`UPDATE signal_topic_catalog_executions SET status='failed',error_code=$2,completed_at=clock_timestamp(),
     execution_token=NULL,execution_expires_at=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,error.code]);
-   await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE execution_id=$1::uuid",[run.id]);return null;}
+   await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[run.id]);return null;}
   const token=randomUUID();await client.query(`UPDATE signal_topic_catalog_executions SET status='running',error_code=NULL,
    execution_token=$2::uuid,execution_expires_at=clock_timestamp()+interval '120 seconds',started_at=COALESCE(started_at,clock_timestamp()),
    completed_at=NULL,heartbeat_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,token]);
-  await client.query("UPDATE signal_topic_classification_outbox SET status='dispatched',completed_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE execution_id=$1::uuid",[run.id]);
+  await client.query("UPDATE signal_topic_classification_outbox SET status='dispatched',completed_at=NULL,lease_token=NULL,lease_expires_at=NULL WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[run.id]);
   return leaseView(run,token);
  });
 }
@@ -375,7 +375,7 @@ export async function finishSignalWorkspaceTopicComputationV1(args:{database:Sig
     JSON.stringify({contract_version:"workspace-topic-computation-v1",result_kind:"retrieval_shortlist",quality:"uncalibrated",approval_policy:"none",
      eligible_roots:run.denominator,processed_roots:run.processed_roots,expected_chunks:natural(run.expected_chunks),processed_chunks:natural(run.processed_chunks),
      evaluated_topic_count:natural(summary.evaluated),retained_candidate_count:natural(summary.retained),omitted_candidate_count:natural(summary.omitted),input_digest:run.input_digest})]);
-  await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[run.id]);
+  await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[run.id]);
   return{status:"ready" as const,execution_id:run.id};
  });
 }
@@ -386,13 +386,13 @@ export async function failSignalWorkspaceTopicComputationV1(args:{database:Signa
    execution_token=NULL,execution_expires_at=NULL,updated_at=clock_timestamp()
    WHERE id=$1::uuid AND workspace_id=$2::uuid AND execution_token=$3::uuid AND status='running' RETURNING id`,
    [args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,code]);
-  if(updated.rowCount)await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid",[args.lease.execution_id]);
+  if(updated.rowCount)await client.query("UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid",[args.lease.execution_id]);
  });
 }
 export async function scheduleSignalWorkspaceTopicComputationsV1(args:{database:SignalWorkspaceTopicDatabaseV1;limit?:number}):Promise<{requeued:number}>{
  return transaction(args.database,async client=>{const rows=(await client.query<{id:string;status:string;input_contract:string;dispatch_generation:number;worker_job_id:string}>(`
   SELECT execution.id,execution.status,execution.input_contract,execution.dispatch_generation,outbox.worker_job_id FROM signal_topic_catalog_executions execution
-  JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
+  JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution'
   WHERE execution.input_contract IN('workspace-topic-computation-v1','workspace-topic-engine-v1') AND ((execution.status='running' AND execution.execution_expires_at<=clock_timestamp())
    OR (execution.status='queued' AND outbox.status='dispatched' AND outbox.updated_at<clock_timestamp()-interval '30 seconds'))
   ORDER BY execution.updated_at,execution.id FOR UPDATE OF execution SKIP LOCKED LIMIT $1`,[pageLimit(args.limit,20)])).rows;
@@ -402,7 +402,7 @@ export async function scheduleSignalWorkspaceTopicComputationsV1(args:{database:
     result_summary=CASE WHEN input_contract='workspace-topic-engine-v1' THEN result_summary||'{"phase":"queued"}'::jsonb ELSE result_summary END,
     updated_at=clock_timestamp() WHERE id=$1::uuid`,[row.id,generation]);
    await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
-    lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
+    lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
     [row.id,row.status==="running"?`${row.input_contract==='workspace-topic-engine-v1'?'workspace-engine':'workspace-topic'}-${row.id}-${generation}`:row.worker_job_id]);
   }return{requeued:rows.length};
  });
@@ -421,7 +421,7 @@ export async function retrySignalWorkspaceTopicComputationV1(args:{database:Sign
    execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,updated_at=clock_timestamp()
    WHERE id=$1::uuid RETURNING dispatch_generation`,[run.id])).rows[0]!.dispatch_generation;
   await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
-   lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
+   lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
    [run.id,`workspace-topic-${run.id}-${generation}`]);return{execution_id:run.id,replayed:false};
  });
 }

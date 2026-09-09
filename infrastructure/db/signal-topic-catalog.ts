@@ -1133,7 +1133,10 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
     const prior = await loadLatestProfile(client, args.workspace_id);
     if (prior && (await client.query<{ busy: boolean }>(`
       SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
-        WHERE taxonomy_profile_id=$1::uuid AND status IN ('queued','running')) busy
+        WHERE taxonomy_profile_id=$1::uuid AND status IN ('queued','running')
+          AND NOT (input_contract='workspace-topic-classification-v1'
+            AND input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
+            AND input_snapshot->'source_projection'->'interpretation_coverage' IS NOT NULL)) busy
     `, [prior.id])).rows[0]?.busy) throw new SignalTopicCatalogError("topic_catalog_busy", 409);
     const definitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const priorHadReadySearch = prior ? Boolean((await client.query<{ available: boolean }>(`
@@ -1222,14 +1225,25 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
   database: Pick<Pool, "connect" | "query">;
   lease: import("./signal-workspace-engine").SignalWorkspaceEngineLeaseV1;
   proposals: AsyncIterable<{ artifact_id: string; body: string }>;
-}) {
-  const client = await args.database.connect(), lease = args.lease;
+}) { return materializeSignalWorkspaceEngineTopicsCoreV1(args); }
+
+export async function materializeSignalWorkspaceEngineTopicsProgressV1(args: import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressMaterializeArgsV1):Promise<import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressResultV1> {
+  return await materializeSignalWorkspaceEngineTopicsCoreV1(args) as import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressResultV1;
+}
+async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
+ database:Pick<Pool,"connect"|"query">;lease:import("./signal-workspace-engine").SignalWorkspaceEngineLeaseV1;
+ proposals:AsyncIterable<{artifact_id:string;body:string}>;
+}|import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressMaterializeArgsV1) {
+  const progress='expected_coverage' in args;
+  const client = await args.database.connect(), lease = 'lease' in args ? args.lease : {
+    execution_id:args.execution_id,workspace_id:args.workspace_id,input_digest:'',execution_token:null};
   try {
     await client.query("BEGIN");
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${lease.workspace_id}:topic`]);
     await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE", [lease.workspace_id]);
-    const run = (await client.query<{ actor_user_id: string; input_snapshot: import("./signal-workspace-engine").SignalWorkspaceEngineSnapshotV1;
+    const progressInput=progress ? await (await import("./signal-workspace-engine")).loadSignalWorkspaceEngineProgressInputWithClientV1(client,args) : null;
+    const run = progressInput?.run ?? (await client.query<{ actor_user_id: string; input_snapshot: import("./signal-workspace-engine").SignalWorkspaceEngineSnapshotV1;
       result_summary: { fit_checkpoint?: import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1 } }>(`
       SELECT execution.actor_user_id,execution.input_snapshot,execution.result_summary
       FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
@@ -1240,7 +1254,7 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
     [lease.execution_id,lease.workspace_id,lease.input_digest,lease.execution_token])).rows[0];
     if (!run) throw new SignalTopicCatalogError("workspace_engine_lease_conflict");
     await assertActor(client, lease.workspace_id, run.actor_user_id, "can_execute_topics");
-    const fit = run.result_summary.fit_checkpoint;
+    const fit = run.result_summary.fit_checkpoint as import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1|undefined;
     if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
     const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");
     const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id });
@@ -1294,10 +1308,14 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
     }
     proposals.sort((a,b) => a.result.cluster_id < b.result.cluster_id ? -1 : a.result.cluster_id > b.result.cluster_id ? 1 : 0);
     const universe = signalWorkspaceInterpretationUniverseDigestV1(proposals.map(item => item.result.cluster_id));
-    if (proposals.length !== fit.interpretation_manifest.unit_count || universe !== fit.interpretation_manifest.unit_digest) {
-      throw new SignalTopicCatalogError("workspace_engine_analysis_incomplete");
+    const expected=progress ? args.expected_coverage : fit.interpretation_manifest;
+    if (proposals.length !== expected.unit_count || universe !== expected.unit_digest
+      || progressInput && (expected.unit_count!==progressInput.coverage.unit_count||expected.unit_digest!==progressInput.coverage.unit_digest)) {
+      throw new SignalTopicCatalogError(progress ? "workspace_engine_progress_coverage_changed" : "workspace_engine_analysis_incomplete");
     }
+    if(progress&&proposals.length===0)throw new SignalTopicCatalogError("workspace_engine_progress_empty");
     const prior = await loadLatestProfile(client, lease.workspace_id);
+    if(progress&&prior?.id!==args.expected_catalog_profile_id)throw new SignalTopicCatalogError("workspace_engine_progress_catalog_changed");
     const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true });
     const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
@@ -1305,7 +1323,8 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
     const mappingDigest = sha256(stableJson(merged.mapping));
     const replay = (await client.query<{ id: string; version: number; metadata: { source_mapping_digest: string } }>(`
       SELECT id,version,metadata FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
-        AND metadata->>'source_engine_execution_id'=$2 ORDER BY version DESC LIMIT 1`, [lease.workspace_id,lease.execution_id])).rows[0];
+        AND metadata->>'source_engine_execution_id'=$2 AND metadata->>'source_interpretation_units_digest'=$3
+        AND metadata->>'source_mapping_digest'=$4 AND id=$5::uuid ORDER BY version DESC LIMIT 1`, [lease.workspace_id,lease.execution_id,universe,mappingDigest,prior?.id??null])).rows[0];
     let profileId: string, version: number;
     if (replay) {
       if (replay.id !== prior?.id || replay.metadata.source_mapping_digest !== mappingDigest) throw new SignalTopicCatalogError("workspace_engine_materialization_conflict");
@@ -1321,7 +1340,10 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
       profileId = inserted.profileId; version = inserted.version;
     }
     await client.query("COMMIT");
-    return { contract_version: "workspace-topic-materialization-v1" as const, execution_id: lease.execution_id,
+    return { contract_version: progress ? "workspace-topic-materialization-progress-v1" as const : "workspace-topic-materialization-v1" as const, execution_id: lease.execution_id,
+      ...(progress ? {interpreted_unit_count:proposals.length,expected_interpretation_unit_count:fit.interpretation_manifest.unit_count,
+        expected_interpretation_units_digest:fit.interpretation_manifest.unit_digest,
+        interpretation_complete:proposals.length===fit.interpretation_manifest.unit_count&&universe===fit.interpretation_manifest.unit_digest} : {}),
       interpretation_units_digest: universe, output_catalog_profile_id: profileId, output_catalog_revision: version,
       topic_count: merged.topic_count, discovered_topic_count: merged.discovered_topic_count,
       mapping_digest: mappingDigest, mapping: merged.mapping, replayed: Boolean(replay) };

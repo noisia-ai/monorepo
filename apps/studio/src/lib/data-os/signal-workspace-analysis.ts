@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
+  retrySignalWorkspaceEngineProgressV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
@@ -107,6 +108,10 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
+  } else if (args.body.action === "retry_progress") {
+    // This resumes only delivery of settled evidence. It cannot renew or
+    // restart the editorial execution or authorize provider spending.
+    await retrySignalWorkspaceEngineProgressV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });
   } else {
     await retrySignalWorkspaceEngineV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });
   }

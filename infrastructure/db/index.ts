@@ -43,3 +43,6 @@ export * from "./signal-workspace-engine-interpretation";
 export * from "./signal-workspace-topic-projection";
 
 export * from "./signal-workspace-topic-selection";
+
+// Progressive derivation of immutable workspace interpretation checkpoints.
+export * from './signal-workspace-engine-progress';

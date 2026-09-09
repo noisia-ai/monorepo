@@ -87,6 +87,8 @@ export type SignalWorkspaceEngineStatusV1 = {
     progress: number; expected_roots: number; expected_chunks: number; expected_guides: number;
     processed_roots: number; processed_chunks: number; error_code: string | null; is_current: boolean;
     model_version_id: string | null; artifact_count: number; claude_cap_micro_usd: number; result_kind: "computational_grouping" | "insufficient_population" | null;
+    materialization_progress?:import('./signal-workspace-engine-progress').SignalWorkspaceEngineProgressCheckpointV1|null;
+    materialization_pending?:boolean;materialization_error_code?:string|null;materialization_retry_available?:boolean;
     fit_completed: boolean; expected_interpretation_units: number; interpreted_units: number; materialized_topics: number;
     storage_recovery_eligible?: boolean;
     interpretation_evidence_recovery_eligible?: boolean;
@@ -183,7 +185,7 @@ async function authorize(client: PoolClient, workspace_id: string, actor_user_id
 }
 async function completeDispatch(client: PoolClient, execution_id: string) {
   await client.query(`UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),
-    lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,[execution_id]);
+    lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,[execution_id]);
 }
 type Run = { interpretation_revision: SignalWorkspaceEngineInterpretationRevisionV1 | null; id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
   input_snapshot: SignalWorkspaceEngineSnapshotV1 & { guides: Array<Omit<SignalWorkspaceEngineGuideV1, "vector">> };
@@ -368,7 +370,7 @@ export async function claimSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       execution_expires_at=clock_timestamp()+interval '180 seconds',heartbeat_at=clock_timestamp(),started_at=COALESCE(started_at,clock_timestamp()),
       result_summary=result_summary||jsonb_build_object('phase',CASE WHEN result_summary ? 'fit_checkpoint' THEN CASE WHEN COALESCE((result_summary->>'interpreted_units')::bigint,0)= (result_summary->'fit_checkpoint'->'interpretation_manifest'->>'unit_count')::bigint THEN 'materializing' ELSE 'interpreting' END ELSE 'exporting' END,'worker_job_id',$3::text),updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,token,args.worker_job_id]);
     await client.query(`UPDATE signal_topic_classification_outbox SET status='dispatched',completed_at=NULL,
-      lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,[run.id]);
+      lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,[run.id]);
     return leaseView(run,token);
   });
 }
@@ -625,7 +627,7 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
       result_summary=result_summary||'{"phase":"queued"}'::jsonb||$2::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,
       [run.id,JSON.stringify(evidenceRecovery||editorialRecovery||transportRecovery?{interpretation_evidence_checkpoint_required:true}:{})])).rows[0]!.dispatch_generation;
     await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
-      completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
+      completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
       [run.id,`workspace-engine-${run.id}-${generation}`]);
     return{execution_id:run.id,replayed:false};
   });
@@ -635,9 +637,10 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
   return transaction(args.database,async client=>{
     const observed=(await client.query<{observed_at:string}>(`SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at`)).rows[0]!.observed_at;
     await authorize(client,args.workspace_id,args.actor_user_id,false);
+    const callerCanExecute=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_execute_topics;
     const rows=(await client.query<{id:string;status:'queued'|'running'|'ready'|'failed';progress:number;denominator:number;expected_chunks:string;
-      processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];
-      revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;transport_recovery_eligible:boolean}>(`
+      processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];progress_dispatch:{status:string;worker_job_id:string;attempt_count:number;error_code:string|null}|null;progress_coverage:SignalWorkspaceEngineUnitManifestV1;latest_catalog_profile_id:string|null;latest_materialization_progress:import('./signal-workspace-engine-progress').SignalWorkspaceEngineProgressCheckpointV1|null;
+      progress_owner:boolean;revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;transport_recovery_eligible:boolean}>(`
       WITH selected AS MATERIALIZED (
        (SELECT id,true is_latest,false is_request FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' ORDER BY created_at DESC,id DESC LIMIT 1)
        UNION ALL (SELECT id,false,true FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1'
@@ -648,6 +651,22 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         execution.processed_roots,execution.processed_chunks::text,execution.error_code,execution.result_summary,execution.input_snapshot-'guides' input_snapshot,execution.actor_user_id,
         execution.input_revision=state.input_revision revision_live,(execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
         (SELECT count(*)::text FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id) artifact_count,
+        (SELECT jsonb_build_object('status',dispatch.status,'worker_job_id',dispatch.worker_job_id,'attempt_count',dispatch.attempt_count,'error_code',dispatch.error_code)
+          FROM signal_topic_classification_outbox dispatch WHERE dispatch.execution_id=execution.id AND dispatch.dispatch_kind='engine_progress') progress_dispatch,
+        (SELECT jsonb_build_object('unit_count',coverage.unit_count,'unit_digest',coverage.unit_digest)
+          FROM signal_workspace_engine_interpretation_coverage_v1(execution.id) coverage) progress_coverage,
+        (SELECT profile.id FROM signal_taxonomy_profiles profile WHERE profile.workspace_id=execution.workspace_id AND profile.kind='topic'
+         AND profile.status IN('draft','activating','active') AND profile.metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY profile.version DESC LIMIT 1) latest_catalog_profile_id,
+        (SELECT jsonb_build_object('artifact_id',artifact.id,'output_catalog_profile_id',artifact.metadata->>'output_catalog_profile_id',
+          'mapping_digest',artifact.metadata->>'mapping_digest','interpreted_unit_count',(artifact.metadata->>'interpreted_unit_count')::bigint,
+          'expected_interpretation_unit_count',(artifact.metadata->>'expected_interpretation_unit_count')::bigint,
+          'interpretation_complete',(artifact.metadata->>'interpretation_complete')::boolean,'topic_count',(artifact.metadata->>'topic_count')::int,
+          'discovered_topic_count',(artifact.metadata->>'discovered_topic_count')::int,'projection_execution_id',projection.id,'generation_id',projection.generation_id)
+         FROM analysis_artifacts artifact JOIN signal_topic_catalog_executions projection ON projection.workspace_id=artifact.workspace_id
+          AND projection.input_snapshot->'source_projection'->>'materialization_artifact_id'=artifact.id::text
+         WHERE artifact.engine_execution_id=execution.id AND artifact.metadata->>'contract_version'='workspace-topic-materialization-progress-v1'
+         ORDER BY (artifact.metadata->>'output_catalog_revision')::int DESC,artifact.id DESC LIMIT 1) latest_materialization_progress,
+        (${signalWorkspaceEngineProgressOwnerPredicateV1}) progress_owner,
         (${storageRecoveryPredicate}) storage_recovery_eligible,
         (${interpretationEvidenceRecoveryPredicate}) interpretation_evidence_recovery_eligible,
         (${editorialRepairRecoveryPredicate}) editorial_repair_recovery_eligible,
@@ -659,18 +678,32 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
       catch(error){if(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))throw error;}}
     const view=async(row:typeof rows[number]):Promise<NonNullable<SignalWorkspaceEngineStatusV1['latest_run']>>=>{
       const actorCanExecute=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:row.actor_user_id})).can_execute_topics;
+      const isCurrent=row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute;
+      const progressCheckpoint=row.latest_materialization_progress;
+      const fullProfile=(row.result_summary.analysis_checkpoint as {output_catalog_profile_id?:string}|undefined)?.output_catalog_profile_id;
+      const confirmedProfile=fullProfile===row.latest_catalog_profile_id || progressCheckpoint?.output_catalog_profile_id===row.latest_catalog_profile_id
+        &&progressCheckpoint.interpreted_unit_count===row.progress_coverage.unit_count;
+      const needsProgress=row.progress_owner&&isCurrent&&!!row.result_summary.fit_checkpoint&&row.progress_coverage.unit_count>0&&['running','failed','ready'].includes(row.status)&&!confirmedProfile;
+      const dispatch=row.progress_dispatch,currentDispatch=dispatch?.worker_job_id===`workspace-progress-${row.id}-${row.latest_catalog_profile_id}-${row.progress_coverage.unit_digest.slice(7)}`;
+      const exhausted=currentDispatch&&!!dispatch&&dispatch.attempt_count>=8&&['failed','dead_letter','pending','dispatching'].includes(dispatch.status);
+      const materializationError=needsProgress&&currentDispatch&&dispatch&&['failed','dead_letter'].includes(dispatch.status)
+        ? (exhausted?'workspace_engine_progress_dispatch_exhausted':dispatch.error_code??'workspace_engine_progress_failed') : null;
       return{execution_id:row.id,status:row.status,phase:row.result_summary.phase as NonNullable<SignalWorkspaceEngineStatusV1['latest_run']>['phase'],
         progress:row.progress,expected_roots:natural(row.denominator),expected_chunks:natural(row.expected_chunks),expected_guides:row.input_snapshot.expected_guides,
         processed_roots:natural(row.processed_roots),processed_chunks:natural(row.processed_chunks),error_code:row.error_code,
-        is_current:row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute,
+        is_current:isCurrent,
         model_version_id:typeof row.result_summary.model_version_id==='string'?row.result_summary.model_version_id:null,artifact_count:natural(row.artifact_count),
         storage_recovery_eligible:row.storage_recovery_eligible,
         interpretation_evidence_recovery_eligible:row.interpretation_evidence_recovery_eligible,
         editorial_repair_recovery_eligible:row.editorial_repair_recovery_eligible,
         transport_recovery_eligible:row.transport_recovery_eligible,
+        materialization_progress:progressCheckpoint,
+        materialization_pending:needsProgress&&!exhausted,
+        materialization_error_code:materializationError,
+        materialization_retry_available:Boolean(needsProgress&&exhausted&&currentDispatch&&dispatch&&['failed','dead_letter'].includes(dispatch.status)&&callerCanExecute&&row.actor_user_id===args.actor_user_id),
         fit_completed:!!row.result_summary.fit_checkpoint,
         expected_interpretation_units:natural((row.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined)?.interpretation_manifest.unit_count??0),
-        interpreted_units:natural(row.result_summary.interpreted_units??0),materialized_topics:natural(row.result_summary.materialized_topics??0),
+        interpreted_units:natural(row.result_summary.interpreted_units??0),materialized_topics:natural(progressCheckpoint?.output_catalog_profile_id===row.latest_catalog_profile_id?progressCheckpoint.topic_count:row.result_summary.materialized_topics??0),
         claude_cap_micro_usd:natural(row.input_snapshot.claude_cap_micro_usd),result_kind:(row.result_summary.result_kind??null) as 'computational_grouping'|'insufficient_population'|null};
     };
     const latest=rows.find(row=>row.is_latest),request=rows.find(row=>row.is_request);
@@ -801,7 +834,37 @@ export async function reviseSignalWorkspaceEngineInterpretationV1(args:{database
    result_summary=result_summary||'{"phase":"queued","interpretation_evidence_checkpoint_required":true}'::jsonb,updated_at=clock_timestamp()
    WHERE id=$1::uuid RETURNING dispatch_generation`,[run.id,JSON.stringify(revision),args.idempotency_key,JSON.stringify({actor_user_id:args.actor_user_id,request_digest:requestDigest})])).rows[0]!;
   await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
-   completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,[run.id,`workspace-engine-${run.id}-${updated.dispatch_generation}`]);
+   completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,[run.id,`workspace-engine-${run.id}-${updated.dispatch_generation}`]);
   return{execution_id:run.id,revision_digest:revision.revision_digest,replayed:false};
  });
+}
+
+/** One paid-evidence owner per workspace prevents two historical engines from
+ * repeatedly replacing each other's derived catalog after an operator edit. */
+export const signalWorkspaceEngineProgressOwnerPredicateV1=`NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions newer
+ WHERE newer.workspace_id=execution.workspace_id AND newer.input_contract='workspace-topic-engine-v1'
+ AND newer.status IN('running','failed','ready') AND newer.result_summary ? 'fit_checkpoint'
+ AND (newer.created_at,newer.id)>(execution.created_at,execution.id)
+ AND EXISTS(SELECT 1 FROM analysis_artifacts paid WHERE paid.engine_execution_id=newer.id
+  AND paid.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'))`;
+
+/** Current authority for a provider-free derivation. It cannot renew or borrow
+ * the editorial execution token, change its status, or authorize a paid call. */
+export async function loadSignalWorkspaceEngineProgressInputWithClientV1(client:PoolClient,scope:{execution_id:string;workspace_id:string;actor_user_id:string}) {
+ const run=await lockedRun(client,scope.execution_id);
+ if(run.workspace_id!==scope.workspace_id||run.actor_user_id!==scope.actor_user_id)return fail('workspace_engine_progress_forbidden',403);
+ await authorize(client,scope.workspace_id,scope.actor_user_id);await current(client,run,true);
+ const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
+ if(!fit||!run.input_snapshot.interpretation_config||!['running','failed','ready'].includes(run.status))return fail('workspace_engine_fit_checkpoint_required');
+ const owner=(await client.query<{owner:boolean}>(`SELECT (${signalWorkspaceEngineProgressOwnerPredicateV1}) owner FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.owner;
+ if(!owner)return fail('workspace_engine_progress_superseded');
+ const coverage=await interpretationCoverage(client,run);
+ if(coverage.unit_count>fit.interpretation_manifest.unit_count)return fail('workspace_engine_proposal_coverage_invalid');
+ return{run,snapshot:publicSnapshot(run.input_snapshot),fit,coverage};
+}
+export async function persistSignalWorkspaceEngineProgressArtifactWithClientV1(client:PoolClient,
+ scope:{execution_id:string;workspace_id:string;actor_user_id:string},artifact:SignalWorkspaceEngineArtifactV1){
+ const {run}=await loadSignalWorkspaceEngineProgressInputWithClientV1(client,scope);
+ if(artifact.metadata.contract_version!=='workspace-topic-materialization-progress-v1'||artifact.artifact_type!=='engine_proposals')return fail('workspace_engine_artifact_invalid',422);
+ return persistArtifact(client,run,artifact);
 }

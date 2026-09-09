@@ -31,7 +31,7 @@ async function authorize(queryable:SignalWorkspaceProjectionQueryableV1,workspac
  if(!caps.can_view||execute&&!caps.can_execute_topics)return fail('workspace_projection_forbidden',403);
 }
 const artifactSQL=`SELECT id artifact_id,artifact_key,artifact_type,content,metadata FROM analysis_artifacts`;
-export type SignalWorkspaceTopicProjectionRequestV1={workspace_id:string;actor_user_id:string;engine_execution_id:string;idempotency_key:string};
+export type SignalWorkspaceTopicProjectionRequestV1={workspace_id:string;actor_user_id:string;engine_execution_id:string;idempotency_key:string;materialization_artifact_id?:string};
 export async function requestSignalWorkspaceTopicProjectionV1(args:SignalWorkspaceTopicProjectionRequestV1&{database:SignalWorkspaceClassificationDatabaseV1}){
  return tx(args.database,client=>requestSignalWorkspaceTopicProjectionWithClientV1(client,args));
 }
@@ -41,28 +41,46 @@ export async function requestSignalWorkspaceTopicProjectionWithClientV1(client:P
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
   const prior=(await client.query<{id:string;generation_id:string;actor_user_id:string;input_contract:string;worker_job_id:string;source:SignalWorkspaceClassificationProjectionV1}>(`
    SELECT execution.id,execution.generation_id,execution.actor_user_id,execution.input_contract,outbox.worker_job_id,execution.input_snapshot->'source_projection' source FROM signal_topic_catalog_executions execution
-   LEFT JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id
+   LEFT JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution'
    WHERE execution.workspace_id=$1::uuid AND execution.idempotency_key=$2`,[args.workspace_id,args.idempotency_key])).rows[0];
-  if(prior){if(prior.input_contract!==contract||prior.source?.contract_version!=='workspace-topic-projection-v1'||prior.actor_user_id!==args.actor_user_id||prior.source?.engine_execution_id!==args.engine_execution_id)return fail('workspace_projection_idempotency_conflict');
+  if(prior){if(prior.input_contract!==contract||prior.source?.contract_version!=='workspace-topic-projection-v1'||prior.actor_user_id!==args.actor_user_id||prior.source?.engine_execution_id!==args.engine_execution_id||args.materialization_artifact_id&&prior.source.materialization_artifact_id!==args.materialization_artifact_id)return fail('workspace_projection_idempotency_conflict');
    return{execution_id:prior.id,generation_id:prior.generation_id,worker_job_id:prior.worker_job_id??`workspace-classification-${prior.id}`,replayed:true};}
   await client.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE',[args.workspace_id]);
   const engine=(await client.query<{id:string;embedding_run_id:string;input_digest:string;input_snapshot:SignalWorkspaceEngineSnapshotV1;result_summary:{
    fit_checkpoint:{model_artifact_id:string|null;output_artifact_id:string;result_kind:string};analysis_checkpoint:{materialization_artifact_id:string;output_catalog_profile_id:string;mapping_digest:string}}}>(`
    SELECT execution.id,execution.embedding_run_id,execution.input_digest,execution.input_snapshot,execution.result_summary
    FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
-   WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1' AND execution.status='ready'
+   WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1' AND (execution.status='ready' OR $3::uuid IS NOT NULL AND execution.status IN('running','failed'))
     AND execution.input_revision=state.input_revision AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) FOR UPDATE OF execution`,
-   [args.engine_execution_id,args.workspace_id])).rows[0];
-  if(!engine?.result_summary.analysis_checkpoint||!engine.result_summary.fit_checkpoint)return fail('workspace_projection_analysis_required');
+   [args.engine_execution_id,args.workspace_id,args.materialization_artifact_id??null])).rows[0];
+  if(!engine?.result_summary.fit_checkpoint||!engine.result_summary.analysis_checkpoint&&!args.materialization_artifact_id)return fail('workspace_projection_analysis_required');
   const current=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
   if(current.context_digest!==engine.input_snapshot.context_digest||current.catalog_digest!==engine.input_snapshot.catalog_digest)return fail('workspace_projection_inputs_stale');
   const input=await loadSignalWorkspaceClassificationInputV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
-  const fit=engine.result_summary.fit_checkpoint,analysis=engine.result_summary.analysis_checkpoint;
+  const fit=engine.result_summary.fit_checkpoint;
+  const progress=args.materialization_artifact_id ? (await client.query<SignalWorkspaceTopicProjectionArtifactV1>(`${artifactSQL}
+   WHERE id=$1::uuid AND workspace_id=$2::uuid AND engine_execution_id=$3::uuid AND artifact_type='engine_proposals'
+    AND metadata->>'contract_version'='workspace-topic-materialization-progress-v1'`,[args.materialization_artifact_id,args.workspace_id,engine.id])).rows[0] : null;
+  if(args.materialization_artifact_id&&!progress)return fail('workspace_projection_artifacts_required');
+  const analysis=progress ? {materialization_artifact_id:progress.artifact_id,output_catalog_profile_id:String(progress.metadata.output_catalog_profile_id),mapping_digest:String(progress.metadata.mapping_digest)} : engine.result_summary.analysis_checkpoint;
   if(input.taxonomy_profile_id!==analysis.output_catalog_profile_id)return fail('workspace_projection_catalog_changed');
   const refs=(await client.query<SignalWorkspaceTopicProjectionArtifactV1>(`${artifactSQL} WHERE workspace_id=$1::uuid AND engine_execution_id=$2::uuid
    AND id=ANY($3::uuid[])`,[args.workspace_id,engine.id,[fit.output_artifact_id,analysis.materialization_artifact_id,...(fit.model_artifact_id?[fit.model_artifact_id]:[])]] )).rows;
   const model=refs.find(ref=>ref.artifact_id===fit.model_artifact_id),output=refs.find(ref=>ref.artifact_id===fit.output_artifact_id),materialization=refs.find(ref=>ref.artifact_id===analysis.materialization_artifact_id);
   if(!output||!materialization||fit.model_artifact_id&&!model||materialization.metadata.mapping_digest!==analysis.mapping_digest)return fail('workspace_projection_artifacts_required');
+  // A complete progressive projection already covers the identical output. Final
+  // editorial promotion reuses it rather than racing a second same-profile run.
+  if(!progress){const existing=(await client.query<{execution_id:string;generation_id:string;worker_job_id:string}>(`SELECT execution.id execution_id,execution.generation_id,outbox.worker_job_id
+   FROM signal_topic_catalog_executions execution JOIN signal_classification_generations generation ON generation.id=execution.generation_id
+   JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution'
+   WHERE execution.workspace_id=$1::uuid AND execution.taxonomy_profile_id=$2::uuid AND execution.actor_user_id=$3::uuid
+    AND execution.status IN('queued','running','ready') AND execution.input_contract='workspace-topic-classification-v1'
+    AND execution.input_snapshot->'source_projection'->>'engine_execution_id'=$4
+    AND execution.input_snapshot->'source_projection'->>'mapping_digest'=$5
+    AND execution.input_snapshot->'source_projection'->'interpretation_coverage'->>'complete'='true'
+    AND signal_workspace_projection_source_current_v1(generation) ORDER BY execution.created_at DESC LIMIT 1`,
+   [args.workspace_id,input.taxonomy_profile_id,args.actor_user_id,engine.id,analysis.mapping_digest])).rows[0];
+   if(existing)return{...existing,replayed:true};}
   const identity:SignalWorkspaceClassificationIdentityV1={contract_version:'signal-workspace-classification-v1',workspace_id:args.workspace_id,
    engine_key:'workspace-computed-cluster-projection',engine_version:1,engine_artifact_digest:model?.content.sha256??output.content.sha256,
    embedding_config_digest:input.embedding_config_digest,catalog_digest:input.catalog_digest,compiler_digest:input.compiler_digest,
@@ -73,13 +91,16 @@ export async function requestSignalWorkspaceTopicProjectionWithClientV1(client:P
    const seal=digest(config);
    model_version_id=(await client.query<{model_version_id:string}>(`SELECT model_version_id FROM register_signal_tagging_model_v1(
     $1::uuid,$2::uuid,$3,$4,'workspace-python',NULL,$5,'python','workspace-model-bundle-v1',$6::jsonb,$7,$8,NULL,NULL,$7,NULL,$9::uuid,$7,$7)`,
-    [args.workspace_id,input.taxonomy_profile_id,`workspace-projection:${args.workspace_id}`,`${engine.id}:${input.taxonomy_profile_id}`,model.content.sha256,JSON.stringify(config),seal,engine.input_digest,args.actor_user_id])).rows[0]!.model_version_id;}
+    [args.workspace_id,input.taxonomy_profile_id,`workspace-projection:${args.workspace_id}`,`${engine.id}:${input.taxonomy_profile_id}:${materialization.artifact_id}`,model.content.sha256,JSON.stringify(config),seal,engine.input_digest,args.actor_user_id])).rows[0]!.model_version_id;}
   const source:SignalWorkspaceClassificationProjectionV1={contract_version:'workspace-topic-projection-v1',engine_execution_id:engine.id,
    model_artifact_id:model?.artifact_id??null,output_artifact_id:output.artifact_id,materialization_artifact_id:materialization.artifact_id,
-   mapping_digest:analysis.mapping_digest,policy_digest:identity.decision_policy_digest,model_version_id};
+   mapping_digest:analysis.mapping_digest,policy_digest:identity.decision_policy_digest,model_version_id,
+   ...(progress ? {interpretation_coverage:{interpreted_unit_count:Number(progress.metadata.interpreted_unit_count),
+     expected_unit_count:Number(progress.metadata.expected_interpretation_unit_count),unit_digest:String(progress.metadata.interpretation_units_digest),
+     expected_unit_digest:String(progress.metadata.expected_interpretation_units_digest),complete:progress.metadata.interpretation_complete===true}} : {})};
   const created=await beginSignalWorkspaceClassificationWithClientV1(client,{...args,identity,embedding_run_id:engine.embedding_run_id,source_projection:source});
   await client.query(`INSERT INTO signal_topic_classification_outbox(execution_id,workspace_id,worker_job_id) VALUES($1::uuid,$2::uuid,$3)
-   ON CONFLICT(execution_id) DO NOTHING`,[created.execution_id,args.workspace_id,created.worker_job_id]);
+   ON CONFLICT(execution_id,dispatch_kind) DO NOTHING`,[created.execution_id,args.workspace_id,created.worker_job_id]);
   return created;
 }
 async function sourceFor(queryable:SignalWorkspaceProjectionQueryableV1,lease:SignalWorkspaceClassificationLeaseV1){
@@ -160,7 +181,7 @@ export async function scheduleSignalWorkspaceTopicProjectionsV1(args:{database:S
  const limit=args.limit??20;if(!Number.isInteger(limit)||limit<1||limit>100)return fail('workspace_projection_page_invalid',422);
  return tx(args.database,async client=>{const rows=(await client.query<{id:string;status:string;dispatch_generation:number;worker_job_id:string}>(`
   SELECT execution.id,execution.status,execution.dispatch_generation,outbox.worker_job_id FROM signal_topic_catalog_executions execution
-  JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id WHERE execution.input_contract=$1
+  JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution' WHERE execution.input_contract=$1
    AND execution.input_snapshot->'source_projection' IS NOT NULL AND ((execution.status='running' AND execution.execution_expires_at<=clock_timestamp())
     OR(execution.status='queued' AND outbox.status='dispatched' AND outbox.updated_at<clock_timestamp()-interval '30 seconds'))
   ORDER BY execution.updated_at,execution.id FOR UPDATE OF execution SKIP LOCKED LIMIT $2`,[contract,limit])).rows;
@@ -168,7 +189,7 @@ export async function scheduleSignalWorkspaceTopicProjectionsV1(args:{database:S
    await client.query(`UPDATE signal_topic_catalog_executions SET status='queued',execution_token=NULL,execution_expires_at=NULL,error_code=NULL,
     completed_at=NULL,dispatch_generation=$2,updated_at=clock_timestamp() WHERE id=$1::uuid`,[row.id,generation]);
    await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
-    lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,
+    lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
     [row.id,row.status==='running'?`workspace-classification-${row.id}-${generation}`:row.worker_job_id]);}
   return{requeued:rows.length};
  });

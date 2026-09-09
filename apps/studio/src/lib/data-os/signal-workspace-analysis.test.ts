@@ -19,10 +19,10 @@ function authorityDatabase(authority: unknown) {
 test("analysis status and mutation enforce DB authority before reading corpus or execution", async () => {
   for (const authority of [null, { ...granted, workspace_status: "archived" }, { ...granted, actor_status: "suspended" },
     { ...granted, same_organization: false }, { ...granted, brand_access_level: null }]) {
-    for (const action of ["load", "start", "retry"]) {
+    for (const action of ["load", "start", "retry", "retry_progress"]) {
       const args = { database: authorityDatabase(authority), workspaceId: id, actorUserId: "actor" };
       await assert.rejects(action === "load" ? loadWorkspaceAnalysisForActorV1(args) : requestWorkspaceAnalysisForActorV1({ ...args,
-        idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action: "retry", run_id: id } }),
+        idempotencyKey: "analysis-test-request", body: action === "start" ? body : { action, run_id: id } }),
       (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
     }
   }
@@ -35,6 +35,8 @@ test("import-capable client does not gain engine permission from a zero cost cap
 test("analysis request is sealed to saved context and server engine config; retry only targets a run", () => {
   assert.equal(validateWorkspaceAnalysisRequestV1(body), true);
   assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry", run_id: id }), true);
+  assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_progress", run_id: id }), true);
+  assert.equal(validateWorkspaceAnalysisRequestV1({ action: "retry_progress", run_id: id, claude_cap_micro_usd: 30_000_000 }), false);
   for (const value of [null, [], {}, { ...body, engine_config: { seed: 2 } }, { ...body, actor_user_id: "other" },
     { ...body, texts: ["injected"] }, { ...body, publish: true }, { ...body, claude_cap_micro_usd: "0" },
     { ...body, claude_cap_micro_usd: -1 }, { ...body, claude_cap_micro_usd: 0.5 }, { ...body, claude_cap_micro_usd: NaN },

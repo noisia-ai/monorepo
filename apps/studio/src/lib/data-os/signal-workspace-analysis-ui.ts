@@ -18,7 +18,8 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
 };
 export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: string;
   expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number }
-  | { action: "retry"; run_id: string };
+  | { action: "retry"; run_id: string }
+  | { action: "retry_progress"; run_id: string };
 export type PendingWorkspaceAnalysis = { version: 1; workspace_id: string; request_scope: string;
   key: string; body: WorkspaceAnalysisRequest };
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -26,6 +27,28 @@ const integer = (value: unknown): value is number => typeof value === "number" &
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value);
 const digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
 const nullable = (value: unknown, predicate: (item: unknown) => boolean) => value === null || predicate(value);
+
+export function validWorkspaceAnalysisMaterialization(value: unknown): boolean {
+  return value === undefined || value === null || object(value)
+    && ["artifact_id", "output_catalog_profile_id", "projection_execution_id", "generation_id"].every(key => uuid(value[key]))
+    && digest(value.mapping_digest)
+    && ["interpreted_unit_count", "expected_interpretation_unit_count", "topic_count", "discovered_topic_count"].every(key => integer(value[key]))
+    && Number(value.interpreted_unit_count) <= Number(value.expected_interpretation_unit_count)
+    && Number(value.discovered_topic_count) <= Number(value.topic_count)
+    && typeof value.interpretation_complete === "boolean"
+    && (!value.interpretation_complete || value.interpreted_unit_count === value.expected_interpretation_unit_count);
+}
+/** Only a persisted receipt or the complete execution can invalidate the catalog. */
+export function workspaceAnalysisCatalogReceiptKey(status: WorkspaceAnalysisStatus | null) {
+  if (!status) return null;
+  const run = status.active_run ?? status.latest_run;
+  if (run?.status === "ready" && status.latest_complete?.execution_id === run.execution_id) {
+    return `${status.workspace_id}:${status.request_scope}:complete:${run.execution_id}:${run.materialization_progress?.artifact_id ?? ""}:${run.materialization_progress?.mapping_digest ?? ""}`;
+  }
+  const progress = run?.materialization_progress;
+  if (progress) return `${status.workspace_id}:${status.request_scope}:${progress.artifact_id}:${progress.mapping_digest}`;
+  return status.latest_complete ? `${status.workspace_id}:${status.request_scope}:complete:${status.latest_complete.execution_id}` : null;
+}
 
 export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAnalysisRun | null {
   return value === null || object(value) && uuid(value.execution_id)
@@ -38,6 +61,12 @@ export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAna
     && typeof value.fit_completed === "boolean" && Number(value.interpreted_units) <= Number(value.expected_interpretation_units)
     && typeof value.is_current === "boolean" && typeof value.retryable === "boolean" && typeof value.outcome_unknown === "boolean"
     && typeof value.transport_recovery_eligible === "boolean"
+    && validWorkspaceAnalysisMaterialization(value.materialization_progress)
+    && (!object(value.materialization_progress) || value.materialization_progress.expected_interpretation_unit_count === value.expected_interpretation_units
+      && Number(value.materialization_progress.interpreted_unit_count) <= Number(value.interpreted_units))
+    && (value.materialization_pending === undefined || typeof value.materialization_pending === "boolean")
+    && (value.materialization_error_code === undefined || nullable(value.materialization_error_code, (code) => typeof code === "string"))
+    && (value.materialization_retry_available === undefined || typeof value.materialization_retry_available === "boolean")
     && integer(value.claude_cap_micro_usd) && [null, "computational_grouping", "insufficient_population"].includes(value.result_kind as null | string)
     && nullable(value.error_code, (code) => typeof code === "string") && nullable(value.model_version_id, uuid)
     && object(value.claude_cost) && ["hard_cap_micro_usd", "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd", "terminal_reserved_micro_usd"]
@@ -78,7 +107,7 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
   const body = value.body;
   if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
-    : body.action !== "retry" || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
+    : !["retry", "retry_progress"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;
 }
 export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null) {
@@ -117,9 +146,21 @@ export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null
     && run.error_code !== "workspace_engine_interpretation_daily_authority_expired"
     && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));
 }
+/** Delivery of already paid results has its own server authority; it never resumes interpretation. */
+export function workspaceAnalysisCanRetryProgress(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
+  return Boolean(status?.can_execute && run?.is_current && run.materialization_retry_available
+    && !run.materialization_pending && status.latest_run?.execution_id === run.execution_id);
+}
+export function workspaceAnalysisProgressRequestConfirmed(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
+  return request.body.action === "retry_progress" && status.workspace_id === request.workspace_id
+    && status.request_scope === request.request_scope && status.request_run?.execution_id === request.body.run_id;
+}
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
   if (status.workspace_id !== request.workspace_id || status.request_scope !== request.request_scope
-    || !status.can_execute || status.active_run || workspaceAnalysisUnknown(status) || status.request_run) return false;
+    || !status.can_execute || status.request_run) return false;
+  if (request.body.action === "retry_progress") return status.latest_run?.execution_id === request.body.run_id
+    && workspaceAnalysisCanRetryProgress(status, status.latest_run);
+  if (status.active_run || workspaceAnalysisUnknown(status)) return false;
   return request.body.action === "retry"
     ? status.latest_run?.execution_id === request.body.run_id && workspaceAnalysisCanRetry(status, status.latest_run)
     : status.preflight.embedding_run_id === request.body.embedding_run_id

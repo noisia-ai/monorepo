@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
 export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = false, initial = null }: {
@@ -51,7 +51,9 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     }
     if (confirmedKey && confirmedKey === pendingRef.current?.key) {
       setCheckedKey(confirmedKey);
-      if (next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedRequest(next)
+      if ((pendingRef.current.body.action === "retry_progress"
+        ? workspaceAnalysisProgressRequestConfirmed(next, pendingRef.current)
+        : next.request_run?.status === "ready" || workspaceAnalysisCanReleaseChangedRequest(next))
         || !next.request_run && rejectedKey.current === confirmedKey) forget();
     }
     if (!pendingRef.current) {
@@ -91,7 +93,8 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   useEffect(() => {
     if (pending && pending.key !== checkedKey && !reading && !submitting && error !== "load") void read();
   }, [pending, checkedKey, reading, submitting, error, read]);
-  const active = data?.active_run?.execution_id ?? null;
+  const active = data?.active_run?.execution_id
+    ?? (data?.latest_run?.materialization_pending ? data.latest_run.execution_id : null);
   useEffect(() => {
     if (!active) return;
     let stopped = false; let timer: ReturnType<typeof setTimeout>;
@@ -133,6 +136,9 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const retryRun = confirmed ? data?.request_run ?? null : !pending ? data?.latest_run ?? null : null;
   const canRetry = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanRetry(data, retryRun);
+  const canRetryProgress = !disabled && !submitting && !reading && error !== "load" && verifiedVersion === catalogVersion
+    && (!pending || Boolean(confirmed && data?.request_run))
+    && workspaceAnalysisCanRetryProgress(data, data?.latest_run ?? null);
   const canStart = !disabled && !submitting && !reading && !pending && error !== "load" && verifiedVersion === catalogVersion
     && workspaceAnalysisCanStart(data, cap);
   const canReplay = !disabled && !submitting && !reading && Boolean(confirmed && data && pending && error !== "load"
@@ -146,9 +152,12 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const retry = useCallback(async () => {
     if (canRetry && retryRun) await submit({ action: "retry", run_id: retryRun.execution_id });
   }, [canRetry, retryRun, submit]);
+  const retryProgress = useCallback(async () => {
+    if (canRetryProgress && data?.latest_run) await submit({ action: "retry_progress", run_id: data.latest_run.execution_id });
+  }, [canRetryProgress, data, submit]);
   const replay = useCallback(async () => {
     if (canReplay && pending) await submit(pending.body, pending);
   }, [canReplay, pending, submit]);
-  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canReplay,
-    read, start, retry, replay, verified: verifiedVersion === catalogVersion };
+  return { data, pending, reading, submitting, error, cap, setCap, canStart, canRetry, canRetryProgress, canReplay,
+    read, start, retry, retryProgress, replay, verified: verifiedVersion === catalogVersion };
 }

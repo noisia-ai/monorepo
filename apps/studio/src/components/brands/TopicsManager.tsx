@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { SignalTopicsManagementProductV1 } from "@/lib/data-os/signal-topics-management";
 import { ArrowClockwise, Archive, Check, FloppyDisk, MagnifyingGlass, Plus, X } from "@phosphor-icons/react";
@@ -57,6 +57,9 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const editorDirty = selected ? stableClientJson(editorPayload(editor)) !== stableClientJson(topicPayload(selected)) : creating && stableClientJson(editorPayload(editor)) !== stableClientJson(editorPayload(emptyEditor()));
   const semanticDirty = selected ? stableClientJson(semanticEditorPayload(editor))
     !== stableClientJson(semanticTopicPayload(selected)) : false;
+  const catalogContext = useRef({ workspaceId, data, selectedKey, creating, editorDirty, busy });
+  catalogContext.current = { workspaceId, data, selectedKey, creating, editorDirty, busy };
+  const progressReader = useRef<AbortController | null>(null);
   const visibleTopics = useMemo(() => data.topics.filter((item) => {
     if (tab === "archived" ? item.lifecycle !== "archived" : item.lifecycle === "archived") return false;
     const needle = query.trim().toLocaleLowerCase();
@@ -90,6 +93,48 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
     if (selectedKey && !next.topics.some((item) => item.term_key === selectedKey)) setSelectedKey(next.topics[0]?.term_key ?? null);
     return next;
   }, [selectedKey, t, workspaceId]);
+
+  // Progressive receipt refreshes never replace unsaved edits or a catalog saved while the read was in flight.
+  const refreshAvailableCatalog = useCallback(async (signal: AbortSignal) => {
+    const before = catalogContext.current;
+    if (signal.aborted || before.workspaceId !== workspaceId || before.editorDirty || before.busy) throw new Error("catalog_refresh_deferred");
+    progressReader.current?.abort();
+    const controller = new AbortController(); progressReader.current = controller;
+    const abort = () => controller.abort(); signal.addEventListener("abort", abort, { once: true });
+    const loadError = t("errors.load");
+    try {
+      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics`, { cache: "no-store", signal: controller.signal });
+      if (controller.signal.aborted || catalogContext.current.workspaceId !== workspaceId) throw new Error("catalog_refresh_deferred");
+      if ([401, 403, 404].includes(response.status)) {
+        setData(current => ({ ...current, topics: [], discovered: { ...current.discovered, items: [] },
+          capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false } }));
+        setSelectedKey(null); setCreating(false); setEditor(emptyEditor()); setResults([]); setResultsStatus("idle");
+        throw new Error(loadError);
+      }
+      if (!response.ok) throw new Error(loadError);
+      const next = await response.json() as Management;
+      const now = catalogContext.current;
+      if (controller.signal.aborted || now.workspaceId !== workspaceId || now.editorDirty || now.busy
+        || before.data.profile?.id !== now.data.profile?.id || before.data.profile?.version !== now.data.profile?.version) throw new Error("catalog_refresh_deferred");
+      if (next.workspace.id !== workspaceId || !Array.isArray(next.topics)) throw new Error(loadError);
+      setData(next);
+      if (!now.creating) {
+        const topic = next.topics.find(item => item.term_key === now.selectedKey)
+          ?? next.topics.find(item => item.lifecycle !== "archived");
+        setSelectedKey(topic?.term_key ?? null); setEditor(topic ? editorFromTopic(topic) : emptyEditor());
+      }
+      setFeedback(current => current?.text === loadError ? null : current);
+      return next;
+    } catch (error) {
+      if (!controller.signal.aborted && catalogContext.current.workspaceId === workspaceId
+        && error instanceof Error && error.message !== "catalog_refresh_deferred") setFeedback({ tone: "error", text: loadError });
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (progressReader.current === controller) progressReader.current = null;
+    }
+  }, [t, workspaceId]);
+  useEffect(() => () => { progressReader.current?.abort(); progressReader.current = null; }, [workspaceId]);
 
   useEffect(() => {
     if (!running) return;
@@ -253,7 +298,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
 
     <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
-      disabled={editorDirty || busy !== null} onCompleted={refresh} onContextPrepared={computation.read} />
+      disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog} onContextPrepared={computation.read} />
 
     {running ? <div className="topics-manager__progress" role="status">
       <span>{data.execution?.intent === "publish" ? t("progress.publishing") : t("progress.searching")}</span>

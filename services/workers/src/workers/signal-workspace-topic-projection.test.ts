@@ -22,7 +22,7 @@ type Row = { ordinal: number; root_id: string; chunk_index: number; start: numbe
 const rowIdentity = (row: Pick<Row, "ordinal" | "root_id" | "chunk_index" | "start" | "end" | "chunk_sha256">) => ({ ordinal: row.ordinal, root_id: row.root_id, chunk_index: row.chunk_index,
   start: row.start, end: row.end, chunk_sha256: row.chunk_sha256 });
 
-async function fixture(options: { topic_count?: number; no_groups?: boolean; stale_topic?: boolean; insufficient?: boolean; archived?: boolean } = {}) {
+async function fixture(options: { topic_count?: number; no_groups?: boolean; stale_topic?: boolean; insufficient?: boolean; archived?: boolean; partial?: boolean } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), "projection-test-"));
   const topicCount = options.topic_count ?? 67;
   const engine = id(900), execution = id(901), workspace = id(902), materializationId = id(903);
@@ -58,7 +58,7 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
     citations: options.insufficient ? [] : [sha(key)]
   }));
   const proposals = interpretations.map((result, index) => ({ result, artifact_id: id(2000 + Math.floor(index / 4)) }));
-  const materialized = mergeSignalWorkspaceTopicMaterializationV1({ prior: [], interpretations: proposals,
+  const materialized = mergeSignalWorkspaceTopicMaterializationV1({ prior: [], interpretations: options.partial ? proposals.slice(0, 4) : proposals,
     execution_id: engine, now: "2026-09-08T00:00:00.000Z", locale: "es-MX" });
   if (options.stale_topic) {
     const item = materialized.definitions[0]!;
@@ -95,7 +95,16 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
       outlier_occurrences: assignments[lane].filter(row => row.stable_cluster_id === null).length })),
     artifacts: [...refs.values()].map(ref => ({ file: ref.artifact_key, sha256: ref.content.sha256, bytes: ref.content.size_bytes })) };
   put("manifest.json", JSON.stringify(manifest), id(1003));
-  put("materialization.json", JSON.stringify(materialized), materializationId, "engine_proposals");
+  const unitDigest = (keys: string[]) => sha(keys.sort().map(key => JSON.stringify(key) + "\n").join(""));
+  const coverage = options.partial ? { interpreted_unit_count: materialized.mapping.length,
+    expected_unit_count: interpretations.length, unit_digest: unitDigest(materialized.mapping.map(row => row.unit_key)),
+    expected_unit_digest: unitDigest(interpretations.map(row => row.cluster_id)), complete: false } : undefined;
+  const materializationKey = coverage ? `materialization-progress-${id(777)}.json` : "materialization.json";
+  put(materializationKey, JSON.stringify(coverage ? { ...materialized,
+    contract_version: "workspace-topic-materialization-progress-v1", execution_id: engine,
+    interpreted_unit_count: coverage.interpreted_unit_count, interpretation_units_digest: coverage.unit_digest,
+    expected_interpretation_unit_count: coverage.expected_unit_count, expected_interpretation_units_digest: coverage.expected_unit_digest,
+    interpretation_complete: coverage.complete, mapping_digest: digest(materialized.mapping) } : materialized), materializationId, "engine_proposals");
   const primary = [...refs.values()];
   const proposalRefs: Artifact[] = [];
   for (let index = 0; index < interpretations.length; index += 4) {
@@ -111,7 +120,7 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
   const guard = () => { if (forbidden) throw new Error("workspace_classification_forbidden"); };
   const stores: Stores<object> = {
     claim: async () => { guard(); return finished ? null : { lease: lease(), source: { engine_execution_id: engine,
-      materialization_artifact_id: materializationId, mapping_digest: digest(materialized.mapping), model_artifact_id: id(1005), artifacts: primary }, model_version_id: id(1006) }; },
+      materialization_artifact_id: materializationId, mapping_digest: digest(materialized.mapping), model_artifact_id: id(1005), artifacts: primary, interpretation_coverage: coverage }, model_version_id: id(1006) }; },
     heartbeat: async () => { guard(); },
     readTopics: async ({ after_term_key, limit }) => { guard(); const remaining = topics.filter(item => after_term_key === null || item.term_key > after_term_key), items = remaining.slice(0, limit);
       return { items, next_term_key: items.at(-1)?.term_key ?? after_term_key, done: remaining.length <= limit }; },
@@ -130,7 +139,7 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
     finish: async () => { guard(); finishCalls++; finished = true; return { status: "ready" }; },
     fail: async args => { failures.push(args.error_code); }
   };
-  return { scratch, roots, chunks, assignments, topics, materialized, refs, files, manifest, persisted, failures, chunkReads,
+  return { scratch, roots, chunks, assignments, topics, materialized, refs, files, manifest, persisted, failures, chunkReads, coverage, materializationKey,
     options: { database: {}, stores, scratch_root: scratch, storage: {
       put: async () => { throw new Error("Projection must never upload/recompute"); },
       get: async (args: { workspace_id: string; execution_id: string; stored: Artifact["content"]; destination: string }) => {
@@ -273,4 +282,39 @@ test("meaning identity excludes presentation but includes scope, boundaries and 
       assert.notEqual(signalWorkspaceClassificationTopicSemanticsDigestV1({ ...value, ...changed }), baseline);
     }
   } finally { await f.close(); }
+});
+
+
+test("partial interpretation projects every root and fragment while leaving uninterpreted groups unresolved", async () => {
+  const f = await fixture({ partial: true }); try {
+    await run(f.job, f.options);
+    assert.deepEqual(f.chunkReads, [128, 5, 1]);
+    const first = f.persisted.get(f.roots[0]!.root_id)!;
+    assert.equal(first.decisions.length, 4);
+    assert.equal(first.has_unresolved_topics, true);
+    assert.equal(first.reason_code, "computed_cluster_interpretation_pending");
+    assert.equal(first.coverage.processed_chunks, 133);
+    assert.equal(f.persisted.get(f.roots[1]!.root_id)!.reason_code, "computed_cluster_outlier");
+    assert.equal(f.persisted.size, 2);
+    assert.ok(first.decisions.every(item => item.disposition === "pending"));
+    assert.equal(f.counters().storageReads, 6, "later interpretation artifacts are paginated but do not enter this sealed projection");
+  } finally { await f.close(); }
+});
+
+test("partial projections reject a forged unit universe, missing mapped evidence or inconsistent completeness", async () => {
+  for (const mode of ["universe", "count", "complete", "mapped_proposal", "truncated"] as const) {
+    const f = await fixture({ partial: true }); try {
+      if (mode === "universe") f.coverage!.expected_unit_digest = sha("different unit universe");
+      if (mode === "count") f.coverage!.expected_unit_count--;
+      if (mode === "complete") f.coverage!.complete = true;
+      if (mode === "mapped_proposal") {
+        const name = [...f.refs.keys()].find(key => key.startsWith("interpretation-"))!;
+        const value = JSON.parse(f.files.get(name)!.toString()); value.interpretations.pop();
+        f.mutateArtifact(name, JSON.stringify(value), true);
+      }
+      if (mode === "truncated") f.mutateArtifact("assignments.guided.jsonl", f.assignments.guided.slice(0, -1).map(row => JSON.stringify(row) + "\n").join(""), true);
+      await assert.rejects(run(f.job, f.options), /workspace_classification_projection_integrity_invalid/, mode);
+      assert.equal(f.counters().commits, 0); assert.equal(f.counters().finishCalls, 0);
+    } finally { await f.close(); }
+  }
 });
