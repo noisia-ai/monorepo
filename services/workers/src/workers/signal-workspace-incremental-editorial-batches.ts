@@ -3,6 +3,7 @@ import { closeSync, openSync, readSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { TextDecoder } from "node:util";
 import { batchSignalWorkspaceInterpretationV1, parseSignalWorkspaceInterpretationClusterV1,
+  buildSignalWorkspaceInterpretationBatchV1,
   SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, signalWorkspaceEmbeddingDigestV1 as digest,
   signalWorkspaceInterpretationUniverseDigestV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationContextV1,
@@ -33,6 +34,77 @@ function* lines(path: string): Generator<unknown> {
     }
     if (pending.length) fail("incomplete");
   } finally { closeSync(file); }
+}
+
+export type WorkspaceIncrementalEditorialBatchPlanV1 = Awaited<ReturnType<typeof stageWorkspaceIncrementalEditorialBatchesV1>>;
+
+/** Restore a complete, server-authorized plan without regrouping its units.
+ * Preflight checks every exact byte range and rebuilds every request before the
+ * first consumable batch. The iterator rechecks each range when consumed. The
+ * caller still validates its lease/claims/grant before reserving or sending. */
+export async function prepareWorkspaceIncrementalEditorialBatchReaderV1(args: {
+  path: string; plan: WorkspaceIncrementalEditorialBatchPlanV1; context: SignalWorkspaceInterpretationContextV1;
+}) {
+  const invalid = (): never => fail("plan_invalid");
+  const plan = structuredClone(args.plan), context = structuredClone(args.context), path = args.path;
+  try {
+  const { plan_digest, ...unsigned } = plan;
+  if (plan.contract_version !== "workspace-incremental-editorial-batch-plan-v1" || digest(unsigned) !== plan_digest
+    || Buffer.byteLength(JSON.stringify(plan)) > MAX_BYTES || plan.workspace_id !== context.workspace_id
+    || plan.editorial_execution_id !== context.execution_id || plan.context_digest !== context.context_digest
+    || plan.editorial_execution_id.toLowerCase() === plan.numeric_execution_id.toLowerCase()
+    || plan.configuration_digest !== digest(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1)
+    || !Number.isSafeInteger(plan.batches) || plan.batches < 1 || plan.requests.length !== plan.batches
+    || !Number.isSafeInteger(plan.units) || plan.units < 1) invalid();
+  const checkFile = async () => {
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.size !== plan.stream.bytes
+      || await hashWorkspaceEngineFileV1(path) !== plan.stream.sha256) fail("source_changed");
+  };
+  await checkFile();
+  const unitKeys = plan.requests.flatMap(request => request.unit_keys);
+  if (unitKeys.length !== plan.units || signalWorkspaceInterpretationUniverseDigestV1(unitKeys) !== plan.target_unit_digest) invalid();
+  let offset = 0;
+  for (const [index, request] of plan.requests.entries()) {
+    if (request.index !== index || request.offset !== offset || !Number.isSafeInteger(request.size_bytes)
+      || request.size_bytes < 1 || request.size_bytes > MAX_BYTES || !Number.isSafeInteger(offset + request.size_bytes)) invalid();
+    offset += request.size_bytes;
+  }
+  if (offset !== plan.stream.bytes) invalid();
+  function* batches() {
+    const file = openSync(path, "r");
+    try {
+      for (const request of plan.requests) {
+        const bytes = Buffer.allocUnsafe(request.size_bytes); let received = 0;
+        while (received < bytes.length) {
+          const read = readSync(file, bytes, received, bytes.length - received, request.offset + received);
+          if (!read) invalid(); received += read;
+        }
+        if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== request.sha256
+          || bytes.at(-1) !== 10 || bytes.indexOf(10) !== bytes.length - 1) invalid();
+        const row = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+        if (!row || !same(Object.keys(row).sort(), ["batch", "contract_version", "index"])
+          || row.contract_version !== "workspace-incremental-editorial-batch-v1" || row.index !== request.index
+          || !row.batch || !same(row.batch.context, context)) invalid();
+        const batch = buildSignalWorkspaceInterpretationBatchV1(context, row.batch.clusters, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1);
+        if (!same(batch, row.batch) || batch.request_digest !== request.request_digest || batch.batch_key !== request.batch_key
+          || batch.reserved_micro_usd !== request.reserved_micro_usd
+          || !same(batch.clusters.map(cluster => cluster.cluster_id), request.unit_keys)) invalid();
+        yield batch;
+      }
+    } catch (error) {
+      if (error instanceof Error && /^workspace_incremental_editorial_batches_[a-z_]+$/u.test(error.message)) throw error;
+      return invalid();
+    } finally { closeSync(file); }
+  }
+  // All ranges, evidence and request seals pass before returning the iterator.
+  for (const _batch of batches()) { /* consume the complete immutable plan */ }
+  await checkFile();
+  return { plan: structuredClone(plan), batches };
+  } catch (error) {
+    if (error instanceof Error && /^workspace_incremental_editorial_batches_[a-z_]+$/u.test(error.message)) throw error;
+    return invalid();
+  }
 }
 
 /** LOCAL preparation only: no lease, claims, reservation, provider or catalog.

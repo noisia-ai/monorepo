@@ -19,7 +19,7 @@ const sha=(bytes:Uint8Array|string)=>`sha256:${createHash("sha256").update(bytes
 const fail=(code:string):never=>{throw new Error(code);};
 export type WorkspaceInterpretationBatchExecutionV1={
  database:SignalWorkspaceEngineDatabaseV1;
- execution:Pick<SignalWorkspaceEngineLeaseV1,"execution_id"|"workspace_id"|"execution_token"|"interpretation_revision_digest"|"interpretation_admission">;
+ execution:Pick<SignalWorkspaceEngineLeaseV1,"execution_id"|"workspace_id"|"execution_token"|"interpretation_revision_digest"> & {interpretation_admission?:{operation_id:string}|null};
  actor_user_id:string;
  config:NonNullable<SignalWorkspaceEngineLeaseV1["snapshot"]["interpretation_config"]>;
  batch:SignalWorkspaceInterpretationBatchV1; directory:string; storage:WorkspaceEngineStorageV1;

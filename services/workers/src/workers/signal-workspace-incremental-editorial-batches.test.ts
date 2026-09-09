@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceEmbeddingDigestV1 as digest,
   signalWorkspaceInterpretationUniverseDigestV1, signalWorkspaceInterpretationReferenceIdV1,
   type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
-import { stageWorkspaceIncrementalEditorialBatchesV1 as stage } from "./signal-workspace-incremental-editorial-batches";
+import { stageWorkspaceIncrementalEditorialBatchesV1 as stage, prepareWorkspaceIncrementalEditorialBatchReaderV1 as restore } from "./signal-workspace-incremental-editorial-batches";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 import type { WorkspaceIncrementalEditorialEvidenceDescriptorV1 as Descriptor } from "./signal-workspace-incremental-editorial-evidence";
 
@@ -74,6 +74,47 @@ test("staged batches preserve the exact existing algorithm and replay bytes; no 
     const replay: string[] = [];
     assert.deepEqual(await stage({ ...f, context, write_batch: async row => { replay.push(row.jsonl); } }), plan);
     assert.deepEqual(replay, output);
+    const batchFile = join(f.directory, "batches.jsonl"); await writeFile(batchFile, output.join(""));
+    const mutablePlan = structuredClone(plan), mutableContext = structuredClone(context);
+    const restored = await restore({ path: batchFile, plan: mutablePlan, context: mutableContext });
+    mutablePlan.requests.length = 0; mutableContext.data.brand = "changed"; restored.plan.requests.length = 0;
+    assert.deepEqual([...restored.batches()], expected);
+  } finally { await f.cleanup(); }
+});
+
+test("restoring a sealed plan rejects a changed final request before returning consumable batches", async t => {
+  for (const kind of ["cost", "offset", "key", "unit", "body", "context"] as const) await t.test(kind, async () => {
+    const f = await fixture(), output: string[] = []; let restored: unknown;
+    try {
+      const plan = await stage({ ...f, context, write_batch: async row => { output.push(row.jsonl); } });
+      const last = plan.requests.at(-1)!;
+      if (kind === "cost") last.reserved_micro_usd++;
+      if (kind === "offset") last.offset++;
+      if (kind === "key") last.batch_key = "different";
+      if (kind === "unit") last.unit_keys[0] = "open:wrong";
+      if (kind === "body") {
+        const row = JSON.parse(output.at(-1)!); row.batch.request_body += "changed";
+        output[output.length - 1] = JSON.stringify(row) + "\n";
+        last.sha256 = sha(output.at(-1)!); last.size_bytes = Buffer.byteLength(output.at(-1)!);
+        plan.stream.sha256 = sha(output.join("")); plan.stream.bytes = Buffer.byteLength(output.join(""));
+      }
+      const { plan_digest: _digest, ...unsigned } = plan; plan.plan_digest = digest(unsigned);
+      const path = join(f.directory, "batches.jsonl"); await writeFile(path, output.join(""));
+      await assert.rejects(async () => { restored = await restore({ path, plan,
+        context: kind === "context" ? { ...context, data: { brand: "changed context" } } : context }); }, /workspace_incremental_editorial_batches_/u);
+      assert.equal(restored, undefined);
+    } finally { await f.cleanup(); }
+  });
+});
+
+test("restored iteration checks exact byte ranges again after preflight", async () => {
+  const f = await fixture(), output: string[] = [];
+  try {
+    const plan = await stage({ ...f, context, write_batch: async row => { output.push(row.jsonl); } });
+    const path = join(f.directory, "batches.jsonl"); await writeFile(path, output.join(""));
+    const restored = await restore({ path, plan, context });
+    await writeFile(path, "changed after preflight");
+    assert.throws(() => [...restored.batches()], /workspace_incremental_editorial_batches_plan_invalid/u);
   } finally { await f.cleanup(); }
 });
 
@@ -145,6 +186,9 @@ test("1,000 units over18MB produce all durable batch lines with bounded output c
     } });
     await file.sync(); assert.equal(count, 1000); assert.equal(plan.units, 1000); assert.ok(maximum <= 4);
     assert.ok(f.descriptor.stream.bytes > 18_000_000); assert.equal(plan.stream.sha256, await hashWorkspaceEngineFileV1(destination));
+    const restored = await restore({ path: destination, plan, context }); let restoredCount = 0;
+    for (const batch of restored.batches()) restoredCount += batch.clusters.length;
+    assert.equal(restoredCount, 1000);
     t.diagnostic(JSON.stringify({ input_units:1000,input_bytes:f.descriptor.stream.bytes,batches:plan.batches,output_bytes:plan.stream.bytes,max_batch_units:maximum }));
   } finally { await file.close(); await f.cleanup(); }
 });

@@ -54,6 +54,19 @@ async function authorize(c:PoolClient,workspace:string,actor:string,execute=true
  if(!(execute?cap.can_execute_topics:cap.can_view))return fail('workspace_engine_interpretation_forbidden',403);}
 async function actorLock(c:PoolClient,actor:string){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`workspace-interpretation-budget:${actor}`]);}
 async function execution(c:PoolClient,workspace:string,id:string,actor:string,checkCurrent=true,executionToken?:string){
+ // New editorial owners require their own sealed request plan, never a fitted/numeric lease.
+ const editorial=(await c.query<{id:string;actor_user_id:string;status:string;execution_token:string|null;lease_live:boolean;input_snapshot:{context_digest:string;catalog_input_digest:string;claude_cap_micro_usd:number;interpretation_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;budget_policy:{budget_timezone:string;daily_cap_micro_usd:number}};current:boolean}>(`SELECT id,actor_user_id,status,execution_token,execution_expires_at>clock_timestamp() lease_live,input_snapshot,false current FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1' FOR UPDATE`,[id,workspace])).rows[0];
+ if(editorial){
+  editorial.current=(await c.query<{current:boolean}>('SELECT workspace_incremental_editorial_execution_current_v1($1::uuid) current',[editorial.id])).rows[0]?.current===true;
+  if(editorial.actor_user_id!==actor)return fail('workspace_engine_interpretation_forbidden',403);
+  if(editorial.status!=='running'||!executionToken||editorial.execution_token!==executionToken||!editorial.lease_live)return fail('workspace_engine_interpretation_lease_conflict');
+  if(checkCurrent){if(!editorial.current)return fail('workspace_engine_interpretation_inputs_stale');
+   const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
+   if(identity.context_digest!==editorial.input_snapshot.context_digest||identity.catalog_digest!==editorial.input_snapshot.catalog_input_digest)return fail('workspace_engine_interpretation_inputs_stale');}
+  return{...editorial,fit_checkpoint:null,interpretation_revision:null,input_snapshot:{context_digest:editorial.input_snapshot.context_digest,catalog_digest:editorial.input_snapshot.catalog_input_digest,claude_cap_micro_usd:editorial.input_snapshot.claude_cap_micro_usd,
+   interpretation_config:{call_configuration:editorial.input_snapshot.interpretation_configuration,...editorial.input_snapshot.budget_policy}}};
+ }
+
  const row=(await c.query<{id:string;actor_user_id:string;status:string;execution_token:string|null;lease_live:boolean;fit_checkpoint:unknown;
   interpretation_revision:SignalWorkspaceEngineInterpretationRevisionV1|null;input_snapshot:{context_digest:string;catalog_digest:string;claude_cap_micro_usd:number;interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1};current:boolean}>(`
  SELECT execution.id,execution.actor_user_id,execution.status,execution.input_snapshot-'guides' input_snapshot,execution.interpretation_revision,
@@ -259,7 +272,7 @@ export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{data
     COALESCE(sum(GREATEST(call.settled_micro_usd-call.reserved_micro_usd,0)) FILTER(WHERE call.call_state='settled'),0)::text observed_exception_micro_usd
    FROM signal_topic_catalog_executions execution LEFT JOIN engine_cost_events call ON call.catalog_execution_id=execution.id AND call.workspace_id=execution.workspace_id
     AND call.workspace_contract='workspace-engine-interpretation-v1'
-   WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1'
+   WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract IN('workspace-topic-engine-v1','workspace-incremental-editorial-v1')
    GROUP BY execution.id`,[args.execution_id,args.workspace_id])).rows[0];
   if(!result)return fail('workspace_engine_interpretation_not_found',404);
   return Object.fromEntries(Object.entries(result).map(([key,value])=>[key,natural(value)])) as SignalWorkspaceEngineInterpretationBudgetV1;
