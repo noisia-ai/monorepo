@@ -6,7 +6,7 @@ import test from "node:test";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 const scope = { workspace_id: "00000000-0000-4000-8000-000000000001", execution_id: "00000000-0000-4000-8000-000000000002" };
-function server() {
+function server(allowedMimeTypes?: readonly string[]) {
   const objects = new Map<string, Uint8Array>(), writes: number[] = [];
   let publicBucket = false, corrupt = false;
   const transport: typeof fetch = async (input, init) => {
@@ -17,6 +17,9 @@ function server() {
     const path = url.split("/corpus-files/")[1]!;
     if (init?.method === "POST") {
       const body = init.body as Uint8Array; writes.push(body.byteLength);
+      if (allowedMimeTypes && !allowedMimeTypes.includes((init.headers as Record<string,string>)["Content-Type"]!)) {
+        return Response.json({ error: "InvalidMimeType" }, { status: 400 });
+      }
       if (objects.has(path)) return Response.json({ error: "Duplicate" }, { status: 400 });
       objects.set(path, Uint8Array.from(body)); return Response.json({ Key: path });
     }
@@ -27,6 +30,27 @@ function server() {
   const storage = createWorkspaceEngineStorageV1({ url: "https://example.supabase.co", service_role_key: "unit-test-key", fetch: transport });
   return { storage, objects, writes, makePublic: () => { publicBucket = true; }, corrupt: () => { corrupt = true; } };
 }
+test("JSON envelopes roundtrip in a private import bucket with binary-only artifact MIME permission", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "noisia-storage-mime-"));
+  try {
+    const f = server(["text/csv", "application/csv", "application/vnd.ms-excel", "application/octet-stream"]);
+    const file = join(directory, "manifest.json"), payload = '{"contract_version":"workspace-engine-output-v1"}\n';
+    await writeFile(file, payload);
+    const args = { ...scope, file, size_bytes: Buffer.byteLength(payload),
+      sha256: await hashWorkspaceEngineFileV1(file), media_type: "application/json" };
+    const stored = await f.storage.put(args);
+    assert.equal(stored.media_type, "application/json", "The artifact's logical type must remain intact.");
+    assert.equal(f.objects.size, 2, "Both the binary part and its JSON envelope were accepted.");
+    const envelope = JSON.parse(Buffer.from(f.objects.get(stored.storage_key)!).toString("utf8"));
+    assert.equal(envelope.contract_version, "workspace-engine-parts-v1");
+    assert.equal(envelope.sha256, args.sha256); assert.equal(envelope.size_bytes, args.size_bytes);
+    assert.deepEqual(await f.storage.put(args), stored, "An existing object still requires exact read verification.");
+    const restored = join(directory, "restored.json");
+    await f.storage.get({ ...scope, stored, destination: restored });
+    assert.equal(await readFile(restored, "utf8"), payload);
+    assert.equal(await hashWorkspaceEngineFileV1(restored), args.sha256);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 test("private model multipart roundtrip crosses 48MiB and immutable replay verifies bytes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "noisia-storage-"));
   try { const f = server(), file = join(directory, "model.open.joblib"), payload = Buffer.alloc(49 * 1024 * 1024, 7);

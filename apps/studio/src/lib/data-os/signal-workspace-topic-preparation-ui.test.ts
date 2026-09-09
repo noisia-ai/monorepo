@@ -123,6 +123,20 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(prepared.includes(text.currentContext));
     assert.doesNotMatch(prepared, /0 intereses preparados|0 prepared interests/u);
   });
+  test(`${locale}: a completed preparation hides its original pending quote and retains the receipt`, () => {
+    const completed = { ...run, status: "completed" as const, counts: { ...run.counts, completed_topics: 4, partial_topics: 0,
+      pending_topics: 0, processed_input_references: 20, processed_unique_inputs: 10, cache_hits: 10 } };
+    const originalQuote = { ...quote, cached_unique_inputs: 0, missing_unique_inputs: 10, requires_provider: true,
+      estimated_upper_micro_usd: 1500 };
+    const html = render({ ...status, latest_completed: completed, latest_run: completed, is_current: true }, originalQuote);
+    assert.doesNotMatch(html, /Costo pendiente estimado|Estimated remaining cost|0 de 10 textos|0 of 10 texts/u);
+    assert.match(html, /0[.,]0008/u);
+    assert.ok(html.includes(text.refresh));
+    assert.doesNotMatch(html, /Preparar contexto e intereses ·|Prepare context and interests ·/u);
+    const changed = render({ ...status, current_plan_digest: `sha256:${"c".repeat(64)}`, latest_completed: completed },
+      { ...originalQuote, plan_digest: `sha256:${"c".repeat(64)}` });
+    assert.match(changed, /Costo pendiente estimado|Estimated remaining cost/u);
+  });
   test(`${locale}: provider disabled and unsaved edits block submission without disabling editing or hiding receipts`, () => {
     const html = render(status, { ...quote, requires_provider: true, missing_unique_inputs: 10, estimated_upper_micro_usd: 1500 });
     assert.ok(html.includes(text.providerDisabled));

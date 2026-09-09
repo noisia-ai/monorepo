@@ -193,6 +193,7 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
   const money = (amount: number) => formatEmbeddingMicroUsd(String(amount), locale);
   const capValue = parseEmbeddingCapMicroUsd(cap);
   const validCap = capValue !== null && BigInt(capValue) <= BigInt(Number.MAX_SAFE_INTEGER);
+  const quoteCompleted = Boolean(quote && status?.latest_completed?.plan_digest === quote.plan_digest);
   const closedRequest = pending && status?.request_run && ["stale", "canceled"].includes(status.request_run.status) && !unknown;
 
   return <div className="topics-manager__cost-notice" aria-label={t("label")}>
@@ -212,7 +213,7 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
       : unresolved ? <p role="status">{t("unresolved")}</p>
       : status?.blocking_run_kind === "corpus" || quote?.blocking_run_kind === "corpus" ? <p role="status">{t("corpusBusy")}</p>
         : run && ["failed", "stale", "canceled"].includes(run.status) ? <p role="status">{t(run.retryable ? "failedRetryable" : "failed")}</p> : null}
-    {quote ? <>
+    {quote && !quoteCompleted ? <>
       <p>{t("estimate", { amount: money(quote.estimated_upper_micro_usd), cached: quote.cached_unique_inputs, total: quote.total_unique_inputs })}</p>
       {quote.recoverable_receipt_inputs > 0 ? <p>{t("recoverableInputs", { count: quote.recoverable_receipt_inputs })}</p> : null}
       {quote.requires_provider && (!quote.provider_available || !status?.provider_available) ? <p>{t("providerDisabled")}</p> : null}
@@ -231,7 +232,7 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
       {!closedRequest && !status?.is_current ? <button className="admin-button" type="button"
         disabled={disabled || !status?.can_execute || Boolean(status.active_run) || reading || quoting || submitting}
         onClick={() => void calculate()}>{t(quoting ? "quoting" : "quote")}</button> : null}
-      {quote || pending ? <button className="admin-button admin-button--primary" type="button" disabled={!canStart} onClick={() => void start()}>
+      {(quote && !quoteCompleted) || pending ? <button className="admin-button admin-button--primary" type="button" disabled={!canStart} onClick={() => void start()}>
         {t(submitting ? "submitting" : pending ? "recover" : "prepare", { amount: money(pending?.body.hard_cap_micro_usd ?? (validCap ? Number(capValue) : 0)) })}</button> : null}
       <button className="admin-button" type="button" disabled={reading || submitting || quoting} onClick={() => void read()}>{t("refresh")}</button>
     </div>

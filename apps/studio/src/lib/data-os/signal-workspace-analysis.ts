@@ -42,7 +42,7 @@ export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["l
   const unknown = Boolean(run.error_code && /outcome_unknown/u.test(run.error_code)) || (budget?.unknown_reserved_micro_usd ?? 0) > 0;
   return { ...run, outcome_unknown: unknown,
     retryable: run.status === "failed" && !unknown && run.is_current
-      && isSignalWorkspaceEngineRetryableErrorV1(run.error_code),
+      && isSignalWorkspaceEngineRetryableErrorV1(run.error_code, run),
     claude_cost: { hard_cap_micro_usd: run.claude_cap_micro_usd,
       settled_micro_usd: budget?.confirmed_micro_usd ?? 0, reserved_micro_usd: budget?.reserved_micro_usd ?? 0,
       unknown_reserved_micro_usd: budget?.unknown_reserved_micro_usd ?? 0 } };

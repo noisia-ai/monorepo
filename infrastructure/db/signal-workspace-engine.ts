@@ -14,8 +14,10 @@ export const SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 = [
   "workspace_engine_interpretation_receipt_recovery_required",
   "workspace_engine_storage_transport_failed", "workspace_engine_storage_unavailable", "topic_queue_unavailable"
 ] as const;
-export const isSignalWorkspaceEngineRetryableErrorV1 = (code: string | null) =>
-  (SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 as readonly string[]).includes(code ?? "");
+export const isSignalWorkspaceEngineRetryableErrorV1 = (code: string | null,
+  evidence?: { storage_recovery_eligible?: boolean }) =>
+  (SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 as readonly string[]).includes(code ?? "")
+  || code === "workspace_engine_storage_verification_failed" && evidence?.storage_recovery_eligible === true;
 export type SignalWorkspaceEngineDatabaseV1 = Pick<Pool, "query" | "connect">;
 export class SignalWorkspaceEngineError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceEngineError"; }
@@ -71,6 +73,7 @@ export type SignalWorkspaceEngineStatusV1 = {
     processed_roots: number; processed_chunks: number; error_code: string | null; is_current: boolean;
     model_version_id: string | null; artifact_count: number; claude_cap_micro_usd: number; result_kind: "computational_grouping" | "insufficient_population" | null;
     fit_completed: boolean; expected_interpretation_units: number; interpreted_units: number; materialized_topics: number;
+    storage_recovery_eligible?: boolean;
   }; latest_complete_execution_id: string | null; latest_complete: SignalWorkspaceEngineStatusV1["latest_run"];
 };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEngineError(code, status); };
@@ -78,6 +81,15 @@ const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
 const natural = (value: unknown): number => { const n = Number(value); if (!Number.isSafeInteger(n) || n < 0) return fail("workspace_engine_count_invalid", 503); return n; };
 const limitOf = (value?: number) => { const n = value ?? 128; if (!Number.isInteger(n) || n < 1 || n > 128) return fail("workspace_engine_page_invalid", 422); return n; };
+// An explicit retry may rerun numerical fit after repairing storage only before
+// any durable fit/model/provider evidence exists. Every upload/hash is verified
+// again; a verification error never enters the unconditional retry allowlist.
+const storageRecoveryPredicate = `execution.status='failed' AND execution.error_code='workspace_engine_storage_verification_failed'
+ AND NOT (execution.result_summary ? 'fit_checkpoint') AND NOT (execution.result_summary ? 'analysis_checkpoint')
+ AND execution.result_summary->>'model_version_id' IS NULL
+ AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id)
+ AND NOT EXISTS(SELECT 1 FROM tagging_model_versions model WHERE model.configuration->>'execution_id'=execution.id::text)
+ AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id)`;
 async function transaction<T>(database: SignalWorkspaceEngineDatabaseV1, work: (client: PoolClient) => Promise<T>, repeatableRead = false): Promise<T> {
   const client = await database.connect();
   try { await client.query(repeatableRead ? "BEGIN ISOLATION LEVEL REPEATABLE READ" : "BEGIN"); await client.query("SET LOCAL search_path=public,extensions,pg_temp"); await client.query("SET LOCAL TIME ZONE 'UTC'");
@@ -511,7 +523,10 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const alias={actor_user_id:args.actor_user_id,request_digest:signalWorkspaceEmbeddingDigestV1({action:'retry',execution_id:run.id})};
     if(!prior)await client.query("UPDATE signal_topic_catalog_executions SET engine_request_keys=engine_request_keys||jsonb_build_object($2::text,$3::jsonb) WHERE id=$1::uuid",[run.id,args.idempotency_key,JSON.stringify(alias)]);
     if(run.status==='ready'||run.status==='queued'||run.status==='running')return{execution_id:run.id,replayed:true};
-    if(run.status!=='failed'||!isSignalWorkspaceEngineRetryableErrorV1(run.error_code))return fail('workspace_engine_retry_unavailable');
+    const storageRecovery=run.error_code==='workspace_engine_storage_verification_failed'
+      && (await client.query<{eligible:boolean}>(`SELECT (${storageRecoveryPredicate}) eligible
+        FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
+    if(run.status!=='failed'||!isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery}))return fail('workspace_engine_retry_unavailable');
     const generation=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,
       execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
       result_summary=result_summary||'{"phase":"queued"}'::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,[run.id])).rows[0]!.dispatch_generation;
@@ -528,7 +543,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
     await authorize(client,args.workspace_id,args.actor_user_id,false);
     const rows=(await client.query<{id:string;status:'queued'|'running'|'ready'|'failed';progress:number;denominator:number;expected_chunks:string;
       processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];
-      revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string}>(`
+      revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean}>(`
       WITH selected AS MATERIALIZED (
        (SELECT id,true is_latest,false is_request FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' ORDER BY created_at DESC,id DESC LIMIT 1)
        UNION ALL (SELECT id,false,true FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1'
@@ -538,7 +553,8 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
       ) SELECT execution.id,execution.status,execution.progress,execution.denominator,execution.expected_chunks::text,
         execution.processed_roots,execution.processed_chunks::text,execution.error_code,execution.result_summary,execution.input_snapshot-'guides' input_snapshot,execution.actor_user_id,
         execution.input_revision=state.input_revision revision_live,(execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
-        (SELECT count(*)::text FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id) artifact_count,selected.is_latest,selected.is_request
+        (SELECT count(*)::text FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id) artifact_count,
+        (${storageRecoveryPredicate}) storage_recovery_eligible,selected.is_latest,selected.is_request
         FROM selected JOIN signal_topic_catalog_executions execution USING(id) JOIN signal_corpus_preparation_input_state state USING(workspace_id)`,
       [args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows;
     let inputIdentity:{context_digest:string;catalog_digest:string}|null=null;
@@ -551,6 +567,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         processed_roots:natural(row.processed_roots),processed_chunks:natural(row.processed_chunks),error_code:row.error_code,
         is_current:row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute,
         model_version_id:typeof row.result_summary.model_version_id==='string'?row.result_summary.model_version_id:null,artifact_count:natural(row.artifact_count),
+        storage_recovery_eligible:row.storage_recovery_eligible,
         fit_completed:!!row.result_summary.fit_checkpoint,
         expected_interpretation_units:natural((row.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined)?.interpretation_manifest.unit_count??0),
         interpreted_units:natural(row.result_summary.interpreted_units??0),materialized_topics:natural(row.result_summary.materialized_topics??0),

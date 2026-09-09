@@ -97,7 +97,9 @@ export function createWorkspaceEngineStorageV1(options: {
       if (await hashWorkspaceEngineFileV1(args.file) !== args.sha256) return fail("file_changed");
       const envelope: Envelope = { contract_version: "workspace-engine-parts-v1", sha256: args.sha256, size_bytes: stat.size, parts };
       const storage_key = `${immutable}.parts.json`;
-      await putVerified(storage_key, Buffer.from(JSON.stringify(envelope)), "application/json");
+      // The private imports bucket permits binary artifacts. The envelope stays
+      // JSON bytes; its transport MIME does not change the original artifact type.
+      await putVerified(storage_key, Buffer.from(JSON.stringify(envelope)), "application/octet-stream");
       return { storage_key, sha256: args.sha256, size_bytes: stat.size, media_type: args.media_type };
     },
     async get(args) {
