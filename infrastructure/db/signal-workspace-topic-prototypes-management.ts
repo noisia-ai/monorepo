@@ -4,6 +4,7 @@ import { quoteSignalWorkspaceEmbeddingCostV1, signalWorkspaceEmbeddingDigestV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceTopicPrototypePlanV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { loadSignalWorkspaceTopicPrototypePlanV1 } from "./signal-workspace-topic-prototype-inputs";
+import { ensureSignalTopicCatalogStoreV1 } from "./signal-topic-catalog";
 import { SignalWorkspaceTopicComputationError } from "./signal-workspace-topic-computation";
 import { SignalWorkspaceEmbeddingsError, type SignalWorkspaceEmbeddingsDatabaseV1,
   type SignalWorkspaceEmbeddingsQueryableV1 } from "./signal-workspace-embeddings";
@@ -54,6 +55,13 @@ function runView(row: Record<string, unknown> | null, planDigest: string | null)
     retryable: row.status === "failed" && retryableErrors.has(String(row.error_code)) && row.topic_input_digest === planDigest
       && integer(row.unknown_reserved_micro_usd) === 0 && integer(row.observed_exception_micro_usd) === 0,
     created_at: timestamp(row.created_at), updated_at: timestamp(row.updated_at), completed_at: row.completed_at === null ? null : timestamp(row.completed_at) };
+}
+
+/** Explicit preparation intent may create the real empty catalog required by the
+ * prototype ledger. Reads remain read-only; this does not enqueue or spend. */
+export function initializeSignalWorkspaceTopicPrototypeCatalogV1(args: Access): Promise<{ taxonomy_profile_id: string; created: boolean }> {
+  return transaction(args, true, client => ensureSignalTopicCatalogStoreV1({ client,
+    workspace_id: args.workspace_id, actor_user_id: args.actor_user_id }));
 }
 
 /** Status projects bounded run metadata; source text, request keys and provider receipts stay server-side. */

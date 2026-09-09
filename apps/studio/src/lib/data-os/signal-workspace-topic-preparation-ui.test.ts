@@ -104,9 +104,24 @@ for (const locale of ["es-MX", "en-US"]) {
       { workspaceId: status.workspace_id, catalogVersion: "catalog:1", initialStatus, initialQuote, disabled })));
   test(`${locale}: before-import inline controls quote the cost and do not claim Topics/Signal output`, () => {
     const html = render(); assert.ok(html.includes(text.body));
-    const prepare = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(locale === "es-MX" ? "Preparar intereses" : "Prepare interests"));
+    const prepare = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(locale === "es-MX" ? "Preparar contexto e intereses" : "Prepare context and interests"));
     assert.ok(prepare); assert.doesNotMatch(prepare, /^<button[^>]*disabled/u); assert.match(prepare, /0[.,]00/u);
-    assert.equal(render({ ...status, availability: "no_topics" }), "");
+    const unavailable = render({ ...status, availability: "no_topics", current_plan_digest: null }, null);
+    assert.ok(unavailable.includes(text.noInputs)); assert.ok(unavailable.includes(text.refresh));
+    const calculate = (unavailable.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(text.quote));
+    assert.ok(calculate); assert.doesNotMatch(calculate, /^<button[^>]*disabled/u);
+  });
+  test(`${locale}: zero interests can prepare independent Brand OS context and report its completion`, () => {
+    const contextQuote = { ...quote, total_topics: 0 };
+    assert.equal(topicPreparationCanExecute(status, contextQuote, "0"), true);
+    const html = render(status, contextQuote); assert.ok(html.includes(text.body));
+    assert.match(html, locale === "es-MX" ? /Preparar contexto e intereses/u : /Prepare context and interests/u);
+    const completed = { ...run, status: "completed" as const, counts: { ...run.counts,
+      total_topics: 0, completed_topics: 0, partial_topics: 0, pending_topics: 0,
+      processed_input_references: 20, processed_unique_inputs: 10, cache_hits: 10 } };
+    const prepared = render({ ...status, latest_completed: completed, is_current: true }, null);
+    assert.ok(prepared.includes(text.currentContext));
+    assert.doesNotMatch(prepared, /0 intereses preparados|0 prepared interests/u);
   });
   test(`${locale}: provider disabled and unsaved edits block submission without disabling editing or hiding receipts`, () => {
     const html = render(status, { ...quote, requires_provider: true, missing_unique_inputs: 10, estimated_upper_micro_usd: 1500 });

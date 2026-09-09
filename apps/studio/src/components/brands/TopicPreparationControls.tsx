@@ -117,11 +117,22 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
     const closedRun = current.current?.request_run;
     if (replaceClosedRequest && closedRun && ["stale", "canceled"].includes(closedRun.status)
       && !topicPreparationUnknown(current.current, quoteRef.current)) forget();
-    if (!current.current || quoter.current) return;
+    if (!current.current?.can_execute || disabled || quoter.current) return;
     const controller = new AbortController(); quoter.current = controller;
     const ticket = epoch.current; const scope = current.current.request_scope; const expectedVersion = version.current;
     setQuoting(true); setError(null);
     try {
+      if (current.current.availability === "no_topics") {
+        const initialized = await fetch(endpoint, { method: "POST", cache: "no-store", signal: controller.signal,
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "initialize_context" }) });
+        if (controller.signal.aborted || ticket !== epoch.current || expectedVersion !== version.current) return;
+        if ([401, 403, 404].includes(initialized.status)) { revoke(); return; }
+        if (!initialized.ok) throw new Error();
+        const prepared: unknown = await initialized.json();
+        if (controller.signal.aborted || ticket !== epoch.current || expectedVersion !== version.current) return;
+        if (!validTopicPreparationStatus(prepared) || prepared.request_scope !== scope || prepared.availability !== "available") throw new Error();
+        if (!accept(prepared)) return;
+      }
       const response = await fetch(`${endpoint}/quote`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || ticket !== epoch.current) return;
       if ([401, 403, 404].includes(response.status)) { revoke(); return; }
@@ -183,10 +194,13 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
   const capValue = parseEmbeddingCapMicroUsd(cap);
   const validCap = capValue !== null && BigInt(capValue) <= BigInt(Number.MAX_SAFE_INTEGER);
   const closedRequest = pending && status?.request_run && ["stale", "canceled"].includes(status.request_run.status) && !unknown;
-  if (status?.availability === "no_topics") return null;
+
   return <div className="topics-manager__cost-notice" aria-label={t("label")}>
     <p>{t("body")}</p>
-    {status?.latest_completed ? <p role="status">{t(status.is_current && verifiedVersion === catalogVersion ? "current" : "previous", {
+    {status?.availability === "no_topics" ? <p role="status">{t("noInputs")}</p> : null}
+    {status?.latest_completed ? <p role="status">{t(status.latest_completed.counts.total_topics === 0
+      ? status.is_current && verifiedVersion === catalogVersion ? "currentContext" : "previousContext"
+      : status.is_current && verifiedVersion === catalogVersion ? "current" : "previous", {
       count: status.latest_completed.counts.completed_topics })}</p> : null}
     {status?.active_run ? <div className="topics-manager__progress" role="status"><span>{t("progress", {
       done: status.active_run.counts.processed_unique_inputs, total: status.active_run.counts.total_unique_inputs })}</span>

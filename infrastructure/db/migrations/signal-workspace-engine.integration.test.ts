@@ -11,7 +11,8 @@ import {scheduleSignalWorkspaceTopicComputationsV1} from '../signal-workspace-to
 import {insertSignalTaxonomyDraftCoreV1} from '../signal-taxonomy-profile';
 import {loadSignalTopicInheritedContextStoreV1} from '../signal-topic-catalog';
 import {loadSignalWorkspaceTopicPrototypePlanV1} from '../signal-workspace-topic-prototype-inputs';
-import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1,loadSignalWorkspaceTopicPrototypesV1} from '../signal-workspace-topic-prototypes-management';
+import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1,loadSignalWorkspaceTopicPrototypesV1,
+ initializeSignalWorkspaceTopicPrototypeCatalogV1} from '../signal-workspace-topic-prototypes-management';
 const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
 async function fixture(){
@@ -137,6 +138,55 @@ test('brand without a catalog has read-only preflight and cannot borrow another 
   await assert.rejects(engine.beginSignalWorkspaceEngineV1({...f.access,workspace_id:workspace,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
     expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:true},claude_cap_micro_usd:0}),/complete_embeddings_required/u);
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[workspace])).rows[0].count,0);
+ }finally{await f.cleanup();}
+});
+
+test('explicit context preparation initializes an empty catalog and unblocks existing corpus without recomputing it', {skip:!enabled,timeout:60_000},async()=>{
+ const f=await fixture();try{
+  // Keep prior evidence intact. There is no usable catalog, exactly the loader
+  // path of a new brand; no corpus fixture is cloned or embedded again.
+  await f.query("UPDATE signal_taxonomy_profiles SET status='retired' WHERE workspace_id=$1::uuid AND kind='topic'",[f.workspace_id]);
+  const profiles=async()=>(await f.query("SELECT count(*)::int n FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','activating','active') AND metadata->>'contract_version'='signal-topic-catalog-v1'",[f.workspace_id])).rows[0].n;
+  assert.equal(await profiles(),0);
+  await f.query("UPDATE brands SET description=description||$2 WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id,` Context bootstrap ${randomUUID()}`]);
+  const corpusState=async()=>(await f.query(`SELECT run.id,run.status,run.input_revision,run.counts,run.reserved_micro_usd,run.settled_micro_usd,
+    (SELECT count(*)::int FROM signal_workspace_embedding_calls call WHERE call.run_id=run.id) calls
+    FROM signal_workspace_embedding_runs run WHERE workspace_id=$1::uuid AND input_contract='corpus' ORDER BY id`,[f.workspace_id])).rows;
+  const beforeCorpus=await corpusState();
+  const missing=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  assert.equal(missing.total_interests,0);assert.equal(missing.embedding_run_id,f.embedding_run_id);assert.ok(missing.missing_guides>0);
+  assert.equal((await loadSignalWorkspaceTopicPrototypesV1(f.access)).availability,'no_topics');
+  await assert.rejects(quoteSignalWorkspaceTopicPrototypesV1(f.access),/workspace_topic_catalog_required/u);
+  assert.equal(await profiles(),0,'Status, preflight and quote must not initialize a catalog.');
+  await f.query('SAVEPOINT revoked_context_actor');
+  await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
+  await assert.rejects(initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access),/workspace_embedding_forbidden/u);
+  assert.equal(await profiles(),0);await f.query('ROLLBACK TO SAVEPOINT revoked_context_actor');
+  await f.query('RELEASE SAVEPOINT revoked_context_actor');
+  await assert.rejects(initializeSignalWorkspaceTopicPrototypeCatalogV1({...f.access,workspace_id:randomUUID()}),/workspace_embedding_forbidden/u);
+  // A later transaction failure must not leave an initialized profile behind.
+  await f.query('SAVEPOINT rollback_context_initialization');
+  assert.equal((await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access)).created,true);
+  assert.equal(await profiles(),1);await f.query('ROLLBACK TO SAVEPOINT rollback_context_initialization');
+  await f.query('RELEASE SAVEPOINT rollback_context_initialization');assert.equal(await profiles(),0);
+  const initialized=await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access);
+  assert.equal(initialized.created,true);assert.equal(await profiles(),1);
+  assert.deepEqual(await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access),{taxonomy_profile_id:initialized.taxonomy_profile_id,created:false});
+  assert.equal((await f.query(`SELECT count(*)::int n FROM taxonomy_terms WHERE taxonomy_id=(SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE id=$1::uuid)`,[initialized.taxonomy_profile_id])).rows[0].n,0);
+  const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id});
+  assert.equal(plan.topics.length,0);assert.ok((plan.context_inputs?.length??0)>0);
+  assert.ok(plan.context_inputs?.every(input=>input.role==='scope_positive'||input.role==='scope_negative'));
+  const quote=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
+  assert.equal(quote.total_topics,0);assert.equal(quote.total_input_references,plan.context_inputs!.length);assert.ok(quote.missing_unique_inputs>0);
+  assert.ok(await prototypes(f)>0,'Only missing context inputs receive local fake responses.');
+  const completed=await loadSignalWorkspaceTopicPrototypesV1(f.access);
+  assert.equal(completed.availability,'available');assert.equal(completed.is_current,true);
+  assert.equal(completed.latest_completed?.counts.completed_topics,0);
+  assert.equal(completed.latest_completed?.counts.processed_input_references,plan.context_inputs!.length);
+  const ready=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  assert.equal(ready.missing_guides,0);assert.equal(ready.expected_guides,plan.context_inputs!.length);
+  assert.equal(ready.total_interests,0);assert.equal(ready.embedding_run_id,missing.embedding_run_id);
+  assert.deepEqual(await corpusState(),beforeCorpus,'Corpus runs, coverage, calls and money must remain unchanged.');
  }finally{await f.cleanup();}
 });
 

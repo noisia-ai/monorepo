@@ -1,6 +1,6 @@
 import { loadSignalWorkspaceContextForTopics, requireIdempotencyKey } from "../_lib";
 import { loadWorkspaceTopicPrototypesForActorV1, requestWorkspaceTopicPrototypesForActorV1,
-  validateWorkspaceTopicPrototypeRequestV1 } from "@/lib/data-os/workspace-topic-prototypes";
+  validateWorkspaceTopicPrototypeRequestV1, initializeWorkspaceTopicPrototypeContextForActorV1, isWorkspaceTopicPrototypeContextInitializationV1 } from "@/lib/data-os/workspace-topic-prototypes";
 import { prototypeFailedResponse, prototypeResponseHeaders } from "./_response";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,10 +21,15 @@ export async function POST(request: Request, context: Context) {
   const { workspaceId } = await context.params;
   const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
-  const key = requireIdempotencyKey(request);
-  if (!key || !/^[A-Za-z0-9._:-]{8,200}$/u.test(key)) return Response.json({ error: "workspace_embedding_idempotency_key_required" }, { status: 400, headers: prototypeResponseHeaders });
   let body: unknown;
   try { body = await request.json(); } catch { body = null; }
+  if (isWorkspaceTopicPrototypeContextInitializationV1(body)) {
+    try { return Response.json(await initializeWorkspaceTopicPrototypeContextForActorV1({ workspaceId: loaded.workspace.id,
+      actorUserId: loaded.session.appUser.id }), { headers: prototypeResponseHeaders }); }
+    catch (error) { return prototypeFailedResponse(error); }
+  }
+  const key = requireIdempotencyKey(request);
+  if (!key || !/^[A-Za-z0-9._:-]{8,200}$/u.test(key)) return Response.json({ error: "workspace_embedding_idempotency_key_required" }, { status: 400, headers: prototypeResponseHeaders });
   if (!validateWorkspaceTopicPrototypeRequestV1(body)) return Response.json({ error: "workspace_embedding_request_invalid" }, { status: 422, headers: prototypeResponseHeaders });
   try { return Response.json(await requestWorkspaceTopicPrototypesForActorV1({ workspaceId: loaded.workspace.id,
     actorUserId: loaded.session.appUser.id, idempotencyKey: key, body }), { status: 202, headers: prototypeResponseHeaders }); }
