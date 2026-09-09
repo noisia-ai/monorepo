@@ -21,6 +21,7 @@ export type WorkspaceInterpretationResponseV1 = {
   outcome: "validated" | "known_response_invalid" | "outcome_unknown";
   error_code: string | null;
 };
+export type WorkspaceInterpretationSendDecisionV1 = boolean | "daily_authority_expired" | "admission_revoked" | "admission_changed";
 /** Fixed codes only: no payload, credentials, remote error strings or headers. */
 export class WorkspaceInterpretationTransportErrorV1 extends Error {
   constructor(readonly code: string, readonly outcome: "definitely_not_sent" | "outcome_unknown") {
@@ -113,7 +114,7 @@ async function readReceipt(response: Response): Promise<WorkspaceInterpretationR
  * private storage callback. No environment lookup, alternate endpoint or logs. */
 export async function sendWorkspaceInterpretationV1(args: {
   batch: SignalWorkspaceInterpretationBatchV1; api_key: string; provider_enabled: boolean;
-  authorize_send: () => Promise<boolean | "daily_authority_expired">;
+  authorize_send: () => Promise<WorkspaceInterpretationSendDecisionV1>;
   persist_receipt: (receipt: WorkspaceInterpretationRawReceiptV1) => Promise<void>;
   fetch_impl?: typeof fetch; timeout_ms?: number;
   schedule_timeout?: (onTimeout: () => void, milliseconds: number) => (() => void);
@@ -156,12 +157,13 @@ export async function sendWorkspaceInterpretationV1(args: {
   // A dated operator grant admits new sends only before its deadline. It does
   // not interrupt an already sent request or change its sealed provider body.
   assertAdmission();
-  let authorized: boolean | "daily_authority_expired";
+  let authorized: WorkspaceInterpretationSendDecisionV1;
   try { authorized = await args.authorize_send(); }
   catch { throw transportError("send_authority_unknown", "outcome_unknown"); }
   // The store adapter may prove rejection before its send transition. A thrown
   // error still means an ambiguous acknowledgment and never releases a reserve.
-  if (authorized === "daily_authority_expired") throw transportError("daily_authority_expired", "definitely_not_sent");
+  if (authorized === "daily_authority_expired" || authorized === "admission_revoked" || authorized === "admission_changed")
+    throw transportError(authorized, "definitely_not_sent");
   // A failed CAS can mean another process already sent this same attempt.
   // Never let that result release its reservation as definitely-not-sent.
   if (authorized !== true) throw transportError("send_not_authorized", "outcome_unknown");

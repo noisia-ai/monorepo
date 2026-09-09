@@ -302,6 +302,17 @@ test("CAS conflict, malformed admission and ambiguous CAS never release another 
   }
   assert.equal(sends, 0);
 });
+test("only exact pre-send admission denials avoid transport and preserve their reason", async () => {
+  for (const reason of ["daily_authority_expired", "admission_revoked", "admission_changed"] as const) {
+    let sends = 0, receipts = 0, timers = 0;
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorize_send: async () => reason,
+      persist_receipt: async () => { receipts++; }, schedule_timeout: () => { timers++; return () => undefined; },
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }) }),
+    error => error instanceof WorkspaceInterpretationTransportErrorV1 && error.outcome === "definitely_not_sent"
+      && error.code === `workspace_engine_interpretation_${reason}`);
+    assert.deepEqual({ sends, receipts, timers }, { sends: 0, receipts: 0, timers: 0 });
+  }
+});
 test("receipt persistence failure and transport exceptions are unknown and never retry or leak key", async () => {
   for (const phase of ["fetch", "persist"] as const) {
     let sends = 0;

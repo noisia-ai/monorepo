@@ -32,7 +32,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   const calls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
   const requestCalls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
   const terminalReceipts = new Map<string, { provider_request_id: string; evidence_sha256: string }>();
-  const reservations: Array<{ call_id: string; configuration: unknown; reserved_micro_usd: number }> = [];
+  const reservations: Array<{ call_id: string; configuration: unknown; reserved_micro_usd: number; admission_operation_id?: string }> = [];
   let sends = 0, fitCount = 0, completed = 0, checkpointCount = 0, failAfterReceipt = false, outcomeUnknown = false;
   let failAfterCheckpoint = false, failAfterCatalog = false, materializationWrites = 0;
   let failResponseAcknowledgment = false;
@@ -44,6 +44,8 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   const checkpointCallIds: string[] = [];
   const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
   const seenAuthorizations: Array<string | undefined> = [];
+  let callAdmission: SignalWorkspaceEngineInterpretationCallV1["admission"] | undefined;
+  let providerEnabled = true;
   let checkpointWritten = false, catalogWritten = false;
   let firstMaterializationArtifact: unknown = null;
   type ResponseMode = "valid" | "invalid" | "partial";
@@ -97,9 +99,13 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       call = { call_id: calls.size ? uuid(60 + calls.size) : uuid(6), execution_id: lease.execution_id, workspace_id: lease.workspace_id,
         attempt_token: uuid(70 + calls.size), retry_of_call_id: args.retry_of_call_id ?? null, editorial_repair: args.editorial_repair ?? null,
         state: "reserved", request_digest: args.request_digest, reserved_micro_usd: args.reserved_micro_usd,
-        settled_micro_usd: null, response: null, interpretation_revision_digest: args.interpretation_revision_digest ?? null };
+        settled_micro_usd: null, response: null, interpretation_revision_digest: args.interpretation_revision_digest ?? null,
+        admission: callAdmission === undefined ? lease.interpretation_admission ? {
+          operation_id: lease.interpretation_admission.operation_id, grant_digest: lease.interpretation_admission.grant_digest,
+          admission_not_after: lease.interpretation_admission.admission_not_after } : null : callAdmission };
       calls.set(call.call_id, call); requestCalls.set(args.idempotency_key, call);
-      reservations.push({ call_id: call.call_id, configuration: args.configuration, reserved_micro_usd: args.reserved_micro_usd });
+      reservations.push({ call_id: call.call_id, configuration: args.configuration, reserved_micro_usd: args.reserved_micro_usd,
+        ...(args.admission_operation_id ? { admission_operation_id: args.admission_operation_id } : {}) });
       if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
       return { ...call };
     },
@@ -160,7 +166,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
         model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
         result_kind: "computational_grouping" }, clusters: [cluster], heartbeat: async () => undefined,
-      api_key: "test_key_not_a_real_credential", provider_enabled: true, authorization_expires_at,
+      api_key: "test_key_not_a_real_credential", provider_enabled: providerEnabled, authorization_expires_at,
       storage: {
         put: async args => { const bytes = await readFile(args.file); assert.equal(hash(bytes), args.sha256);
           const key = `workspace-engine/${lease.workspace_id}/${lease.execution_id}/${args.sha256.slice(7)}.parts.json`;
@@ -183,6 +189,9 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     });
   };
   return { execute, cleanup: () => rm(directory, { recursive: true, force: true }),
+    admission: (receipt: SignalWorkspaceEngineLeaseV1["interpretation_admission"]) => { lease.interpretation_admission = receipt; },
+    callAdmission: (receipt: SignalWorkspaceEngineInterpretationCallV1["admission"]) => { callAdmission = receipt; },
+    providerEnabled: (value: boolean) => { providerEnabled = value; },
     seedHistoricalReceipt: async () => {
       assert.equal(configuration.model, "claude-opus-5"); assert.equal(calls.size, 0);
       const context = await stores.context({ database: {} as Args["database"], lease });
@@ -266,13 +275,14 @@ test("crash after durable response recovers after spending permission expires wi
     assert.equal(s.get().totalSettled, 450); assert.deepEqual(s.get().call!.response, receipt);
   } finally { await s.cleanup(); }
 });
-test("DB-proven expiry before send releases only the unsent reservation; ambiguous acknowledgments retain exposure", async () => {
-  const code = "workspace_engine_interpretation_daily_authority_expired";
-  for (const error of [new SignalWorkspaceEngineInterpretationError(code, 409), new Error(code),
-    Object.assign(new Error(code), { code, status: 409 }), new Error("lost COMMIT acknowledgment")]) {
+for (const reason of ["daily_authority_expired", "admission_revoked", "admission_changed"] as const)
+test(`DB-proven ${reason} before send preserves its reason; ambiguous acknowledgments retain exposure`, async () => {
+  const code = `workspace_engine_interpretation_${reason}`;
+  for (const error of [new SignalWorkspaceEngineInterpretationError(code, 409), new SignalWorkspaceEngineInterpretationError(code, 503), new Error(code),
+    Object.assign(new Error(code), { code, status: 409 }), Object.assign(new Error(code), { code: "23514" }), new Error("lost COMMIT acknowledgment")]) {
     const s = await scenario(); try {
       s.rejectSend(error);
-      const proven = error instanceof SignalWorkspaceEngineInterpretationError;
+      const proven = error instanceof SignalWorkspaceEngineInterpretationError && error.status === 409;
       await assert.rejects(s.execute(), { message: proven ? code : "workspace_engine_interpretation_send_authority_unknown" });
       const result = s.get();
       assert.equal(result.sends, 0); assert.equal(result.completed, 0); assert.equal(result.totalSettled, 0);
@@ -281,6 +291,68 @@ test("DB-proven expiry before send releases only the unsent reservation; ambiguo
       assert.equal(result.retainedExposure, proven ? 0 : result.call!.reserved_micro_usd);
     } finally { await s.cleanup(); }
   }
+});
+function admissionReceipt(n: number, deadline = "2099-01-01T06:00:00.000Z"): NonNullable<SignalWorkspaceEngineLeaseV1["interpretation_admission"]> {
+  return { contract_version: "workspace-interpretation-admission-v1", operation_id: uuid(n), grant_digest: hash(`grant:${n}`),
+    action: "authorize_interpretation", execution_id: uuid(1), workspace_id: uuid(2), authorized_by_user_id: uuid(50),
+    budget_actor_user_id: uuid(5), prior_admission_operation_id: null, input_digest: hash("snapshot"),
+    fit_checkpoint_digest: hash("fit"), interpretation_revision_digest: null, configuration_digest: hash("configuration"),
+    budget_date: "2099-01-01", budget_timezone: "UTC", authorized_at: "2099-01-01T00:00:00.000Z", admission_not_after: deadline,
+    grant_cap_micro_usd: 2_000_000, run_cap_micro_usd: 30_000_000, daily_cap_micro_usd: 30_000_000 };
+}
+test("renewed call uses its DB admission despite an expired legacy deadline and keeps the sealed request", async () => {
+  const s = await scenario(); try {
+    const grant = admissionReceipt(900); s.admission(grant);
+    await s.execute("2000-01-01T00:00:00.000Z");
+    const result = s.get(); assert.equal(result.sends, 1); assert.equal(result.completed, 1);
+    assert.deepEqual(result.seenAuthorizations, [grant.admission_not_after]);
+    assert.equal(result.reservations[0]!.admission_operation_id, grant.operation_id);
+    assert.equal(result.call!.admission?.grant_digest, grant.grant_digest);
+    assert.equal(result.seenBatches[0]!.configuration.model, "claude-sonnet-4-6");
+    assert.equal(result.call!.request_digest, result.seenBatches[0]!.request_digest);
+  } finally { await s.cleanup(); }
+});
+test("an old call cannot borrow the current lease deadline, and a grant cannot enable a disabled provider", async () => {
+  for (const mode of ["old_call", "kill_switch"] as const) {
+    const s = await scenario(); try {
+      const grant = admissionReceipt(900); s.admission(grant);
+      if (mode === "old_call") s.callAdmission({ operation_id: uuid(899), grant_digest: hash("old-grant"), admission_not_after: "2000-01-01T00:00:00.000Z" });
+      else s.providerEnabled(false);
+      await assert.rejects(s.execute(grant.admission_not_after), { message: mode === "old_call"
+        ? "workspace_engine_interpretation_daily_authority_expired" : "workspace_engine_interpretation_provider_disabled" });
+      const result = s.get(); assert.equal(result.sends, 0); assert.equal(result.totalSettled, 0);
+      assert.equal(result.call!.state, "definitely_not_sent"); assert.ok(!result.states.includes("sent"));
+    } finally { await s.cleanup(); }
+  }
+});
+test("renewal or revocation after a durable response never reassigns its receipt or sends again", async () => {
+  const s = await scenario(); try {
+    const grant = admissionReceipt(900); s.admission(grant); s.crashAfterReceipt();
+    await assert.rejects(s.execute("2000-01-01T00:00:00.000Z"), /workspace_engine_worker_failed/u);
+    const original = structuredClone(s.get().call!);
+    s.admission({ ...admissionReceipt(901), action: "revoke_interpretation", prior_admission_operation_id: grant.operation_id });
+    s.providerEnabled(false); await s.execute("2000-01-01T00:00:00.000Z");
+    const result = s.get(); assert.equal(result.sends, 1); assert.equal(result.completed, 1);
+    assert.equal(result.reservations.length, 1); assert.equal(result.seenAuthorizations.length, 1);
+    assert.deepEqual(result.call!.admission, original.admission); assert.deepEqual(result.call!.response, original.response);
+    assert.equal(result.call!.request_digest, original.request_digest);
+  } finally { await s.cleanup(); }
+});
+test("a proven unsent call keeps its old grant while its single successor uses the new permission", async () => {
+  const s = await scenario(); try {
+    const expired = admissionReceipt(900, "2000-01-01T00:00:00.000Z"); s.admission(expired);
+    await assert.rejects(s.execute(), /daily_authority_expired/u);
+    const old = structuredClone(s.get().call!); assert.equal(old.state, "definitely_not_sent");
+    const renewed = { ...admissionReceipt(901), prior_admission_operation_id: expired.operation_id }; s.admission(renewed);
+    await s.execute("2000-01-01T00:00:00.000Z");
+    const result = s.get(); assert.equal(result.sends, 1); assert.equal(result.calls.length, 2);
+    assert.deepEqual(result.calls[0], old); assert.equal(result.call!.retry_of_call_id, old.call_id);
+    assert.equal(result.call!.admission?.operation_id, renewed.operation_id);
+    assert.equal(result.call!.request_digest, old.request_digest);
+    assert.deepEqual(result.reservations.map(item => item.admission_operation_id), [expired.operation_id, renewed.operation_id]);
+    assert.equal(result.seenBatches[0]!.request_body, result.seenBatches[1]!.request_body);
+    assert.equal(result.retainedExposure, result.totalSettled);
+  } finally { await s.cleanup(); }
 });
 test("uncertain sent request never sends again or materializes", async () => {
   const s = await scenario(); try { s.unknown(); await assert.rejects(s.execute(), /outcome_unknown/u);

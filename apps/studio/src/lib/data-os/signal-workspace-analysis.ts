@@ -4,6 +4,7 @@ import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
+  loadSignalWorkspaceInterpretationAdmissionV1, authorizeSignalWorkspaceInterpretationAdmissionV1, revokeSignalWorkspaceInterpretationAdmissionV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
@@ -41,6 +42,11 @@ export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<str
     && [maximum, daily].every(value => Number.isSafeInteger(value) && value > 0) && validTimezone && admissionOpen;
   return { available, maximum_cap_micro_usd: available ? Math.min(maximum, daily) : 0,
     daily_cap_micro_usd: daily, budget_timezone: timezone };
+}
+/** New DB admission receipts own their date and sealed budgets. The operating
+ * kill switch still prevents new sends; an expired legacy env date is not a renewal veto. */
+export function workspaceAnalysisAdmissionProviderAvailableV1(env: Readonly<Record<string, string | undefined>> = process.env) {
+  return env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY);
 }
 export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"], budget?: SignalWorkspaceEngineInterpretationBudgetV1): WorkspaceAnalysisRun | null {
   if (!run) return null;
@@ -80,8 +86,10 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
     budgets.set(execution_id, await loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id }));
   }));
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
+  const loadedAdmission = await loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey });
+  const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
   const latest = view(raw.latest_run);
-  const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, contract_version: "signal-workspace-analysis-v1",
+  const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
     latest_run: latest, active_run: latest && ["queued", "running"].includes(latest.status) ? latest : null,
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
@@ -111,6 +119,14 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
+  } else if (args.body.action === "authorize_interpretation") {
+    if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+    await authorizeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
+      expected_admission_operation_id: args.body.expected_admission_operation_id, grant_cap_micro_usd: args.body.grant_cap_micro_usd,
+      admission_not_after: args.body.admission_not_after });
+  } else if (args.body.action === "revoke_interpretation") {
+    await revokeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
+      expected_admission_operation_id: args.body.expected_admission_operation_id });
   } else if (args.body.action === "retry_numeric") {
     // Resume only this zero-provider numeric execution; editorial receipts stay separate.
     await retrySignalWorkspaceNumericUpdateV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey });

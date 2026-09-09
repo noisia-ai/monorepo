@@ -3,7 +3,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
-  workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
+  workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
 const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
 const body = { action: "start", embedding_run_id: id, expected_context_digest: hash, expected_catalog_digest: hash, claude_cap_micro_usd: 0 };
@@ -253,4 +253,45 @@ test("numeric recovery reaches the dedicated DB discriminator and rejects an edi
   (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_engine_incremental_retry_unavailable");
   assert.equal(locked, true); assert.equal(released, true);
   assert.ok(queries.includes("ROLLBACK")); assert.ok(!queries.some(sql => /^(INSERT|UPDATE)/u.test(sql)));
+});
+
+
+test("new admission uses DB dates and ceilings but preserves the server kill switch; it cannot enable infrastructure", () => {
+  const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "local-test-placeholder",
+    NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL: "2026-09-08T06:00:00.000Z" };
+  assert.equal(workspaceAnalysisAdmissionProviderAvailableV1(env), true);
+  assert.equal(workspaceAnalysisInterpretationPolicyV1(env, Date.parse("2026-09-09T07:00:00Z")).available, false);
+  assert.equal(workspaceAnalysisAdmissionProviderAvailableV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "false" }), false);
+  assert.equal(workspaceAnalysisAdmissionProviderAvailableV1({ ...env, ANTHROPIC_API_KEY: "" }), false);
+});
+test("admission actions reject client execution rights and ignore caller model or budget actor injection", async () => {
+  const authorize = { action: "authorize_interpretation", run_id: id, expected_admission_operation_id: null,
+    grant_cap_micro_usd: 1_000_000, admission_not_after: "2026-09-10T06:00:00.000Z" };
+  const revoke = { action: "revoke_interpretation", run_id: id, expected_admission_operation_id: id };
+  for (const candidate of [authorize, revoke]) {
+    assert.equal(validateWorkspaceAnalysisRequestV1(candidate), true);
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase(granted), workspaceId: id,
+      actorUserId: "actor", idempotencyKey: "admission-test-request", body: candidate }),
+    (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
+    for (const injected of [{ model: "claude-opus-5" }, { budget_actor_user_id: id }, { daily_cap_micro_usd: 100_000_000 }])
+      assert.equal(validateWorkspaceAnalysisRequestV1({ ...candidate, ...injected }), false);
+  }
+});
+test("stopping sends reaches the admin store even while the provider is disabled; authorizing cannot", async () => {
+  const prior = process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED;
+  process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = "false";
+  try {
+    let connections = 0;
+    const unavailableDatabase = new Error("local database seam");
+    const database = { query: async () => ({ rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] }),
+      connect: async () => { connections++; throw unavailableDatabase; } } as unknown as Pick<Pool, "query" | "connect">;
+    const args = { database, workspaceId: id, actorUserId: "actor", idempotencyKey: "admission-control-request" };
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ ...args, body: { action: "authorize_interpretation", run_id: id,
+      expected_admission_operation_id: null, grant_cap_micro_usd: 1, admission_not_after: "2026-09-10T06:00:00.000Z" } }),
+    (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_analysis_interpretation_unavailable");
+    assert.equal(connections, 0);
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ ...args, body: { action: "revoke_interpretation", run_id: id,
+      expected_admission_operation_id: id } }), error => error === unavailableDatabase);
+    assert.equal(connections, 1);
+  } finally { if (prior === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = prior; }
 });

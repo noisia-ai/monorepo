@@ -1,3 +1,4 @@
+import type {SignalWorkspaceInterpretationAdmissionV1} from './signal-workspace-interpretation-admission';
 import type { Pool, PoolClient } from "pg";
 import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
@@ -61,6 +62,7 @@ export type SignalWorkspaceEngineInterpretationCheckpointV1 = {
 export type SignalWorkspaceEngineLeaseV1 = {
   execution_id: string; workspace_id: string; execution_token: string; input_digest: string;
   snapshot: SignalWorkspaceEngineSnapshotV1;
+  interpretation_admission?: SignalWorkspaceInterpretationAdmissionV1|null;
   effective_interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1; interpretation_revision_digest?: string | null;
 };
 export type SignalWorkspaceEngineChunkV1 = {
@@ -189,7 +191,7 @@ async function completeDispatch(client: PoolClient, execution_id: string) {
   await client.query(`UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),
     lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,[execution_id]);
 }
-type Run = { interpretation_revision: SignalWorkspaceEngineInterpretationRevisionV1 | null; id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
+type Run = { interpretation_admission:SignalWorkspaceInterpretationAdmissionV1|null; interpretation_revision: SignalWorkspaceEngineInterpretationRevisionV1 | null; id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
   input_snapshot: SignalWorkspaceEngineSnapshotV1 & { guides: Array<Omit<SignalWorkspaceEngineGuideV1, "vector">> };
   execution_token: string | null; lease_live: boolean; revision_live: boolean; policy_live: boolean;
   result_summary: Record<string, unknown>; error_code: string | null; processed_roots: number; processed_chunks: string };
@@ -201,7 +203,7 @@ async function lockedRun(client: PoolClient, id: string): Promise<Run> {
     execution.input_snapshot-'guides' input_snapshot,execution.execution_token,execution.execution_expires_at>clock_timestamp() lease_live,
     state.input_revision=execution.input_revision revision_live,
     (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
-    execution.result_summary,execution.interpretation_revision,execution.error_code,execution.processed_roots,execution.processed_chunks::text
+    execution.result_summary,workspace_interpretation_admission_receipt_v1(execution.id) interpretation_admission,execution.interpretation_revision,execution.error_code,execution.processed_roots,execution.processed_chunks::text
     FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
     WHERE execution.id=$1::uuid AND execution.input_contract='workspace-topic-engine-v1' FOR UPDATE OF execution`, [id])).rows[0];
   if (!row) return fail("workspace_engine_not_found", 404); return row;
@@ -229,7 +231,7 @@ export async function withSignalWorkspaceEngineLeaseV1<T>(args:{database:SignalW
  return transaction(args.database,async client=>work(client,await requireLease(client,args.lease,args.full??false)));
 }
 const leaseView = (run: Run, token: string): SignalWorkspaceEngineLeaseV1 => ({execution_id:run.id,workspace_id:run.workspace_id,
-  execution_token:token,input_digest:run.input_digest,snapshot:publicSnapshot(run.input_snapshot),
+  execution_token:token,input_digest:run.input_digest,snapshot:publicSnapshot(run.input_snapshot),interpretation_admission:run.interpretation_admission,
   effective_interpretation_config:run.interpretation_revision?.configuration??run.input_snapshot.interpretation_config,
   interpretation_revision_digest:run.interpretation_revision?.revision_digest??null});
 function publicSnapshot(snapshot: Run["input_snapshot"]): SignalWorkspaceEngineSnapshotV1 { const {guides:_guides,...rest}=snapshot; return rest; }

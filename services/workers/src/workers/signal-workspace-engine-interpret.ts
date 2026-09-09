@@ -17,6 +17,7 @@ import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniv
   validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
+  type WorkspaceInterpretationSendDecisionV1,
   type WorkspaceInterpretationResponseV1 } from "../providers/workspace-interpretation";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
@@ -105,6 +106,7 @@ export async function interpretWorkspaceEngineV1(args: {
       idempotency_key: batch.batch_key, request_digest: batch.request_digest, configuration: config.call_configuration,
       reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
       ...(lease.interpretation_revision_digest ? { interpretation_revision_digest: lease.interpretation_revision_digest } : {}),
+      ...(lease.interpretation_admission ? { admission_operation_id: lease.interpretation_admission.operation_id } : {}),
       ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
     let call = await store.reserve(reservation);
     let transportAttempts = 0, confirmedTerminals = 0;
@@ -132,12 +134,18 @@ export async function interpretWorkspaceEngineV1(args: {
         response = await (args.send ?? sendWorkspaceInterpretationV1)({ batch,
           api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
           provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
-          authorization_expires_at: args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
-          authorize_send: async () => {
+          // A prior reservation keeps its own admission receipt. The current
+          // lease authorizes new reservations, never changes an old call's date.
+          authorization_expires_at: call.admission?.admission_not_after
+            ?? args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
+          authorize_send: async (): Promise<WorkspaceInterpretationSendDecisionV1> => {
             try { return (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized; }
             catch (error) {
-              if (error instanceof SignalWorkspaceEngineInterpretationError && error.status === 409
-                && error.code === "workspace_engine_interpretation_daily_authority_expired") return "daily_authority_expired";
+              if (error instanceof SignalWorkspaceEngineInterpretationError && error.status === 409) {
+                if (error.code === "workspace_engine_interpretation_daily_authority_expired") return "daily_authority_expired";
+                if (error.code === "workspace_engine_interpretation_admission_revoked") return "admission_revoked";
+                if (error.code === "workspace_engine_interpretation_admission_changed") return "admission_changed";
+              }
               throw error;
             }
           },

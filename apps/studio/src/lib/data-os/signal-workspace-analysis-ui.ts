@@ -1,3 +1,5 @@
+import { isWorkspaceAdmissionAction, validWorkspaceAdmissionRequest, validWorkspaceInterpretationAdmission,
+  type WorkspaceInterpretationAdmission, type WorkspaceInterpretationAdmissionRequest } from "./signal-workspace-interpretation-admission-ui";
 import type { SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { embeddingCapUsdInput, latestCorpusEmbeddingSnapshot, parseEmbeddingCapMicroUsd } from "./workspace-corpus-embeddings-ui";
 import { validWorkspaceAnalysisUpdate, validWorkspaceNumericReadiness, type WorkspaceAnalysisUpdate, type WorkspaceNumericReadiness } from "./signal-workspace-analysis-update-ui";
@@ -12,6 +14,7 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
   request_scope: string; can_execute: boolean;
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
+  admission?: WorkspaceInterpretationAdmission | null;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
     cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number; provider_available: boolean };
@@ -23,7 +26,8 @@ export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: stri
   expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number }
   | { action: "retry"; run_id: string }
   | { action: "retry_progress"; run_id: string }
-  | { action: "retry_numeric"; run_id: string };
+  | { action: "retry_numeric"; run_id: string }
+  | WorkspaceInterpretationAdmissionRequest;
 export type PendingWorkspaceAnalysis = { version: 1; workspace_id: string; request_scope: string;
   key: string; body: WorkspaceAnalysisRequest };
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -95,7 +99,8 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
     && (!value.latest_complete || (value.latest_complete as WorkspaceAnalysisRun).status === "ready")
-    && nullable(value.latest_complete_execution_id, uuid) && validWorkspaceAnalysisUpdate(value.update) && validWorkspaceNumericReadiness(value.numeric_readiness, value.workspace_id as string);
+    && nullable(value.latest_complete_execution_id, uuid) && validWorkspaceAnalysisUpdate(value.update) && validWorkspaceNumericReadiness(value.numeric_readiness, value.workspace_id as string)
+    && validWorkspaceInterpretationAdmission(value.admission, value.workspace_id);
 }
 export function latestWorkspaceAnalysis(current: WorkspaceAnalysisStatus | null, next: WorkspaceAnalysisStatus, workspaceId: string) {
   if (!validWorkspaceAnalysisStatus(next)) return current?.workspace_id === workspaceId ? current : null;
@@ -109,6 +114,8 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     || value.version !== 1 || value.workspace_id !== workspaceId || value.request_scope !== scope
     || typeof value.key !== "string" || !/^[A-Za-z0-9._:-]{8,200}$/u.test(value.key) || !object(value.body)) return null;
   const body = value.body;
+  if (body.action === "authorize_interpretation" || body.action === "revoke_interpretation")
+    return validWorkspaceAdmissionRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
     : !["retry", "retry_progress", "retry_numeric"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
@@ -126,8 +133,9 @@ const recoveryFailureCodes = ["workspace_engine_interpretation_output_invalid", 
   "workspace_engine_interpretation_transport_terminal_confirmed", "workspace_engine_interpretation_transport_retry_exhausted",
   "workspace_engine_interpretation_daily_authority_expired"];
 export function workspaceAnalysisRecoveryFailure(status: WorkspaceAnalysisStatus | null) {
-  return [status?.latest_run, status?.request_run].some((run) => run?.status === "failed" && run.is_current
-    && recoveryFailureCodes.includes(run.error_code ?? ""));
+  return Boolean(status?.admission?.is_current && status.admission.requires_authorization)
+    || [status?.latest_run, status?.request_run].some((run) => run?.status === "failed" && run.is_current
+      && recoveryFailureCodes.includes(run.error_code ?? ""));
 }
 export function workspaceAnalysisCanReleaseChangedRequest(status: WorkspaceAnalysisStatus) {
   const run = status.request_run;
@@ -145,7 +153,7 @@ export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null
 }
 export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)
-    && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
+    && !(status?.admission?.requires_authorization && status.admission.execution_id === run?.execution_id) && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
     && run.error_code !== "workspace_engine_interpretation_transport_retry_exhausted"
     && run.error_code !== "workspace_engine_interpretation_daily_authority_expired"
     && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));
@@ -175,6 +183,10 @@ export function workspaceAnalysisNumericRequestConfirmed(status: WorkspaceAnalys
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
   if (status.workspace_id !== request.workspace_id || status.request_scope !== request.request_scope
     || !status.can_execute) return false;
+  // A scoped GET without a receipt permits only replay of the already confirmed
+  // body. Expired deadlines or changed CAS must be rejected by the server, never
+  // silently replaced with a new authorization or left impossible to resolve.
+  if (isWorkspaceAdmissionAction(request.body)) return !status.admission?.request;
   if (request.body.action === "retry_numeric") return !status.update?.request_numeric
     && sameNumericExecution(status.update?.numeric.execution_id, request.body.run_id) && workspaceAnalysisCanRetryNumeric(status);
   if (status.request_run) return false;
@@ -188,6 +200,8 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_engine_interpretation_admission_changed" || code === "workspace_engine_interpretation_admission_cap_or_deadline_invalid") return "admissionChanged";
+  if (code === "workspace_engine_interpretation_admission_unavailable") return "admissionUnavailable";
   if (code === "workspace_engine_interpretation_daily_authority_expired") return "authorizationExpired";
   if (code === "workspace_engine_interpretation_transport_terminal_confirmed") return "transportTerminal";
   if (code === "workspace_engine_interpretation_transport_retry_exhausted") return "transportExhausted";

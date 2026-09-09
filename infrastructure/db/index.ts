@@ -53,3 +53,5 @@ export * from "./signal-workspace-engine-incremental";
 // Existing Topics over the reconciled numerical population and paid lineage.
 export * from './signal-workspace-incremental-projection';
 export * from "./signal-workspace-numeric-producer";
+
+export * from './signal-workspace-interpretation-admission';

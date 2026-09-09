@@ -2596,6 +2596,30 @@
     "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Monitorización de tu marca", "body": "Gestiona el contexto y los tópicos; revisa los datos recibidos y su preparación.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
     "topics": {
       "analysis": {
+        "admissionGrant": {
+          "title": "Permiso de gasto para continuar",
+          "receipts": "Confirmado: {confirmed} · Reservado: {reserved}.",
+          "terminal": "Dentro de lo reservado, {amount} siguen pendientes de conciliación.",
+          "recorded": "Permiso registrado: máximo {amount}; vence el {expiry} ({zone}).",
+          "revoked": "Se detuvieron los nuevos envíos. Las llamadas ya admitidas pueden terminar y registrar su costo.",
+          "sameRun": "Continúa la misma ejecución con Sonnet 4.6. Se conservan los grupos, las interpretaciones guardadas y el catálogo.",
+          "cap": "Máximo adicional para esta continuación · disponible {amount}",
+          "expires": "Vence el {expiry} ({zone}), según la fecha del servidor.",
+          "limits": "Los techos vigentes se conservan: {run} para la ejecución y {daily} por día.",
+          "partial": "Este importe limita las nuevas llamadas; no garantiza completar todos los grupos.",
+          "providerDisabled": "Los envíos al proveedor están deshabilitados. Puedes consultar el progreso y los recibos.",
+          "invalidCap": "Introduce un importe positivo dentro del margen disponible.",
+          "authorize": "Autorizar y continuar",
+          "revoke": "Detener nuevos envíos",
+          "replay": "Comprobar la misma solicitud",
+          "stopEffect": "Detiene nuevas reservas y envíos. Las llamadas ya admitidas pueden terminar; sus respuestas y costos se conservan.",
+          "permissionRequired": "La continuación requiere un permiso de gasto de un administrador interno.",
+          "inputsChanged": "Los datos o el contexto guardado cambiaron. Revisa el estado antes de autorizar una continuación.",
+          "budgetUnavailable": "No queda margen dentro de los techos vigentes para nuevas llamadas.",
+          "pendingGrant": "La solicitud pendiente conserva su máximo adicional de {amount} y su vencimiento el {expiry} ({zone}). Confirma su estado antes de autorizar otra.",
+          "pendingStop": "La detención de nuevos envíos está pendiente de confirmación. Comprueba la misma solicitud.",
+          "unavailable": "Esta ejecución no tiene una continuación autorizable con el estado y los permisos actuales."
+        },
         "admission": {
           "title": "Actualización de nuevas menciones",
           "firstAnalysis": "La actualización automática requiere un primer análisis compatible. Todavía no se ha programado una actualización.",
@@ -2693,7 +2717,7 @@
         "prepareContext": "Preparar contexto e intereses",
         "openData": "Ver datos y preparación",
         "phases": { "materializing": "Guardando tópicos editables", "queued": "En cola", "exporting": "Preparando conversaciones", "fitting": "Descubriendo temas", "persisting": "Guardando resultados", "interpreting": "Interpretando temas", "classifying": "Clasificando conversaciones", "complete": "Proceso terminado", "failed": "Proceso interrumpido" },
-        "errors": { "authorizationExpired": "El permiso de gasto para continuar la interpretación venció. Se conservan el progreso y los recibos. Hace falta un permiso de gasto vigente para reanudar.", "transportExhausted": "Se agotó el intento de recuperación de esta interrupción. No se enviará otra solicitud con estos mismos datos; los recibos y los importes pendientes de conciliación se conservan.", "transportTerminal": "El proveedor confirmó que la solicitud terminó por una interrupción. No se recibió una interpretación utilizable.", "editorialInvalid": "La respuesta de interpretación no cumplió los requisitos de evidencia. No se aceptó su contenido; el costo registrado se conserva.", "editorialRepairExhausted": "La reparación de la interpretación tampoco cumplió los requisitos. Se agotó la reparación de este lote. No se repetirán estas llamadas automáticamente; los recibos y costos se conservan.", "load": "No se pudo consultar el análisis. Vuelve a actualizar el estado.", "request": "No se pudo confirmar la solicitud. Consulta su estado antes de volver a enviarla.", "storage": "No se pudo conservar la solicitud en este navegador. No se ha iniciado el análisis.", "forbidden": "El análisis ya no está disponible con tu acceso actual.", "changed": "Los datos o el contexto cambiaron. Actualiza el estado antes de iniciar otra solicitud.", "failed": "El análisis no pudo terminar. Se conserva el trabajo ya registrado.", "blocked": "El análisis requiere resolver la condición indicada antes de continuar." }
+        "errors": { "admissionChanged": "El permiso, el margen o el vencimiento cambiaron. Actualiza el estado y revisa los valores antes de confirmar otra solicitud.", "admissionUnavailable": "No se puede autorizar esta continuación con el estado actual. Se conservan la ejecución y los recibos.", "authorizationExpired": "El permiso de gasto para continuar la interpretación venció. Se conservan el progreso y los recibos. Hace falta un permiso de gasto vigente para reanudar.", "transportExhausted": "Se agotó el intento de recuperación de esta interrupción. No se enviará otra solicitud con estos mismos datos; los recibos y los importes pendientes de conciliación se conservan.", "transportTerminal": "El proveedor confirmó que la solicitud terminó por una interrupción. No se recibió una interpretación utilizable.", "editorialInvalid": "La respuesta de interpretación no cumplió los requisitos de evidencia. No se aceptó su contenido; el costo registrado se conserva.", "editorialRepairExhausted": "La reparación de la interpretación tampoco cumplió los requisitos. Se agotó la reparación de este lote. No se repetirán estas llamadas automáticamente; los recibos y costos se conservan.", "load": "No se pudo consultar el análisis. Vuelve a actualizar el estado.", "request": "No se pudo confirmar la solicitud. Consulta su estado antes de volver a enviarla.", "storage": "No se pudo conservar la solicitud en este navegador. No se ha iniciado el análisis.", "forbidden": "El análisis ya no está disponible con tu acceso actual.", "changed": "Los datos o el contexto cambiaron. Actualiza el estado antes de iniciar otra solicitud.", "failed": "El análisis no pudo terminar. Se conserva el trabajo ya registrado.", "blocked": "El análisis requiere resolver la condición indicada antes de continuar." }
       },
       "preparation": {
       "unresolved": "Hay una preparación anterior pendiente de resolver. Se conservan sus recibos y reservas.",
