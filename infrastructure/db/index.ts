@@ -24,6 +24,7 @@ export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";
 export * from "./signal-workspace-capabilities";
 export * from "./signal-workspace-corpus-readiness";
+export * from "./admin-workspace-corpus-summary";
 export * from "./signal-workspace-corpus-preparation";
 export * from "./signal-workspace-corpus-preparation-management";
 export * from "./signal-workspace-embeddings";

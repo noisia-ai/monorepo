@@ -6,12 +6,14 @@ import { notFound } from "next/navigation";
 
 import {
   AdminResourceSection,
-  AdminSettingsRow,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
-  formatAdminNumber
+  formatAdminDate
 } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminCorpusProgress, AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
+import { loadWorkspaceAnalysisForActorV1 } from "@/lib/data-os/signal-workspace-analysis";
+import { adminCorpusAnalysisStep, adminCorpusNeedsImport } from "@/lib/data/admin-corpus-presentation";
+import type { WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { requireStudioUser } from "@/lib/auth/guards";
 import {
   getAdminBrandWorkspace,
@@ -35,7 +37,10 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
   if (!workspace || !brand) notFound();
   const { summary } = workspace;
   const currentReport = workspace.reports.find((report) => report.reportKey === "triggers-barriers") ?? null;
-  const issues = workspaceIssues(workspace);
+  const analysis = summary.workspaceId ? await loadWorkspaceAnalysisForActorV1({
+    workspaceId: summary.workspaceId, actorUserId: session.appUser.id
+  }).catch(() => null) : null;
+  const issues = workspaceIssues(workspace, analysis);
 
   return (
     <div className="admin-workspace-page">
@@ -63,39 +68,11 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
       />
       <BrandMonitoringJourney brandId={id} />
 
-      <dl className="admin-summary-strip">
-        <div>
-          <dt>{t("brand.summary.mentions")}</dt>
-          <dd>{formatAdminNumber(summary.governedMentions, locale)}</dd>
-          <small>{t("brand.summary.mentionsHint")}</small>
-        </div>
-        <div>
-          <dt>{t("brand.summary.coverage")}</dt>
-          <dd>{summary.coverageFrom && summary.coverageThrough
-            ? `${formatAdminDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}`
-            : "—"}</dd>
-          <small>{t(`coverage.${summary.coverageState}`)}</small>
-        </div>
-        <div>
-          <dt>{t("brand.summary.sources")}</dt>
-          <dd>{summary.activeSources}</dd>
-          <small>{t("brand.summary.sourcesHint", { count: summary.staleSources + summary.failedSources })}</small>
-        </div>
-        <div>
-          <dt>{t("brand.summary.report")}</dt>
-          <dd>{currentReport?.currentRevision ? `r${currentReport.currentRevision}` : "—"}</dd>
-          <small>{t(`reports.states.${summary.reportState}`)}</small>
-        </div>
-      </dl>
+      <AdminCorpusSummaryStrip corpus={summary.corpus} />
 
       <section className="admin-two-column">
         <AdminResourceSection subtitle={t("brand.health.subtitle")} title={t("brand.health.title")}>
-          <div className="admin-settings-list">
-            <AdminSettingsRow title={t("brand.health.coverage")} value={<AdminStatus state={summary.coverageState}>{t(`coverage.${summary.coverageState}`)}</AdminStatus>} />
-            <AdminSettingsRow title={t("brand.health.freshness")} value={<AdminStatus state={summary.freshnessState}>{t(`states.${summary.freshnessLabel}`)}</AdminStatus>} />
-            <AdminSettingsRow title={t("brand.health.quality")} value={<AdminStatus state={summary.qualityState}>{t(`quality.${summary.qualityState}`)}</AdminStatus>} />
-            <AdminSettingsRow title={t("brand.health.population")} value={summary.populationVersion ? t("brand.health.populationVersion", { version: summary.populationVersion }) : t("states.not_available")} />
-          </div>
+          <AdminCorpusProgress corpus={summary.corpus} analysis={analysis} brandId={id} workspaceSlug={summary.workspaceSlug} />
         </AdminResourceSection>
 
         <AdminResourceSection subtitle={t("brand.issues.subtitle")} title={t("brand.issues.title")}>
@@ -174,12 +151,21 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
   );
 }
 
-function workspaceIssues(workspace: AdminBrandWorkspace) {
+function workspaceIssues(workspace: AdminBrandWorkspace, analysis: WorkspaceAnalysisStatus | null) {
   const summary = workspace.summary;
   const base = `/studio/brands/${summary.brandId}`;
   const issues: Array<{ code: string; count: number; href: string }> = [];
   if (!summary.workspaceId) issues.push({ code: "workspace", count: 1, href: `${base}/settings` });
-  if (summary.activeSources === 0) issues.push({ code: "sources", count: 0, href: `${base}/data` });
+  if (adminCorpusNeedsImport(summary.corpus)) issues.push({ code: "sources", count: 0, href: `${base}/data` });
+  if ((!summary.corpus || summary.corpus.measurement_state === "unavailable") && summary.workspaceId) issues.push({ code: "receipt_unavailable", count: 0, href: `${base}/data#corpus-readiness` });
+  if (summary.corpus?.state === "needs_attention") issues.push({ code: "receipt_attention", count: 0, href: `${base}/data#corpus-readiness` });
+  if ((summary.corpus?.received_unique_roots ?? 0) > 0) {
+    const step = adminCorpusAnalysisStep(summary.corpus, analysis);
+    const dataStep = ["needs_preparation", "missing_embeddings"].includes(step);
+    issues.push({ code: step === "authorization_expired" ? "analysis_permission" : step === "interrupted" ? "analysis_interrupted"
+      : step === "running" ? "analysis_running" : ["complete", "no_groups"].includes(step) ? "topics" : "analysis",
+      count: 0, href: dataStep ? `${base}/data#corpus-readiness` : `${base}/topics` });
+  }
   if (summary.staleSources + summary.failedSources > 0) issues.push({ code: "freshness", count: summary.staleSources + summary.failedSources, href: `${base}/data` });
   if (summary.pendingImports > 0) issues.push({ code: "imports", count: summary.pendingImports, href: `${base}/data` });
   if (summary.reportsNeedingReview > 0) issues.push({ code: "review", count: summary.reportsNeedingReview, href: `${base}/reports` });

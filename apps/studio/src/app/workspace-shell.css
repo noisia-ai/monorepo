@@ -9907,3 +9907,19 @@ body.semantic-review-controls-open .admin-shell__main {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* Receipt progress uses rows without the optional leading icon. */
+.admin-corpus-progress .admin-settings-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: 680px) {
+  .admin-corpus-progress .admin-settings-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-corpus-progress .admin-settings-row > * {
+    grid-column: 1;
+    min-width: 0;
+  }
+}

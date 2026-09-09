@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { loadAdminWorkspaceCorpusSummariesV1, type AdminWorkspaceCorpusSummaryV1 } from "@noisia/db";
 
 type AdminUser = {
   id: string;
@@ -22,6 +23,8 @@ export type AdminBrandWorkspaceRow = {
   populationId: string | null;
   populationVersion: number | null;
   governedMentions: number;
+  /** All accepted workspace imports; separate from operational brand population. */
+  corpus: AdminWorkspaceCorpusSummaryV1 | null;
   coverageFrom: string | null;
   coverageThrough: string | null;
   coverageState: AdminOperationalState;
@@ -141,8 +144,14 @@ export type AdminBrandWorkspace = {
 
 export async function listAdminBrandWorkspaces(user: AdminUser): Promise<AdminBrandWorkspaceRow[]> {
   if (user.userType !== "noisia_internal") return [];
-  const result = await pool.query<AdminBrandSqlRow>(ADMIN_BRAND_WORKSPACES_SQL);
-  return result.rows.map(mapBrandWorkspaceRow);
+  return loadAdminBrandWorkspaceRows(user);
+}
+
+async function loadAdminBrandWorkspaceRows(user: AdminUser, brandLookup: string | null = null) {
+  const result = await pool.query<AdminBrandSqlRow>(ADMIN_BRAND_WORKSPACES_SQL, [brandLookup]);
+  const corpus = await loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id,
+    workspace_ids: result.rows.flatMap(row => row.workspace_id ? [row.workspace_id] : []) });
+  return result.rows.map(row => ({ ...mapBrandWorkspaceRow(row), corpus: row.workspace_id ? corpus.get(row.workspace_id) ?? null : null }));
 }
 
 export async function getAdminDashboard(user: AdminUser) {
@@ -168,7 +177,8 @@ export async function getAdminDashboard(user: AdminUser) {
 }
 
 export async function getAdminBrandWorkspace(user: AdminUser, brandLookup: string) {
-  const brands = await listAdminBrandWorkspaces(user);
+  if (user.userType !== "noisia_internal") return null;
+  const brands = await loadAdminBrandWorkspaceRows(user, brandLookup);
   const summary = brands.find((brand) => (
     brand.brandId === brandLookup || brand.brandSlug === brandLookup
   ));
@@ -354,6 +364,7 @@ function mapBrandWorkspaceRow(row: AdminBrandSqlRow): AdminBrandWorkspaceRow {
     populationId: row.population_id,
     populationVersion: row.population_version == null ? null : Number(row.population_version),
     governedMentions,
+    corpus: null,
     coverageFrom: row.coverage_from,
     coverageThrough: row.coverage_through,
     coverageState,
@@ -612,6 +623,7 @@ const ADMIN_BRAND_WORKSPACES_SQL = `
       AND analysis.report_key = 'triggers-barriers'
       AND analysis.strategic_contract_version = 'signal-tb-strategic-v1'
   ) report_state ON true
+  WHERE ($1::text IS NULL OR brand.id::text=$1 OR brand.slug=$1)
   ORDER BY lower(COALESCE(brand.display_name, brand.name)), brand.id
 `;
 

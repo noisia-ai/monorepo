@@ -2078,13 +2078,13 @@
     },
     "studyContext": {
       "label": "Navegación del estudio", "eyebrow": "Estudio", "title": "Workspace de análisis", "compactLabel": "Vista del estudio",
-      "items": { "engine": "Engine", "mentions": "Menciones", "review": "Review" }
+      "items": { "engine": "Engine", "mentions": "Menciones recibidas", "review": "Review" }
     },
     "studySurfaces": {
       "mentions": {
         "eyebrow": "Corpus del estudio", "fallbackTitle": "Corpus del estudio", "subtitle": "Revisa, filtra y cura las menciones fuente utilizadas por este análisis.",
         "status": { "approved": "Corpus aprobado", "pending": "En preparación" },
-        "summary": { "mentions": "Menciones", "filtered": "Resultado filtrado", "page": "Página", "of": "de {count}", "pageSize": "Tamaño de página", "perPage": "por página", "filters": "Filtros", "active": "activos" },
+        "summary": { "mentions": "Menciones recibidas", "filtered": "Resultado filtrado", "page": "Página", "of": "de {count}", "pageSize": "Tamaño de página", "perPage": "por página", "filters": "Filtros", "active": "activos" },
         "browser": {
           "eyebrow": "Menciones del corpus", "title": "Revisión de menciones", "filters": "Filtrar y ordenar", "filteredResults": "menciones filtradas",
           "total": "{count, number} en total", "excludedCount": "{count, plural, one {# excluida} other {# excluidas}}", "selectPage": "Seleccionar página", "selectMention": "Seleccionar mención",
@@ -2136,27 +2136,73 @@
       "attention": { "title": "Marcas que requieren atención", "subtitle": "Estado operativo desde datos canónicos, fuentes y registro de reportes.", "emptyTitle": "Todo en orden", "emptyBody": "Ninguna marca cumple actualmente una regla de atención." }
     },
     "brands": {
-      "eyebrow": "Administración de workspaces", "title": "Marcas", "subtitle": "{count} marcas con estado operativo workspace-owned.",
+      "eyebrow": "Administración de workspaces", "title": "Marcas", "subtitle": "{count} marcas y sus datos recibidos.",
       "actions": { "create": "Crear marca", "open": "Abrir {brand}" },
       "filters": { "search": "Marca", "searchPlaceholder": "Nombre, slug o industria", "organization": "Organización", "organizationPlaceholder": "Nombre o ID de organización", "status": "Estado", "all": "Todos", "allStatuses": "Todos los estados", "apply": "Aplicar" },
-      "table": { "title": "Workspaces de marca", "subtitle": "Cobertura, frescura, calidad y estado actual del reporte.", "count": "{count, plural, one {# resultado} other {# resultados}}" },
-      "columns": { "brand": "Marca", "mentions": "Menciones", "coverage": "Cobertura", "freshness": "Frescura", "quality": "Calidad de datos", "health": "Salud de datos", "report": "Reporte", "activity": "Última actividad", "actions": "Acciones" },
+      "table": { "title": "Workspaces de marca", "subtitle": "Datos recibidos, fechas observadas y estado del reporte.", "count": "{count, plural, one {# resultado} other {# resultados}}" },
+      "columns": { "brand": "Marca", "mentions": "Menciones recibidas", "coverage": "Fechas observadas", "freshness": "Frescura", "quality": "Calidad de datos", "health": "Recepción", "report": "Reporte", "activity": "Última actividad", "actions": "Acciones" },
       "empty": { "title": "No hay marcas coincidentes", "body": "Ajusta los filtros o crea una marca." },
       "pagination": { "label": "Páginas de marcas", "previous": "Anterior", "next": "Siguiente", "position": "Página {page} de {total}" }
+    },
+    "corpusSummary": {
+      "received": "Menciones recibidas",
+      "receivedHint": "Menciones únicas tras eliminar duplicados; aún no implica análisis completo.",
+      "receivedPartialHint": "Mínimo recibido medido; hay fuentes cuya recepción no se puede comprobar.",
+      "filesTitle": "Archivos recibidos",
+      "files": "{count, plural, one {# archivo aceptado} other {# archivos aceptados}}",
+      "rows": "{count, number} filas leídas antes de eliminar duplicados",
+      "dates": "Fechas observadas",
+      "reception": "Recepción",
+      "receptionHint": "Recibir datos no significa que ya estén analizados o en Signal.",
+      "analysis": "Análisis de conversaciones",
+      "interpreted": "Interpretación: {done, number} de {total, number} grupos.",
+      "previousRun": "Este avance corresponde a una versión anterior de los datos o el contexto.",
+      "signalHint": "Signal muestra los tópicos que elijas y sus menciones asociadas. Un análisis completo no los selecciona automáticamente.",
+      "openSignal": "Ver Signal",
+      "openData": "Ver datos",
+      "openTopics": "Ver Topics",
+      "states": {
+        "received": "Datos recibidos",
+        "partial": "Recepción parcial",
+        "awaiting_import": "Sin archivos recibidos",
+        "needs_attention": "Revisar recepción",
+        "unavailable": "Recepción no disponible"
+      },
+      "coverage": {
+        "observed": "Fechas de las menciones recibidas; no certifican cobertura completa.",
+        "partial": "Fechas de la parte verificable del corpus; no representan cobertura completa.",
+        "unavailable": "Sin fechas observadas disponibles."
+      },
+      "steps": {
+        "unavailable": "No se pudo comprobar el estado del análisis. Los datos recibidos se conservan.",
+        "awaiting_import": "Importa las conversaciones para comenzar.",
+        "receipt_attention": "Revisa la recepción de los archivos en Datos antes de continuar.",
+        "needs_preparation": "Prepara el texto de las menciones recibidas en Datos.",
+        "missing_embeddings": "Termina la preparación para analizar en Datos.",
+        "missing_context": "Prepara el contexto guardado de Brand OS desde Topics.",
+        "ready": "Los datos están preparados. Puedes iniciar el análisis desde Topics.",
+        "running": "El análisis está en curso. Consulta su avance en Topics.",
+        "changed": "Hay datos o contexto nuevos. Revisa la preparación del siguiente análisis.",
+        "authorization_expired": "El permiso de gasto para continuar la interpretación venció. El progreso se conserva.",
+        "interrupted": "El análisis se interrumpió. Revisa el motivo y las opciones para continuar en Topics.",
+        "interpretation_pending": "El agrupamiento terminó; falta completar la interpretación y guardar los tópicos.",
+        "complete": "El análisis terminó. Revisa los tópicos y elige cuáles mostrar en Signal.",
+        "no_groups": "El análisis terminó sin grupos estables nuevos. Los intereses existentes se conservan."
+      }
     },
     "createBrand": { "eyebrow": "Configuración del workspace" },
     "brand": {
       "eyebrow": "Overview operativo", "noIndustry": "Sin industria configurada",
       "actions": { "openSignal": "Abrir Signal", "addData": "Agregar o importar datos", "runAnalysis": "Ejecutar análisis", "updateReport": "Actualizar reporte" },
       "summary": { "mentions": "Menciones gobernadas", "mentionsHint": "Población primary-brand actual", "coverage": "Cobertura", "sources": "Fuentes activas", "sourcesHint": "{count, plural, one {# requiere atención} other {# requieren atención}}", "report": "T&B actual" },
-      "health": { "title": "Salud de datos", "subtitle": "Una vista de alcance, frescura y calidad.", "coverage": "Cobertura", "freshness": "Frescura", "quality": "Calidad", "population": "Población operacional", "populationVersion": "Versión {version}" },
+      "health": { "title": "De los datos a Signal", "subtitle": "Recepción y avance del análisis son estados distintos.", "coverage": "Cobertura", "freshness": "Frescura", "quality": "Calidad", "population": "Población operacional", "populationVersion": "Versión {version}" },
       "issues": {
-        "title": "Requiere atención", "subtitle": "Checks que bloquean serving o reporting confiable.", "emptyTitle": "Sin bloqueos", "emptyBody": "Fuentes, cobertura y reportes no tienen bloqueos actuales.",
-        "items": { "workspace": "Inicialización del workspace", "sources": "Sin fuentes activas", "freshness": "Frescura de fuentes", "imports": "Imports pendientes", "review": "Review del reporte" },
-        "hints": { "workspace": "Termina la configuración del workspace.", "sources": "Agrega una fuente primary-brand gobernada.", "freshness": "{count, plural, one {# fuente requiere atención.} other {# fuentes requieren atención.}}", "imports": "{count, plural, one {# import sigue pendiente.} other {# imports siguen pendientes.}}", "review": "{count, plural, one {# corrida requiere una decisión.} other {# corridas requieren una decisión.}}" }
+        "title": "Próximos pasos", "subtitle": "Continúa desde el estado real de esta marca.", "emptyTitle": "Sin tareas de recepción pendientes", "emptyBody": "Consulta Datos y Topics para comprobar preparación, análisis y resultados.",
+        "items": {"workspace": "Inicialización del workspace", "sources": "Importar conversaciones", "freshness": "Frescura de fuentes", "imports": "Imports pendientes", "review": "Review del reporte", "receipt_unavailable": "Comprobar recepción", "receipt_attention": "Revisar datos recibidos", "analysis": "Continuar el análisis", "analysis_permission": "Permiso de gasto vencido", "analysis_interrupted": "Análisis interrumpido", "analysis_running": "Ver análisis en curso", "topics": "Revisar tópicos para Signal"},
+        "hints": {"workspace": "Termina la configuración del workspace.", "sources": "Carga archivos desde la interfaz de Datos.", "freshness": "{count, plural, one {# fuente requiere atención.} other {# fuentes requieren atención.}}", "imports": "{count, plural, one {# import sigue pendiente.} other {# imports siguen pendientes.}}", "review": "{count, plural, one {# corrida requiere una decisión.} other {# corridas requieren una decisión.}}", "receipt_unavailable": "No se pudo comprobar el resumen. Esto no significa que no existan datos.", "receipt_attention": "Consulta los recibos y el detalle de lo incluido o pendiente.", "analysis": "Revisa el siguiente paso según el avance conservado.", "analysis_permission": "Se necesita un permiso de gasto vigente para nuevas llamadas. El progreso y los recibos se conservan.", "analysis_interrupted": "Consulta el motivo del fallo y las opciones disponibles.", "analysis_running": "El procesamiento sigue activo; no hace falta volver a iniciarlo.", "topics": "Edita los resultados y elige qué mostrar en Signal."}
       },
-      "sources": { "title": "Fuentes", "subtitle": "Ingesta workspace-owned y últimos resultados.", "open": "Gestionar fuentes", "emptyTitle": "Aún no hay fuentes", "emptyBody": "Agrega una fuente para comenzar a alimentar Signal." },
-      "resources": { "title": "Recursos del workspace", "subtitle": "Contexto y análisis que reutilizan la misma población gobernada." },
+      "sources": { "title": "Fuentes", "subtitle": "Fuentes de datos y últimos archivos recibidos.", "open": "Gestionar fuentes", "emptyTitle": "Aún no hay fuentes", "emptyBody": "Agrega una fuente para comenzar a alimentar Signal." },
+      "resources": { "title": "Recursos del workspace", "subtitle": "Contexto, tópicos y reportes de esta marca." },
       "reports": { "title": "Reportes", "subtitle": "Una identidad de reporte con releases revisionadas.", "open": "Abrir reportes", "current": "Revisión actual", "review": "Corridas en Review", "latestRun": "Última corrida", "published": "Publicado", "summary": "{revision} · {review} en Review · publicado {published}" },
       "brandOs": { "title": "Brand OS", "subtitle": "Contexto de marca y conocimiento reutilizable.", "open": "Abrir Brand OS", "aliases": "Aliases", "competitors": "Competidores", "knowledge": "Fuentes de conocimiento", "profiles": "Perfiles activos", "summary": "{aliases} aliases · {competitors} competidores · {knowledge} fuentes de conocimiento", "profilesCount": "{count} perfiles activos" }
     },
@@ -3113,6 +3159,7 @@
         "errors": { "operation": "No se pudo completar la operación de la governed view." }
       },
       "workspaceMissing": { "title": "Workspace no disponible", "body": "Esta marca legacy no terminó la inicialización del workspace." },
+      "advancedPreparation": {"title": "Diagnósticos avanzados de datos y reportes", "body": "Configuración detallada de vistas gobernadas, revisión semántica y reportes. El recorrido principal de preparación y análisis se muestra arriba."},
       "destinations": {
         "title": "Gestionar los datos del workspace",
         "subtitle": "Abre cada recurso en su espacio de trabajo; esta vista conserva fuentes, imports y gobernanza.",

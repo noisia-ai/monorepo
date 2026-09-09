@@ -2078,13 +2078,13 @@
     },
     "studyContext": {
       "label": "Study navigation", "eyebrow": "Study", "title": "Analysis workspace", "compactLabel": "Study view",
-      "items": { "engine": "Engine", "mentions": "Mentions", "review": "Review" }
+      "items": { "engine": "Engine", "mentions": "Mentions received", "review": "Review" }
     },
     "studySurfaces": {
       "mentions": {
         "eyebrow": "Study corpus", "fallbackTitle": "Study corpus", "subtitle": "Review, filter, and curate the source mentions used by this analysis.",
         "status": { "approved": "Approved corpus", "pending": "Preparing" },
-        "summary": { "mentions": "Mentions", "filtered": "Filtered result", "page": "Page", "of": "of {count}", "pageSize": "Page size", "perPage": "per page", "filters": "Filters", "active": "active" },
+        "summary": { "mentions": "Mentions received", "filtered": "Filtered result", "page": "Page", "of": "of {count}", "pageSize": "Page size", "perPage": "per page", "filters": "Filters", "active": "active" },
         "browser": {
           "eyebrow": "Corpus mentions", "title": "Mention review", "filters": "Filter and sort", "filteredResults": "filtered mentions",
           "total": "{count, number} total", "excludedCount": "{count, plural, one {# excluded} other {# excluded}}", "selectPage": "Select page", "selectMention": "Select mention",
@@ -2136,27 +2136,73 @@
       "attention": { "title": "Brands requiring attention", "subtitle": "Operational state from canonical data, sources and report registry.", "emptyTitle": "All clear", "emptyBody": "No brand currently meets an attention rule." }
     },
     "brands": {
-      "eyebrow": "Workspace administration", "title": "Brands", "subtitle": "{count} brands with workspace-owned operational state.",
+      "eyebrow": "Workspace administration", "title": "Brands", "subtitle": "{count} brands and their received data.",
       "actions": { "create": "Create brand", "open": "Open {brand}" },
       "filters": { "search": "Brand", "searchPlaceholder": "Name, slug or industry", "organization": "Organization", "organizationPlaceholder": "Name or organization ID", "status": "Status", "all": "All", "allStatuses": "All statuses", "apply": "Apply" },
-      "table": { "title": "Brand workspaces", "subtitle": "Coverage, freshness, quality and current report state.", "count": "{count, plural, one {# result} other {# results}}" },
-      "columns": { "brand": "Brand", "mentions": "Mentions", "coverage": "Coverage", "freshness": "Freshness", "quality": "Data quality", "health": "Data health", "report": "Report", "activity": "Last activity", "actions": "Actions" },
+      "table": { "title": "Brand workspaces", "subtitle": "Received data, observed dates and report status.", "count": "{count, plural, one {# result} other {# results}}" },
+      "columns": { "brand": "Brand", "mentions": "Mentions received", "coverage": "Observed dates", "freshness": "Freshness", "quality": "Data quality", "health": "Receipt", "report": "Report", "activity": "Last activity", "actions": "Actions" },
       "empty": { "title": "No matching brands", "body": "Adjust the filters or create a brand." },
       "pagination": { "label": "Brands pages", "previous": "Previous", "next": "Next", "position": "Page {page} of {total}" }
+    },
+    "corpusSummary": {
+      "received": "Mentions received",
+      "receivedHint": "Unique mentions after removing duplicates; this does not mean analysis is complete.",
+      "receivedPartialHint": "Minimum measured receipt; some sources have no verifiable receipt.",
+      "filesTitle": "Files received",
+      "files": "{count, plural, one {# accepted file} other {# accepted files}}",
+      "rows": "{count, number} rows read before removing duplicates",
+      "dates": "Observed dates",
+      "reception": "Receipt",
+      "receptionHint": "Receiving data does not mean it has been analyzed or added to Signal.",
+      "analysis": "Conversation analysis",
+      "interpreted": "Interpretation: {done, number} of {total, number} groups.",
+      "previousRun": "This progress belongs to a previous version of the data or context.",
+      "signalHint": "Signal shows the topics you select and their associated mentions. A complete analysis does not select them automatically.",
+      "openSignal": "View Signal",
+      "openData": "View data",
+      "openTopics": "View Topics",
+      "states": {
+        "received": "Data received",
+        "partial": "Partial receipt",
+        "awaiting_import": "No files received",
+        "needs_attention": "Review receipt",
+        "unavailable": "Receipt unavailable"
+      },
+      "coverage": {
+        "observed": "Dates from received mentions; they do not certify complete coverage.",
+        "partial": "Dates from the verifiable part of the corpus; they do not represent complete coverage.",
+        "unavailable": "No observed dates available."
+      },
+      "steps": {
+        "unavailable": "The analysis status could not be verified. Received data is preserved.",
+        "awaiting_import": "Import conversations to begin.",
+        "receipt_attention": "Review file receipt in Data before continuing.",
+        "needs_preparation": "Prepare the text of received mentions in Data.",
+        "missing_embeddings": "Finish preparation for analysis in Data.",
+        "missing_context": "Prepare the saved Brand OS context from Topics.",
+        "ready": "Data is prepared. You can start analysis from Topics.",
+        "running": "Analysis is in progress. View its progress in Topics.",
+        "changed": "There is new data or context. Review preparation for the next analysis.",
+        "authorization_expired": "Spending authorization to continue interpretation has expired. Progress is preserved.",
+        "interrupted": "Analysis was interrupted. Review the reason and options to continue in Topics.",
+        "interpretation_pending": "Grouping is complete; interpretation and saving topics are still pending.",
+        "complete": "Analysis is complete. Review topics and choose which to show in Signal.",
+        "no_groups": "Analysis finished without new stable groups. Existing interests are preserved."
+      }
     },
     "createBrand": { "eyebrow": "Workspace setup" },
     "brand": {
       "eyebrow": "Operational overview", "noIndustry": "No industry configured",
       "actions": { "openSignal": "Open Signal", "addData": "Add or import data", "runAnalysis": "Run analysis", "updateReport": "Update report" },
       "summary": { "mentions": "Governed mentions", "mentionsHint": "Current primary-brand population", "coverage": "Coverage", "sources": "Active sources", "sourcesHint": "{count, plural, one {# requires attention} other {# require attention}}", "report": "Current T&B" },
-      "health": { "title": "Data health", "subtitle": "One view of scope, freshness and quality.", "coverage": "Coverage", "freshness": "Freshness", "quality": "Quality", "population": "Operational population", "populationVersion": "Version {version}" },
+      "health": { "title": "From data to Signal", "subtitle": "Receipt and analysis progress are separate states.", "coverage": "Coverage", "freshness": "Freshness", "quality": "Quality", "population": "Operational population", "populationVersion": "Version {version}" },
       "issues": {
-        "title": "Requires attention", "subtitle": "Checks that block reliable serving or reporting.", "emptyTitle": "No blocking issues", "emptyBody": "Sources, coverage and reports have no current blockers.",
-        "items": { "workspace": "Workspace initialization", "sources": "No active sources", "freshness": "Source freshness", "imports": "Pending imports", "review": "Report Review" },
-        "hints": { "workspace": "Finish workspace setup.", "sources": "Add a governed primary-brand source.", "freshness": "{count, plural, one {# source requires attention.} other {# sources require attention.}}", "imports": "{count, plural, one {# import is still pending.} other {# imports are still pending.}}", "review": "{count, plural, one {# run requires a decision.} other {# runs require a decision.}}" }
+        "title": "Next steps", "subtitle": "Continue from this brand’s current state.", "emptyTitle": "No pending receipt tasks", "emptyBody": "Check Data and Topics for preparation, analysis and results.",
+        "items": {"workspace": "Workspace initialization", "sources": "Import conversations", "freshness": "Source freshness", "imports": "Pending imports", "review": "Report Review", "receipt_unavailable": "Check receipt", "receipt_attention": "Review received data", "analysis": "Continue analysis", "analysis_permission": "Spending authorization expired", "analysis_interrupted": "Analysis interrupted", "analysis_running": "View analysis in progress", "topics": "Review topics for Signal"},
+        "hints": {"workspace": "Finish workspace setup.", "sources": "Upload files through the Data interface.", "freshness": "{count, plural, one {# source requires attention.} other {# sources require attention.}}", "imports": "{count, plural, one {# import is still pending.} other {# imports are still pending.}}", "review": "{count, plural, one {# run requires a decision.} other {# runs require a decision.}}", "receipt_unavailable": "The summary could not be verified. This does not mean no data exists.", "receipt_attention": "Check receipts and details of included or pending data.", "analysis": "Review the next step based on preserved progress.", "analysis_permission": "Current spending authorization is required for new calls. Progress and receipts are preserved.", "analysis_interrupted": "Check the failure reason and available options.", "analysis_running": "Processing is still active; there is no need to start it again.", "topics": "Edit results and choose what to show in Signal."}
       },
-      "sources": { "title": "Sources", "subtitle": "Workspace-owned ingestion and latest results.", "open": "Manage sources", "emptyTitle": "No sources yet", "emptyBody": "Add a source to begin feeding Signal." },
-      "resources": { "title": "Workspace resources", "subtitle": "Context and analysis that reuse the same governed population." },
+      "sources": { "title": "Sources", "subtitle": "Data sources and the latest files received.", "open": "Manage sources", "emptyTitle": "No sources yet", "emptyBody": "Add a source to begin feeding Signal." },
+      "resources": { "title": "Workspace resources", "subtitle": "Context, topics and reports for this brand." },
       "reports": { "title": "Reports", "subtitle": "One report identity with revisioned releases.", "open": "Open reports", "current": "Current revision", "review": "Runs in Review", "latestRun": "Latest run", "published": "Published", "summary": "{revision} · {review} in Review · published {published}" },
       "brandOs": { "title": "Brand OS", "subtitle": "Brand context and reusable knowledge.", "open": "Open Brand OS", "aliases": "Aliases", "competitors": "Competitors", "knowledge": "Knowledge sources", "profiles": "Active profiles", "summary": "{aliases} aliases · {competitors} competitors · {knowledge} knowledge sources", "profilesCount": "{count} active profiles" }
     },
@@ -3113,6 +3159,7 @@
         "errors": { "operation": "The governed view operation could not be completed." }
       },
       "workspaceMissing": { "title": "Workspace unavailable", "body": "This legacy brand has not completed workspace initialization." },
+      "advancedPreparation": {"title": "Advanced data and report diagnostics", "body": "Detailed configuration for governed views, semantic review and reports. The main preparation and analysis flow appears above."},
       "destinations": {
         "title": "Manage workspace data",
         "subtitle": "Open each resource in its own workspace; this overview retains sources, imports, and governance.",

@@ -1,5 +1,5 @@
 import { ArrowRight, Database } from "@phosphor-icons/react/dist/ssr";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -9,10 +9,9 @@ import {
   AdminResourceSection,
   AdminSettingsRow,
   AdminStatus,
-  AdminWorkspaceHeader,
-  formatAdminDate,
-  formatAdminNumber
+  AdminWorkspaceHeader
 } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
 import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpusReadinessPanel";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
@@ -28,9 +27,8 @@ export const dynamic = "force-dynamic";
 
 export default async function BrandDataPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [t, locale, session] = await Promise.all([
+  const [t, session] = await Promise.all([
     getTranslations("AdminWorkspace"),
-    getLocale(),
     requireStudioUser(`/studio/brands/${id}/data`)
   ]);
   const workspace = await getAdminBrandWorkspace(session.appUser, id);
@@ -63,12 +61,7 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
       />
       <BrandMonitoringJourney brandId={id} current="data" />
 
-      <dl className="admin-summary-strip">
-        <div><dt>{t("data.summary.sources")}</dt><dd>{summary.activeSources}</dd><small>{t("data.summary.sourcesHint")}</small></div>
-        <div><dt>{t("data.summary.mentions")}</dt><dd>{formatAdminNumber(summary.governedMentions, locale)}</dd><small>{t("data.summary.mentionsHint")}</small></div>
-        <div><dt>{t("data.summary.coverage")}</dt><dd>{summary.coverageFrom && summary.coverageThrough ? `${formatAdminDate(summary.coverageFrom, locale, { month: "short", year: "numeric" })} – ${formatAdminDate(summary.coverageThrough, locale, { month: "short", year: "numeric" })}` : "—"}</dd><small>{t(`coverage.${summary.coverageState}`)}</small></div>
-        <div><dt>{t("data.summary.freshness")}</dt><dd><AdminStatus state={summary.freshnessState}>{t(`states.${summary.freshnessLabel}`)}</AdminStatus></dd><small>{t("data.summary.freshnessHint")}</small></div>
-      </dl>
+      <AdminCorpusSummaryStrip corpus={summary.corpus} />
 
       {summary.workspaceId ? (
         <>
@@ -79,10 +72,14 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
             workspaceId={summary.workspaceId}
           />
           {governance ? (
-            <GovernancePreparationManager
-              initial={governance}
-              workspaceId={summary.workspaceId}
-            />
+            <details className="admin-section" style={{ padding: 16 }}>
+              <summary>{t("data.advancedPreparation.title")}</summary>
+              <p className="admin-table__muted">{t("data.advancedPreparation.body")}</p>
+              <GovernancePreparationManager
+                initial={governance}
+                workspaceId={summary.workspaceId}
+              />
+            </details>
           ) : null}
           <AdminResourceSection
             subtitle={t("data.destinations.subtitle")}

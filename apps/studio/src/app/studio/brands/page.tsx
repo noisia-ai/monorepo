@@ -6,9 +6,9 @@ import {
   AdminResourceSection,
   AdminStatus,
   AdminWorkspaceHeader,
-  formatAdminDate,
-  formatAdminNumber
+  formatAdminDate
 } from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminCorpusCoverage, AdminCorpusReceipt, AdminCorpusStatus } from "@/components/admin/AdminCorpusSummary";
 import { AdminBrandFilters } from "@/components/admin/AdminBrandFilters";
 import { PermanentDeleteBrandButton } from "@/components/brands/AdminEntityActions";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -111,20 +111,9 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
                         <small>{brand.organizationName}{brand.industry ? ` · ${brand.industry}` : ""}</small>
                       </div>
                     </td>
-                    <td>{formatAdminNumber(brand.governedMentions, locale)}</td>
-                    <td>
-                      <AdminStatus state={brand.coverageState}>
-                        {brand.coverageFrom && brand.coverageThrough
-                          ? `${formatAdminDate(brand.coverageFrom, locale)} – ${formatAdminDate(brand.coverageThrough, locale)}`
-                          : t("coverage.notAvailable")}
-                      </AdminStatus>
-                    </td>
-                    <td>
-                      <div className="admin-status-stack">
-                        <AdminStatus state={brand.freshnessState}>{t(`states.${brand.freshnessLabel}`)}</AdminStatus>
-                        <AdminStatus state={brand.qualityState}>{t(`quality.${brand.qualityState}`)}</AdminStatus>
-                      </div>
-                    </td>
+                    <td><AdminCorpusReceipt corpus={brand.corpus} /></td>
+                    <td><AdminCorpusCoverage corpus={brand.corpus} /></td>
+                    <td><AdminCorpusStatus corpus={brand.corpus} /></td>
                     <td><AdminStatus state={reportTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
                     <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
                     <td>
