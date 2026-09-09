@@ -5,10 +5,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorkspaceInterpretationReferenceIdV1,
+  SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as legacyConfig, buildSignalWorkspaceInterpretationBatchV1,
   SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
   signalWorkspaceInterpretationCostV1,
-  type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
-import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1 } from "@noisia/db";
+  type SignalWorkspaceInterpretationClusterV1, type SignalWorkspaceInterpretationConfigurationV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1,
+  SignalWorkspaceEngineInterpretationCheckpointV1 } from "@noisia/db";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
 import { interpretWorkspaceEngineV1 } from "./signal-workspace-engine-interpret";
 
@@ -22,7 +24,7 @@ const cluster: SignalWorkspaceInterpretationClusterV1 = (() => {
       text, strength: 0.9, selection_reason: "high_affiliation" }] };
 })();
 
-async function scenario() {
+async function scenario(configuration: SignalWorkspaceInterpretationConfigurationV1 = config) {
   type Args = Parameters<typeof interpretWorkspaceEngineV1>[0];
   const directory = await mkdtemp(join(tmpdir(), "noisia-interpretation-test-"));
   const files = new Map<string, Buffer>(); let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
@@ -52,11 +54,12 @@ async function scenario() {
       context_digest: hash("context"), catalog_digest: hash("catalog"), prototype_plan_digest: hash("plan"),
       expected_roots: 3, expected_chunks: 3, expected_guides: 0, parent_execution_id: null, context_refs: [],
       engine_config: { ...SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 }, claude_cap_micro_usd: 30_000_000,
-      interpretation_config: { call_configuration: config, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" } } };
+      interpretation_config: { call_configuration: configuration, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" } } };
   const stores = {
     context: async () => ({ actor_user_id: uuid(5), context: { workspace_id: lease.workspace_id,
       execution_id: lease.execution_id, context_digest: hash("context"), data: { interests: [] } } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
+    checkpoints: async () => ({ items: [], next_artifact_id: null, done: true }),
     reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
       assert.equal(args.workspace_id, lease.workspace_id); assert.equal(args.execution_id, lease.execution_id);
       assert.equal(args.execution_token, lease.execution_token); assert.equal(args.actor_user_id, uuid(5));
@@ -92,7 +95,7 @@ async function scenario() {
       call = { call_id: calls.size ? uuid(60 + calls.size) : uuid(6), execution_id: lease.execution_id, workspace_id: lease.workspace_id,
         attempt_token: uuid(70 + calls.size), retry_of_call_id: args.retry_of_call_id ?? null, editorial_repair: args.editorial_repair ?? null,
         state: "reserved", request_digest: args.request_digest, reserved_micro_usd: args.reserved_micro_usd,
-        settled_micro_usd: null, response: null };
+        settled_micro_usd: null, response: null, interpretation_revision_digest: args.interpretation_revision_digest ?? null };
       calls.set(call.call_id, call); requestCalls.set(args.idempotency_key, call);
       reservations.push({ call_id: call.call_id, configuration: args.configuration, reserved_micro_usd: args.reserved_micro_usd });
       if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
@@ -109,9 +112,10 @@ async function scenario() {
     settle: async () => {
       assert.ok(responseSaved, "Cost cannot settle before receipt");
       if (failAfterReceipt && (!repairOnlyCrash || call!.editorial_repair)) { failAfterReceipt = false; throw new Error("workspace_engine_worker_failed"); }
-      if (call!.state !== "settled") totalSettled += signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10,
-        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
-      call!.state = "settled"; call!.settled_micro_usd = 750; states.push("settled");
+      const cost = signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10,
+        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, configuration);
+      if (call!.state !== "settled") totalSettled += cost;
+      call!.state = "settled"; call!.settled_micro_usd = cost; states.push("settled");
       if (failSettlementAck) { failSettlementAck = false; throw new Error("workspace_engine_worker_failed"); }
       return { ...call! };
     },
@@ -168,14 +172,35 @@ async function scenario() {
         const mode = args.batch.editorial_repair ? repairMode ?? responseMode : responseMode;
         const output = { interpretations: [{ cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest,
           status: "coherent", name: "Diferencias entre reserva y cobro", definition: "Conversaciones sobre diferencias en el cobro de una reserva.",
-          inclusion: [], exclusion: [], citations: [mode === "invalid" ? hash("invented citation") : cluster.representatives[0]!.ref_id] }] };
-        const bytes = JSON.stringify({ model: config.model, type: "message", role: "assistant", stop_reason: "end_turn",
+          inclusion: [], exclusion: [], citations: [mode === "invalid" ? hash("invented citation") : "r1"] }] };
+        const bytes = JSON.stringify({ model: args.batch.configuration.model, type: "message", role: "assistant", stop_reason: "end_turn",
           usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify(output) }] });
         return new Response(bytes, { status: 200, headers: mode === "partial" ? { "content-length": String(bytes.length + 1) } : {} });
       } }); },
     });
   };
   return { execute, cleanup: () => rm(directory, { recursive: true, force: true }),
+    seedHistoricalReceipt: async () => {
+      assert.equal(configuration.model, "claude-opus-5"); assert.equal(calls.size, 0);
+      const context = await stores.context({ database: {} as Args["database"], lease });
+      const historical = buildSignalWorkspaceInterpretationBatchV1(context.context, [cluster], configuration);
+      call = await stores.reserve({ database: {} as Args["database"], workspace_id: lease.workspace_id, execution_id: lease.execution_id,
+        actor_user_id: context.actor_user_id, execution_token: lease.execution_token, idempotency_key: historical.batch_key,
+        request_digest: historical.request_digest, configuration, reserved_micro_usd: historical.reserved_micro_usd,
+        daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" });
+      const bytes = Buffer.from(JSON.stringify({ model: configuration.model, type: "message", role: "assistant", stop_reason: "end_turn",
+        usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify({ interpretations: [{
+          cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest, status: "coherent", name: "Cobros de la reserva",
+          definition: "Diferencias entre el importe reservado y el cobrado.", inclusion: [], exclusion: [],
+          citations: [cluster.representatives[0]!.ref_id] }] }) }] }));
+      const key = `historical/${call.call_id}`; files.set(key, bytes);
+      const persisted = calls.get(call.call_id)!;
+      persisted.state = "settled"; persisted.settled_micro_usd = 750;
+      persisted.response = { storage_key: key, sha256: hash(bytes), size_bytes: bytes.length, http_status: 200,
+        provider_request_id: "req_historical", complete: true };
+      responseSaved = true; totalSettled = 750;
+      return { request_digest: historical.request_digest, body: historical.request_body };
+    },
     get: () => ({ sends, fitCount, completed, checkpointCount, materializationWrites, storedObjects: files.size, call, states,
       calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches, seenAuthorizations, terminalReceipts, reservations,
       retainedExposure: [...calls.values()].reduce((sum, row) => sum + (row.state === "settled" ? row.settled_micro_usd!
@@ -197,6 +222,25 @@ async function scenario() {
     mode: (mode: typeof responseMode) => { responseMode = mode; },
     repairMode: (mode: typeof responseMode) => { repairMode = mode; } };
 }
+
+test("a historical Opus lease consumes its sealed receipt at historical cost with no provider admission", async () => {
+  const s = await scenario(legacyConfig); try {
+    const historical = await s.seedHistoricalReceipt(); await s.execute();
+    const result = s.get(); assert.equal(result.sends, 0); assert.equal(result.seenBatches.length, 0);
+    assert.equal(result.states.includes("sent"), false); assert.equal(result.completed, 1);
+    assert.equal(result.call?.request_digest, historical.request_digest); assert.equal(JSON.parse(historical.body).model, "claude-opus-5");
+    assert.equal(result.totalSettled, 750); assert.equal(result.call?.settled_micro_usd, 750);
+    assert.deepEqual(result.reservations[0]!.configuration, legacyConfig);
+  } finally { await s.cleanup(); }
+});
+test("a historical Opus lease missing a receipt cannot create an authorized provider send", async () => {
+  const s = await scenario(legacyConfig); try {
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_provider_model_disabled/u);
+    assert.equal(s.get().sends, 0); assert.equal(s.get().states.includes("sent"), false);
+    assert.equal(s.get().call?.state, "definitely_not_sent"); assert.equal(s.get().totalSettled, 0);
+    assert.equal(s.get().completed, 0);
+  } finally { await s.cleanup(); }
+});
 
 test("same execution persists paid interpretation before editable catalog completion", async () => {
   const s = await scenario(); try { await s.execute(); const result = s.get();
@@ -222,8 +266,8 @@ test("uncertain sent request never sends again or materializes", async () => {
 });
 test("a second invalid editorial response settles both calls and stops without another repair or fabricated results", async () => {
   const s = await scenario(); try { s.mode("invalid"); await assert.rejects(s.execute(), /repair_invalid/u);
-    assert.equal(s.get().call?.state, "settled"); assert.equal(s.get().call?.settled_micro_usd, 750);
-    assert.equal(s.get().totalSettled, 1500); assert.equal(s.get().calls.length, 2);
+    assert.equal(s.get().call?.state, "settled"); assert.equal(s.get().call?.settled_micro_usd, 450);
+    assert.equal(s.get().totalSettled, 900); assert.equal(s.get().calls.length, 2);
     assert.equal(s.get().completed, 0); await assert.rejects(s.execute(), /repair_invalid/u); assert.equal(s.get().sends, 2);
     assert.equal(s.get().calls.length, 2); assert.equal(s.get().checkpointCount, 0);
   } finally { await s.cleanup(); }
@@ -280,7 +324,7 @@ test("lost acknowledgment for a partial receipt does not grant complete-receipt 
 test("one complete invalid response can have one metered repair preserving the full batch and original receipt", async () => {
   const s = await scenario(); try {
     s.mode("invalid"); s.repairMode("valid"); await s.execute(); const first = s.get();
-    assert.equal(first.sends, 2); assert.equal(first.calls.length, 2); assert.equal(first.totalSettled, 1500);
+    assert.equal(first.sends, 2); assert.equal(first.calls.length, 2); assert.equal(first.totalSettled, 900);
     assert.equal(first.completed, 1); assert.equal(first.checkpointCount, 1);
     const [original, repair] = first.calls, [batch, correction] = first.seenBatches;
     assert.equal(original!.state, "settled"); assert.equal(original!.editorial_repair, null);
@@ -292,7 +336,7 @@ test("one complete invalid response can have one metered repair preserving the f
     assert.deepEqual(first.checkpointCallIds, [repair!.call_id]);
     const originalReceipt = structuredClone(original!.response);
     await s.execute(); const replay = s.get();
-    assert.equal(replay.sends, 2); assert.equal(replay.calls.length, 2); assert.equal(replay.totalSettled, 1500);
+    assert.equal(replay.sends, 2); assert.equal(replay.calls.length, 2); assert.equal(replay.totalSettled, 900);
     assert.equal(replay.materializationWrites, 1); assert.equal(replay.storedObjects, 4);
     assert.deepEqual(replay.calls[0]!.response, originalReceipt);
   } finally { await s.cleanup(); }
@@ -312,7 +356,7 @@ for (const stage of ["source_settlement_ack", "repair_reservation_ack", "repair_
     assert.equal(s.get().completed, 0);
     if (stage === "repair_response_ack" || stage === "repair_settlement") s.repairDisabled(true);
     await s.execute(); const done = s.get();
-    assert.equal(done.sends, 2); assert.equal(done.calls.length, 2); assert.equal(done.totalSettled, 1500);
+    assert.equal(done.sends, 2); assert.equal(done.calls.length, 2); assert.equal(done.totalSettled, 900);
     assert.equal(done.completed, 1); assert.equal(done.checkpointCount, 1); assert.equal(done.materializationWrites, 1);
     assert.equal(done.checkpointCallIds.at(-1), done.calls[1]!.call_id);
   } finally { await s.cleanup(); }
@@ -323,7 +367,7 @@ test("an unknown repair never resends or creates a repair of the repair", async 
     s.mode("invalid"); s.repairUnknown();
     await assert.rejects(s.execute(), /outcome_unknown/u);
     await assert.rejects(s.execute(), /outcome_unknown/u);
-    assert.equal(s.get().sends, 2); assert.equal(s.get().calls.length, 2); assert.equal(s.get().totalSettled, 750);
+    assert.equal(s.get().sends, 2); assert.equal(s.get().calls.length, 2); assert.equal(s.get().totalSettled, 450);
     assert.equal(s.get().call?.state, "outcome_unknown"); assert.equal(s.get().completed, 0);
   } finally { await s.cleanup(); }
 });
@@ -333,7 +377,7 @@ test("a cap rejection after settling the original response prevents all repair t
     s.mode("invalid"); s.repairMode("valid"); s.repairCapBlocked();
     await assert.rejects(s.execute(), /run_cap_exceeded/u);
     await assert.rejects(s.execute(), /run_cap_exceeded/u);
-    assert.equal(s.get().sends, 1); assert.equal(s.get().calls.length, 1); assert.equal(s.get().totalSettled, 750);
+    assert.equal(s.get().sends, 1); assert.equal(s.get().calls.length, 1); assert.equal(s.get().totalSettled, 450);
     assert.equal(s.get().calls[0]!.state, "settled"); assert.equal(s.get().completed, 0);
   } finally { await s.cleanup(); }
 });
@@ -344,7 +388,7 @@ test("a proven unsent repair uses a successor with the same editorial identity o
     await assert.rejects(s.execute(), /provider_disabled/u);
     const before = s.get(); assert.equal(before.sends, 1); assert.equal(before.calls[1]!.state, "definitely_not_sent");
     s.repairDisabled(false); await s.execute(); const done = s.get();
-    assert.equal(done.sends, 2); assert.equal(done.calls.length, 3); assert.equal(done.totalSettled, 1500);
+    assert.equal(done.sends, 2); assert.equal(done.calls.length, 3); assert.equal(done.totalSettled, 900);
     assert.equal(done.calls[2]!.retry_of_call_id, before.calls[1]!.call_id);
     assert.deepEqual(done.calls[2]!.editorial_repair, before.calls[1]!.editorial_repair);
     assert.equal(done.calls[2]!.request_digest, before.calls[1]!.request_digest);
@@ -367,7 +411,7 @@ test("a provider-confirmed terminal repair gets one transport successor preservi
     assert.deepEqual(successor.editorial_repair, terminal!.editorial_repair);
     assert.deepEqual(done.calls[0], original); assert.deepEqual(done.calls[1], terminal);
     assert.deepEqual(done.terminalReceipts.get(terminal!.call_id), terminalEvidence);
-    assert.equal(done.totalSettled, 1500); assert.equal(done.retainedExposure, 1500 + terminal!.reserved_micro_usd);
+    assert.equal(done.totalSettled, 900); assert.equal(done.retainedExposure, 900 + terminal!.reserved_micro_usd);
     assert.deepEqual(done.reservations[2]!.configuration, done.reservations[1]!.configuration);
     assert.equal(done.reservations[2]!.reserved_micro_usd, done.reservations[1]!.reserved_micro_usd);
     assert.deepEqual(done.seenBatches[2], done.seenBatches[1]);
@@ -403,8 +447,8 @@ test("an invalid terminal successor exhausts the same editorial repair instead o
     await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
     await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
     assert.equal(s.get().sends, 3); assert.equal(s.get().calls.length, 3); assert.equal(s.get().checkpointCount, 0);
-    assert.equal(s.get().calls[2]!.state, "settled"); assert.equal(s.get().totalSettled, 1500);
-    assert.equal(s.get().retainedExposure, 1500 + terminal!.reserved_micro_usd);
+    assert.equal(s.get().calls[2]!.state, "settled"); assert.equal(s.get().totalSettled, 900);
+    assert.equal(s.get().retainedExposure, 900 + terminal!.reserved_micro_usd);
     assert.deepEqual(s.get().calls[2]!.editorial_repair, terminal!.editorial_repair);
     assert.deepEqual(s.get().calls[1], terminal);
   } finally { await s.cleanup(); }
@@ -420,7 +464,7 @@ test("an unknown terminal successor cannot be resent or extended, even when a la
     assert.equal(s.get().calls.length, 3); assert.equal(s.get().sends, 3);
     s.confirmTerminal(); await assert.rejects(s.execute(), /transport_retry_exhausted/u);
     assert.equal(s.get().calls.length, 3); assert.equal(s.get().sends, 3); assert.equal(s.get().checkpointCount, 0);
-    assert.equal(s.get().totalSettled, 750); assert.equal(s.get().retainedExposure, before.retainedExposure);
+    assert.equal(s.get().totalSettled, 450); assert.equal(s.get().retainedExposure, before.retainedExposure);
   } finally { await s.cleanup(); }
 });
 
@@ -430,7 +474,7 @@ test("a terminal successor cap rejection retains the confirmed-terminal reservat
     const before = structuredClone(s.get().calls); const exposure = s.get().retainedExposure;
     s.repairCapBlocked(); await assert.rejects(s.execute(), /run_cap_exceeded/u);
     await assert.rejects(s.execute(), /run_cap_exceeded/u);
-    assert.deepEqual(s.get().calls, before); assert.equal(s.get().sends, 2); assert.equal(s.get().totalSettled, 750);
+    assert.deepEqual(s.get().calls, before); assert.equal(s.get().sends, 2); assert.equal(s.get().totalSettled, 450);
     assert.equal(s.get().retainedExposure, exposure); assert.equal(s.get().completed, 0);
   } finally { await s.cleanup(); }
 });
@@ -443,6 +487,149 @@ test("terminal evidence never bypasses current actor, input or lease rejection",
       const before = structuredClone(s.get().calls); s.rejectReserve(code);
       await assert.rejects(s.execute(), error => error instanceof Error && error.message === code);
       assert.deepEqual(s.get().calls, before); assert.equal(s.get().sends, 2); assert.equal(s.get().completed, 0);
+    } finally { await s.cleanup(); }
+  }
+});
+
+async function rolloverScenario() {
+  type Args = Parameters<typeof interpretWorkspaceEngineV1>[0];
+  const directory = await mkdtemp(join(tmpdir(), "noisia-sonnet-rollover-"));
+  // This fixture supplies local ledger rows and private storage. Real Worker
+  // batching, provider decoding, artifact verification and materializer input run.
+  const context = { workspace_id: uuid(2), execution_id: uuid(1), context_digest: hash("context"), data: { interests: [] } };
+  const groups = Array.from({ length: 6 }, (_, i) => ({ ...structuredClone(cluster), cluster_id: `open:unit_${i + 1}`,
+    cluster_digest: hash(`membership ${i + 1}`) }));
+  const oldBatch = buildSignalWorkspaceInterpretationBatchV1(context, groups.slice(0, 4), legacyConfig);
+  const interpretation = (group: SignalWorkspaceInterpretationClusterV1, wire = false) => ({ cluster_id: group.cluster_id,
+    cluster_digest: group.cluster_digest, status: "coherent", name: `Reserva ${group.cluster_id}`,
+    definition: "Diferencias entre reserva y cobro.", inclusion: [], exclusion: [],
+    citations: [wire ? "r1" : group.representatives[0]!.ref_id] });
+  let oldPacket = { contract_version: "workspace-engine-interpretation-result-v1", execution_id: context.execution_id,
+    context, clusters: oldBatch.clusters, interpretations: oldBatch.clusters.map(group => interpretation(group)) };
+  const originalBytes = Buffer.from(JSON.stringify(oldPacket));
+  const files = new Map<string, Buffer>([["historical-4-units", originalBytes]]);
+  const checkpoints: SignalWorkspaceEngineInterpretationCheckpointV1[] = [{ artifact_id: uuid(80), artifact_key: `interpretation-${uuid(6)}.json`,
+    storage_key: "historical-4-units", sha256: hash(originalBytes), size_bytes: originalBytes.length, media_type: "application/json",
+    unit_keys: oldBatch.clusters.map(item => item.cluster_id), call_id: uuid(6), call_configuration: legacyConfig,
+    interpretation_revision_digest: null }];
+  const revision = hash("authorized rollover");
+  const lease: SignalWorkspaceEngineLeaseV1 = { execution_id: context.execution_id, workspace_id: context.workspace_id,
+    execution_token: uuid(4), input_digest: hash("snapshot"), interpretation_revision_digest: revision,
+    effective_interpretation_config: { call_configuration: config, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" },
+    snapshot: { contract_version: "workspace-topic-engine-v1", workspace_id: context.workspace_id, taxonomy_profile_id: uuid(20),
+      preparation_run_id: uuid(21), embedding_run_id: uuid(22), input_revision: "1", embedding_profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+      context_digest: context.context_digest, catalog_digest: hash("catalog"), prototype_plan_digest: hash("plan"), expected_roots: 3,
+      expected_chunks: 3, expected_guides: 0, parent_execution_id: null, context_refs: [], engine_config: { ...SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 },
+      claude_cap_micro_usd: 30_000_000, interpretation_config: { call_configuration: legacyConfig, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" } } };
+  let sends = 0, claims = 0, reserved = 0, newCost = 0, complete = 0, crash = false, readError: string | null = null;
+  const pages: Array<string | null> = [], proposalBodies: string[] = [], sentUnits: string[][] = [];
+  let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
+  const stores = {
+    context: async () => ({ actor_user_id: uuid(5), context }),
+    fit: async () => ({}),
+    checkpoints: async (args: { after_artifact_id?: string | null }) => {
+      if (readError) throw new Error(readError);
+      pages.push(args.after_artifact_id ?? null);
+      const rows = checkpoints.filter(item => !args.after_artifact_id || item.artifact_id > args.after_artifact_id);
+      return { items: rows.slice(0, 1), next_artifact_id: rows[0]?.artifact_id ?? null, done: rows.length <= 1 };
+    },
+    reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
+      reserved++; assert.deepEqual(args.configuration, config); assert.equal(args.interpretation_revision_digest, revision);
+      assert.equal(args.execution_id, lease.execution_id); assert.equal(args.execution_token, lease.execution_token);
+      call = { call_id: uuid(90), execution_id: lease.execution_id, workspace_id: lease.workspace_id, attempt_token: uuid(91),
+        retry_of_call_id: null, editorial_repair: null, state: "reserved", request_digest: args.request_digest,
+        reserved_micro_usd: args.reserved_micro_usd, settled_micro_usd: null, response: null, interpretation_revision_digest: revision };
+      return { ...call };
+    },
+    sent: async () => { claims++; assert.equal(call!.state, "reserved"); call!.state = "in_flight"; return { call, send_authorized: true }; },
+    response: async (args: { response: NonNullable<SignalWorkspaceEngineInterpretationCallV1["response"]> }) => {
+      call!.response = args.response; call!.state = "response_persisted"; return { ...call! };
+    },
+    settle: async () => { newCost += 450; call!.settled_micro_usd = 450; call!.state = "settled"; return { ...call! }; },
+    fail: async () => { throw new Error("unexpected rollover failure"); },
+    checkpoint: async (args: Parameters<NonNullable<Args["stores"]>["checkpoint"]>[0]) => {
+      checkpoints.push({ ...args.artifact, artifact_id: uuid(100), call_id: call!.call_id, call_configuration: config,
+        unit_keys: args.unit_keys, interpretation_revision_digest: revision });
+      if (crash) { crash = false; throw new Error("lost checkpoint acknowledgment"); }
+      return { artifact_id: uuid(100) };
+    },
+    materialize: async (args: { proposals: AsyncIterable<{ artifact_id: string; body: string }> }) => {
+      const keys: string[] = []; proposalBodies.length = 0;
+      for await (const source of args.proposals) {
+        proposalBodies.push(source.body); const packet = JSON.parse(source.body);
+        for (const item of packet.interpretations) { keys.push(item.cluster_id); assert.deepEqual(item.citations, [cluster.representatives[0]!.ref_id]); }
+      }
+      assert.deepEqual(keys.sort(), groups.map(item => item.cluster_id));
+      assert.equal(new Set(keys).size, 6); assert.equal(proposalBodies[0], originalBytes.toString());
+      return { contract_version: "workspace-topic-materialization-v1", execution_id: lease.execution_id, output_catalog_profile_id: uuid(9),
+        output_catalog_revision: 2, interpretation_units_digest: hash("all six"), topic_count: 6, discovered_topic_count: 6,
+        mapping_digest: hash("mapping"), mapping: [], replayed: false };
+    },
+    persist: async () => ({ artifact_id: uuid(101) }), complete: async () => { complete++; return { execution_id: lease.execution_id }; },
+  } as unknown as NonNullable<Args["stores"]>;
+  const execute = async () => interpretWorkspaceEngineV1({ database: {} as Args["database"], lease, stores,
+    directory: await mkdtemp(join(directory, "attempt-")), clusters: groups, heartbeat: async () => undefined,
+    fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
+      model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
+      result_kind: "computational_grouping" }, api_key: "test_only_not_a_real_api_key", provider_enabled: true,
+    storage: { put: async args => { const bytes = await readFile(args.file); const key = args.sha256;
+        files.set(key, bytes); return { storage_key: key, sha256: args.sha256, size_bytes: bytes.length, media_type: args.media_type }; },
+      get: async args => { await writeFile(args.destination, files.get(args.stored.storage_key)!, { flag: "wx" }); } },
+    send: args => sendWorkspaceInterpretationV1({ ...args, fetch_impl: (async (_url, init) => {
+      sends++; sentUnits.push(args.batch.clusters.map(item => item.cluster_id));
+      assert.equal(JSON.parse(init!.body as string).model, "claude-sonnet-4-6");
+      return Response.json({ model: "claude-sonnet-4-6", type: "message", role: "assistant", stop_reason: "end_turn",
+        usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify({
+          interpretations: args.batch.clusters.map(group => interpretation(group, true)) }) }] });
+    }) as typeof fetch }),
+  });
+  return { execute, get: () => ({ sends, claims, reserved, newCost, complete, pages, sentUnits, proposalBodies }),
+    crashAfterCheckpoint: () => { crash = true; }, rejectReader: (code: string) => { readError = code; },
+    tamper: (kind: string) => {
+      const row = checkpoints[0]!;
+      if (kind === "hash") { files.set(row.storage_key, Buffer.from(originalBytes.toString().replace("Reserva", "Alterar"))); return; }
+      if (kind === "size") { row.size_bytes++; return; }
+      if (kind === "units") { row.unit_keys = [groups[5]!.cluster_id]; return; }
+      if (kind === "profile") { row.call_configuration = config; return; }
+      if (kind === "revision") { row.interpretation_revision_digest = hash("unauthorized"); return; }
+      if (kind === "duplicate") { checkpoints.push({ ...row, artifact_id: uuid(81) }); return; }
+      oldPacket = structuredClone(oldPacket);
+      if (kind === "context") oldPacket.context.context_digest = hash("another context");
+      if (kind === "cluster") oldPacket.clusters[0]!.terms.push("unrelated evidence");
+      if (kind === "citation") oldPacket.interpretations[0]!.citations = [hash("not in representative evidence")];
+      if (kind === "alias") oldPacket.interpretations[0]!.citations = ["r1"];
+      const bytes = Buffer.from(JSON.stringify(oldPacket)); files.set(row.storage_key, bytes); row.sha256 = hash(bytes); row.size_bytes = bytes.length;
+    }, cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
+test("same execution keeps four historical Opus units and sends only two pending Sonnet units", async () => {
+  const s = await rolloverScenario(); try {
+    await s.execute(); const result = s.get();
+    assert.deepEqual(result.sentUnits, [["open:unit_5", "open:unit_6"]]);
+    assert.equal(result.sends, 1); assert.equal(result.claims, 1); assert.equal(result.reserved, 1);
+    assert.equal(result.newCost, 450); assert.equal(result.complete, 1); assert.equal(result.proposalBodies.length, 2);
+  } finally { await s.cleanup(); }
+});
+test("rollover resumes after a lost checkpoint acknowledgment without resending any of the six units", async () => {
+  const s = await rolloverScenario(); try {
+    s.crashAfterCheckpoint(); await assert.rejects(s.execute(), /lost checkpoint acknowledgment/u);
+    assert.equal(s.get().complete, 0); await s.execute();
+    assert.equal(s.get().sends, 1); assert.equal(s.get().reserved, 1); assert.equal(s.get().newCost, 450);
+    assert.equal(s.get().complete, 1); assert.deepEqual(s.get().pages, [null, null, uuid(80)]);
+  } finally { await s.cleanup(); }
+});
+for (const kind of ["hash", "size", "context", "cluster", "citation", "alias", "units", "duplicate", "profile", "revision"]) {
+  test(`rollover rejects ${kind} checkpoint corruption before any reservation or provider admission`, async () => {
+    const s = await rolloverScenario(); try {
+      s.tamper(kind); await assert.rejects(s.execute(), /workspace_engine_interpretation_checkpoint_invalid/u);
+      assert.equal(s.get().reserved, 0); assert.equal(s.get().claims, 0); assert.equal(s.get().sends, 0); assert.equal(s.get().complete, 0);
+    } finally { await s.cleanup(); }
+  });
+}
+test("checkpoint recovery cannot bypass a rejected lease or current context", async () => {
+  for (const code of ["workspace_engine_lease_conflict", "workspace_engine_forbidden", "workspace_engine_inputs_stale"]) {
+    const s = await rolloverScenario(); try {
+      s.rejectReader(code); await assert.rejects(s.execute(), error => error instanceof Error && error.message === code);
+      assert.equal(s.get().reserved, 0); assert.equal(s.get().sends, 0); assert.equal(s.get().complete, 0);
     } finally { await s.cleanup(); }
   }
 });

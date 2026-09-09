@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildSignalWorkspaceInterpretationBatchV1, signalWorkspaceInterpretationReferenceIdV1,
   buildSignalWorkspaceInterpretationRepairBatchV1,
+  SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as legacyConfig,
+  signalWorkspaceInterpretationCostV1,
   type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
   type WorkspaceInterpretationRawReceiptV1 } from "./workspace-interpretation.js";
@@ -16,9 +18,9 @@ const group: SignalWorkspaceInterpretationClusterV1 = { cluster_id: "open:fixtur
     text, strength: 0.8, selection_reason: "high_affiliation" }] };
 const batch = buildSignalWorkspaceInterpretationBatchV1(context, [group]);
 const output = { interpretations: [{ cluster_id: group.cluster_id, cluster_digest: group.cluster_digest, status: "coherent", name: "Delivery experience",
-  definition: "Discussion of delivery experiences", inclusion: [], exclusion: [], citations: [group.representatives[0]!.ref_id] }] };
+  definition: "Discussion of delivery experiences", inclusion: [], exclusion: [], citations: ["r1"] }] };
 function response(overrides: Record<string, unknown> = {}) {
-  return { id: "msg_fixture", type: "message", role: "assistant", model: "claude-opus-5", stop_reason: "end_turn",
+  return { id: "msg_fixture", type: "message", role: "assistant", model: "claude-sonnet-4-6", stop_reason: "end_turn",
     content: [{ type: "text", text: JSON.stringify(output) }], usage: { input_tokens: 100, output_tokens: 20,
       cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, ...overrides };
 }
@@ -37,6 +39,48 @@ function manualTimeout() {
     fire: () => { assert.ok(callback); callback(); },
   };
 }
+test("new Sonnet requests seal the model and its rates into the body and reservation", async () => {
+  assert.equal(batch.configuration.model, "claude-sonnet-4-6");
+  assert.equal(JSON.parse(batch.request_body).model, "claude-sonnet-4-6");
+  assert.equal(batch.reserved_micro_usd, signalWorkspaceInterpretationCostV1({ input_tokens: batch.input_token_upper_bound,
+    output_tokens: batch.configuration.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, batch.configuration));
+  const result = await sendWorkspaceInterpretationV1({ ...base, authorize_send: async () => true,
+    persist_receipt: async () => undefined, fetch_impl: fakeFetch((_url, init) => {
+      assert.equal(init?.body, batch.request_body); return Response.json(response());
+    }) });
+  assert.equal(result.outcome, "validated"); assert.ok(result.usage);
+  assert.equal(signalWorkspaceInterpretationCostV1(result.usage, batch.configuration), 600);
+  assert.equal(signalWorkspaceInterpretationCostV1(result.usage, legacyConfig), 1_000);
+});
+test("historical Opus original and repair receipts replay, but neither may claim or send", async () => {
+  const original = buildSignalWorkspaceInterpretationBatchV1(context, [group], legacyConfig);
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(original, {
+    source_call_id: "00000000-0000-4000-8000-000000000004", source_response_sha256: sha("historical raw"), diagnostic: "output_invalid" });
+  let claims = 0, sends = 0, receipts = 0; const timer = manualTimeout();
+  for (const historical of [original, repair]) {
+    const raw = JSON.stringify(response({ model: "claude-opus-5", content: [{ type: "text", text: JSON.stringify({
+      interpretations: [{ ...output.interpretations[0], citations: [group.representatives[0]!.ref_id] }] }) }] }));
+    const replay = validateWorkspaceInterpretationReceiptV1(historical, { bytes: new TextEncoder().encode(raw), sha256: sha(raw),
+      http_status: 200, provider_request_id: "req_historical", complete: true });
+    assert.equal(replay.outcome, "validated"); assert.equal(JSON.parse(historical.request_body).model, "claude-opus-5");
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, batch: historical, schedule_timeout: timer.schedule_timeout,
+      authorize_send: async () => { claims++; return true; }, persist_receipt: async () => { receipts++; },
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }) }),
+    error => error instanceof WorkspaceInterpretationTransportErrorV1
+      && error.code === "workspace_engine_interpretation_provider_model_disabled" && error.outcome === "definitely_not_sent");
+  }
+  assert.equal(claims, 0); assert.equal(sends, 0); assert.equal(receipts, 0); assert.deepEqual(timer.durations, []);
+});
+test("a receipt from another supported model is never settled against the requested profile", async () => {
+  const legacy = buildSignalWorkspaceInterpretationBatchV1(context, [group], legacyConfig);
+  for (const [requested, reported] of [[batch, legacyConfig.model], [legacy, batch.configuration.model]] as const) {
+    const raw = JSON.stringify(response({ model: reported }));
+    const result = validateWorkspaceInterpretationReceiptV1(requested, { bytes: new TextEncoder().encode(raw), sha256: sha(raw),
+      http_status: 200, provider_request_id: "req_wrong_model", complete: true });
+    assert.equal(result.error_code, "workspace_engine_interpretation_response_model_invalid");
+    assert.equal(result.outcome, "outcome_unknown"); assert.equal(result.usage, null);
+  }
+});
 test("default ten-minute deadline and supported overrides preserve the sealed request without waiting", async () => {
   for (const timeout_ms of [undefined, 1, 600_000]) {
     const timer = manualTimeout(); let claims = 0, sends = 0, receipts = 0;
@@ -160,6 +204,8 @@ test("exactly one authorized send persists raw receipt before validation; replay
   assert.deepEqual(events, ["durableCAS", "send", "durableReceipt"]);
   assert.equal(result.outcome, "validated"); assert.equal(result.usage?.input_tokens, 100);
   assert.equal(result.interpretations?.length, 1); assert.ok(receipt);
+  assert.deepEqual(result.interpretations?.[0]?.citations, [group.representatives[0]!.ref_id]);
+  assert.deepEqual(JSON.parse(JSON.parse(new TextDecoder().decode((receipt as WorkspaceInterpretationRawReceiptV1).bytes)).content[0].text).interpretations[0].citations, ["r1"]);
   assert.deepEqual(validateWorkspaceInterpretationReceiptV1(batch, receipt), result);
   assert.equal(events.filter(event => event === "send").length, 1);
 });

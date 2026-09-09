@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-v1";
 
-/** Official contracts checked 2026-09-08:
+/** Official contracts checked 2026-09-08 and 2026-09-09:
+ * https://platform.claude.com/docs/en/models/sonnet-4-6/overview
  * https://platform.claude.com/docs/en/models/opus-5/whats-new-opus-5
  * https://platform.claude.com/docs/en/about-claude/pricing
  * https://platform.claude.com/docs/en/build-with-claude/structured-outputs
@@ -76,7 +77,8 @@ export const SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1 = freezeDeep({
     } },
   },
 });
-export const SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 = Object.freeze({
+// Immutable historical profile: retained for receipt replay, never new provider sends.
+export const SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 = Object.freeze({
   contract_version: "workspace-engine-interpretation-config-v1", provider: "anthropic", model: "claude-opus-5",
   prompt_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_PROMPT_V1),
   schema_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1),
@@ -86,12 +88,35 @@ export const SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 = Object.freeze({
   thinking: "disabled", effort: "high", max_output_tokens: 8192,
   token_bound_version: "utf8-request-bytes-times-four-plus-8192-v1",
 });
+export const SIGNAL_WORKSPACE_INTERPRETATION_SONNET_PROMPT_V1 = `${SIGNAL_WORKSPACE_INTERPRETATION_PROMPT_V1}
+For this packet, citation ref_id values are short local labels r1, r2, and so on. Copy ONLY these exact ref_id labels from the SAME cluster. Never cite root_id, chunk_sha256 or cluster_digest. The application maps each label to its original verified text; you must not invent or repair a label. Every coherent or mixed result must include top-level citations for its name and definition, in addition to citations on conditions.`;
+/** Current operator-selected profile. Model and rates are part of every request seal. */
+export const SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 = Object.freeze({
+  ...SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1,
+  model: "claude-sonnet-4-6",
+  prompt_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_SONNET_PROMPT_V1),
+  citation_wire_version: "group-local-reference-labels-v1",
+  pricing_version: "claude-sonnet-4-6-standard-global-usd-2026-09-09",
+  input_micro_usd_per_million_tokens: 3_000_000, output_micro_usd_per_million_tokens: 15_000_000,
+  cache_read_micro_usd_per_million_tokens: 300_000, cache_creation_micro_usd_per_million_tokens: 3_750_000,
+});
+export type SignalWorkspaceInterpretationConfigurationV1 = typeof SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1
+  | typeof SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1;
+/** Exact known profiles only; old cost receipts cannot be repriced by a caller. */
+export function parseSignalWorkspaceInterpretationConfigurationV1(value: unknown): SignalWorkspaceInterpretationConfigurationV1 {
+  const encoded = stableJson(value);
+  for (const config of [SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1]) {
+    if (stableJson(config) === encoded) return config;
+  }
+  return fail("config_mismatch");
+}
 export type SignalWorkspaceInterpretationUsageV1 = {
   input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number;
 };
-export function signalWorkspaceInterpretationCostV1(usage: SignalWorkspaceInterpretationUsageV1): number {
+export function signalWorkspaceInterpretationCostV1(usage: SignalWorkspaceInterpretationUsageV1,
+  configuration: SignalWorkspaceInterpretationConfigurationV1 = SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1): number {
   let numerator = 0n;
-  const config = SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
+  const config = parseSignalWorkspaceInterpretationConfigurationV1(configuration);
   for (const [field, rate] of [
     ["input_tokens", config.input_micro_usd_per_million_tokens],
     ["output_tokens", config.output_micro_usd_per_million_tokens],
@@ -140,7 +165,7 @@ function contextValue(context: SignalWorkspaceInterpretationContextV1) {
   catch { return fail("context_invalid"); }
 }
 export type SignalWorkspaceInterpretationBatchV1 = {
-  batch_key: string; request_digest: string; configuration: typeof SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
+  batch_key: string; request_digest: string; configuration: SignalWorkspaceInterpretationConfigurationV1;
   context: SignalWorkspaceInterpretationContextV1; clusters: SignalWorkspaceInterpretationClusterV1[];
   request_body: string; input_token_upper_bound: number; reserved_micro_usd: number;
   editorial_repair?: SignalWorkspaceInterpretationEditorialRepairV1;
@@ -164,15 +189,20 @@ export function parseSignalWorkspaceInterpretationEditorialRepairV1(value: unkno
 }
 export function buildSignalWorkspaceInterpretationBatchV1(
   context: SignalWorkspaceInterpretationContextV1, values: SignalWorkspaceInterpretationClusterV1[],
+  selectedConfiguration: SignalWorkspaceInterpretationConfigurationV1 = SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
 ): SignalWorkspaceInterpretationBatchV1 {
+  const configuration = parseSignalWorkspaceInterpretationConfigurationV1(selectedConfiguration);
   if (!values.length || values.length > SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.batch_clusters) return fail("batch_invalid");
   const safeContext = contextValue(context), clusters = values.map(parseSignalWorkspaceInterpretationClusterV1);
   assertUnitOrder(clusters.map(cluster => cluster.cluster_id));
-  const request_body = stableJson({ model: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,
+  const shortReferences = configuration.model === "claude-sonnet-4-6";
+  const wireClusters = shortReferences ? clusters.map(cluster => ({ ...cluster,
+    representatives: cluster.representatives.map((ref, index) => ({ ...ref, ref_id: `r${index + 1}` })) })) : clusters;
+  const request_body = stableJson({ model: configuration.model,
     max_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, stream: false,
-    thinking: { type: "disabled" }, system: SIGNAL_WORKSPACE_INTERPRETATION_PROMPT_V1,
+    thinking: { type: "disabled" }, system: shortReferences ? SIGNAL_WORKSPACE_INTERPRETATION_SONNET_PROMPT_V1 : SIGNAL_WORKSPACE_INTERPRETATION_PROMPT_V1,
     output_config: { effort: "high", format: { type: "json_schema", schema: SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1 } },
-    messages: [{ role: "user", content: stableJson({ contract_version: "workspace-engine-interpretation-packet-v1", context: safeContext, clusters }) }],
+    messages: [{ role: "user", content: stableJson({ contract_version: "workspace-engine-interpretation-packet-v1", context: safeContext, clusters: wireClusters }) }],
   });
   const bytes = Buffer.byteLength(request_body);
   if (bytes > SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.request_bytes) return fail("batch_capacity_exceeded");
@@ -181,9 +211,9 @@ export function buildSignalWorkspaceInterpretationBatchV1(
   // settled from the receipt even if larger, then ledger blocks further sends.
   const input_token_upper_bound = bytes * 4 + 8192;
   const reserved_micro_usd = signalWorkspaceInterpretationCostV1({ input_tokens: input_token_upper_bound,
-    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
-  const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 });
-  return { batch_key: `interpretation:${request_digest.slice(7)}`, request_digest, configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, configuration);
+  const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration });
+  return { batch_key: `interpretation:${request_digest.slice(7)}`, request_digest, configuration,
     context: safeContext, clusters, request_body, input_token_upper_bound, reserved_micro_usd };
 }
 /** A new, bounded editorial request; never a replay of an uncertain send.
@@ -193,7 +223,7 @@ export function buildSignalWorkspaceInterpretationRepairBatchV1(original: Signal
   source_call_id: string; source_response_sha256: string; diagnostic: "output_invalid";
 }): SignalWorkspaceInterpretationBatchV1 {
   if (original.editorial_repair) return fail("repair_invalid");
-  const expected = buildSignalWorkspaceInterpretationBatchV1(original.context, original.clusters);
+  const expected = buildSignalWorkspaceInterpretationBatchV1(original.context, original.clusters, original.configuration);
   if (signalWorkspaceEmbeddingDigestV1(expected) !== signalWorkspaceEmbeddingDigestV1(original)) return fail("repair_invalid");
   const editorial_repair = parseSignalWorkspaceInterpretationEditorialRepairV1({
     contract_version: "workspace-editorial-repair-v1", ...args, source_request_digest: original.request_digest,
@@ -208,7 +238,7 @@ export function buildSignalWorkspaceInterpretationRepairBatchV1(original: Signal
   if (bytes > SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.repair_request_bytes) return fail("batch_capacity_exceeded");
   const input_token_upper_bound = bytes * 4 + 8192;
   const reserved_micro_usd = signalWorkspaceInterpretationCostV1({ input_tokens: input_token_upper_bound,
-    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, original.configuration);
   const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration: original.configuration });
   return { ...expected, editorial_repair, request_body, request_digest, batch_key: `interpretation-repair:${request_digest.slice(7)}`,
     input_token_upper_bound, reserved_micro_usd };
@@ -219,24 +249,26 @@ function assertUnitOrder(keys: Iterable<string>) {
 }
 /** Caller streams ALL groups in C/ASCII order. No census/top-K limit or global materialization. */
 export function* batchSignalWorkspaceInterpretationV1(context: SignalWorkspaceInterpretationContextV1,
-  values: Iterable<SignalWorkspaceInterpretationClusterV1>): Generator<SignalWorkspaceInterpretationBatchV1> {
+  values: Iterable<SignalWorkspaceInterpretationClusterV1>,
+  configuration: SignalWorkspaceInterpretationConfigurationV1 = SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1): Generator<SignalWorkspaceInterpretationBatchV1> {
+  parseSignalWorkspaceInterpretationConfigurationV1(configuration);
   let pending: SignalWorkspaceInterpretationClusterV1[] = [], previous: string | null = null;
   for (const value of values) {
     const cluster = parseSignalWorkspaceInterpretationClusterV1(value);
     if (previous !== null && cluster.cluster_id <= previous) return fail("unit_order_invalid");
     previous = cluster.cluster_id;
     if (pending.length) {
-      try { buildSignalWorkspaceInterpretationBatchV1(context, [...pending, cluster]); }
+      try { buildSignalWorkspaceInterpretationBatchV1(context, [...pending, cluster], configuration); }
       catch (error) {
         if (!(error instanceof SignalWorkspaceInterpretationErrorV1) || !["workspace_engine_interpretation_batch_capacity_exceeded", "workspace_engine_interpretation_batch_invalid"].includes(error.code)) throw error;
-        yield buildSignalWorkspaceInterpretationBatchV1(context, pending); pending = [];
+        yield buildSignalWorkspaceInterpretationBatchV1(context, pending, configuration); pending = [];
       }
     }
     // Explicit error for an individually oversized group/context, never clipping.
-    if (!pending.length) buildSignalWorkspaceInterpretationBatchV1(context, [cluster]);
+    if (!pending.length) buildSignalWorkspaceInterpretationBatchV1(context, [cluster], configuration);
     pending.push(cluster);
   }
-  if (pending.length) yield buildSignalWorkspaceInterpretationBatchV1(context, pending);
+  if (pending.length) yield buildSignalWorkspaceInterpretationBatchV1(context, pending, configuration);
 }
 export function signalWorkspaceInterpretationUniverseDigestV1(keys: Iterable<string>): string {
   const hash = createHash("sha256"); let previous: string | null = null;
@@ -279,4 +311,29 @@ export function validateSignalWorkspaceInterpretationResultV1(batch: SignalWorks
       || !allowed.size && (result.status !== "insufficient" || result.inclusion.length || result.exclusion.length)) return fail("output_evidence_missing");
   }
   return parsed.data.interpretations.sort((a, b) => a.cluster_id < b.cluster_id ? -1 : a.cluster_id > b.cluster_id ? 1 : 0);
+}
+
+/** Decode provider-only short labels through the sealed group's reference map.
+ * Raw provider bytes stay unchanged; durable proposals contain canonical references.
+ * No edit-distance matching, fallback references or omitted output fields. */
+export function decodeSignalWorkspaceInterpretationProviderResultV1(batch: SignalWorkspaceInterpretationBatchV1,
+  value: unknown): SignalWorkspaceInterpretationV1[] {
+  const config = parseSignalWorkspaceInterpretationConfigurationV1(batch.configuration);
+  if (config.model === "claude-opus-5") return validateSignalWorkspaceInterpretationResultV1(batch, value);
+  const labels = z.array(z.string().regex(/^r[1-9][0-9]?$/u)).max(10).refine(items => new Set(items).size === items.length);
+  const wireCondition = z.object({ text: text(240), citations: labels.refine(items => items.length > 0) }).strict();
+  const wireInterpretation = interpretationSchema.extend({ citations: labels,
+    inclusion: z.array(wireCondition).max(8), exclusion: z.array(wireCondition).max(8) });
+  const parsed = z.object({ interpretations: z.array(wireInterpretation).max(4) }).strict().safeParse(value);
+  if (!parsed.success || parsed.data.interpretations.length !== batch.clusters.length) return fail("output_invalid");
+  const interpretations = parsed.data.interpretations.map(item => {
+    const cluster = batch.clusters.find(candidate => candidate.cluster_id === item.cluster_id);
+    if (!cluster) return fail("output_identity_invalid");
+    const allowed = new Map(cluster.representatives.map((reference, index) => [`r${index + 1}`, reference.ref_id]));
+    const resolve = (values: string[]) => values.map(label => allowed.get(label) ?? fail("citation_invalid"));
+    return { ...item, citations: resolve(item.citations),
+      inclusion: item.inclusion.map(condition => ({ ...condition, citations: resolve(condition.citations) })),
+      exclusion: item.exclusion.map(condition => ({ ...condition, citations: resolve(condition.citations) })) };
+  });
+  return validateSignalWorkspaceInterpretationResultV1(batch, { interpretations });
 }

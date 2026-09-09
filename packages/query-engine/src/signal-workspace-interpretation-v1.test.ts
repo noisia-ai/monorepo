@@ -5,11 +5,13 @@ import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-
 import {
   SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as configuration,
   SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1,
+  SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as legacyOpus,
+  parseSignalWorkspaceInterpretationConfigurationV1,
   batchSignalWorkspaceInterpretationV1, buildSignalWorkspaceInterpretationBatchV1,
   buildSignalWorkspaceInterpretationRepairBatchV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   parseSignalWorkspaceInterpretationClusterV1, signalWorkspaceInterpretationCostV1,
   signalWorkspaceInterpretationReferenceIdV1, signalWorkspaceInterpretationUniverseDigestV1,
-  validateSignalWorkspaceInterpretationResultV1,
+  validateSignalWorkspaceInterpretationResultV1, decodeSignalWorkspaceInterpretationProviderResultV1,
   type SignalWorkspaceInterpretationClusterV1,
 } from "./signal-workspace-interpretation-v1.js";
 const sha = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -50,7 +52,7 @@ test("request identities are stable across JSON property order, and seal members
   assert.notEqual(buildSignalWorkspaceInterpretationBatchV1(context, [{ ...value, cluster_digest: sha("different full membership") }]).batch_key, batch.batch_key);
   assert.notEqual(buildSignalWorkspaceInterpretationBatchV1({ ...context, context_digest: sha("changed") }, [value]).batch_key, batch.batch_key);
   const request = JSON.parse(batch.request_body);
-  assert.equal(request.model, "claude-opus-5"); assert.deepEqual(request.thinking, { type: "disabled" });
+  assert.equal(request.model, "claude-sonnet-4-6"); assert.deepEqual(request.thinking, { type: "disabled" });
   assert.equal(request.output_config.effort, "high"); assert.equal(request.max_tokens, 8192);
   assert.equal(request.tools, undefined); assert.equal(request.cache_control, undefined);
   assert.equal(request.system.includes("untrusted data"), true);
@@ -92,8 +94,8 @@ test("mixed remains explicit; insufficient may be empty with no invented evidenc
 test("conservative reserve includes entire serialized input and output cap; actual usage has exact integer pricing", () => {
   const batch = buildSignalWorkspaceInterpretationBatchV1(context, [cluster(1)]);
   assert.equal(batch.input_token_upper_bound, Buffer.byteLength(batch.request_body) * 4 + 8192);
-  assert.equal(batch.reserved_micro_usd, batch.input_token_upper_bound * 5 + 8192 * 25);
-  assert.equal(signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 }), 757);
+  assert.equal(batch.reserved_micro_usd, batch.input_token_upper_bound * 3 + 8192 * 15);
+  assert.equal(signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 }), 455);
   assert.throws(() => signalWorkspaceInterpretationCostV1({ input_tokens: -1, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }), /usage_invalid/u);
 });
 test("editorial repair preserves the entire packet and evidence authority with a distinct bounded request", () => {
@@ -113,7 +115,7 @@ test("editorial repair preserves the entire packet and evidence authority with a
   assert.deepEqual(buildSignalWorkspaceInterpretationRepairBatchV1(original, source), repair);
   assert.ok(Buffer.byteLength(repair.request_body) <= 102_400);
   assert.ok(repair.reserved_micro_usd > original.reserved_micro_usd);
-  assert.equal(repair.reserved_micro_usd, (Buffer.byteLength(repair.request_body) * 4 + 8192) * 5 + 8192 * 25);
+  assert.equal(repair.reserved_micro_usd, (Buffer.byteLength(repair.request_body) * 4 + 8192) * 3 + 8192 * 15);
   assert.equal(validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: groups.map(answer) }).length, 2);
   assert.throws(() => validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: [{ ...answer(groups[0]!), citations: ["x"] }] }), /output_invalid/u);
   assert.throws(() => validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: [answer(groups[0]!), { ...answer(groups[1]!), citations: answer(groups[0]!).citations }] }), /citation_invalid/u);
@@ -121,4 +123,57 @@ test("editorial repair preserves the entire packet and evidence authority with a
   assert.throws(() => buildSignalWorkspaceInterpretationRepairBatchV1({ ...original, reserved_micro_usd: 1 }, source), /repair_invalid/u);
   assert.throws(() => parseSignalWorkspaceInterpretationEditorialRepairV1({ ...repair.editorial_repair, protocol_digest: sha("unapproved protocol") }), /repair_invalid/u);
   assert.notEqual(buildSignalWorkspaceInterpretationRepairBatchV1(original, { ...source, source_response_sha256: sha("different receipt") }).request_digest, repair.request_digest);
+});
+
+test("Sonnet defaults do not change immutable Opus receipts or repair identities", () => {
+  const groups = [cluster(1)], sonnet = buildSignalWorkspaceInterpretationBatchV1(context, groups);
+  const old = buildSignalWorkspaceInterpretationBatchV1(context, groups, legacyOpus);
+  assert.equal(JSON.parse(old.request_body).model, "claude-opus-5");
+  assert.equal(JSON.parse(sonnet.request_body).model, "claude-sonnet-4-6");
+  assert.notEqual(old.request_digest, sonnet.request_digest);
+  assert.deepEqual(old.clusters, sonnet.clusters);
+  assert.deepEqual(old.context, sonnet.context);
+  assert.equal(old.reserved_micro_usd, old.input_token_upper_bound * 5 + 8192 * 25);
+  const usage = { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 };
+  assert.equal(signalWorkspaceInterpretationCostV1(usage, legacyOpus), 757);
+  assert.equal(signalWorkspaceInterpretationCostV1(usage, configuration), 455);
+  assert.deepEqual([...batchSignalWorkspaceInterpretationV1(context, groups, legacyOpus)], [old]);
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(old, {
+    source_call_id: "00000000-0000-4000-8000-000000000090", source_response_sha256: sha("old reply"), diagnostic: "output_invalid" });
+  assert.equal(repair.configuration, legacyOpus);
+  assert.equal(JSON.parse(repair.request_body).model, "claude-opus-5");
+  assert.equal(repair.reserved_micro_usd, repair.input_token_upper_bound * 5 + 8192 * 25);
+  assert.deepEqual(parseSignalWorkspaceInterpretationConfigurationV1(structuredClone(legacyOpus)), legacyOpus);
+  for (const invalid of [{ ...configuration, model: "claude-opus-5" }, { ...legacyOpus, output_micro_usd_per_million_tokens: 1 },
+    { ...configuration, pricing_version: "unverified" }, { ...configuration, extra: true }]) {
+    assert.throws(() => parseSignalWorkspaceInterpretationConfigurationV1(invalid), /config_mismatch/u);
+  }
+});
+
+test("short citation labels resolve only within the exact sealed group and never rewrite raw output", () => {
+  const a = cluster(1), b = cluster(2), batch = buildSignalWorkspaceInterpretationBatchV1(context, [a, b]);
+  const packet = JSON.parse(JSON.parse(batch.request_body).messages[0].content);
+  assert.equal(packet.clusters[0].representatives[0].ref_id, "r1");
+  assert.equal(packet.clusters[1].representatives[0].ref_id, "r1");
+  assert.equal(batch.clusters[0]!.representatives[0]!.ref_id, a.representatives[0]!.ref_id);
+  const wire = { interpretations: [a, b].map(row => ({ ...answer(row), citations: ["r1"],
+    inclusion: [{ text: "Delivery experiences", citations: ["r1"] }] })) };
+  const unchanged = JSON.stringify(wire);
+  const decoded = decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire);
+  assert.deepEqual(decoded.map(item => item.citations), [a.representatives.map(ref => ref.ref_id), b.representatives.map(ref => ref.ref_id)]);
+  assert.equal(JSON.stringify(wire), unchanged);
+  assert.deepEqual(validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: decoded }), decoded);
+  for (const invalid of ["r2", "r0", "r01", "R1", "r1 ", a.representatives[0]!.ref_id]) {
+    const changed = structuredClone(wire); changed.interpretations[0]!.citations = [invalid];
+    assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, changed), /citation|output_invalid/u);
+  }
+  const missing = structuredClone(wire); missing.interpretations[0]!.citations = [];
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, missing), /evidence_missing/u);
+  const duplicate = structuredClone(wire); duplicate.interpretations[0]!.citations = ["r1", "r1"];
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, duplicate), /output_invalid/u);
+  const extra = { interpretations: [{ ...wire.interpretations[0], approved: true }, wire.interpretations[1]] };
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, extra), /output_invalid/u);
+  const historical = buildSignalWorkspaceInterpretationBatchV1(context, [a], legacyOpus);
+  assert.deepEqual(decodeSignalWorkspaceInterpretationProviderResultV1(historical, { interpretations: [answer(a)] })[0]!.citations,
+    a.representatives.map(ref => ref.ref_id));
 });

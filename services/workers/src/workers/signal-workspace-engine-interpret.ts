@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   readSignalWorkspaceEngineInterpretationContextV1, checkpointSignalWorkspaceEngineFitV1,
   reserveSignalWorkspaceEngineInterpretationV1, markSignalWorkspaceEngineInterpretationSentV1,
   persistSignalWorkspaceEngineInterpretationResponseV1, settleSignalWorkspaceEngineInterpretationV1,
   failSignalWorkspaceEngineInterpretationV1, checkpointSignalWorkspaceEngineInterpretationV1,
+  readSignalWorkspaceEngineInterpretationCheckpointsV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
-  signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceInterpretationRepairBatchV1,
+  signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceInterpretationRepairBatchV1, buildSignalWorkspaceInterpretationBatchV1,
+  parseSignalWorkspaceInterpretationConfigurationV1,
+  validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
   type WorkspaceInterpretationResponseV1 } from "../providers/workspace-interpretation";
@@ -21,6 +24,7 @@ const stores = {
   reserve: reserveSignalWorkspaceEngineInterpretationV1, sent: markSignalWorkspaceEngineInterpretationSentV1,
   response: persistSignalWorkspaceEngineInterpretationResponseV1, settle: settleSignalWorkspaceEngineInterpretationV1,
   fail: failSignalWorkspaceEngineInterpretationV1, checkpoint: checkpointSignalWorkspaceEngineInterpretationV1,
+  checkpoints: readSignalWorkspaceEngineInterpretationCheckpointsV1,
   materialize: materializeSignalWorkspaceEngineTopicsV1, persist: persistSignalWorkspaceEngineArtifactV1,
   complete: completeSignalWorkspaceEngineAnalysisV1,
 };
@@ -38,13 +42,17 @@ export async function interpretWorkspaceEngineV1(args: {
   api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
-  const config = lease.snapshot.interpretation_config ?? fail("workspace_engine_interpretation_not_requested");
+  const config = lease.effective_interpretation_config ?? lease.snapshot.interpretation_config
+    ?? fail("workspace_engine_interpretation_not_requested");
+  const configuration = parseSignalWorkspaceInterpretationConfigurationV1(config.call_configuration);
   const universe = signalWorkspaceInterpretationUniverseDigestV1(args.clusters.map(item => item.cluster_id));
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });
   await args.heartbeat("interpreting");
   const context = await store.context({ database, lease });
   const proposals: Array<{ artifact_id: string; file: string }> = [];
-  for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, args.clusters)) {
+  const completedUnits = await restoreCheckpoints();
+  const remaining = args.clusters.filter(cluster => !completedUnits.has(cluster.cluster_id));
+  for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, remaining, configuration)) {
     await args.heartbeat("interpreting");
     if (signalWorkspaceEmbeddingDigestV1(originalBatch.configuration) !== signalWorkspaceEmbeddingDigestV1(config.call_configuration)) {
       return fail("workspace_engine_interpretation_config_mismatch");
@@ -95,6 +103,7 @@ export async function interpretWorkspaceEngineV1(args: {
       actor_user_id: context.actor_user_id, execution_token: lease.execution_token,
       idempotency_key: batch.batch_key, request_digest: batch.request_digest, configuration: config.call_configuration,
       reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
+      ...(lease.interpretation_revision_digest ? { interpretation_revision_digest: lease.interpretation_revision_digest } : {}),
       ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
     let call = await store.reserve(reservation);
     let transportAttempts = 0, confirmedTerminals = 0;
@@ -153,6 +162,60 @@ export async function interpretWorkspaceEngineV1(args: {
       return fail("workspace_engine_interpretation_outcome_unknown");
     }
     return { call, response };
+  }
+
+  async function restoreCheckpoints() {
+    const completed = new Set<string>(), known = new Map(args.clusters.map(cluster => [cluster.cluster_id, cluster]));
+    let after: string | null = null;
+    for (;;) {
+      await args.heartbeat("interpreting");
+      const page = await store.checkpoints({ database, lease, after_artifact_id: after, limit: 32 });
+      if (page.items.length > 32 || !page.done && (!page.items.length || page.next_artifact_id !== page.items.at(-1)?.artifact_id))
+        return fail("workspace_engine_interpretation_checkpoint_invalid");
+      for (const item of page.items) {
+        if (after !== null && item.artifact_id <= after || !Number.isSafeInteger(item.size_bytes)
+          || item.size_bytes <= 0 || item.size_bytes > 2 * 1024 * 1024 || item.media_type !== "application/json")
+          return fail("workspace_engine_interpretation_checkpoint_invalid");
+        after = item.artifact_id;
+        const path = join(args.directory, `checkpoint-${proposals.length}.json`);
+        await storage.get({ workspace_id: lease.workspace_id, execution_id: lease.execution_id, stored: item, destination: path });
+        if ((await stat(path)).size !== item.size_bytes) return fail("workspace_engine_interpretation_checkpoint_invalid");
+        const bytes = await readFile(path);
+        if (sha(bytes) !== item.sha256) return fail("workspace_engine_interpretation_checkpoint_invalid");
+        try {
+          const packet = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+          if (!packet || typeof packet !== "object" || Array.isArray(packet)
+            || Object.keys(packet).some(key => !["contract_version", "execution_id", "context", "clusters", "interpretations", "editorial_repair"].includes(key))
+            || packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
+            || signalWorkspaceEmbeddingDigestV1(packet.context) !== signalWorkspaceEmbeddingDigestV1(context.context)) throw new Error();
+          const historicalConfiguration = parseSignalWorkspaceInterpretationConfigurationV1(item.call_configuration);
+          const authorizedConfiguration = item.interpretation_revision_digest === null
+            ? lease.snapshot.interpretation_config?.call_configuration
+            : item.interpretation_revision_digest === lease.interpretation_revision_digest ? config.call_configuration : null;
+          if (!authorizedConfiguration || signalWorkspaceEmbeddingDigestV1(historicalConfiguration)
+            !== signalWorkspaceEmbeddingDigestV1(authorizedConfiguration)) throw new Error();
+          let batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters, historicalConfiguration);
+          if (packet.editorial_repair !== undefined) {
+            const repair = parseSignalWorkspaceInterpretationEditorialRepairV1(packet.editorial_repair);
+            const rebuilt = buildSignalWorkspaceInterpretationRepairBatchV1(batch, repair);
+            if (signalWorkspaceEmbeddingDigestV1(rebuilt.editorial_repair) !== signalWorkspaceEmbeddingDigestV1(repair)) throw new Error();
+            batch = rebuilt;
+          }
+          const unitKeys = batch.clusters.map(cluster => cluster.cluster_id);
+          if (JSON.stringify(unitKeys) !== JSON.stringify(item.unit_keys)) throw new Error();
+          for (const cluster of batch.clusters) {
+            if (completed.has(cluster.cluster_id) || !known.has(cluster.cluster_id)
+              || signalWorkspaceEmbeddingDigestV1(cluster) !== signalWorkspaceEmbeddingDigestV1(known.get(cluster.cluster_id))) throw new Error();
+          }
+          // Stored proposals already contain canonical SHA citations. Provider
+          // aliases never grant authority to a historical artifact or its text.
+          validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
+          for (const key of unitKeys) completed.add(key);
+        } catch { return fail("workspace_engine_interpretation_checkpoint_invalid"); }
+        proposals.push({ artifact_id: item.artifact_id, file: path });
+      }
+      if (page.done) return completed;
+    }
   }
 
   async function put(filename: string, content: Uint8Array | string) {

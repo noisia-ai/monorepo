@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1, type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1 } from "./signal-topic-catalog";
 import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
@@ -45,9 +45,21 @@ export type SignalWorkspaceEngineSnapshotV1 = {
   parent_execution_id: string | null; context_refs: unknown[]; engine_config: Record<string,unknown>; claude_cap_micro_usd: number;
   interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1;
 };
+export type SignalWorkspaceEngineInterpretationRevisionV1 = {
+  contract_version: "workspace-engine-interpretation-revision-v1"; revision_digest: string;
+  execution_id: string; workspace_id: string; actor_user_id: string; input_digest: string;
+  source_call_id: string; source_request_digest: string; source_response_sha256: string; source_configuration_digest: string;
+  configuration: SignalWorkspaceEngineAnalysisConfigV1; fit_checkpoint_digest: string;
+  retained_unit_manifest: SignalWorkspaceEngineUnitManifestV1; budget_date: string; admission_not_after: string; authorized_at: string;
+};
+export type SignalWorkspaceEngineInterpretationCheckpointV1 = {
+  artifact_id: string; artifact_key: string; storage_key: string; sha256: string; size_bytes: number; media_type: string;
+  unit_keys: string[]; call_id: string; call_configuration: SignalWorkspaceEngineInterpretationConfigurationV1; interpretation_revision_digest: string | null;
+};
 export type SignalWorkspaceEngineLeaseV1 = {
   execution_id: string; workspace_id: string; execution_token: string; input_digest: string;
   snapshot: SignalWorkspaceEngineSnapshotV1;
+  effective_interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1; interpretation_revision_digest?: string | null;
 };
 export type SignalWorkspaceEngineChunkV1 = {
   root_id: string; root_fingerprint: string; asset_sha256: string; expected_root_chunks: number;
@@ -143,7 +155,7 @@ const editorialRepairRecoveryPredicate = `execution.status='failed'
    AND source.catalog_execution_id=execution.id AND source.actor_user_id=execution.actor_user_id
    AND source.call_state='settled' AND source.response_storage_key IS NOT NULL AND source.response_http_status=200
    AND COALESCE((source.metadata->>'response_complete')::boolean,true) AND NOT (source.metadata ? 'editorial_repair')
-   AND source.call_configuration=execution.input_snapshot->'interpretation_config'->'call_configuration'
+   AND source.call_configuration=workspace_engine_interpretation_configuration_v1(execution.id,source.metadata->>'interpretation_revision_digest')
    AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id AND artifact.metadata->>'call_id'=source.id::text))
  AND (${outputBundlePredicate})`;
 const transportRecoveryPredicate = `execution.status='failed'
@@ -173,7 +185,7 @@ async function completeDispatch(client: PoolClient, execution_id: string) {
   await client.query(`UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),
     lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,[execution_id]);
 }
-type Run = { id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
+type Run = { interpretation_revision: SignalWorkspaceEngineInterpretationRevisionV1 | null; id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
   input_snapshot: SignalWorkspaceEngineSnapshotV1 & { guides: Array<Omit<SignalWorkspaceEngineGuideV1, "vector">> };
   execution_token: string | null; lease_live: boolean; revision_live: boolean; policy_live: boolean;
   result_summary: Record<string, unknown>; error_code: string | null; processed_roots: number; processed_chunks: string };
@@ -185,7 +197,7 @@ async function lockedRun(client: PoolClient, id: string): Promise<Run> {
     execution.input_snapshot-'guides' input_snapshot,execution.execution_token,execution.execution_expires_at>clock_timestamp() lease_live,
     state.input_revision=execution.input_revision revision_live,
     (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
-    execution.result_summary,execution.error_code,execution.processed_roots,execution.processed_chunks::text
+    execution.result_summary,execution.interpretation_revision,execution.error_code,execution.processed_roots,execution.processed_chunks::text
     FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
     WHERE execution.id=$1::uuid AND execution.input_contract='workspace-topic-engine-v1' FOR UPDATE OF execution`, [id])).rows[0];
   if (!row) return fail("workspace_engine_not_found", 404); return row;
@@ -204,7 +216,9 @@ async function requireLease(client: PoolClient, lease: SignalWorkspaceEngineLeas
   await authorize(client, run.workspace_id, run.actor_user_id); await current(client, run, full); return run;
 }
 const leaseView = (run: Run, token: string): SignalWorkspaceEngineLeaseV1 => ({execution_id:run.id,workspace_id:run.workspace_id,
-  execution_token:token,input_digest:run.input_digest,snapshot:publicSnapshot(run.input_snapshot)});
+  execution_token:token,input_digest:run.input_digest,snapshot:publicSnapshot(run.input_snapshot),
+  effective_interpretation_config:run.interpretation_revision?.configuration??run.input_snapshot.interpretation_config,
+  interpretation_revision_digest:run.interpretation_revision?.revision_digest??null});
 function publicSnapshot(snapshot: Run["input_snapshot"]): SignalWorkspaceEngineSnapshotV1 { const {guides:_guides,...rest}=snapshot; return rest; }
 async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, actor: string) {
   const interestOptions={input_interests_only:true};
@@ -514,11 +528,11 @@ export async function checkpointSignalWorkspaceEngineInterpretationV1(args:{data
   return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true),config=run.input_snapshot.interpretation_config;
     const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
     if(!fit||!config)return fail('workspace_engine_fit_checkpoint_required');
-    const call=(await client.query<{response_sha256:string;call_configuration:unknown;call_state:string}>(`SELECT response_sha256,call_configuration,call_state
+    const call=(await client.query<{response_sha256:string;call_configuration:unknown;call_state:string;authorized_configuration:unknown}>(`SELECT response_sha256,call_configuration,call_state,workspace_engine_interpretation_configuration_v1(catalog_execution_id,metadata->>'interpretation_revision_digest') authorized_configuration
       FROM engine_cost_events WHERE id=$1::uuid AND workspace_id=$2::uuid AND catalog_execution_id=$3::uuid
        AND workspace_contract='workspace-engine-interpretation-v1'`,[args.call_id,run.workspace_id,run.id])).rows[0];
     if(!call||call.call_state!=='settled'||!call.response_sha256
-      ||signalWorkspaceEmbeddingDigestV1(call.call_configuration)!==signalWorkspaceEmbeddingDigestV1(config.call_configuration))return fail('workspace_engine_interpretation_receipt_required');
+      ||signalWorkspaceEmbeddingDigestV1(call.call_configuration)!==signalWorkspaceEmbeddingDigestV1(call.authorized_configuration))return fail('workspace_engine_interpretation_receipt_required');
     const artifact={...args.artifact,metadata:{...args.artifact.metadata,contract_version:'workspace-engine-interpretation-checkpoint-v1',
       execution_id:run.id,fit_checkpoint_digest:fit.checkpoint_digest,call_id:args.call_id,response_sha256:call.response_sha256,unit_keys:[...args.unit_keys].sort()}};
     const saved=await persistArtifact(client,run,artifact),coverage=await interpretationCoverage(client,run),expected=fit.interpretation_manifest;
@@ -721,4 +735,73 @@ export async function readSignalWorkspaceEngineCheckpointV1(args:{database:Signa
       SELECT id artifact_id,artifact_key,content,metadata FROM analysis_artifacts WHERE engine_execution_id=$1::uuid
        AND workspace_id=$2::uuid AND artifact_type='engine_output' AND artifact_key='manifest.json' LIMIT 1`,[run.id,run.workspace_id])).rows[0]??null;
   });
+}
+
+/** Read immutable completed editorial units; object SHA and packet validation
+ * remain mandatory before their bytes can be used by the Worker/materializer. */
+export async function readSignalWorkspaceEngineInterpretationCheckpointsV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;
+ after_artifact_id?:string|null;limit?:number}):Promise<{items:SignalWorkspaceEngineInterpretationCheckpointV1[];next_artifact_id:string|null;done:boolean}>{
+ const limit=args.limit??32;if(!Number.isInteger(limit)||limit<1||limit>32)return fail('workspace_engine_page_invalid',422);
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+  if(!run.result_summary.fit_checkpoint)return fail('workspace_engine_fit_checkpoint_required');
+  const rows=(await client.query<{artifact_id:string;artifact_key:string;content:{storage_key:string;sha256:string;size_bytes:number;media_type:string};
+   unit_keys:string[];call_id:string;call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;interpretation_revision_digest:string|null;valid:boolean}>(`
+   SELECT artifact.id artifact_id,artifact.artifact_key,artifact.content,artifact.metadata->'unit_keys' unit_keys,
+    call.id call_id,call.call_configuration,call.metadata->>'interpretation_revision_digest' interpretation_revision_digest,
+    COALESCE(call.call_state='settled' AND call.response_sha256=artifact.metadata->>'response_sha256'
+     AND call.actor_user_id=$3::uuid AND call.call_configuration=workspace_engine_interpretation_configuration_v1(call.catalog_execution_id,call.metadata->>'interpretation_revision_digest')
+     AND artifact.metadata->>'fit_checkpoint_digest'=$4,false) valid
+   FROM analysis_artifacts artifact LEFT JOIN engine_cost_events call ON call.id=(artifact.metadata->>'call_id')::uuid
+    AND call.catalog_execution_id=artifact.engine_execution_id AND call.workspace_id=artifact.workspace_id
+   WHERE artifact.workspace_id=$1::uuid AND artifact.engine_execution_id=$2::uuid AND artifact.artifact_type='engine_proposals'
+    AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
+    AND ($5::uuid IS NULL OR artifact.id>$5::uuid) ORDER BY artifact.id LIMIT $6`,
+   [run.workspace_id,run.id,run.actor_user_id,(run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1).checkpoint_digest,args.after_artifact_id??null,limit+1])).rows;
+  if(rows.some(row=>!row.valid))return fail('workspace_engine_interpretation_receipt_required');
+  const page=rows.slice(0,limit),items=page.map(row=>({artifact_id:row.artifact_id,artifact_key:row.artifact_key,...row.content,
+   unit_keys:row.unit_keys,call_id:row.call_id,call_configuration:row.call_configuration,interpretation_revision_digest:row.interpretation_revision_digest}));
+  return{items,next_artifact_id:items.at(-1)?.artifact_id??null,done:rows.length<=limit};
+ });
+}
+/** Explicit, bounded model rollover. The original request and all metered calls
+ * remain immutable; this action cannot create a new execution or release cost. */
+export async function reviseSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;
+ execution_id:string;idempotency_key:string;source_call_id:string;configuration:SignalWorkspaceEngineAnalysisConfigV1;admission_not_after:string}):Promise<{execution_id:string;revision_digest:string;replayed:boolean}>{
+ if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(args.admission_not_after))return fail('workspace_engine_revision_invalid',422);
+ const profile=parseSignalWorkspaceInterpretationConfigurationV1(args.configuration.call_configuration);
+ if(signalWorkspaceEmbeddingDigestV1(profile)!==signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1))return fail('workspace_engine_revision_model_invalid',422);
+ const requestDigest=signalWorkspaceEmbeddingDigestV1({action:'revise_interpretation',execution_id:args.execution_id,source_call_id:args.source_call_id,
+  configuration:args.configuration,admission_not_after:args.admission_not_after});
+ return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id);
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`workspace-interpretation-budget:${args.actor_user_id}`]);
+  const run=await lockedRun(client,args.execution_id);if(run.workspace_id!==args.workspace_id||run.actor_user_id!==args.actor_user_id)return fail('workspace_engine_forbidden',403);
+  await current(client,run,true);
+  const prior=(await client.query<{id:string;alias:{actor_user_id:string;request_digest:string}|null}>(`SELECT id,engine_request_keys->$2 alias
+   FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)`,[args.workspace_id,args.idempotency_key])).rows[0];
+  if(prior&&(prior.id!==run.id||prior.alias?.actor_user_id!==args.actor_user_id||prior.alias?.request_digest!==requestDigest))return fail('workspace_engine_idempotency_conflict');
+  if(run.interpretation_revision){const r=run.interpretation_revision;
+   if(r.source_call_id!==args.source_call_id||r.admission_not_after!==args.admission_not_after||signalWorkspaceEmbeddingDigestV1(r.configuration)!==signalWorkspaceEmbeddingDigestV1(args.configuration))return fail('workspace_engine_revision_exhausted');
+   if(!prior)await client.query("UPDATE signal_topic_catalog_executions SET engine_request_keys=engine_request_keys||jsonb_build_object($2::text,$3::jsonb) WHERE id=$1::uuid",[run.id,args.idempotency_key,JSON.stringify({actor_user_id:args.actor_user_id,request_digest:requestDigest})]);
+   return{execution_id:run.id,revision_digest:r.revision_digest,replayed:true};
+  }
+  if(run.status!=='failed'||run.error_code!=='workspace_engine_interpretation_repair_invalid')return fail('workspace_engine_revision_unavailable');
+  const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;if(!fit)return fail('workspace_engine_fit_checkpoint_required');
+  const source=(await client.query<{request_digest:string;response_sha256:string;call_configuration:unknown;budget_date:string}>(`SELECT request_digest,response_sha256,call_configuration,budget_date::text
+   FROM engine_cost_events WHERE id=$1::uuid AND workspace_id=$2::uuid AND catalog_execution_id=$3::uuid AND actor_user_id=$4::uuid FOR UPDATE`,
+   [args.source_call_id,run.workspace_id,run.id,run.actor_user_id])).rows[0];if(!source)return fail('workspace_engine_revision_source_invalid');
+  const retained=await interpretationCoverage(client,run),clock=(await client.query<{now:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now`)).rows[0]!.now;
+  const body={contract_version:'workspace-engine-interpretation-revision-v1' as const,execution_id:run.id,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,input_digest:run.input_digest,
+   source_call_id:args.source_call_id,source_request_digest:source.request_digest,source_response_sha256:source.response_sha256,
+   source_configuration_digest:signalWorkspaceEmbeddingDigestV1(source.call_configuration),configuration:args.configuration,
+   fit_checkpoint_digest:fit.checkpoint_digest,retained_unit_manifest:retained,budget_date:source.budget_date,admission_not_after:args.admission_not_after,authorized_at:clock};
+  const revision={...body,revision_digest:signalWorkspaceEmbeddingDigestV1(body)};
+  const updated=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET interpretation_revision=$2::jsonb,
+   status='queued',error_code=NULL,completed_at=NULL,execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
+   engine_request_keys=engine_request_keys||jsonb_build_object($3::text,$4::jsonb),
+   result_summary=result_summary||'{"phase":"queued","interpretation_evidence_checkpoint_required":true}'::jsonb,updated_at=clock_timestamp()
+   WHERE id=$1::uuid RETURNING dispatch_generation`,[run.id,JSON.stringify(revision),args.idempotency_key,JSON.stringify({actor_user_id:args.actor_user_id,request_digest:requestDigest})])).rows[0]!;
+  await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
+   completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE execution_id=$1::uuid`,[run.id,`workspace-engine-${run.id}-${updated.dispatch_generation}`]);
+  return{execution_id:run.id,revision_digest:revision.revision_digest,replayed:false};
+ });
 }

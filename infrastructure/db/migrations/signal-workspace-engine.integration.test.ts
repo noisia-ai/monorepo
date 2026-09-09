@@ -4,7 +4,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import type {Pool,PoolClient} from 'pg';
-import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile,SIGNAL_WORKSPACE_ENGINE_JOB_V1,SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1} from '@noisia/query-engine';
+import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile,SIGNAL_WORKSPACE_ENGINE_JOB_V1,SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1,SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as opus,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as embeddings from '../signal-workspace-embeddings';
 import * as money from '../signal-workspace-engine-interpretation';
@@ -788,5 +788,124 @@ test('external provider terminal evidence retains cost reserves and permits one 
   budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.reserved_micro_usd,820);assert.equal(budget.terminal_reserved_micro_usd,820);assert.equal(budget.confirmed_micro_usd,150);
   assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0],sourceBefore);
   assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND metadata ? 'editorial_repair' AND retry_of_call_id IS NULL",[started.execution_id])).rows[0].n,1);
+ }finally{await f.cleanup();}
+});
+
+test('editorial model revision preserves historical checkpoints and terminal reserves in the same execution', {skip:!enabled,timeout:120_000},async()=>{
+ const f=await fixture();try{
+  for(const file of ['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql','0143_signal_workspace_editorial_revision.sql'])
+   await f.query(readFileSync(new URL(`./${file}`,import.meta.url),'utf8'));
+  await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const configuration=opus;
+  const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
+   expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'editorial-repair'},claude_cap_micro_usd:10_000,
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:10_000}});
+  const claim=async()=>{const value=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-editorial-repair'});assert.ok(value);return value;};
+  const lease=await claim(),coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
+  await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'persisting',exported:{...coverage,stream_digest:sha('unchanged numerical export')}});
+  const bundle=['manifest.json','model-manifest.json','model.open.joblib','clusters.open.json','assignments.open.jsonl','roots.jsonl'].map(name=>({
+   name,storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/${name}.parts.json`,sha256:sha(name),size_bytes:10,media_type:'application/octet-stream'}));
+  const ids=new Map<string,string>();for(const file of bundle){const saved=await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:{
+   artifact_key:file.name,artifact_type:file.name==='model-manifest.json'||file.name.endsWith('.joblib')?'engine_model':'engine_output',title:file.name,
+   storage_key:file.storage_key,sha256:file.sha256,size_bytes:file.size_bytes,media_type:file.media_type,metadata:{filename:file.name,...(file.name==='manifest.json'?{bundle}:{})}}});ids.set(file.name,saved.artifact_id);}
+  await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease,coverage,model_artifact_id:ids.get('model-manifest.json')!,output_artifact_id:ids.get('manifest.json')!,
+   result_kind:'computational_grouping',model_configuration:{fixture:'editorial-repair'},runtime_kind:'python',artifact_format:'joblib',license_key:null,
+   interpretation_manifest:{unit_count:2,unit_digest:sha('"open:old"\n"open:pending"\n')}});
+
+  let activeLease=lease;
+  const {buildSignalWorkspaceInterpretationBatchV1,signalWorkspaceInterpretationReferenceIdV1}=await import('@noisia/query-engine');
+  const {materializeSignalWorkspaceEngineTopicsV1}=await import('../signal-topic-catalog');
+  const governed=await engine.readSignalWorkspaceEngineInterpretationContextV1({database:f.database,lease});
+  const example=(await engine.readSignalWorkspaceEngineChunksV1({database:f.database,lease,after:null,limit:1})).items[0]!;
+  const ref={root_id:example.root_id,chunk_index:example.chunk_index,start:example.start,end:example.end,chunk_sha256:example.chunk_sha256};
+  const ref_id=signalWorkspaceInterpretationReferenceIdV1(ref);
+  const packet=(key:string,configuration:typeof opus|typeof sonnet)=>{const batch=buildSignalWorkspaceInterpretationBatchV1(governed.context,[{
+   cluster_id:key,lane:'open',cluster_digest:sha(key),root_count:1,chunk_count:1,terms:['local evidence'],representatives:[{...ref,ref_id,text:example.text,strength:0.8,selection_reason:'high_affiliation'}]}],configuration);
+   return{batch,body:JSON.stringify({contract_version:'workspace-engine-interpretation-result-v1',execution_id:started.execution_id,context:batch.context,clusters:batch.clusters,
+    interpretations:[{cluster_id:key,cluster_digest:sha(key),status:'coherent',name:'Local evidence',definition:'A local conversation supported by the referenced fragment.',
+     inclusion:[{text:'The referenced conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]})};};
+  const oldPacket=packet('open:old',opus),newPacket=packet('open:pending',sonnet);
+
+  const reserve=(key:string,configuration=opus,editorial_repair?:money.SignalWorkspaceEngineEditorialRepairV1,retry_of_call_id?:string)=>
+   money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:activeLease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:10_000,
+    idempotency_key:key,request_digest:key==='original-valid-unit'?oldPacket.batch.request_digest:sha(key.replace(/:retry:.+$/u,'')),reserved_micro_usd:2000,...editorial_repair?{editorial_repair}:{},...retry_of_call_id?{retry_of_call_id}:{}});
+  const token=(call:money.SignalWorkspaceEngineInterpretationCallV1)=>({database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:activeLease.execution_token});
+  const settle=async(call:money.SignalWorkspaceEngineInterpretationCallV1)=>{await money.markSignalWorkspaceEngineInterpretationSentV1(token(call));
+   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token(call),response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/${call.call_id}.parts.json`,
+    sha256:sha(call.call_id),size_bytes:29,http_status:200,provider_request_id:null,complete:true}});
+   return money.settleSignalWorkspaceEngineInterpretationV1({...token(call),usage:{input_tokens:1,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0}});};
+  const checkpoint=async(call:money.SignalWorkspaceEngineInterpretationCallV1,key:string)=>engine.checkpointSignalWorkspaceEngineInterpretationV1({database:f.database,lease:activeLease,call_id:call.call_id,unit_keys:[key],artifact:{
+   artifact_type:'engine_proposals',artifact_key:`interpretation-${call.call_id}.json`,title:'Fixture interpretation',metadata:{},storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/interpretation-${call.call_id}.parts.json`,sha256:sha(key==='open:old'?oldPacket.body:newPacket.body),size_bytes:Buffer.byteLength(key==='open:old'?oldPacket.body:newPacket.body),media_type:'application/json'}});
+  const valid=await settle(await reserve('original-valid-unit'));const saved=await checkpoint(valid,'open:old');
+  const source=await settle(await reserve('original-invalid-unit'));
+  const repair:money.SignalWorkspaceEngineEditorialRepairV1={contract_version:'workspace-editorial-repair-v1',source_call_id:source.call_id,source_request_digest:source.request_digest,
+   source_response_sha256:source.response!.sha256,diagnostic:'output_invalid',protocol_digest:SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1};
+  const terminal=await reserve('repair-invalid-unit',opus,repair);await money.markSignalWorkspaceEngineInterpretationSentV1(token(terminal));
+  await money.failSignalWorkspaceEngineInterpretationV1({...token(terminal),outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:activeLease,error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+  const terminalRow=(await f.query('SELECT sent_at FROM engine_cost_events WHERE id=$1::uuid',[terminal.call_id])).rows[0];
+  await f.query("UPDATE users SET primary_role='noisia_admin' WHERE id=$1::uuid",[f.actor_user_id]);
+  await money.reconcileSignalWorkspaceEngineTerminalV1({database:f.database,workspace_id:f.workspace_id,...started,call_id:terminal.call_id,attempt_token:terminal.attempt_token,
+   expected_request_digest:terminal.request_digest,verifier_user_id:f.actor_user_id,terminal:{source:'anthropic_console',provider_model:opus.model,provider_request_id:`req_${randomUUID().replaceAll('-','')}`,
+    started_at:new Date(terminalRow.sent_at).toISOString(),ended_at:new Date(terminalRow.sent_at).toISOString(),http_status:499,reason:'client_disconnected',
+    usage:{input_tokens:1,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0},evidence:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/observation.parts.json`,sha256:sha('external evidence'),size_bytes:200}}});
+  await engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:randomUUID()});activeLease=await claim();
+  const exhausted=await settle(await reserve(`repair-invalid-unit:retry:${terminal.call_id}`,opus,repair,terminal.call_id));
+  for(const state of ['reserved','in_flight','outcome_unknown'] as const){
+   await f.query('SAVEPOINT unresolved_revision');try{const blocked=await reserve(`blocking-${state}`);
+    if(state!=='reserved')await money.markSignalWorkspaceEngineInterpretationSentV1(token(blocked));
+    if(state==='outcome_unknown')await money.failSignalWorkspaceEngineInterpretationV1({...token(blocked),outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
+    await engine.failSignalWorkspaceEngineV1({database:f.database,lease:activeLease,error_code:'workspace_engine_interpretation_repair_invalid'});
+    await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...f.access,...started,idempotency_key:randomUUID(),source_call_id:exhausted.call_id,
+     configuration:{call_configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000},admission_not_after:new Date(Date.now()+600_000).toISOString()}),/revision authority/u);
+   }finally{await f.query('ROLLBACK TO SAVEPOINT unresolved_revision');await f.query('RELEASE SAVEPOINT unresolved_revision');}
+  }
+  await engine.failSignalWorkspaceEngineV1({database:f.database,lease:activeLease,error_code:'workspace_engine_interpretation_repair_invalid'});
+  const originalSnapshot=(await f.query('SELECT input_snapshot,request_digest FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
+  const beforeCalls=(await f.query('SELECT * FROM engine_cost_events WHERE catalog_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows;
+  const beforeArtifacts=(await f.query('SELECT * FROM analysis_artifacts WHERE engine_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows;
+  const request={...f.access,...started,idempotency_key:randomUUID(),source_call_id:exhausted.call_id,configuration:{call_configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000},admission_not_after:new Date(Date.now()+600_000).toISOString()};
+  await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...request,source_call_id:source.call_id}),/revision authority/u);
+  await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...request,actor_user_id:randomUUID()}),/forbidden/u);
+  await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...request,admission_not_after:new Date(Date.now()-1000).toISOString()}),/revision authority/u);
+  await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...request,configuration:{...request.configuration,daily_cap_micro_usd:20_000}}),/revision authority/u);
+  await f.query('SAVEPOINT stale_revision');try{
+   await f.query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[f.workspace_id]);
+   await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1(request),/inputs_stale/u);
+  }finally{await f.query('ROLLBACK TO SAVEPOINT stale_revision');await f.query('RELEASE SAVEPOINT stale_revision');}
+  await f.query('SAVEPOINT expiring_revision');try{
+   const brief=await engine.reviseSignalWorkspaceEngineInterpretationV1({...request,admission_not_after:new Date(Date.now()+1000).toISOString()});
+   const shortLease=await claim();const pending=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:shortLease.execution_token,
+    configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000,idempotency_key:'short-sonnet-grant',request_digest:sha('short grant'),reserved_micro_usd:1000,interpretation_revision_digest:brief.revision_digest});
+   await new Promise(resolve=>setTimeout(resolve,1100));
+   await assert.rejects(money.markSignalWorkspaceEngineInterpretationSentV1({database:f.database,call_id:pending.call_id,attempt_token:pending.attempt_token,execution_token:shortLease.execution_token}),/grant is unavailable/u);
+  }finally{await f.query('ROLLBACK TO SAVEPOINT expiring_revision');await f.query('RELEASE SAVEPOINT expiring_revision');}
+  const revised=await engine.reviseSignalWorkspaceEngineInterpretationV1(request);assert.equal(revised.execution_id,started.execution_id);assert.equal(revised.replayed,false);
+  assert.equal((await engine.reviseSignalWorkspaceEngineInterpretationV1(request)).replayed,true);
+  await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1({...request,source_call_id:source.call_id}),/idempotency_conflict/u);
+  assert.deepEqual((await f.query('SELECT input_snapshot,request_digest FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0],originalSnapshot);
+  assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE catalog_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows,beforeCalls);
+  assert.deepEqual((await f.query('SELECT * FROM analysis_artifacts WHERE engine_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows,beforeArtifacts);
+  activeLease=await claim();assert.equal(activeLease.snapshot.interpretation_config!.call_configuration.model,opus.model);
+  assert.equal(activeLease.effective_interpretation_config!.call_configuration.model,sonnet.model);assert.equal(activeLease.interpretation_revision_digest,revised.revision_digest);
+  const checkpoints=await engine.readSignalWorkspaceEngineInterpretationCheckpointsV1({database:f.database,lease:activeLease,limit:1});
+  assert.equal(checkpoints.done,true);assert.equal(checkpoints.items[0]!.artifact_id,saved.artifact_id);assert.equal(checkpoints.items[0]!.call_configuration.model,opus.model);
+  await assert.rejects(engine.readSignalWorkspaceEngineInterpretationCheckpointsV1({database:f.database,lease:{...activeLease,workspace_id:randomUUID()}}),/lease_conflict/u);
+  const next={...f.access,...started,execution_token:activeLease.execution_token,configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000,
+   idempotency_key:'sonnet-pending-unit',request_digest:newPacket.batch.request_digest,reserved_micro_usd:1000,interpretation_revision_digest:revised.revision_digest};
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...next,interpretation_revision_digest:undefined}),/revision_mismatch/u);
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...next,configuration:opus}),/config_mismatch/u);
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...next,reserved_micro_usd:8000}),/run_cap_exceeded/u);
+  const newCall=await money.reserveSignalWorkspaceEngineInterpretationV1(next);assert.equal(newCall.interpretation_revision_digest,revised.revision_digest);
+  assert.deepEqual(await money.reserveSignalWorkspaceEngineInterpretationV1(next),newCall);
+  await f.query('BEGIN');try{await assert.rejects(f.query("UPDATE engine_cost_events SET metadata=metadata-'interpretation_revision_digest' WHERE id=$1::uuid",[newCall.call_id]),/revision is immutable/u);}finally{await f.query('ROLLBACK');}
+  const finalCall=await settle(newCall);const newSaved=await checkpoint(finalCall,'open:pending');
+  const all=await engine.readSignalWorkspaceEngineInterpretationCheckpointsV1({database:f.database,lease:activeLease});assert.equal(all.items.length,2);
+  assert.deepEqual(new Set(all.items.map(row=>row.call_configuration.model)),new Set([opus.model,sonnet.model]));
+  const mixed=await materializeSignalWorkspaceEngineTopicsV1({database:f.database,lease:activeLease,proposals:(async function*(){yield{artifact_id:saved.artifact_id,body:oldPacket.body};yield{artifact_id:newSaved.artifact_id,body:newPacket.body};})()});
+  assert.equal(mixed.topic_count,2,'canonical old and new profiles materialize together without reinterpreting historical units');
+  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+  assert.equal(budget.confirmed_micro_usd,108);assert.equal(budget.reserved_micro_usd,2000);assert.equal(budget.terminal_reserved_micro_usd,2000);assert.equal(budget.unknown_reserved_micro_usd,0);
+  await f.query('BEGIN');try{await assert.rejects(f.query("UPDATE signal_topic_catalog_executions SET interpretation_revision=NULL WHERE id=$1::uuid",[started.execution_id]),/immutable/u);}finally{await f.query('ROLLBACK');}
  }finally{await f.cleanup();}
 });

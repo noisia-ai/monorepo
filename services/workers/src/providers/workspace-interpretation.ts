@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import {
-  SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
   SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1,
   buildSignalWorkspaceInterpretationBatchV1,
   buildSignalWorkspaceInterpretationRepairBatchV1,
   signalWorkspaceEmbeddingDigestV1,
-  validateSignalWorkspaceInterpretationResultV1,
+  decodeSignalWorkspaceInterpretationProviderResultV1,
   type SignalWorkspaceInterpretationBatchV1,
   type SignalWorkspaceInterpretationUsageV1,
   type SignalWorkspaceInterpretationV1,
@@ -64,7 +63,7 @@ export function validateWorkspaceInterpretationReceiptV1(
   if (!body) return { ...result, error_code: "workspace_engine_interpretation_response_invalid" };
   // A different/absent reported model cannot be settled at this sealed model's
   // rates. Its raw usage remains durable for explicit cost reconciliation.
-  if (body.model !== SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model) {
+  if (body.model !== batch.configuration.model) {
     return { ...result, error_code: "workspace_engine_interpretation_response_model_invalid" };
   }
   result.usage = usageOf(body.usage);
@@ -81,7 +80,7 @@ export function validateWorkspaceInterpretationReceiptV1(
     return { ...result, error_code: "workspace_engine_interpretation_output_invalid" };
   }
   try {
-    result.interpretations = validateSignalWorkspaceInterpretationResultV1(batch, JSON.parse(texts[0].text));
+    result.interpretations = decodeSignalWorkspaceInterpretationProviderResultV1(batch, JSON.parse(texts[0].text));
     return { ...result, outcome: "validated" };
   } catch { return { ...result, error_code: "workspace_engine_interpretation_output_invalid" }; }
 }
@@ -123,7 +122,7 @@ export async function sendWorkspaceInterpretationV1(args: {
 }): Promise<WorkspaceInterpretationResponseV1> {
   let requestBody: string;
   try {
-    const original = buildSignalWorkspaceInterpretationBatchV1(args.batch.context, args.batch.clusters);
+    const original = buildSignalWorkspaceInterpretationBatchV1(args.batch.context, args.batch.clusters, args.batch.configuration);
     const expected = args.batch.editorial_repair
       ? buildSignalWorkspaceInterpretationRepairBatchV1(original, {
         source_call_id: args.batch.editorial_repair.source_call_id,
@@ -133,6 +132,9 @@ export async function sendWorkspaceInterpretationV1(args: {
     if (signalWorkspaceEmbeddingDigestV1(expected) !== signalWorkspaceEmbeddingDigestV1(args.batch)) throw new Error();
     requestBody = expected.request_body;
   } catch { throw transportError("request_invalid", "definitely_not_sent"); }
+  // Historical receipts remain readable, but the current spending grant admits
+  // only Sonnet. Reject before the ledger send CAS or any provider interaction.
+  if (args.batch.configuration.model !== "claude-sonnet-4-6") throw transportError("provider_model_disabled", "definitely_not_sent");
   if (!args.provider_enabled) throw transportError("provider_disabled", "definitely_not_sent");
   if (!args.api_key || !/^[A-Za-z0-9_-]{16,512}$/u.test(args.api_key)) throw transportError("provider_configuration_invalid", "definitely_not_sent");
   const timeout = args.timeout_ms === undefined ? requestTimeoutMs : args.timeout_ms;

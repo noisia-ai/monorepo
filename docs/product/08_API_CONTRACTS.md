@@ -2893,3 +2893,7 @@ The existing workspace analysis response projects `transport_recovery_eligible` 
 The browser cannot confirm provider termination or submit an evidence assertion through this contract. The operational server function `reconcileSignalWorkspaceEngineTerminalV1` requires a current internal administrator with workspace execution access and a scoped private observation. It records evidence without enqueueing work, inventing response bytes, settling the original charge or reserving a successor. Resume and provider send each revalidate their existing authorities independently.
 
 A dated operational grant can set Worker environment `NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL` to a canonical UTC timestamp with milliseconds. It prevents new sends after expiry and preserves responses from requests already admitted. It is not a browser-controlled budget override and does not modify the provider request body.
+
+### Interpretación con Sonnet 4.6 — continuación de la misma ejecución
+
+Nuevas interpretaciones usan Sonnet 4.6. La revisión editorial es una operación interna autorizada, idempotente y acotada; no agrega endpoint público para alterar recibos. El Worker recibe configuración efectiva fuera del snapshot original, recupera checkpoints verificados y envía sólo unidades pendientes. Las referencias cortas del proveedor se resuelven a citas canónicas del mismo grupo; JSON original y contabilidad se conservan. El catálogo exige cobertura completa y selección individual para Signal. [ADR029](../adr/029-workspace-interpretation-model-revision.md).

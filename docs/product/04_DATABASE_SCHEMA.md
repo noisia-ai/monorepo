@@ -2475,3 +2475,7 @@ Ver ADR027 y el recibo local de integración; esto no declara SQL0140 aplicado e
 The request index excludes both definitely-not-sent attempts and confirmed terminals so one exact transport successor can exist. Existing successor uniqueness, actor/lease/input authority and aggregate caps remain enforced. SQL0142 limits traversal to one confirmed terminal per logical request, requires the exact numerical bundle and blocks an additional unresolved call. A successor retains the same editorial repair identity and reserves separately; no second editorial repair is created.
 
 Budget readers expose `terminal_reserved_micro_usd` as a subset of `reserved_micro_usd`. It is neither a settled charge nor added twice to exposure. Confirming terminal transport does not settle an invoice or create an interpretation. See ADR028 and the focal delivery receipt for runtime status.
+
+### Revisión editorial de interpretación — SQL0143
+
+Una columna `interpretation_revision` en la ejecución conserva una transición explícita y única de Opus a Sonnet 4.6 tras reparación inválida. Snapshot original, artefactos y recibos permanecen inmutables. Cada llamada nueva identifica la revisión; los límites suman también los costos y reservas anteriores. La revisión exige fuente settled, inputs vigentes, ausencia de llamadas pendientes y admisión con fecha. [ADR029](../adr/029-workspace-interpretation-model-revision.md).
