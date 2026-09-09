@@ -1,3 +1,4 @@
+import { AdminSourceCaptureScopes } from "@/components/admin/AdminSourceCaptureScopes";
 import Link from "next/link";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { ArrowRight, Gauge, Plus, Tag } from "@phosphor-icons/react/dist/ssr";
@@ -101,11 +102,11 @@ export default async function BrandWorkspaceOverview({ params }: { params: Promi
         ) : (
           <div className="admin-table-wrap">
             <table className="admin-table">
-              <thead><tr><th>{t("data.columns.source")}</th><th>{t("data.columns.scope")}</th><th>{t("data.columns.freshness")}</th><th>{t("data.columns.lastImport")}</th></tr></thead>
+              <thead><tr><th>{t("data.columns.source")}</th><th>{t("brand.sources.captureScopes.title")}</th><th>{t("data.columns.freshness")}</th><th>{t("data.columns.lastImport")}</th></tr></thead>
               <tbody>{workspace.sources.slice(0, 6).map((source) => (
                 <tr key={source.id}>
                   <td><div className="admin-table__primary"><strong>{source.name}</strong><small>{source.provider} · {source.connectionMethod}</small></div></td>
-                  <td><AdminStatus state={source.scopeReviewStatus === "approved" ? "good" : "warning"}>{source.scope ?? t("states.not_available")}</AdminStatus></td>
+                  <td><AdminSourceCaptureScopes summary={source.importCaptureScopes} /></td>
                   <td><AdminStatus state={freshnessTone(source.freshnessState)}>{t(`states.${source.freshnessState}`)}</AdminStatus></td>
                   <td className="admin-table__muted">{formatAdminDate(source.latestImport?.createdAt, locale)}</td>
                 </tr>

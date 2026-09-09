@@ -1,3 +1,4 @@
+import { ADMIN_SOURCE_CAPTURE_SCOPES_SQL, mapAdminSourceCaptureScopes, type AdminSourceImportCaptureScopes, type AdminSourceCaptureScopeRow } from "./admin-source-capture-scopes";
 import { adminDashboardCorpusTotals, adminDashboardReceiptPriority } from "./admin-dashboard-presentation";
 import { pool } from "@/lib/db";
 import { loadAdminWorkspaceCorpusSummariesV1, type AdminWorkspaceCorpusSummaryV1 } from "@noisia/db";
@@ -75,6 +76,7 @@ type AdminBrandSqlRow = {
 };
 
 export type AdminWorkspaceSource = {
+  importCaptureScopes: AdminSourceImportCaptureScopes;
   id: string;
   name: string;
   provider: string;
@@ -221,7 +223,7 @@ export async function getAdminBrandWorkspace(user: AdminUser, brandLookup: strin
       latest_import_created_at: Date | string | null;
       created_at: Date | string;
       updated_at: Date | string;
-    }>(ADMIN_WORKSPACE_SOURCES_SQL, [summary.workspaceId]),
+    } & AdminSourceCaptureScopeRow>(ADMIN_WORKSPACE_SOURCES_SQL, [summary.workspaceId]),
     pool.query<{
       id: string;
       data_source_id: string;
@@ -270,6 +272,7 @@ export async function getAdminBrandWorkspace(user: AdminUser, brandLookup: strin
   return {
     summary,
     sources: sourceRows.rows.map((row) => ({
+      importCaptureScopes: mapAdminSourceCaptureScopes(row),
       id: row.id,
       name: row.name,
       provider: row.provider,
@@ -631,6 +634,7 @@ const ADMIN_BRAND_WORKSPACES_SQL = `
 `;
 
 const ADMIN_WORKSPACE_SOURCES_SQL = `
+  WITH import_scopes AS (${ADMIN_SOURCE_CAPTURE_SCOPES_SQL})
   SELECT source.id::text, source.name, source.provider, source.source_type,
     source.connection_method, source.governed_scope, source.scope_review_status,
     source.status, policy.cadence,
@@ -644,8 +648,15 @@ const ADMIN_WORKSPACE_SOURCES_SQL = `
     latest_import.excluded_count AS latest_import_excluded,
     latest_import.duplicate_count AS latest_import_duplicates,
     latest_import.created_at AS latest_import_created_at,
+    COALESCE(import_scopes.import_accepted_files,0) AS import_accepted_files,
+    COALESCE(import_scopes.import_scope_primary_brand,0) AS import_scope_primary_brand,
+    COALESCE(import_scopes.import_scope_competitor,0) AS import_scope_competitor,
+    COALESCE(import_scopes.import_scope_category,0) AS import_scope_category,
+    COALESCE(import_scopes.import_scope_reference,0) AS import_scope_reference,
+    COALESCE(import_scopes.import_scope_unknown,0) AS import_scope_unknown,
     source.created_at, source.updated_at
   FROM data_sources source
+  LEFT JOIN import_scopes ON import_scopes.data_source_id=source.id
   LEFT JOIN signal_refresh_policies policy
     ON policy.workspace_id = source.workspace_id
    AND policy.data_source_id = source.id
