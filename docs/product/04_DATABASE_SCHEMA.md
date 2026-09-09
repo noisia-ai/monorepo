@@ -2459,3 +2459,10 @@ El final de interpretación crea la proyección y su outbox existente en la mism
 transacción. Signal lee raíces/assignments relacionales con permisos actuales de
 métricas y evidencia; no crea un perfil activo para habilitar serving.
 Ver ADR027 y el recibo local de integración; esto no declara SQL0140 aplicado en UAT.
+
+
+### 0141 — Reparación editorial limitada (8 septiembre, estado de despliegue en recibo)
+
+`engine_cost_events.metadata.editorial_repair` vincula una nueva petición al ID, request_digest y SHA de una respuesta completa ya liquidada. También sella versión, diagnóstico fijo y digest del protocolo. No se reutiliza `retry_of_call_id` para un recibo pagado: ese campo conserva exclusivamente sucesores de intentos probadamente no enviados.
+
+`uq_workspace_editorial_repair_source` permite una única reparación lógica raíz por fuente. `guard_workspace_engine_editorial_repair_v1` conserva esa metadata inmutable, exige misma ejecución/workspace/actor/configuración, fuente HTTP200 completa/liquidada/sin propuesta, no permite reparar una reparación y bloquea resultados inciertos. Los límites monetarios de0138/0139 siguen contando ambas llamadas. Ver `DELIVERY_WORKSPACE_EDITORIAL_REPAIR_2026-09-08.md` para la aceptación y sus límites.

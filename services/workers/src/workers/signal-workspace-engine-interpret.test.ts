@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorkspaceInterpretationReferenceIdV1,
   SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+  signalWorkspaceInterpretationCostV1, type SignalWorkspaceInterpretationEditorialRepairV1,
   type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1 } from "@noisia/db";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
@@ -25,12 +26,21 @@ async function scenario() {
   type Args = Parameters<typeof interpretWorkspaceEngineV1>[0];
   const directory = await mkdtemp(join(tmpdir(), "noisia-interpretation-test-"));
   const files = new Map<string, Buffer>(); let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
+  const calls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
+  const requestCalls = new Map<string, SignalWorkspaceEngineInterpretationCallV1>();
   let sends = 0, fitCount = 0, completed = 0, checkpointCount = 0, failAfterReceipt = false, outcomeUnknown = false;
   let failAfterCheckpoint = false, failAfterCatalog = false, materializationWrites = 0;
   let failResponseAcknowledgment = false;
+  let repairOnlyCrash = false, unknownRepair = false, disableRepair = false, denyRepairCap = false;
+  let failRepairReservationAck = false, failSettlementAck = false;
+  let totalSettled = 0;
+  const checkpointCallIds: string[] = [];
+  const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
   let checkpointWritten = false, catalogWritten = false;
   let firstMaterializationArtifact: unknown = null;
-  let responseMode: "valid" | "invalid" | "partial" = "valid", responseSaved = false;
+  type ResponseMode = "valid" | "invalid" | "partial";
+  let responseMode: ResponseMode = "valid", responseSaved = false;
+  let repairMode: ResponseMode | null = null;
   const states: string[] = [];
   const lease: SignalWorkspaceEngineLeaseV1 = { execution_id: uuid(1), workspace_id: uuid(2), execution_token: uuid(4), input_digest: hash("snapshot"),
     snapshot: { contract_version: "workspace-topic-engine-v1", workspace_id: uuid(2), taxonomy_profile_id: uuid(20), preparation_run_id: uuid(21),
@@ -43,23 +53,50 @@ async function scenario() {
     context: async () => ({ actor_user_id: uuid(5), context: { workspace_id: lease.workspace_id,
       execution_id: lease.execution_id, context_digest: hash("context"), data: { interests: [] } } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
-    reserve: async (args: { request_digest: string; reserved_micro_usd: number }) => {
-      call ??= { call_id: uuid(6), execution_id: lease.execution_id, workspace_id: lease.workspace_id, attempt_token: uuid(7),
-        retry_of_call_id: null, state: "reserved", request_digest: args.request_digest, reserved_micro_usd: args.reserved_micro_usd,
-        settled_micro_usd: null, response: null }; return { ...call };
+    reserve: async (args: { idempotency_key: string; request_digest: string; reserved_micro_usd: number;
+      editorial_repair?: SignalWorkspaceInterpretationEditorialRepairV1; retry_of_call_id?: string }) => {
+      const existing = requestCalls.get(args.idempotency_key);
+      if (existing) {
+        assert.equal(existing.request_digest, args.request_digest);
+        assert.deepEqual(existing.editorial_repair, args.editorial_repair ?? null);
+        call = existing; return { ...call };
+      }
+      if (args.editorial_repair) {
+        const source = calls.get(args.editorial_repair.source_call_id)!;
+        assert.ok(source); assert.equal(source.state, "settled"); assert.equal(source.editorial_repair, null);
+        assert.equal(source.response?.complete, true); assert.equal(source.response?.sha256, args.editorial_repair.source_response_sha256);
+        assert.equal(source.request_digest, args.editorial_repair.source_request_digest);
+        if (denyRepairCap) throw new Error("workspace_engine_interpretation_run_cap_exceeded");
+        assert.ok(![...calls.values()].some(row => row.editorial_repair && row.state !== "definitely_not_sent"));
+      }
+      if (args.retry_of_call_id) {
+        const previous = calls.get(args.retry_of_call_id)!; assert.equal(previous.state, "definitely_not_sent");
+        assert.equal(previous.request_digest, args.request_digest); assert.deepEqual(previous.editorial_repair, args.editorial_repair ?? null);
+      }
+      call = { call_id: calls.size ? uuid(60 + calls.size) : uuid(6), execution_id: lease.execution_id, workspace_id: lease.workspace_id,
+        attempt_token: uuid(70 + calls.size), retry_of_call_id: args.retry_of_call_id ?? null, editorial_repair: args.editorial_repair ?? null,
+        state: "reserved", request_digest: args.request_digest, reserved_micro_usd: args.reserved_micro_usd,
+        settled_micro_usd: null, response: null };
+      calls.set(call.call_id, call); requestCalls.set(args.idempotency_key, call);
+      if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
+      return { ...call };
     },
     sent: async () => { const allowed = call!.state === "reserved"; if (allowed) call!.state = "in_flight";
       states.push("sent"); return { call, send_authorized: allowed }; },
     response: async (args: { response: NonNullable<SignalWorkspaceEngineInterpretationCallV1["response"]> }) => {
       assert.equal(call!.state, "in_flight"); call!.response = args.response; call!.state = "response_persisted";
       responseSaved = true; states.push("response");
-      if (failResponseAcknowledgment) { failResponseAcknowledgment = false; throw new Error("simulated response COMMIT acknowledgment lost"); }
+      if (failResponseAcknowledgment && (!repairOnlyCrash || call!.editorial_repair)) { failResponseAcknowledgment = false; throw new Error("simulated response COMMIT acknowledgment lost"); }
       return { ...call! };
     },
     settle: async () => {
       assert.ok(responseSaved, "Cost cannot settle before receipt");
-      if (failAfterReceipt) { failAfterReceipt = false; throw new Error("workspace_engine_worker_failed"); }
-      call!.state = "settled"; call!.settled_micro_usd = 750; states.push("settled"); return { ...call! };
+      if (failAfterReceipt && (!repairOnlyCrash || call!.editorial_repair)) { failAfterReceipt = false; throw new Error("workspace_engine_worker_failed"); }
+      if (call!.state !== "settled") totalSettled += signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10,
+        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+      call!.state = "settled"; call!.settled_micro_usd = 750; states.push("settled");
+      if (failSettlementAck) { failSettlementAck = false; throw new Error("workspace_engine_worker_failed"); }
+      return { ...call! };
     },
     fail: async (args: { outcome: SignalWorkspaceEngineInterpretationCallV1["state"]; error_code: string }) => {
       // Mirror the narrow DB guard: only a confirmed complete persisted receipt
@@ -68,7 +105,8 @@ async function scenario() {
         && args.error_code === "workspace_engine_interpretation_receipt_persistence_unknown") return { ...call! };
       if (call!.state !== "settled") call!.state = args.outcome; return { ...call! };
     },
-    checkpoint: async () => { assert.equal(call!.state, "settled");
+    checkpoint: async (args: { call_id: string }) => { assert.equal(call!.state, "settled"); assert.equal(args.call_id, call!.call_id);
+      checkpointCallIds.push(args.call_id);
       if (!checkpointWritten) { checkpointWritten = true; checkpointCount++; }
       states.push("checkpoint");
       if (failAfterCheckpoint) { failAfterCheckpoint = false; throw new Error("workspace_engine_worker_failed"); }
@@ -77,6 +115,7 @@ async function scenario() {
       let count = 0; for await (const item of args.proposals) {
         assert.equal(item.artifact_id, uuid(8)); const body = JSON.parse(item.body);
         assert.equal(body.interpretations[0].cluster_id, cluster.cluster_id); count++;
+        assert.deepEqual(body.editorial_repair ?? null, call!.editorial_repair);
       }
       assert.equal(count, 1); states.push("materialized"); const replayed = catalogWritten;
       if (!catalogWritten) { catalogWritten = true; materializationWrites++; }
@@ -106,23 +145,31 @@ async function scenario() {
         get: async args => { const bytes = files.get(args.stored.storage_key)!; assert.equal(hash(bytes), args.stored.sha256);
           await writeFile(args.destination, bytes, { flag: "wx" }); },
       },
-      send: async args => sendWorkspaceInterpretationV1({ ...args, fetch_impl: async () => {
-        sends++; if (outcomeUnknown) throw new Error("simulated socket close");
+      send: async args => { seenBatches.push(args.batch); return sendWorkspaceInterpretationV1({ ...args,
+        provider_enabled: args.batch.editorial_repair && disableRepair ? false : args.provider_enabled, fetch_impl: async () => {
+        sends++; if (outcomeUnknown || args.batch.editorial_repair && unknownRepair) throw new Error("simulated socket close");
+        const mode = args.batch.editorial_repair ? repairMode ?? responseMode : responseMode;
         const output = { interpretations: [{ cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest,
           status: "coherent", name: "Diferencias entre reserva y cobro", definition: "Conversaciones sobre diferencias en el cobro de una reserva.",
-          inclusion: [], exclusion: [], citations: [responseMode === "invalid" ? hash("invented citation") : cluster.representatives[0]!.ref_id] }] };
+          inclusion: [], exclusion: [], citations: [mode === "invalid" ? hash("invented citation") : cluster.representatives[0]!.ref_id] }] };
         const bytes = JSON.stringify({ model: config.model, type: "message", role: "assistant", stop_reason: "end_turn",
           usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify(output) }] });
-        return new Response(bytes, { status: 200, headers: responseMode === "partial" ? { "content-length": String(bytes.length + 1) } : {} });
-      } }),
+        return new Response(bytes, { status: 200, headers: mode === "partial" ? { "content-length": String(bytes.length + 1) } : {} });
+      } }); },
     });
   };
   return { execute, cleanup: () => rm(directory, { recursive: true, force: true }),
-    get: () => ({ sends, fitCount, completed, checkpointCount, materializationWrites, storedObjects: files.size, call, states }),
+    get: () => ({ sends, fitCount, completed, checkpointCount, materializationWrites, storedObjects: files.size, call, states,
+      calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches }),
     crashAfterReceipt: () => { failAfterReceipt = true; }, unknown: () => { outcomeUnknown = true; },
     loseResponseAcknowledgment: () => { failResponseAcknowledgment = true; },
+    targetRepairCrash: () => { repairOnlyCrash = true; }, repairUnknown: () => { unknownRepair = true; },
+    repairDisabled: (value: boolean) => { disableRepair = value; }, repairCapBlocked: () => { denyRepairCap = true; },
+    loseRepairReservationAcknowledgment: () => { failRepairReservationAck = true; },
+    loseSettlementAcknowledgment: () => { failSettlementAck = true; },
     crashAfterCheckpoint: () => { failAfterCheckpoint = true; }, crashAfterCatalog: () => { failAfterCatalog = true; },
-    mode: (mode: typeof responseMode) => { responseMode = mode; } };
+    mode: (mode: typeof responseMode) => { responseMode = mode; },
+    repairMode: (mode: typeof responseMode) => { repairMode = mode; } };
 }
 
 test("same execution persists paid interpretation before editable catalog completion", async () => {
@@ -147,10 +194,12 @@ test("uncertain sent request never sends again or materializes", async () => {
     assert.equal(s.get().completed, 0); assert.equal(s.get().checkpointCount, 0);
   } finally { await s.cleanup(); }
 });
-test("invalid citations retain actual usage but cannot become editable results", async () => {
-  const s = await scenario(); try { s.mode("invalid"); await assert.rejects(s.execute(), /output_invalid/u);
+test("a second invalid editorial response settles both calls and stops without another repair or fabricated results", async () => {
+  const s = await scenario(); try { s.mode("invalid"); await assert.rejects(s.execute(), /repair_invalid/u);
     assert.equal(s.get().call?.state, "settled"); assert.equal(s.get().call?.settled_micro_usd, 750);
-    assert.equal(s.get().completed, 0); await assert.rejects(s.execute(), /output_invalid/u); assert.equal(s.get().sends, 1);
+    assert.equal(s.get().totalSettled, 1500); assert.equal(s.get().calls.length, 2);
+    assert.equal(s.get().completed, 0); await assert.rejects(s.execute(), /repair_invalid/u); assert.equal(s.get().sends, 2);
+    assert.equal(s.get().calls.length, 2); assert.equal(s.get().checkpointCount, 0);
   } finally { await s.cleanup(); }
 });
 test("partial raw response remains uncertain even when its bounded bytes parse as JSON", async () => {
@@ -199,5 +248,80 @@ test("lost acknowledgment for a partial receipt does not grant complete-receipt 
     assert.equal(s.get().call?.state, "outcome_unknown"); assert.equal(s.get().call?.response?.complete, false);
     await assert.rejects(s.execute(), /outcome_unknown/u);
     assert.equal(s.get().sends, 1); assert.equal(s.get().completed, 0);
+  } finally { await s.cleanup(); }
+});
+
+test("one complete invalid response can have one metered repair preserving the full batch and original receipt", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid"); await s.execute(); const first = s.get();
+    assert.equal(first.sends, 2); assert.equal(first.calls.length, 2); assert.equal(first.totalSettled, 1500);
+    assert.equal(first.completed, 1); assert.equal(first.checkpointCount, 1);
+    const [original, repair] = first.calls, [batch, correction] = first.seenBatches;
+    assert.equal(original!.state, "settled"); assert.equal(original!.editorial_repair, null);
+    assert.equal(repair!.state, "settled"); assert.equal(repair!.editorial_repair?.source_call_id, original!.call_id);
+    assert.equal(repair!.editorial_repair?.source_response_sha256, original!.response!.sha256);
+    assert.notEqual(repair!.request_digest, original!.request_digest);
+    assert.deepEqual(correction!.context, batch!.context); assert.deepEqual(correction!.clusters, batch!.clusters);
+    assert.deepEqual(correction!.configuration, batch!.configuration);
+    assert.deepEqual(first.checkpointCallIds, [repair!.call_id]);
+    const originalReceipt = structuredClone(original!.response);
+    await s.execute(); const replay = s.get();
+    assert.equal(replay.sends, 2); assert.equal(replay.calls.length, 2); assert.equal(replay.totalSettled, 1500);
+    assert.equal(replay.materializationWrites, 1); assert.equal(replay.storedObjects, 4);
+    assert.deepEqual(replay.calls[0]!.response, originalReceipt);
+  } finally { await s.cleanup(); }
+});
+
+for (const stage of ["source_settlement_ack", "repair_reservation_ack", "repair_response_ack", "repair_settlement",
+  "proposal_ack", "catalog_ack"] as const) test(`editorial repair recovers ${stage} using the same two receipts and reservations`, async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid");
+    if (stage === "source_settlement_ack") s.loseSettlementAcknowledgment();
+    if (stage === "repair_reservation_ack") s.loseRepairReservationAcknowledgment();
+    if (stage === "repair_response_ack") { s.targetRepairCrash(); s.loseResponseAcknowledgment(); }
+    if (stage === "repair_settlement") { s.targetRepairCrash(); s.crashAfterReceipt(); }
+    if (stage === "proposal_ack") s.crashAfterCheckpoint();
+    if (stage === "catalog_ack") s.crashAfterCatalog();
+    await assert.rejects(s.execute(), /workspace_engine_(worker_failed|interpretation_receipt_recovery_required)/u);
+    assert.equal(s.get().completed, 0);
+    if (stage === "repair_response_ack" || stage === "repair_settlement") s.repairDisabled(true);
+    await s.execute(); const done = s.get();
+    assert.equal(done.sends, 2); assert.equal(done.calls.length, 2); assert.equal(done.totalSettled, 1500);
+    assert.equal(done.completed, 1); assert.equal(done.checkpointCount, 1); assert.equal(done.materializationWrites, 1);
+    assert.equal(done.checkpointCallIds.at(-1), done.calls[1]!.call_id);
+  } finally { await s.cleanup(); }
+});
+
+test("an unknown repair never resends or creates a repair of the repair", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairUnknown();
+    await assert.rejects(s.execute(), /outcome_unknown/u);
+    await assert.rejects(s.execute(), /outcome_unknown/u);
+    assert.equal(s.get().sends, 2); assert.equal(s.get().calls.length, 2); assert.equal(s.get().totalSettled, 750);
+    assert.equal(s.get().call?.state, "outcome_unknown"); assert.equal(s.get().completed, 0);
+  } finally { await s.cleanup(); }
+});
+
+test("a cap rejection after settling the original response prevents all repair transport and does not release source cost", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid"); s.repairCapBlocked();
+    await assert.rejects(s.execute(), /run_cap_exceeded/u);
+    await assert.rejects(s.execute(), /run_cap_exceeded/u);
+    assert.equal(s.get().sends, 1); assert.equal(s.get().calls.length, 1); assert.equal(s.get().totalSettled, 750);
+    assert.equal(s.get().calls[0]!.state, "settled"); assert.equal(s.get().completed, 0);
+  } finally { await s.cleanup(); }
+});
+
+test("a proven unsent repair uses a successor with the same editorial identity on explicit job recovery", async () => {
+  const s = await scenario(); try {
+    s.mode("invalid"); s.repairMode("valid"); s.repairDisabled(true);
+    await assert.rejects(s.execute(), /provider_disabled/u);
+    const before = s.get(); assert.equal(before.sends, 1); assert.equal(before.calls[1]!.state, "definitely_not_sent");
+    s.repairDisabled(false); await s.execute(); const done = s.get();
+    assert.equal(done.sends, 2); assert.equal(done.calls.length, 3); assert.equal(done.totalSettled, 1500);
+    assert.equal(done.calls[2]!.retry_of_call_id, before.calls[1]!.call_id);
+    assert.deepEqual(done.calls[2]!.editorial_repair, before.calls[1]!.editorial_repair);
+    assert.equal(done.calls[2]!.request_digest, before.calls[1]!.request_digest);
+    await s.execute(); assert.equal(s.get().sends, 2); assert.equal(s.get().calls.length, 3);
   } finally { await s.cleanup(); }
 });

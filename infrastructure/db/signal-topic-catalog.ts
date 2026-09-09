@@ -12,6 +12,7 @@ import {
   hashEmbeddingChunk,
   signalTopicDefinitionDigestV1,
   buildSignalWorkspaceInterpretationBatchV1, validateSignalWorkspaceInterpretationResultV1,
+  buildSignalWorkspaceInterpretationRepairBatchV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   signalWorkspaceInterpretationUniverseDigestV1, mergeSignalWorkspaceTopicMaterializationV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationV1,
   signalTopicDefinitionSchemaV1,
@@ -1251,23 +1252,42 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
     for await (const source of args.proposals) {
       if (Buffer.byteLength(source.body) > 2 * 1024 * 1024 || seen.has(source.artifact_id)) throw new SignalTopicCatalogError("workspace_engine_proposal_invalid");
       seen.add(source.artifact_id);
-      const artifact = (await client.query<{ request_digest: string; content: { sha256: string; size_bytes: number }; metadata: { unit_keys: string[]; fit_checkpoint_digest: string } }>(`
-        SELECT artifact.content,artifact.metadata,call.request_digest FROM analysis_artifacts artifact
+      const artifact = (await client.query<{ request_digest: string; editorial_repair: unknown;
+        content: { sha256: string; size_bytes: number }; metadata: { unit_keys: string[]; fit_checkpoint_digest: string } }>(`
+        SELECT artifact.content,artifact.metadata,call.request_digest,call.metadata->'editorial_repair' editorial_repair FROM analysis_artifacts artifact
         JOIN engine_cost_events call ON call.id=(artifact.metadata->>'call_id')::uuid
           AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
         WHERE artifact.id=$1::uuid AND artifact.workspace_id=$2::uuid AND artifact.engine_execution_id=$3::uuid
           AND artifact.artifact_type='engine_proposals'
           AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
-          AND call.call_state='settled' AND call.response_sha256=artifact.metadata->>'response_sha256'`,
-      [source.artifact_id,lease.workspace_id,lease.execution_id])).rows[0];
+          AND call.call_state='settled' AND call.response_sha256=artifact.metadata->>'response_sha256'
+          AND call.actor_user_id=$4::uuid AND call.call_configuration=$5::jsonb`,
+      [source.artifact_id,lease.workspace_id,lease.execution_id,run.actor_user_id,
+        JSON.stringify(run.input_snapshot.interpretation_config.call_configuration)])).rows[0];
       if (!artifact || artifact.content.sha256 !== sha256(source.body) || artifact.content.size_bytes !== Buffer.byteLength(source.body)
         || artifact.metadata.fit_checkpoint_digest !== fit.checkpoint_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_receipt_invalid");
       const packet = JSON.parse(source.body) as { contract_version: string; execution_id: string;
-        context: SignalWorkspaceInterpretationBatchV1["context"]; clusters: SignalWorkspaceInterpretationBatchV1["clusters"]; interpretations: unknown };
+        context: SignalWorkspaceInterpretationBatchV1["context"]; clusters: SignalWorkspaceInterpretationBatchV1["clusters"];
+        interpretations: unknown; editorial_repair?: unknown };
       if (packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
         || packet.context.workspace_id !== lease.workspace_id || packet.context.execution_id !== lease.execution_id
         || packet.context.context_digest !== current.context_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_identity_invalid");
-      const batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters);
+      let batch = buildSignalWorkspaceInterpretationBatchV1(packet.context, packet.clusters);
+      if (artifact.editorial_repair != null || packet.editorial_repair !== undefined) {
+        const repair = parseSignalWorkspaceInterpretationEditorialRepairV1(packet.editorial_repair);
+        if (stableJson(repair) !== stableJson(artifact.editorial_repair)
+          || repair.source_request_digest !== batch.request_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_request_mismatch");
+        const parent = (await client.query(`SELECT id FROM engine_cost_events
+          WHERE id=$1::uuid AND workspace_id=$2::uuid AND catalog_execution_id=$3::uuid AND actor_user_id=$4::uuid
+            AND workspace_contract='workspace-engine-interpretation-v1' AND call_state='settled'
+            AND response_storage_key IS NOT NULL AND response_sha256=$5 AND request_digest=$6
+            AND COALESCE((metadata->>'response_complete')::boolean,true)
+            AND NOT (metadata ? 'editorial_repair') AND call_configuration=$7::jsonb`,
+        [repair.source_call_id,lease.workspace_id,lease.execution_id,run.actor_user_id,repair.source_response_sha256,
+          repair.source_request_digest,JSON.stringify(batch.configuration)])).rows[0];
+        if (!parent) throw new SignalTopicCatalogError("workspace_engine_proposal_receipt_invalid");
+        batch = buildSignalWorkspaceInterpretationRepairBatchV1(batch, repair);
+      }
       if (batch.request_digest !== artifact.request_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_request_mismatch");
       const results = validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
       if (JSON.stringify(results.map(item => item.cluster_id)) !== JSON.stringify(artifact.metadata.unit_keys)) throw new SignalTopicCatalogError("workspace_engine_proposal_coverage_invalid");

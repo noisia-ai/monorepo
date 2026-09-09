@@ -3,6 +3,7 @@ import {
   SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
   SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1,
   buildSignalWorkspaceInterpretationBatchV1,
+  buildSignalWorkspaceInterpretationRepairBatchV1,
   signalWorkspaceEmbeddingDigestV1,
   validateSignalWorkspaceInterpretationResultV1,
   type SignalWorkspaceInterpretationBatchV1,
@@ -112,7 +113,13 @@ export async function sendWorkspaceInterpretationV1(args: {
 }): Promise<WorkspaceInterpretationResponseV1> {
   let requestBody: string;
   try {
-    const expected = buildSignalWorkspaceInterpretationBatchV1(args.batch.context, args.batch.clusters);
+    const original = buildSignalWorkspaceInterpretationBatchV1(args.batch.context, args.batch.clusters);
+    const expected = args.batch.editorial_repair
+      ? buildSignalWorkspaceInterpretationRepairBatchV1(original, {
+        source_call_id: args.batch.editorial_repair.source_call_id,
+        source_response_sha256: args.batch.editorial_repair.source_response_sha256,
+        diagnostic: args.batch.editorial_repair.diagnostic,
+      }) : original;
     if (signalWorkspaceEmbeddingDigestV1(expected) !== signalWorkspaceEmbeddingDigestV1(args.batch)) throw new Error();
     requestBody = expected.request_body;
   } catch { throw transportError("request_invalid", "definitely_not_sent"); }

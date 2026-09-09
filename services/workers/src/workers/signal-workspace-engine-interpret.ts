@@ -10,7 +10,8 @@ import {
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
-  signalWorkspaceEmbeddingDigestV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
+  signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceInterpretationRepairBatchV1,
+  type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
   type WorkspaceInterpretationResponseV1 } from "../providers/workspace-interpretation";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
@@ -37,22 +38,64 @@ export async function interpretWorkspaceEngineV1(args: {
   api_key?: string; provider_enabled?: boolean;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
-  const config = lease.snapshot.interpretation_config;
-  if (!config) return fail("workspace_engine_interpretation_not_requested");
+  const config = lease.snapshot.interpretation_config ?? fail("workspace_engine_interpretation_not_requested");
   const universe = signalWorkspaceInterpretationUniverseDigestV1(args.clusters.map(item => item.cluster_id));
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });
   await args.heartbeat("interpreting");
   const context = await store.context({ database, lease });
   const proposals: Array<{ artifact_id: string; file: string }> = [];
-  for (const batch of batchSignalWorkspaceInterpretationV1(context.context, args.clusters)) {
+  for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, args.clusters)) {
     await args.heartbeat("interpreting");
-    if (signalWorkspaceEmbeddingDigestV1(batch.configuration) !== signalWorkspaceEmbeddingDigestV1(config.call_configuration)) {
+    if (signalWorkspaceEmbeddingDigestV1(originalBatch.configuration) !== signalWorkspaceEmbeddingDigestV1(config.call_configuration)) {
       return fail("workspace_engine_interpretation_config_mismatch");
     }
+    let batch = originalBatch;
+    let { call, response } = await executeBatch(batch);
+    if (!response.interpretations || response.outcome !== "validated") {
+      // One new editorial request may correct a complete, metered but invalid
+      // result. It never replaces the original receipt, restarts numerical fit,
+      // retries unknown transport, or recursively repairs a second bad answer.
+      if (response.outcome !== "known_response_invalid" || response.error_code !== "workspace_engine_interpretation_output_invalid")
+        return fail(response.error_code ?? "workspace_engine_interpretation_output_invalid");
+      if (call.state !== "settled" || call.editorial_repair || !call.response?.complete
+        || call.request_digest !== batch.request_digest || call.response.sha256 !== response.receipt_sha256)
+        return fail("workspace_engine_interpretation_repair_unavailable");
+      batch = buildSignalWorkspaceInterpretationRepairBatchV1(originalBatch, { source_call_id: call.call_id,
+        source_response_sha256: call.response.sha256, diagnostic: "output_invalid" });
+      await args.heartbeat("interpreting");
+      ({ call, response } = await executeBatch(batch));
+      if (!response.interpretations || response.outcome !== "validated")
+        return fail("workspace_engine_interpretation_repair_invalid");
+    }
+    await args.heartbeat("interpreting");
+    const filename = `interpretation-${call.call_id}.json`;
+    const body = JSON.stringify({ contract_version: "workspace-engine-interpretation-result-v1", execution_id: lease.execution_id,
+      context: batch.context, clusters: batch.clusters, interpretations: response.interpretations,
+      ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) });
+    const stored = await put(filename, body);
+    const checkpoint = await store.checkpoint({ database, lease, call_id: call.call_id,
+      unit_keys: batch.clusters.map(item => item.cluster_id), artifact: { ...stored, artifact_key: filename,
+        artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
+    proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
+  }
+  await args.heartbeat("materializing");
+  const materialized = await store.materialize({ database, lease, proposals: (async function* () {
+    for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };
+  })() });
+  // replayed is transport state, excluded from immutable artifact bytes.
+  const { replayed: _replayed, mapping, ...metadata } = materialized;
+  const stored = await put("materialization.json", JSON.stringify({ ...metadata, mapping }));
+  const artifact = await store.persist({ database, lease, artifact: { ...stored, artifact_key: "materialization.json",
+    artifact_type: "engine_proposals", title: "Editable topic catalog", metadata } });
+  await args.heartbeat("materializing");
+  return store.complete({ database, lease, materialization_artifact_id: artifact.artifact_id });
+
+  async function executeBatch(batch: SignalWorkspaceInterpretationBatchV1) {
     const reservation = { database, workspace_id: lease.workspace_id, execution_id: lease.execution_id,
       actor_user_id: context.actor_user_id, execution_token: lease.execution_token,
       idempotency_key: batch.batch_key, request_digest: batch.request_digest, configuration: config.call_configuration,
-      reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd };
+      reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
+      ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
     let call = await store.reserve(reservation);
     let unsentAttempts = 0;
     while (call.state === "definitely_not_sent") {
@@ -61,6 +104,7 @@ export async function interpretWorkspaceEngineV1(args: {
       call = await store.reserve({ ...reservation, idempotency_key: `${batch.batch_key}:retry:${call.call_id}`,
         retry_of_call_id: call.call_id });
     }
+    if (call.state === "outcome_unknown") return fail("workspace_engine_interpretation_outcome_unknown");
     const attempt = { database, call_id: call.call_id, attempt_token: call.attempt_token };
     let response: WorkspaceInterpretationResponseV1;
     if (call.response) {
@@ -98,33 +142,13 @@ export async function interpretWorkspaceEngineV1(args: {
       await store.fail({ ...attempt, outcome: "outcome_unknown", error_code: "workspace_engine_interpretation_outcome_unknown" });
       return fail("workspace_engine_interpretation_outcome_unknown");
     }
-    if (response.usage) await store.settle({ ...attempt, usage: response.usage });
+    if (response.usage && response.outcome !== "outcome_unknown") call = await store.settle({ ...attempt, usage: response.usage });
     else {
       await store.fail({ ...attempt, outcome: "outcome_unknown", error_code: response.error_code ?? "workspace_engine_interpretation_outcome_unknown" });
       return fail("workspace_engine_interpretation_outcome_unknown");
     }
-    if (!response.interpretations || response.outcome !== "validated") return fail(response.error_code ?? "workspace_engine_interpretation_output_invalid");
-    await args.heartbeat("interpreting");
-    const filename = `interpretation-${call.call_id}.json`;
-    const body = JSON.stringify({ contract_version: "workspace-engine-interpretation-result-v1", execution_id: lease.execution_id,
-      context: batch.context, clusters: batch.clusters, interpretations: response.interpretations });
-    const stored = await put(filename, body);
-    const checkpoint = await store.checkpoint({ database, lease, call_id: call.call_id,
-      unit_keys: batch.clusters.map(item => item.cluster_id), artifact: { ...stored, artifact_key: filename,
-        artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
-    proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
+    return { call, response };
   }
-  await args.heartbeat("materializing");
-  const materialized = await store.materialize({ database, lease, proposals: (async function* () {
-    for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };
-  })() });
-  // replayed is transport state, excluded from immutable artifact bytes.
-  const { replayed: _replayed, mapping, ...metadata } = materialized;
-  const stored = await put("materialization.json", JSON.stringify({ ...metadata, mapping }));
-  const artifact = await store.persist({ database, lease, artifact: { ...stored, artifact_key: "materialization.json",
-    artifact_type: "engine_proposals", title: "Editable topic catalog", metadata } });
-  await args.heartbeat("materializing");
-  return store.complete({ database, lease, materialization_artifact_id: artifact.artifact_id });
 
   async function put(filename: string, content: Uint8Array | string) {
     const path = join(args.directory, filename);

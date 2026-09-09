@@ -1,16 +1,21 @@
 import type {Pool,PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
-import {signalWorkspaceEmbeddingDigestV1} from '@noisia/query-engine';
+import {signalWorkspaceEmbeddingDigestV1,SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1} from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import {loadSignalWorkspaceEngineInputIdentityV1,type SignalWorkspaceEngineAnalysisConfigV1} from './signal-workspace-engine';
 export type SignalWorkspaceEngineInterpretationDatabaseV1=Pick<Pool,'query'|'connect'>;
 export class SignalWorkspaceEngineInterpretationError extends Error{
  constructor(readonly code:string,readonly status=409){super(code);this.name='SignalWorkspaceEngineInterpretationError';}
 }
+export type SignalWorkspaceEngineEditorialRepairV1={
+ contract_version:'workspace-editorial-repair-v1';source_call_id:string;source_request_digest:string;
+ source_response_sha256:string;diagnostic:'output_invalid';protocol_digest:string;
+};
 export type SignalWorkspaceEngineInterpretationCallV1={
  call_id:string;execution_id:string;workspace_id:string;attempt_token:string;retry_of_call_id:string|null;
  state:'reserved'|'in_flight'|'response_persisted'|'settled'|'outcome_unknown'|'definitely_not_sent';
  reserved_micro_usd:number;settled_micro_usd:number|null;request_digest:string;
+ editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null;
  response:null|{storage_key:string;sha256:string;size_bytes:number;http_status:number;provider_request_id:string|null;complete:boolean};
 };
 export type SignalWorkspaceEngineInterpretationConfigurationV1={
@@ -36,9 +41,10 @@ async function tx<T>(database:SignalWorkspaceEngineInterpretationDatabaseV1,work
 type Row={id:string;workspace_id:string;catalog_execution_id:string;actor_user_id:string;request_digest:string;request_seal:string;
  call_state:SignalWorkspaceEngineInterpretationCallV1['state'];attempt_token:string;retry_of_call_id:string|null;reserved_micro_usd:string;settled_micro_usd:string|null;
  call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;response_storage_key:string|null;response_sha256:string|null;response_size_bytes:string|null;
- response_http_status:number|null;provider_request_id:string|null;response_complete:boolean;budget_date:string;budget_timezone:string;budget_daily_cap_micro_usd:string;failure_code:string|null};
+ response_http_status:number|null;provider_request_id:string|null;response_complete:boolean;budget_date:string;budget_timezone:string;budget_daily_cap_micro_usd:string;failure_code:string|null;
+ editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null};
 const view=(r:Row):SignalWorkspaceEngineInterpretationCallV1=>({call_id:r.id,execution_id:r.catalog_execution_id,workspace_id:r.workspace_id,attempt_token:r.attempt_token,retry_of_call_id:r.retry_of_call_id,
- state:r.call_state,reserved_micro_usd:natural(r.reserved_micro_usd),settled_micro_usd:r.settled_micro_usd===null?null:natural(r.settled_micro_usd),request_digest:r.request_digest,
+ state:r.call_state,reserved_micro_usd:natural(r.reserved_micro_usd),settled_micro_usd:r.settled_micro_usd===null?null:natural(r.settled_micro_usd),request_digest:r.request_digest,editorial_repair:r.editorial_repair,
  response:r.response_storage_key?{storage_key:r.response_storage_key,sha256:r.response_sha256!,size_bytes:natural(r.response_size_bytes),http_status:r.response_http_status!,provider_request_id:r.provider_request_id,complete:r.response_complete}:null});
 async function authorize(c:PoolClient,workspace:string,actor:string,execute=true){const cap=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
  if(!(execute?cap.can_execute_topics:cap.can_view))return fail('workspace_engine_interpretation_forbidden',403);}
@@ -63,7 +69,8 @@ async function execution(c:PoolClient,workspace:string,id:string,actor:string,ch
 }
 const rowSQL=`SELECT id,workspace_id,catalog_execution_id,actor_user_id,request_digest,request_seal,call_state,attempt_token,retry_of_call_id,
  reserved_micro_usd::text,settled_micro_usd::text,call_configuration,response_storage_key,response_sha256,response_size_bytes::text,
- response_http_status,provider_request_id,COALESCE((metadata->>'response_complete')::boolean,true) response_complete,budget_date::text,budget_timezone,budget_daily_cap_micro_usd::text,failure_code
+ response_http_status,provider_request_id,COALESCE((metadata->>'response_complete')::boolean,true) response_complete,budget_date::text,budget_timezone,budget_daily_cap_micro_usd::text,failure_code,
+ metadata->'editorial_repair' editorial_repair
  FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1'`;
 async function lockedCall(c:PoolClient,id:string,token:string){
  const scope=(await c.query<{actor_user_id:string;catalog_execution_id:string}>("SELECT actor_user_id,catalog_execution_id FROM engine_cost_events WHERE id=$1::uuid AND workspace_contract='workspace-engine-interpretation-v1'",[id])).rows[0];
@@ -76,15 +83,23 @@ const exposureSQL=`CASE WHEN call_state='settled' THEN settled_micro_usd WHEN ca
 export async function reserveSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
  workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;request_digest:string;
  configuration:SignalWorkspaceEngineInterpretationConfigurationV1;reserved_micro_usd:number;budget_timezone:string;daily_cap_micro_usd:number;
- retry_of_call_id?:string;execution_token?:string}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
+ retry_of_call_id?:string;execution_token?:string;editorial_repair?:SignalWorkspaceEngineEditorialRepairV1}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
  const config=args.configuration;
  if(!validKey(args.idempotency_key)||!digest.test(args.request_digest)||!digest.test(config.prompt_digest)||!digest.test(config.schema_digest)
   ||config.provider!=='anthropic'||!config.model||config.model.length>120||!config.pricing_version||config.pricing_version.length>200
   ||![config.input_micro_usd_per_million_tokens,config.output_micro_usd_per_million_tokens,config.cache_read_micro_usd_per_million_tokens,config.cache_creation_micro_usd_per_million_tokens]
    .every(n=>Number.isSafeInteger(n)&&n>=0)||!Number.isSafeInteger(args.reserved_micro_usd)||args.reserved_micro_usd<=0
   ||!Number.isSafeInteger(args.daily_cap_micro_usd)||args.daily_cap_micro_usd<=0||args.budget_timezone.length>100)return fail('workspace_engine_interpretation_request_invalid',422);
+ const repair=args.editorial_repair;
+ if(repair&&(Object.keys(repair).sort().join(',')!=='contract_version,diagnostic,protocol_digest,source_call_id,source_request_digest,source_response_sha256'
+  ||repair.contract_version!=='workspace-editorial-repair-v1'||repair.diagnostic!=='output_invalid'
+  ||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(repair.source_call_id)
+  ||!digest.test(repair.source_request_digest)||!digest.test(repair.source_response_sha256)
+  ||repair.protocol_digest!==SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1||repair.source_request_digest===args.request_digest))
+   return fail('workspace_engine_interpretation_repair_invalid',422);
  const seal=signalWorkspaceEmbeddingDigestV1({request_digest:args.request_digest,configuration:config,reserved_micro_usd:args.reserved_micro_usd,
-  budget_timezone:args.budget_timezone,daily_cap_micro_usd:args.daily_cap_micro_usd,execution_id:args.execution_id,retry_of_call_id:args.retry_of_call_id??null});
+  budget_timezone:args.budget_timezone,daily_cap_micro_usd:args.daily_cap_micro_usd,execution_id:args.execution_id,retry_of_call_id:args.retry_of_call_id??null,
+  ...(repair?{editorial_repair:repair}:{})});
  return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id);await actorLock(c,args.actor_user_id);
   const byKey=(await c.query<Row>(`${rowSQL} AND workspace_id=$1::uuid AND idempotency_key=$2 FOR UPDATE`,[args.workspace_id,args.idempotency_key])).rows[0];
   if(byKey){if(byKey.actor_user_id!==args.actor_user_id||byKey.request_seal!==seal)return fail('workspace_engine_interpretation_idempotency_conflict');return view(byKey);}
@@ -95,6 +110,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   if(args.retry_of_call_id){const prior=attempts.find(row=>row.id===args.retry_of_call_id);
    if(!prior||prior.actor_user_id!==args.actor_user_id||prior.call_state!=='definitely_not_sent'||prior.response_storage_key!==null
     ||natural(prior.reserved_micro_usd)!==args.reserved_micro_usd||signalWorkspaceEmbeddingDigestV1(prior.call_configuration)!==signalWorkspaceEmbeddingDigestV1(config)
+    ||signalWorkspaceEmbeddingDigestV1(prior.editorial_repair)!==signalWorkspaceEmbeddingDigestV1(repair??null)
     ||attempts.some(row=>row.retry_of_call_id===prior.id))return fail('workspace_engine_interpretation_retry_unavailable');
   }else if(attempts.length){const prior=attempts[0]!;
    if(prior.actor_user_id!==args.actor_user_id||prior.request_seal!==seal)return fail('workspace_engine_interpretation_idempotency_conflict');return view(prior);}
@@ -102,6 +118,19 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   const sealed=run.input_snapshot.interpretation_config;
   if(sealed&&(signalWorkspaceEmbeddingDigestV1(config)!==signalWorkspaceEmbeddingDigestV1(sealed.call_configuration)
     ||args.budget_timezone!==sealed.budget_timezone||args.daily_cap_micro_usd!==sealed.daily_cap_micro_usd))return fail('workspace_engine_interpretation_config_mismatch');
+  if(repair){
+   const source=(await c.query<Row>(`${rowSQL} AND id=$1::uuid FOR UPDATE`,[repair.source_call_id])).rows[0];
+   if(!sealed||!source||source.workspace_id!==args.workspace_id||source.catalog_execution_id!==args.execution_id||source.actor_user_id!==args.actor_user_id
+    ||source.call_state!=='settled'||!source.response_storage_key||source.response_http_status!==200||!source.response_complete||source.editorial_repair!==null
+    ||source.request_digest!==repair.source_request_digest||source.response_sha256!==repair.source_response_sha256
+    ||signalWorkspaceEmbeddingDigestV1(source.call_configuration)!==signalWorkspaceEmbeddingDigestV1(config)
+    ||(await c.query("SELECT 1 FROM analysis_artifacts WHERE engine_execution_id=$1::uuid AND metadata->>'call_id'=$2 LIMIT 1",[args.execution_id,source?.id??''])).rows.length)
+     return fail('workspace_engine_interpretation_repair_unavailable');
+   if((await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[args.execution_id])).rows.length)
+     return fail('workspace_engine_interpretation_outcome_unknown');
+   if(!args.retry_of_call_id&&(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND lower(metadata->'editorial_repair'->>'source_call_id')=lower($2::text) AND retry_of_call_id IS NULL LIMIT 1",[args.execution_id,repair.source_call_id])).rows.length)
+     return fail('workspace_engine_interpretation_repair_unavailable');
+  }
   if(!(await c.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_timezone_invalid',422);
   const date=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[args.budget_timezone])).rows[0]!.date;
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT
@@ -111,10 +140,10 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   if(natural(spent.run_spent)+args.reserved_micro_usd>natural(run.input_snapshot.claude_cap_micro_usd))return fail('workspace_engine_interpretation_run_cap_exceeded');
   if(natural(spent.day_spent)+args.reserved_micro_usd>args.daily_cap_micro_usd)return fail('workspace_engine_interpretation_daily_cap_exceeded');
   const id=randomUUID(),token=randomUUID();await c.query(`INSERT INTO engine_cost_events(id,workspace_contract,workspace_id,catalog_execution_id,actor_user_id,
-   provider,model,operation,idempotency_key,request_digest,request_seal,call_configuration,call_state,attempt_token,reserved_micro_usd,budget_date,budget_timezone,budget_daily_cap_micro_usd,retry_of_call_id)
+   provider,model,operation,idempotency_key,request_digest,request_seal,call_configuration,call_state,attempt_token,reserved_micro_usd,budget_date,budget_timezone,budget_daily_cap_micro_usd,retry_of_call_id,metadata)
    VALUES($1::uuid,'workspace-engine-interpretation-v1',$2::uuid,$3::uuid,$4::uuid,'anthropic',$5,'workspace-engine-interpretation',
-    $6,$7,$8,$9::jsonb,'reserved',$10::uuid,$11,$12::date,$13,$14,$15::uuid)`,[id,args.workspace_id,args.execution_id,args.actor_user_id,config.model,
-    args.idempotency_key,args.request_digest,seal,JSON.stringify(config),token,args.reserved_micro_usd,date,args.budget_timezone,args.daily_cap_micro_usd,args.retry_of_call_id??null]);
+    $6,$7,$8,$9::jsonb,'reserved',$10::uuid,$11,$12::date,$13,$14,$15::uuid,$16::jsonb)`,[id,args.workspace_id,args.execution_id,args.actor_user_id,config.model,
+    args.idempotency_key,args.request_digest,seal,JSON.stringify(config),token,args.reserved_micro_usd,date,args.budget_timezone,args.daily_cap_micro_usd,args.retry_of_call_id??null,JSON.stringify(repair?{editorial_repair:repair}:{})]);
   return view((await c.query<Row>(`${rowSQL} AND id=$1::uuid`,[id])).rows[0]!);
  });
 }
@@ -122,6 +151,8 @@ export async function markSignalWorkspaceEngineInterpretationSentV1(args:{databa
  return tx(args.database,async c=>{const row=await lockedCall(c,args.call_id,args.attempt_token);
   if(row.call_state!=='reserved')return{call:view(row),send_authorized:false};
   await authorize(c,row.workspace_id,row.actor_user_id);const run=await execution(c,row.workspace_id,row.catalog_execution_id,row.actor_user_id,true,args.execution_token);
+  if(row.editorial_repair&&(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND id<>$2::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[row.catalog_execution_id,row.id])).rows.length)
+    return fail('workspace_engine_interpretation_outcome_unknown');
   const today=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[row.budget_timezone])).rows[0]!.date;
   if(today!==row.budget_date)return fail('workspace_engine_interpretation_daily_authority_expired');
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT

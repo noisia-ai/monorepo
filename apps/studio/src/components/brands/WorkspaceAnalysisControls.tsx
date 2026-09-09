@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisErrorKey, workspaceAnalysisEditorialFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
@@ -25,6 +25,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
   const preflight = status?.preflight;
   const unknown = workspaceAnalysisUnknown(status);
+  const editorialFailure = workspaceAnalysisEditorialFailure(status);
   const selectedCap = parseEmbeddingCapMicroUsd(analysis.cap);
   const capNumber = selectedCap !== null && BigInt(selectedCap) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(selectedCap) : null;
   useEffect(() => {
@@ -61,7 +62,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         })}
         {run.claude_cost.unknown_reserved_micro_usd > 0 ? <> {t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</> : null}
       </p> : null}
-      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown ? <>
+      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !editorialFailure ? <>
         <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
@@ -87,7 +88,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
             <ArrowClockwise aria-hidden size={15} />{t("resend")}</button>
             : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
-                : !unknown && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}
+                : !unknown && !editorialFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>

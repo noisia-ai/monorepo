@@ -59,3 +59,10 @@ proyección seleccionada hacia Signal, con una distinción explícita entre memb
 calculada y verificación semántica. No se aprueban modelos, tags o datos para
 sortear los lectores legacy. El contrato tampoco acredita capacidad de dos millones
 de menciones por haber pasado pruebas pequeñas ni completa el monitoreo incremental.
+
+
+## Addendum — 8 September: known invalid editorial output
+
+The first real Claude response was complete and metered but failed citation/shape validation. A plain retry would replay the same invalid receipt forever. One distinct editorial correction now references that immutable receipt and reuses the original numerical bundle. Its deterministic protocol, request digest and cost record are separate; the initial model/pricing configuration remains sealed. SQL0141 enforces one logical correction and preserves existing definitely-not-sent transport succession and budget checks.
+
+Unknown sends never qualify. The original packet and citation authority remain unchanged, and materialization verifies the corrected receipt chain. Exhausted corrections remain explicit failures; serving a partial catalog with editorial exceptions is separate pending work, not an invented successful interpretation.

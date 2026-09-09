@@ -10,6 +10,7 @@ import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-
  */
 export const SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1 = Object.freeze({
   batch_clusters: 4, representatives: 10, request_bytes: 98_304,
+  repair_request_bytes: 102_400,
   response_bytes: 2_097_152, max_output_tokens: 8192,
 });
 export class SignalWorkspaceInterpretationErrorV1 extends Error {
@@ -142,7 +143,25 @@ export type SignalWorkspaceInterpretationBatchV1 = {
   batch_key: string; request_digest: string; configuration: typeof SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
   context: SignalWorkspaceInterpretationContextV1; clusters: SignalWorkspaceInterpretationClusterV1[];
   request_body: string; input_token_upper_bound: number; reserved_micro_usd: number;
+  editorial_repair?: SignalWorkspaceInterpretationEditorialRepairV1;
 };
+export const SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_INSTRUCTION_V1 = `This is the single editorial correction for a previously completed response that failed local output validation. Reinterpret EVERY group in the original evidence packet and return the complete requested JSON object. The repair metadata identifies the previous receipt; it is not evidence. Use only exact ref_id values supplied in each group's representatives. Never use placeholders such as "x" or invent citations. A coherent or mixed result requires a supported name, definition and citations; if the evidence is insufficient, use the insufficient status and the original evidence rules. Do not repeat invalid placeholder fields, omit groups, change group identities or invent support. All original evidence, trust boundaries and output constraints still apply.`;
+export const SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1 = signalWorkspaceEmbeddingDigestV1({
+  contract_version: "workspace-editorial-repair-v1", instruction: SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_INSTRUCTION_V1,
+  diagnostic: "output_invalid", max_editorial_repairs: 1,
+  request_bytes: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.repair_request_bytes,
+});
+const editorialRepairSchema = z.object({
+  contract_version: z.literal("workspace-editorial-repair-v1"), source_call_id: z.string().uuid(),
+  source_request_digest: digest, source_response_sha256: digest, diagnostic: z.literal("output_invalid"),
+  protocol_digest: z.literal(SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1),
+}).strict();
+export type SignalWorkspaceInterpretationEditorialRepairV1 = z.infer<typeof editorialRepairSchema>;
+export function parseSignalWorkspaceInterpretationEditorialRepairV1(value: unknown): SignalWorkspaceInterpretationEditorialRepairV1 {
+  const result = editorialRepairSchema.safeParse(value);
+  if (!result.success) return fail("repair_invalid");
+  return result.data;
+}
 export function buildSignalWorkspaceInterpretationBatchV1(
   context: SignalWorkspaceInterpretationContextV1, values: SignalWorkspaceInterpretationClusterV1[],
 ): SignalWorkspaceInterpretationBatchV1 {
@@ -166,6 +185,33 @@ export function buildSignalWorkspaceInterpretationBatchV1(
   const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 });
   return { batch_key: `interpretation:${request_digest.slice(7)}`, request_digest, configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
     context: safeContext, clusters, request_body, input_token_upper_bound, reserved_micro_usd };
+}
+/** A new, bounded editorial request; never a replay of an uncertain send.
+ * The original packet, model/pricing configuration and raw receipt stay intact.
+ * The ledger separately proves that the referenced source is settled and known. */
+export function buildSignalWorkspaceInterpretationRepairBatchV1(original: SignalWorkspaceInterpretationBatchV1, args: {
+  source_call_id: string; source_response_sha256: string; diagnostic: "output_invalid";
+}): SignalWorkspaceInterpretationBatchV1 {
+  if (original.editorial_repair) return fail("repair_invalid");
+  const expected = buildSignalWorkspaceInterpretationBatchV1(original.context, original.clusters);
+  if (signalWorkspaceEmbeddingDigestV1(expected) !== signalWorkspaceEmbeddingDigestV1(original)) return fail("repair_invalid");
+  const editorial_repair = parseSignalWorkspaceInterpretationEditorialRepairV1({
+    contract_version: "workspace-editorial-repair-v1", ...args, source_request_digest: original.request_digest,
+    protocol_digest: SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1,
+  });
+  const body = JSON.parse(original.request_body);
+  const request_body = stableJson({ ...body,
+    system: `${body.system}\n\n${SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_INSTRUCTION_V1}`,
+    messages: [...body.messages, { role: "user", content: stableJson({ editorial_repair }) }],
+  });
+  const bytes = Buffer.byteLength(request_body);
+  if (bytes > SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.repair_request_bytes) return fail("batch_capacity_exceeded");
+  const input_token_upper_bound = bytes * 4 + 8192;
+  const reserved_micro_usd = signalWorkspaceInterpretationCostV1({ input_tokens: input_token_upper_bound,
+    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+  const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration: original.configuration });
+  return { ...expected, editorial_repair, request_body, request_digest, batch_key: `interpretation-repair:${request_digest.slice(7)}`,
+    input_token_upper_bound, reserved_micro_usd };
 }
 function assertUnitOrder(keys: Iterable<string>) {
   let previous: string | null = null;

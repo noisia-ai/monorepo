@@ -2877,3 +2877,10 @@ Las métricas cuentan raíces únicas; la cobertura seleccionada es su unión. N
 precisión semántica ni una suma aditiva de Topics. El permiso de LLM no sustituye los
 permisos de métricas, lista o texto. Respuestas privadas/no-store. Las superficies
 actuales de Signal se reutilizan sin payloads completos ni aprobación simulada.
+
+
+### Recuperación editorial de Workspace Analysis (8 septiembre)
+
+La ruta existente de análisis conserva `action=retry` e idempotencia. `workspace_engine_interpretation_output_invalid` sólo es recuperable cuando el servidor prueba respuesta completa y liquidada, fit/bundle vigente, misma autoridad y ausencia de resultados inciertos. El navegador no envía ni concede `editorial_repair_recovery_eligible`. La misma ejecución recupera su paquete y puede efectuar una única corrección editorial por lote bajo el cap original.
+
+`workspace_engine_interpretation_repair_invalid` es terminal para esa corrección. La UI muestra el fallo y el gasto real; no inicia otra corrida para eludirlo. Los inputs realmente cambiados permiten un nuevo análisis normal, tras resolver cualquier intención o resultado incierto. No se añade endpoint ni formulario.

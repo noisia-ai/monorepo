@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import type {Pool,PoolClient} from 'pg';
-import {signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+import {signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
  type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as money from '../signal-workspace-engine-interpretation';
@@ -35,8 +36,9 @@ async function fixture(){
  const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup};
 }
-test('one analysis keeps fit and metered interpretation recoverable, rejects partial completion and preserves semantic input identity across own outputs', {skip:!enabled,timeout:90_000},async()=>{
+for(const withRepair of [false,true]) test(`one analysis keeps fit and metered interpretation recoverable, rejects partial completion and preserves semantic input identity across own outputs${withRepair?' with an editorial repair':''}`, {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
+  if(withRepair)await f.query(await readFile(new URL('./0141_signal_workspace_editorial_repair.sql',import.meta.url),'utf8'));
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
   const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000};
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);assert.equal(preflight.missing_guides,0);
@@ -90,7 +92,7 @@ test('one analysis keeps fit and metered interpretation recoverable, rejects par
     inclusion:[{text:'The referenced conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]})};
   };
   const firstPacket=packet(keys[0]!),secondPacket=packet(keys[1]!);
-  const firstBody=firstPacket.body,secondBody=secondPacket.body;
+  const firstBody=firstPacket.body;let secondBody=secondPacket.body;
   const proposalArtifact=(name:string,body:string)=>({...artifact(name,'engine_proposals'),sha256:sha(body),size_bytes:Buffer.byteLength(body)});
   assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run?.phase,'interpreting');
   await assert.rejects(reserve(randomUUID(),randomUUID()),/lease_conflict/u);
@@ -121,11 +123,33 @@ test('one analysis keeps fit and metered interpretation recoverable, rejects par
    async function* wrongProposals(){yield{artifact_id:firstCheckpoint.artifact_id,body:firstBody};yield{artifact_id:wrong.artifact_id,body:secondBody};}
    await assert.rejects(materializeSignalWorkspaceEngineTopicsV1({database:f.database,lease,proposals:wrongProposals()}),/proposal_request_mismatch/u);
   }finally{await f.query('ROLLBACK');}
-  const secondCall=await reserve(randomUUID(),lease.execution_token,configuration,secondPacket.batch.request_digest,secondPacket.batch.reserved_micro_usd);
+  let secondCall=await reserve(randomUUID(),lease.execution_token,configuration,secondPacket.batch.request_digest,secondPacket.batch.reserved_micro_usd);
   const secondToken={database:f.database,call_id:secondCall.call_id,attempt_token:secondCall.attempt_token};
   await money.markSignalWorkspaceEngineInterpretationSentV1({...secondToken,execution_token:lease.execution_token});
   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...secondToken,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/raw-response-2.json`,sha256:sha('raw2'),size_bytes:10,http_status:200,provider_request_id:'local2'}});
   await money.settleSignalWorkspaceEngineInterpretationV1({...secondToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+  if(withRepair){
+   const originalId=secondCall.call_id;
+   const repair=buildSignalWorkspaceInterpretationRepairBatchV1(secondPacket.batch,{source_call_id:originalId,source_response_sha256:sha('raw2'),diagnostic:'output_invalid'});
+   secondCall=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,idempotency_key:repair.batch_key,request_digest:repair.request_digest,
+    configuration,reserved_micro_usd:repair.reserved_micro_usd,budget_timezone:interpretation_config.budget_timezone,daily_cap_micro_usd:interpretation_config.daily_cap_micro_usd,
+    execution_token:lease.execution_token,editorial_repair:repair.editorial_repair});
+   const repairToken={database:f.database,call_id:secondCall.call_id,attempt_token:secondCall.attempt_token};
+   await money.markSignalWorkspaceEngineInterpretationSentV1({...repairToken,execution_token:lease.execution_token});
+   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...repairToken,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/raw-repair.json`,sha256:sha('corrected raw'),size_bytes:13,http_status:200,provider_request_id:'local-repair'}});
+   await money.settleSignalWorkspaceEngineInterpretationV1({...repairToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+   secondBody=JSON.stringify({...JSON.parse(secondBody),editorial_repair:repair.editorial_repair});
+   // A valid paid repair cannot lend its receipt to a different source or an
+   // unmarked original packet, even if artifact bytes and group keys match.
+   for(const body of [secondPacket.body,JSON.stringify({...JSON.parse(secondBody),editorial_repair:{...repair.editorial_repair,source_response_sha256:sha('foreign receipt')}})]){
+    await f.query('BEGIN');try{
+     const forged=await engine.checkpointSignalWorkspaceEngineInterpretationV1({...first,call_id:secondCall.call_id,artifact:proposalArtifact('forged-repair.json',body),unit_keys:[keys[1]!]});
+     async function* forgedProposals(){yield{artifact_id:firstCheckpoint.artifact_id,body:firstBody};yield{artifact_id:forged.artifact_id,body};}
+     await assert.rejects(materializeSignalWorkspaceEngineTopicsV1({database:f.database,lease:lease!,proposals:forgedProposals()}),/repair_invalid|proposal_request_mismatch/u);
+    }finally{await f.query('ROLLBACK');}
+   }
+   assert.deepEqual((await f.query('SELECT id,call_state,response_sha256 FROM engine_cost_events WHERE id=$1::uuid',[originalId])).rows,[{id:originalId,call_state:'settled',response_sha256:sha('raw2')}]);
+  }
   const secondCheckpoint=await engine.checkpointSignalWorkspaceEngineInterpretationV1({...first,call_id:secondCall.call_id,artifact:proposalArtifact('interpretation-2.json',secondBody),unit_keys:[keys[1]!]});
   assert.equal(secondCheckpoint.interpreted_units,2);
   assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run?.phase,'materializing');
@@ -146,6 +170,6 @@ test('one analysis keeps fit and metered interpretation recoverable, rejects par
   assert.equal(final.topic_count,2);const status=await engine.loadSignalWorkspaceEngineStatusV1(f.access);
   assert.equal(status.latest_run?.status,'ready');assert.equal(status.latest_run?.is_current,true);assert.equal(status.latest_run?.interpreted_units,2);assert.equal(status.latest_run?.materialized_topics,2);
   assert.deepEqual((await f.query('SELECT status FROM signal_tagging_model_version_events WHERE model_version_id=$1::uuid',[fit.model_version_id])).rows,[{status:'draft'}]);
-  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.confirmed_micro_usd,3500);assert.equal(budget.reserved_micro_usd,0);
+  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.confirmed_micro_usd,withRepair?5250:3500);assert.equal(budget.reserved_micro_usd,0);
  }finally{await f.cleanup();}
 });

@@ -6,6 +6,7 @@ import {
   SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as configuration,
   SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1,
   batchSignalWorkspaceInterpretationV1, buildSignalWorkspaceInterpretationBatchV1,
+  buildSignalWorkspaceInterpretationRepairBatchV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   parseSignalWorkspaceInterpretationClusterV1, signalWorkspaceInterpretationCostV1,
   signalWorkspaceInterpretationReferenceIdV1, signalWorkspaceInterpretationUniverseDigestV1,
   validateSignalWorkspaceInterpretationResultV1,
@@ -94,4 +95,30 @@ test("conservative reserve includes entire serialized input and output cap; actu
   assert.equal(batch.reserved_micro_usd, batch.input_token_upper_bound * 5 + 8192 * 25);
   assert.equal(signalWorkspaceInterpretationCostV1({ input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 1, cache_creation_input_tokens: 1 }), 757);
   assert.throws(() => signalWorkspaceInterpretationCostV1({ input_tokens: -1, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }), /usage_invalid/u);
+});
+test("editorial repair preserves the entire packet and evidence authority with a distinct bounded request", () => {
+  const groups = [cluster(1), cluster(2)], original = buildSignalWorkspaceInterpretationBatchV1(context, groups);
+  const snapshot = structuredClone(original);
+  const source = { source_call_id: "00000000-0000-4000-8000-000000000090", source_response_sha256: sha("invalid raw receipt"), diagnostic: "output_invalid" as const };
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(original, source);
+  const body = JSON.parse(repair.request_body), before = JSON.parse(original.request_body);
+  assert.deepEqual(original, snapshot);
+  assert.deepEqual(body.messages[0], before.messages[0]);
+  assert.deepEqual(repair.clusters, original.clusters);
+  assert.deepEqual(repair.configuration, original.configuration);
+  assert.deepEqual(body.output_config, before.output_config);
+  assert.ok(body.system.startsWith(before.system));
+  assert.equal(body.messages.length, 2);
+  assert.notEqual(repair.request_digest, original.request_digest);
+  assert.deepEqual(buildSignalWorkspaceInterpretationRepairBatchV1(original, source), repair);
+  assert.ok(Buffer.byteLength(repair.request_body) <= 102_400);
+  assert.ok(repair.reserved_micro_usd > original.reserved_micro_usd);
+  assert.equal(repair.reserved_micro_usd, (Buffer.byteLength(repair.request_body) * 4 + 8192) * 5 + 8192 * 25);
+  assert.equal(validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: groups.map(answer) }).length, 2);
+  assert.throws(() => validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: [{ ...answer(groups[0]!), citations: ["x"] }] }), /output_invalid/u);
+  assert.throws(() => validateSignalWorkspaceInterpretationResultV1(repair, { interpretations: [answer(groups[0]!), { ...answer(groups[1]!), citations: answer(groups[0]!).citations }] }), /citation_invalid/u);
+  assert.throws(() => buildSignalWorkspaceInterpretationRepairBatchV1(repair, source), /repair_invalid/u);
+  assert.throws(() => buildSignalWorkspaceInterpretationRepairBatchV1({ ...original, reserved_micro_usd: 1 }, source), /repair_invalid/u);
+  assert.throws(() => parseSignalWorkspaceInterpretationEditorialRepairV1({ ...repair.editorial_repair, protocol_digest: sha("unapproved protocol") }), /repair_invalid/u);
+  assert.notEqual(buildSignalWorkspaceInterpretationRepairBatchV1(original, { ...source, source_response_sha256: sha("different receipt") }).request_digest, repair.request_digest);
 });

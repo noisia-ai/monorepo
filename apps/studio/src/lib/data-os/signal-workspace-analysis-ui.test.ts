@@ -6,8 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
-  workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
-  workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
+  workspaceAnalysisCanReleaseChangedEditorialRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
+  workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 Object.assign(globalThis, { React });
 const id = "00000000-0000-4000-8000-000000000001";
@@ -76,6 +76,35 @@ test("unknown outcome/reserve blocks new starts, replay and retry even when a la
   assert.equal(workspaceAnalysisCanRetry({ ...status, latest_run: failed }, failed), true);
   assert.equal(workspaceAnalysisCanRetry(status, { ...failed, is_current: false }), false);
   assert.equal(workspaceAnalysisCanRetry(status, { ...failed, retryable: false }), false);
+});
+test("known editorial failures cannot become a replacement run; eligible recovery stays on the same execution", () => {
+  for (const code of ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"]) {
+    const failed = { ...ready, status: "failed" as const, phase: "failed" as const, error_code: code, retryable: code.endsWith("output_invalid") };
+    const received = { ...status, latest_run: failed };
+    assert.equal(workspaceAnalysisUnknown(received), false);
+    assert.equal(workspaceAnalysisCanStart(received, "0.002001"), false);
+    assert.equal(workspaceAnalysisCanReplay(received, pending), false);
+    assert.equal(workspaceAnalysisCanRetry(received, failed), failed.retryable);
+    assert.equal(workspaceAnalysisCanStart({ ...received, latest_run: { ...failed, is_current: false } }, "0.002001"), true);
+  }
+  assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_output_invalid"), "editorialInvalid");
+  assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_repair_invalid"), "editorialRepairExhausted");
+});
+test("only a confirmed editorial failure with changed inputs releases the local intent; unknown receipts stay pending", () => {
+  for (const code of ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"]) {
+    const failed = { ...ready, status: "failed" as const, phase: "failed" as const, error_code: code, is_current: false };
+    const changed = { ...status, latest_run: failed, request_run: failed };
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest(changed), true);
+    assert.equal(workspaceAnalysisCanStart(changed, "0.002001"), true);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: null }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed, is_current: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed, outcome_unknown: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed,
+      claude_cost: { ...failed.claude_cost, unknown_reserved_micro_usd: 1 } } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, latest_run: { ...failed, outcome_unknown: true } }), false);
+    assert.equal(workspaceAnalysisCanReleaseChangedEditorialRequest({ ...changed, request_run: { ...failed,
+      error_code: "workspace_engine_storage_verification_failed" } }), false);
+  }
 });
 test("late status cannot undo a newer receipt or cross workspace/actor scope", () => {
   const current = { ...status, latest_run: ready, latest_complete: ready, latest_complete_execution_id: id,
@@ -155,6 +184,19 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(uncertain.replace(/&#x27;/gu, "'").includes(t.unknown)); assert.ok(uncertain.includes("0.075"));
     assert.ok(!uncertain.includes(t.estimate.split("{amount}")[0]), "a new estimate must not compete with an unresolved receipt");
     assert.ok(!uncertain.includes(t.startWithCap.split("{amount}")[0]), "the disabled action does not suggest a new cap while cost is uncertain");
+  });
+  test(`${locale}: invalid paid editorial output retains its cost and exhausted repair never advertises a replacement run`, () => {
+    const failed = { ...ready, status: "failed" as const, phase: "failed" as const, fit_completed: true,
+      expected_interpretation_units: 357, interpreted_units: 0, error_code: "workspace_engine_interpretation_output_invalid", retryable: true,
+      claude_cap_micro_usd: 30_000_000, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 147_415, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0 } };
+    const invalid = render({ ...status, latest_run: failed });
+    assert.ok(invalid.includes(t.errors.editorialInvalid)); assert.ok(invalid.includes(t.retry));
+    assert.match(invalid, /0[.,]147415/u); assert.ok(!invalid.includes(t.unknown));
+    const exhausted = render({ ...status, latest_run: { ...failed, retryable: false, error_code: "workspace_engine_interpretation_repair_invalid" } });
+    assert.ok(exhausted.includes(t.errors.editorialRepairExhausted)); assert.match(exhausted, /0[.,]147415/u);
+    assert.ok(!exhausted.includes(t.retry)); assert.ok(!exhausted.includes(t.changeCap));
+    assert.ok(!exhausted.includes(t.startWithCap.split("{amount}")[0]));
+    assert.ok(!exhausted.includes(t.unknown));
   });
   test(`${locale}: unknown estimate is explained as a spending limit and no-provider blocks complete analysis`, () => {
     const unknown = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,

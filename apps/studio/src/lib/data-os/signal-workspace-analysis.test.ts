@@ -130,6 +130,28 @@ test("interpretation evidence retry requires its own server eligibility and neve
 });
 
 
+test("editorial repair retry requires its exact server eligibility while settled invalid output remains a known cost", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 80, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
+    error_code: "workspace_engine_interpretation_output_invalid", is_current: true, model_version_id: id, artifact_count: 15,
+    claude_cap_micro_usd: 30_000_000, result_kind: "computational_grouping", fit_completed: true,
+    expected_interpretation_units: 357, interpreted_units: 0, materialized_topics: 0 };
+  const budget = { confirmed_micro_usd: 147_415, reserved_micro_usd: 0, unknown_reserved_micro_usd: 0,
+    observed_exception_micro_usd: 0, hard_cap_micro_usd: 30_000_000 };
+  assert.equal(workspaceAnalysisRunViewV1(run, budget)?.retryable, false);
+  const eligible = { ...run, editorial_repair_recovery_eligible: true };
+  const view = workspaceAnalysisRunViewV1(eligible, budget)!;
+  assert.equal(view.retryable, true); assert.equal(view.outcome_unknown, false);
+  assert.equal(view.claude_cost.settled_micro_usd, 147_415);
+  assert.equal(workspaceAnalysisRunViewV1({ ...eligible, is_current: false }, budget)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1({ ...eligible, status: "running" }, budget)?.retryable, false);
+  assert.equal(workspaceAnalysisRunViewV1(eligible, { ...budget, unknown_reserved_micro_usd: 1 })?.retryable, false);
+  for (const error_code of ["workspace_engine_interpretation_repair_invalid", "workspace_engine_interpretation_cluster_invalid",
+    "workspace_engine_storage_verification_failed", "workspace_engine_forbidden"])
+    assert.equal(workspaceAnalysisRunViewV1({ ...eligible, error_code }, budget)?.retryable, false);
+});
+
+
 test("provider availability requires explicit complete budget policy and a current configured key", () => {
   const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "test_not_real",
     NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "30000000",

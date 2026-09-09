@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildSignalWorkspaceInterpretationBatchV1, signalWorkspaceInterpretationReferenceIdV1,
+  buildSignalWorkspaceInterpretationRepairBatchV1,
   type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
   type WorkspaceInterpretationRawReceiptV1 } from "./workspace-interpretation.js";
@@ -55,6 +56,31 @@ test("known usage survives invalid schema, foreign citations and max_tokens with
     assert.equal(saved, true); assert.equal(sends, 1); assert.equal(result.outcome, "known_response_invalid");
     assert.equal(result.usage?.output_tokens, 20); assert.equal(result.interpretations, null);
   }
+});
+test("editorial repair sends only its canonical sealed request and preserves the same citation checks", async () => {
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(batch, {
+    source_call_id: "00000000-0000-4000-8000-000000000091", source_response_sha256: sha("retained invalid response"), diagnostic: "output_invalid",
+  });
+  let sends = 0, cas = 0, receipts = 0;
+  const result = await sendWorkspaceInterpretationV1({ ...base, batch: repair,
+    authorize_send: async () => { cas++; return true; }, persist_receipt: async () => { receipts++; },
+    fetch_impl: fakeFetch((_url, init) => { sends++; assert.equal(init?.body, repair.request_body); return Response.json(response()); }),
+  });
+  assert.equal(result.outcome, "validated"); assert.equal(sends, 1); assert.equal(receipts, 1);
+  for (const changed of [
+    { ...repair, request_body: repair.request_body + " " },
+    { ...repair, editorial_repair: { ...repair.editorial_repair!, source_request_digest: sha("foreign source") } },
+    { ...repair, editorial_repair: { ...repair.editorial_repair!, protocol_digest: sha("changed instruction") } },
+  ]) {
+    await assert.rejects(sendWorkspaceInterpretationV1({ ...base, batch: changed,
+      authorize_send: async () => { cas++; return true; }, persist_receipt: async () => { receipts++; },
+      fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }),
+    }), /request_invalid/u);
+  }
+  assert.equal(cas, 1); assert.equal(sends, 1); assert.equal(receipts, 1);
+  const bad = response({ content: [{ type: "text", text: JSON.stringify({ interpretations: [{ ...output.interpretations[0], citations: ["x"] }] }) }] });
+  const bytes = new TextEncoder().encode(JSON.stringify(bad));
+  assert.equal(validateWorkspaceInterpretationReceiptV1(repair, { bytes, sha256: sha(JSON.stringify(bad)), http_status: 200, provider_request_id: "req_retained", complete: true }).outcome, "known_response_invalid");
 });
 test("a different reported model retains raw usage without settling at the requested model's rates", async () => {
   let receipt: WorkspaceInterpretationRawReceiptV1 | undefined;

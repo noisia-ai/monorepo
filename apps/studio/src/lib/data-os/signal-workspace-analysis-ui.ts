@@ -87,10 +87,19 @@ export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | nu
   const cost = status?.preflight.cost.claude;
   return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
 }
+export function workspaceAnalysisEditorialFailure(status: WorkspaceAnalysisStatus | null) {
+  return [status?.latest_run, status?.request_run].some((run) => run?.status === "failed" && run.is_current
+    && ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"].includes(run.error_code ?? ""));
+}
+export function workspaceAnalysisCanReleaseChangedEditorialRequest(status: WorkspaceAnalysisStatus) {
+  const run = status.request_run;
+  return Boolean(run?.status === "failed" && !run.is_current && !workspaceAnalysisUnknown(status)
+    && ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid"].includes(run.error_code ?? ""));
+}
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
   if (!status || !cap || !status.can_execute || status.active_run || workspaceAnalysisUnknown(status)
-    || status.preflight.state !== "ready") return false;
+    || workspaceAnalysisEditorialFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
   return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
     && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
@@ -110,6 +119,8 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_engine_interpretation_output_invalid") return "editorialInvalid";
+  if (code === "workspace_engine_interpretation_repair_invalid") return "editorialRepairExhausted";
   if (["load", "request", "storage", "forbidden"].includes(code)) return code;
   if (/context|catalog|input|embedding.*changed|stale/u.test(code)) return "changed";
   return "failed";
