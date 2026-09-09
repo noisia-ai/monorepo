@@ -158,13 +158,14 @@ export const revokeSignalWorkspaceInterpretationAdmissionV1=(args:SignalWorkspac
  * exceptions and uncertain transaction completion remain transport uncertainty. */
 export async function assertSignalWorkspaceInterpretationAdmissionWithClientV1(c:PoolClient,args:{execution_id:string;admission_operation_id?:string}){
  const deny=(code:string):never=>{throw new SignalWorkspaceEngineInterpretationError(`workspace_engine_interpretation_${code}`,409);};
- const row=(await c.query<{id:string|null;receipt:SignalWorkspaceInterpretationAdmissionV1|null;expired:boolean;admin_valid:boolean;source_valid:boolean}>(`SELECT interpretation_admission_operation_id id,
+ const row=(await c.query<{id:string|null;receipt:SignalWorkspaceInterpretationAdmissionV1|null;expired:boolean;admin_valid:boolean;source_valid:boolean;input_contract:string}>(`SELECT input_contract,interpretation_admission_operation_id id,
   workspace_interpretation_admission_receipt_v1(id) receipt,
   clock_timestamp()>=(workspace_interpretation_admission_receipt_v1(id)->>'admission_not_after')::timestamptz expired,
   signal_workspace_incremental_parent_current_v1(id,workspace_id,actor_user_id) source_valid,
   workspace_interpretation_admission_admin_v1(workspace_id,(workspace_interpretation_admission_receipt_v1(id)->>'authorized_by_user_id')::uuid) admin_valid
   FROM signal_topic_catalog_executions WHERE id=$1::uuid`,[args.execution_id])).rows[0];
  if(!row)return deny('admission_changed');
+ if(row.input_contract==='workspace-incremental-editorial-v1')row.source_valid=(await c.query<{valid:boolean}>('SELECT workspace_incremental_editorial_execution_current_v1($1::uuid) valid',[args.execution_id])).rows[0]?.valid===true;
  if(!row.id){if(args.admission_operation_id)return deny('admission_changed');return null;}
  if(row.receipt?.action==='revoke_interpretation')return deny('admission_revoked');
  if(row.id!==args.admission_operation_id||!row.admin_valid||!row.source_valid)return deny('admission_changed');

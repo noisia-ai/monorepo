@@ -41,6 +41,7 @@ import { signalWorkspaceEngineProgressJobV1 } from "../workers/signal-workspace-
 import { SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_NAME, signalWorkspaceTopicProjectionJobV1 } from "../workers/signal-workspace-topic-projection";
 import { SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME, signalWorkspaceIncrementalDerivationJobV1 } from "../workers/signal-workspace-incremental-derivation";
 import { SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME, signalWorkspaceIncrementalProjectionJobV1 } from "../workers/signal-workspace-incremental-projection";
+import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME, signalWorkspaceIncrementalEditorialJobV1 } from "../workers/signal-workspace-incremental-editorial-job";
 
 export { redisConnection };
 
@@ -65,6 +66,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_NAME) return signalWorkspaceTopicProjectionJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME) return signalWorkspaceIncrementalDerivationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME) return signalWorkspaceIncrementalProjectionJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME) return signalWorkspaceIncrementalEditorialJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

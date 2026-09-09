@@ -10,6 +10,7 @@ import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopi
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
 import { SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME } from "./signal-workspace-incremental-derivation";
 import { SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME } from "./signal-workspace-incremental-projection";
+import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME } from "./signal-workspace-incremental-editorial-job";
 
 type QueueLike = {
   add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown>;
@@ -51,9 +52,13 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
       WHERE attempt_count >= $1 AND status IN('pending','failed','dispatching')
         AND (status<>'dispatching' OR lease_expires_at<=now())
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
+          WHERE editorial.id=signal_topic_classification_outbox.execution_id
+            AND editorial.input_contract='workspace-incremental-editorial-v1' AND editorial.status NOT IN('queued','running'))
       RETURNING execution_id,dispatch_kind,error_code
     ) UPDATE signal_topic_catalog_executions execution
-      SET status='failed',error_code=CASE WHEN execution.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
+      SET status='failed',error_code=CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'
+       OR execution.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
        THEN dead.error_code ELSE 'topic_queue_unavailable' END,completed_at=now(),updated_at=now()
       FROM dead WHERE execution.id=dead.execution_id AND dead.dispatch_kind='execution' AND execution.status='queued'
   `, [maxAttempts]);
@@ -63,6 +68,9 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     WITH candidates AS(
       SELECT id FROM signal_topic_classification_outbox
       WHERE attempt_count<$1
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
+          WHERE editorial.id=signal_topic_classification_outbox.execution_id
+            AND editorial.input_contract='workspace-incremental-editorial-v1' AND editorial.status NOT IN('queued','running'))
         AND (dispatch_kind<>'incremental_projection' OR status<>'failed' OR error_code IN('workspace_incremental_projection_transport_unavailable','workspace_classification_transport_unavailable'))
         AND ((status IN('pending','failed') AND available_at<=now())
         OR (status='dispatching' AND lease_expires_at<=now()))
@@ -105,6 +113,9 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       if ((completed.rowCount ?? 0) === 1) result.dispatched += 1;
     } catch (error) {
       const dead = row.attempt_count >= maxAttempts;
+      const errorCode = row.input_contract==='workspace-incremental-editorial-v1'
+        && safeWorkspaceClassificationErrorV1(error)==='workspace_classification_transport_unavailable'
+        ? 'workspace_incremental_editorial_transport_unavailable' : safeError(error);
       if (dead) await database.query(`
         WITH exhausted AS(
           UPDATE signal_topic_classification_outbox SET status='dead_letter',
@@ -112,17 +123,18 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
           WHERE id=$1::uuid AND lease_token=$2::uuid AND status='dispatching'
           RETURNING execution_id,dispatch_kind,error_code
         ) UPDATE signal_topic_catalog_executions execution
-          SET status='failed',error_code=CASE WHEN execution.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
+          SET status='failed',error_code=CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'
+           OR execution.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
            THEN exhausted.error_code ELSE 'topic_queue_unavailable' END,completed_at=now(),updated_at=now()
           FROM exhausted WHERE execution.id=exhausted.execution_id AND exhausted.dispatch_kind='execution' AND execution.status='queued'
-      `, [row.outbox_id, row.lease_token, safeError(error)]);
+      `, [row.outbox_id, row.lease_token, errorCode]);
       else await database.query(`
         UPDATE signal_topic_classification_outbox SET status='failed',
           available_at=now()+make_interval(secs=>$3),lease_token=NULL,lease_expires_at=NULL,
           error_code=$4,updated_at=now()
         WHERE id=$1::uuid AND lease_token=$2::uuid AND status='dispatching'
       `, [row.outbox_id, row.lease_token,
-        Math.min(900, 5 * (2 ** Math.max(0, row.attempt_count - 1))), safeError(error)]);
+        Math.min(900, 5 * (2 ** Math.max(0, row.attempt_count - 1))), errorCode]);
       if (dead) result.dead_lettered += 1;
       else result.failed += 1;
     }
@@ -137,6 +149,7 @@ export function topicExecutionJobNameV1(inputContract: string, sourceProjection 
   if (inputContract === "legacy-topic-catalog-v1") return SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME;
   if (inputContract === "workspace-topic-computation-v1") return SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME;
   if (inputContract === "workspace-topic-engine-v1") return SIGNAL_WORKSPACE_ENGINE_JOB_V1;
+  if (inputContract === "workspace-incremental-editorial-v1") return SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME;
   if(inputContract === "workspace-topic-classification-v1" && sourceProjection) {
     if (projectionContract === 'workspace-topic-incremental-projection-v1') return SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME;
     if (!projectionContract || projectionContract === 'workspace-topic-projection-v1') return SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1;
