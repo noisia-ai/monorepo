@@ -22,6 +22,15 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const status = analysis.data;
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
+  // Deduplicate only identical receipts from the same execution; distinct or newer
+  // admission amounts must stay visible alongside the historical run receipt.
+  const admissionReceiptAlreadyVisible = Boolean(run && status?.admission
+    && run.execution_id.toLowerCase() === status.admission.execution_id.toLowerCase()
+    && run.claude_cost.settled_micro_usd === status.admission.confirmed_micro_usd
+    && run.claude_cost.reserved_micro_usd === status.admission.reserved_micro_usd
+    && run.claude_cost.terminal_reserved_micro_usd === status.admission.terminal_reserved_micro_usd
+    && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0
+      || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0));
   const update = status?.update;
   const admission = status?.numeric_readiness;
   const admissionMessage = admission ? workspaceNumericReadinessMessage(admission) : null;
@@ -71,8 +80,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   }, [catalogReceipt, complete, disabled, analysis.error, analysis.verified, status?.observed_at]);
 
   return <div className="admin-section" aria-label={t("title")}>
+    <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
-      <div><strong>{t("title")}</strong><p className="admin-drawer-form__hint">{t("body")}</p></div>
       {!status && analysis.reading ? <p role="status">{t("loading")}</p> : null}
       {admission && admissionMessage ? <div role="status" data-numeric-readiness={admission.state}>
         <strong>{t("admission.title")}</strong>
@@ -124,25 +133,27 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           done: run.interpreted_units, total: run.expected_interpretation_units
         })}</> : null}
       </p> : null}
-      {materialization ? <p role="status" className="admin-drawer-form__hint">
-        <strong>{t("partialCatalog", { count: materialization.topic_count })}</strong>{" "}
-        {t("materializedProgress", { done: materialization.interpreted_unit_count, total: materialization.expected_interpretation_unit_count })}{" "}
-        {!materialization.interpretation_complete ? t("partialCoverage") : t("classificationCoverage")}
-        {disabled ? <> {t("catalogRefreshDeferred")}</> : null}
-      </p> : status?.latest_run?.materialization_pending ? <p role="status">{t("catalogUpdating")}</p> : null}
+      {materialization ? <div role="status">
+        <strong>{t("partialCatalog", { count: materialization.topic_count })}</strong>
+        <p>{t("materializedProgress", { done: materialization.interpreted_unit_count, total: materialization.expected_interpretation_unit_count })}</p>
+        <p className="admin-drawer-form__hint">{!materialization.interpretation_complete ? t("partialCoverage") : t("classificationCoverage")}
+          {disabled ? <> {t("catalogRefreshDeferred")}</> : null}</p>
+      </div> : status?.latest_run?.materialization_pending ? <p role="status">{t("catalogUpdating")}</p> : null}
       {currentRun?.materialization_error_code ? <p role="alert" className="team-msg team-msg--error">{t("catalogSaveFailed")}</p> : null}
       {complete ? <p role="status"><strong>{t(complete.result_kind === "insufficient_population" ? "insufficient" : noGroups ? "noGroups" : interpretedComplete ? "completed" : "computed")}</strong>{" "}{t(complete.result_kind === "insufficient_population" ? "insufficientBody" : noGroups ? "noGroupsBody" : interpretedComplete ? "completedBody" : "computedBody")}
         {interpretedComplete && complete.result_kind !== "insufficient_population" && catalogCount !== null ? <> {t("catalogTopics", { count: catalogCount })}</> : null}
         {status?.active_run ? <> {t("previous")}</> : !complete.is_current ? <> {t("outdated")}</> : null}
       </p> : null}
       {analysis.error === "load" && status ? <p role="status">{t("unverified")}</p> : null}
-      {run && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <p>
-        {t("cost", { amount: money(run.claude_cost.hard_cap_micro_usd) })} {t("receipt", {
-          settled: money(run.claude_cost.settled_micro_usd), reserved: money(run.claude_cost.reserved_micro_usd)
-        })}
-        {run.claude_cost.unknown_reserved_micro_usd > 0 ? <> {t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</> : null}
-        {run.claude_cost.terminal_reserved_micro_usd > 0 ? <> {t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</> : null}
-      </p> : null}
+      {run && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <div data-analysis-receipt>
+        <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
+          <div><dt>{t("receiptLabels.cap")}</dt><dd>{money(run.claude_cost.hard_cap_micro_usd)}</dd></div>
+          <div><dt>{t("receiptLabels.confirmed")}</dt><dd>{money(run.claude_cost.settled_micro_usd)}</dd></div>
+          <div><dt>{t("receiptLabels.reserved")}</dt><dd>{money(run.claude_cost.reserved_micro_usd)}</dd></div>
+        </dl>
+        {run.claude_cost.unknown_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</p> : null}
+        {run.claude_cost.terminal_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</p> : null}
+      </div> : null}
       {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
         <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
@@ -159,9 +170,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         </details> : null}
       </> : null}
       {unknown ? <p role="status">{t("unknown")}</p> : run?.status === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(run.error_code ?? "failed")}`)}</p> : null}
-      {status?.admission ? <WorkspaceInterpretationAdmissionControls status={status} canAuthorize={analysis.canAuthorizeAdmission}
-        canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting}
-        pendingRequest={analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? analysis.pending.body : null} onSubmit={analysis.submitAdmission} /> : null}
+
       {analysis.pending && (isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_incremental_delivery" ? !status?.update?.request_delivery : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
       {analysis.error ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(analysis.error)}`)}</p> : null}
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
@@ -182,6 +191,9 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>
+      {status?.admission ? <WorkspaceInterpretationAdmissionControls status={status} canAuthorize={analysis.canAuthorizeAdmission}
+        canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting} receiptsAlreadyVisible={admissionReceiptAlreadyVisible}
+        pendingRequest={analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? analysis.pending.body : null} onSubmit={analysis.submitAdmission} /> : null}
       {status ? <details open={!update && preflight?.state === "missing_context"}>
         <summary>{t("prepareContext")}</summary>
         <TopicPreparationControls workspaceId={workspaceId} catalogVersion={catalogVersion}

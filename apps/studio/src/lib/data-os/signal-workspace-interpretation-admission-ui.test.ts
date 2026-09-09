@@ -4,6 +4,7 @@ import test from "node:test";
 import React, { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
+import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { WorkspaceInterpretationAdmissionControls } from "../../components/brands/WorkspaceInterpretationAdmissionControls";
 import { validWorkspaceAnalysisStatus, parsePendingWorkspaceAnalysis, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanStart,
   type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
@@ -127,5 +128,48 @@ for (const locale of ["es-MX", "en-US"]) {
     const stopped = render({ ...current, admission: { ...current.admission, can_revoke: false,
       current: { ...receipt, action: "revoke_interpretation" } } });
     assert.ok(stopped.includes(copy.revoked)); assert.ok(!stopped.includes(`>${copy.revoke}</button>`));
+  });
+}
+
+for (const locale of ["es-MX", "en-US"]) {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const copy = messages.AdminWorkspace.topics.analysis;
+  const run: NonNullable<WorkspaceAnalysisStatus["latest_run"]> = {
+    execution_id: id, status: "failed", phase: "failed", progress: 82, expected_roots: 100, expected_chunks: 130,
+    expected_guides: 2, processed_roots: 100, processed_chunks: 130, error_code: "workspace_engine_worker_failed",
+    is_current: true, model_version_id: id, artifact_count: 23, claude_cap_micro_usd: 5_000_000,
+    result_kind: "computational_grouping", fit_completed: true, expected_interpretation_units: 357,
+    interpreted_units: 32, materialized_topics: 0, retryable: true, outcome_unknown: false, transport_recovery_eligible: false,
+    claude_cost: { hard_cap_micro_usd: 5_000_000, settled_micro_usd: 1_000_000, reserved_micro_usd: 1_000_000,
+      unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 500_000 },
+    materialization_progress: { artifact_id: id, output_catalog_profile_id: id, mapping_digest: hash,
+      interpreted_unit_count: 32, expected_interpretation_unit_count: 357, interpretation_complete: false,
+      topic_count: 32, discovered_topic_count: 32, projection_execution_id: id, generation_id: id }
+  };
+  const value: WorkspaceAnalysisStatus = { ...status, latest_run: run };
+  const render = (input = value) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, timeZone: "UTC", messages } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceAnalysisControls, { workspaceId: id, brandId: "example-brand", catalogVersion: "1", initial: input })));
+  test(`${locale}: equal same-run receipts appear once; partial catalog and reconciliation remain visible`, () => {
+    const html = render();
+    assert.ok(html.includes(copy.receiptLabels.confirmed));
+    assert.ok(!html.includes(copy.admissionGrant.receipts.split("{")[0]));
+    assert.ok(html.includes(copy.terminalAmount.split("{")[0]));
+    assert.match(html, /32[^<]*357/u);
+    assert.ok(html.includes(copy.partialCoverage));
+    assert.ok(html.indexOf(copy.partialCoverage) < html.indexOf(copy.admissionGrant.title));
+    assert.ok(html.includes(copy.errors.failed));
+    assert.ok(html.includes(copy.admissionGrant.authorize));
+    assert.ok(html.includes(copy.refresh));
+    assert.ok(!render({ ...value, admission: { ...admission, execution_id: id.toUpperCase() } }).includes(copy.admissionGrant.receipts.split("{")[0]));
+  });
+  test(`${locale}: different executions, changed amounts, and unknown exposure are never deduplicated away`, () => {
+    for (const patch of [{ execution_id: other }, { confirmed_micro_usd: 900_000 },
+      { reserved_micro_usd: 1_100_000 }, { terminal_reserved_micro_usd: 400_000 }]) {
+      assert.ok(render({ ...value, admission: { ...admission, ...patch } }).includes(copy.admissionGrant.receipts.split("{")[0]));
+    }
+    assert.ok(render({ ...value, latest_run: { ...run, outcome_unknown: true,
+      claude_cost: { ...run.claude_cost, unknown_reserved_micro_usd: 200_000 } } }).includes(copy.unknownAmount.split("{")[0]));
+    assert.ok(render({ ...value, latest_run: null }).includes(copy.admissionGrant.receipts.split("{")[0]));
   });
 }
