@@ -108,9 +108,11 @@ export async function buildSignalWorkspaceIncrementalDescriptorWithClientV1(args
 }
 export async function beginSignalWorkspaceIncrementalEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;
  idempotency_key:string;embedding_run_id:string;expected_context_digest:string;expected_catalog_digest:string;
- engine_config:Record<string,unknown>;close_requested:boolean;parent_execution_id?:string}){
+ engine_config:Record<string,unknown>;close_requested:boolean;parent_execution_id?:string;
+ automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}){
  return beginSignalWorkspaceEngineV1({...args,claude_cap_micro_usd:0,
-  incremental_options:{close_requested:args.close_requested,parent_execution_id:args.parent_execution_id}});
+  incremental_options:{close_requested:args.close_requested,parent_execution_id:args.parent_execution_id,
+   automatic_admission:args.automatic_admission}});
 }
 
 export async function readSignalWorkspaceIncrementalRootsV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;

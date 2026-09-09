@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { workspaceNumericAdmissionPoll } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
@@ -96,19 +97,30 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
   const active = data?.active_run?.execution_id
     ?? (data?.latest_run?.materialization_pending ? data.latest_run.execution_id : null)
     ?? (data?.update?.has_pending_work ? data.update.numeric.execution_id : null);
+  const admission = workspaceNumericAdmissionPoll(data?.numeric_readiness);
+  const admissionKey = admission?.key, admissionKind = admission?.kind;
+  const admissionReads = useRef({ key: "", count: 0 });
   useEffect(() => {
-    if (!active || error || submitting) return;
+    if (admissionReads.current.key !== admissionKey) admissionReads.current = { key: admissionKey ?? "", count: 0 };
+    if ((!active && !admissionKey) || error || submitting) return;
     let stopped = false, inFlight = false; let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       if (stopped || inFlight) return;
       inFlight = true;
-      try { if (document.visibilityState === "visible") await read(); }
-      finally { inFlight = false; if (!stopped) timer = setTimeout(() => void poll(), 4_000); }
+      try {
+        if (document.visibilityState === "visible") {
+          if (!active && admissionKind === "bounded") {
+            if (admissionReads.current.count >= 6) return;
+            admissionReads.current.count++;
+          }
+          await read();
+        }
+      } finally { inFlight = false; if (!stopped && (active || admissionKind !== "bounded" || admissionReads.current.count < 6)) timer = setTimeout(() => void poll(), 4_000); }
     };
     const visible = () => { if (document.visibilityState === "visible") { clearTimeout(timer); void poll(); } };
     timer = setTimeout(() => void poll(), 4_000); document.addEventListener("visibilitychange", visible);
     return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
-  }, [active, error, submitting, read]);
+  }, [active, admissionKey, admissionKind, error, submitting, read]);
 
   const submit = useCallback(async (body: WorkspaceAnalysisRequest, replay?: PendingWorkspaceAnalysis) => {
     const status = current.current;

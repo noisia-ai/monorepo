@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 
 import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME, SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopicProjectionsV1,
+  scheduleSignalWorkspaceNumericUpdatesV1,
   scheduleSignalWorkspaceEngineProgressV1, SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1,
   scheduleSignalWorkspaceIncrementalProjectionsV1,
   SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1 } from "@noisia/db";
@@ -16,6 +17,7 @@ type QueueLike = {
 };
 type Options = { database?: Pick<Pool, "query" | "connect">; queue?: QueueLike; interval_ms?: number;
   run_immediately?: boolean; batch_size?: number; lease_seconds?: number; max_attempts?: number;
+  numeric_cursor?: { after_workspace_id: string | null };
   schedule?: typeof scheduleSignalWorkspaceTopicComputationsV1 };
 
 export async function drainSignalTopicClassificationOutboxV1(options: Options = {}) {
@@ -25,6 +27,13 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
   // Recovers only workspace execution ledgers, not legacy corpus tables.
   if(options.schedule) await options.schedule({database});
   else {
+    // Operational rollout gate; this producer admits only zero-cost numeric work.
+    if (process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED === 'true') {
+      const numeric = await scheduleSignalWorkspaceNumericUpdatesV1({database,
+        after_workspace_id: options.numeric_cursor?.after_workspace_id});
+      if (options.numeric_cursor) options.numeric_cursor.after_workspace_id = numeric.next_cursor;
+      if (numeric.failures.length) console.warn("Workspace numeric admissions deferred", { failures: numeric.failures });
+    }
     await scheduleSignalWorkspaceTopicComputationsV1({database});
     // Enable once every replica understands dispatch_kind. Older drainers
     // route by execution contract and cannot safely consume derived jobs.
@@ -131,6 +140,7 @@ export function topicExecutionJobNameV1(inputContract: string, sourceProjection 
 }
 
 export function startSignalTopicClassificationOutboxDrainerV1(options: Options = {}) {
+  options = {...options, numeric_cursor: options.numeric_cursor ?? {after_workspace_id:null}};
   let closed = false;
   let inFlight: Promise<unknown> | null = null;
   const drainNow = () => {

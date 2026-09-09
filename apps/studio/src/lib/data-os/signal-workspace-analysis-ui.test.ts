@@ -4,12 +4,13 @@ import test from "node:test";
 import React, { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
+import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJourney";
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
-import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
+import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, validWorkspaceNumericReadiness, workspaceNumericAdmissionPoll, workspaceNumericReadinessMessage, type WorkspaceNumericReadiness, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
 
 Object.assign(globalThis, { React });
 const id = "00000000-0000-4000-8000-000000000001";
@@ -286,6 +287,29 @@ test("incremental decoder rejects malformed coverage; nullable receipt and stale
   assert.equal(workspaceAnalysisAssociationReceipt(id, status.request_scope, { ...incrementalUpdate, serving: null }), null);
 });
 
+const numericReadiness: WorkspaceNumericReadiness = { contract_version: "workspace-numeric-readiness-v1", workspace_id: id,
+  desired_revision: "9007199254740993", state: "blocked", reason_code: "corpus_embeddings_required",
+  has_pending_work: false, execution_id: null, embedding_run_id: null };
+test("numeric admission is actor/workspace data, not permission to enqueue or a fabricated execution", () => {
+  assert.equal(validWorkspaceAnalysisStatus({ ...status, numeric_readiness: numericReadiness }), true);
+  assert.equal(validWorkspaceNumericReadiness(numericReadiness, "another-workspace"), false);
+  for (const patch of [{ desired_revision: 1 }, { state: "running" }, { has_pending_work: undefined }, { embedding_run_id: "unbound" }])
+    assert.equal(validWorkspaceNumericReadiness({ ...numericReadiness, ...patch }, id), false);
+  assert.equal(workspaceNumericAdmissionPoll(numericReadiness), null);
+  assert.equal(workspaceNumericReadinessMessage(numericReadiness), "prepareAnalysis");
+  for (const state of ["waiting_preparation", "waiting_embeddings"] as const) {
+    assert.equal(workspaceNumericAdmissionPoll({ ...numericReadiness, state, has_pending_work: true })?.kind, "durable");
+    assert.equal(workspaceNumericAdmissionPoll({ ...numericReadiness, state, has_pending_work: false }), null);
+  }
+  assert.equal(workspaceNumericAdmissionPoll({ ...numericReadiness, state: "ready_to_schedule", has_pending_work: true })?.kind, "bounded");
+  for (const state of ["already_handled", "not_enabled", "blocked"] as const)
+    assert.equal(workspaceNumericAdmissionPoll({ ...numericReadiness, state, has_pending_work: true }), null);
+  assert.equal(workspaceNumericReadinessMessage({ ...numericReadiness, reason_code: "numeric_parent_context_changed" }), "contextChanged");
+  assert.equal(workspaceNumericReadinessMessage({ ...numericReadiness, reason_code: "numeric_actor_forbidden" }), "permission");
+  assert.equal(workspaceNumericReadinessMessage({ ...numericReadiness, reason_code: "unknown_reason" }), "blocked");
+  assert.equal(workspaceNumericReadinessMessage({ ...numericReadiness, state: "not_enabled", reason_code: "new_input_revision_required" }), "noNewData");
+});
+
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const t = messages.AdminWorkspace.topics.analysis;
@@ -293,6 +317,24 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initial: WorkspaceAnalysisStatus, disabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     providerProps, createElement(WorkspaceAnalysisControls, { brandId: "new-brand", workspaceId: id,
       catalogVersion: "empty:0", initial, disabled })));
+  test(`${locale}: admission distinguishes missing preparation, real queued work and eligibility without claiming execution`, () => {
+    for (const state of ["not_enabled", "blocked", "waiting_preparation", "waiting_embeddings", "ready_to_schedule", "already_handled"] as const) {
+      const readiness = { ...numericReadiness, state, has_pending_work: ["waiting_preparation", "waiting_embeddings", "ready_to_schedule"].includes(state) };
+      const html = render({ ...status, latest_run: progressiveRun, numeric_readiness: readiness });
+      assert.ok(html.includes(t.admission[workspaceNumericReadinessMessage(readiness)]));
+      assert.ok(html.includes(t.errors.authorizationExpired));
+      assert.ok(!html.includes("<progress"), "admission is not execution progress");
+      if (state === "blocked") {
+        assert.ok(html.includes(t.admission.paidPreparation));
+        assert.ok(html.includes("/studio/brands/new-brand/data#corpus-readiness"));
+      }
+      assert.ok(!html.includes(`>${t.retry}</button>`));
+    }
+    const journey = renderToStaticMarkup(createElement(NextIntlClientProvider, providerProps,
+      createElement(BrandMonitoringJourney, { brandId: "new-brand", current: "topics" })));
+    assert.ok(journey.includes(messages.AdminWorkspace.monitoringJourney.title));
+    assert.ok(!journey.includes(locale === "es-MX" ? "Prepara la monitorización" : "Prepare your brand monitoring"));
+  });
   test(`${locale}: incremental associations lead while editorial failure, partial coverage and costs remain visible`, () => {
     const run = { ...progressiveRun, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 1_918_865,
       reserved_micro_usd: 1_681_800, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 } };

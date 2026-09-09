@@ -287,7 +287,8 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
   idempotency_key:string;embedding_run_id:string;expected_context_digest:string;expected_catalog_digest:string;
   claude_cap_micro_usd:number;engine_config:Record<string,unknown>;parent_execution_id?:string|null;
   interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1;
-  incremental_options?:{close_requested:boolean;parent_execution_id?:string}}):Promise<{execution_id:string;replayed:boolean}> {
+  incremental_options?:{close_requested:boolean;parent_execution_id?:string;
+    automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}}):Promise<{execution_id:string;replayed:boolean}> {
   if(args.incremental_options&&(args.claude_cap_micro_usd!==0||args.interpretation_config))return fail('workspace_engine_incremental_numeric_only',422);
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!digestPattern.test(args.expected_context_digest)||!digestPattern.test(args.expected_catalog_digest)
     ||!Number.isSafeInteger(args.claude_cap_micro_usd)||args.claude_cap_micro_usd<0||Buffer.byteLength(JSON.stringify(args.engine_config),'utf8')>65536)
@@ -302,6 +303,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     catalog_digest:args.expected_catalog_digest,claude_cap_micro_usd:args.claude_cap_micro_usd,engine_config:args.engine_config,
     ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),
     ...(args.incremental_options?{numeric_policy:'workspace-frozen-model-cohort-v1',close_requested:args.incremental_options.close_requested}:{}),
+    ...(args.incremental_options?.automatic_admission?{automatic_admission:args.incremental_options.automatic_admission}:{}),
     parent_selection:args.incremental_options?(args.incremental_options.parent_execution_id??'latest-compatible-numeric-v1'):
       args.parent_execution_id===undefined?"latest-compatible-complete-v1":args.parent_execution_id});
   return transaction(args.database,async client=>{
@@ -323,6 +325,10 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.input_contract='corpus' AND run.status='completed' AND prep.status='completed'
        AND run.input_revision=state.input_revision AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())`,[args.embedding_run_id,args.workspace_id])).rows[0];
     if(!embedded)return fail('workspace_engine_complete_embeddings_required');assertSignalWorkspaceEmbeddingProfileV1(embedded.profile);
+    if(args.incremental_options?.automatic_admission)
+      await (await import('./signal-workspace-numeric-producer')).assertSignalWorkspaceNumericAdmissionWithClientV1({queryable:client,
+        workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,input_revision:embedded.input_revision,
+        admission:args.incremental_options.automatic_admission});
     if(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references)
       return fail('workspace_engine_corpus_embeddings_incomplete');
     const input=await buildInput(client,args.workspace_id,args.actor_user_id);

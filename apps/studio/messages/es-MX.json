@@ -2593,9 +2593,26 @@
         "errors": { "title": "La revisión de candidatos no está disponible", "load": "No se pudo cargar la revisión de candidatos.", "command": "No se pudo guardar el cambio del candidato." }
       }
     },
-    "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Prepara la monitorización de tu marca", "body": "Completa el contexto, define tus intereses e importa las conversaciones que vas a analizar.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
+    "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Monitorización de tu marca", "body": "Gestiona el contexto y los tópicos; revisa los datos recibidos y su preparación.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
     "topics": {
       "analysis": {
+        "admission": {
+          "title": "Actualización de nuevas menciones",
+          "firstAnalysis": "La actualización automática requiere un primer análisis compatible. Todavía no se ha programado una actualización.",
+          "noNewData": "No hay datos nuevos pendientes de una actualización automática.",
+          "waiting_preparation": "El texto de las nuevas menciones se está preparando. La actualización espera a que termine esa solicitud.",
+          "waiting_embeddings": "La preparación para analizar las nuevas menciones está en curso. La actualización espera a que termine esa solicitud.",
+          "blocked": "La actualización automática está detenida. Revisa los datos y el estado del análisis antes de continuar.",
+          "ready_to_schedule": "Los datos preparados cumplen los requisitos para la actualización automática. Todavía no se ha iniciado; puedes volver a comprobar el estado.",
+          "already_handled": "Estos datos ya están incluidos en una solicitud. Consulta su avance y los resultados disponibles a continuación.",
+          "prepareText": "La nueva carga necesita preparar sus textos. El último resultado disponible se conserva.",
+          "prepareAnalysis": "Termina la preparación para analizar las nuevas menciones desde Datos. El último resultado disponible se conserva.",
+          "prepareContext": "Prepara el contexto y los intereses guardados para que puedan orientar la actualización.",
+          "contextChanged": "El contexto o los intereses cambiaron respecto al análisis anterior. Revisa el análisis antes de continuar; no se iniciará otro automáticamente.",
+          "noCompatibleResult": "No hay un resultado anterior compatible para esta actualización automática. Revisa el estado del análisis.",
+          "permission": "La cuenta que autorizó el análisis ya no tiene los permisos necesarios para la actualización automática. Los resultados disponibles se conservan.",
+          "paidPreparation": "Cargar un archivo no inicia llamadas de pago. Si la preparación las necesita, consulta el costo y autorízalas desde Datos."
+        },
         "update": {
           "numeric": "Actualizando conversaciones con las nuevas menciones.",
           "projecting": "Actualizando las asociaciones de los tópicos.",

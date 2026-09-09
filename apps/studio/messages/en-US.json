@@ -2593,9 +2593,26 @@
         "errors": { "title": "Candidate review is unavailable", "load": "The candidate review could not be loaded.", "command": "The candidate change could not be saved." }
       }
     },
-    "monitoringJourney": {"label": "Monitoring journey", "title": "Prepare your brand monitoring", "body": "Add context, define your interests and import the conversations to analyze.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
+    "monitoringJourney": {"label": "Monitoring journey", "title": "Your brand monitoring", "body": "Manage context and topics; review received data and its preparation.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
     "topics": {
       "analysis": {
+        "admission": {
+          "title": "Updates for new mentions",
+          "firstAnalysis": "Automatic updates require a first compatible analysis. No update has been scheduled yet.",
+          "noNewData": "There is no new data awaiting an automatic update.",
+          "waiting_preparation": "Text from the new mentions is being prepared. The update is waiting for that request to finish.",
+          "waiting_embeddings": "Preparation to analyze the new mentions is in progress. The update is waiting for that request to finish.",
+          "blocked": "The automatic update is blocked. Review the data and analysis status before continuing.",
+          "ready_to_schedule": "The prepared data meets the requirements for an automatic update. It has not started yet; you can check the status again.",
+          "already_handled": "This data is already included in a request. Check its progress and available results below.",
+          "prepareText": "The new upload needs text preparation. The latest available result is preserved.",
+          "prepareAnalysis": "Finish preparing the new mentions for analysis from Data. The latest available result is preserved.",
+          "prepareContext": "Prepare the saved context and interests so they can guide the update.",
+          "contextChanged": "The context or interests have changed since the previous analysis. Review the analysis before continuing; another will not start automatically.",
+          "noCompatibleResult": "There is no compatible previous result for this automatic update. Review the analysis status.",
+          "permission": "The account that authorized the analysis no longer has the permissions required for automatic updates. Available results are preserved.",
+          "paidPreparation": "Uploading a file does not start paid calls. If preparation requires them, review the cost and authorize them from Data."
+        },
         "update": {
           "numeric": "Updating conversations with the new mentions.",
           "projecting": "Updating topic associations.",

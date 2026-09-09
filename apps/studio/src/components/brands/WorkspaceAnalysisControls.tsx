@@ -6,7 +6,7 @@ import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
-import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState } from "@/lib/data-os/signal-workspace-analysis-update-ui";
+import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState, workspaceNumericReadinessMessage } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
@@ -21,6 +21,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
   const update = status?.update;
+  const admission = status?.numeric_readiness;
+  const admissionMessage = admission ? workspaceNumericReadinessMessage(admission) : null;
   const updateState = update ? analysis.error === "load" ? "unverified" : workspaceAnalysisUpdateState(update) : null;
   const associations = workspaceAnalysisAssociationReceipt(workspaceId, status?.request_scope ?? "", update);
   const onAssociations = useRef(onAssociationsAvailable); onAssociations.current = onAssociationsAvailable;
@@ -69,6 +71,13 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
     <div className="admin-section__body admin-drawer-form">
       <div><strong>{t("title")}</strong><p className="admin-drawer-form__hint">{t("body")}</p></div>
       {!status && analysis.reading ? <p role="status">{t("loading")}</p> : null}
+      {admission && admissionMessage ? <div role="status" data-numeric-readiness={admission.state}>
+        <strong>{t("admission.title")}</strong>
+        <p className="admin-drawer-form__hint">{analysis.error === "load" ? t("update.unverified") : t(`admission.${admissionMessage}`)}</p>
+        {["prepareText", "prepareAnalysis", "waiting_preparation", "waiting_embeddings"].includes(admissionMessage) ?
+          <Link href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("openData")}</Link> : null}
+        {["prepareText", "prepareAnalysis"].includes(admissionMessage) ? <p className="admin-drawer-form__hint">{t("admission.paidPreparation")}</p> : null}
+      </div> : null}
       {update && updateState ? <div role="status" data-analysis-update={updateState}>
         <strong>{t(`update.${updateState}`)}</strong>
         {updateState === "numeric" ? <div className="topics-manager__progress">

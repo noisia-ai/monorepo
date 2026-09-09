@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
-  retrySignalWorkspaceEngineProgressV1, loadSignalWorkspaceAnalysisUpdateV1,
+  retrySignalWorkspaceEngineProgressV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
@@ -65,6 +65,8 @@ export function workspaceAnalysisPreflightStateV1(args: {
 export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempotencyKey?: string }): Promise<WorkspaceAnalysisStatus> {
   if (args.idempotencyKey !== undefined && !requestKeyPattern.test(args.idempotencyKey)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, false);
+  // Read admission first so an acknowledged execution is visible to the following run readers.
+  const numeric_readiness = await loadSignalWorkspaceNumericReadinessV1(access);
   const raw = await loadSignalWorkspaceEngineStatusV1({ ...access, idempotency_key: args.idempotencyKey });
   const update = await loadSignalWorkspaceAnalysisUpdateV1(access);
   const preparation = await loadSignalWorkspaceCorpusPreparationStoreV1({ queryable: access.database, workspace_id: args.workspaceId });
@@ -79,7 +81,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   }));
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
   const latest = view(raw.latest_run);
-  const result: WorkspaceAnalysisStatus = { ...raw, update, contract_version: "signal-workspace-analysis-v1",
+  const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
     latest_run: latest, active_run: latest && ["queued", "running"].includes(latest.status) ? latest : null,
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),

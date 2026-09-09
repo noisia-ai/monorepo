@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { drainSignalTopicClassificationOutboxV1 } from "./signal-topic-classification-outbox";
+import { drainSignalTopicClassificationOutboxV1, startSignalTopicClassificationOutboxDrainerV1 } from "./signal-topic-classification-outbox";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
 import { SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 
@@ -15,6 +15,34 @@ const claimed = {
   input_contract: "legacy-topic-catalog-v1"
 };
 const schedule = async () => ({ requeued: 0 });
+
+test('numeric producer is rollout-gated and advances a fair bounded workspace cursor without queueing blocked candidates', async () => {
+  const prior = process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED;
+  const candidates = Array.from({ length: 9 }, (_, index) => `50000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+  const seen: unknown[] = [];
+  const query = async (sql: string, params?: unknown[]) => {
+    if (sql.includes('FROM signal_corpus_preparation_input_state state') && sql.includes('optin.input_contract')) {
+      seen.push(params?.[0]); assert.equal(params?.[1], 9);
+      return { rows: (params?.[0] ? candidates.slice(8) : candidates).map(workspace_id => ({ workspace_id })), rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  const database = { query, connect: async () => ({ query, release() {} }) };
+  const queue = { getJob: async () => assert.fail('no admitted jobs'), add: async () => assert.fail('no admitted jobs') };
+  const drainer = startSignalTopicClassificationOutboxDrainerV1({ database: database as never, queue,
+    run_immediately: false, interval_ms: 60_000 });
+  try {
+    delete process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED;
+    await drainer.drainNow(); assert.deepEqual(seen, []);
+    process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED = 'true';
+    await drainer.drainNow(); await drainer.drainNow(); await drainer.drainNow();
+    assert.deepEqual(seen, [null, candidates[7], null]);
+  } finally {
+    await drainer.close();
+    if (prior === undefined) delete process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED;
+    else process.env.NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED = prior;
+  }
+});
 
 test("topic classification outbox dispatches with the durable job id and acknowledges its lease", async () => {
   const statements: string[] = [];
