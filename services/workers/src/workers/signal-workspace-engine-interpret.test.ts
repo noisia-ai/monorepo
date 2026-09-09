@@ -11,6 +11,7 @@ import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorks
   type SignalWorkspaceInterpretationClusterV1, type SignalWorkspaceInterpretationConfigurationV1 } from "@noisia/query-engine";
 import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1,
   SignalWorkspaceEngineInterpretationCheckpointV1 } from "@noisia/db";
+import { SignalWorkspaceEngineInterpretationError } from "@noisia/db";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
 import { interpretWorkspaceEngineV1 } from "./signal-workspace-engine-interpret";
 
@@ -38,6 +39,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   let repairOnlyCrash = false, unknownRepair = false, disableRepair = false, denyRepairCap = false;
   let failRepairReservationAck = false, failSettlementAck = false;
   let reserveFailure: string | null = null;
+  let sendRejection: Error | null = null;
   let totalSettled = 0;
   const checkpointCallIds: string[] = [];
   const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
@@ -101,7 +103,8 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       if (args.editorial_repair && failRepairReservationAck) { failRepairReservationAck = false; throw new Error("workspace_engine_worker_failed"); }
       return { ...call };
     },
-    sent: async () => { const allowed = call!.state === "reserved"; if (allowed) call!.state = "in_flight";
+    sent: async () => { if (sendRejection) throw sendRejection;
+      const allowed = call!.state === "reserved"; if (allowed) call!.state = "in_flight";
       states.push("sent"); return { call, send_authorized: allowed }; },
     response: async (args: { response: NonNullable<SignalWorkspaceEngineInterpretationCallV1["response"]> }) => {
       assert.equal(call!.state, "in_flight"); call!.response = args.response; call!.state = "response_persisted";
@@ -215,6 +218,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       call.state = "terminal_confirmed";
     },
     rejectReserve: (code: string) => { reserveFailure = code; },
+    rejectSend: (error: Error) => { sendRejection = error; },
     repairDisabled: (value: boolean) => { disableRepair = value; }, repairCapBlocked: () => { denyRepairCap = true; },
     loseRepairReservationAcknowledgment: () => { failRepairReservationAck = true; },
     loseSettlementAcknowledgment: () => { failSettlementAck = true; },
@@ -252,11 +256,31 @@ test("same execution persists paid interpretation before editable catalog comple
     assert.equal(s.get().storedObjects, 3);
   } finally { await s.cleanup(); }
 });
-test("crash after durable response recovers without another provider request", async () => {
+test("crash after durable response recovers after spending permission expires without another provider request", async () => {
   const s = await scenario(); try { s.crashAfterReceipt(); await assert.rejects(s.execute(), /workspace_engine_worker_failed/u);
     assert.equal(s.get().call?.state, "response_persisted"); assert.equal(s.get().completed, 0);
-    await s.execute(); assert.equal(s.get().sends, 1); assert.equal(s.get().completed, 1);
+    const receipt = structuredClone(s.get().call!.response);
+    await s.execute("2000-01-01T00:00:00.000Z");
+    assert.equal(s.get().sends, 1); assert.equal(s.get().completed, 1);
+    assert.equal(s.get().seenBatches.length, 1); assert.equal(s.get().reservations.length, 1);
+    assert.equal(s.get().totalSettled, 450); assert.deepEqual(s.get().call!.response, receipt);
   } finally { await s.cleanup(); }
+});
+test("DB-proven expiry before send releases only the unsent reservation; ambiguous acknowledgments retain exposure", async () => {
+  const code = "workspace_engine_interpretation_daily_authority_expired";
+  for (const error of [new SignalWorkspaceEngineInterpretationError(code, 409), new Error(code),
+    Object.assign(new Error(code), { code, status: 409 }), new Error("lost COMMIT acknowledgment")]) {
+    const s = await scenario(); try {
+      s.rejectSend(error);
+      const proven = error instanceof SignalWorkspaceEngineInterpretationError;
+      await assert.rejects(s.execute(), { message: proven ? code : "workspace_engine_interpretation_send_authority_unknown" });
+      const result = s.get();
+      assert.equal(result.sends, 0); assert.equal(result.completed, 0); assert.equal(result.totalSettled, 0);
+      assert.equal(result.call!.response, null); assert.equal(result.reservations.length, 1);
+      assert.equal(result.call!.state, proven ? "definitely_not_sent" : "outcome_unknown");
+      assert.equal(result.retainedExposure, proven ? 0 : result.call!.reserved_micro_usd);
+    } finally { await s.cleanup(); }
+  }
 });
 test("uncertain sent request never sends again or materializes", async () => {
   const s = await scenario(); try { s.unknown(); await assert.rejects(s.execute(), /outcome_unknown/u);
@@ -279,14 +303,17 @@ test("partial raw response remains uncertain even when its bounded bytes parse a
   } finally { await s.cleanup(); }
 });
 
-test("crash after interpretation checkpoint reuses settled response and the same proposal without sending", async () => {
+test("crash after interpretation checkpoint reuses the paid response after spending permission expires", async () => {
   const s = await scenario(); try {
     s.crashAfterCheckpoint(); await assert.rejects(s.execute(), /workspace_engine_worker_failed/u);
     assert.equal(s.get().call?.state, "settled"); assert.equal(s.get().checkpointCount, 1);
     assert.equal(s.get().materializationWrites, 0); assert.equal(s.get().completed, 0);
-    await s.execute(); const result = s.get();
+    const receipt = structuredClone(s.get().call!.response);
+    await s.execute("2000-01-01T00:00:00.000Z"); const result = s.get();
     assert.equal(result.sends, 1); assert.equal(result.checkpointCount, 1); assert.equal(result.materializationWrites, 1);
     assert.equal(result.completed, 1); assert.equal(result.storedObjects, 3);
+    assert.equal(result.seenBatches.length, 1); assert.equal(result.reservations.length, 1);
+    assert.equal(result.totalSettled, 450); assert.deepEqual(result.call!.response, receipt);
   } finally { await s.cleanup(); }
 });
 test("crash after catalog commit recovers completion without another catalog, response or proposal", async () => {

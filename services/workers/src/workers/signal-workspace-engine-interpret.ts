@@ -8,6 +8,7 @@ import {
   failSignalWorkspaceEngineInterpretationV1, checkpointSignalWorkspaceEngineInterpretationV1,
   readSignalWorkspaceEngineInterpretationCheckpointsV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
+  SignalWorkspaceEngineInterpretationError,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
@@ -132,7 +133,14 @@ export async function interpretWorkspaceEngineV1(args: {
           api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
           provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
           authorization_expires_at: args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
-          authorize_send: async () => (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized,
+          authorize_send: async () => {
+            try { return (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized; }
+            catch (error) {
+              if (error instanceof SignalWorkspaceEngineInterpretationError && error.status === 409
+                && error.code === "workspace_engine_interpretation_daily_authority_expired") return "daily_authority_expired";
+              throw error;
+            }
+          },
           persist_receipt: async raw => {
             const stored = await put(`response-${call.call_id}.json`, raw.bytes);
             call = await store.response({ ...attempt, response: { ...stored, http_status: raw.http_status,

@@ -113,7 +113,7 @@ async function readReceipt(response: Response): Promise<WorkspaceInterpretationR
  * private storage callback. No environment lookup, alternate endpoint or logs. */
 export async function sendWorkspaceInterpretationV1(args: {
   batch: SignalWorkspaceInterpretationBatchV1; api_key: string; provider_enabled: boolean;
-  authorize_send: () => Promise<boolean>;
+  authorize_send: () => Promise<boolean | "daily_authority_expired">;
   persist_receipt: (receipt: WorkspaceInterpretationRawReceiptV1) => Promise<void>;
   fetch_impl?: typeof fetch; timeout_ms?: number;
   schedule_timeout?: (onTimeout: () => void, milliseconds: number) => (() => void);
@@ -156,12 +156,15 @@ export async function sendWorkspaceInterpretationV1(args: {
   // A dated operator grant admits new sends only before its deadline. It does
   // not interrupt an already sent request or change its sealed provider body.
   assertAdmission();
-  let authorized: boolean;
+  let authorized: boolean | "daily_authority_expired";
   try { authorized = await args.authorize_send(); }
   catch { throw transportError("send_authority_unknown", "outcome_unknown"); }
+  // The store adapter may prove rejection before its send transition. A thrown
+  // error still means an ambiguous acknowledgment and never releases a reserve.
+  if (authorized === "daily_authority_expired") throw transportError("daily_authority_expired", "definitely_not_sent");
   // A failed CAS can mean another process already sent this same attempt.
   // Never let that result release its reservation as definitely-not-sent.
-  if (!authorized) throw transportError("send_not_authorized", "outcome_unknown");
+  if (authorized !== true) throw transportError("send_not_authorized", "outcome_unknown");
   assertAdmission();
   const controller = new AbortController();
   const cancelTimeout = (args.schedule_timeout ?? scheduleTimeout)(() => controller.abort(), timeout);

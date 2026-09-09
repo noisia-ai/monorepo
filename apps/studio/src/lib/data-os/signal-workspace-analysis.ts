@@ -25,14 +25,19 @@ async function authorize(args: Access, execute: boolean) {
   if (!capabilities.can_view || execute && !capabilities.can_execute_topics) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
   return { database, capabilities, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
-export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env) {
+export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now()) {
   const maximum = Number(env.NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD ?? 0);
   const daily = Number(env.NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD ?? 0);
   const timezone = env.NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE ?? "UTC";
   let validTimezone = false;
   try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); validTimezone = true; } catch { /* Invalid config disables sends. */ }
+  const expires = env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL;
+  const admissionOpen = expires === undefined || typeof expires === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(expires)
+    && Number.isFinite(Date.parse(expires)) && new Date(expires).toISOString() === expires
+    && Number.isFinite(nowMilliseconds) && nowMilliseconds < Date.parse(expires);
   const available = env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY)
-    && [maximum, daily].every(value => Number.isSafeInteger(value) && value > 0) && validTimezone;
+    && [maximum, daily].every(value => Number.isSafeInteger(value) && value > 0) && validTimezone && admissionOpen;
   return { available, maximum_cap_micro_usd: available ? Math.min(maximum, daily) : 0,
     daily_cap_micro_usd: daily, budget_timezone: timezone };
 }

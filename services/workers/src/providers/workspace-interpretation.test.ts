@@ -291,9 +291,11 @@ test("disabled, missing key and tampered seal fail before CAS or transport", asy
   }
   assert.equal(sends, 0); assert.equal(claims, 0);
 });
-test("CAS conflict and ambiguous CAS never release another process's reservation", async () => {
+test("CAS conflict, malformed admission and ambiguous CAS never release another process's reservation", async () => {
   let sends = 0;
-  for (const authorize_send of [async () => false, async () => { throw new Error("private database detail"); }]) {
+  for (const authorize_send of [async () => false, async () => "unexpected" as unknown as boolean,
+    async () => ({ send_authorized: true }) as unknown as boolean,
+    async () => { throw new Error("private database detail"); }]) {
     await assert.rejects(sendWorkspaceInterpretationV1({ ...base, authorize_send, persist_receipt: async () => undefined,
       fetch_impl: fakeFetch(() => { sends++; return Response.json(response()); }) }),
     error => error instanceof WorkspaceInterpretationTransportErrorV1 && error.outcome === "outcome_unknown" && !error.message.includes("private"));

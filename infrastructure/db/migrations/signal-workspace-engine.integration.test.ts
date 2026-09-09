@@ -874,11 +874,49 @@ test('editorial model revision preserves historical checkpoints and terminal res
    await assert.rejects(engine.reviseSignalWorkspaceEngineInterpretationV1(request),/inputs_stale/u);
   }finally{await f.query('ROLLBACK TO SAVEPOINT stale_revision');await f.query('RELEASE SAVEPOINT stale_revision');}
   await f.query('SAVEPOINT expiring_revision');try{
-   const brief=await engine.reviseSignalWorkspaceEngineInterpretationV1({...request,admission_not_after:new Date(Date.now()+1000).toISOString()});
-   const shortLease=await claim();const pending=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:shortLease.execution_token,
-    configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000,idempotency_key:'short-sonnet-grant',request_digest:sha('short grant'),reserved_micro_usd:1000,interpretation_revision_digest:brief.revision_digest});
-   await new Promise(resolve=>setTimeout(resolve,1100));
-   await assert.rejects(money.markSignalWorkspaceEngineInterpretationSentV1({database:f.database,call_id:pending.call_id,attempt_token:pending.attempt_token,execution_token:shortLease.execution_token}),/grant is unavailable/u);
+   const deadline=new Date(Date.now()+3000).toISOString();
+   const brief=await engine.reviseSignalWorkspaceEngineInterpretationV1({...request,admission_not_after:deadline});
+   const shortLease=await claim();
+   const shortRequest=(key:string)=>({...f.access,...started,execution_token:shortLease.execution_token,
+    configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10_000,idempotency_key:key,request_digest:sha(key),reserved_micro_usd:1000,interpretation_revision_digest:brief.revision_digest});
+   const shortToken=(call:money.SignalWorkspaceEngineInterpretationCallV1)=>({database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:shortLease.execution_token});
+   const raw=(call:money.SignalWorkspaceEngineInterpretationCallV1)=>({storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/${call.call_id}.parts.json`,
+    sha256:sha(call.call_id),size_bytes:29,http_status:200,provider_request_id:null,complete:true});
+   const usage={input_tokens:1,output_tokens:1,cache_read_input_tokens:0,cache_creation_input_tokens:0};
+   const pending=await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-sonnet-grant'));
+   const inflight=await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-inflight-grant'));
+   await money.markSignalWorkspaceEngineInterpretationSentV1(shortToken(inflight));
+   const persisted=await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-persisted-grant'));
+   await money.markSignalWorkspaceEngineInterpretationSentV1(shortToken(persisted));
+   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...shortToken(persisted),response:raw(persisted)});
+   const ledgerBefore=(await f.query('SELECT * FROM engine_cost_events WHERE catalog_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows;
+   const executionBefore=(await f.query('SELECT * FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
+   const budgetBefore=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+   await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(deadline)-Date.now())+75));
+   const expired=(error:unknown)=>error instanceof money.SignalWorkspaceEngineInterpretationError&&error.code==='workspace_engine_interpretation_daily_authority_expired'&&error.status===409;
+   await assert.rejects(money.markSignalWorkspaceEngineInterpretationSentV1(shortToken(pending)),expired);
+   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('new-after-expiry')),expired);
+   await assert.rejects(money.markSignalWorkspaceEngineInterpretationSentV1({...shortToken(pending),attempt_token:randomUUID()}),/attempt_conflict/u);
+   assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE catalog_execution_id=$1::uuid ORDER BY id',[started.execution_id])).rows,ledgerBefore);
+   assert.deepEqual((await f.query('SELECT * FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0],executionBefore);
+   assert.deepEqual(await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started}),budgetBefore);
+   assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-sonnet-grant'))).state,'reserved','lookup never implies send authority');
+   assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-persisted-grant'))).state,'response_persisted');
+   assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(shortToken(persisted))).send_authorized,false);
+   assert.equal((await money.settleSignalWorkspaceEngineInterpretationV1({...shortToken(persisted),usage})).state,'settled');
+   assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1(shortRequest('short-persisted-grant'))).state,'settled');
+   // A response sent before expiry may arrive afterwards. Persist and meter it;
+   // never cancel the admitted send or turn a receipt replay into another send.
+   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...shortToken(inflight),response:raw(inflight)});
+   assert.equal((await money.settleSignalWorkspaceEngineInterpretationV1({...shortToken(inflight),usage})).state,'settled');
+   const ambiguous=Object.assign(new Error('unrelated database failure'),{code:'23514'});
+   const connection=await f.database.connect();const failing=Object.assign(Object.create(connection) as PoolClient,{query:(sql:string,values?:unknown[])=>sql.startsWith('SELECT instant.now')?Promise.reject(ambiguous):connection.query(sql,values),release:()=>{}});
+   const database=Object.assign(Object.create(f.database) as Pool,{connect:async()=>failing});
+   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...shortRequest('ambiguous-db-failure'),database}),error=>error===ambiguous);
+   const midnight=(await f.query(`SELECT point,instant >= '2026-09-09T06:00:00Z'::timestamptz
+    OR to_char(instant AT TIME ZONE 'America/Mexico_City','YYYY-MM-DD') <> '2026-09-08' expired
+    FROM (VALUES(0,'2026-09-09T05:59:59.999Z'::timestamptz),(1,'2026-09-09T06:00:00Z'::timestamptz)) sample(point,instant) ORDER BY point`)).rows;
+   assert.deepEqual(midnight,[{point:0,expired:false},{point:1,expired:true}],'the original Mexico grant ends at its midnight, without adopting a new budget date');
   }finally{await f.query('ROLLBACK TO SAVEPOINT expiring_revision');await f.query('RELEASE SAVEPOINT expiring_revision');}
   const revised=await engine.reviseSignalWorkspaceEngineInterpretationV1(request);assert.equal(revised.execution_id,started.execution_id);assert.equal(revised.replayed,false);
   assert.equal((await engine.reviseSignalWorkspaceEngineInterpretationV1(request)).replayed,true);

@@ -188,3 +188,41 @@ test("provider availability requires explicit complete budget policy and a curre
     assert.equal(workspaceAnalysisInterpretationPolicyV1({ ...env, ...change }).available, false);
   }
 });
+
+test("explicit authorization expiry remains non-retryable while preserving interpretation progress and cost receipts", () => {
+  const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",
+    progress: 82, expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
+    error_code: "workspace_engine_interpretation_daily_authority_expired", is_current: true, model_version_id: id, artifact_count: 23,
+    claude_cap_micro_usd: 30_000_000, result_kind: "computational_grouping", fit_completed: true,
+    expected_interpretation_units: 357, interpreted_units: 32, materialized_topics: 0 };
+  const budget = { confirmed_micro_usd: 1_918_865, reserved_micro_usd: 1_681_800, terminal_reserved_micro_usd: 1_681_800,
+    unknown_reserved_micro_usd: 0, observed_exception_micro_usd: 0, hard_cap_micro_usd: 30_000_000 };
+  const view = workspaceAnalysisRunViewV1(run, budget)!;
+  assert.equal(view.retryable, false); assert.equal(view.outcome_unknown, false);
+  assert.equal(view.error_code, run.error_code); assert.equal(view.interpreted_units, 32); assert.equal(view.expected_interpretation_units, 357);
+  assert.deepEqual(view.claude_cost, { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 1_918_865, reserved_micro_usd: 1_681_800,
+    unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 });
+  const generic = workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_worker_failed" }, budget)!;
+  assert.equal(generic.error_code, "workspace_engine_worker_failed"); assert.equal(generic.retryable, true);
+  assert.deepEqual(generic.claude_cost, view.claude_cost);
+});
+
+test("the configured admission deadline disables new starts at expiry without changing historical run views", () => {
+  const env = { NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true", ANTHROPIC_API_KEY: "test_not_real",
+    NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "30000000", NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD: "30000000",
+    NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE: "America/Mexico_City",
+    NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL: "2026-09-09T06:00:00.000Z" };
+  const expiry = Date.parse(env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL);
+  assert.equal(workspaceAnalysisInterpretationPolicyV1(env, expiry - 1).available, true);
+  for (const now of [expiry, expiry + 1, Number.NaN]) {
+    const policy = workspaceAnalysisInterpretationPolicyV1(env, now);
+    assert.equal(policy.available, false); assert.equal(policy.maximum_cap_micro_usd, 0);
+    assert.equal(policy.daily_cap_micro_usd, 30_000_000, "a closed admission does not rewrite its original cap");
+    assert.equal(policy.budget_timezone, "America/Mexico_City");
+  }
+  for (const deadline of ["", "not-a-date", "2026-09-09T06:00:00Z", "2026-02-30T06:00:00.000Z", "2026-09-09T01:00:00.000-05:00"]) {
+    assert.equal(workspaceAnalysisInterpretationPolicyV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL: deadline }, expiry - 1).available, false);
+  }
+  assert.equal(workspaceAnalysisInterpretationPolicyV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL: undefined }, expiry).available, true,
+    "absence keeps the existing unbounded-date policy; configured invalid or expired values never do");
+});

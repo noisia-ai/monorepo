@@ -80,6 +80,18 @@ async function lockedCall(c:PoolClient,id:string,token:string){
  const row=(await c.query<Row>(`${rowSQL} AND id=$1::uuid FOR UPDATE`,[id])).rows[0]!;
  if(row.attempt_token!==token)return fail('workspace_engine_interpretation_attempt_conflict');return row;
 }
+// A sealed editorial grant expires independently of the lease. Diagnose only a
+// DB-clock-proven expiry; malformed or unrelated DB failures remain failures.
+// Call after idempotent receipt lookup, only before a new reservation or send.
+async function assertEditorialAdmission(c:PoolClient,revision:SignalWorkspaceEngineInterpretationRevisionV1|null){
+ if(!revision)return;
+ const row=(await c.query<{expired:boolean|null}>(`SELECT instant.now >= $1::timestamptz
+  OR to_char(instant.now AT TIME ZONE $2,'YYYY-MM-DD') <> $3 expired
+  FROM (SELECT clock_timestamp() now) instant`,
+  [revision.admission_not_after,revision.configuration.budget_timezone,revision.budget_date])).rows[0];
+ if(row?.expired===true)return fail('workspace_engine_interpretation_daily_authority_expired');
+ if(row?.expired!==false)return fail('workspace_engine_interpretation_config_mismatch');
+}
 const exposureSQL=`CASE WHEN call_state='settled' THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
 export async function reserveSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
  workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;request_digest:string;
@@ -141,6 +153,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
    if((await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[args.execution_id])).rows.length)
     return fail('workspace_engine_interpretation_outcome_unknown');
   }
+  await assertEditorialAdmission(c,run.interpretation_revision);
   if(!(await c.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_timezone_invalid',422);
   const date=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[args.budget_timezone])).rows[0]!.date;
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT
@@ -163,6 +176,7 @@ export async function markSignalWorkspaceEngineInterpretationSentV1(args:{databa
   await authorize(c,row.workspace_id,row.actor_user_id);const run=await execution(c,row.workspace_id,row.catalog_execution_id,row.actor_user_id,true,args.execution_token);
   if(row.editorial_repair&&(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND id<>$2::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[row.catalog_execution_id,row.id])).rows.length)
     return fail('workspace_engine_interpretation_outcome_unknown');
+  await assertEditorialAdmission(c,run.interpretation_revision);
   const today=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[row.budget_timezone])).rows[0]!.date;
   if(today!==row.budget_date)return fail('workspace_engine_interpretation_daily_authority_expired');
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT

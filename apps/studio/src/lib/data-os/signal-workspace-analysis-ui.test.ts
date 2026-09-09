@@ -30,6 +30,24 @@ const pending: PendingWorkspaceAnalysis = { version: 1, workspace_id: id, reques
   key: "analysis-request-1", body: { action: "start", embedding_run_id: id, expected_context_digest: hash,
     expected_catalog_digest: hash, claude_cap_micro_usd: 2_001 } };
 
+test("explicit expired authorization blocks retry, replay and a replacement run without inferring it from a generic failure", () => {
+  const expired: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", fit_completed: true,
+    expected_interpretation_units: 357, interpreted_units: 32, error_code: "workspace_engine_interpretation_daily_authority_expired" };
+  const current = { ...status, latest_run: expired };
+  assert.equal(workspaceAnalysisErrorKey(expired.error_code!), "authorizationExpired");
+  assert.equal(workspaceAnalysisCanStart(current, "0.002001"), false);
+  assert.equal(workspaceAnalysisCanRetry(current, expired), false);
+  assert.equal(workspaceAnalysisCanRetry(current, { ...expired, retryable: true }), false,
+    "this cut has no renewal contract; an inconsistent retry flag cannot authorize it");
+  assert.equal(workspaceAnalysisCanReplay(current, pending), false);
+  assert.equal(workspaceAnalysisCanReplay(current, { ...pending, body: { action: "retry", run_id: id } }), false);
+  assert.equal(workspaceAnalysisUnknown(current), false);
+  const generic = { ...expired, error_code: "workspace_engine_worker_failed", retryable: true };
+  assert.equal(workspaceAnalysisErrorKey(generic.error_code), "failed");
+  assert.equal(workspaceAnalysisCanRetry({ ...status, latest_run: generic }, generic), true);
+  assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_outcome_unknown"), "failed");
+});
+
 test("full analysis can start without topic counts; complete inputs and exact monetary bounds still apply", () => {
   assert.equal(validWorkspaceAnalysisStatus(status), true);
   assert.equal(workspaceAnalysisCanStart(status, "0.002001"), true);
@@ -258,6 +276,22 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(resumed.includes(t.terminalAmount.split("{amount}")[0])); assert.ok(!resumed.includes(t.transportRetry));
     const uncertain = render({ ...status, latest_run: { ...failed, outcome_unknown: true } });
     assert.ok(uncertain.replace(/&#x27;/gu, "'").includes(t.unknown)); assert.ok(!uncertain.includes(t.retry));
+  });
+  test(`${locale}: expired permission preserves 32 of 357 units and receipts without presenting a retry or new cap`, () => {
+    const expired: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", retryable: false, fit_completed: true,
+      expected_interpretation_units: 357, interpreted_units: 32, error_code: "workspace_engine_interpretation_daily_authority_expired",
+      claude_cap_micro_usd: 30_000_000, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 1_918_865,
+        reserved_micro_usd: 1_681_800, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 } };
+    const html = render({ ...status, latest_run: expired });
+    assert.ok(html.includes(t.errors.authorizationExpired)); assert.ok(html.includes(t.fitCompletePending));
+    assert.match(html, /32[^]*357/u); assert.match(html, /1[.,]918865/u); assert.match(html, /1[.,]6818/u);
+    assert.ok(html.includes(t.terminalAmount.split("{amount}")[0]));
+    assert.ok(!html.includes(t.retry)); assert.ok(!html.includes(t.resend)); assert.ok(!html.includes(t.changeCap));
+    assert.ok(!html.includes(t.unknown)); assert.ok(!html.includes(t.completedBody));
+    assert.ok(!html.includes(t.startWithCap.split("{amount}")[0]));
+    const generic = render({ ...status, latest_run: { ...expired, error_code: "workspace_engine_worker_failed", retryable: true } });
+    assert.ok(generic.includes(t.errors.failed)); assert.ok(!generic.includes(t.errors.authorizationExpired));
+    assert.match(generic, /32[^]*357/u); assert.match(generic, /1[.,]918865/u);
   });
   test(`${locale}: unknown estimate is explained as a spending limit and no-provider blocks complete analysis`, () => {
     const unknown = { ...status, preflight: { ...status.preflight, cost: { ...status.preflight.cost,

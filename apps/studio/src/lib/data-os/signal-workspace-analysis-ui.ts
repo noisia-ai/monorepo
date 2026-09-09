@@ -90,7 +90,8 @@ export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | nu
   return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
 }
 const recoveryFailureCodes = ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid",
-  "workspace_engine_interpretation_transport_terminal_confirmed", "workspace_engine_interpretation_transport_retry_exhausted"];
+  "workspace_engine_interpretation_transport_terminal_confirmed", "workspace_engine_interpretation_transport_retry_exhausted",
+  "workspace_engine_interpretation_daily_authority_expired"];
 export function workspaceAnalysisRecoveryFailure(status: WorkspaceAnalysisStatus | null) {
   return [status?.latest_run, status?.request_run].some((run) => run?.status === "failed" && run.is_current
     && recoveryFailureCodes.includes(run.error_code ?? ""));
@@ -113,6 +114,7 @@ export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)
     && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
     && run.error_code !== "workspace_engine_interpretation_transport_retry_exhausted"
+    && run.error_code !== "workspace_engine_interpretation_daily_authority_expired"
     && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));
 }
 export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, request: PendingWorkspaceAnalysis) {
@@ -125,6 +127,7 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_engine_interpretation_daily_authority_expired") return "authorizationExpired";
   if (code === "workspace_engine_interpretation_transport_terminal_confirmed") return "transportTerminal";
   if (code === "workspace_engine_interpretation_transport_retry_exhausted") return "transportExhausted";
   if (code === "workspace_engine_interpretation_output_invalid") return "editorialInvalid";
