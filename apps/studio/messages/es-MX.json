@@ -578,6 +578,18 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "refreshError": "No se pudo actualizar el resultado. Se conserva la última lectura; usa Actualizar para volver a consultarla.",
+      "summaryTitle": "Resumen",
+      "openTopics": "Ver todos los Topics",
+      "interpretationPartial": "Interpretación parcial: {done, number} de {total, number} grupos. Este resultado sólo incorpora los grupos ya interpretados.",
+      "interpretationComplete": "Interpretación completa para este resultado: {done, number} de {total, number} grupos.",
+      "interpretationUnknown": "El avance de interpretación de este resultado no está disponible.",
+      "pendingCoverage": "{count, number} menciones tienen conversaciones por resolver. Algunas también aparecen en Topics seleccionados; estos conteos pueden superponerse.",
+      "processing": "La clasificación se está actualizando. Se conserva el resultado anterior mientras llega el nuevo.",
+      "updating": "Actualizando",
+      "partialCurrent": "Vigente · interpretación parcial",
+      "emptyPreparing": "Preparando el resultado de Topics",
+      "emptyPreparingBody": "La clasificación está en curso. El resultado aparecerá aquí cuando termine; tus Topics y su selección se conservan.",
       "title": "Tópicos y narrativas", "scope": "Todas las conversaciones recibidas con derechos de consulta. Sin atribución implícita a la marca.",
       "current": "Actualizado", "stale": "Resultado anterior", "manage": "Gestionar Topics", "refresh": "Actualizar", "utc": "Fechas en UTC",
       "computed": "Pertenencia calculada", "quality": "Los grupos se calcularon sobre las menciones. Su precisión semántica todavía no está calibrada.",

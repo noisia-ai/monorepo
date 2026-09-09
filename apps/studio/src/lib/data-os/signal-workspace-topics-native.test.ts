@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import { workspaceTopicsInterpretationCoverageV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicSelectionStatusV1, SignalWorkspaceCapabilitiesV1 } from "@noisia/db";
 import { nativeTopicsQueryV1, nativeTopicsViewV1, nativeTopicSelectionViewV1 } from "./signal-workspace-topics-native";
 
@@ -37,4 +38,17 @@ test("torn CAS read, cross-tenant data and unrelated receipts do not confirm the
   assert.throws(() => nativeTopicSelectionViewV1(scope, "delivery", undefined, { ...state, workspace_id: "other" }, overview, caps));
   const result = nativeTopicSelectionViewV1(scope, "delivery", "request-key", { ...state, request_receipt: { operation_id: "operation", term_key: "other", revision: 2, selection } }, overview, caps);
   assert.equal(result.request_receipt, null);
+});
+
+test("editorial coverage is an exact projection snapshot; absent coverage is not invented completion", () => {
+  const input = { interpreted_unit_count: 32, expected_unit_count: 357, complete: false,
+    unit_digest: hash, expected_unit_digest: hash };
+  assert.deepEqual(workspaceTopicsInterpretationCoverageV1(input), { interpreted_unit_count: 32, expected_unit_count: 357, complete: false });
+  assert.equal(workspaceTopicsInterpretationCoverageV1(null), null);
+  assert.equal(workspaceTopicsInterpretationCoverageV1(undefined), null);
+  assert.deepEqual(workspaceTopicsInterpretationCoverageV1({ interpreted_unit_count: 0, expected_unit_count: 0, complete: true }),
+    { interpreted_unit_count: 0, expected_unit_count: 0, complete: true });
+  for (const patch of [{ interpreted_unit_count: -1 }, { interpreted_unit_count: 358 }, { interpreted_unit_count: "32" },
+    { interpreted_unit_count: 1.2 }, { expected_unit_count: undefined }, { complete: true }, { complete: "false" }])
+    assert.throws(() => workspaceTopicsInterpretationCoverageV1({ ...input, ...patch }), /coverage_invalid/);
 });

@@ -17,7 +17,7 @@ type Selection = { revision: number; items: Record<string, { selected: boolean; 
   definition_revision: number; generation_id: string }> };
 type Generation = { id: string; taxonomy_profile_id: string; preparation_run_id: string;
   input_revision: string; current_revision: string; finalized_digest: string; policy_live: boolean;
-  source_engine_execution_id: string; identity: SignalWorkspaceClassificationIdentityV1; correction_digest: string; source_valid: boolean };
+  source_engine_execution_id: string; interpretation_coverage: unknown; identity: SignalWorkspaceClassificationIdentityV1; correction_digest: string; source_valid: boolean };
 type Context = { generation: Generation | null; topics: SignalTopicDefinitionV1[]; selection: Selection;
   is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null }; native: boolean };
 
@@ -31,6 +31,16 @@ function parseDate(value: string | null | undefined): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value) || Number(value.slice(0, 4)) < 1 || !Number.isFinite(Date.parse(value))
     || new Date(value).toISOString().slice(0, 10) !== value) return fail("workspace_topics_date_invalid", 422);
   return value;
+}
+export function workspaceTopicsInterpretationCoverageV1(value: unknown): SignalWorkspaceTopicsOverviewV1["interpretation_coverage"] {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return fail("workspace_topics_interpretation_coverage_invalid", 503);
+  const item = value as Record<string, unknown>;
+  const done = item.interpreted_unit_count, total = item.expected_unit_count;
+  if (typeof done !== "number" || typeof total !== "number" || !Number.isSafeInteger(done) || !Number.isSafeInteger(total)
+    || done < 0 || total < done || typeof item.complete !== "boolean" || item.complete !== (done === total))
+    return fail("workspace_topics_interpretation_coverage_invalid", 503);
+  return { interpreted_unit_count: done, expected_unit_count: total, complete: item.complete };
 }
 async function transaction<T>(database: Database, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await database.connect();
@@ -65,6 +75,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     generation.input_revision::text,state.input_revision::text current_revision,generation.finalized_digest,
     (generation.policy_valid_until IS NULL OR generation.policy_valid_until>now()) policy_live,
     generation.input_snapshot->'source_projection'->>'engine_execution_id' source_engine_execution_id,
+    generation.input_snapshot->'source_projection'->'interpretation_coverage' interpretation_coverage,
     generation.input_snapshot->'identity' identity,generation.input_snapshot->>'correction_digest' correction_digest,
     signal_workspace_projection_source_current_v1(generation) source_valid
     FROM signal_classification_generations generation JOIN signal_corpus_preparation_input_state state USING(workspace_id)
@@ -212,6 +223,7 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       terms, filters: ctx.filters, rights: summary.rights_digest }), observed_at: summary.observed_at,
     denominator: summary.denominator, coverage: { processed: summary.processed, assigned_unique: summary.assigned_unique,
       abstained: summary.abstained, unresolved: summary.unresolved, withheld: summary.withheld },
+    interpretation_coverage: workspaceTopicsInterpretationCoverageV1(ctx.generation?.interpretation_coverage),
     quality: "not_calibrated", terms, series: summary.series,
     limitations: ["computed_memberships_not_semantic_precision", "multilabel_counts_are_not_additive",
       ...(!ctx.generation ? ["classification_required"] : !ctx.is_current ? ["last_complete_generation_stale"] : []),

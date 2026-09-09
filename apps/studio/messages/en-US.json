@@ -580,6 +580,18 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "refreshError": "The result could not be refreshed. The last read is preserved; use Refresh to check it again.",
+      "summaryTitle": "Overview",
+      "openTopics": "View all Topics",
+      "interpretationPartial": "Partial interpretation: {done, number} of {total, number} groups. This result includes only groups already interpreted.",
+      "interpretationComplete": "Interpretation is complete for this result: {done, number} of {total, number} groups.",
+      "interpretationUnknown": "Interpretation progress for this result is unavailable.",
+      "pendingCoverage": "{count, number} mentions have conversations still unresolved. Some also appear in selected Topics; these counts can overlap.",
+      "processing": "Classification is updating. The previous result remains available while the next one arrives.",
+      "updating": "Updating",
+      "partialCurrent": "Current · partial interpretation",
+      "emptyPreparing": "Preparing the Topics result",
+      "emptyPreparingBody": "Classification is in progress. The result will appear here when it finishes; your Topics and selections are preserved.",
       "title": "Topics & narratives", "scope": "All received conversations with viewing rights. No implied attribution to the brand.",
       "current": "Up to date", "stale": "Previous result", "manage": "Manage Topics", "refresh": "Refresh", "utc": "Dates in UTC",
       "computed": "Computed membership", "quality": "Clusters were computed from the mentions. Their semantic precision has not yet been calibrated.",

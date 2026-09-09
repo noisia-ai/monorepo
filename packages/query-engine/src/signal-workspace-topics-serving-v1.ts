@@ -23,6 +23,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
     unresolved: number;
     withheld: number;
   };
+  interpretation_coverage: { interpreted_unit_count: number; expected_unit_count: number; complete: boolean } | null;
   quality: "not_calibrated";
   terms: Array<{
     term_key: string;
