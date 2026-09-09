@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { acceptTopicSignalSelectionV1, canSelectTopicSignalV1, parseTopicSignalSelectionIntentV1, parseTopicSignalSelectionV1,
   topicSignalSelectionStorageKeyV1, shouldPollTopicSignalV1, type TopicSignalSelectionV1, type TopicSignalSelectionIntentV1
 } from "@/lib/data-os/signal-topic-selection-ui";
 
-export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false }: {
-  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean;
+export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null }: {
+  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null;
 }) {
   const t = useTranslations("AdminWorkspace.topics.signalSelection");
   const [data, setData] = useState<TopicSignalSelectionV1 | null>(null);
@@ -128,7 +129,9 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
       </button>
       <button className="admin-button" type="button" disabled={busy} onClick={() => void read()}>{t(pending ? "recover" : "refresh")}</button>
     </div>
+    {state?.is_current && matches && !error && state.mention_count !== null ? <p><strong>{t("memberships", { count: state.mention_count })}</strong></p> : null}
     <p>{t("basis")}</p>
+    {state?.selected && state.is_current && matches && !error && !dirty && signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("openSignal")}</Link> : null}
     {state?.selected ? <p role="status">{t("selected")}{!state.is_current ? ` ${t("stale")}` : ""}</p> : null}
     {state && !state.selected && !state.is_current ? <p role={state.is_processing ? "status" : undefined}>{t(state.is_processing ? "processing" : "prepare")}</p> : null}
     {state && !state.selected && state.is_current && state.mention_count === 0 ? <p>{t("noMemberships")}</p> : null}

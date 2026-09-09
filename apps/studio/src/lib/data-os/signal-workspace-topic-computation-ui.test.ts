@@ -100,6 +100,23 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(search); assert.match(search, /^<button[^>]*disabled/u);
     assert.ok(!html.includes(messages.AdminWorkspace.topics.cost.notice));
   });
+  test(`${locale}: discovered Topics use associations, never the interests search preflight or ranking`, () => {
+    const discovered = { ...management, topics: [{ ...management.topics[0]!, origin: "workspace_discovery" as const,
+      scope: "all_conversations" as const, discovery_guidance: false }] };
+    for (const preflight of [status.preflight, { ...status.preflight, state: "missing_prototypes" as const, missing_prototypes: 10 }]) {
+      const html = render({ ...status, preflight, latest_ready: ready, latest_run: ready, is_current: true }, discovered);
+      assert.ok(html.includes(messages.AdminWorkspace.topics.signalSelection.show));
+      assert.ok(html.includes(messages.AdminWorkspace.topics.states.discovered));
+      assert.ok(html.includes(messages.AdminWorkspace.topics.fields.discoveryGuidance));
+      assert.ok(html.includes(messages.AdminWorkspace.topics.actions.archive));
+      assert.doesNotMatch(html, /<fieldset[^>]*disabled/u);
+      for (const copy of [messages.AdminWorkspace.topics.actions.search,
+        messages.AdminWorkspace.topics.computation.preflight.missing_prototypes,
+        messages.AdminWorkspace.topics.computation.resultsTitle, messages.AdminWorkspace.topics.computation.startBody]) {
+        assert.ok(!html.includes(copy), `discovery must not imply this prerequisite: ${copy}`);
+      }
+    }
+  });
   test(`${locale}: a new run preserves the previous ready counts and describes their freshness`, () => {
     const html = render({ ...status, latest_ready: ready, active_run: { ...ready, id: "new-search", status: "running", progress: 25, processed_roots: 10 }, is_current: false });
     assert.ok(html.includes(messages.AdminWorkspace.topics.computation.resultsTitle));

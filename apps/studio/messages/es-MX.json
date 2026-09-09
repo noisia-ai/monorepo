@@ -2700,9 +2700,10 @@
       },
       "eyebrow": "Topics",
       "signalSelection": {
+        "memberships": "{count, plural, one {# mención asociada} other {# menciones asociadas}}", "openSignal": "Ver en Signal",
         "show": "Mostrar en Signal", "remove": "Quitar de Signal", "saving": "Consultando…", "resend": "Confirmar la misma solicitud",
         "recover": "Verificar solicitud", "refresh": "Actualizar estado", "basis": "Esta selección muestra la pertenencia calculada al grupo; no valida su precisión semántica.",
-        "selected": "Seleccionado para Signal.", "stale": "El resultado anterior requiere actualización.", "prepare": "Completa el análisis antes de mostrar este Topic.", "noMemberships": "Todavía no hay menciones asociadas a este Topic.",
+        "selected": "Seleccionado para Signal.", "stale": "Sus asociaciones están pendientes de actualización.", "prepare": "Las asociaciones de este Topic todavía no están vigentes. Consulta el avance del análisis y actualiza este estado.", "noMemberships": "Todavía no hay menciones asociadas a este Topic.",
         "saveFirst": "Guarda los cambios antes de cambiar su selección.", "pending": "La solicitud está pendiente de confirmar. Se conserva la misma solicitud para evitar duplicados.",
         "forbidden": "No tienes acceso a esta acción o el Topic ya no está disponible.", "conflict": "El Topic o la selección cambió. Actualiza el estado antes de continuar.",
         "load": "No pudimos verificar el estado. Actualiza para volver a intentarlo.", "save": "No pudimos confirmar el cambio. Verifica la solicitud antes de continuar.",
@@ -2776,6 +2777,7 @@
         "viewReceived": "Ver datos recibidos"
       },
       "states": {
+        "discovered": "Descubierto",
         "draft": "Borrador",
         "searching": "Buscando",
         "ready": "Listo para seguir",
@@ -2810,6 +2812,7 @@
         "empty": "No hay tópicos archivados."
       },
       "editor": {
+        "discoveredDefinition": "Qué conversación describe", "discoveredScope": "Ámbito de conversación",
         "workspaceSource": "Descubierto en el análisis del corpus. Puedes editarlo aquí y elegir por separado si aparece en Signal.",
         "select": "Elige un tópico o crea uno nuevo.",
         "newEyebrow": "Definición nueva",

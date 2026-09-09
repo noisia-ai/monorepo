@@ -2700,9 +2700,10 @@
       },
       "eyebrow": "Topics",
       "signalSelection": {
+        "memberships": "{count, plural, one {# associated mention} other {# associated mentions}}", "openSignal": "View in Signal",
         "show": "Show in Signal", "remove": "Remove from Signal", "saving": "Checking…", "resend": "Confirm the same request",
         "recover": "Check request", "refresh": "Refresh status", "basis": "This selection shows computed cluster membership; it does not validate semantic precision.",
-        "selected": "Selected for Signal.", "stale": "The previous result needs an update.", "prepare": "Complete the analysis before showing this Topic.", "noMemberships": "There are no mentions associated with this Topic yet.",
+        "selected": "Selected for Signal.", "stale": "Its associations are awaiting an update.", "prepare": "This Topic’s associations are not current yet. Check analysis progress and refresh this status.", "noMemberships": "There are no mentions associated with this Topic yet.",
         "saveFirst": "Save your changes before changing the selection.", "pending": "The request is awaiting confirmation. The same request is retained to avoid duplicates.",
         "forbidden": "You do not have access to this action or the Topic is no longer available.", "conflict": "The Topic or selection changed. Refresh its status before continuing.",
         "load": "We could not verify the status. Refresh to try again.", "save": "We could not confirm the change. Check the request before continuing.",
@@ -2776,6 +2777,7 @@
         "viewReceived": "View received data"
       },
       "states": {
+        "discovered": "Discovered",
         "draft": "Draft",
         "searching": "Searching",
         "ready": "Ready to follow",
@@ -2810,6 +2812,7 @@
         "empty": "No archived topics."
       },
       "editor": {
+        "discoveredDefinition": "What conversation it describes", "discoveredScope": "Conversation scope",
         "workspaceSource": "Discovered in the corpus analysis. Edit it here and choose separately whether it appears in Signal.",
         "select": "Choose a topic or create a new one.",
         "newEyebrow": "New definition",

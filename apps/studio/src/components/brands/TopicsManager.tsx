@@ -48,12 +48,13 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const [resultState, setResultState] = useState<"relevant" | "doubt" | "excluded">("relevant");
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const computation = useWorkspaceTopicComputation({ workspaceId, termKey: selectedKey,
+  const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
+  const selectedIsDiscovery = selected?.origin === "workspace_discovery";
+  const computation = useWorkspaceTopicComputation({ workspaceId, termKey: selectedIsDiscovery ? null : selectedKey,
     catalogVersion: `${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`, initial: initialComputation });
   const workspaceSearch = computation.data?.mode === "workspace";
   const legacySearch = computation.data?.mode === "legacy";
 
-  const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const editorDirty = selected ? stableClientJson(editorPayload(editor)) !== stableClientJson(topicPayload(selected)) : creating && stableClientJson(editorPayload(editor)) !== stableClientJson(editorPayload(emptyEditor()));
   const semanticDirty = selected ? stableClientJson(semanticEditorPayload(editor))
     !== stableClientJson(semanticTopicPayload(selected)) : false;
@@ -76,12 +77,14 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const running = legacySearch && data.execution && ["queued", "running"].includes(data.execution.status);
   const hasUnsupportedSignalScope = data.topics.some((item) => item.lifecycle !== "archived"
     && item.scope !== "primary_brand");
-  const topicStatusLabel = (topic: Topic) => t(workspaceSearch && topic.lifecycle !== "archived"
+  const topicStatusLabel = (topic: Topic) => t(topic.origin === "workspace_discovery" && topic.lifecycle !== "archived"
+    ? "states.discovered" : workspaceSearch && topic.lifecycle !== "archived"
     ? computation.data?.active_run ? "states.searching"
       : computation.data?.latest_ready ? computation.data.is_current ? "computation.available" : "computation.outdated"
         : "states.draft"
     : `states.${topic.status}`);
-  const topicStatusTone = (topic: Topic) => workspaceSearch && topic.lifecycle !== "archived"
+  const topicStatusTone = (topic: Topic) => topic.origin === "workspace_discovery" && topic.lifecycle !== "archived"
+    ? "not_available" as const : workspaceSearch && topic.lifecycle !== "archived"
     ? computation.data?.latest_ready || computation.data?.active_run ? "warning" as const : "not_available" as const
     : statusTone(topic.status);
 
@@ -379,8 +382,8 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
           </header>
           <fieldset className="topics-manager__form" disabled={!canEdit || busy !== null}>
             <label>{t("fields.name")}<input maxLength={160} onChange={(event) => setEditor({ ...editor, label: event.target.value })} value={editor.label} /></label>
-            <label>{t("fields.definition")}<textarea maxLength={1500} onChange={(event) => setEditor({ ...editor, definition: event.target.value })} rows={4} value={editor.definition} /></label>
-            <label>{t("fields.scope")}<select onChange={(event) => setEditor({ ...editor, scope: event.target.value as Topic["scope"] })} value={editor.scope}>
+            <label>{t(selectedIsDiscovery ? "editor.discoveredDefinition" : "fields.definition")}<textarea maxLength={1500} onChange={(event) => setEditor({ ...editor, definition: event.target.value })} rows={4} value={editor.definition} /></label>
+            <label>{t(selectedIsDiscovery ? "editor.discoveredScope" : "fields.scope")}<select onChange={(event) => setEditor({ ...editor, scope: event.target.value as Topic["scope"] })} value={editor.scope}>
               {SIGNAL_TOPIC_EDITOR_SCOPES_V1.map((scope) => <option key={scope} value={scope}>{t(`scopes.${scope}`)}</option>)}</select></label>
             <details><summary>{t("advanced.title")}</summary><div className="topics-manager__advanced">
               <label className="topics-manager__guidance"><input type="checkbox" checked={editor.discovery_guidance}
@@ -400,17 +403,17 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
               : selected ? <><button className="admin-button" disabled={!canEdit || busy !== null || !editorDirty || !editor.label.trim() || !editor.definition.trim()} onClick={() => void saveTopic()} type="button">
                 <FloppyDisk aria-hidden size={15} />{t("actions.save")}</button>
                 {selected.lifecycle === "archived" ? <>
-                  {legacySearch && selected.status === "failed" ? <button className="admin-button admin-button--primary"
+                  {!selectedIsDiscovery && legacySearch && selected.status === "failed" ? <button className="admin-button admin-button--primary"
                     disabled={!canEdit || busy !== null || Boolean(running) || editorDirty} onClick={() => { if (canExecute) void command("retry"); }} type="button">
                     <ArrowClockwise aria-hidden size={15} />{t("actions.retry")}</button> : null}
                   <button className="admin-button" disabled={!canEdit || busy !== null || Boolean(running) || editorDirty}
                     onClick={() => void command("restore")} type="button">
                     <ArrowClockwise aria-hidden size={15} />{t("actions.restore")}</button></> : <>
-                  {workspaceSearch ? <button className="admin-button admin-button--primary"
+                  {!selectedIsDiscovery && workspaceSearch ? <button className="admin-button admin-button--primary"
                     disabled={!computation.canStart || computation.submitting || busy !== null || editorDirty}
                     onClick={() => void computation.start()} type="button"><MagnifyingGlass aria-hidden size={15} />
                     {t(computation.pending && !computation.data?.active_run ? "computation.recover" : "actions.search")}</button>
-                    : selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
+                    : !selectedIsDiscovery && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
                     <MagnifyingGlass aria-hidden size={15} />{data.execution?.status === "failed" ? t("actions.retry") : t("actions.search")}</button> : null}
                   {legacySearch && selected.origin !== "workspace_discovery" && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
                     disabled={!canExecute || busy !== null || Boolean(running) || !data.search_execution_id || editorDirty
@@ -418,14 +421,15 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
                     <Check aria-hidden size={15} />{t("actions.follow")}</button> : null}
                   <button className="admin-button admin-button--danger" disabled={!canEdit || busy !== null || editorDirty} onClick={() => void command("archive")} type="button">
                     <Archive aria-hidden size={15} />{t("actions.archive")}</button></>}</> : null}
-            {!creating ? <button className="admin-button" disabled={computation.reading || computation.submitting}
+            {!creating && !selectedIsDiscovery ? <button className="admin-button" disabled={computation.reading || computation.submitting}
               onClick={() => void computation.read()} type="button"><ArrowClockwise aria-hidden size={15} />{t("computation.refresh")}</button> : null}
           </div>
           {!creating && selected?.origin === "workspace_discovery" && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
-            definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} /> : null}
-          {!creating && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
-          {!creating && workspaceSearch && computation.data ? <>
+            definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null}
+            signalHref={`/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`} /> : null}
+          {!creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
+          {!creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">
               {t(`computation.preflight.${computation.data.preflight.state}`, { count: computation.data.preflight.missing_prototypes ?? 0 })}
               {["missing_embeddings", "needs_preparation", "awaiting_import"].includes(computation.data.preflight.state)
@@ -438,20 +442,20 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
             {computation.data.latest_run?.status === "failed" ? <p className="team-msg team-msg--error" role="alert">
               {t(`computation.errors.${computationErrorKey(computation.data.latest_run.error_code ?? "failed")}`)}</p> : null}
           </> : null}
-          {legacySearch && !creating && selected && semanticDirty
+          {legacySearch && !creating && !selectedIsDiscovery && selected && semanticDirty
             && (selected.status === "ready" || selected.status === "in_signal")
             ? <p className="topics-manager__cost-notice">{t("cost.editNotice", {
               amount: formatMicroUsd(EDIT_RECLASSIFICATION_CAP_MICRO_USD, locale)
             })}</p> : null}
-          {legacySearch && !creating && selected && selected.status === "ready" && hasUnsupportedSignalScope
+          {legacySearch && !creating && !selectedIsDiscovery && selected && selected.status === "ready" && hasUnsupportedSignalScope
             ? <p className="topics-manager__cost-notice">{t("scopeNotice")}</p> : null}
-          {legacySearch && !creating && selected && selected.lifecycle !== "archived"
+          {legacySearch && !creating && !selectedIsDiscovery && selected && selected.lifecycle !== "archived"
             && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current)
             && data.embedding_preflight.requires_paid_call ? <p className="topics-manager__cost-notice">
               {t("cost.notice", { amount: formatMicroUsd(data.embedding_preflight.estimated_micro_usd, locale),
                 count: data.embedding_preflight.missing_inputs })}
             </p> : null}
-          {!creating && selected && workspaceSearch && computation.data?.latest_ready ? <section className="topics-manager__results">
+          {!creating && !selectedIsDiscovery && selected && workspaceSearch && computation.data?.latest_ready ? <section className="topics-manager__results">
             <header><div><small>{t("computation.resultsEyebrow")}</small><h3>{t("computation.resultsTitle")}</h3>
               <p>{t("computation.resultsBody")}</p>
               <p>{t("computation.coverage", { roots: computation.data.latest_ready.denominator,
@@ -495,7 +499,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
                 <button className={item.correction === "excluded" ? "is-active is-excluded" : ""} disabled={!canEdit || busy !== null}
                   onClick={() => void correct(item, "excluded")} type="button"><X aria-hidden size={14} />{t("results.notBelongs")}</button></div>
             </article>) : <div className="admin-empty admin-empty--compact"><strong>{t("results.empty")}</strong></div>}</div>
-          </section> : !creating && selected ? <div className="topics-manager__start"><MagnifyingGlass aria-hidden size={22} />
+          </section> : !creating && !selectedIsDiscovery && selected ? <div className="topics-manager__start"><MagnifyingGlass aria-hidden size={22} />
             <div><strong>{t(workspaceSearch ? "computation.startTitle" : awaitingImport ? "readiness.awaiting_import.title" : "start.title")}</strong><p>{t(workspaceSearch ? "computation.startBody" : awaitingImport ? "readiness.awaiting_import.body" : "start.body")}</p></div></div> : null}
         </> : <div className="admin-empty"><strong>{t("editor.select")}</strong></div>}
       </main>
