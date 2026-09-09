@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg";
 import type {
   SignalWorkspaceClassificationIdentityV1, SignalWorkspaceClassificationRootIdentityV1,
-  SignalWorkspaceClassificationOutcomeV1
+  SignalWorkspaceClassificationOutcomeV1,SignalWorkspaceIncrementalProjectionSourceV1
 } from "@noisia/query-engine";
 
 export type SignalWorkspaceClassificationDatabaseV1 = Pick<Pool, "query" | "connect">;
@@ -30,13 +30,14 @@ export type SignalWorkspaceClassificationChunksPageV1 = {
   next_cursor: SignalWorkspaceClassificationChunksCursorV1 | null;
   done: boolean;
 };
-export type SignalWorkspaceClassificationProjectionV1 = {
+export type SignalWorkspaceClassificationFitProjectionV1 = {
   contract_version: "workspace-topic-projection-v1";
   engine_execution_id: string; model_artifact_id: string | null; output_artifact_id: string;
   materialization_artifact_id: string; mapping_digest: string; policy_digest: string;
   model_version_id: string | null;
   interpretation_coverage?: {interpreted_unit_count:number;expected_unit_count:number;unit_digest:string;expected_unit_digest:string;complete:boolean};
 };
+export type SignalWorkspaceClassificationProjectionV1=SignalWorkspaceClassificationFitProjectionV1|SignalWorkspaceIncrementalProjectionSourceV1;
 export class SignalWorkspaceClassificationError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceClassificationError"; }
 }
@@ -195,7 +196,14 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
       AND run.counts->>'total_chunk_references'=run.counts->>'processed_chunk_references'
       AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())`, [args.embedding_run_id, args.workspace_id, identity.embedding_config_digest])).rows[0];
     if (!embedded) return fail("workspace_classification_complete_embeddings_required");
-    if ((await client.query("SELECT id FROM signal_topic_catalog_executions WHERE taxonomy_profile_id=$1::uuid AND status IN('queued','running')", [inputs.taxonomy_profile_id])).rows.length) return fail("workspace_classification_execution_active");
+    const incrementalSource=args.source_projection?.contract_version==='workspace-topic-incremental-projection-v1'?args.source_projection:null;
+    const active=incrementalSource?await client.query(`SELECT active.id FROM signal_topic_catalog_executions active WHERE active.taxonomy_profile_id=$1::uuid AND active.status IN('queued','running')
+     AND NOT ($2::uuid IS NOT NULL AND EXISTS(SELECT 1 FROM signal_workspace_incremental_projection_lineage_v1($2::uuid) lineage
+      WHERE (active.id=lineage.parent_id AND active.input_contract='workspace-topic-engine-v1' AND NOT active.input_snapshot ? 'numeric_descriptor')
+       OR (active.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
+        AND active.input_snapshot->'source_projection'->>'engine_execution_id'=lineage.parent_id::text)))`,
+     [inputs.taxonomy_profile_id,incrementalSource.engine_execution_id]):await client.query("SELECT id FROM signal_topic_catalog_executions WHERE taxonomy_profile_id=$1::uuid AND status IN('queued','running')",[inputs.taxonomy_profile_id]);
+    if(active.rows.length)return fail("workspace_classification_execution_active");
     const snapshot: Snapshot = {contract_version: contract, identity, context_digest: inputs.context_digest, correction_digest: inputs.correction_digest, topics: inputs.topics,
       ...(args.source_projection?{source_projection:args.source_projection}:{})};
     const id = randomUUID(), generation = randomUUID();
@@ -567,7 +575,7 @@ export async function finishSignalWorkspaceClassificationV1(args:{database:Signa
 }
 /** Failure cleanup preserves a checkpoint even when its acknowledgement was lost. */
 export async function failSignalWorkspaceClassificationV1(args:{database:SignalWorkspaceClassificationDatabaseV1;lease:SignalWorkspaceClassificationLeaseV1;error_code:string}) {
-  const code=/^workspace_classification_[a-z_]{1,100}$/u.test(args.error_code)?args.error_code:"workspace_classification_worker_failed";
+  const code=/^workspace_(?:classification|incremental_projection)_[a-z_]{1,100}$/u.test(args.error_code)?args.error_code:"workspace_classification_worker_failed";
   await args.database.query(`WITH failed AS(UPDATE signal_topic_catalog_executions SET status='failed',error_code=$4,execution_token=NULL,execution_expires_at=NULL,
    completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid AND workspace_id=$2::uuid AND execution_token=$3::uuid
     AND input_contract='workspace-topic-classification-v1' AND status='running' RETURNING id)

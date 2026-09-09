@@ -1,5 +1,6 @@
 import type { SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { embeddingCapUsdInput, latestCorpusEmbeddingSnapshot, parseEmbeddingCapMicroUsd } from "./workspace-corpus-embeddings-ui";
+import { validWorkspaceAnalysisUpdate, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
 
 export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> & {
   retryable: boolean; outcome_unknown: boolean; transport_recovery_eligible: boolean;
@@ -9,6 +10,7 @@ export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["la
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
   request_scope: string; can_execute: boolean;
+  update?: WorkspaceAnalysisUpdate | null;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
     cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number; provider_available: boolean };
@@ -91,7 +93,7 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
     && (!value.latest_complete || (value.latest_complete as WorkspaceAnalysisRun).status === "ready")
-    && nullable(value.latest_complete_execution_id, uuid);
+    && nullable(value.latest_complete_execution_id, uuid) && validWorkspaceAnalysisUpdate(value.update);
 }
 export function latestWorkspaceAnalysis(current: WorkspaceAnalysisStatus | null, next: WorkspaceAnalysisStatus, workspaceId: string) {
   if (!validWorkspaceAnalysisStatus(next)) return current?.workspace_id === workspaceId ? current : null;
@@ -132,7 +134,7 @@ export function workspaceAnalysisCanReleaseChangedRequest(status: WorkspaceAnaly
 }
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
-  if (!status || !cap || !status.can_execute || status.active_run || workspaceAnalysisUnknown(status)
+  if (!status || !cap || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceAnalysisUnknown(status)
     || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
   return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n

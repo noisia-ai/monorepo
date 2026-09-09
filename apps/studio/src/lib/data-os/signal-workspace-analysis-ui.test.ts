@@ -9,6 +9,8 @@ import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendi
   workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
+import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
+
 Object.assign(globalThis, { React });
 const id = "00000000-0000-4000-8000-000000000001";
 const hash = `sha256:${"1".repeat(64)}`;
@@ -244,6 +246,46 @@ test("progress delivery retries require their own server authority and exact rec
   for (const patch of [{ materialization_error_code: 123 }, { materialization_retry_available: "yes" }])
     assert.equal(validWorkspaceAnalysisStatus({ ...current, latest_run: { ...failed, ...patch } }), false);
 });
+const incrementalUpdate: WorkspaceAnalysisUpdate = {
+  desired_revision: "9007199254740993", input_revision: "9007199254740993", has_pending_work: true,
+  numeric: { execution_id: id, status: "ready", phase: "complete", progress: 100,
+    expected_roots: 401, processed_roots: 401, is_current: true, error_code: null },
+  derivation: null, projection: null,
+  serving: { generation_id: id, input_revision: "9007199254740992", is_current: false,
+    interpretation_coverage: { interpreted_unit_count: 4, expected_unit_count: 11, unit_digest: hash, expected_unit_digest: hash, complete: false },
+    discovery_coverage: { state: "pending_cohort_close", pending_roots: 13 } }
+};
+test("incremental status preserves exact revisions, pending derivation and old serving without authorizing another analysis", () => {
+  assert.equal(validWorkspaceAnalysisStatus({ ...status, update: incrementalUpdate }), true);
+  assert.equal(workspaceAnalysisUpdateState(incrementalUpdate), "pending");
+  assert.equal(workspaceAnalysisCanStart({ ...status, update: incrementalUpdate }, "0.002001"), false);
+  assert.equal(workspaceAnalysisUpdateState({ ...incrementalUpdate, numeric: { ...incrementalUpdate.numeric, status: "running", progress: 40 } }), "numeric");
+  assert.equal(workspaceAnalysisUpdateState({ ...incrementalUpdate, projection: { ...incrementalUpdate.numeric, generation_id: id, status: "running" } }), "projecting");
+  for (const derivation of [{ status: "dead_letter", error_code: null }, { status: "failed", error_code: "storage_failed" }])
+    assert.equal(workspaceAnalysisUpdateState({ ...incrementalUpdate, has_pending_work: false, derivation }), "failed");
+  const complete = { ...incrementalUpdate, has_pending_work: false, serving: { ...incrementalUpdate.serving!, input_revision: incrementalUpdate.input_revision, is_current: true } };
+  assert.equal(workspaceAnalysisUpdateState(complete), "ready");
+  assert.equal(complete.serving.interpretation_coverage?.complete, false);
+  assert.equal(complete.serving.discovery_coverage?.pending_roots, 13);
+});
+test("incremental decoder rejects malformed coverage; nullable receipt and stale-response boundaries stay explicit", () => {
+  assert.equal(validWorkspaceAnalysisUpdate(null), true);
+  assert.equal(validWorkspaceAnalysisUpdate({ ...incrementalUpdate, serving: null }), true);
+  for (const patch of [{ desired_revision: 9007199254740992 }, { input_revision: "1.5" }, { has_pending_work: undefined },
+    { numeric: { ...incrementalUpdate.numeric, processed_roots: 402 } }, { derivation: { status: "failed", error_code: 3 } },
+    { serving: { ...incrementalUpdate.serving, discovery_coverage: { state: "complete", pending_roots: 13 } } },
+    { serving: { ...incrementalUpdate.serving, interpretation_coverage: { ...incrementalUpdate.serving!.interpretation_coverage, complete: true } } }])
+    assert.equal(validWorkspaceAnalysisUpdate({ ...incrementalUpdate, ...patch }), false);
+  const current = { ...status, update: incrementalUpdate, observed_at: "2026-09-09T11:00:00.000002Z" };
+  assert.equal(latestWorkspaceAnalysis(current, { ...status, update: null }, id), current);
+  const receipt = workspaceAnalysisAssociationReceipt(id, status.request_scope, incrementalUpdate);
+  assert.notEqual(receipt, workspaceAnalysisAssociationReceipt(id, "another-actor", incrementalUpdate));
+  assert.notEqual(receipt, workspaceAnalysisAssociationReceipt("another-workspace", status.request_scope, incrementalUpdate));
+  assert.notEqual(receipt, workspaceAnalysisAssociationReceipt(id, status.request_scope, { ...incrementalUpdate,
+    serving: { ...incrementalUpdate.serving!, generation_id: "00000000-0000-4000-8000-000000000002" } }));
+  assert.equal(workspaceAnalysisAssociationReceipt(id, status.request_scope, { ...incrementalUpdate, serving: null }), null);
+});
+
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const t = messages.AdminWorkspace.topics.analysis;
@@ -251,6 +293,23 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initial: WorkspaceAnalysisStatus, disabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     providerProps, createElement(WorkspaceAnalysisControls, { brandId: "new-brand", workspaceId: id,
       catalogVersion: "empty:0", initial, disabled })));
+  test(`${locale}: incremental associations lead while editorial failure, partial coverage and costs remain visible`, () => {
+    const run = { ...progressiveRun, claude_cost: { hard_cap_micro_usd: 30_000_000, settled_micro_usd: 1_918_865,
+      reserved_micro_usd: 1_681_800, unknown_reserved_micro_usd: 0, terminal_reserved_micro_usd: 1_681_800 } };
+    const html = render({ ...status, latest_run: run, update: incrementalUpdate });
+    assert.ok(html.includes(t.update.pending));
+    assert.ok(html.indexOf(t.update.pending) < html.indexOf(t.errors.authorizationExpired));
+    assert.ok(html.includes(t.update.editorial));
+    assert.match(html, /4[^]*11/u); assert.match(html, /13/u);
+    assert.match(html, /1[.,]918865/u); assert.match(html, /1[.,]6818/u);
+    assert.ok(!html.includes(t.completedBody));
+    const delivered = render({ ...status, latest_run: run, update: { ...incrementalUpdate, has_pending_work: false,
+      serving: { ...incrementalUpdate.serving!, input_revision: incrementalUpdate.input_revision, is_current: true } } });
+    assert.ok(delivered.includes(t.update.ready)); assert.ok(delivered.includes(t.errors.authorizationExpired));
+    const failed = render({ ...status, latest_run: run, update: { ...incrementalUpdate, has_pending_work: false,
+      derivation: { status: "dead_letter", error_code: "storage_failed" } } });
+    assert.ok(failed.includes(t.update.failureDerivation)); assert.ok(failed.includes(t.update.previousServing));
+  });
   test(`${locale}: saved partial topics remain readable through failure and never imply complete classification or automatic Signal selection`, () => {
     const html = render({ ...status, latest_run: progressiveRun });
     assert.match(html, /32[^]*357/u);

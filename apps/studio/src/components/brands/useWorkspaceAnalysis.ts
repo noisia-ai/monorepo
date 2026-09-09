@@ -94,14 +94,21 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     if (pending && pending.key !== checkedKey && !reading && !submitting && error !== "load") void read();
   }, [pending, checkedKey, reading, submitting, error, read]);
   const active = data?.active_run?.execution_id
-    ?? (data?.latest_run?.materialization_pending ? data.latest_run.execution_id : null);
+    ?? (data?.latest_run?.materialization_pending ? data.latest_run.execution_id : null)
+    ?? (data?.update?.has_pending_work ? data.update.numeric.execution_id : null);
   useEffect(() => {
-    if (!active) return;
-    let stopped = false; let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => { await read(); if (!stopped) timer = setTimeout(() => void poll(), 4_000); };
-    timer = setTimeout(() => void poll(), 4_000);
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [active, read]);
+    if (!active || error || submitting) return;
+    let stopped = false, inFlight = false; let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try { if (document.visibilityState === "visible") await read(); }
+      finally { inFlight = false; if (!stopped) timer = setTimeout(() => void poll(), 4_000); }
+    };
+    const visible = () => { if (document.visibilityState === "visible") { clearTimeout(timer); void poll(); } };
+    timer = setTimeout(() => void poll(), 4_000); document.addEventListener("visibilitychange", visible);
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
+  }, [active, error, submitting, read]);
 
   const submit = useCallback(async (body: WorkspaceAnalysisRequest, replay?: PendingWorkspaceAnalysis) => {
     const status = current.current;

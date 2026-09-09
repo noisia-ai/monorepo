@@ -81,7 +81,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     FROM signal_classification_generations generation JOIN signal_corpus_preparation_input_state state USING(workspace_id)
     JOIN signal_topic_catalog_executions execution ON execution.generation_id=generation.id AND execution.status='ready'
     WHERE generation.workspace_id=$1::uuid AND generation.input_contract='workspace-topic-classification-v1'
-      AND generation.status='ready' AND generation.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
+      AND generation.status='ready' AND generation.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
       AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item WHERE item.generation_id=generation.id AND item.resolution_state='error')
     ORDER BY generation.generation_version DESC LIMIT 1`, [args.workspace_id])).rows[0] ?? null;
   let isCurrent = false;

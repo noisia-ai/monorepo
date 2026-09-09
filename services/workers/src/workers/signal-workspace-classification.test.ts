@@ -223,6 +223,10 @@ test("default dependencies are absent, profile mismatch is closed, and errors st
   assert.equal(f.engineCalls.length, 0);
   assert.equal(safeWorkspaceClassificationErrorV1(new Error("private SQL/corpus details")), "workspace_classification_worker_failed");
   assert.equal(safeWorkspaceClassificationErrorV1({ code: "workspace_classification_authority_revoked" }), "workspace_classification_authority_revoked");
+  assert.equal(safeWorkspaceClassificationErrorV1(new Error("workspace_incremental_projection_inputs_changed")), "workspace_incremental_projection_inputs_changed");
+  assert.equal(safeWorkspaceClassificationErrorV1(new Error("workspace_incremental_projection_private text")), "workspace_classification_worker_failed");
+  assert.equal(safeWorkspaceClassificationErrorV1({ code: "ECONNRESET" }), "workspace_classification_transport_unavailable");
+  assert.equal(safeWorkspaceClassificationErrorV1({ code: "23514", message: "private constraint details" }), "workspace_classification_worker_failed");
   await assert.rejects(f.execute({ stores: { ...f.stores, claim: async () => { throw new Error("secret connection details"); } } }),
     { message: "workspace_classification_worker_failed" });
 });

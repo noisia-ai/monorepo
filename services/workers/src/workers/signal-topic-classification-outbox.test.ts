@@ -156,3 +156,34 @@ test("progress dispatch identity never routes other contracts or unknown dispatc
     assert.throws(() => topicExecutionJobNameV1(input, true, "engine_progress"), /contract_unknown/u);
   assert.throws(() => topicExecutionJobNameV1("workspace-topic-engine-v1", false, "future"), /contract_unknown/u);
 });
+
+test("incremental binding derivation carries its durable scope without reopening the numeric execution", async () => {
+  const actor = "50000000-0000-4000-8000-000000000005";
+  const database = { query: async (sql: string) => sql.includes("RETURNING outbox.id::text")
+    ? { rows: [{ ...claimed, input_contract: "workspace-topic-engine-v1", dispatch_kind: "incremental_projection", actor_user_id: actor }], rowCount: 1 }
+    : { rows: [], rowCount: 1 } };
+  const jobs: unknown[] = [];
+  const queue = { getJob: async () => null, add: async (name: string, data: unknown, options: Record<string, unknown>) => {
+    assert.equal(name, "signal_workspace_incremental_derivation_v1");
+    assert.equal(options.attempts, 1); assert.equal(options.jobId, claimed.worker_job_id); jobs.push(data);
+  } };
+  assert.equal((await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule })).dispatched, 1);
+  assert.deepEqual(jobs, [{ execution_id: claimed.execution_id, workspace_id: claimed.workspace_id, actor_user_id: actor }]);
+});
+
+test("incremental classification routes only its explicit source contract and retains its previous job", async () => {
+  const database = { query: async (sql: string) => sql.includes("RETURNING outbox.id::text")
+    ? { rows: [{ ...claimed, input_contract: "workspace-topic-classification-v1", source_projection: true,
+      source_projection_contract: "workspace-topic-incremental-projection-v1", dispatch_kind: "execution" }], rowCount: 1 }
+    : { rows: [], rowCount: 1 } };
+  const retries: string[] = [];
+  const queue = { getJob: async () => ({ name: "signal_workspace_incremental_projection_v1", getState: async () => "failed",
+    retry: async (state: string) => { retries.push(state); } }), add: async () => assert.fail("same durable job must be retained") };
+  assert.equal((await drainSignalTopicClassificationOutboxV1({ database: database as never, queue, schedule })).dispatched, 1);
+  assert.deepEqual(retries, ["failed"]);
+  const { topicExecutionJobNameV1: route } = await import("./signal-topic-classification-outbox");
+  assert.equal(route("workspace-topic-classification-v1", true, "execution", "workspace-topic-projection-v1"), "signal_workspace_topic_projection_v1");
+  assert.throws(() => route("workspace-topic-classification-v1", true, "execution", "unknown-projection"), /contract_unknown/u);
+  for (const contract of ["legacy-topic-catalog-v1", "workspace-topic-computation-v1", "workspace-topic-classification-v1"])
+    assert.throws(() => route(contract, true, "incremental_projection"), /contract_unknown/u);
+});

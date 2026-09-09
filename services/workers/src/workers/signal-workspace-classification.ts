@@ -212,6 +212,9 @@ function boundedSize(value: number | undefined, maximum: number) {
 
 export function safeWorkspaceClassificationErrorV1(error: unknown) {
   const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  if (typeof code === "string" && ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND",
+    "57P01", "57P02", "57P03", "08000", "08003", "08006", "40001", "40P01"].includes(code))
+    return "workspace_classification_transport_unavailable";
   const value = typeof code === "string" ? code : error instanceof Error ? error.message : "";
-  return /^workspace_classification_[a-z_]{1,100}$/u.test(value) ? value : "workspace_classification_worker_failed";
+  return /^workspace_(?:classification|incremental_projection)_[a-z_]{1,100}$/u.test(value) ? value : "workspace_classification_worker_failed";
 }

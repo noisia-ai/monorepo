@@ -7,8 +7,8 @@ import { acceptTopicSignalSelectionV1, canSelectTopicSignalV1, parseTopicSignalS
   topicSignalSelectionStorageKeyV1, shouldPollTopicSignalV1, type TopicSignalSelectionV1, type TopicSignalSelectionIntentV1
 } from "@/lib/data-os/signal-topic-selection-ui";
 
-export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null }: {
-  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null;
+export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null, refreshKey = null }: {
+  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null; refreshKey?: string | null;
 }) {
   const t = useTranslations("AdminWorkspace.topics.signalSelection");
   const [data, setData] = useState<TopicSignalSelectionV1 | null>(null);
@@ -71,6 +71,13 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
     void read(true);
     return () => { alive.current = false; fence.current++; request.current?.abort(); sending.current = false; };
   }, [read, definitionRevision, definitionDigest]);
+
+  const refreshedReceipt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!refreshKey || refreshKey === refreshedReceipt.current || !data || dirty || disabled || busy || pending || error) return;
+    refreshedReceipt.current = refreshKey;
+    void read();
+  }, [refreshKey, data, dirty, disabled, busy, pending, error, read]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;

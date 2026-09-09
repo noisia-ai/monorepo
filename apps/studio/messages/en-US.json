@@ -2596,6 +2596,26 @@
     "monitoringJourney": {"label": "Monitoring journey", "title": "Prepare your brand monitoring", "body": "Add context, define your interests and import the conversations to analyze.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
     "topics": {
       "analysis": {
+        "update": {
+          "numeric": "Updating conversations with the new mentions.",
+          "projecting": "Updating topic associations.",
+          "pending": "Computation updated. Saving the associations is pending.",
+          "ready": "Topic associations are up to date. Your Signal selection is preserved.",
+          "outdated": "There are changes after this update. Available coverage is preserved.",
+          "failed": "The update could not finish. Progress and available results are preserved.",
+          "unverified": "The current status could not be verified. Showing the last received progress.",
+          "rootProgress": "{done} of {total} mentions reviewed to update their associations.",
+          "previousServing": "Signal keeps the latest available result while the update finishes.",
+          "interpretation": "{done} of {total} model groups have an interpretation in the available result. This is not a mention count.",
+          "discoveryPending": "{count, plural, one {# mention is still pending new-conversation discovery; it may have known associations.} other {# mentions are still pending new-conversation discovery; they may have known associations.}}",
+          "noServing": "The associations do not have an available Signal result yet.",
+          "openSignal": "View available results in Signal",
+          "newAnalysis": "To start another analysis:",
+          "editorial": "Earlier interpretation · progress and receipts",
+          "failureNumeric": "The update computation was interrupted.",
+          "failureProjection": "Saving the associations did not finish.",
+          "failureDerivation": "The associations could not be prepared for saving."
+        },
         "partialCatalog": "{count, plural, =0 {Progress saved without active topics.} one {Catalog available: # active topic.} other {Catalog available: # active topics.}}",
         "materializedProgress": "This saved progress includes {done, number} of {total, number} interpreted groups.",
         "partialCoverage": "You can edit the available topics. Mention coverage remains partial; review classification before choosing what to show in Signal.",

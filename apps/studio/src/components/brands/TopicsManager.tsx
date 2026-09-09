@@ -88,6 +88,8 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
     ? computation.data?.latest_ready || computation.data?.active_run ? "warning" as const : "not_available" as const
     : statusTone(topic.status);
 
+  const [associationReceipt, setAssociationReceipt] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/data-os/signal/${workspaceId}/topics`, { cache: "no-store" });
     if (!response.ok) throw new Error(t("errors.load"));
@@ -301,7 +303,8 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
 
     <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
-      disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog} onContextPrepared={computation.read} />
+      disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog} onContextPrepared={computation.read}
+      onAssociationsAvailable={setAssociationReceipt} signalHref={`/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`} />
 
     {running ? <div className="topics-manager__progress" role="status">
       <span>{data.execution?.intent === "publish" ? t("progress.publishing") : t("progress.searching")}</span>
@@ -426,7 +429,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
           </div>
           {!creating && selected?.origin === "workspace_discovery" && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
-            definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null}
+            definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} refreshKey={associationReceipt}
             signalHref={`/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`} /> : null}
           {!creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {!creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>

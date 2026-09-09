@@ -6,11 +6,13 @@ import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
-export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onContextPrepared }: {
+export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onContextPrepared, onAssociationsAvailable, signalHref }: {
   brandId: string; workspaceId: string; catalogVersion: string; disabled?: boolean;
+  onAssociationsAvailable?: (receipt: string) => unknown; signalHref?: string;
   initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>; onContextPrepared?: () => unknown;
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
@@ -18,6 +20,16 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const status = analysis.data;
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
+  const update = status?.update;
+  const updateState = update ? analysis.error === "load" ? "unverified" : workspaceAnalysisUpdateState(update) : null;
+  const associations = workspaceAnalysisAssociationReceipt(workspaceId, status?.request_scope ?? "", update);
+  const onAssociations = useRef(onAssociationsAvailable); onAssociations.current = onAssociationsAvailable;
+  const notifiedAssociations = useRef<string | null>(null);
+  useEffect(() => {
+    if (!associations || disabled || analysis.error || !analysis.verified || associations === notifiedAssociations.current) return;
+    notifiedAssociations.current = associations;
+    void onAssociations.current?.(associations);
+  }, [associations, disabled, analysis.error, analysis.verified]);
   const interpretedComplete = workspaceAnalysisInterpretedComplete(complete);
   const noGroups = interpretedComplete && complete?.expected_interpretation_units === 0;
   const onComplete = useRef(onCompleted); onComplete.current = onCompleted;
@@ -57,9 +69,32 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
     <div className="admin-section__body admin-drawer-form">
       <div><strong>{t("title")}</strong><p className="admin-drawer-form__hint">{t("body")}</p></div>
       {!status && analysis.reading ? <p role="status">{t("loading")}</p> : null}
-      {preflight && preflight.state !== "ready" ? <p role="status" className="admin-drawer-form__hint">{t(preflight.state)}
+      {update && updateState ? <div role="status" data-analysis-update={updateState}>
+        <strong>{t(`update.${updateState}`)}</strong>
+        {updateState === "numeric" ? <div className="topics-manager__progress">
+          <progress aria-label={t("update.numeric")} max={100} value={update.numeric.progress} />
+          <span>{update.numeric.progress}%</span>
+        </div> : updateState === "projecting" && update.projection ? <p className="admin-drawer-form__hint">
+          {t("update.rootProgress", { done: update.projection.processed_roots, total: update.projection.expected_roots })}
+        </p> : null}
+        {updateState === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(update.numeric.status === "failed"
+          ? "update.failureNumeric" : update.projection?.status === "failed" ? "update.failureProjection" : "update.failureDerivation")}</p> : null}
+        {update.serving ? <>
+          {updateState !== "ready" ? <p className="admin-drawer-form__hint">{t("update.previousServing")}</p> : null}
+          {update.serving.interpretation_coverage ? <p className="admin-drawer-form__hint">{t("update.interpretation", {
+            done: update.serving.interpretation_coverage.interpreted_unit_count,
+            total: update.serving.interpretation_coverage.expected_unit_count
+          })}</p> : null}
+          {update.serving.discovery_coverage && update.serving.discovery_coverage.pending_roots > 0 ? <p className="admin-drawer-form__hint">
+            {t("update.discoveryPending", { count: update.serving.discovery_coverage.pending_roots })}
+          </p> : null}
+          {signalHref ? <Link href={signalHref} prefetch={false}>{t("update.openSignal")}</Link> : null}
+        </> : <p className="admin-drawer-form__hint">{t("update.noServing")}</p>}
+      </div> : null}
+      {preflight && preflight.state !== "ready" ? <p role="status" className="admin-drawer-form__hint">{update ? <>{t("update.newAnalysis")} </> : null}{t(preflight.state)}
         {preflight.state !== "missing_context" ? <> <Link href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("openData")}</Link></> : null}
       </p> : null}
+      {update && run ? <strong>{t("update.editorial")}</strong> : null}
       {status?.active_run ? <div className="topics-manager__progress" role="status">
         <span>{t(`phases.${status.active_run.phase}`)}</span>
         <progress aria-label={t(`phases.${status.active_run.phase}`)} max={100} value={status.active_run.progress} />
@@ -89,7 +124,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {run.claude_cost.unknown_reserved_micro_usd > 0 ? <> {t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</> : null}
         {run.claude_cost.terminal_reserved_micro_usd > 0 ? <> {t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</> : null}
       </p> : null}
-      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure ? <>
+      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
         <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
@@ -122,7 +157,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>
-      {status ? <details open={preflight?.state === "missing_context"}>
+      {status ? <details open={!update && preflight?.state === "missing_context"}>
         <summary>{t("prepareContext")}</summary>
         <TopicPreparationControls workspaceId={workspaceId} catalogVersion={catalogVersion}
           disabled={disabled} onCompleted={() => { void analysis.read(); void onContextPrepared?.(); }} />

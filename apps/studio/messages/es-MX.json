@@ -2596,6 +2596,26 @@
     "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Prepara la monitorización de tu marca", "body": "Completa el contexto, define tus intereses e importa las conversaciones que vas a analizar.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
     "topics": {
       "analysis": {
+        "update": {
+          "numeric": "Actualizando conversaciones con las nuevas menciones.",
+          "projecting": "Actualizando las asociaciones de los tópicos.",
+          "pending": "Cálculo actualizado. El guardado de las asociaciones está pendiente.",
+          "ready": "Las asociaciones de los tópicos están actualizadas. Se conserva tu selección en Signal.",
+          "outdated": "Hay cambios posteriores a esta actualización. La cobertura disponible se conserva.",
+          "failed": "La actualización no pudo completarse. El progreso y los resultados disponibles se conservan.",
+          "unverified": "No se pudo comprobar el estado actual. Se muestra el último avance recibido.",
+          "rootProgress": "{done} de {total} menciones revisadas para actualizar sus asociaciones.",
+          "previousServing": "Signal conserva el último resultado disponible mientras se completa la actualización.",
+          "interpretation": "{done} de {total} grupos del modelo tienen interpretación en el resultado disponible. Esta cifra no cuenta menciones.",
+          "discoveryPending": "{count, plural, one {# mención sigue pendiente de descubrir conversaciones nuevas; puede tener asociaciones conocidas.} other {# menciones siguen pendientes de descubrir conversaciones nuevas; pueden tener asociaciones conocidas.}}",
+          "noServing": "Las asociaciones todavía no tienen un resultado disponible en Signal.",
+          "openSignal": "Ver resultados disponibles en Signal",
+          "newAnalysis": "Para iniciar otro análisis:",
+          "editorial": "Interpretación anterior · progreso y recibos",
+          "failureNumeric": "El cálculo de la actualización se interrumpió.",
+          "failureProjection": "No se completó el guardado de las asociaciones.",
+          "failureDerivation": "No se pudieron preparar las asociaciones para guardarlas."
+        },
         "partialCatalog": "{count, plural, =0 {Avance guardado sin tópicos activos.} one {Catálogo disponible: # tópico activo.} other {Catálogo disponible: # tópicos activos.}}",
         "materializedProgress": "Este avance incluye {done, number} de {total, number} grupos interpretados.",
         "partialCoverage": "Puedes editar los tópicos disponibles. La cobertura de menciones sigue parcial; revisa su clasificación antes de elegir qué mostrar en Signal.",

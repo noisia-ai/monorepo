@@ -49,3 +49,6 @@ export * from './signal-workspace-engine-progress';
 
 // Server-authorized numerical continuation, separate from editorial completion.
 export * from "./signal-workspace-engine-incremental";
+
+// Existing Topics over the reconciled numerical population and paid lineage.
+export * from './signal-workspace-incremental-projection';

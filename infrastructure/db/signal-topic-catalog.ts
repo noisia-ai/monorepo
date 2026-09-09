@@ -1135,7 +1135,7 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
       SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
         WHERE taxonomy_profile_id=$1::uuid AND status IN ('queued','running')
           AND NOT (input_contract='workspace-topic-classification-v1'
-            AND input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
+            AND input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
             AND input_snapshot->'source_projection'->'interpretation_coverage' IS NOT NULL)) busy
     `, [prior.id])).rows[0]?.busy) throw new SignalTopicCatalogError("topic_catalog_busy", 409);
     const definitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];

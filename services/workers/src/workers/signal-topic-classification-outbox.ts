@@ -3,8 +3,11 @@ import type { Pool } from "pg";
 import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME, SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopicProjectionsV1,
   scheduleSignalWorkspaceEngineProgressV1, SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1,
+  scheduleSignalWorkspaceIncrementalProjectionsV1,
   SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME } from "./signal-workspace-topic-computation";
+import { SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME } from "./signal-workspace-incremental-derivation";
+import { SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME } from "./signal-workspace-incremental-projection";
 
 type QueueLike = {
   add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown>;
@@ -28,6 +31,8 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     if (process.env.NOISIA_WORKSPACE_TOPIC_PROGRESS_ENABLED === 'true')
       await scheduleSignalWorkspaceEngineProgressV1({database});
     await scheduleSignalWorkspaceTopicProjectionsV1({database});
+    if (process.env.NOISIA_WORKSPACE_INCREMENTAL_PROJECTION_ENABLED === 'true')
+      await scheduleSignalWorkspaceIncrementalProjectionsV1({database});
   }
   await database.query(`
     WITH dead AS(
@@ -43,7 +48,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
   `, [maxAttempts]);
   const claimed = await database.query<{ outbox_id: string; execution_id: string; workspace_id: string;
     lease_token: string; worker_job_id: string; attempt_count: number; input_contract: string;
-    source_projection: boolean; dispatch_kind: string; actor_user_id: string }>(`
+    source_projection: boolean; source_projection_contract: string | null; dispatch_kind: string; actor_user_id: string }>(`
     WITH candidates AS(
       SELECT id FROM signal_topic_classification_outbox
       WHERE attempt_count<$1 AND ((status IN('pending','failed') AND available_at<=now())
@@ -57,13 +62,14 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     RETURNING outbox.id::text outbox_id,outbox.execution_id::text,
       outbox.workspace_id::text,outbox.lease_token::text,outbox.worker_job_id,outbox.attempt_count,
       execution.input_contract,execution.input_snapshot->'source_projection' IS NOT NULL source_projection,
+      execution.input_snapshot->'source_projection'->>'contract_version' source_projection_contract,
       outbox.dispatch_kind,execution.actor_user_id::text
   `, [maxAttempts, options.batch_size ?? 20, options.lease_seconds ?? 60]);
   const result = { claimed: claimed.rows.length, dispatched: 0, failed: 0, dead_lettered: 0 };
   for (const row of claimed.rows) {
     try {
-      const jobName = topicExecutionJobNameV1(row.input_contract,row.source_projection,row.dispatch_kind);
-      const data = row.dispatch_kind === 'engine_progress'
+      const jobName = topicExecutionJobNameV1(row.input_contract,row.source_projection,row.dispatch_kind,row.source_projection_contract);
+      const data = row.dispatch_kind === 'engine_progress' || row.dispatch_kind === 'incremental_projection'
         ? { execution_id: row.execution_id, workspace_id: row.workspace_id, actor_user_id: row.actor_user_id }
         : { execution_id: row.execution_id };
       const prior = await queue.getJob(row.worker_job_id);
@@ -110,13 +116,17 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
   return result;
 }
 
-export function topicExecutionJobNameV1(inputContract: string, sourceProjection = false, dispatchKind = 'execution') {
+export function topicExecutionJobNameV1(inputContract: string, sourceProjection = false, dispatchKind = 'execution', projectionContract?: string | null) {
   if (dispatchKind === 'engine_progress' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1;
+  if (dispatchKind === 'incremental_projection' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME;
   if (dispatchKind !== 'execution') throw new Error("topic_dispatch_contract_unknown");
   if (inputContract === "legacy-topic-catalog-v1") return SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME;
   if (inputContract === "workspace-topic-computation-v1") return SIGNAL_WORKSPACE_TOPIC_COMPUTATION_JOB_NAME;
   if (inputContract === "workspace-topic-engine-v1") return SIGNAL_WORKSPACE_ENGINE_JOB_V1;
-  if(inputContract === "workspace-topic-classification-v1" && sourceProjection) return SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1;
+  if(inputContract === "workspace-topic-classification-v1" && sourceProjection) {
+    if (projectionContract === 'workspace-topic-incremental-projection-v1') return SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME;
+    if (!projectionContract || projectionContract === 'workspace-topic-projection-v1') return SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1;
+  }
   throw new Error("topic_dispatch_contract_unknown");
 }
 

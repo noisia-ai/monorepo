@@ -458,7 +458,7 @@ export async function persistSignalWorkspaceEngineArtifactV1(args:{database:Sign
   artifact:SignalWorkspaceEngineArtifactV1}):Promise<{artifact_id:string;replayed:boolean}>{
   return transaction(args.database,async client=>persistSignalWorkspaceEngineArtifactWithClientV1(client,await requireLease(client,args.lease,true),args.artifact));
 }
-export async function persistSignalWorkspaceEngineArtifactWithClientV1(client:PoolClient,run:Run,a:SignalWorkspaceEngineArtifactV1):Promise<{artifact_id:string;replayed:boolean}>{
+export async function persistSignalWorkspaceEngineArtifactWithClientV1(client:PoolClient,run:Pick<Run,'id'|'workspace_id'|'input_digest'>,a:SignalWorkspaceEngineArtifactV1):Promise<{artifact_id:string;replayed:boolean}>{
   const prefix=`workspace-engine/${run.workspace_id}/${run.id}/`;
   if(!/^[A-Za-z0-9._:-]{1,120}$/u.test(a.artifact_key)||!a.storage_key.startsWith(prefix)||!a.storage_key.slice(prefix.length)
     ||a.storage_key.includes('..')||!digestPattern.test(a.sha256)||!Number.isSafeInteger(a.size_bytes)||a.size_bytes<0

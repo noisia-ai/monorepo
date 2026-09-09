@@ -4,7 +4,7 @@ import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabil
 import {loadSignalWorkspaceEngineInputIdentityV1,type SignalWorkspaceEngineSnapshotV1} from './signal-workspace-engine';
 import {beginSignalWorkspaceClassificationWithClientV1,claimSignalWorkspaceClassificationV1,heartbeatSignalWorkspaceClassificationV1,
  loadSignalWorkspaceClassificationInputV1,SignalWorkspaceClassificationError,
- type SignalWorkspaceClassificationDatabaseV1,type SignalWorkspaceClassificationLeaseV1,type SignalWorkspaceClassificationProjectionV1} from './signal-workspace-classification';
+ type SignalWorkspaceClassificationDatabaseV1,type SignalWorkspaceClassificationLeaseV1,type SignalWorkspaceClassificationFitProjectionV1 as SignalWorkspaceClassificationProjectionV1} from './signal-workspace-classification';
 
 export const SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1='signal_workspace_topic_projection_v1' as const;
 export const SIGNAL_WORKSPACE_TOPIC_PROJECTION_POLICY_V1={contract_version:'workspace-topic-projection-v1',
@@ -153,7 +153,7 @@ export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(ar
  const rows=(await args.queryable.query<SignalWorkspaceTopicProjectionRunV1&{identity:SignalWorkspaceClassificationIdentityV1;correction_digest:string;generation_version:number;source_current:boolean}>(`WITH runs AS(
   SELECT execution.id execution_id,generation.id generation_id,generation.taxonomy_profile_id,generation.generation_version,execution.status,
    generation.input_snapshot->'source_projection'->>'engine_execution_id' source_engine_execution_id,
-   generation.input_snapshot->'source_projection'->>'mapping_digest' mapping_digest,generation.input_snapshot->'source_projection'->>'model_version_id' model_version_id,
+   COALESCE(generation.input_snapshot->'source_projection'->>'mapping_digest',generation.input_snapshot->'source_projection'->>'binding_digest') mapping_digest,generation.input_snapshot->'source_projection'->>'model_version_id' model_version_id,
    generation.input_snapshot->'identity' identity,generation.input_snapshot->>'correction_digest' correction_digest,generation.denominator,execution.processed_roots,
    execution.expected_chunks::int expected_chunks,execution.processed_chunks::int processed_chunks,execution.error_code,
    to_char(generation.finalized_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') computed_at,
@@ -183,14 +183,17 @@ export async function scheduleSignalWorkspaceTopicProjectionsV1(args:{database:S
   SELECT execution.id,execution.status,execution.dispatch_generation,outbox.worker_job_id FROM signal_topic_catalog_executions execution
   JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id AND outbox.dispatch_kind='execution' WHERE execution.input_contract=$1
    AND execution.input_snapshot->'source_projection' IS NOT NULL AND ((execution.status='running' AND execution.execution_expires_at<=clock_timestamp())
-    OR(execution.status='queued' AND outbox.status='dispatched' AND outbox.updated_at<clock_timestamp()-interval '30 seconds'))
+    OR(execution.status='queued' AND outbox.status='dispatched' AND outbox.updated_at<clock_timestamp()-interval '30 seconds')
+    OR(execution.status='failed' AND execution.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-incremental-projection-v1'
+     AND execution.error_code IN('workspace_incremental_projection_transport_unavailable','workspace_classification_transport_unavailable')
+     AND execution.dispatch_generation<8 AND execution.updated_at<clock_timestamp()-interval '15 seconds'))
   ORDER BY execution.updated_at,execution.id FOR UPDATE OF execution SKIP LOCKED LIMIT $2`,[contract,limit])).rows;
-  for(const row of rows){const generation=row.dispatch_generation+(row.status==='running'?1:0);
+  for(const row of rows){const generation=row.dispatch_generation+(row.status!=='queued'?1:0);
    await client.query(`UPDATE signal_topic_catalog_executions SET status='queued',execution_token=NULL,execution_expires_at=NULL,error_code=NULL,
     completed_at=NULL,dispatch_generation=$2,updated_at=clock_timestamp() WHERE id=$1::uuid`,[row.id,generation]);
    await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
     lease_token=NULL,lease_expires_at=NULL,completed_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
-    [row.id,row.status==='running'?`workspace-classification-${row.id}-${generation}`:row.worker_job_id]);}
+    [row.id,row.status!=='queued'?`workspace-classification-${row.id}-${generation}`:row.worker_job_id]);}
   return{requeued:rows.length};
  });
 }

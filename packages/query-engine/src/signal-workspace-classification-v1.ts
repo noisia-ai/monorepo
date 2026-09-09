@@ -9,6 +9,24 @@ export const SIGNAL_WORKSPACE_CLASSIFICATION_OUTCOME_MAX_BYTES_V1 = 8 * 1024 * 1
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const key = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,119}$/u);
 
+/** Numerical lineage is distinct from a fit-v1 assignment file. The DB checks
+ * these exact references against the sealed incremental source and bank. */
+export const signalWorkspaceIncrementalMembershipMetadataSchemaV1 = z.object({
+  contract_version: z.literal("workspace-computed-incremental-membership-v1"),
+  engine_execution_id: z.string().uuid(), output_artifact_id: z.string().uuid(),
+  memberships_artifact_id: z.string().uuid(), binding_artifact_id: z.string().uuid(), binding_digest: digest,
+  unit_keys: z.array(z.string().regex(/^(open|guided):[A-Za-z0-9_.:-]{1,180}$/u)).length(1),
+  model_component_key: digest, birth_membership_digest: digest,
+  model_origin: z.object({ execution_id: z.string().uuid(), model_artifact_sha256: digest }).strict(),
+  proposal_artifact_id: z.string().uuid(), proposal_owner_execution_id: z.string().uuid(),
+  proposal_semantics_digest: digest, materialized_definition_digest: digest,
+  evaluation_digest: digest,
+  evidence_fragment: z.object({ chunk_index: z.number().int().nonnegative(), start: z.number().int().nonnegative(),
+    end: z.number().int().positive(), chunk_sha256: digest }).strict(),
+  matched_chunks: z.number().int().positive()
+}).strict();
+export type SignalWorkspaceIncrementalMembershipMetadataV1 = z.infer<typeof signalWorkspaceIncrementalMembershipMetadataSchemaV1>;
+
 /** Semantic identity only. Run IDs and ingestion revisions belong to the
  * generation receipt, not this identity: a new import must permit exact reuse. */
 export const signalWorkspaceClassificationIdentitySchemaV1 = z.object({
@@ -54,7 +72,7 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
   // Actual membership in a numerical cluster is reproducible evidence. It is
   // deliberately not authority to approve the cluster's interpreted meaning.
   membership_basis: z.literal("computed_cluster").optional(),
-  membership_metadata: z.object({
+  membership_metadata: z.discriminatedUnion("contract_version", [z.object({
     contract_version: z.literal("workspace-computed-cluster-membership-v1"),
     engine_execution_id: z.string().uuid(),
     materialization_artifact_id: z.string().uuid(),
@@ -67,13 +85,13 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
       end: z.number().int().positive(), chunk_sha256: digest
     }).strict(),
     matched_chunks: z.number().int().positive()
-  }).strict().optional()
+  }).strict(), signalWorkspaceIncrementalMembershipMetadataSchemaV1]).optional()
 }).strict().superRefine((value, ctx) => {
   const problem = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
   if (value.membership_basis === "computed_cluster") {
     if (!value.membership_metadata || value.disposition !== "pending" || value.resolution_method !== "model"
       || value.approval_policy_id !== null) problem("workspace_classification_computed_membership_not_approval");
-    if (value.membership_metadata && (new Set(value.membership_metadata.assignment_artifact_ids).size
+    if (value.membership_metadata?.contract_version === "workspace-computed-cluster-membership-v1" && (new Set(value.membership_metadata.assignment_artifact_ids).size
       !== value.membership_metadata.assignment_artifact_ids.length || new Set(value.membership_metadata.unit_keys).size
       !== value.membership_metadata.unit_keys.length)) problem("workspace_classification_computed_membership_duplicate_ref");
     const fragment = value.membership_metadata?.evidence_fragment;
