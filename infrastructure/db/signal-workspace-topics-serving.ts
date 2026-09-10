@@ -373,6 +373,11 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     if (!ctx.native) return null;
     if (!ctx.generation) return fail("workspace_mentions_generation_unavailable", 404);
     if (!ctx.is_current) return fail("workspace_mentions_stale");
+    // The full-corpus CTEs otherwise choose quadratic nested loops when workspace
+    // cardinality is underestimated. Disable JIT too: discouraged join costs can
+    // cross its compilation threshold. Both settings end with this read-only transaction.
+    await client.query("SET LOCAL enable_nestloop=off");
+    await client.query("SET LOCAL jit=off");
     // Empty visible_terms intentionally avoids every membership/selection join.
     const params = [access.workspace_id, ctx.generation.id, ctx.filters.date_from, ctx.filters.date_to, "[]",
       request.filters.search_query, request.filters.platforms];
