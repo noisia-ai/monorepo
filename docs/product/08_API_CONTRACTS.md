@@ -2842,3 +2842,59 @@ run completo en vez de persistirse como excepciones. El navegador no suministra
 la policy, actor, disposition, evidencia ni aplicabilidad heredada. Publication preflight
 permanece GET/no-store/non-writing y expone conteos `automatic_ready` y
 `automatic_exceptions`; cualquier excepción pending sigue bloqueando publicación.
+
+### One-call Topic Evaluation (69B.5I-E-I, local)
+
+`GET /api/data-os/signal/{workspaceId}/topic-evaluation` es un dry run management-only:
+construye el envelope determinístico de corpus + Brand OS/Semantic Context + las 115
+propuestas y devuelve límites/costo máximo sin escribir ni llamar al provider. La
+respuesta sólo proyecta identifiers, digests y conteos de autoridad; las señales
+acotadas de las propuestas y el texto gobernado del contexto permanecen server-private.
+`execution_enabled` no implica `execution_configuration_complete`: un vuelo pagado exige
+model, pricing version, rates, ceilings, estimate y platform hard cap explícitos. Nunca
+se ejecuta con defaults o pricing `unconfigured`.
+
+`POST` exige `Idempotency-Key`, digest exacto del envelope, confirmación cerrada y hard
+cap. Está deshabilitado por defecto y rechaza idempotency repetida. Cuando un gate futuro
+lo habilite sólo puede crear un run/outbox de una llamada; no existe endpoint de retry.
+El resultado válido crea candidates `pending` con joins a evidence refs existentes. No
+adopta Topics, no publica y no toca serving.
+
+### Topics computados del workspace y selección de Signal (local, 8 septiembre 2026)
+
+El final del análisis existente encola su proyección completa de forma transaccional;
+no requiere un segundo formulario ni una llamada al proveedor para persistirla.
+
+`GET /api/data-os/signal/{workspaceId}/topics/{termKey}/commands` incorpora estado de
+selección: definición/revisión, generación, costo cero de esta acción, permiso,
+procesamiento en curso y recuperación opcional por `idempotency_key`.
+`POST` en la misma ruta admite `action=select_signal`, `selected`, revisión esperada
+de selección y definición, digest, generación e `idempotency_key`, también en header.
+El servidor verifica autoridad, vigencia y al menos una pertenencia. Una clave
+reutilizada con otro cuerpo produce409. Quitar una selección sigue permitido si está
+desactualizada. La selección persiste entre generaciones compatibles.
+
+`GET /api/data-os/signal/{workspaceId}/topics-narratives` reconoce la fuente nativa
+antes del resolver de corpus antiguo. Devuelve
+`contract_version=signal-workspace-topics-serving-v1`,
+`source=workspace_computed`, `scope=all_conversations`, `corpus_id=null`, generación,
+vigencia, procesamiento, selección, términos, cobertura, serie diaria y `scope_digest`.
+Los filtros nativos son `date_from` y `date_to` (días UTC inclusivos); sin ellos,
+el intervalo completo. No se ignoran dimensiones/comparaciones no soportadas ni se
+convierte `all-governed` en `all_conversations`.
+
+La evidencia conserva la ruta
+`GET /api/data-os/signal/{workspaceId}/topics-narratives/topic/{termKey}/evidence`.
+Acepta `cursor`, `scope_digest`, fechas y `limit` de1–50. Devuelve texto del fragmento
+real asociado al Topic y su índice/offsets/SHA; una corrección humana puede mostrar
+preview sin referencia computada. `next_cursor` usa ID de raíz y vincula selección,
+generación, periodo, actor y derechos.403/404/409 retiran la evidencia del cliente.
+
+Las métricas cuentan raíces únicas; la cobertura seleccionada es su unión. No son
+precisión semántica ni una suma aditiva de Topics. El permiso de LLM no sustituye los
+permisos de métricas, lista o texto. Respuestas privadas/no-store. Las superficies
+actuales de Signal se reutilizan sin payloads completos ni aprobación simulada.
+
+### Interpretación con Sonnet 4.6 — continuación de la misma ejecución
+
+Nuevas interpretaciones usan Sonnet 4.6. La revisión editorial es una operación interna autorizada, idempotente y acotada; no agrega endpoint público para alterar recibos. El Worker recibe configuración efectiva fuera del snapshot original, recupera checkpoints verificados y envía sólo unidades pendientes. Las referencias cortas del proveedor se resuelven a citas canónicas del mismo grupo; JSON original y contabilidad se conservan. El catálogo exige cobertura completa y selección individual para Signal. [ADR029](../adr/029-workspace-interpretation-model-revision.md).

@@ -164,6 +164,31 @@ test("full-evidence candidate management is closed, run-bound, and candidate-onl
           evidence_ref:digest,explanation_digest:digest,retrieval_operation:"representative_mentions",
           retrieval_index:0}]},topic_adoption:false,publication:false,serving:false};
   assert.equal(parseSignalTopicEvaluationV2CandidateDetail(detail).candidate.review_state,"pending");
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(detail).refinement.status,"unavailable");
+  const suggestion={display_name:"Echo campaign",description:"Campaign scope",rationale:"Evidence summary",
+    evidence_refs:[digest],related_candidates:[{candidate_key:"candidate.two",title:"Launch news"}],
+    recommendation:"consider_merge",proposal_digest:digest,created_at:"2026-09-06T00:00:00.000Z",
+    source_revision:1,is_stale:false};
+  const withRefinement={...detail,refinement:{status:"available",proposal:suggestion}};
+  assert.equal(parseSignalTopicEvaluationV2CandidateDetail(withRefinement).refinement.status,"available");
+  const origin={kind:"imported_result",source_run_key:"source.lab-run",source_output_digest:digest,
+    source_completed_at:"2026-09-05T20:00:00.000Z",imported_at:"2026-09-06T10:00:00.000Z",
+    source_provider_calls:12,source_cost_micro_usd:396885};
+  assert.equal(parseSignalTopicEvaluationV2CandidatePage(page).result_origin,null);
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidatePage({...page,result_origin:origin}).result_origin,origin);
+  assert.deepEqual(parseSignalTopicEvaluationV2CandidateDetail({...detail,result_origin:origin}).result_origin,origin);
+  for(const invalid of[{...origin,kind:"uat_execution"},{...origin,source_cost_micro_usd:-1},
+    {...origin,source_provider_calls:13},{...origin,artifact:{private:true}}]){
+    assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,result_origin:invalid}));
+  }
+  for(const invalid of [
+    {status:"available",proposal:null},
+    {status:"none",proposal:suggestion},
+    {status:"available",proposal:{...suggestion,provider_response_private:"private"}},
+    {status:"available",proposal:{...suggestion,related_candidates:Array(9).fill(suggestion.related_candidates[0])}},
+    {status:"available",proposal:{...suggestion,evidence_refs:Array(49).fill(digest)}},
+    {status:"available",proposal:{...suggestion,recommendation:"merge"}}
+  ])assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,refinement:invalid}));
   assert.throws(()=>parseSignalTopicEvaluationV2CandidateDetail({...detail,
     candidate:{...detail.candidate,raw_provider_response:{private:true}}}));
   const save=parseSignalTopicEvaluationV2CandidateCommand({action:"save",run_key:"run.v2.one",
@@ -209,6 +234,14 @@ test("full-evidence candidate management is closed, run-bound, and candidate-onl
     $ref:"#/components/schemas/SignalTopicEvaluationV2CandidateCommand",components:document.components});
   assert.equal(candidatePage(page),true,JSON.stringify(candidatePage.errors));
   assert.equal(candidateDetail(detail),true,JSON.stringify(candidateDetail.errors));
+  assert.equal(candidatePage({...page,result_origin:origin}),true,JSON.stringify(candidatePage.errors));
+  assert.equal(candidateDetail({...detail,result_origin:origin}),true,JSON.stringify(candidateDetail.errors));
+  assert.equal(candidateDetail({...detail,result_origin:{...origin,artifact:{private:true}}}),false);
+  for(const refinement of [{status:"available",proposal:suggestion},{status:"none",proposal:null},
+    {status:"unavailable",proposal:null}])assert.equal(candidateDetail({...detail,refinement}),true,
+      JSON.stringify(candidateDetail.errors));
+  assert.equal(candidateDetail({...detail,refinement:{status:"available",proposal:{...suggestion,
+    provider_response_private:"private"}}}),false);
   assert.equal(candidateCommand(save),true,JSON.stringify(candidateCommand.errors));
   assert.equal(candidateCommand({...save,reason:"not permitted"}),false);
 });

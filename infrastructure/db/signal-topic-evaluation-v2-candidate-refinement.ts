@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-
-import type { PoolClient } from "pg";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 
 import {
   SIGNAL_TOPIC_CANDIDATE_REFINEMENT_V1_CONTRACT,
@@ -21,6 +20,7 @@ import {
 
 type Queryable = { query<T = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{
   rows: T[]; rowCount: number | null }> };
+type TransactionClient = Queryable & { release(): void };
 
 type CandidateSessionRow = {
   id: string;
@@ -75,7 +75,7 @@ function assertActor(actor: SignalTopicEvaluationActorV2) {
 /** Opens no provider edge. The session freezes one ordinary pending candidate as the sole
  * evidence-navigation authority for a later proposal-only refinement run. */
 export async function createSignalTopicCandidateRefinementSessionV1(args: {
-  pool: { connect(): Promise<PoolClient> };
+  pool: { connect(): Promise<TransactionClient> };
   workspace_id: string;
   actor: SignalTopicEvaluationActorV2;
   idempotency_key: string;
@@ -93,7 +93,7 @@ export async function createSignalTopicCandidateRefinementSessionV1(args: {
       [`topic-candidate-refinement:${args.workspace_id}:${input.run_key}:${input.candidate_key}`]);
     const startInputDigest = await refinementStartInputDigest(client, input);
     const replay = (await client.query<CandidateSessionRow>(`${sessionSelectSql()}
-      WHERE session.workspace_id=$1::uuid AND session.idempotency_key=$2 FOR UPDATE OF session`,
+      WHERE session.workspace_id=$1::uuid AND session.idempotency_key=$2`,
     [args.workspace_id, args.idempotency_key])).rows[0];
     if (replay) {
       if (replay.actor_user_id !== args.actor.id || replay.start_input_digest !== startInputDigest) {
@@ -103,8 +103,8 @@ export async function createSignalTopicCandidateRefinementSessionV1(args: {
       return projectSession(replay);
     }
     const candidate = (await client.query<CandidateForSessionRow>(`${candidateSelectSql()}
-      WHERE candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3
-      FOR UPDATE OF candidate,run,snapshot`, [args.workspace_id, input.run_key, input.candidate_key])).rows[0];
+      AND candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3`,
+    [args.workspace_id, input.run_key, input.candidate_key])).rows[0];
     if (!candidate || candidate.candidate_revision !== input.expected_revision
         || candidate.candidate_state_token !== input.state_token) {
       throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_candidate_stale", 409);
@@ -139,7 +139,7 @@ export async function createSignalTopicCandidateRefinementSessionV1(args: {
       start_input_digest: startInputDigest, trace_count: 0, expires_at: inserted.expires_at,
       session_digest: inserted.session_digest });
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    await rollbackSafely(client);
     throw mapRefinementError(error);
   } finally { client.release(); }
 }
@@ -147,7 +147,7 @@ export async function createSignalTopicCandidateRefinementSessionV1(args: {
 /** Reads one sealed session, wraps the snapshot navigation primitives and records an append-only
  * trace. It is provider-neutral: callers receive a sanitized result but no model is constructed. */
 export async function navigateSignalTopicCandidateRefinementV1(args: {
-  pool: { connect(): Promise<PoolClient> };
+  pool: { connect(): Promise<TransactionClient> };
   workspace_id: string;
   actor: SignalTopicEvaluationActorV2;
   session_key: string;
@@ -160,6 +160,8 @@ export async function navigateSignalTopicCandidateRefinementV1(args: {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`topic-candidate-refinement-session:${args.workspace_id}:${args.session_key}`]);
     const session = await loadLockedSession(client, args.workspace_id, args.actor.id, args.session_key, now);
     const result = request.operation === "candidate_context"
       ? await candidateContextResult(client, session)
@@ -176,7 +178,7 @@ export async function navigateSignalTopicCandidateRefinementV1(args: {
     assertRefinementResultBudget(usedBytes, resultBytes);
     const previousTrace = (await client.query<{ trace_index: number }>(`SELECT trace_index
       FROM signal_topic_evaluation_v2_candidate_refinement_navigation_traces
-      WHERE session_id=$1::uuid ORDER BY trace_index DESC LIMIT 1 FOR UPDATE`, [session.id])).rows[0];
+      WHERE session_id=$1::uuid ORDER BY trace_index DESC LIMIT 1`, [session.id])).rows[0];
     const traceIndex = (previousTrace?.trace_index ?? -1) + 1;
     if (traceIndex >= SIGNAL_TOPIC_CANDIDATE_REFINEMENT_V1_LIMITS.max_navigation_calls) {
       throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_navigation_limit_reached", 409);
@@ -202,14 +204,14 @@ export async function navigateSignalTopicCandidateRefinementV1(args: {
       provider_calls_allowed: 0 as const, topic_adoption: false as const, publication: false as const,
       serving: false as const };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    await rollbackSafely(client);
     throw mapRefinementError(error);
   } finally { client.release(); }
 }
 
 /** Appends a proposal only. It deliberately has no path to the candidate editorial tables. */
 export async function appendSignalTopicCandidateRefinementProposalV1(args: {
-  pool: { connect(): Promise<PoolClient> };
+  pool: { connect(): Promise<TransactionClient> };
   workspace_id: string;
   actor: SignalTopicEvaluationActorV2;
   session_key: string;
@@ -228,13 +230,15 @@ export async function appendSignalTopicCandidateRefinementProposalV1(args: {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`topic-candidate-refinement-session:${args.workspace_id}:${args.session_key}`]);
     const session = await loadLockedSession(client, args.workspace_id, args.actor.id, args.session_key,
       args.now ?? new Date());
     const proposalDigest = await refinementProposalDigest(client, session, proposal);
     const replay = (await client.query<{ proposal_digest: string; idempotency_key: string }>(`SELECT
       proposal_digest,idempotency_key
       FROM signal_topic_evaluation_v2_candidate_refinement_proposals
-      WHERE session_id=$1::uuid FOR UPDATE`, [session.id])).rows[0];
+      WHERE session_id=$1::uuid`, [session.id])).rows[0];
     if (replay) {
       if (replay.idempotency_key !== args.idempotency_key || replay.proposal_digest !== proposalDigest) {
         throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_proposal_already_exists", 409);
@@ -271,7 +275,7 @@ export async function appendSignalTopicCandidateRefinementProposalV1(args: {
     await client.query("COMMIT");
     return proposalResponse(session, proposalDigest, false);
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    await rollbackSafely(client);
     throw mapRefinementError(error);
   } finally { client.release(); }
 }
@@ -280,13 +284,13 @@ async function loadLockedSession(queryable: Queryable, workspaceId: string, acto
   sessionKey: string, now: Date): Promise<CandidateSessionRow> {
   const session = (await queryable.query<CandidateSessionRow>(`${sessionSelectSql()}
     WHERE session.workspace_id=$1::uuid AND session.actor_user_id=$2::uuid AND session.session_key=$3
-    FOR UPDATE OF session,candidate,run,snapshot`, [workspaceId, actorId, sessionKey])).rows[0];
+    `, [workspaceId, actorId, sessionKey])).rows[0];
   if (!session) throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_session_not_found", 404);
   if (new Date(session.expires_at).getTime() <= now.getTime()) {
     throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_session_expired", 409);
   }
   const current = (await queryable.query<CandidateForSessionRow>(`${candidateSelectSql()}
-    WHERE candidate.id=$1::uuid FOR UPDATE OF candidate,run,snapshot`, [session.candidate_id])).rows[0];
+    AND candidate.id=$1::uuid`, [session.candidate_id])).rows[0];
   if (!current || current.workspace_id !== session.workspace_id || current.run_id !== session.run_id
       || current.snapshot_id !== session.snapshot_id || current.candidate_revision !== session.candidate_revision
       || current.candidate_version_digest !== session.candidate_version_digest
@@ -372,12 +376,32 @@ async function mapRefinementRequest(queryable: Queryable, session: CandidateSess
 function encodeRefinementCursor(session: CandidateSessionRow, filterDigest: string, innerCursor: string) {
   const payload = { session_key: session.session_key, filter_digest: filterDigest, inner_cursor: innerCursor,
     expires_at: session.expires_at };
-  return Buffer.from(JSON.stringify({ payload, signature: signalTopicEvaluationDigestV2({ payload,
-    session_digest: session.session_digest }) }), "utf8").toString("base64url");
+  // Do not base64-wrap the already base64-encoded cursor and duplicate all scope metadata.
+  // The signature binds that metadata; compact only the existing signed inner JSON. This fits
+  // the unchanged 512-character API/DB trace bound without weakening either cursor's scope.
+  const compact = deflateRawSync(Buffer.from(innerCursor, "base64url")).toString("base64url");
+  const signature = signalTopicEvaluationDigestV2({ payload, session_digest: session.session_digest }).slice(7);
+  const cursor = `v2.${compact}.${signature}`;
+  if (innerCursor.length > 512 || cursor.length > 512) {
+    throw new SignalTopicEvaluationV2Error("topic_candidate_refinement_cursor_invalid", 422);
+  }
+  return cursor;
 }
 
 function decodeRefinementCursor(session: CandidateSessionRow, filterDigest: string, value: string, now: Date) {
   try {
+    if (value.startsWith("v2.")) {
+      const parts = /^v2\.([A-Za-z0-9_-]+)\.([0-9a-f]{64})$/u.exec(value);
+      if (!parts || value.length > 512 || new Date(session.expires_at).getTime() <= now.getTime()) throw new Error();
+      // A bounded inner cursor is at most 384 decoded bytes; never inflate unbounded input.
+      const innerCursor = inflateRawSync(Buffer.from(parts[1]!, "base64url"),
+        { maxOutputLength: 384 }).toString("base64url");
+      const payload = { session_key: session.session_key, filter_digest: filterDigest,
+        inner_cursor: innerCursor, expires_at: session.expires_at };
+      const expected = signalTopicEvaluationDigestV2({ payload, session_digest: session.session_digest }).slice(7);
+      if (parts[2] !== expected) throw new Error();
+      return innerCursor;
+    }
     const decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as { payload: {
       session_key: string; filter_digest: string; inner_cursor: string; expires_at: string }; signature: string };
     const expected = signalTopicEvaluationDigestV2({ payload: decoded.payload, session_digest: session.session_digest });
@@ -484,7 +508,9 @@ function projectSession(row: CandidateSessionRow): SignalTopicCandidateRefinemen
     provider_calls_allowed: 0, topic_adoption: false, publication: false, serving: false };
 }
 
-export const signalTopicCandidateRefinementTestOnly = { assertRefinementResultBudget };
+export const signalTopicCandidateRefinementTestOnly = {
+  assertRefinementResultBudget, encodeRefinementCursor, decodeRefinementCursor
+};
 
 function proposalResponse(session: CandidateSessionRow, proposalDigest: string, idempotentReplay: boolean) {
   return { contract_version: SIGNAL_TOPIC_CANDIDATE_REFINEMENT_V1_CONTRACT, session_key: session.session_key,
@@ -502,4 +528,8 @@ function mapRefinementError(error: unknown) {
     return new SignalTopicEvaluationV2Error("topic_candidate_refinement_rejected", 409);
   }
   return error;
+}
+
+async function rollbackSafely(client: TransactionClient) {
+  try { await client.query("ROLLBACK"); } catch { /* preserve the original domain error */ }
 }

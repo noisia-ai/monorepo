@@ -2435,3 +2435,42 @@ restaurar `decide-semantic-context-locale-authority` en la allowlist cerrada de 
 `operator_correction`. Esto permite que el writer deliberado de 0100 vuelva a crear un
 successor `pending` con lineage sellada, sin permitir que create/save ordinarios originen
 autoridad Global ni admitir una acción genérica.
+
+### 0107 — One-call Topic Evaluation control plane (local)
+
+0107 añade `signal_topic_evaluation_runs`, su reserva, outbox one-shot, catálogo de
+evidence refs, candidates, joins candidate→evidence y eventos. El run sella corpus,
+packet de 115 propuestas, Brand OS/Semantic Context, token ceilings, hard cap, request
+identity e idempotency. Call count y dispatch count son 0..1; un outcome ambiguo queda
+terminal y no tiene retry. Candidates nacen `pending` y no referencian Topic Contracts,
+publication, pointers, bindings o serving. Las filas de input/evidence/candidate/event
+son append-only; el run sólo permite transiciones de estado y settlement sin cambiar su
+autoridad sellada.
+
+### 0140 — Proyección completa de Topics y selección de Signal (local, 8 septiembre)
+
+Se agrega `signal_classification_assignments.membership_basis` (`decision` por defecto
+o `computed_cluster`) y `membership_metadata`. La pertenencia computada sólo admite
+`pending/model`, sin aprobación; sella ejecución, artefactos de asignaciones,
+materialización, semántica y fragmento de evidencia. El fragmento conserva índice,
+offsets UTF16 y SHA del chunk real, sin duplicar texto.
+
+El snapshot de las generaciones0136 añade `source_projection`, con referencias al
+modelo/output/materialización de un análisis completo y al modelo registrado para
+su catálogo resultante. Se verifican raíz, todos sus chunks, modelo, perfil, hashes,
+propuesta y autoridad. No se modifican las reglas de aprobación del camino antiguo.
+
+`signal_workspaces.topic_signal_selection` guarda revisión e items por `term_key`.
+`signal_topic_catalog_operations` admite `select_signal` y su `selection_result`
+inmutable para CAS y recuperación de ACK perdido. La generación del recibo no impide
+actualizar cifras en generaciones semánticamente compatibles. Archivar deselecciona;
+restaurar no selecciona. No se modifica el contexto ni el costo al elegir un Topic.
+
+El final de interpretación crea la proyección y su outbox existente en la misma
+transacción. Signal lee raíces/assignments relacionales con permisos actuales de
+métricas y evidencia; no crea un perfil activo para habilitar serving.
+Ver ADR027 y el recibo local de integración; esto no declara SQL0140 aplicado en UAT.
+
+### Revisión editorial de interpretación — SQL0143
+
+Una columna `interpretation_revision` en la ejecución conserva una transición explícita y única de Opus a Sonnet 4.6 tras reparación inválida. Snapshot original, artefactos y recibos permanecen inmutables. Cada llamada nueva identifica la revisión; los límites suman también los costos y reservas anteriores. La revisión exige fuente settled, inputs vigentes, ausencia de llamadas pendientes y admisión con fecha. [ADR029](../adr/029-workspace-interpretation-model-revision.md).

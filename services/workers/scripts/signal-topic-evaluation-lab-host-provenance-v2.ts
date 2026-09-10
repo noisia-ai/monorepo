@@ -19,7 +19,7 @@ export const SIGNAL_TOPIC_EVALUATION_LAB_HOST_RECEIPT_PATH=resolve(REPO_ROOT,
   ".data/signal-topic-evaluation/lab-1b/clone-provenance.current.json");
 
 const hostReceiptSchema=z.object({
-  contract_version:z.literal("signal-topic-evaluation-lab-host-provenance-v1"),
+  contract_version:z.literal("signal-topic-evaluation-lab-host-provenance-v2"),
   marker_namespace:z.literal("noisia.topic-evaluation.disposable-lab-host-anchor"),
   created_at:z.string().datetime({offset:true}),
   container_name:z.literal(SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME),
@@ -38,7 +38,7 @@ const hostReceiptSchema=z.object({
   candidate_review_migration_digest:z.literal(
     "sha256:7a6b61cc16dba808e0c98645855e2597db8d0f8ca4665979945c866a0bc3e946"),
   database_marker_setup_digest:z.literal(
-    "sha256:0906a2b7cfebbbfb5408d94b48c50652645d6313030f05a01632b16ae6be242b"),
+    "sha256:213e2f7a6187c001a82e320bf38f27818934edb60a4038c1ee8a94fbd9442d95"),
   receipt_digest:z.string().regex(DIGEST)
 }).strict();
 

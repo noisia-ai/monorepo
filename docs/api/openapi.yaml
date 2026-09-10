@@ -3830,6 +3830,11 @@ components:
         rejected: { type: integer, minimum: 0 }
         limit: { type: integer, minimum: 1, maximum: 50 }
         next_cursor: { type: [string, "null"], minLength: 16, maxLength: 512 }
+        result_origin:
+          description: Optional provenance of an imported historical result. Null or omitted for legacy/native results; source telemetry is historical, not a new UAT provider charge.
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/SignalTopicEvaluationV2ImportedResultOrigin" }
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
@@ -3841,9 +3846,69 @@ components:
         contract_version: { const: signal-topic-evaluation-v2-candidate-detail-v1 }
         run_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{7,199}$' }
         candidate: { $ref: "#/components/schemas/SignalTopicEvaluationV2CandidateDetailItem" }
+        result_origin:
+          oneOf:
+            - { type: "null" }
+            - { $ref: "#/components/schemas/SignalTopicEvaluationV2ImportedResultOrigin" }
+        refinement:
+          description: Latest persisted suggestion, independent of navigation-session expiry. Optional for rolling compatibility; omission means unavailable, never an inferred suggestion. Copying wording is local to the form; existing editorial save remains the only write.
+          $ref: "#/components/schemas/SignalTopicEvaluationV2RefinementProjection"
         topic_adoption: { const: false }
         publication: { const: false }
         serving: { const: false }
+    SignalTopicEvaluationV2ImportedResultOrigin:
+      type: object
+      additionalProperties: false
+      required: [kind, source_run_key, source_output_digest, source_completed_at, imported_at,
+        source_provider_calls, source_cost_micro_usd]
+      properties:
+        kind: { const: imported_result }
+        source_run_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,199}$' }
+        source_output_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        source_completed_at: { type: string, format: date-time }
+        imported_at: { type: string, format: date-time }
+        source_provider_calls: { type: integer, minimum: 0, maximum: 12 }
+        source_cost_micro_usd: { type: integer, minimum: 0, maximum: 20000000 }
+    SignalTopicEvaluationV2RefinementProjection:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [status, proposal]
+          properties:
+            status: { type: string, enum: [unavailable, none] }
+            proposal: { type: "null" }
+        - type: object
+          additionalProperties: false
+          required: [status, proposal]
+          properties:
+            status: { const: available }
+            proposal: { $ref: "#/components/schemas/SignalTopicEvaluationV2RefinementSuggestion" }
+    SignalTopicEvaluationV2RefinementSuggestion:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, rationale, evidence_refs, related_candidates,
+        recommendation, proposal_digest, created_at, source_revision, is_stale]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, minLength: 1, maxLength: 1500 }
+        rationale: { type: string, minLength: 1, maxLength: 1200 }
+        evidence_refs: { type: array, minItems: 1, maxItems: 48,
+          items: { type: string, pattern: '^sha256:[0-9a-f]{64}$' } }
+        related_candidates:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [candidate_key, title]
+            properties:
+              candidate_key: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{0,199}$' }
+              title: { type: string, minLength: 1, maxLength: 160 }
+        recommendation: { type: string, enum: [none, consider_merge, consider_split] }
+        proposal_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        created_at: { type: string, format: date-time }
+        source_revision: { type: integer, minimum: 1 }
+        is_stale: { type: boolean }
     SignalTopicEvaluationV2CandidateDetailItem:
       type: object
       additionalProperties: false

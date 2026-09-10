@@ -2,7 +2,7 @@
 
 > **Versión:** 0.2
 > **Checkpoint:** 2026-08-12T12:45:03-06:00 (`America/Mexico_City`)
-> **Última actualización:** 2026-08-15T10:42:46-06:00 (`America/Mexico_City`)
+> **Última actualización:** 2026-08-21 (`America/Mexico_City`)
 > **Estado:** catálogo funcional y backlog de producto preparado para Linear
 > **Rama de referencia:** `codex/noisia-data-os-cut-1-wip`
 > **Producción:** sin cutover workspace-owned; este documento no declara release
@@ -812,6 +812,13 @@ denominadores distintos. No deben copiarse a producción.
 
 ## Roadmap De Cierre
 
+> **Nota canónica 2026-08-21:** `Gate D`, `Gate E` y `Gate F` son aliases históricos de
+> la transición anterior. El roadmap vivo usa `10A–10H` y la capa de entrega `11A–11D`
+> descrita en
+> [63_NOISIA_V02_CANONICAL_PRODUCT_PROGRAM_AND_DELIVERY_LAYER.md](./63_NOISIA_V02_CANONICAL_PRODUCT_PROGRAM_AND_DELIVERY_LAYER.md).
+> La sección siguiente se conserva para trazabilidad, no para crear trabajo nuevo con
+> esos nombres.
+
 ### Gate D · Primera Corrida T&B V2
 
 1. Repetir preflight justo antes de lanzar.
@@ -850,7 +857,11 @@ contribuyentes actuales. Un import nuevo no los hereda.
 9. Monitorear y cerrar incidentes.
 10. Retirar V1 de forma forward-only.
 
-## Preparación Para Linear
+## Preparación Histórica Para Linear
+
+> La estructura canónica actual usa la initiative `Noisia V0.2 — Product Completion` y
+> diez proyectos por resultado definidos en el documento 63. La propuesta siguiente se
+> conserva como backlog de origen; no debe importarse literalmente ni duplicar issues.
 
 ### Jerarquía Recomendada
 

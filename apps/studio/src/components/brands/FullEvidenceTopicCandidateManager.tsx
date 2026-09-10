@@ -7,7 +7,8 @@ import { useCallback,useEffect,useRef,useState,type MouseEvent } from "react";
 import { AdminFeedbackState,AdminResourceSection,AdminStatus,AdminSummaryStrip,
   formatAdminNumber } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
-import { createSignalTopicEvaluationV2ReviewIdempotencyKey,
+import { TopicCandidateRefinementSuggestion } from "./TopicCandidateRefinementSuggestion";
+import { copySignalTopicEvaluationV2RefinementWording,createSignalTopicEvaluationV2ReviewIdempotencyKey,
   parseSignalTopicEvaluationV2CandidateDetail,parseSignalTopicEvaluationV2CandidatePage,
   type SignalTopicEvaluationV2Candidate,type SignalTopicEvaluationV2CandidateDetail,
   type SignalTopicEvaluationV2CandidatePage } from "@/lib/data-os/signal-topic-evaluation-v2-management";
@@ -29,6 +30,7 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null);
   const[title,setTitle]=useState(""),[description,setDescription]=useState("");
   const[inclusion,setInclusion]=useState(""),[exclusion,setExclusion]=useState("");
+  const[proposalDismissed,setProposalDismissed]=useState(false),[proposalCopied,setProposalCopied]=useState(false);
   const openerRef=useRef<HTMLButtonElement|null>(null);
 
   const load=useCallback(async(cursor?:string|null)=>{setLoading(true);setError(null);
@@ -45,8 +47,15 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
       `${endpoint}/${encodeURIComponent(candidate.candidate_key)}?run_key=${encodeURIComponent(page.run_key)}`));
       setDetail(loaded);setTitle(loaded.candidate.title);setDescription(loaded.candidate.description);
       setInclusion(loaded.candidate.inclusion.join("\n"));setExclusion(loaded.candidate.exclusion.join("\n"));
+      setProposalDismissed(false);setProposalCopied(false);
     }catch(loadError){setError(loadError instanceof Error?loadError.message:t("errors.load"));}
     finally{setBusy(false);}
+  }
+  function useProposal(){
+    if(!detail||busy||detail.refinement.status!=="available")return;
+    const next=copySignalTopicEvaluationV2RefinementWording({candidate:detail.candidate,
+      proposal:detail.refinement.proposal,fields:{title,description,inclusion,exclusion}});
+    if(!next)return;setTitle(next.title);setDescription(next.description);setProposalCopied(true);
   }
   async function command(action:"save"|"reject"|"restore"|"undo"){
     if(!detail||busy)return;setBusy(true);setError(null);const candidate=detail.candidate;
@@ -74,6 +83,7 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
       {label:t("summary.pending"),value:formatAdminNumber(page.pending,locale),hint:t("summary.pendingHint")},
       {label:t("summary.rejected"),value:formatAdminNumber(page.rejected,locale),hint:t("summary.rejectedHint")} ]}/>
       <p className="admin-drawer-form__hint">{t("boundary")}</p>
+      {page.result_origin?<p className="admin-drawer-form__hint">{t("importedResult")}</p>:null}
       {page.items.length?<div className="topic-evaluation-manager__list">{page.items.map((item)=><button
         className="topic-evaluation-manager__candidate" key={`${page.run_key}:${item.candidate_key}`}
         onClick={(event)=>void open(item,event)} type="button"><span><strong>{item.title}</strong>
@@ -84,9 +94,13 @@ export function FullEvidenceTopicCandidateManager({workspaceId}:{workspaceId:str
       {page.next_cursor?<button className="admin-button" disabled={loading} onClick={()=>void load(page.next_cursor)} type="button">
         {t("actions.more")}</button>:null}{error?<p className="workspace-form__error" role="alert">{error}</p>:null}</>:null}
   </AdminResourceSection>
-  {candidate?<WorkspaceDrawer ariaLabel={t("drawer.title")} closeLabel={t("actions.close")}
+  {candidate&&detail?<WorkspaceDrawer ariaLabel={t("drawer.title")} closeLabel={t("actions.close")}
     eyebrow={t("drawer.eyebrow")} onClose={()=>{if(!busy)setDetail(null);}} returnFocusRef={openerRef} title={candidate.title}>
-    <div className="admin-drawer-form"><p className="admin-drawer-form__intro">{t("drawer.boundary")}</p>
+    <div className="admin-drawer-form topic-evaluation-manager__editor"><p className="admin-drawer-form__intro">{t("drawer.boundary")}</p>
+      {detail.result_origin?<p className="admin-drawer-form__hint">{t("importedResult")}</p>:null}
+      <TopicCandidateRefinementSuggestion refinement={detail.refinement} dismissed={proposalDismissed}
+        copied={proposalCopied} busy={busy} editable={candidate.review_state==="pending"} t={t}
+        onUse={useProposal} onDismiss={()=>setProposalDismissed(true)} onShow={()=>setProposalDismissed(false)}/>
       <label className="workspace-field"><span>{t("fields.title")}</span><input className="workspace-control"
         disabled={candidate.review_state==="rejected"||busy} maxLength={160}
         onChange={(event)=>setTitle(event.target.value)} value={title}/></label>

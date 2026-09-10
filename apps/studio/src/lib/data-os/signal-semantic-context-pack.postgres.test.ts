@@ -106,7 +106,7 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   let migration0097="";let migration0098="";let migration0099="";let migration0100="";let migration0101="";
   let migration0102="";let migration0103="";let migration0104="";let migration0105="";let migration0106="";
   let migration0107="";let migration0108="";let migration0109="";let migration0110="";let migration0111="";
-  let migration0112="";
+  let migration0112="";let migration0113="";let migration0114="";let migration0115="";
   const admin=new pg.Client({connectionString:DB_URL,ssl:false});await admin.connect();
   try{await admin.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public");
     const directory=resolve(process.cwd(),"../../infrastructure/db/migrations");
@@ -128,6 +128,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
       else if(file.startsWith("0110_"))migration0110=sql;
       else if(file.startsWith("0111_"))migration0111=sql;
       else if(file.startsWith("0112_"))migration0112=sql;
+      else if(file.startsWith("0113_"))migration0113=sql;
+      else if(file.startsWith("0114_"))migration0114=sql;
+      else if(file.startsWith("0115_"))migration0115=sql;
       else await admin.query(sql);}
   }finally{await admin.end();}
 
@@ -160,6 +163,9 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   assert.ok(migration0110,"0110 migration is present and must be applied after 0109");
   assert.ok(migration0111,"0111 migration is present and must be applied after 0110");
   assert.ok(migration0112,"0112 migration is present and must be applied after 0111");
+  assert.ok(migration0113,"0113 migration is present and must be applied after 0112");
+  assert.ok(migration0114,"0114 migration is present and must be applied after 0113");
+  assert.ok(migration0115,"0115 migration is present and must be applied after 0114");
   const migrationClient=new pg.Client({connectionString:DB_URL,ssl:false});await migrationClient.connect();
   try{await migrationClient.query(migration0097);await migrationClient.query(migration0098);}
   finally{await migrationClient.end();}
@@ -694,6 +700,12 @@ test("0091 semantic context authority is append-only, drift-aware, idempotent, a
   try{await migration0111Client.query(migration0111);}finally{await migration0111Client.end();}
   const migration0112Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0112Client.connect();
   try{await migration0112Client.query(migration0112);}finally{await migration0112Client.end();}
+  const migration0113Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0113Client.connect();
+  try{await migration0113Client.query(migration0113);}finally{await migration0113Client.end();}
+  const migration0114Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0114Client.connect();
+  try{await migration0114Client.query(migration0114);}finally{await migration0114Client.end();}
+  const migration0115Client=new pg.Client({connectionString:DB_URL,ssl:false});await migration0115Client.connect();
+  try{await migration0115Client.query(migration0115);}finally{await migration0115Client.end();}
   await exerciseTopicEvaluationProviderBoundaryV1();
   await exerciseTopicEvaluationCandidateReviewV1();
   await exerciseTopicEvaluationSuccessorAuthorityV1();

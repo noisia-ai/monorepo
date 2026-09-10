@@ -1,0 +1,22 @@
+# Menciones desde Resumen nativo — diagnóstico focal
+
+2026-09-09, lectura runtime070c; incidente UATc8 comunicado por Root. No llamadas remotas, pruebas, cambios de código ni datos. El texto focal signal-mentions-ui.txt no estaba en este aislado ni en noisia-website; no afirmo haber leído una respuesta HTTP real de esa captura.
+
+**Causa:** `apps/studio/src/components/signal-v2/SignalV2BrandMonitoring.tsx:497` considera nativos sólo monitoring/topics. Menciones usa `/api/data-os/signal/{workspaceId}/mentions` (:521), que llama `loadSignalWorkspaceModuleContext` → `resolveSignalModuleServingScopeV1` y el lector anterior `loadSignalMentionsV1` (`lib/data-os/signal-workspace-serving.ts:1112`). No tiene la rama nativa que sí poseen Resumen/Topics.
+
+Matiz sobre la petición: en el click normal `buildModuleQuery` (:1909) **elimina** view=all_conversations para Menciones; entra como view=brand. Si no existe el corpus/población anterior, se espera `not_available`, por ejemplo `legacy_serving_corpus_not_available`; `signalBackendErrorResponse` (:247) lo mapea a **404**. Si una query explícita conserva all_conversations, el parser cerrado anterior devuelve `invalid_filter` / `signal_client_view_not_supported`, **400**. Confirmar el código exacto observado requeriría el response retenido; no lo deduzco sólo del texto de UI.
+
+El cliente convierte cualquier respuesta no-ok en el mensaje genérico (:531), mantiene currentModule y restaura URL previa cuando no hay caché (:551). Por eso se conserva Resumen y parece que el enlace no navega. No es evidencia de pérdida de menciones ni de selección.
+
+**Base reutilizable encontrada:** `loadSignalWorkspaceCanonicalMentionsV1` (:1215) y `loadSignalWorkspaceCanonicalMentionByIdV1` en signal-workspace-serving.ts, usados por `/admin-mentions`. Ya generan el payload paginado de Menciones mediante `buildSignalMentionDrillDownPlanV1({workspace_canonical:true})` y pueden reutilizarse como piezas, junto al módulo visual existente.
+
+**No es todavía el lector cliente nativo completo.** En `packages/query-engine/src/signal-materialization-v1.ts:214–218`, el scope workspace canonical exige sólo workspace_id y canonical_mention_id=id, más los filtros posteriores; no fija generación preparada/clasificada ni sus derechos de métricas/evidencia. El endpoint admin-mentions lo protege con el gate interno StrategicReview y agrega facetas internas. Pasarlo directamente al endpoint cliente o redirigir la navegación a Admin cambiaría alcance y autorización. El reader de evidencia por Topic `infrastructure/db/signal-workspace-topics-serving.ts` sí preserva generación/rights, pero exige Topic seleccionado y no es un listado de todo el corpus.
+
+## Próximo corte concreto (NOI-34 [SIG-02] / NOI-37 / NOI-20 existentes)
+
+1. Acordar el alcance del listado desde Signal: raíces de la misma generación nativa disponible (incluidas no asignadas/pendientes, no sólo unión de Topics seleccionados), con conteo de evidencia visible separado del denominador de métricas. No confundirlo con todas las recibidas de Datos.
+2. Extender el lector/predicado existente con scope servidor de generación, actor/workspace, rights e inclusión; reutilizar paginación y DTO. Fecha/filtros, foco por mención y cursor deben quedar vinculados a ese scope y limpiar texto ante retirada de derechos/revisión. No hidratar miles de IDs en React ni crear study_corpus_id/población puente. No presentar dimensiones legacy sin efecto ni importar tags legacy como asignaciones nativas.
+3. Añadir rama nativa antes de resolver scope anterior en `api/data-os/signal/[workspaceId]/mentions/route.ts`; cablear carga inicial/directa en `SignalV2WorkspacePage.tsx` y navegación/refresh en `SignalV2BrandMonitoring.tsx`. Conservar el módulo Menciones visible y su diseño; no simular éxito con records vacíos ni volver a Admin.
+4. QA focal futura: click Resumen→Menciones y URL directa; registros paginados/foco reales; mismo universo frente a pendiente/multilabel; filtros sin alcance silencioso; cursor stale y 401/403/404/409 retiran texto; workspace ajeno denegado; no cambio de selección/proveedor.
+
+**Decisión de alcance:** no recomiendo implementarlo hoy como cambio ≤3 archivos sin contrato nuevo. Hay piezas útiles, pero falta el alcance autorizado del módulo. Un cambio pequeño de nativeTarget o eliminar view no completa el recorrido y podría ocultar el fallo. Esta brecha queda explícita para el siguiente resultado E2E, sin retirar el módulo ni duplicar tickets.

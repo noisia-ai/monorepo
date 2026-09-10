@@ -52,6 +52,27 @@ test("Sonnet 5 serialized request omits all sampling parameters",async()=>{
   assert.equal("top_p" in serialized!,false);assert.equal("top_k" in serialized!,false);
 });
 
+test("a metered max_tokens response remains known-invalid when SDK output getter is empty", async () => {
+  let fetchCalls = 0;
+  const fixture = createAnthropic({ apiKey: "fixture-not-secret", fetch: async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({ id: "msg_fixture_output_limit", type: "message", role: "assistant",
+      model: "claude-sonnet-5", content: [{ type: "text", text: "{\"candidates\":[" }],
+      stop_reason: "max_tokens", stop_sequence: null,
+      usage: { input_tokens: 321, output_tokens: 1000 }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  } });
+  const result = await generateAnthropicBoundedTextV1({ model: "claude-sonnet-5", prompt: "fixture",
+    max_output_tokens: 1000, structured_output: { schema: signalTopicEvaluationProviderOutputSchemaV1,
+      name: "fixture_candidates", description: "fixture" }
+  }, fixture);
+  assert.equal(fetchCalls, 1);
+  assert.equal(result.text, "");
+  assert.equal(result.provider_request_id, "msg_fixture_output_limit");
+  assert.deepEqual(result.usage, { input_tokens: 321, output_tokens: 1000 });
+  assert.equal(result.structured_output_failure, "output_limit");
+});
+
 function findForbiddenSchemaKeywords(value:unknown,path="$",found:string[]=[]):string[]{
   if(!value||typeof value!=="object")return found;
   for(const[key,child]of Object.entries(value as Record<string,unknown>)){

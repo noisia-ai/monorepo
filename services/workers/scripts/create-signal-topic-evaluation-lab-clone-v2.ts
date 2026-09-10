@@ -27,7 +27,7 @@ const SOURCE_RUN="backend-10c2c-2026-08-21-final-2-bertopic-bge-detail-seed-17";
 const MIGRATION_PATH=resolve(REPO_ROOT,"infrastructure/db/migrations/0115_signal_topic_evaluation_v2_candidate_review.sql");
 const MARKER_PATH=resolve(REPO_ROOT,"services/workers/scripts/setup-signal-topic-evaluation-lab-provenance-v2.sql");
 const MIGRATION_DIGEST="sha256:7a6b61cc16dba808e0c98645855e2597db8d0f8ca4665979945c866a0bc3e946";
-const MARKER_DIGEST="sha256:0906a2b7cfebbbfb5408d94b48c50652645d6313030f05a01632b16ae6be242b";
+const MARKER_DIGEST="sha256:213e2f7a6187c001a82e320bf38f27818934edb60a4038c1ee8a94fbd9442d95";
 
 class LabCloneCreationError extends Error{
   constructor(readonly code:string){super(code);this.name="LabCloneCreationError";}
@@ -115,7 +115,7 @@ async function main(){
     "topic_evaluation_lab_container_changed_during_setup");
 
   const unsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_digest">={
-    contract_version:"signal-topic-evaluation-lab-host-provenance-v1",
+    contract_version:"signal-topic-evaluation-lab-host-provenance-v2",
     marker_namespace:"noisia.topic-evaluation.disposable-lab-host-anchor" as const,
     created_at:new Date().toISOString(),container_name:before.container_name,
     container_id:before.container_id,image_id:before.image_id,image_reference:before.image_reference,
@@ -128,15 +128,38 @@ async function main(){
     candidate_review_migration_digest:MIGRATION_DIGEST as typeof MIGRATION_DIGEST,
     database_marker_setup_digest:MARKER_DIGEST as typeof MARKER_DIGEST};
   const receipt={...unsigned,receipt_digest:signalTopicEvaluationLabHostReceiptDigestV1(unsigned)};
+  const containerIdentityDigest=signalTopicEvaluationDigestV2({container_id:before.container_id,
+    image_id:before.image_id});
+  const hostAnchor=await sealHostReceiptAnchor(cloneName,receipt,containerIdentityDigest);
+  if(hostAnchor.clone_name!==cloneName||hostAnchor.host_receipt_digest!==receipt.receipt_digest
+      ||hostAnchor.container_identity_digest!==containerIdentityDigest
+      ||hostAnchor.source_run_key!==receipt.source_run_key
+      ||hostAnchor.source_snapshot_digest!==receipt.source_snapshot_digest
+      ||hostAnchor.source_artifact_binding_digest!==receipt.source_artifact_binding_digest
+      ||hostAnchor.source_membership_binding_digest!==receipt.source_membership_binding_digest
+      ||hostAnchor.system_identifier!==receipt.server_system_identifier
+      ||typeof hostAnchor.anchor_digest!=="string"||!/^sha256:[0-9a-f]{64}$/u.test(hostAnchor.anchor_digest)){
+    throw new LabCloneCreationError("topic_evaluation_lab_host_anchor_seal_failed");
+  }
   await ensureSignalTopicEvaluationLabHostReceiptDirectoryV1();
   await writeFile(SIGNAL_TOPIC_EVALUATION_LAB_HOST_RECEIPT_PATH,`${JSON.stringify(receipt,null,2)}\n`,
     {mode:0o600,flag:"wx"});
   console.log(JSON.stringify({status:"created",clone_name:cloneName,
-    container_identity_digest:signalTopicEvaluationDigestV2({container_id:before.container_id,
-      image_id:before.image_id}),host_receipt_digest:receipt.receipt_digest,
+    container_identity_digest:containerIdentityDigest,host_receipt_digest:receipt.receipt_digest,
     source:{canonical_roots:21_195,proposals:115,catalog_entries:116,assigned:11_186,outliers:10_009},
     effects:{local_clones_created:1,local_migrations_applied:1,provider_calls:0,uat_connections:0,
       adoption:0,publication:0,serving:0}}));
+}
+
+async function sealHostReceiptAnchor(cloneName:string,receipt:SignalTopicEvaluationLabHostReceiptV1,
+  containerIdentityDigest:string){
+  const encoded=(value:string)=>`convert_from(decode('${Buffer.from(value,"utf8").toString("base64")}','base64'),'utf8')`;
+  return queryJson(cloneName,`WITH inserted AS (
+    INSERT INTO noisia_topic_evaluation_lab.host_receipt_anchor(
+      host_receipt_digest,container_identity_digest,anchor_digest
+    ) VALUES(${encoded(receipt.receipt_digest)},${encoded(containerIdentityDigest)},'sha256:${"0".repeat(64)}')
+    RETURNING *
+  ) SELECT row_to_json(inserted) FROM inserted`);
 }
 
 await main().catch((error:unknown)=>{console.error(error instanceof LabCloneCreationError?error.code:

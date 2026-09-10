@@ -733,6 +733,44 @@ type V2ManagementCandidateRow={candidate_key:string;title:string;description:str
   state_token:string;undo_target_revision:number|null;source_cluster_keys:string[];evidence_count:number;
   rank:number|null;updated_at:string};
 
+export type SignalTopicEvaluationV2CandidateRefinement =
+  | { status:"unavailable"|"none";proposal:null }
+  | { status:"available";proposal:{display_name:string;description:string;rationale:string;
+      evidence_refs:string[];related_candidates:Array<{candidate_key:string;title:string}>;
+      recommendation:"none"|"consider_merge"|"consider_split";proposal_digest:string;
+      created_at:string;source_revision:number;is_stale:boolean} };
+
+export type SignalTopicEvaluationV2ResultOrigin={kind:"imported_result";source_run_key:string;
+  source_output_digest:string;source_completed_at:string;imported_at:string;
+  source_provider_calls:number;source_cost_micro_usd:number}|null;
+
+async function loadV2ResultOrigin(args:{queryable:Queryable;workspace_id:string;run_key:string}
+):Promise<SignalTopicEvaluationV2ResultOrigin>{
+  const available=(await args.queryable.query<{imports_available:boolean}>(
+    `SELECT to_regclass('public.signal_topic_evaluation_v2_result_import_receipts') IS NOT NULL imports_available`
+  )).rows[0]?.imports_available;
+  if(!available)return null;
+  const row=(await args.queryable.query<{source_run_key:string;source_output_digest:string;
+    source_completed_at:string;imported_at:string;source_provider_calls:string;source_cost_micro_usd:string}>(
+    `SELECT receipt.artifact->'source_run'->>'run_key' source_run_key,
+      receipt.artifact->'source_run'->>'output_digest' source_output_digest,
+      receipt.artifact->'source_run'->>'completed_at' source_completed_at,
+      receipt.created_at::text imported_at,
+      receipt.artifact->'source_run'->>'provider_call_count' source_provider_calls,
+      receipt.artifact->'source_run'->>'settled_micro_usd' source_cost_micro_usd
+    FROM public.signal_topic_evaluation_v2_result_import_receipts receipt
+    JOIN signal_topic_evaluation_v2_runs run ON run.id=receipt.run_id
+      AND run.import_receipt_id=receipt.id AND run.workspace_id=receipt.workspace_id
+      AND run.snapshot_id=receipt.snapshot_id
+    WHERE run.workspace_id=$1::uuid AND run.run_key=$2 AND run.status='completed'
+      AND run.origin='imported_result' LIMIT 1`,[args.workspace_id,args.run_key])).rows[0];
+  if(!row)return null;
+  return{kind:"imported_result",source_run_key:row.source_run_key,source_output_digest:row.source_output_digest,
+    source_completed_at:new Date(row.source_completed_at).toISOString(),
+    imported_at:new Date(row.imported_at).toISOString(),source_provider_calls:parseSafeInteger(row.source_provider_calls),
+    source_cost_micro_usd:parseSafeInteger(row.source_cost_micro_usd)};
+}
+
 /** Management-only, bounded projection. It never exposes the private response, prompt or corpus. */
 export async function loadSignalTopicEvaluationV2CandidateManagement(args:{queryable:Queryable;
   workspace_id:string;actor:SignalTopicEvaluationActorV2;cursor?:string|null;limit?:number}){
@@ -745,7 +783,7 @@ export async function loadSignalTopicEvaluationV2CandidateManagement(args:{query
       AND ($2::text IS NULL OR run.run_key=$2)
     ORDER BY run.completed_at DESC,run.id DESC LIMIT 1`,[args.workspace_id,cursor?.run_key??null])).rows[0];
   if(!run)return{contract_version:"signal-topic-evaluation-v2-candidate-page-v1" as const,
-    run_key:null,items:[],total:0,pending:0,rejected:0,limit,next_cursor:null,
+    run_key:null,result_origin:null,items:[],total:0,pending:0,rejected:0,limit,next_cursor:null,
     topic_adoption:false as const,publication:false as const,serving:false as const};
   const rows=await args.queryable.query<V2ManagementCandidateRow>(`WITH base AS(
       SELECT candidate.id candidate_id,candidate.candidate_key,candidate.source_cluster_keys,
@@ -791,8 +829,9 @@ export async function loadSignalTopicEvaluationV2CandidateManagement(args:{query
       count(*) FILTER(WHERE review_state='rejected')::int rejected FROM current`,
   [args.workspace_id,run.run_key])).rows[0]??{total:0,pending:0,rejected:0};
   const hasMore=rows.rows.length>limit;const visible=rows.rows.slice(0,limit);
+  const result_origin=await loadV2ResultOrigin({...args,run_key:run.run_key});
   return{contract_version:"signal-topic-evaluation-v2-candidate-page-v1" as const,run_key:run.run_key,
-    items:visible.map(projectV2ManagementCandidate),...totals,limit,
+    result_origin,items:visible.map(projectV2ManagementCandidate),...totals,limit,
     next_cursor:hasMore&&visible.length?encodeCandidateManagementCursorV2(run.run_key,
       visible.at(-1)!.candidate_key):null,topic_adoption:false as const,publication:false as const,
     serving:false as const};
@@ -839,10 +878,109 @@ export async function loadSignalTopicEvaluationV2CandidateDetail(args:{queryable
     JOIN signal_topic_evaluation_v2_runs run ON run.id=candidate.run_id
     WHERE candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3
     ORDER BY evidence.evidence_ref`,[args.workspace_id,args.run_key,args.candidate_key])).rows;
+  const refinement=await loadV2CandidateRefinement(args,row);
+  const result_origin=await loadV2ResultOrigin(args);
   return{contract_version:"signal-topic-evaluation-v2-candidate-detail-v1" as const,run_key:row.run_key,
     candidate:{...projectV2ManagementCandidate(row),candidate_digest:row.candidate_digest,
       base_model_payload:row.base_payload,base_model_payload_digest:row.base_payload_digest,
-      evidence},topic_adoption:false as const,publication:false as const,serving:false as const};
+      evidence},refinement,result_origin,topic_adoption:false as const,publication:false as const,serving:false as const};
+}
+
+/** Historical proposal reader only. Session expiry limits navigation, not visibility of a saved
+ * draft; no session is opened, refreshed or traced by this projection. */
+async function loadV2CandidateRefinement(args:{queryable:Queryable;workspace_id:string;
+  run_key:string;candidate_key:string},current:{revision:number;version_digest:string}
+):Promise<SignalTopicEvaluationV2CandidateRefinement>{
+  const availability=(await args.queryable.query<{proposals_available:boolean;sessions_available:boolean;
+    archives_available:boolean;imports_available:boolean}>(
+    `SELECT to_regclass('public.signal_topic_evaluation_v2_candidate_refinement_proposals') IS NOT NULL
+      proposals_available,
+      to_regclass('public.signal_topic_evaluation_v2_candidate_refinement_sessions') IS NOT NULL
+      sessions_available,
+      to_regclass('public.signal_topic_evaluation_v2_archived_refinements') IS NOT NULL archives_available,
+      to_regclass('public.signal_topic_evaluation_v2_result_import_receipts') IS NOT NULL imports_available`)).rows[0];
+  const liveAvailable=availability?.proposals_available&&availability.sessions_available;
+  const archiveAvailable=availability?.archives_available&&availability.imports_available;
+  if(!liveAvailable&&!archiveAvailable){
+    return{status:"unavailable",proposal:null};
+  }
+  // Only fixed, server-owned SQL fragments are composed. Values remain bound parameters.
+  const sourceQueries:string[]=[];
+  if(liveAvailable)sourceQueries.push(`SELECT proposal.id,proposal.display_name,proposal.description,
+        proposal.rationale,proposal.evidence_refs,proposal.related_candidate_keys,proposal.recommendation,
+        proposal.proposal_digest,proposal.created_at,session.candidate_revision source_revision,
+        session.candidate_version_digest source_version_digest,
+        candidate.id candidate_id,candidate.workspace_id,candidate.run_id
+      FROM public.signal_topic_evaluation_v2_candidate_refinement_proposals proposal
+      JOIN public.signal_topic_evaluation_v2_candidate_refinement_sessions session
+        ON session.id=proposal.session_id AND session.workspace_id=proposal.workspace_id
+        AND session.run_id=proposal.run_id AND session.snapshot_id=proposal.snapshot_id
+        AND session.candidate_id=proposal.candidate_id
+      JOIN signal_topic_evaluation_v2_candidates candidate ON candidate.id=proposal.candidate_id
+        AND candidate.workspace_id=proposal.workspace_id AND candidate.run_id=proposal.run_id
+      JOIN signal_topic_evaluation_v2_runs run ON run.id=candidate.run_id
+        AND run.workspace_id=candidate.workspace_id AND run.snapshot_id=proposal.snapshot_id
+        AND run.status='completed'
+      WHERE candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3
+        AND candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving`);
+  if(archiveAvailable)sourceQueries.push(`SELECT proposal.id,proposal.display_name,proposal.description,
+        proposal.rationale,proposal.evidence_refs,proposal.related_candidate_keys,proposal.recommendation,
+        proposal.source_proposal_digest proposal_digest,proposal.source_created_at created_at,
+        proposal.source_revision,proposal.source_version_digest,
+        candidate.id candidate_id,candidate.workspace_id,candidate.run_id
+      FROM public.signal_topic_evaluation_v2_archived_refinements proposal
+      JOIN public.signal_topic_evaluation_v2_result_import_receipts receipt
+        ON receipt.id=proposal.import_receipt_id AND receipt.workspace_id=proposal.workspace_id
+        AND receipt.run_id=proposal.run_id AND receipt.snapshot_id=proposal.snapshot_id
+      JOIN signal_topic_evaluation_v2_candidates candidate ON candidate.id=proposal.candidate_id
+        AND candidate.workspace_id=proposal.workspace_id AND candidate.run_id=proposal.run_id
+      JOIN signal_topic_evaluation_v2_runs run ON run.id=candidate.run_id
+        AND run.import_receipt_id=receipt.id AND run.origin='imported_result'
+        AND run.workspace_id=candidate.workspace_id AND run.snapshot_id=proposal.snapshot_id
+        AND run.status='completed'
+      WHERE candidate.workspace_id=$1::uuid AND run.run_key=$2 AND candidate.candidate_key=$3
+        AND candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving`);
+  const proposal=(await args.queryable.query<{
+    display_name:string;description:string;rationale:string;evidence_refs:string[];
+    related_candidates:Array<{candidate_key:string;title:string}>;
+    recommendation:"none"|"consider_merge"|"consider_split";proposal_digest:string;created_at:string;
+    source_revision:number;source_version_digest:string
+  }>(`WITH proposal_sources AS(${sourceQueries.join(" UNION ALL ")}), latest_proposal AS(
+      SELECT proposal.display_name,proposal.description,proposal.rationale,proposal.evidence_refs,
+        proposal.related_candidate_keys,proposal.recommendation,proposal.proposal_digest,
+        proposal.created_at,proposal.source_revision,proposal.source_version_digest,
+        proposal.candidate_id,proposal.workspace_id,proposal.run_id
+      FROM proposal_sources proposal
+      ORDER BY proposal.created_at DESC,proposal.id DESC LIMIT 1
+    ) SELECT proposal.display_name,proposal.description,proposal.rationale,
+      ARRAY(SELECT evidence_ref FROM unnest(proposal.evidence_refs) WITH ORDINALITY refs(evidence_ref,ordinal)
+        ORDER BY ordinal LIMIT 48) evidence_refs,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object('candidate_key',related.candidate_key,
+        'title',related.title) ORDER BY related.ordinal) FROM(
+          SELECT candidate.candidate_key,COALESCE(editorial.title,base.payload->>'title') title,keys.ordinal
+          FROM unnest(proposal.related_candidate_keys) WITH ORDINALITY keys(candidate_key,ordinal)
+          JOIN signal_topic_evaluation_v2_candidates candidate ON candidate.candidate_key=keys.candidate_key
+            AND candidate.run_id=proposal.run_id AND candidate.workspace_id=proposal.workspace_id
+            AND candidate.id<>proposal.candidate_id
+          JOIN signal_topic_evaluation_v2_candidate_revisions base
+            ON base.candidate_id=candidate.id AND base.revision=1
+          LEFT JOIN LATERAL(SELECT revision.title,revision.review_state
+            FROM signal_topic_evaluation_v2_candidate_editorial_revisions revision
+            WHERE revision.candidate_id=candidate.id ORDER BY revision.revision DESC LIMIT 1) editorial ON true
+          WHERE candidate.status='pending' AND NOT candidate.adopted AND NOT candidate.published AND NOT candidate.serving
+            AND COALESCE(editorial.review_state,'pending')='pending'
+          ORDER BY keys.ordinal LIMIT 8
+        ) related),'[]'::jsonb) related_candidates,
+      proposal.recommendation,proposal.proposal_digest,proposal.created_at::text,
+      proposal.source_revision,proposal.source_version_digest
+    FROM latest_proposal proposal`,[args.workspace_id,args.run_key,args.candidate_key])).rows[0];
+  if(!proposal)return{status:"none",proposal:null};
+  return{status:"available",proposal:{display_name:proposal.display_name,description:proposal.description,
+    rationale:proposal.rationale,evidence_refs:proposal.evidence_refs,
+    related_candidates:proposal.related_candidates,recommendation:proposal.recommendation,
+    proposal_digest:proposal.proposal_digest,created_at:new Date(proposal.created_at).toISOString(),
+    source_revision:proposal.source_revision,is_stale:proposal.source_revision!==current.revision
+      ||proposal.source_version_digest!==current.version_digest}};
 }
 
 export async function reviewSignalTopicEvaluationV2Candidate(args:{pool:{connect():Promise<PoolClient>};

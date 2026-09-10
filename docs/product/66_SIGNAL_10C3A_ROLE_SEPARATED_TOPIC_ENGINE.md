@@ -373,3 +373,23 @@ real empieza en `0/115`, holdout permanece sellado y finalizar sólo expresa
 Topic Contract, no asigna roots y no autoriza 10C.3B/10D. El detalle contractual y el
 flight card de QA viven en
 [doc 67](./67_SIGNAL_TOPIC_DISCOVERY_OPERATOR_REVIEW_WORKBENCH.md).
+
+## Checkpoint 10C.3A-C · Brand OS readiness y discovery contextual
+
+**Registrado:** 2026-08-21 (`America/Mexico_City`).
+
+La auditoría del flujo ejecutado confirmó que las 115 proposals no consumieron Brand OS,
+Knowledge Base ni Study OS dentro de los embeddings o del clustering. BGE-M3 recibió el
+texto normalizado de cada mención; scope, entity, market y locale permanecieron como
+memberships tipadas para slices, métricas y evidence. El Brand OS de Amazon Alexa era
+insuficiente para interpretación estratégica, pero no fue la causa directa del resultado
+10C.3A.
+
+La revisión masiva se pausa y el packet actual se preserva como baseline global
+context-free. Antes de autorizar 10C.3B se completa un Brand OS versionado y se
+preregistra un challenger local partition-aware/context-aware que separe semantic shape,
+strategic relevance y contextual naming. Claude, si posteriormente se autoriza, opera
+cluster-level y devuelve sólo propuestas `pending`; nunca decide memberships o serving.
+
+El canon completo, readiness gate, secuencia y criterios de salida viven en
+[doc 68](./68_SIGNAL_CONTEXT_AWARE_DISCOVERY_AND_BRAND_OS_READINESS.md).

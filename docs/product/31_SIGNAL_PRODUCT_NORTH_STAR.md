@@ -1,5 +1,13 @@
 # 31 · Signal Product North Star
 
+> **Ampliación aprobada, 2026-09-07:** el [Compass self-service](./PROMPT_LOOPING/COMPASS_SELF_SERVICE_2026-09-07.md)
+> concreta este North Star en un recorrido de marca nueva a Signal, con cómputo de todo
+> el corpus e incrementalidad/novedad obligatorias para monitorización. Topics es una
+> sección principal; contexto y controles rutinarios deben ser utilizables sin ingeniería.
+> El [plan de entrega](./PROMPT_LOOPING/PLAN_SELF_SERVICE_MONITORING_2026-09-07.md)
+> prioriza ese núcleo antes de expansión de reportes/MCP y rediseño global. El análisis
+> original inferior se conserva; sus estados antiguos no son prueba de entrega actual.
+
 > **Estado:** canon de dirección de producto y corte holístico, actualizado
 > 2026-08-15.
 > **Decisión central:** reportes casi always-on y reportes estratégicos conviven en el
@@ -999,8 +1007,9 @@ El provider drain `signal.taxonomy-enrichment.v1` quedó cerrado en producer, re
 queue, worker y DB. Flags y API keys no pueden reactivarlo; history permanece legible y
 un run residual termina `blocked` con reason estable y `provider_calls=0`.
 
-Este checkpoint es exclusivamente local: 10A.4 sigue pendiente e independiente; no se
-conectaron readers, pointers o bindings y no hubo provider calls ni gasto.
+En ese checkpoint 10A.4 seguía pendiente e independiente. Fue superseded después por el
+cutover 0084–0089 y el QA greenfield Preview/UAT; no se conectaron readers, pointers o
+bindings y no hubo provider calls ni gasto.
 
 ## Checkpoint de ejecución · Local Modeling Benchmark 10C
 
@@ -1016,8 +1025,8 @@ no es candidata automática de modelado.
 Al no existir una pareja de finalistas operable, no se ejecutó full-pop/multi-seed y no
 se recomendó un modelo. El packet ciego privado de calibration sólo permite revisar el
 resultado técnico `none acceptable`; no puede autorizar un ganador. 10D permanece
-bloqueado hasta una futura decisión de modelado preregistrada. 10A.4 sigue pendiente e
-independiente.
+bloqueado hasta una futura decisión de modelado preregistrada. En ese checkpoint 10A.4
+seguía pendiente; el programa actual lo considera superseded.
 
 ## Corrección canónica · Gates 10C.0 y 10C.1
 
@@ -1166,6 +1175,38 @@ SIGNAL_10C2_PREREGISTRATION_READY=false
 SIGNAL_10D_READY=false
 ```
 
+## Decisión de programa · Linear y capa posterior a Signal
+
+**Registrado:** 2026-08-21 (`America/Mexico_City`)
+
+El North Star ya no termina en la visualización interna de Signal. Noisia opera como
+software as a hidden service: el equipo interno usa Admin y Signal para producir
+inteligencia gobernada, pero el cliente puede recibir esa inteligencia como PDF,
+mini-site, dashboard/landing mobile-first, historia vertical o API.
+
+La línea canónica conserva `10A–10H` para adquisición, semántica, Topics & Narratives,
+Signal y production readiness. La capa de entrega posterior se denomina:
+
+- `11A` Signal Intelligence Contract;
+- `11B` Deliverable Artifact Model y renderers;
+- `11C` Insights Agent interno;
+- `11D` Signal MCP read-only para agentes autorizados.
+
+Insights Agent y MCP son dos clientes de una misma capa server-owned. Ninguno consulta
+stores legacy como autoridad, ejecuta SQL libre, expone un dump de menciones o crea otra
+taxonomía. El agente puede crear drafts de entregables; MCP empieza read-only. Todo
+número conserva `query_id`, toda afirmación cualitativa conserva evidence refs y ninguna
+publicación ocurre sin Review humana.
+
+La nomenclatura anterior `Gate D/E/F` se conserva sólo como historia. `Gate D` se mapea
+al proyecto T&B, `Gate E` se descompone entre Admin QA/10G/UAT y `Gate F` se reemplaza
+por `10H`. `10A.4` deja de figurar como pendiente: sus objetivos quedaron superseded por
+el cutover 0084–0089, Preview/UAT autenticado y el recorrido greenfield multi-scope.
+
+El mapa completo de programa, definición de producto terminado y modelo de Linear vive
+en
+[63_NOISIA_V02_CANONICAL_PRODUCT_PROGRAM_AND_DELIVERY_LAYER.md](./63_NOISIA_V02_CANONICAL_PRODUCT_PROGRAM_AND_DELIVERY_LAYER.md).
+
 ## Checkpoint Preview/UAT · primer import greenfield y Semantic Review
 
 **Registrado:** 2026-08-20T01:03:18-06:00 (`America/Mexico_City`)
@@ -1260,6 +1301,16 @@ SIGNAL_10C2_PREREGISTRATION_READY=true
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint local · Semantic Context 69A.3
+
+**Registrado:** 2026-08-22T15:05:20-06:00 (`America/Mexico_City`).
+
+El drift de Brand OS, Knowledge, locale/market o provider lineage ya tiene una salida
+append-only: 0093 crea una generación successor sin modificar la anterior, conserva
+propuestas/decisiones históricas y deja toda propuesta nueva pendiente. La transición
+no llama providers, no publica packs y no toca Topics, assignments, readers, pointers o
+bindings. El cut Preview/UAT y el QA autenticado continúan como evidencia separada.
 
 ## Checkpoint 10C.2A · harness multi-scope listo, export real fail-closed
 

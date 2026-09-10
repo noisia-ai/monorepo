@@ -197,3 +197,24 @@ authority from this editor.
 
 The next product milestone is a contextual shadow experiment, followed by a simple Topic
 workspace. It is not another round of per-leaf locale forms.
+
+## 8. One-call Topic Evaluation control plane
+
+Migration 0107 and the server/Worker entrypoint add the missing non-serving control
+plane for one future contextual evaluation. A read-only dry run seals references to the
+frozen corpus, the 115 diagnostic proposals, their evidence/mention references and the
+current Brand OS/Semantic Context authority. The private execution envelope includes
+bounded cluster signals and current approved context text, while the browser flight card
+exposes only identifiers, digests and counts. Execution is disabled by default.
+
+When a later gate explicitly enables it, the server may reserve one bounded request and
+the Worker may call the product Anthropic lane exactly once. There is no retry or
+fallback: an ambiguous transport outcome is terminal, while a response already durably
+persisted may be validated without another call. Invalid JSON or unknown evidence fails
+atomically with zero candidates.
+
+Outputs are editable/rejectable **Topic Evaluation candidates**. They are not Topic
+Contracts, are never automatically adopted, and cannot publish or change serving. The
+evaluation rubric is at least ten coherent, evidence-backed, editable candidates. If it
+misses that rubric, the next action is diagnosis of the frozen corpus-to-Brand-OS
+handoff and comparison with local/no-provider algorithms—not a second paid call.

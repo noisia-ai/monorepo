@@ -7081,6 +7081,9 @@ export const signalTopicEvaluationV2Runs = pgTable("signal_topic_evaluation_v2_r
   snapshotId: uuid("snapshot_id").notNull().references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
   executionAuthorizationId: uuid("execution_authorization_id")
     .references(() => signalTopicEvaluationV2ExecutionAuthorizations.id, { onDelete: "restrict" }),
+  origin: text("origin").notNull().default("native"),
+  importReceiptId: uuid("import_receipt_id")
+    .references((): AnyPgColumn => signalTopicEvaluationV2ResultImportReceipts.id, { onDelete: "restrict" }),
   requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   idempotencyKey: text("idempotency_key").notNull(), runKey: text("run_key").notNull(),
   confirmation: text("confirmation").notNull(), flightCard: jsonb("flight_card").notNull(),
@@ -7339,6 +7342,45 @@ export const signalTopicEvaluationV2CandidateRefinementProposals = pgTable(
   }, (table) => [unique("uq_signal_topic_evaluation_v2_refinement_proposal_session").on(table.sessionId),
     unique("uq_signal_topic_evaluation_v2_refinement_proposal_idempotency")
       .on(table.sessionId, table.idempotencyKey)]
+);
+
+// 0122 is the product import lane. Composite scope/deferred cohort checks live in hand-verified SQL;
+// none of the local-only Lab migrations is a prerequisite for these archival tables.
+export const signalTopicEvaluationV2ResultImportReceipts = pgTable(
+  "signal_topic_evaluation_v2_result_import_receipts", {
+    id: uuid("id").primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().unique()
+      .references((): AnyPgColumn => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull()
+      .references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    actorUserId: uuid("actor_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),artifactDigest: text("artifact_digest").notNull(),
+    artifact: jsonb("artifact").notNull(),createdAt: now()
+  },(table)=>[unique().on(table.workspaceId,table.idempotencyKey),
+    unique().on(table.workspaceId,table.artifactDigest),
+    unique().on(table.id,table.runId,table.workspaceId,table.snapshotId)]
+);
+
+export const signalTopicEvaluationV2ArchivedRefinements = pgTable(
+  "signal_topic_evaluation_v2_archived_refinements", {
+    id: uuid("id").primaryKey(),
+    importReceiptId: uuid("import_receipt_id").notNull().unique()
+      .references(() => signalTopicEvaluationV2ResultImportReceipts.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull().references(() => signalTopicEvaluationV2Runs.id, { onDelete: "restrict" }),
+    snapshotId: uuid("snapshot_id").notNull()
+      .references(() => signalTopicEvaluationV2Snapshots.id, { onDelete: "restrict" }),
+    candidateId: uuid("candidate_id").notNull()
+      .references(() => signalTopicEvaluationV2Candidates.id, { onDelete: "restrict" }),
+    sourceRevision: integer("source_revision").notNull(),sourceVersionDigest: text("source_version_digest").notNull(),
+    sourceProposalDigest: text("source_proposal_digest").notNull(),
+    sourceCreatedAt: timestamp("source_created_at",{withTimezone:true}).notNull(),
+    displayName: text("display_name").notNull(),description: text("description").notNull(),
+    rationale: text("rationale").notNull(),evidenceRefs: text("evidence_refs").array().notNull(),
+    relatedCandidateKeys: text("related_candidate_keys").array().notNull(),
+    recommendation: text("recommendation").notNull(),createdAt: now()
+  }
 );
 
 export const dashboardDataRefs = pgTable(

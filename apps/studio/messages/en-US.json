@@ -2218,6 +2218,22 @@
         "errors": { "title": "Full evidence is unavailable", "body": "The read-only preflight could not be verified. No execution was enabled." }
       },
       "fullEvidenceTopicCandidates": {
+        "importedResult": "Lab result imported for review. Its candidates and references were preserved; importing it did not run another evaluation or incur a new charge.",
+        "refinement": {
+          "title": "Refinement suggestion",
+          "hint": "Compare the suggestion with the candidate. Using it replaces only the form name and description; nothing changes until Save.",
+          "unavailable": "Refinement suggestions are not yet available in this environment. You can still edit the candidate.",
+          "none": "This candidate has no saved refinement suggestion yet.",
+          "basis": "View basis · {count, plural, one {# consulted reference} other {# consulted references}}",
+          "sourceRevision": "Based on candidate revision {revision}.",
+          "related": "Related candidates: {names}",
+          "consider_merge": "Suggests reviewing a possible combination. It does not combine candidates automatically.",
+          "consider_split": "Suggests reviewing a possible split. It does not create other candidates automatically.",
+          "stale": "The candidate changed after this suggestion. You can read it, but it can no longer be copied automatically over the current revision.",
+          "use": "Use suggestion", "dismiss": "Hide suggestion", "show": "Show suggestion",
+          "dismissed": "Suggestion hidden in this panel. The candidate and saved suggestion are unchanged.",
+          "copied": "Suggestion copied into the form. You can adjust it before Save and undo the saved change later."
+        },
         "title": "Full-evidence Topic candidates",
         "subtitle": "Editable review copies over immutable model output and evidence.",
         "loading": "Loading candidate review…",

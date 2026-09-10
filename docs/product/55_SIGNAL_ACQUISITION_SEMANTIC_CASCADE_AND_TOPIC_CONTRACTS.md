@@ -401,8 +401,9 @@ un bridge proyectado sólo desde approved con retiro 2026-10-15. El full-pop pro
 está cerrado en producer/queue/worker/recovery/DB y no puede revivir por env.
 
 Este estado no activa Topic Contracts ni conecta Signal readers. 10C se ejecutó después
-como benchmark aislado y produjo `no_adoption`; 10D sigue bloqueado. 10A.4 permanece como
-rehearsal remoto independiente y pendiente.
+como benchmark aislado y produjo `no_adoption`; 10D sigue bloqueado. La referencia a
+10A.4 es histórica: el cutover 0084–0089 y el QA greenfield Preview/UAT supersedieron
+ese rehearsal como gate independiente.
 
 - crear `abstained` y assignments append-only;
 - separar determinísticos de workload pagado;

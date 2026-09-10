@@ -8,7 +8,7 @@ import { SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,SIGNAL_TOPIC_EVALUATION_LAB_
   from "./signal-topic-evaluation-lab-host-provenance-v2";
 
 const unsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_digest">={
-  contract_version:"signal-topic-evaluation-lab-host-provenance-v1",
+  contract_version:"signal-topic-evaluation-lab-host-provenance-v2",
   marker_namespace:"noisia.topic-evaluation.disposable-lab-host-anchor" as const,
   created_at:"2026-09-04T20:30:00.000Z",container_name:SIGNAL_TOPIC_EVALUATION_LAB_CONTAINER_NAME,
   container_id:"a".repeat(64),image_id:`sha256:${"b".repeat(64)}`,
@@ -23,7 +23,7 @@ const unsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_digest">={
   candidate_review_migration_digest:
     "sha256:7a6b61cc16dba808e0c98645855e2597db8d0f8ca4665979945c866a0bc3e946" as const,
   database_marker_setup_digest:
-    "sha256:0906a2b7cfebbbfb5408d94b48c50652645d6313030f05a01632b16ae6be242b" as const};
+    "sha256:213e2f7a6187c001a82e320bf38f27818934edb60a4038c1ee8a94fbd9442d95" as const};
 const receipt={...unsigned,receipt_digest:signalTopicEvaluationLabHostReceiptDigestV1(unsigned)};
 const container={container_name:receipt.container_name,container_id:receipt.container_id,
   image_id:receipt.image_id,image_reference:receipt.image_reference,endpoint_host:receipt.endpoint_host,

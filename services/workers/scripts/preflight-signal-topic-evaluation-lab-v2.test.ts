@@ -38,7 +38,7 @@ const marker={marker_namespace:"noisia.topic-evaluation.disposable-lab-clone",
   source_artifact_binding_digest:authority.artifact_binding_digest,
   recorded_system_identifier:"7462383493939691021",current_system_identifier:"7462383493939691021"};
 const hostReceiptUnsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_digest">={
-  contract_version:"signal-topic-evaluation-lab-host-provenance-v1",
+  contract_version:"signal-topic-evaluation-lab-host-provenance-v2",
   marker_namespace:"noisia.topic-evaluation.disposable-lab-host-anchor" as const,
   created_at:"2026-09-04T20:30:00.000Z",container_name:"noisia-r24a-provenance-pg" as const,
   container_id:"a".repeat(64),image_id:`sha256:${"b".repeat(64)}`,
@@ -52,7 +52,7 @@ const hostReceiptUnsigned:Omit<SignalTopicEvaluationLabHostReceiptV1,"receipt_di
   candidate_review_migration_digest:
     "sha256:7a6b61cc16dba808e0c98645855e2597db8d0f8ca4665979945c866a0bc3e946" as const,
   database_marker_setup_digest:
-    "sha256:0906a2b7cfebbbfb5408d94b48c50652645d6313030f05a01632b16ae6be242b" as const};
+    "sha256:213e2f7a6187c001a82e320bf38f27818934edb60a4038c1ee8a94fbd9442d95" as const};
 const hostReceipt={...hostReceiptUnsigned,receipt_digest:signalTopicEvaluationDigestV2(hostReceiptUnsigned)};
 const ledger=[
   {ordinal:112,migration_name:"0112_signal_topic_evaluation_full_evidence_control_plane.sql",

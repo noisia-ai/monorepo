@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
 
 import {
   appendSignalTopicCandidateRefinementProposalV1,
@@ -35,6 +37,26 @@ const sealedSession = {
   expires_at: "2099-01-01T00:15:00.000Z", session_digest: digest
 };
 
+test("session-bound paged cursor fits the unchanged API and DB limit with real-shaped signed evidence", () => {
+  const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+  const inner = Buffer.from(JSON.stringify({ payload: { operation: "search_cluster",
+    filter_digest: sha("filter"), value: sha("member"), rank: 21 }, signature: sha("inner") })).toString("base64url");
+  const api = signalTopicCandidateRefinementTestOnly;
+  const cursor = api.encodeRefinementCursor(sealedSession, sha("filter"), inner);
+  assert.ok(cursor.length <= 512);
+  assert.equal(api.decodeRefinementCursor(sealedSession, sha("filter"), cursor, new Date("2099-01-01T00:00:00Z")), inner);
+  for (const [session, filter, token, now] of [
+    [{ ...sealedSession, session_key: "topic-refine-other" }, sha("filter"), cursor, new Date("2099-01-01T00:00:00Z")],
+    [sealedSession, sha("other-filter"), cursor, new Date("2099-01-01T00:00:00Z")],
+    [sealedSession, sha("filter"), cursor.slice(0, -1) + (cursor.endsWith("a") ? "b" : "a"), new Date("2099-01-01T00:00:00Z")],
+    [sealedSession, sha("filter"), cursor, new Date("2099-01-01T00:15:00Z")],
+    [sealedSession, sha("filter"), `v2.${deflateRawSync(Buffer.alloc(10_000)).toString("base64url")}.${"a".repeat(64)}`, new Date("2099-01-01T00:00:00Z")]
+  ] as const) {
+    assert.throws(() => api.decodeRefinementCursor(session, filter, token, now),
+      /topic_candidate_refinement_cursor_invalid/u);
+  }
+});
+
 function scriptedPool(rows: Array<Array<Record<string, unknown>>>) {
   const sql: string[] = [];
   const client = {
@@ -63,7 +85,11 @@ test("refinement session is a server-clock sealed proposal-only write", async ()
   assert.equal(result.publication, false);
   assert.equal(result.serving, false);
   const writes = scripted.sql.filter((query) => /\bINSERT\s+INTO\b/iu.test(query));
+  const candidateRead = scripted.sql.find((query) => /FROM signal_topic_evaluation_v2_candidates candidate/iu.test(query));
   assert.equal(writes.length, 1);
+  assert.ok(candidateRead);
+  assert.doesNotMatch(candidateRead!, /candidate\.serving\n\s+WHERE candidate\.workspace_id/iu);
+  assert.match(candidateRead!, /AND candidate\.workspace_id=\$1::uuid/iu);
   assert.match(writes[0]!, /candidate_refinement_sessions/u);
   assert.doesNotMatch(writes[0]!, /candidate_editorial_revisions|topic_contract|published|serving/iu);
   assert.match(writes[0]!, /clock_timestamp\(\)/u);
@@ -86,7 +112,7 @@ test("session idempotency replays only the exact sealed start input", async () =
 
 test("refinement proposal appends context only and cannot enter editorial or Topic planes", async () => {
   const scripted = scriptedPool([
-    [], [sealedSession], [currentCandidate], [{ digest }], [], [{ evidence_ref: digest }], [], []
+    [], [], [sealedSession], [currentCandidate], [{ digest }], [], [{ evidence_ref: digest }], [], []
   ]);
   const result = await appendSignalTopicCandidateRefinementProposalV1({ pool: scripted.pool as never,
     workspace_id: ids.workspace, actor, session_key: sealedSession.session_key,
@@ -106,7 +132,7 @@ test("refinement proposal appends context only and cannot enter editorial or Top
 });
 
 test("proposal idempotency is bound to its exact sealed proposal payload", async () => {
-  const replay = scriptedPool([[], [sealedSession], [currentCandidate], [{ digest }],
+  const replay = scriptedPool([[], [], [sealedSession], [currentCandidate], [{ digest }],
     [{ proposal_digest: digest, idempotency_key: "refinement.test.proposal.002" }], []]);
   const proposal = {
     contract_version: "signal-topic-candidate-refinement-v1" as const,
@@ -120,7 +146,7 @@ test("proposal idempotency is bound to its exact sealed proposal payload", async
   assert.equal(replayed.idempotent_replay, true);
   assert.equal(replay.sql.filter((query) => /\bINSERT\s+INTO\b/iu.test(query)).length, 0);
 
-  const conflict = scriptedPool([[], [sealedSession], [currentCandidate], [{ digest: changedDigest }],
+  const conflict = scriptedPool([[], [], [sealedSession], [currentCandidate], [{ digest: changedDigest }],
     [{ proposal_digest: digest, idempotency_key: "refinement.test.proposal.002" }]]);
   await assert.rejects(appendSignalTopicCandidateRefinementProposalV1({ pool: conflict.pool as never,
     workspace_id: ids.workspace, actor, session_key: sealedSession.session_key,
@@ -138,12 +164,12 @@ test("aggregate evidence budget permits six maximum results and rejects a sevent
 });
 
 test("expired and out-of-scope sessions reject before generic navigation or trace insertion", async () => {
-  const expired = scriptedPool([[], [{ ...sealedSession, expires_at: "2000-01-01T00:00:00.000Z" }]]);
+  const expired = scriptedPool([[], [], [{ ...sealedSession, expires_at: "2000-01-01T00:00:00.000Z" }]]);
   await assert.rejects(navigateSignalTopicCandidateRefinementV1({ pool: expired.pool as never,
     workspace_id: ids.workspace, actor, session_key: sealedSession.session_key,
     request: { operation: "candidate_context" }, now: new Date("2026-09-05T00:00:00.000Z") }),
   /topic_candidate_refinement_session_expired/u);
-  const forbidden = scriptedPool([[], [sealedSession], [currentCandidate]]);
+  const forbidden = scriptedPool([[], [], [sealedSession], [currentCandidate]]);
   await assert.rejects(navigateSignalTopicCandidateRefinementV1({ pool: forbidden.pool as never,
     workspace_id: ids.workspace, actor, session_key: sealedSession.session_key,
     request: { operation: "cluster_profile", cluster_key: "cluster.not-in-candidate" } }),

@@ -303,13 +303,14 @@ export function BrandEditForm({
         </div>
       </section>
 
-      <section className="admin-section workspace-form__section">
-        <header className="admin-section__head">
+      <details className="admin-section workspace-disclosure workspace-form__section workspace-form__section--disclosure">
+        <summary className="admin-section__head workspace-form__section-summary">
           <div>
             <p className="workspace-form__eyebrow">{t("relationsEyebrow")}</p>
             <h2>{t("relationsTitle")}</h2>
           </div>
-        </header>
+          <Icon name="chevron-down" size={16} />
+        </summary>
         <div className="workspace-form__body">
         <div className="workspace-form__grid">
           <TokenCatalogField
@@ -339,21 +340,21 @@ export function BrandEditForm({
           surface="workspace"
         />
         </div>
+      </details>
 
-        <footer className="workspace-form__section-footer">
-          {error && (
-            <p className="workspace-form__error" role="alert">
-              <Icon name="alert" size={14} /> {error}
-            </p>
-          )}
-          <button className="admin-button" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
-            {t("cancel")}
-          </button>
-          <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
-          </button>
-        </footer>
-      </section>
+      <footer className="workspace-form__footer">
+        {error && (
+          <p className="workspace-form__error" role="alert">
+            <Icon name="alert" size={14} /> {error}
+          </p>
+        )}
+        <button className="admin-button" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
+          {t("cancel")}
+        </button>
+        <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
+        </button>
+      </footer>
     </form>
   );
 }

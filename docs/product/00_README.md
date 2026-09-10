@@ -82,6 +82,15 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 60 | `60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md` | Corte online Preview/UAT: Railway aislado, Supabase staging, Redis UAT, guardas de Worker, QA y rollback |
 | 61 | `61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md` | Handoff operativo UAT: custodia de accesos, checklist browser/async, rollback, defect protocol y continuación greenfield Amazon Alexa |
 | 62 | `62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md` | Preregistración 10C.2 ligada al corpus Amazon Alexa multi-scope congelado; sampling, splits, candidatos y hard gates, sin ejecutar modelado ni abrir 10D |
+| 63 | `63_NOISIA_V02_CANONICAL_PRODUCT_PROGRAM_AND_DELIVERY_LAYER.md` | Programa canónico de producto: proyectos Linear, una sola nomenclatura 10A–10H/11A–11D, definición de producto terminado y capa posterior a Signal para entregables, Insights Agent y MCP |
+| 64 | `64_SIGNAL_10C2C_EXECUTION_HANDOFF.md` | Handoff ejecutable del benchmark 10C.2C sobre el corpus y splits preregistrados |
+| 65 | `65_SIGNAL_10C2C_EXECUTION_EVIDENCE.md` | Evidencia y resultado del benchmark 10C.2C |
+| 66 | `66_SIGNAL_10C3A_ROLE_SEPARATED_TOPIC_ENGINE.md` | Contrato del motor diagnóstico de tópicos con roles y autoridad separados |
+| 67 | `67_SIGNAL_TOPIC_DISCOVERY_OPERATOR_REVIEW_WORKBENCH.md` | Workbench diagnóstico para revisar propuestas de descubrimiento; no crea Topic Contracts ni serving |
+| 68 | `68_SIGNAL_CONTEXT_AWARE_DISCOVERY_AND_BRAND_OS_READINESS.md` | Readiness entre descubrimiento contextual y Brand OS |
+| 69 | `69_SIGNAL_SEMANTIC_CONTEXT_PACK_AUTHORITY.md` | Contrato técnico append-only de review, autoridad y publicación del Semantic Context Pack |
+| 70 | `70_SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_ADAPTER.md` | Adaptador estructurado de propuestas semánticas y su lineage de provider |
+| 71 | `71_BRAND_OS_VOCABULARY_AND_TOPIC_DISCOVERY_PRODUCT_MODEL.md` | Explicación operativa de Vocabulario y límites, auditoría del Discovery actual y UX simplificada propuesta |
 
 ---
 

@@ -1,8 +1,9 @@
 # 56 · Signal Semantic Cascade Execution Plan
 
-> **Estado:** plan ejecutable de ingeniería; Gates 10A.3, 10A.5A, 10A.5B y 10B están
-> implementados y validados localmente. 10C cerró técnicamente con `no_adoption` y no
-> habilita 10D. 10A.4 permanece como rehearsal remoto independiente.
+> **Estado:** plan ejecutable de ingeniería; 10A y 10B están implementados y verificados
+> en Preview/UAT. 10C.2 tiene corpus multi-scope, harness, authority y preflight real
+> listos, pero su ejecución no está autorizada. 10D permanece bloqueado. El rehearsal
+> histórico 10A.4 fue superseded por el cutover 0084–0089 y el QA greenfield UAT.
 > **Registrado:** 2026-08-15T10:42:46-06:00 (`America/Mexico_City`).
 > **Canon de producto:**
 > [55_SIGNAL_ACQUISITION_SEMANTIC_CASCADE_AND_TOPIC_CONTRACTS.md](./55_SIGNAL_ACQUISITION_SEMANTIC_CASCADE_AND_TOPIC_CONTRACTS.md).
@@ -781,8 +782,9 @@ La operación queda autenticada en la transacción; el trigger también protege 
 Retiro: 2026-10-15 en Gate 10H, después de reader cutover de 10G y evidencia de que no
 queda consumidor sin generation/watermark.
 
-10A.4 sigue pendiente e independiente. 10C se ejecutó después como harness aislado y
-produjo `no_adoption`; 10D no fue ejecutado. No se adoptó Python/modelo, no se activó
+En ese checkpoint 10A.4 seguía pendiente; hoy está superseded por el cutover 0084–0089
+y el QA greenfield Preview/UAT. 10C se ejecutó después como harness aislado y produjo
+`no_adoption`; 10D no fue ejecutado. No se adoptó Python/modelo, no se activó
 Topic Contract Control Plane y no se movió ningún reader, pointer o binding.
 
 **Objetivo:** preparar una sola autoridad segura antes de ejecutar modelos.
@@ -1045,9 +1047,14 @@ cliente ni datasets.
 
 ## 17. Estado De Ejecución Inicial
 
+> **Lectura histórica:** esta tabla describe el estado al registrar el plan. El checkpoint
+> actual es 10C.2B: `REAL_EXPORT_PREFLIGHT_READY=true`,
+> `EXECUTION_AUTHORIZED=false`, `EXECUTED=false`, `10D_READY=false`. Los checkpoints
+> posteriores al registro, al final de este documento y en el doc 62, tienen precedencia.
+
 | Gate | Estado al registrar este plan | Siguiente decisión |
 |---|---|---|
-| 10A | `10A5B_browser_qa_local` | Mantener 10A.4 remoto separado y continuar 10B |
+| 10A | `10A5B_browser_qa_local` | Estado histórico; 10A.4 fue superseded después por Preview/UAT |
 | 10A.5A | `implemented_local_ready_for_10A5B` | Núcleo compartido + Brief/lineage + adapter workspace-owned; cero runtime legacy nuevo |
 | 10A.5B | `browser_qa_local` | Provider real sigue requiriendo confirmación/cap; no es requisito para comenzar 10B local |
 | 10B | `implemented_local_0087` | Autoridad append-only, abstention, gold/model registry, projector temporal y kill switch legacy cerrados; sin staging |
@@ -1075,8 +1082,8 @@ cliente ni datasets.
 5. **Frontend 10A.5B · Query review y first-use:** **completado con QA browser local**.
    Generación server-owned con flight card, review/approval por slot,
    fallback/diff visible y override avanzado append-only.
-6. **Backend 10A.4 · Staging rehearsal:** aplicar sólo con autorización, backfill
-   no-inferential únicamente si protege un contrato general; no rescatar Laika/Alexa.
+6. **Backend 10A.4 · Staging rehearsal:** **superseded**. Sus objetivos quedaron
+   cubiertos por el cutover 0084–0089, Preview/UAT y QA greenfield; no crear otro gate.
 7. **Backend 10B · Classification authority:** **completado localmente**. Abstention,
    ledgers, gold/model registry, projector temporal y kill switch legacy cerrado.
 8. **Platform 10C · Benchmark:** el primer run cerró con `no_adoption` para su matriz.
@@ -1084,11 +1091,9 @@ cliente ni datasets.
    dos finalistas fallaron gates full-seed y el resultado es `no_adoption`. El packet
    diagnóstico no puede autorizar 10D.
 
-El siguiente paso de modelado permitido es únicamente revisión humana del resultado
-10C.1. **10D · Local Semantic Cascade Shadow** permanece bloqueado sin artifact/model
-decision; **10E** conserva Topic Contracts y contextual naming. El rehearsal 10A.4 en staging
-se conserva como gate independiente y requiere autorización; no se usará para adaptar
-Laika/Alexa.
+El checkpoint vigente posterior es 10C.2B. **10D · Local Semantic Cascade Shadow**
+permanece bloqueado sin artifact/model decision; **10E** conserva Topic Contracts y
+contextual naming. 10A.4 no se reabre ni se usa para adaptar fixtures.
 
 Este corte evita otra misión gigante de varias horas que mezcle schema, modelos, UI y
 reader cutover. Cada misión entrega un estado consumible por la siguiente y conserva el
@@ -1370,6 +1375,17 @@ SIGNAL_10C2_PREREGISTRATION_READY=true
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## Checkpoint 69A.3 · reconciliación append-only de Semantic Context
+
+**Registrado:** 2026-08-22T15:05:20-06:00 (`America/Mexico_City`).
+
+La implementación local elimina el bloqueo de un draft stale mediante un successor
+sellado a authority/provider lineage current. Drafts y publicaciones anteriores quedan
+inmutables; una corrida provider no terminal bloquea la transición, y la concurrencia
+converge bajo advisory lock/CAS. Frontend 69B usa el contrato management-only
+`POST .../semantic-context/reconcile`. Provider execution, 10C.3B y 10D siguen sin
+autorizarse.
 
 ## 26. 10C.2A · contrato ejecutable y harness multi-scope
 
