@@ -12,7 +12,7 @@ import {type WorkspaceProjectionCheckpointFixtureV1,fixtureSha} from './signal-w
 /** Genuine local ledger/fit/checkpoint APIs with explicit synthetic numerical
  * bytes. No model is loaded and no provider is called by this fixture. */
 export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckpointFixtureV1,clusterIds:readonly[string,string],options:{
- emerging_component?:boolean;migrations_applied?:boolean;editorial_evidence?:boolean;
+ emerging_component?:boolean;migrations_applied?:boolean;editorial_evidence?:boolean;emerging_units?:number;
  onInputCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onOutputIndex?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onNumericCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;checkpoint:numeric.SignalWorkspaceIncrementalCheckpointV1})=>Promise<void>;
@@ -71,32 +71,43 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  const components=(['open','guided'] as const).map((lane,index)=>({component_key:digest([options.emerging_component&&index===1?lease.execution_id:parentId,modelRefs[index]!.sha256,lane]),lane,
   model_origin:{execution_id:options.emerging_component&&index===1?lease.execution_id:parentId,model_artifact_sha256:modelRefs[index]!.sha256},model:modelRefs[index]!,center:lane==='guided'?center:null,
   units:[{local_label:0,unit_key:`${lane}:${clusterIds[index]}`,birth_membership_digest:fixtureSha(`synthetic original ${lane} birth`)},...(options.emerging_component&&index===1&&!options.editorial_evidence?[{local_label:1,unit_key:'guided:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',birth_membership_digest:fixtureSha('synthetic empty emerging unit')}]:[])]})).sort((a,b)=>options.emerging_component?(a.component_key>b.component_key?-1:1):(a.component_key<b.component_key?-1:1));
+ // Opt-in multibatch editorial fixtures distribute the COMPLETE numerical
+ // population among several emerging labels. Existing fixtures are byte-identical.
+ if(options.emerging_units!==undefined){
+  if(!options.emerging_component||!options.editorial_evidence||!Number.isInteger(options.emerging_units)
+   ||options.emerging_units<1||options.emerging_units>chunks.length)throw Error('local emerging unit count invalid');
+  const component=components.find(row=>row.model_origin.execution_id===lease.execution_id)!;
+  const first=component.units[0]!;
+  component.units=Array.from({length:options.emerging_units},(_,local_label)=>({...first,local_label,
+   unit_key:local_label===0?first.unit_key:`${component.lane}:${randomUUID()}`}));
+ }
  const populations=chunks.map((chunk,ordinal)=>({ordinal,root_id:chunk.root_id,root_fingerprint:chunk.root_fingerprint,
   asset_sha256:roots.find(root=>root.root_id===chunk.root_id)!.asset_sha256,expected_chunks:roots.find(root=>root.root_id===chunk.root_id)!.expected_chunks,
   chunk_index:chunk.chunk_index,start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256}));
  const population=digest(populations);
- const memberships=chunks.flatMap(chunk=>components.map(component=>({root_id:chunk.root_id,root_fingerprint:chunk.root_fingerprint,chunk_index:chunk.chunk_index,
-  start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256,lane:component.lane,unit_key:component.units[0]!.unit_key,model_component_key:component.component_key,strength:0.8,
+ const memberships=chunks.flatMap((chunk,ordinal)=>components.map(component=>({root_id:chunk.root_id,root_fingerprint:chunk.root_fingerprint,chunk_index:chunk.chunk_index,
+  start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256,lane:component.lane,unit_key:component.units[options.emerging_units&&component.model_origin.execution_id===lease.execution_id?ordinal%component.units.length:0]!.unit_key,model_component_key:component.component_key,strength:0.8,
   model_origin:component.model_origin,evaluation_origin:{execution_id:lease.execution_id,input_population_digest:population,
    evaluation_key:digest([lease.execution_id,component.component_key,population,component.model_origin.execution_id===lease.execution_id?'fitted_member':'predicted_member']),basis:component.model_origin.execution_id===lease.execution_id?'fitted_member':'predicted_member'},carried_from:null})));
  // Wire order is independent from the deliberately nonlexical model-bank order.
  memberships.sort((a,b)=>(a.root_id<b.root_id?-1:a.root_id>b.root_id?1:0)||a.chunk_index-b.chunk_index||(a.model_component_key<b.model_component_key?-1:1));
  // Optional complete, synthetic birth evidence for the real free-preparation
  // Worker. Existing projection-only fixtures retain their original bytes.
- const candidates=options.editorial_evidence?components.filter(component=>component.model_origin.execution_id===lease.execution_id).map(component=>{
-  const birth=populations.map(({ordinal,root_id,chunk_index,start,end,chunk_sha256})=>({ordinal,root_id,chunk_index,start,end,chunk_sha256}));
-  const unit=component.units[0]!;unit.birth_membership_digest=digest(birth);
-  const distinct=roots.map(root=>birth.find(row=>row.root_id===root.root_id)!),boundary=distinct[1];
+ const candidates=options.editorial_evidence?components.filter(component=>component.model_origin.execution_id===lease.execution_id).flatMap(component=>component.units.map(unit=>{
+  const assigned=new Set(memberships.filter(row=>row.unit_key===unit.unit_key).map(row=>`${row.root_id}:${row.chunk_index}`));
+  const birth=populations.filter(row=>assigned.has(`${row.root_id}:${row.chunk_index}`)).map(({ordinal,root_id,chunk_index,start,end,chunk_sha256})=>({ordinal,root_id,chunk_index,start,end,chunk_sha256}));
+  unit.birth_membership_digest=digest(birth);
+  const distinct=roots.map(root=>birth.find(row=>row.root_id===root.root_id)).filter((row):row is typeof birth[number]=>row!==undefined),boundary=distinct[1];
   const high=distinct.filter(row=>row!==boundary).slice(0,boundary?9:10);
   return{unit_key:unit.unit_key,component_key:component.component_key,birth_membership_digest:unit.birth_membership_digest,
-   root_count:roots.length,chunk_count:chunks.length,terms:['Explicit local evidence'],representatives:[
+   root_count:distinct.length,chunk_count:birth.length,terms:['Explicit local evidence'],representatives:[
     ...high.map(row=>({...row,strength:0.8,selection_reason:'high_affiliation'})),
     ...(boundary?[{...boundary,strength:0.8,selection_reason:'low_affiliation_boundary'}]:[])]};
- }):[];
+ })):[];
  const pendingRoot=roots[0]!.root_id,pending=populations.filter(row=>row.root_id===pendingRoot);
  const numericBodies=new Map<string,string>([
   ['population.jsonl',populations.map(row=>JSON.stringify(row)+'\n').join('')],['memberships.jsonl',memberships.map(row=>JSON.stringify(row)+'\n').join('')],
-  ['roots.jsonl',roots.map(root=>JSON.stringify({...root,unit_keys:components.map(component=>component.units[0]!.unit_key).sort(),state:'computed',discovery_pending:root.root_id===pendingRoot})+'\n').join('')],
+  ['roots.jsonl',roots.map(root=>JSON.stringify({...root,unit_keys:[...new Set(memberships.filter(row=>row.root_id===root.root_id).map(row=>row.unit_key))].sort(),state:'computed',discovery_pending:root.root_id===pendingRoot})+'\n').join('')],
   ['pending-cohort.jsonl',pending.map(row=>JSON.stringify(row)+'\n').join('')],['model-components.json',JSON.stringify(components)],
   ['root-transitions.jsonl',''],['candidate-groups.json',JSON.stringify(candidates)],['relations.json','[]'],['guides.jsonl',''],['guide-vectors.npy','local guide bytes'],
   ['model.open.joblib',modelBodies.open],['model.guided.joblib',modelBodies.guided],['guide-center.npy',centerBody]]);
@@ -129,5 +140,5 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
    roots:roots.length,occurrences:chunks.length,memberships:memberships.length,pending_occurrences:pending.length,relations_scope:'new_candidates_in_this_execution'}});
  await options.onNumericCheckpoint?.({lease,checkpoint});
  await numeric.finishSignalWorkspaceIncrementalNumericV1({database,lease,checkpoint_digest:checkpoint.checkpoint_digest});
- return{...f,lease,roots,chunks,components,checkpoint,old,storage,artifact,output};
+ return{...f,lease,roots,chunks,components,memberships,checkpoint,old,storage,artifact,output};
 }

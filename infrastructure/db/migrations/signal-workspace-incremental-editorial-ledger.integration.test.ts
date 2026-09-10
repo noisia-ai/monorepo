@@ -14,6 +14,7 @@ test('incremental editorial sealed requests use the unique monetary ledger, reta
    await query(await readFile(new URL('./0148_signal_workspace_incremental_editorial.sql',import.meta.url),'utf8'));
    await query(await readFile(new URL('./0149_signal_workspace_incremental_editorial_ledger.sql',import.meta.url),'utf8'));
    await query(await readFile(new URL('./0151_signal_workspace_incremental_editorial_serving.sql',import.meta.url),'utf8'));
+   await query(await readFile(new URL('./0152_signal_workspace_incremental_editorial_renewal.sql',import.meta.url),'utf8'));
    const scope={...access,numeric_execution_id:f.lease.execution_id};
    const rollback=async(work:()=>Promise<void>)=>{await query('BEGIN');try{await work();}finally{await query('ROLLBACK');}};
    const baseline=async()=>({artifacts:(await query("SELECT to_jsonb(artifact) body FROM analysis_artifacts artifact WHERE engine_execution_id=ANY($1::uuid[]) AND metadata->>'contract_version' IS DISTINCT FROM 'workspace-incremental-unit-census-v1' ORDER BY id",[[base.lease.execution_id,f.lease.execution_id]])).rows,engine:(await query('SELECT to_jsonb(run) body FROM signal_topic_catalog_executions run WHERE id=ANY($1::uuid[]) ORDER BY id',[[base.lease.execution_id,f.lease.execution_id]])).rows,

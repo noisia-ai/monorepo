@@ -3,6 +3,8 @@ import {beginSignalWorkspaceIncrementalEditorialWithClientV1,
  type SignalWorkspaceIncrementalEditorialBeginArgsV1,
  type SignalWorkspaceIncrementalEditorialResultV1} from './signal-workspace-incremental-editorial';
 import {enqueueSignalWorkspaceIncrementalEditorialWithClientV1} from './signal-workspace-incremental-editorial-execution';
+import {renewSignalWorkspaceIncrementalEditorialWithClientV1,
+ type SignalWorkspaceIncrementalEditorialRenewArgsV1} from './signal-workspace-incremental-editorial-renewal';
 
 export type SignalWorkspaceIncrementalEditorialQueuedResultV1 = SignalWorkspaceIncrementalEditorialResultV1 & {
  dispatch: {execution_id:string;worker_job_id:string}|null;
@@ -32,5 +34,18 @@ export async function beginAndEnqueueSignalWorkspaceIncrementalEditorialV1(
    actor_user_id:accepted.receipt.budget_actor_user_id,execution_id:accepted.execution_id,
   });
   return{...accepted,dispatch};
+ });
+}
+
+/** Renewal and recovery of the existing dispatch commit together. An accepted
+ * request still resolves after the provider switch is turned off. */
+export async function renewAndEnqueueSignalWorkspaceIncrementalEditorialV1(
+ args:SignalWorkspaceIncrementalEditorialRenewArgsV1&{provider_available:boolean},
+):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
+ return withSignalWorkspaceEngineTransactionV1(args.database,async client=>{
+  const accepted=await renewSignalWorkspaceIncrementalEditorialWithClientV1(client,args);
+  if(!accepted.replayed&&!args.provider_available)
+   throw new SignalWorkspaceEngineError('workspace_analysis_interpretation_unavailable',422);
+  return accepted;
  });
 }

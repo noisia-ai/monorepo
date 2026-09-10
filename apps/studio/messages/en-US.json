@@ -2840,7 +2840,12 @@
           "recover": "Recover saved results",
           "pendingRetry": "Checking the recovery request for this interpretation. Another request will not start while this one is confirmed.",
           "catalogSaved": "Catalog saved: {count, plural, one {# available Topic} other {# available Topics}}, including existing ones. Signal coverage is confirmed separately.",
-          "details": "Interpretation and cost details"
+          "details": "Interpretation and cost details",
+          "renewBody": "Continue the {count, plural, one {# pending group} other {# pending groups}} in this interpretation with {model}. Paid results are preserved; the additional cap does not increase the original execution cap.",
+          "renewCap": "Additional cap to continue (up to {amount})",
+          "renew": "Authorize and continue",
+          "pendingRenew": "Confirming continuation of this interpretation: additional cap {amount}, until {expiry} ({zone}). This request is preserved until its outcome is known.",
+          "renewLimits": "Original interpretation cap: {run}. Daily cap: {daily} ({date}, {zone})."
         }
       },
       "preparation": {

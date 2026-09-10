@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1 } from "@noisia/db";
+import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1, type SignalWorkspaceIncrementalEditorialRenewalV1 } from "@noisia/db";
 import { loadWorkspaceIncrementalEditorialForActorV1, workspaceIncrementalEditorialExecutionViewV1, loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
   workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
@@ -39,6 +39,8 @@ test("incremental evidence and paid admission use the existing scoped authority 
       expected_numeric_checkpoint_digest: hash, expected_target_unit_digest: hash, expected_history_cut_digest: hash,
       cap_micro_usd: 1, admission_not_after: "2026-09-10T00:00:00.000Z" },
     { action: "revoke_incremental_editorial", run_id: id, expected_admission_operation_id: id },
+    { action: "renew_incremental_editorial", run_id: id, expected_admission_operation_id: id,
+      grant_cap_micro_usd: 1, admission_not_after: "2026-09-10T00:00:00.000Z" },
     { action: "retry_incremental_editorial", run_id: id, expected_worker_job_id: "editorial-owner-job" }
   ];
   for (const request of requests) {
@@ -377,8 +379,12 @@ function historicalAdmission(action: "authorize_interpretation" | "revoke_interp
     operation: { execution_id: historicalOwner, status: "failed", is_current: false, can_revoke: action === "authorize_interpretation", requires_authorization: true, receipt },
     request: { idempotency_key: "historical-admission-key", receipt } };
 }
-for (const action of ["authorize_interpretation", "revoke_interpretation"] as const) test(`service resolves historical ${action} receipt before newer preparation or absent current catalog`, async () => {
+for (const { action, renewed } of [
+  { action: "authorize_interpretation", renewed: false }, { action: "revoke_interpretation", renewed: false },
+  { action: "authorize_interpretation", renewed: true }
+] as const) test(`service resolves historical ${renewed ? "renewed" : action} receipt before newer preparation or absent current catalog`, async () => {
   const loaded = historicalAdmission(action), order: string[] = [];
+  if (renewed) loaded.request!.receipt.prior_admission_operation_id = id;
   const database = { query: async () => { throw new Error("The adapter must not query the missing live catalog"); },
     connect: async () => { throw new Error("No adapter-owned transaction"); } } as unknown as Pick<Pool, "query" | "connect">;
   const args = { database, workspace_id: id, actor_user_id: id, idempotency_key: "historical-admission-key" };
@@ -430,4 +436,46 @@ test("begin with provider off reaches the atomic wrapper's replay branch instead
       idempotencyKey: "historical-admission-key", body: request }), error => error === marker);
     assert.equal(connections, 1);
   } finally { if (previous === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = previous; }
+});
+
+
+test("renewal reaches atomic receipt recovery with provider off and rejects browser-owned authority", async () => {
+  const previous = process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED;
+  process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = "false";
+  try {
+    const request = { action: "renew_incremental_editorial", run_id: historicalOwner, expected_admission_operation_id: id,
+      grant_cap_micro_usd: 500_000, admission_not_after: "2026-09-11T00:00:00.000Z" };
+    assert.equal(validateWorkspaceAnalysisRequestV1(request), true);
+    for (const injected of [{ provider_available: true }, { budget_actor_user_id: id }, { run_cap_micro_usd: 30_000_000 },
+      { model: "claude-sonnet-4-6" }, { grant_cap_micro_usd: 0 }, { grant_cap_micro_usd: 0.5 }, { grant_cap_micro_usd: "5" },
+      { expected_admission_operation_id: null }, { admission_not_after: "2026-09-11" }])
+      assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, ...injected }), false);
+    const marker = new Error("Atomic renewal transaction reached"); let connections = 0;
+    const database = { query: async () => ({ rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] }),
+      connect: async () => { connections++; throw marker; } } as unknown as Pick<Pool, "query" | "connect">;
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: id, actorUserId: id,
+      idempotencyKey: "renewal-admission-key", body: request }), error => error === marker);
+    assert.equal(connections, 1, "No early provider rejection may hide a previously accepted receipt");
+  } finally {
+    if (previous === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED;
+    else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = previous;
+  }
+});
+
+test("server provider switch limits renewal without erasing paid recovery or its budget evidence", () => {
+  const renewal: SignalWorkspaceIncrementalEditorialRenewalV1 = { execution_id: historicalOwner, is_current: true, can_renew: true,
+    blocked_reason: null, expected_admission_operation_id: id, budget_actor_user_id: id, budget_timezone: "UTC", budget_date: "2026-09-10",
+    maximum_admission_not_after: "2026-09-11T00:00:00.000Z", run_cap_micro_usd: 1_000_000, daily_cap_micro_usd: 2_000_000,
+    confirmed_micro_usd: 120_000, reserved_micro_usd: 40_000, terminal_reserved_micro_usd: 10_000, maximum_grant_micro_usd: 840_000 };
+  const run = { execution_id: historicalOwner, status: "failed", error_code: "workspace_engine_interpretation_admission_expired", is_current: true,
+    has_pending_work: false, has_unresolved_call: false, expected_units: 3, interpreted_units: 1, dispatch: { worker_job_id: "editorial-job", status: "failed" },
+    can_retry: true, requires_authorization: true, recorded_recovery_available: true, renewal,
+    costs: { confirmed_micro_usd: 120_000, reserved_micro_usd: 40_000, terminal_reserved_micro_usd: 10_000 }, request: null };
+  const off = workspaceIncrementalEditorialExecutionViewV1(run, false)!;
+  assert.equal(off.renewal?.can_renew, false); assert.equal(off.renewal?.blocked_reason, "workspace_analysis_interpretation_unavailable");
+  assert.equal(off.can_retry, true); assert.deepEqual(off.costs, run.costs); assert.equal(off.renewal?.maximum_grant_micro_usd, 840_000);
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1(run, true)?.renewal?.can_renew, true);
+  const stale = workspaceIncrementalEditorialExecutionViewV1({ ...run, renewal: { ...renewal, is_current: false, can_renew: false, blocked_reason: "source_stale" } }, false);
+  assert.equal(stale?.renewal?.blocked_reason, "source_stale", "The switch must not replace a more specific server refusal");
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1({ ...run, renewal: null }, true)?.renewal, null);
 });

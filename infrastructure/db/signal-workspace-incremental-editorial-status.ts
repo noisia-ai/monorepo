@@ -5,6 +5,8 @@ import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSi
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import type {SignalWorkspaceIncrementalEditorialReceiptV1} from './signal-workspace-incremental-editorial';
 import {readSignalWorkspaceIncrementalEditorialRetryWithQueryableV1,requeueSignalWorkspaceIncrementalEditorialWithClientV1} from './signal-workspace-incremental-editorial-execution';
+import {readSignalWorkspaceIncrementalEditorialRenewalWithQueryableV1,
+ type SignalWorkspaceIncrementalEditorialRenewalV1} from './signal-workspace-incremental-editorial-renewal';
 
 type Scope={database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string};
 type Queryable=Pick<PoolClient,'query'>;
@@ -18,6 +20,7 @@ export type SignalWorkspaceIncrementalEditorialStatusV1={
  expected_units:number;interpreted_units:number;dispatch:Dispatch|null;can_retry:boolean;requires_authorization:boolean;recorded_recovery_available:boolean;
  costs:{confirmed_micro_usd:number;reserved_micro_usd:number;terminal_reserved_micro_usd:number};
  request:{idempotency_key:string;receipt:SignalWorkspaceIncrementalEditorialRetryReceiptV1}|null;
+ renewal?:SignalWorkspaceIncrementalEditorialRenewalV1|null;
 };
 type Run={id:string;actor_user_id:string;status:string;error_code:string|null;current:boolean;expected_units:number;
  context_digest:string;catalog_digest:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1;
@@ -67,7 +70,8 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
   has_pending_work:['queued','running'].includes(run.status)&&Boolean(dispatch&&['pending','dispatching','dispatched'].includes(dispatch.status)),
   has_unresolved_call:recovery.unknown,expected_units:run.expected_units,interpreted_units:counts.interpreted,dispatch,can_retry,requires_authorization,recorded_recovery_available,
   costs:{confirmed_micro_usd:Number(counts.confirmed),reserved_micro_usd:Number(counts.reserved),terminal_reserved_micro_usd:Number(counts.terminal)},
-  request:idempotency_key&&run.request?.actor_user_id===args.actor_user_id?{idempotency_key,receipt:run.request}:null};
+  request:idempotency_key&&run.request?.actor_user_id===args.actor_user_id?{idempotency_key,receipt:run.request}:null,
+  renewal:await readSignalWorkspaceIncrementalEditorialRenewalWithQueryableV1(c,args)};
 }
 /** Current authority is checked, while expired/revoked grant receipts and costs remain readable. */
 export async function loadSignalWorkspaceIncrementalEditorialStatusV1(args:Omit<Scope,'execution_id'>&{execution_id?:string;idempotency_key?:string}){

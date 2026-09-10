@@ -64,3 +64,5 @@ export * from "./signal-workspace-incremental-editorial-preparation";
 
 export * from "./signal-workspace-incremental-editorial-admission-queue";
 export * from "./signal-workspace-incremental-editorial-status";
+
+export * from "./signal-workspace-incremental-editorial-renewal";

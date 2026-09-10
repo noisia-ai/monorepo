@@ -2840,7 +2840,12 @@
           "recover": "Recuperar resultados guardados",
           "pendingRetry": "Comprobando la solicitud de recuperación de esta interpretación. No se iniciará otra mientras se confirma.",
           "catalogSaved": "Catálogo guardado: {count, plural, one {# Topic disponible} other {# Topics disponibles}}, incluidos los existentes. La cobertura de Signal se confirma por separado.",
-          "details": "Detalles de interpretación y costos"
+          "details": "Detalles de interpretación y costos",
+          "renewBody": "Continúa los {count, plural, one {# grupo pendiente} other {# grupos pendientes}} de esta misma interpretación con {model}. Los resultados pagados se conservan; el máximo adicional no aumenta el tope original.",
+          "renewCap": "Máximo adicional para continuar (hasta {amount})",
+          "renew": "Autorizar y continuar",
+          "pendingRenew": "Confirmando la continuación de esta misma interpretación: máximo adicional {amount}, hasta {expiry} ({zone}). Se conserva esta solicitud hasta conocer su resultado.",
+          "renewLimits": "Tope original de esta interpretación: {run}. Tope diario: {daily} ({date}, {zone})."
         }
       },
       "preparation": {

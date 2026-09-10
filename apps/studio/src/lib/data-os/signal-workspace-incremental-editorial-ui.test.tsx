@@ -57,8 +57,24 @@ function withAdmission(patch: Partial<NonNullable<WorkspaceIncrementalEditorial[
   return { ...status, incremental_editorial: { ...state, admission: { ...state.admission!, ...patch } } };
 }
 
+const renewal: NonNullable<typeof execution.renewal> = {
+  execution_id: owner, is_current: true, can_renew: true, blocked_reason: null,
+  expected_admission_operation_id: other, budget_actor_user_id: other, budget_timezone: "America/Mexico_City", budget_date: "2026-09-09",
+  maximum_admission_not_after: "2026-09-10T05:30:00.000Z", run_cap_micro_usd: 2_000_000, daily_cap_micro_usd: 8_000_000,
+  ...execution.costs, maximum_grant_micro_usd: 1_500_000
+};
+const renew: WorkspaceIncrementalEditorialRequest = { action: "renew_incremental_editorial", run_id: owner,
+  expected_admission_operation_id: other, grant_cap_micro_usd: 1_000_000, admission_not_after: renewal.maximum_admission_not_after };
+function withRenewal(patch: Partial<typeof renewal> = {}, runPatch: Partial<typeof execution> = {}): WorkspaceAnalysisStatus {
+  return { ...status, incremental_editorial: { ...state, preparation: { ...state.preparation!, can_prepare: false },
+    admission: { ...state.admission!, can_authorize: false, operation: { execution_id: owner, status: "failed", is_current: true,
+      can_revoke: false, requires_authorization: true, receipt } },
+    execution: { ...execution, error_code: "workspace_engine_interpretation_daily_authority_expired", can_retry: false,
+      recorded_recovery_available: false, renewal: { ...renewal, ...patch }, ...runPatch } } };
+}
+
 test("closed requests accept only server CAS and explicit cap/deadline, never source refs or budget actor", () => {
-  for (const body of [prepare, begin, revoke, retry]) {
+  for (const body of [prepare, begin, revoke, retry, renew]) {
     assert.equal(validWorkspaceIncrementalEditorialRequest(body), true);
     assert.deepEqual(parsePendingWorkspaceAnalysis(intent(body), id, status.request_scope), intent(body));
     for (const extra of [{ actor_user_id: other }, { budget_actor_user_id: other }, { configuration: {} }, { refs: [] }, { census: {} }, { automatic: true }])
@@ -233,4 +249,91 @@ for (const locale of ["es-MX", "en-US"]) test(`${locale}: execution keeps progre
   assert.doesNotMatch(unknown, locale === "es-MX" ? /Recuperar resultados guardados/ : /Recover saved results/);
   const noDispatch = render(withExecution({ status: "queued", dispatch: null, can_retry: false, requires_authorization: false }));
   assert.match(noDispatch, locale === "es-MX" ? /no hay una entrega activa confirmada/ : /no active delivery is confirmed/);
+});
+
+test("renewal uses only current owner CAS and server remaining cap; never numeric or initial admission maxima", () => {
+  assert.equal(validWorkspaceAnalysisStatus(withRenewal()), true);
+  assert.equal(workspaceIncrementalEditorialCanSubmit(withRenewal(), renew), true);
+  for (const patch of [{ can_renew: false }, { is_current: false }, { maximum_grant_micro_usd: 999_999 }])
+    assert.equal(workspaceIncrementalEditorialCanSubmit(withRenewal(patch), renew), false);
+  for (const patch of [{ is_current: false }, { has_pending_work: true }, { has_unresolved_call: true }, { status: "running" },
+    { status: "ready" }, { recorded_recovery_available: true }, { interpreted_units: 3 }])
+    assert.equal(workspaceIncrementalEditorialCanSubmit(withRenewal({}, patch), renew), false);
+  for (const body of [{ ...renew, run_id: id }, { ...renew, expected_admission_operation_id: id }, { ...renew, grant_cap_micro_usd: 2_000_000 },
+    { ...renew, grant_cap_micro_usd: 0 }, { ...renew, admission_not_after: deadline }, { ...renew, admission_not_after: "2020-01-01T00:00:00.000Z" }])
+    assert.equal(workspaceIncrementalEditorialCanSubmit(withRenewal(), body), false);
+  const current = withRenewal();
+  assert.equal(workspaceIncrementalEditorialCanSubmit({ ...current, can_execute: false }, renew), false);
+  assert.equal(workspaceIncrementalEditorialCanSubmit({ ...current, incremental_editorial: { ...current.incremental_editorial!,
+    admission: { ...current.incremental_editorial!.admission!, provider_available: false } } }, renew), false);
+  for (const patch of [{ grant_cap_micro_usd: "1" }, { grant_cap_micro_usd: 0.1 }, { grant_cap_micro_usd: -1 },
+    { provider_available: true }, { model: "claude-sonnet-4-6" }, { expected_admission_operation_id: null }])
+    assert.equal(validWorkspaceIncrementalEditorialRequest({ ...renew, ...patch }), false);
+});
+test("renewal decoder rejects mismatched identity and fabricated limits; legacy status without renewal stays readable", () => {
+  assert.equal(validWorkspaceAnalysisStatus(withExecution()), true);
+  for (const patch of [{ execution_id: id }, { maximum_grant_micro_usd: -1 }, { expected_admission_operation_id: "bad" },
+    { budget_timezone: "fake-zone" }, { terminal_reserved_micro_usd: 40_001 }])
+    assert.equal(validWorkspaceAnalysisStatus(withRenewal(patch)), false);
+});
+test("renewed receipt closes original owner/CAS/cap/date/key after changed source, expired deadline or another failed attempt", () => {
+  const current = withRenewal({ can_renew: false, is_current: false }, { is_current: false });
+  const accepted = { ...current, observed_at: "2026-09-11T12:00:00.000001Z", incremental_editorial: { ...current.incremental_editorial!,
+    admission: { ...current.incremental_editorial!.admission!, numeric_execution_id: other, is_current: false, request: {
+      idempotency_key: intent(renew).key, receipt: { ...receipt, prior_admission_operation_id: other,
+        grant_cap_micro_usd: renew.grant_cap_micro_usd, admission_not_after: renew.admission_not_after }
+    } } } };
+  assert.equal(validWorkspaceAnalysisStatus(accepted), true);
+  assert.equal(workspaceIncrementalEditorialRequestConfirmed(accepted, intent({ ...renew, run_id: owner.toUpperCase(), expected_admission_operation_id: other.toUpperCase() })), true);
+  assert.equal(workspaceAnalysisCanReplay(accepted, intent(renew)), false);
+  for (const candidate of [intent({ ...renew, run_id: id }), intent({ ...renew, expected_admission_operation_id: id }),
+    intent({ ...renew, grant_cap_micro_usd: 1 }), intent({ ...renew, admission_not_after: deadline }), { ...intent(renew), key: "other-key" },
+    { ...intent(renew), workspace_id: other }, { ...intent(renew), request_scope: "other-actor" }])
+    assert.equal(workspaceIncrementalEditorialRequestConfirmed(accepted, candidate), false);
+  const pending = intent(renew);
+  assert.equal(workspaceAnalysisCanReplay({ ...current, observed_at: accepted.observed_at }, pending), true);
+  assert.deepEqual(parsePendingWorkspaceAnalysis(JSON.parse(JSON.stringify(pending)), id, status.request_scope), pending);
+  assert.equal(workspaceAnalysisCanReplay({ ...current, can_execute: false }, pending), false);
+});
+for (const locale of ["es-MX", "en-US"]) test(`${locale}: renewal uses compact existing confirmation and prioritizes paid recovery without another grant`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  let posts = 0;
+  const render = (value: WorkspaceAnalysisStatus) => renderToStaticMarkup(<NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">
+    <WorkspaceIncrementalEditorialControls status={value} canSubmit canRevoke={false} submitting={false} canReplay={false}
+      onReplay={async () => { posts++; }} onSubmit={async () => { posts++; }} />
+  </NextIntlClientProvider>);
+  const html = render(withRenewal());
+  assert.match(html, /value="1.5"/); assert.doesNotMatch(html, /value="6.5"/);
+  assert.match(html, locale === "es-MX" ? /2 grupos pendientes/ : /2 pending groups/);
+  assert.match(html, locale === "es-MX" ? /Autorizar y continuar/ : /Authorize and continue/);
+  assert.match(html, /America\/Mexico_City/);
+  assert.match(html, /0[.,]12/); assert.match(html, /0[.,]04/); assert.match(html, /0[.,]01/);
+  assert.doesNotMatch(html, /<details[^>]*open/);
+  assert.equal((html.match(/<input /g) ?? []).length, 1);
+  const recovery = withRenewal({}, { can_retry: true, recorded_recovery_available: true });
+  recovery.incremental_editorial!.admission!.provider_available = false;
+  const saved = render(recovery);
+  assert.match(saved, locale === "es-MX" ? /Recuperar resultados guardados/ : /Recover saved results/);
+  assert.doesNotMatch(saved, locale === "es-MX" ? /Autorizar y continuar|Hace falta otro permiso/ : /Authorize and continue|Another spending authorization/);
+  assert.doesNotMatch(saved, /<input /);
+  assert.equal(workspaceIncrementalEditorialCanSubmit(recovery, retry), true);
+  assert.equal(posts, 0);
+});
+
+for (const locale of ["es-MX", "en-US"]) test(`${locale}: unavailable renewal explains server reason without hiding paid recovery`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const render = (value: WorkspaceAnalysisStatus) => renderToStaticMarkup(<NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">
+    <WorkspaceIncrementalEditorialControls status={value} canSubmit canRevoke={false} submitting={false} canReplay={false}
+      onReplay={async () => {}} onSubmit={async () => {}} />
+  </NextIntlClientProvider>);
+  const copy = messages.AdminWorkspace.topics.analysis.incrementalEditorial;
+  for (const [reason, key] of [["cap_exceeded", "budgetUnavailable"], ["forbidden", "permission"], ["source_stale", "changed"]] as const) {
+    const html = render(withRenewal({ can_renew: false, blocked_reason: `workspace_incremental_editorial_${reason}` }));
+    assert.ok(html.includes(copy[key]));
+    assert.doesNotMatch(html, locale === "es-MX" ? /Autorizar y continuar/ : /Authorize and continue/);
+  }
+  const stale = render(withRenewal({ can_renew: false, blocked_reason: "workspace_incremental_editorial_source_stale" }, { is_current: false }));
+  assert.equal(stale.split(copy.changed).length - 1, 1);
+  const saved = render(withRenewal({ can_renew: false, blocked_reason: "workspace_incremental_editorial_cap_exceeded" }, { recorded_recovery_available: true, can_retry: true }));
+  assert.ok(!saved.includes(copy.budgetUnavailable));
 });

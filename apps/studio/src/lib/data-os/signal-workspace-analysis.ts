@@ -7,6 +7,7 @@ import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceInterpretationAdmissionV1, authorizeSignalWorkspaceInterpretationAdmissionV1, revokeSignalWorkspaceInterpretationAdmissionV1,
   loadSignalWorkspaceIncrementalEditorialPreparationV1, requestSignalWorkspaceIncrementalEditorialPreparationV1,
   loadSignalWorkspaceIncrementalEditorialAdmissionV1, beginAndEnqueueSignalWorkspaceIncrementalEditorialV1, revokeSignalWorkspaceIncrementalEditorialV1,
+  renewAndEnqueueSignalWorkspaceIncrementalEditorialV1,
   loadSignalWorkspaceIncrementalEditorialStatusV1, retrySignalWorkspaceIncrementalEditorialV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
@@ -53,7 +54,9 @@ export function workspaceAnalysisAdmissionProviderAvailableV1(env: Readonly<Reco
   return env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY);
 }
 export function workspaceIncrementalEditorialExecutionViewV1(run: SignalWorkspaceIncrementalEditorialStatusV1 | null, providerAvailable: boolean) {
-  return run ? { ...run, can_retry: run.can_retry && (providerAvailable || run.recorded_recovery_available) } : null;
+  return run ? { ...run, can_retry: run.can_retry && (providerAvailable || run.recorded_recovery_available),
+    renewal: run.renewal ? { ...run.renewal, can_renew: run.renewal.can_renew && providerAvailable,
+      blocked_reason: run.renewal.can_renew && !providerAvailable ? "workspace_analysis_interpretation_unavailable" : run.renewal.blocked_reason } : run.renewal } : null;
 }
 const incrementalEditorialReaders = {
   admission: (args: Parameters<typeof loadSignalWorkspaceIncrementalEditorialAdmissionV1>[0]) => loadSignalWorkspaceIncrementalEditorialAdmissionV1(args),
@@ -157,6 +160,11 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       expected_target_unit_digest: args.body.expected_target_unit_digest, expected_history_cut_digest: args.body.expected_history_cut_digest,
       cap_micro_usd: args.body.cap_micro_usd, admission_not_after: args.body.admission_not_after, idempotency_key: args.idempotencyKey,
       provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
+  } else if (args.body.action === "renew_incremental_editorial") {
+    await renewAndEnqueueSignalWorkspaceIncrementalEditorialV1({ ...access, execution_id: args.body.run_id,
+      expected_admission_operation_id: args.body.expected_admission_operation_id,
+      grant_cap_micro_usd: args.body.grant_cap_micro_usd, admission_not_after: args.body.admission_not_after,
+      idempotency_key: args.idempotencyKey, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
   } else if (args.body.action === "revoke_incremental_editorial") {
     await revokeSignalWorkspaceIncrementalEditorialV1({ ...access, execution_id: args.body.run_id,
       expected_admission_operation_id: args.body.expected_admission_operation_id, idempotency_key: args.idempotencyKey });
