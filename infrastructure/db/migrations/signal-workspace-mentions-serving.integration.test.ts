@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import pg, { type PoolClient } from "pg";
 import { writeFile } from "node:fs/promises";
 import { workspaceProjectionFixtureV1, fixtureSha, type WorkspaceProjectionCheckpointFixtureV1 } from "./signal-workspace-topic-projection.fixture";
 import { loadSignalWorkspaceMentionsV1, loadSignalWorkspaceTopicsOverviewV1, type SignalWorkspaceMentionsArgsV1 } from "../signal-workspace-topics-serving";
@@ -28,7 +29,7 @@ async function project(f: Pick<WorkspaceProjectionCheckpointFixtureV1, "database
 }
 async function read(args: SignalWorkspaceMentionsArgsV1) { const result = await loadSignalWorkspaceMentionsV1(args); assert.ok(result); return result; }
 
-test("native mentions reads the complete real generation, pages/focus/filter in scope and withholds revoked or changed text", { skip: !enabled, timeout: 90_000 }, async () => {
+test("native mentions reads the complete real generation, pages/focus/filter in scope and withholds revoked or changed text", { skip: !enabled, timeout: 90_000 }, async t => {
   const f = await workspaceProjectionFixtureV1({ migrations });
   try {
     await assert.rejects(read(f.access), /workspace_mentions_generation_unavailable/u);
@@ -41,7 +42,32 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
     const baseline = await audit();
     const overview = await loadSignalWorkspaceTopicsOverviewV1(f.access); assert.ok(overview);
     assert.equal(overview.terms.length, 0, "no selected Topic is required for global mention content");
-    const first = await read({ ...f.access, limit: 1 });
+    await f.query("SET LOCAL jit=on");
+    const statements: string[] = [], corpusPlanCosts: number[] = [];
+    const observed = { connect: async () => {
+      const client = await f.database.connect(), proxy = Object.create(client) as PoolClient;
+      proxy.query = (async (sql: string, params?: unknown[]) => {
+        statements.push(sql);
+        if (sql.includes("mention_roots AS MATERIALIZED")) {
+          const settings = (await client.query("SELECT current_setting('jit') jit,current_setting('enable_nestloop') nestloop")).rows[0]!;
+          assert.deepEqual(settings, { jit: "off", nestloop: "off" });
+          const plan = (await client.query(`EXPLAIN (FORMAT JSON) ${sql}`, params)).rows[0]!["QUERY PLAN"][0].Plan;
+          corpusPlanCosts.push(plan["Total Cost"]);
+        }
+        return client.query(sql, params);
+      }) as PoolClient["query"];
+      return proxy;
+    } };
+    const readStart = performance.now();
+    const first = await read({ ...f.access, database: observed, limit: 1 });
+    t.diagnostic(JSON.stringify({ first_read_ms: Math.round(performance.now() - readStart), corpus_plan_costs: corpusPlanCosts, entered_jit: "on" }));
+    const setting = statements.indexOf("SET LOCAL enable_nestloop=off");
+    const corpusQueries = statements.map((sql, index) => sql.includes("mention_roots AS MATERIALIZED") ? index : -1).filter(index => index >= 0);
+    assert.equal(statements.filter(sql => sql === "SET LOCAL enable_nestloop=off").length, 1);
+    const jitSetting = statements.indexOf("SET LOCAL jit=off");
+    assert.equal(statements.filter(sql => sql === "SET LOCAL jit=off").length, 1);
+    assert.equal(corpusQueries.length, 2); assert.ok(setting > 3 && jitSetting > setting && corpusQueries.every(index => index > jitSetting));
+    assert.equal(statements.at(-1), "COMMIT");
     assert.equal(first.generation_id, overview.generation_id); assert.equal(first.metric_denominator, overview.denominator);
     assert.equal(first.total_count, f.roots.length); assert.equal(first.evidence_visible_total, f.roots.length);
     assert.equal(first.withheld_evidence_count, 0); assert.equal(first.integrity_withheld_count, 0); assert.ok(first.next_cursor);
@@ -190,4 +216,28 @@ test("native mentions includes partial interpretation and fully abstained roots 
     assert.equal(list.items.every(row => row.resolution_state === "abstained"), true);
     assert.equal((await loadSignalWorkspaceTopicsOverviewV1(empty.access))!.terms.length, 0);
   } finally { await empty.cleanup(); }
+});
+
+
+test("mentions planner preferences restore both settings on commit, rollback and SQL error", { skip: !enabled }, async () => {
+  const url = new URL(process.env.DATABASE_URL!);
+  assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.port, "55439");
+  assert.match(url.pathname, /^\/noisia_(national_import_test|projection_test)_\d+$/u);
+  const client = new pg.Client({ connectionString: url.href, ssl: false }); await client.connect();
+  const settings = async () => (await client.query("SELECT current_setting('jit') jit,current_setting('enable_nestloop') nestloop")).rows[0]!;
+  const start = async () => {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await client.query("SET LOCAL enable_nestloop=off"); await client.query("SET LOCAL jit=off");
+    assert.deepEqual(await settings(), { jit: "off", nestloop: "off" });
+  };
+  try {
+    for (const nestloop of ["on", "off"] as const) for (const jit of ["on", "off"] as const) {
+      await client.query(`SET enable_nestloop=${nestloop}`); await client.query(`SET jit=${jit}`);
+      for (const ending of ["COMMIT", "ROLLBACK"] as const) {
+        await start(); await client.query(ending); assert.deepEqual(await settings(), { jit, nestloop });
+      }
+      await start(); await assert.rejects(client.query("SELECT 1/0"), /division by zero/u);
+      await client.query("ROLLBACK"); assert.deepEqual(await settings(), { jit, nestloop });
+    }
+  } finally { await client.query("ROLLBACK"); await client.end(); }
 });
