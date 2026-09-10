@@ -26,9 +26,14 @@ type ResultItem = { canonical_root_id: string; text: string; platform: string; p
   correction_updated_at: string | null; definition_revision: number };
 const EDIT_RECLASSIFICATION_CAP_MICRO_USD = 5_000;
 
-export function TopicsManager({ brandId, initial, workspaceId, initialComputation = null }: {
-  brandId: string; initial: Management; workspaceId: string; initialComputation?: WorkspaceTopicComputationStatus | null;
-}) {
+type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: string;
+  initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
+  navigation?: { dataHref: string; signalHref: string; brandOsHref?: string | null };
+};
+export function TopicsManager(props: TopicsManagerProps) {
+  return <ScopedTopicsManager key={`${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
+}
+function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation = null, navigation }: TopicsManagerProps) {
   const t = useTranslations("AdminWorkspace.topics");
   const tEvidence = useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates");
   const locale = useLocale();
@@ -61,6 +66,19 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const catalogContext = useRef({ workspaceId, data, selectedKey, creating, editorDirty, busy });
   catalogContext.current = { workspaceId, data, selectedKey, creating, editorDirty, busy };
   const progressReader = useRef<AbortController | null>(null);
+  const refreshReader = useRef<AbortController | null>(null);
+  const live = useRef(true);
+  const clearAccess = useCallback(() => {
+    progressReader.current?.abort(); refreshReader.current?.abort();
+    setData(current => ({ ...current, topics: [], discovered: { ...current.discovered, items: [] },
+      capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false } }));
+    setSelectedKey(null); setCreating(false); setEditor(emptyEditor()); setResults([]); setResultsStatus("idle");
+    setBusy(null); setFeedback({ tone: "error", text: t("errors.forbidden") });
+  }, [t]);
+  const dataHref = navigation?.dataHref ?? `/studio/brands/${encodeURIComponent(brandId)}/data`;
+  const signalHref = navigation?.signalHref ?? `/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`;
+  const processingVisible = !navigation || data.capabilities.can_execute;
+
   const visibleTopics = useMemo(() => data.topics.filter((item) => {
     if (tab === "archived" ? item.lifecycle !== "archived" : item.lifecycle === "archived") return false;
     const needle = query.trim().toLocaleLowerCase();
@@ -91,13 +109,17 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
   const [associationReceipt, setAssociationReceipt] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const response = await fetch(`/api/data-os/signal/${workspaceId}/topics`, { cache: "no-store" });
+    refreshReader.current?.abort(); const controller = new AbortController(); refreshReader.current = controller;
+    const response = await fetch(`/api/data-os/signal/${workspaceId}/topics`, { cache: "no-store", signal: controller.signal });
+    if (!live.current || controller.signal.aborted) throw new Error("catalog_refresh_deferred");
+    if ([401, 403, 404].includes(response.status)) { clearAccess(); throw new Error(t("errors.forbidden")); }
     if (!response.ok) throw new Error(t("errors.load"));
     const next = await response.json() as Management;
+    if (!live.current || controller.signal.aborted || next.workspace.id !== workspaceId) throw new Error("catalog_refresh_deferred");
     setData(next);
     if (selectedKey && !next.topics.some((item) => item.term_key === selectedKey)) setSelectedKey(next.topics[0]?.term_key ?? null);
     return next;
-  }, [selectedKey, t, workspaceId]);
+  }, [clearAccess, selectedKey, t, workspaceId]);
 
   // Progressive receipt refreshes never replace unsaved edits or a catalog saved while the read was in flight.
   const refreshAvailableCatalog = useCallback(async (signal: AbortSignal) => {
@@ -111,9 +133,7 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
       const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || catalogContext.current.workspaceId !== workspaceId) throw new Error("catalog_refresh_deferred");
       if ([401, 403, 404].includes(response.status)) {
-        setData(current => ({ ...current, topics: [], discovered: { ...current.discovered, items: [] },
-          capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false } }));
-        setSelectedKey(null); setCreating(false); setEditor(emptyEditor()); setResults([]); setResultsStatus("idle");
+        clearAccess();
         throw new Error(loadError);
       }
       if (!response.ok) throw new Error(loadError);
@@ -138,8 +158,8 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
       signal.removeEventListener("abort", abort);
       if (progressReader.current === controller) progressReader.current = null;
     }
-  }, [t, workspaceId]);
-  useEffect(() => () => { progressReader.current?.abort(); progressReader.current = null; }, [workspaceId]);
+  }, [clearAccess, t, workspaceId]);
+  useEffect(() => { live.current = true; return () => { live.current = false; progressReader.current?.abort(); refreshReader.current?.abort(); }; }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -262,18 +282,19 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
 
   async function act(name: string, action: () => Promise<void>, success: string) {
     setBusy(name); setFeedback(null);
-    try { await action(); setFeedback({ tone: "ok", text: success }); }
-    catch (error) { setFeedback({ tone: "error", text: requestErrorMessage(t, error) }); }
+    try { await action(); if (live.current) setFeedback({ tone: "ok", text: success }); }
+    catch (error) { if (!live.current) return; if (error instanceof TopicRequestError && error.code === "topic_catalog_forbidden") clearAccess(); else setFeedback({ tone: "error", text: requestErrorMessage(t, error) }); }
     finally { setBusy(null); }
   }
 
+  if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("errors.forbidden")}</p>;
   return <div className="topics-manager">
     {!workspaceSearch && data.readiness.state !== "ready" ? <section className="topics-manager__preparation">
       <div><strong>{t(`readiness.${data.readiness.state}.title`)}</strong><p>{t(`readiness.${data.readiness.state}.body`)}</p></div>
       {data.readiness.next_action === "prepare_mentions"
-        ? <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link>
+        ? <Link className="admin-button" href={`${dataHref}#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link>
         : data.readiness.next_action === "import_mentions"
-          ? <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/data`} prefetch={false}>{t("actions.import")}</Link> : null}
+          ? <Link className="admin-button" href={dataHref} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
     <section className="admin-section topics-manager__toolbar">
@@ -301,10 +322,10 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
       }} type="button"><Plus aria-hidden size={15} />{t("actions.create")}</button>
     </section>
 
-    <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
+    {processingVisible ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
       disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog} onContextPrepared={computation.read}
-      onAssociationsAvailable={setAssociationReceipt} signalHref={`/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`} />
+      onAssociationsAvailable={setAssociationReceipt} signalHref={signalHref} /> : null}
 
     {running ? <div className="topics-manager__progress" role="status">
       <span>{data.execution?.intent === "publish" ? t("progress.publishing") : t("progress.searching")}</span>
@@ -406,19 +427,19 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
               : selected ? <><button className="admin-button" disabled={!canEdit || busy !== null || !editorDirty || !editor.label.trim() || !editor.definition.trim()} onClick={() => void saveTopic()} type="button">
                 <FloppyDisk aria-hidden size={15} />{t("actions.save")}</button>
                 {selected.lifecycle === "archived" ? <>
-                  {!selectedIsDiscovery && legacySearch && selected.status === "failed" ? <button className="admin-button admin-button--primary"
+                  {processingVisible && !selectedIsDiscovery && legacySearch && selected.status === "failed" ? <button className="admin-button admin-button--primary"
                     disabled={!canEdit || busy !== null || Boolean(running) || editorDirty} onClick={() => { if (canExecute) void command("retry"); }} type="button">
                     <ArrowClockwise aria-hidden size={15} />{t("actions.retry")}</button> : null}
                   <button className="admin-button" disabled={!canEdit || busy !== null || Boolean(running) || editorDirty}
                     onClick={() => void command("restore")} type="button">
                     <ArrowClockwise aria-hidden size={15} />{t("actions.restore")}</button></> : <>
-                  {!selectedIsDiscovery && workspaceSearch ? <button className="admin-button admin-button--primary"
+                  {processingVisible && !selectedIsDiscovery && workspaceSearch ? <button className="admin-button admin-button--primary"
                     disabled={!computation.canStart || computation.submitting || busy !== null || editorDirty}
                     onClick={() => void computation.start()} type="button"><MagnifyingGlass aria-hidden size={15} />
                     {t(computation.pending && !computation.data?.active_run ? "computation.recover" : "actions.search")}</button>
-                    : !selectedIsDiscovery && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
+                    : processingVisible && !selectedIsDiscovery && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
                     <MagnifyingGlass aria-hidden size={15} />{data.execution?.status === "failed" ? t("actions.retry") : t("actions.search")}</button> : null}
-                  {legacySearch && selected.origin !== "workspace_discovery" && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
+                  {processingVisible && legacySearch && selected.origin !== "workspace_discovery" && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
                     disabled={!canExecute || busy !== null || Boolean(running) || !data.search_execution_id || editorDirty
                       || hasUnsupportedSignalScope} onClick={() => void command("follow")} type="button">
                     <Check aria-hidden size={15} />{t("actions.follow")}</button> : null}
@@ -427,16 +448,16 @@ export function TopicsManager({ brandId, initial, workspaceId, initialComputatio
             {!creating && !selectedIsDiscovery ? <button className="admin-button" disabled={computation.reading || computation.submitting}
               onClick={() => void computation.read()} type="button"><ArrowClockwise aria-hidden size={15} />{t("computation.refresh")}</button> : null}
           </div>
-          {!creating && selected?.origin === "workspace_discovery" && selected.lifecycle !== "archived" ? <TopicSignalControls
+          {!creating && selected && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
             definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} refreshKey={associationReceipt}
-            signalHref={`/signal/${encodeURIComponent(data.workspace.slug)}/topics-narratives`} /> : null}
+            signalHref={signalHref} onAccessDenied={clearAccess} /> : null}
           {!creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
-          {!creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
+          {processingVisible && !creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">
               {t(`computation.preflight.${computation.data.preflight.state}`, { count: computation.data.preflight.missing_prototypes ?? 0 })}
               {["missing_embeddings", "needs_preparation", "awaiting_import"].includes(computation.data.preflight.state)
-                ? <> <Link href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link></> : null}
+                ? <> <Link href={`${dataHref}#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link></> : null}
             </p> : <p className="topics-manager__cost-notice">{t("computation.readyBody")}</p>}
             {computation.data.active_run ? <div className="topics-manager__progress" role="status">
               <span>{t("computation.progress", { done: computation.data.active_run.processed_roots, total: computation.data.active_run.denominator })}</span>
@@ -561,6 +582,7 @@ async function jsonRequest(url: string, method: string, body: unknown, idempoten
   extraHeaders: Record<string, string> = {}) {
   const response = await fetch(url, { method, headers: { "Content-Type": "application/json",
     ...(idempotency ? { "Idempotency-Key": idempotency } : {}), ...extraHeaders }, body: JSON.stringify(body) });
+  if ([401, 403, 404].includes(response.status)) throw new TopicRequestError("topic_catalog_forbidden");
   const payload = await response.json().catch(() => ({})) as { message?: string; error?: string };
   if (!response.ok) throw new TopicRequestError(payload.error ?? "unknown");
   return payload;

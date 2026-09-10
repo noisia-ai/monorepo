@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import type { WorkspaceManualImportSetupV1 } from "@/lib/data-os/workspace-manual-import-setup";
@@ -10,9 +10,12 @@ import { AdminResourceSection } from "@/components/admin/AdminWorkspacePrimitive
 
 type Setup = WorkspaceManualImportSetupV1;
 
-export function SelfServiceImportManager({ brandId, workspaceId, timezone }: {
-  brandId: string; workspaceId: string; timezone: string;
-}) {
+type Props = { brandId: string; workspaceId: string; timezone: string; requestScope?: string;
+  topicsHref?: string; canImport?: boolean; canProcess?: boolean; onAccessDenied?: () => void };
+export function SelfServiceImportManager(props: Props) {
+  return props.canImport === false ? null : <ScopedImportManager key={`${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
+}
+function ScopedImportManager({ brandId, workspaceId, timezone, topicsHref, canProcess = true, onAccessDenied }: Props) {
   const t = useTranslations("AdminWorkspace.data.selfService");
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(true);
@@ -22,25 +25,44 @@ export function SelfServiceImportManager({ brandId, workspaceId, timezone }: {
   const [revision, setRevision] = useState(0);
   const [configurationRequest, setConfigurationRequest] = useState(0);
   const [category, setCategory] = useState("");
+  const alive = useRef(true), epoch = useRef(0);
+  const reader = useRef<AbortController | null>(null), writer = useRef<AbortController | null>(null);
+  const accessCallback = useRef(onAccessDenied); accessCallback.current = onAccessDenied;
+  const denied = useRef(false);
+  const clearAccess = useCallback(() => {
+    epoch.current++; denied.current = true; reader.current?.abort(); writer.current?.abort();
+    setSetup(null); setAddingSource(false); setCategory(""); setBusy(false); setLoading(false);
+    setError(t("errors.forbidden")); accessCallback.current?.();
+  }, [t]);
   const configured = setup?.configured ?? false;
   const hasPreparedSource = Boolean(setup?.sources.length);
   const endpoint = `/api/data-os/signal/${workspaceId}/imports/setup`;
 
   const load = useCallback(async () => {
+    reader.current?.abort(); const controller = new AbortController(); reader.current = controller;
+    const ticket = epoch.current;
     setLoading(true); setError(null);
     try {
-      const response = await fetch(endpoint, { cache: "no-store" });
+      const response = await fetch(endpoint, { cache: "no-store", signal: controller.signal });
+      if (!alive.current || controller.signal.aborted || ticket !== epoch.current) return;
+      if ([401, 403, 404].includes(response.status)) { clearAccess(); return; }
       if (!response.ok) throw new Error();
       const next = await response.json() as Setup;
-      setSetup(next);
+      if (!alive.current || controller.signal.aborted || ticket !== epoch.current) return;
+      if (next.contract_version !== "signal-workspace-manual-import-setup-v1" || !Array.isArray(next.sources)
+        || next.import_url !== `/api/data-os/signal/${workspaceId}/acquisition-plan/imports`) throw new Error();
+      denied.current = false; setSetup(next);
       setCategory(next.category_name ?? next.category_name_suggested ?? "");
-    } catch { setError(t("errors.load")); }
-    finally { setLoading(false); }
-  }, [endpoint, t]);
-  useEffect(() => { void load(); }, [load]);
+    } catch { if (alive.current && !controller.signal.aborted && ticket === epoch.current) setError(t("errors.load")); }
+    finally { if (alive.current && !controller.signal.aborted && ticket === epoch.current) setLoading(false); }
+  }, [clearAccess, endpoint, t, workspaceId]);
+  useEffect(() => { const fence = epoch; alive.current = true; void load(); return () => {
+    alive.current = false; fence.current++; reader.current?.abort(); writer.current?.abort();
+  }; }, [load]);
 
   async function prepare(form: FormData) {
-    if (busy) return;
+    if (busy || denied.current || !setup) return;
+    const ticket = epoch.current, controller = new AbortController(); writer.current = controller;
     setBusy(true); setError(null);
     const retentionDate = String(form.get("retention_until") ?? "").trim();
     const body = JSON.stringify({
@@ -57,19 +79,24 @@ export function SelfServiceImportManager({ brandId, workspaceId, timezone }: {
     try {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${workspaceId}:${body}`));
       const key = `manual-import-setup:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-      const response = await fetch(endpoint, { method: "POST", body, headers: {
+      if (!alive.current || ticket !== epoch.current) return;
+      const response = await fetch(endpoint, { method: "POST", body, signal: controller.signal, headers: {
         "Content-Type": "application/json", "Idempotency-Key": key
       } });
+      if (!alive.current || ticket !== epoch.current || controller.signal.aborted) return;
+      if ([401, 403, 404].includes(response.status)) { clearAccess(); return; }
       const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!alive.current || ticket !== epoch.current || controller.signal.aborted) return;
       if (!response.ok) throw new Error(payload.error ?? "unknown");
       // Re-read durable state, including after a retry of an acknowledged setup.
-      await load(); setAddingSource(false); setRevision((value) => value + 1);
+      await load(); if (!alive.current || ticket !== epoch.current) return; setAddingSource(false); setRevision((value) => value + 1);
     } catch (failure) {
+      if (!alive.current || ticket !== epoch.current || controller.signal.aborted) return;
       const code = failure instanceof Error ? failure.message : "unknown";
       setError(t(code === "forbidden" || code.includes("forbidden") ? "errors.forbidden"
         : code.includes("rights") ? "errors.rights" : code.includes("category") ? "errors.category"
           : "errors.save"));
-    } finally { setBusy(false); }
+    } finally { if (alive.current && ticket === epoch.current) setBusy(false); }
   }
 
   return <>
@@ -97,8 +124,8 @@ export function SelfServiceImportManager({ brandId, workspaceId, timezone }: {
         <button className="admin-button" onClick={() => setAddingSource(true)} type="button">{t("addSource")}</button>
       </div> : null}
     </AdminResourceSection>
-    {setup && hasPreparedSource ? <div id="brand-import-configuration"><AcquisitionPlanManager configurationRequest={configurationRequest} refreshRevision={revision} importsOnly preparedSourceKeys={setup.sources.map((source) => source.source_key)} timezone={setup.timezone || timezone} workspaceId={workspaceId} /></div> : null}
+    {setup && hasPreparedSource ? <div id="brand-import-configuration"><AcquisitionPlanManager canProcess={canProcess} onAccessDenied={clearAccess} configurationRequest={configurationRequest} refreshRevision={revision} importsOnly preparedSourceKeys={setup.sources.map((source) => source.source_key)} timezone={setup.timezone || timezone} workspaceId={workspaceId} /></div> : null}
     <div className="topics-manager__preparation"><div><strong>{t("next.title")}</strong><p>{t("next.body")}</p></div>
-      <Link className="admin-button" href={`/studio/brands/${encodeURIComponent(brandId)}/topics`} prefetch={false}>{t("next.action")}</Link></div>
+      <Link className="admin-button" href={topicsHref ?? `/studio/brands/${encodeURIComponent(brandId)}/topics`} prefetch={false}>{t("next.action")}</Link></div>
   </>;
 }

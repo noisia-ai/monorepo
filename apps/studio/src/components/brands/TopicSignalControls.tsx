@@ -7,9 +7,10 @@ import { acceptTopicSignalSelectionV1, canSelectTopicSignalV1, parseTopicSignalS
   topicSignalSelectionStorageKeyV1, shouldPollTopicSignalV1, type TopicSignalSelectionV1, type TopicSignalSelectionIntentV1
 } from "@/lib/data-os/signal-topic-selection-ui";
 
-export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null, refreshKey = null }: {
-  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null; refreshKey?: string | null;
+export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null, refreshKey = null, onAccessDenied }: {
+  workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null; refreshKey?: string | null; onAccessDenied?: () => void;
 }) {
+  const accessDenied = useRef(onAccessDenied); accessDenied.current = onAccessDenied;
   const t = useTranslations("AdminWorkspace.topics.signalSelection");
   const [data, setData] = useState<TopicSignalSelectionV1 | null>(null);
   const [pending, setPending] = useState<TopicSignalSelectionIntentV1 | null>(null);
@@ -39,7 +40,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
         { cache: "no-store", signal: controller.signal });
       if (!alive.current || run !== epoch.current) return;
       if ([401, 403, 404].includes(response.status)) {
-        clearIntent(); current.current = null; setData(null); throw new Error("forbidden");
+        clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden");
       }
       if (!response.ok) throw new Error("load");
       const body = await response.json();
@@ -54,7 +55,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
           intent.current = restored; setPending(restored);
           const recovery = await fetch(`${endpoint}?idempotency_key=${encodeURIComponent(restored.key)}`, { cache: "no-store", signal: controller.signal });
           if (!alive.current || run !== epoch.current) return;
-          if ([401, 403, 404].includes(recovery.status)) { clearIntent(); current.current = null; setData(null); throw new Error("forbidden"); }
+          if ([401, 403, 404].includes(recovery.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
           if (!recovery.ok) throw new Error("load");
           const recovered = await recovery.json();
           if (!alive.current || run !== epoch.current) return;
@@ -114,7 +115,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
       const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": value.key },
         body: JSON.stringify(value.body), signal: controller.signal });
       if (!alive.current || run !== epoch.current) return;
-      if ([401, 403, 404].includes(response.status)) { clearIntent(); current.current = null; setData(null); throw new Error("forbidden"); }
+      if ([401, 403, 404].includes(response.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
       if (!response.ok) { rejected = response.status < 500; throw new Error(response.status === 409 ? "conflict" : "save"); }
       const body = await response.json();
       if (!alive.current || run !== epoch.current) return;

@@ -18,9 +18,9 @@ async function tx<T>(database:SignalWorkspaceClassificationDatabaseV1,work:(clie
   const result=await work(client);await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
 }
-async function authorize(queryable:SignalWorkspaceProjectionQueryableV1,workspace_id:string,actor_user_id:string,execute:boolean){
+async function authorize(queryable:SignalWorkspaceProjectionQueryableV1,workspace_id:string,actor_user_id:string,select:boolean){
  const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable,workspace_id,actor_user_id});
- if(!caps.can_view||execute&&!caps.can_execute_topics)return fail('workspace_topic_selection_forbidden',403);
+ if(!caps.can_view||select&&!caps.can_select_signal)return fail('workspace_topic_selection_forbidden',403);
 }
 export async function loadSignalWorkspaceTopicSelectionWithQueryableV1(args:{queryable:SignalWorkspaceProjectionQueryableV1;workspace_id:string;actor_user_id:string;idempotency_key?:string}):Promise<SignalWorkspaceTopicSelectionStatusV1>{
  await authorize(args.queryable,args.workspace_id,args.actor_user_id,false);
@@ -48,6 +48,7 @@ export async function selectSignalWorkspaceTopicV1(args:{database:SignalWorkspac
  return tx(args.database,async client=>{
   await authorize(client,args.workspace_id,args.actor_user_id,true);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
+  await authorize(client,args.workspace_id,args.actor_user_id,true);
   const prior=(await client.query<{id:string;actor_user_id:string;request_digest:string;action:string;selection_result:{revision:number;selection:SignalWorkspaceTopicSelectionV1}}>(`
    SELECT id,actor_user_id,request_digest,action,selection_result FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2`,[args.workspace_id,args.idempotency_key])).rows[0];
   if(prior){if(prior.action!=='select_signal'||prior.actor_user_id!==args.actor_user_id||prior.request_digest!==request_digest)return fail('workspace_topic_selection_idempotency_conflict');

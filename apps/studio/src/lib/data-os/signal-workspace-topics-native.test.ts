@@ -21,11 +21,12 @@ const state: SignalWorkspaceTopicSelectionStatusV1 = { contract_version: "signal
   observed_at: "2026-09-08T00:00:00.000001Z", revision: 2, items: { delivery: selection }, request_receipt: null };
 const overview = { workspace_id: "workspace", is_current: true, is_processing: false, selection_revision: 2, generation_id: "new-generation",
   terms: [{ term_key: "delivery", definition_digest: hash, definition_revision: 1, mention_count: 8 }] } as SignalWorkspaceTopicsOverviewV1;
-const caps: SignalWorkspaceCapabilitiesV1 = { can_view: true, can_edit_topics: true, can_import_mentions: true, can_execute_topics: true, can_adopt_topics: true };
+const caps: SignalWorkspaceCapabilitiesV1 = { can_view: true, can_edit_topics: true, can_import_mentions: true, can_execute_topics: true, can_adopt_topics: true, can_select_signal: true };
 test("selection survives a newer compatible generation without becoming a paid action or model approval", () => {
   const result = nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, caps);
   assert.equal(result.selected, true); assert.equal(result.is_current, true); assert.equal(result.generation_id, "new-generation"); assert.equal(result.mention_count, 8);
-  assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, { ...caps, can_execute_topics: false }).can_select, false);
+  assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, { ...caps, can_execute_topics: false, can_adopt_topics: false }).can_select, true);
+  assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, { ...caps, can_select_signal: false }).can_select, false);
 });
 test("changed meaning or stale generation keeps selection removable but not falsely current", () => {
   const edited = { ...overview, terms: [{ ...overview.terms[0]!, definition_revision: 2 }] };

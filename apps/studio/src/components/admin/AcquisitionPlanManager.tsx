@@ -197,7 +197,9 @@ export function AcquisitionPlanManager({
   importsOnly = false,
   preparedSourceKeys,
   refreshRevision = 0,
-  configurationRequest = 0
+  configurationRequest = 0,
+  onAccessDenied,
+  canProcess = true
 }: {
   timezone: string;
   workspaceId: string;
@@ -205,6 +207,8 @@ export function AcquisitionPlanManager({
   preparedSourceKeys?: string[];
   refreshRevision?: number;
   configurationRequest?: number;
+  onAccessDenied?: () => void;
+  canProcess?: boolean;
 }) {
   const t = useTranslations("AdminWorkspace.data.acquisition");
   const common = useTranslations("AdminWorkspace");
@@ -240,6 +244,23 @@ export function AcquisitionPlanManager({
   const requestRef = useRef<AbortController | null>(null);
   const previousRefreshRevision = useRef(refreshRevision);
   const uploadRef = useRef<XMLHttpRequest | null>(null);
+  const live = useRef(true), revoked = useRef(false), deniedCallback = useRef(onAccessDenied);
+  deniedCallback.current = onAccessDenied;
+  const [accessDenied, setAccessDenied] = useState(false);
+  const scopedFetch = useCallback<typeof fetch>(async (url, options) => {
+    if (!live.current || revoked.current) throw new DOMException("Access withdrawn", "AbortError");
+    const response = await fetch(url, options);
+    if (!live.current || revoked.current || options?.signal?.aborted) throw new DOMException("Superseded", "AbortError");
+    if ([401, 403, 404].includes(response.status)) {
+      revoked.current = true; uploadCancelled.current = true; uploadRef.current?.abort(); requestRef.current?.abort(); historyController.current?.abort();
+      setPlan(null); setBrief(null); setConnectors([]); setDrawer(null); setImports(null); setImportResult(null); setImportSummary(null); setQueryDetail(null);
+      setAccessDenied(true); deniedCallback.current?.();
+      throw new DOMException("Access withdrawn", "AbortError");
+    }
+    return response;
+  }, []);
+  const postJson = useCallback(<T,>(url: string, body: unknown, key = crypto.randomUUID()) => requestJson<T>(url, body, key, scopedFetch), [scopedFetch]);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const planLoadError = t("errors.load"), sourceLoadError = t("errors.sources"), briefLoadError = t("errors.briefLoad"), statusReadError = t("errors.statusRead");
 
   const loadState = useCallback(async (quiet = false) => {
@@ -250,10 +271,10 @@ export function AcquisitionPlanManager({
     if (!quiet) setError(null);
     try {
       const [planResponse,sourceResponse] = await Promise.all([
-        fetch(`/api/data-os/signal/${workspaceId}/acquisition-plan`,{
+        scopedFetch(`/api/data-os/signal/${workspaceId}/acquisition-plan`,{
           cache: "no-store",signal: controller.signal
         }),
-        fetch(`/api/data-os/signal/${workspaceId}/sources`,{
+        scopedFetch(`/api/data-os/signal/${workspaceId}/sources`,{
           cache: "no-store",signal: controller.signal
         })
       ]);
@@ -261,16 +282,18 @@ export function AcquisitionPlanManager({
       const sourcePayload = await sourceResponse.json() as { sources?: Connector[];message?: string };
       if (!planResponse.ok) throw new Error(planPayload.message ?? planLoadError);
       if (!sourceResponse.ok) throw new Error(sourcePayload.message ?? sourceLoadError);
+      if (controller.signal.aborted || revoked.current) return;
       setPlan(planPayload);
       setConnectors((sourcePayload.sources ?? []).filter((source) => (
         source.source_contract_version === "signal-data-source-connector-v1"
       )));
       if(planPayload.draft_plan){
-        const briefResponse=await fetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/brief`,{
+        const briefResponse=await scopedFetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/brief`,{
           cache:"no-store",signal:controller.signal
         });
         const briefPayload=await briefResponse.json() as AcquisitionBriefContext&{message?:string};
         if(!briefResponse.ok)throw new Error(briefPayload.message??briefLoadError);
+        if (controller.signal.aborted || revoked.current) return;
         setBrief(briefPayload);
       }else setBrief(null);
     } catch (loadError) {
@@ -278,11 +301,11 @@ export function AcquisitionPlanManager({
     } finally {
       if (!quiet) setLoading(false);
     }
-  },[planLoadError,sourceLoadError,briefLoadError,workspaceId]);
+  },[planLoadError,sourceLoadError,briefLoadError,scopedFetch,workspaceId]);
 
   useEffect(() => {
     void loadState();
-    return () => { requestRef.current?.abort(); };
+  return () => { requestRef.current?.abort(); };
   },[loadState]);
 
   // Transfer ownership lasts until this component unmounts. Read refreshes and
@@ -307,7 +330,7 @@ export function AcquisitionPlanManager({
     const controller = new AbortController(); let timer: number | null = null;
     const load = async () => {
       try {
-        const response = await fetch(`${importEndpoint}?limit=1`, { cache: "no-store", signal: controller.signal });
+        const response = await scopedFetch(`${importEndpoint}?limit=1`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error();
         const payload = await response.json() as ImportHistoryPayload;
         if (controller.signal.aborted) return;
@@ -321,7 +344,7 @@ export function AcquisitionPlanManager({
     };
     void load();
     return () => { controller.abort(); if (timer !== null) window.clearTimeout(timer); };
-  }, [historyRevision, importEndpoint, router]);
+  }, [historyRevision, importEndpoint, router, scopedFetch]);
 
   useEffect(() => {
     if (!historySlot) return;
@@ -331,7 +354,7 @@ export function AcquisitionPlanManager({
     const load = async () => {
       try {
         const params = new URLSearchParams({ slot_key: historySlot, limit: "50" });
-        const response = await fetch(`${importEndpoint}?${params}`, { cache: "no-store", signal: controller.signal });
+        const response = await scopedFetch(`${importEndpoint}?${params}`, { cache: "no-store", signal: controller.signal });
         const payload = await response.json() as ImportHistoryPayload;
         if (!response.ok) throw new Error(t("errors.history"));
         if (controller.signal.aborted) return;
@@ -344,12 +367,12 @@ export function AcquisitionPlanManager({
     };
     void load();
     return () => { controller.abort(); if (timer !== null) window.clearTimeout(timer); };
-  }, [historySlot, historyRevision, importEndpoint, t]);
+  }, [historySlot, historyRevision, importEndpoint, scopedFetch, t]);
 
   useEffect(() => {
     if (drawer?.mode !== "import" || !monitorImportId) return;
     const controller = new AbortController();
-    void pollWorkspaceImport<ImportItem>({ url: `${importEndpoint}/${monitorImportId}`, importId: monitorImportId,
+    void pollWorkspaceImport<ImportItem>({ transport: scopedFetch, url: `${importEndpoint}/${monitorImportId}`, importId: monitorImportId,
       signal: controller.signal, onProgress: (next) => setImportResult((current) => replaceMonitoredImport(current, next)) })
       .then(async (terminal) => {
         if (controller.signal.aborted) return;
@@ -360,7 +383,7 @@ export function AcquisitionPlanManager({
         } });
       }).catch(() => { if (!controller.signal.aborted) setError(statusReadError); });
     return () => controller.abort();
-  }, [drawer?.mode, monitorImportId, monitorRevision, importEndpoint, loadState, router, statusReadError]);
+  }, [drawer?.mode, monitorImportId, monitorRevision, importEndpoint, loadState, router, scopedFetch, statusReadError]);
 
   const slotViews = useMemo(() => buildSlotViews(plan?.slots ?? [], plan?.current_slots),[plan?.slots, plan?.current_slots]);
   const activeConnectors = useMemo(
@@ -414,7 +437,7 @@ export function AcquisitionPlanManager({
     setBusy("generation-preflight");setError(null);setGenerationConfirmed(false);
     try{
       const params=new URLSearchParams({source_key:sourceKey,hard_cap_usd:hardCap.trim()});
-      const response=await fetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/query-generation?${params}`,{cache:"no-store"});
+      const response=await scopedFetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/query-generation?${params}`,{cache:"no-store"});
       const payload=await response.json() as QueryGenerationPreflight&{message?:string};
       if(!response.ok)throw new Error(payload.message??t("errors.generationPreflight"));
       setGenerationPreflight(payload);
@@ -423,6 +446,7 @@ export function AcquisitionPlanManager({
   };
 
   const openGeneration = async () => {
+    if (!canProcess) return;
     let next=plan;
     if(!plan?.draft_plan)next=await reconcile();
     if(!next?.draft_plan)return;
@@ -433,7 +457,7 @@ export function AcquisitionPlanManager({
   };
 
   const loadBrief = async () => {
-    const response=await fetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/brief`,{cache:"no-store"});
+    const response=await scopedFetch(`/api/data-os/signal/${workspaceId}/acquisition-plan/brief`,{cache:"no-store"});
     const payload=await response.json() as AcquisitionBriefContext&{message?:string};
     if(!response.ok)throw new Error(payload.message??t("errors.briefLoad"));
     setBrief(payload);return payload;
@@ -481,6 +505,7 @@ export function AcquisitionPlanManager({
   };
 
   const generateQueries = async () => {
+    if (!canProcess) return;
     if(!generationPreflight||!generationConfirmed)return;
     setBusy("generate");setError(null);
     try{
@@ -500,8 +525,8 @@ export function AcquisitionPlanManager({
       const path=(version:number)=>`/api/data-os/signal/${workspaceId}/acquisition-plan/slots/${encodeURIComponent(slot.slotKey)}/query-versions/${version}`;
       const previous=activeQuery(slot.current);
       const [detailResponse,previousResponse]=await Promise.all([
-        fetch(path(query.version),{cache:"no-store"}),
-        previous&&previous.version!==query.version?fetch(path(previous.version),{cache:"no-store"}):Promise.resolve(null)
+        scopedFetch(path(query.version),{cache:"no-store"}),
+        previous&&previous.version!==query.version?scopedFetch(path(previous.version),{cache:"no-store"}):Promise.resolve(null)
       ]);
       const detail=await detailResponse.json() as QueryDetail&{message?:string};
       if(!detailResponse.ok)throw new Error(detail.message??t("errors.queryDetail"));
@@ -688,13 +713,13 @@ export function AcquisitionPlanManager({
       )),uploadRef);
       if (uploadCancelled.current) throw new DOMException("Upload aborted", "AbortError");
       transferComplete = true; setUploadTransferActive(false);
-      const finalized = await confirmWorkspaceImportUpload<ImportItem>({ url: created.polling_url, importId: created.import.id });
+      const finalized = await confirmWorkspaceImportUpload<ImportItem>({ transport: scopedFetch, url: created.polling_url, importId: created.import.id });
       setImportResult((current) => replaceMonitoredImport(current, finalized));
       setMonitorImportId(created.import.id);
       setHistoryRevision((value) => value + 1);
     } catch (operationError) {
       if(pollingUrl && trackedImportId && !transferComplete) {
-        const failed = await reportWorkspaceImportUploadFailure<ImportItem>({ url: pollingUrl, importId: trackedImportId,
+        const failed = await reportWorkspaceImportUploadFailure<ImportItem>({ transport: scopedFetch, url: pollingUrl, importId: trackedImportId,
           key, code: isAbort(operationError) ? "upload_aborted" : "upload_transport_failed" }).catch(() => null);
         if (failed) setImportResult((current) => replaceMonitoredImport(current, failed));
         setMonitorImportId(trackedImportId);
@@ -716,7 +741,7 @@ export function AcquisitionPlanManager({
     const signal = historyController.current?.signal;
     try {
       const params = new URLSearchParams({ slot_key: historySlot, cursor: historyCursor, limit: "50" });
-      const response = await fetch(`${importEndpoint}?${params}`, { cache: "no-store", signal });
+      const response = await scopedFetch(`${importEndpoint}?${params}`, { cache: "no-store", signal });
       if (!response.ok) throw new Error();
       const payload = await response.json() as ImportHistoryPayload;
       if (signal?.aborted) return;
@@ -737,7 +762,7 @@ export function AcquisitionPlanManager({
     if (canConfirmImportUpload(item)) {
       setBusy(`finalize:${item.id}`);
       try {
-        const result = await confirmWorkspaceImportUpload<ImportItem>({
+        const result = await confirmWorkspaceImportUpload<ImportItem>({ transport: scopedFetch,
           url: `${importEndpoint}/${item.id}`, importId: item.id
         });
         setImportResult((current) => replaceMonitoredImport(current, result));
@@ -775,18 +800,19 @@ export function AcquisitionPlanManager({
   const configuredSlots=slotViews.filter((slot)=>activeQuery(slot.draft??slot.current)).length;
   const blockers=plan?.state==="current"?[]:plan?.readiness.blockers??[];
 
+  if (accessDenied) return <p role="alert" className="workspace-form__error">{common("data.selfService.errors.forbidden")}</p>;
   return <>
     <AdminResourceSection
       actions={<div className="admin-workspace-actions">
         <button aria-label={t("actions.refresh")} className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>{void loadState();setHistoryRevision((value) => value + 1);}} type="button">
           <ArrowsClockwise aria-hidden size={14}/>{t("actions.refresh")}
         </button>
-        {importsOnly ? <button className="admin-button" disabled={Boolean(busy)||!activeConnectors.length} onClick={() => void openGeneration()} type="button"><MagicWand aria-hidden size={15}/>{t("manualImport.prepareQueries")}</button> : null}
+        {importsOnly && canProcess ? <button className="admin-button" disabled={Boolean(busy)||!activeConnectors.length} onClick={() => void openGeneration()} type="button"><MagicWand aria-hidden size={15}/>{t("manualImport.prepareQueries")}</button> : null}
         {importsOnly ? <button className="admin-button" onClick={() => setShowConfiguration((value) => !value)} type="button">{t("manualImport.configuration")}</button> : null}
         {showConfiguration ? <><button className="admin-button" disabled={Boolean(busy)} onClick={()=>void reconcile()} type="button">
           {plan?.draft_plan?t("actions.sync"):plan?.current_plan?t("actions.newDraft"):t("actions.prepare")}
         </button>
-        {plan?.draft_plan?<button className="admin-button" disabled={Boolean(busy)||!activeConnectors.length} onClick={()=>void openGeneration()} type="button">
+        {canProcess && plan?.draft_plan?<button className="admin-button" disabled={Boolean(busy)||!activeConnectors.length} onClick={()=>void openGeneration()} type="button">
           <MagicWand aria-hidden size={15}/>{configuredSlots?t("actions.regenerate"):t("actions.generate")}
         </button>:null}
         {plan?.draft_plan?<button className="admin-button admin-button--primary" disabled={!plan.readiness.ready_to_promote||Boolean(busy)} onClick={()=>setDrawer({mode:"promote"})} type="button">
@@ -883,7 +909,7 @@ export function AcquisitionPlanManager({
       <AcquisitionBriefForm brief={brief} busy={busy==="brief"} error={error} locale={locale} onSubmit={(form)=>void saveBrief(form)} t={t}/>
     </WorkspaceDrawer>:null}
 
-    {drawer?.mode==="generate"?<WorkspaceDrawer ariaLabel={t("drawers.generate.title")} closeLabel={common("actions.close")} eyebrow={t("eyebrow")} onClose={closeDrawer} title={t("drawers.generate.title")}>
+    {canProcess && drawer?.mode==="generate"?<WorkspaceDrawer ariaLabel={t("drawers.generate.title")} closeLabel={common("actions.close")} eyebrow={t("eyebrow")} onClose={closeDrawer} title={t("drawers.generate.title")}>
       <div className="semantic-resolution-flight__body admin-query-generation">
         <p className="semantic-resolution-flight__intro">{t("drawers.generate.body")}</p>
         <div className="admin-query-generation__controls">
@@ -1075,8 +1101,8 @@ function observedSummary(item:ImportItem,locale:string,
 function isAbort(error:unknown){return error instanceof DOMException&&error.name==="AbortError";}
 function message(error:unknown,fallback:string){return error instanceof Error&&error.message?error.message:fallback;}
 
-async function postJson<T=unknown>(url:string,body:unknown,key=crypto.randomUUID()):Promise<T>{
-  const response=await fetch(url,{body:JSON.stringify(body),cache:"no-store",headers:{"Content-Type":"application/json","Idempotency-Key":key},method:"POST"});
+async function requestJson<T=unknown>(url:string,body:unknown,key=crypto.randomUUID(),transport:typeof fetch=fetch):Promise<T>{
+  const response=await transport(url,{body:JSON.stringify(body),cache:"no-store",headers:{"Content-Type":"application/json","Idempotency-Key":key},method:"POST"});
   const payload=await response.json() as T&{message?:string;error?:string};
   if(!response.ok)throw new Error(payload.message??payload.error??"Request failed.");
   return payload;

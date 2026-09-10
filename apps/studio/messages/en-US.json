@@ -2654,7 +2654,7 @@
         "errors": { "title": "Candidate review is unavailable", "load": "The candidate review could not be loaded.", "command": "The candidate change could not be saved." }
       }
     },
-    "monitoringJourney": {"label": "Monitoring journey", "title": "Your brand monitoring", "body": "Manage context and topics; review received data and its preparation.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions"}},
+    "monitoringJourney": {"label": "Monitoring journey", "title": "Your brand monitoring", "body": "Manage context and topics; review received data and its preparation.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions", "signal": "Signal"}},
     "topics": {
       "analysis": {
         "receiptLabels": {"cap": "Interpretation cap", "confirmed": "Confirmed Claude cost", "reserved": "Reserved Claude cost"},
@@ -3953,5 +3953,31 @@
       "serving": { "title": "Operational serving", "subtitle": "Active technical contract for client-facing surfaces.", "readMode": "Read mode", "readModeHint": "Source currently serving operational queries.", "scope": "Default client scope", "scopeHint": "Population clients can consume without operator-only filters.", "rollback": "Rollback", "rollbackValue": "Controlled through configuration and never deletes data.", "exploration": "Competitor/category exploration", "deferred": "Deferred until a server-owned exploration population exists." },
       "permissions": { "title": "Permissions", "subtitle": "Navigation follows role; every route still authorizes server-side.", "role": "Current role", "team": "Team administration", "manage": "Manage team" }
     }
+  },
+  "ClientWorkspaceEntry": {
+    "skip": "Skip to content",
+    "account": "Account",
+    "navigation": "Manage this brand",
+    "allBrands": "My brands",
+    "topics": "Topics",
+    "data": "Data",
+    "forbidden": "Your access to this brand is no longer available. Return to My brands to see your current access.",
+    "dataReadOnly": "You can view received data. Your access does not allow importing or preparing new files.",
+    "brandsTitle": "Your brands",
+    "brandsBody": "Explore their conversations and topics, even before a report is published.",
+    "brandManage": "Review available topics, choose what to follow in Signal, and view this brand’s data.",
+    "brandReadOnly": "View this brand’s available topics and data.",
+    "emptyTitle": "No brands have been assigned to you yet.",
+    "emptyBody": "When you are given access to a brand, it will appear here.",
+    "homeTitle": "Your brands and reports in one place.",
+    "homeBody": "Explore each brand’s analysis and published reports. Your account permissions determine what you can manage.",
+    "reports": "Published reports",
+    "reportCount": "{count, plural, one {# published report} other {# published reports}}",
+    "reportFallback": "Published report for your team.",
+    "reportEmpty": "No reports have been published yet.",
+    "reportEmptyBody": "Reports will appear here when available. You can open your assigned brands in the section above.",
+    "access": "Access",
+    "openStudio": "Go to Studio",
+    "goSignal": "Go to Signal"
   }
 }

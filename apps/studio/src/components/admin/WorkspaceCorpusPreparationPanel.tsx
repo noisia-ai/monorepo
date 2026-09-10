@@ -42,9 +42,9 @@ export function corpusPreparationAction(data: CorpusPreparationView | null, hasR
   return data.latest_completed ? "update" : "prepare";
 }
 
-export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles, receiptObservedAt, initial = null }: {
+export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles, receiptObservedAt, initial = null, canProcess = true, onAccessDenied }: {
   workspaceId: string; hasReceivedFiles: boolean; receiptObservedAt: string;
-  initial?: CorpusPreparationView | null;
+  initial?: CorpusPreparationView | null; canProcess?: boolean; onAccessDenied?: () => void;
 }) {
   const t = useTranslations("AdminWorkspace.data.corpusPreparation");
   const locale = useLocale();
@@ -55,6 +55,7 @@ export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles,
   const [error, setError] = useState<"load" | "request" | "forbidden" | null>(null);
   const [requestFailure, setRequestFailure] = useState<string | null>(null);
   const scope = useRef(0);
+  const deniedCallback = useRef(onAccessDenied); deniedCallback.current = onAccessDenied;
   const reader = useRef<AbortController | null>(null);
   const mutation = useRef<AbortController | null>(null);
   const requestKey = useRef<PendingPreparationRequest | null>(null);
@@ -67,7 +68,7 @@ export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles,
     // A late POST response cannot restore a snapshot after a newer access denial.
     scope.current += 1;
     reader.current?.abort(); mutation.current?.abort(); mutation.current = null;
-    setSnapshot(null); setReading(false); setSubmitting(false); setError("forbidden");
+    setSnapshot(null); setReading(false); setSubmitting(false); setError("forbidden"); requestKey.current = null; deniedCallback.current?.();
   }, []);
 
   const accept = useCallback((next: CorpusPreparationView) => {
@@ -194,7 +195,7 @@ export function WorkspaceCorpusPreparationPanel({ workspaceId, hasReceivedFiles,
         <ArrowClockwise aria-hidden size={15} />{t("actions.refresh")}
       </button>
     </div>
-    {data?.latest_completed ? <WorkspaceCorpusEmbeddingsControls workspaceId={workspaceId}
+    {canProcess && data?.latest_completed ? <WorkspaceCorpusEmbeddingsControls workspaceId={workspaceId}
       preparationRunId={data.is_current ? data.latest_completed.id : null} /> : null}
   </section>;
 }
