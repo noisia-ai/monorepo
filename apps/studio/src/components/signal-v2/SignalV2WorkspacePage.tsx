@@ -1,3 +1,4 @@
+import { loadClientBrandWorkspaceEntryV1 } from "@/lib/data-os/workspace-management-entry";
 import { notFound } from "next/navigation";
 import {
   SignalBackendContractError,
@@ -73,7 +74,9 @@ export async function SignalV2WorkspacePage({
   const manageTopicsHref = session.appUser.userType === "noisia_internal"
     && workspace.subject.type === "brand"
     ? `/studio/brands/${workspace.subject.id}/topics`
-    : null;
+    : workspace.subject.type === "brand"
+      ? (await loadClientBrandWorkspaceEntryV1(session.appUser, workspace.slug))?.navigation.topicsHref ?? null
+      : null;
   const query = await searchParams;
   if (activeModule === "mentions" && !activeReportKey) {
     const params = new URLSearchParams();

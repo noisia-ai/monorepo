@@ -15,9 +15,10 @@ export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
-export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migrations?:string[];
+export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;migrations?:string[];
  model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
- onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>}={}){
+ onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
+export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
  const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await client.query('SET LOCAL search_path=public,extensions,pg_temp');
@@ -32,6 +33,14 @@ export async function workspaceProjectionFixtureV1(options:{empty?:boolean;migra
  const workspace_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_WORKSPACE_ID!,actor_user_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_ACTOR_ID!,embedding_run_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_EMBEDDING_ID!;
  assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
  const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
+ return workspaceProjectionFixtureBodyV1({database,query,scoped,workspace_id,actor_user_id,embedding_run_id,cleanup},options);
+}
+/** Test-only body. The caller owns the physical transaction, target guard and synthetic
+ * seed. No connection/environment lookup occurs here; historical guard stays above. */
+export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query:WorkspaceProjectionCheckpointFixtureV1['query'];
+ scoped:PoolClient;workspace_id:string;actor_user_id:string;embedding_run_id:string;cleanup:()=>Promise<void>},
+ options:WorkspaceProjectionFixtureOptionsV1={}){
+ const {database,query,scoped,workspace_id,actor_user_id,embedding_run_id,cleanup}=seed;
  try{
  for(const name of options.migrations??[]) {assert.match(name,/^014[1-7]_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));}
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});

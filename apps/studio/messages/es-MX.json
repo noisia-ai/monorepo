@@ -2654,7 +2654,7 @@
         "errors": { "title": "La revisión de candidatos no está disponible", "load": "No se pudo cargar la revisión de candidatos.", "command": "No se pudo guardar el cambio del candidato." }
       }
     },
-    "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Monitorización de tu marca", "body": "Gestiona el contexto y los tópicos; revisa los datos recibidos y su preparación.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones"}},
+    "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Monitorización de tu marca", "body": "Gestiona el contexto y los tópicos; revisa los datos recibidos y su preparación.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones", "signal": "Signal"}},
     "topics": {
       "analysis": {
         "receiptLabels": {"cap": "Tope de interpretación", "confirmed": "Claude confirmado", "reserved": "Claude reservado"},
@@ -3953,5 +3953,31 @@
       "serving": { "title": "Serving operacional", "subtitle": "Contrato técnico activo para las superficies cliente.", "readMode": "Modo de lectura", "readModeHint": "Fuente que atiende las consultas operacionales actuales.", "scope": "Scope cliente por defecto", "scopeHint": "Población que puede consumir el cliente sin filtros operator-only.", "rollback": "Rollback", "rollbackValue": "Se controla por configuración y nunca borra datos.", "exploration": "Exploración competitor/category", "deferred": "Aplazada hasta contar con una población server-owned." },
       "permissions": { "title": "Permisos", "subtitle": "La navegación sigue el rol; cada ruta también autoriza server-side.", "role": "Rol actual", "team": "Administración de equipo", "manage": "Gestionar equipo" }
     }
+  },
+  "ClientWorkspaceEntry": {
+    "skip": "Ir al contenido",
+    "account": "Cuenta",
+    "navigation": "Gestionar esta marca",
+    "allBrands": "Mis marcas",
+    "topics": "Topics",
+    "data": "Datos",
+    "forbidden": "Tu acceso a esta marca ya no está disponible. Vuelve a Mis marcas para consultar tus accesos actuales.",
+    "dataReadOnly": "Puedes consultar los datos recibidos. Tu acceso no permite importar ni preparar nuevos archivos.",
+    "brandsTitle": "Tus marcas",
+    "brandsBody": "Consulta sus conversaciones y Topics, aunque todavía no tengan un reporte publicado.",
+    "brandManage": "Revisa los Topics disponibles, elige qué seguir en Signal y consulta los datos de esta marca.",
+    "brandReadOnly": "Consulta los Topics y los datos disponibles de esta marca.",
+    "emptyTitle": "Todavía no tienes marcas asignadas.",
+    "emptyBody": "Cuando te asignen acceso a una marca, aparecerá aquí.",
+    "homeTitle": "Tus marcas y reportes, en un solo lugar.",
+    "homeBody": "Consulta el análisis de cada marca y sus reportes publicados. Los permisos de tu cuenta determinan qué puedes gestionar.",
+    "reports": "Reportes publicados",
+    "reportCount": "{count, plural, one {# reporte publicado} other {# reportes publicados}}",
+    "reportFallback": "Reporte publicado para el equipo.",
+    "reportEmpty": "Todavía no hay reportes publicados.",
+    "reportEmptyBody": "Los reportes aparecerán aquí cuando estén disponibles. Tus marcas asignadas se pueden abrir desde la sección anterior.",
+    "access": "Acceso",
+    "openStudio": "Ir a Studio",
+    "goSignal": "Ir a Signal"
   }
 }

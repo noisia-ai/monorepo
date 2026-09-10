@@ -1,0 +1,13 @@
+{
+  "contract_version": "noi19-private-dev-test-target-v1",
+  "environment_id": "5bad359d-cfa4-4e8f-aa41-98e6f075375a",
+  "environment_name": "dev-test",
+  "database_service_id": "8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0",
+  "host": "pgvector.railway.internal",
+  "port": 5432,
+  "database": "railway",
+  "user": "postgres",
+  "runner_service_id": null,
+  "system_identifier": null,
+  "schema_sha256": null
+}

@@ -51,7 +51,7 @@ export async function loadNativeTopicSelectionV1(scope: ActorScope, termKey: str
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: pool, ...scope });
   const [state, overview] = await Promise.all([
     loadSignalWorkspaceTopicSelectionV1({ database: pool, ...scope, ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}) }),
-    capabilities.can_edit_topics ? loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, include_unselected: true }) : null
+    capabilities.can_select_signal ? loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, include_unselected: true }) : null
   ]);
   return nativeTopicSelectionViewV1(scope, termKey, idempotencyKey, state, overview, capabilities);
 }
@@ -64,7 +64,7 @@ export function nativeTopicSelectionViewV1(scope: ActorScope, termKey: string, i
   if (!term && !selected) throw Object.assign(new Error("Topic unavailable"), { code: "workspace_topic_not_found", status: 404 });
   const receipt = state.request_receipt?.term_key === termKey ? state.request_receipt : null;
   return { workspace_id: scope.workspace_id, term_key: termKey, request_scope: createHash("sha256").update(`${scope.actor_user_id}:${scope.workspace_id}`).digest("hex"),
-    observed_at: state.observed_at, is_processing: overview?.is_processing ?? false, can_select: capabilities.can_execute_topics, selection_revision: state.revision,
+    observed_at: state.observed_at, is_processing: overview?.is_processing ?? false, can_select: capabilities.can_select_signal, selection_revision: state.revision,
     selected: selected?.selected ?? false, definition_revision: term?.definition_revision ?? selected!.definition_revision,
     definition_digest: term?.definition_digest ?? selected!.definition_digest, generation_id: overview?.generation_id ?? selected?.generation_id ?? null,
     is_current: Boolean(overview?.is_current && term && overview.generation_id && (!selected?.selected

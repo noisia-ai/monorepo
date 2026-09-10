@@ -4,6 +4,7 @@ export type SignalWorkspaceCapabilitiesV1 = {
   can_import_mentions: boolean;
   can_execute_topics: boolean;
   can_adopt_topics: boolean;
+  can_select_signal: boolean;
 };
 
 export type SignalWorkspaceCapabilityAuthorityV1 = {
@@ -21,7 +22,7 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   authority: SignalWorkspaceCapabilityAuthorityV1 | null
 ): SignalWorkspaceCapabilitiesV1 {
   const denied: SignalWorkspaceCapabilitiesV1 = { can_view: false, can_edit_topics: false,
-    can_import_mentions: false, can_execute_topics: false, can_adopt_topics: false };
+    can_import_mentions: false, can_execute_topics: false, can_adopt_topics: false, can_select_signal: false };
   if (!authority || authority.workspace_status !== "active" || authority.brand_status !== "active"
     || authority.actor_status !== "active") return denied;
   const internalRoles = ["noisia_admin", "analyst", "founder", "admin", "kam",
@@ -29,14 +30,14 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const internal = authority.user_type === "noisia_internal"
     && internalRoles.includes(authority.primary_role);
   if (internal) return { can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_execute_topics: true, can_adopt_topics: true };
+    can_execute_topics: true, can_adopt_topics: true, can_select_signal: true };
   if (authority.user_type !== "client" || !authority.same_organization) return denied;
   const administrator = ["client_admin", "brand_manager", "client_owner"].includes(authority.primary_role);
   const viewer = ["client_viewer", "agency_insights"].includes(authority.primary_role);
   const hasGrant = ["read", "comment", "admin"].includes(authority.brand_access_level ?? "");
   const canEdit = administrator && ["comment", "admin"].includes(authority.brand_access_level ?? "");
   return { ...denied, can_view: (administrator || viewer) && hasGrant,
-    can_edit_topics: canEdit, can_import_mentions: canEdit };
+    can_edit_topics: canEdit, can_import_mentions: canEdit, can_select_signal: canEdit };
 }
 
 export async function loadSignalWorkspaceCapabilitiesStoreV1(args: {
@@ -62,4 +63,54 @@ export async function loadSignalWorkspaceCapabilitiesStoreV1(args: {
     WHERE workspace.id=$1::uuid
   `, [args.workspace_id, args.actor_user_id])).rows[0] ?? null;
   return resolveSignalWorkspaceCapabilitiesV1(authority);
+}
+
+export type SignalBrandWorkspaceEntryV1 = {
+  workspace_id: string;
+  workspace_slug: string;
+  name: string;
+  brand_id: string;
+  organization_id: string;
+  timezone: string;
+  capabilities: SignalWorkspaceCapabilitiesV1;
+};
+
+/** One authorized brand-workspace inventory; no report or corpus is required. */
+export async function listSignalBrandWorkspaceEntriesStoreV1(args: {
+  queryable: Parameters<typeof loadSignalWorkspaceCapabilitiesStoreV1>[0]["queryable"];
+  actor_user_id: string;
+  workspace_slug?: string;
+}): Promise<SignalBrandWorkspaceEntryV1[]> {
+  if (args.workspace_slug !== undefined && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(args.workspace_slug)) return [];
+  type Row = Omit<SignalBrandWorkspaceEntryV1, "capabilities"> & SignalWorkspaceCapabilityAuthorityV1;
+  const rows = (await args.queryable.query<Row>(`
+    SELECT workspace.id workspace_id,workspace.slug workspace_slug,
+      COALESCE(brand.display_name,brand.name,workspace.slug) name,
+      workspace.brand_id,workspace.organization_id,workspace.timezone,
+      workspace.status workspace_status,brand.status brand_status,
+      actor.status actor_status,actor.user_type,actor.primary_role,
+      (actor.organization_id=workspace.organization_id) same_organization,
+      grant_access.access_level brand_access_level
+    FROM signal_workspaces workspace
+    JOIN brands brand ON brand.id=workspace.brand_id AND brand.organization_id=workspace.organization_id
+    JOIN users actor ON actor.id=$1::uuid AND actor.status='active'
+    LEFT JOIN LATERAL (
+      SELECT access.access_level FROM user_brand_access access
+      WHERE access.user_id=actor.id AND access.brand_id=workspace.brand_id
+        AND access.revoked_at IS NULL AND access.access_level IN('read','comment','admin')
+      ORDER BY CASE access.access_level WHEN 'admin' THEN 0 WHEN 'comment' THEN 1 ELSE 2 END
+      LIMIT 1
+    ) grant_access ON true
+    WHERE workspace.status='active' AND brand.status='active'
+      AND ($2::text IS NULL OR workspace.slug=$2)
+      AND (actor.user_type='noisia_internal' OR
+        actor.user_type='client' AND actor.organization_id=workspace.organization_id AND grant_access.access_level IS NOT NULL)
+    ORDER BY lower(COALESCE(brand.display_name,brand.name,workspace.slug)),workspace.id
+  `, [args.actor_user_id, args.workspace_slug ?? null])).rows;
+  return rows.flatMap(row => {
+    const capabilities = resolveSignalWorkspaceCapabilitiesV1(row);
+    if (!capabilities.can_view) return [];
+    return [{ workspace_id: row.workspace_id, workspace_slug: row.workspace_slug, name: row.name,
+      brand_id: row.brand_id, organization_id: row.organization_id, timezone: row.timezone, capabilities }];
+  });
 }

@@ -21145,3 +21145,17 @@ body:has(.signal-report)::before { display: none; }
 .admin-acquisition-history .admin-acquisition-history__item strong,
 .admin-acquisition-history .admin-acquisition-history__item small,
 .admin-acquisition-history .admin-acquisition-history__item span { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+/* Scoped client brand management composes the shared workspace primitives. */
+.client-brand-workspace .workspace-shell__topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; }
+.client-brand-workspace__body { max-width: 1440px; margin: 0 auto; padding: 20px 24px 40px; }
+.client-brand-workspace__navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+.client-brand-workspace__navigation > strong { margin-right: auto; max-width: 100%; overflow-wrap: anywhere; }
+.client-brand-workspace .workspace-shell__main { min-width: 0; }
+@media (max-width: 640px) {
+  .client-brand-workspace__body { padding: 16px 12px 28px; }
+  .client-brand-workspace .workspace-shell__topbar { padding: 0 12px; }
+  .client-brand-workspace__navigation > strong { flex-basis: 100%; margin-bottom: 4px; }
+}
+
+.client-brand-workspace__navigation .workspace-shell__nav-link { display: inline-flex; width: auto; min-height: 32px; height: auto; padding: 4px 10px; white-space: nowrap; }

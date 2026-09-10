@@ -19,9 +19,9 @@ export function latestCorpusReadinessSnapshot(
   return previous && previous.observed_at > incoming.observed_at ? previous : incoming;
 }
 
-export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
+export function WorkspaceCorpusReadinessPanel({ initial, workspaceId, canProcess = true, onAccessDenied }: {
   initial: SignalWorkspaceCorpusReadinessV1 | null;
-  workspaceId: string;
+  workspaceId: string; canProcess?: boolean; onAccessDenied?: () => void;
 }) {
   const t = useTranslations("AdminWorkspace.data.corpusReadiness");
   const locale = useLocale();
@@ -30,6 +30,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
   const [loading, setLoading] = useState(data === null);
   const [error, setError] = useState<"load" | "forbidden" | null>(null);
   const request = useRef<AbortController | null>(null);
+  const deniedCallback = useRef(onAccessDenied); deniedCallback.current = onAccessDenied;
 
   const refresh = useCallback(async () => {
     request.current?.abort();
@@ -41,7 +42,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
         cache: "no-store", signal: controller.signal
       });
       if ([401, 403, 404].includes(response.status)) {
-        if (!controller.signal.aborted) { setData(null); setError("forbidden"); }
+        if (!controller.signal.aborted) { setData(null); setError("forbidden"); deniedCallback.current?.(); }
         return;
       }
       const next = await response.json() as SignalWorkspaceCorpusReadinessV1;
@@ -84,7 +85,7 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId }: {
         <div className="admin-section__body admin-drawer-form">
         <p className="admin-drawer-form__hint">{t(data.state === "awaiting_import" ? "empty" : "countsHelp")}</p>
         {data.reconciliation_errors.length ? <p className="workspace-form__error" role="alert">{t("reconciliation")}</p> : null}
-        <WorkspaceCorpusPreparationPanel workspaceId={workspaceId} hasReceivedFiles={data.accepted_files > 0} receiptObservedAt={data.observed_at} />
+        <WorkspaceCorpusPreparationPanel canProcess={canProcess} onAccessDenied={onAccessDenied} workspaceId={workspaceId} hasReceivedFiles={data.accepted_files > 0} receiptObservedAt={data.observed_at} />
         <details>
           <summary>{t("details.title")}</summary>
           <dl className="admin-summary-strip admin-summary-strip--compact">
