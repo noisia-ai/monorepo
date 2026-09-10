@@ -580,6 +580,7 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "openMention": "Open mention",
       "refreshError": "The result could not be refreshed. The last read is preserved; use Refresh to check it again.",
       "summaryTitle": "Overview",
       "openTopics": "View all Topics",
@@ -1321,6 +1322,24 @@
       }
     },
     "mentions": {
+      "native": {
+        "status": "Available result",
+        "unavailable": "Mentions unavailable",
+        "unavailableBody": "We could not open this mention view. Refresh the list to check the available result and your current access.",
+        "subtitle": "Conversations from your brand’s analysis",
+        "counts": "{metrics, number} conversations in metrics · {visible, number} with text available to view in this period.",
+        "unassigned": "Includes conversations without an assigned Topic or with partial results. Selecting Topics in Signal does not narrow this list.",
+        "withheld": "Text is unavailable for {count, number} conversations under the current usage permissions.",
+        "integrity": "{count, plural, one {One text is withheld because its content could not be verified.} other {# texts are withheld because their content could not be verified.}}",
+        "processing": "A new result is being prepared. This list shows the available result.",
+        "allDates": "All dates",
+        "refreshRequired": "This view changed or access is unavailable. Text has been removed; refresh to check what is available.",
+        "choosePlatform": "Choose a platform",
+        "platformLabel": "Platform",
+        "addPlatform": "Filter platform",
+        "removePlatform": "Remove platform filter: {platform}",
+        "excerpt": "Mention excerpt"
+      },
       "title": "Mentions",
       "status": "Live evidence",
       "subtitle": "Explore the approved conversation behind {brand}, with its governed context attached.",

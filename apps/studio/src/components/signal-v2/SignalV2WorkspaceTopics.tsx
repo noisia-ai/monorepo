@@ -10,10 +10,11 @@ import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./Si
 import { SignalEChart } from "./SignalEChart";
 import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
 
-export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, refreshFailed = false }: {
+export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, refreshFailed = false }: {
   data: SignalWorkspaceTopicsOverviewV1; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onRefresh?: () => Promise<boolean>; surface?: "summary" | "topics"; onOpenTopics?: () => void; refreshFailed?: boolean;
+  onOpenMention?: (mentionId: string) => void;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
@@ -130,7 +131,8 @@ export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApp
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at, platform: item.platform, originalUrl: item.url }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
       onClose={() => { request.current?.abort(); sequence.current++; setDrawer(false); setReading(false); }}
+      onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}
       onLoadMore={evidence?.next_cursor ? () => void read(evidence.next_cursor!) : error && data.is_current ? () => void read() : undefined}
-      loadMoreLabel={t(error ? "refresh" : "more")} openOriginalLabel={t("original")} openingEnrichedLabel={t("loading")} viewEnrichedLabel={t("evidence")} /> : null}
+      loadMoreLabel={t(error ? "refresh" : "more")} openOriginalLabel={t("original")} openingEnrichedLabel={t("loading")} viewEnrichedLabel={t("openMention")} /> : null}
   </div>;
 }

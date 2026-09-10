@@ -59,6 +59,7 @@ export function SignalAnalyticsFilter({
   filter,
   loading,
   onApply,
+  periodLabelOverride,
   showComparison = true
 }: {
   boundedToCoverage?: boolean;
@@ -67,6 +68,7 @@ export function SignalAnalyticsFilter({
   filter: SignalFilterV1;
   loading: boolean;
   onApply: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
+  periodLabelOverride?: string;
   showComparison?: boolean;
 }) {
   const t = useTranslations("SignalV2");
@@ -146,7 +148,7 @@ export function SignalAnalyticsFilter({
   const maximumDate = boundedToCoverage && coverage.date_through
     ? parseDate(coverage.date_through)
     : todayInWorkspace;
-  const periodLabel = formatRange(pendingPeriodRange ?? filter.date_range, locale);
+  const periodLabel = !pendingPeriodRange && periodLabelOverride ? periodLabelOverride : formatRange(pendingPeriodRange ?? filter.date_range, locale);
   const comparisonLabel = pendingComparisonLabel ?? (comparison.date_range
     ? formatRange(comparison.date_range, locale)
     : t("filters.comparison.none"));

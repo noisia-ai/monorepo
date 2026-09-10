@@ -723,6 +723,7 @@ export function formatCount(value: number) {
 }
 
 function formatDate(value: string) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "—";
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
 }
 

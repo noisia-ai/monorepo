@@ -9346,3 +9346,20 @@
     animation: none;
   }
 }
+.signal-v2-mentions-native-summary {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  color: #555;
+}
+.signal-v2-mentions-page.signal-v2-mentions-page--native { grid-template-rows: auto auto minmax(0, 1fr); }
+.signal-v2-mentions-native-summary p { margin: 0; }
+.signal-v2-mentions-native-summary p + p { margin-top: 5px; }
+.signal-v2-mentions-native-summary p:first-child { color: #202020; font-weight: 500; }
+.signal-v2-mentions-platforms { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #eee; }
+.signal-v2-mentions-platforms form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.signal-v2-mentions-platforms label { font-size: 12px; }
+.signal-v2-mentions-platforms select { min-width: 0; max-width: 100%; border: 1px solid #ccc; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; background: #fff; }

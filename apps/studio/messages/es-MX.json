@@ -578,6 +578,7 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "openMention": "Abrir mención",
       "refreshError": "No se pudo actualizar el resultado. Se conserva la última lectura; usa Actualizar para volver a consultarla.",
       "summaryTitle": "Resumen",
       "openTopics": "Ver todos los Topics",
@@ -1319,6 +1320,24 @@
       }
     },
     "mentions": {
+      "native": {
+        "status": "Resultado disponible",
+        "unavailable": "Menciones no disponibles",
+        "unavailableBody": "No se pudo abrir esta vista de menciones. Actualiza la lista para consultar el resultado disponible y tu acceso actual.",
+        "subtitle": "Conversaciones del análisis de tu marca",
+        "counts": "{metrics, number} conversaciones en las métricas · {visible, number} con texto disponible para consultar en este periodo.",
+        "unassigned": "Incluye conversaciones sin tópico asignado o con resultados parciales. Seleccionar Topics en Signal no reduce esta lista.",
+        "withheld": "El texto de {count, number} conversaciones no está disponible con los permisos de uso actuales.",
+        "integrity": "{count, plural, one {Se omitió un texto porque no se pudo verificar su contenido.} other {Se omitieron # textos porque no se pudo verificar su contenido.}}",
+        "processing": "Se está preparando un nuevo resultado. Esta lista muestra el resultado disponible.",
+        "allDates": "Todas las fechas",
+        "refreshRequired": "La vista cambió o el acceso no está disponible. Se retiraron los textos; actualiza para consultar lo que esté disponible.",
+        "choosePlatform": "Elige una plataforma",
+        "platformLabel": "Plataforma",
+        "addPlatform": "Filtrar plataforma",
+        "removePlatform": "Quitar filtro de plataforma: {platform}",
+        "excerpt": "Fragmento de la mención"
+      },
       "title": "Menciones",
       "status": "Evidencia viva",
       "subtitle": "Explora la conversación aprobada detrás de {brand}, con su contexto gobernado conectado.",

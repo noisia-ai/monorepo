@@ -13,6 +13,9 @@ import {
   signalJsonResponse
 } from "@/lib/data-os/signal-workspace-serving";
 import { scheduleSignalMentionsShadowV1 } from "@/lib/data-os/signal-operational-module-shadow";
+import { loadSignalWorkspaceContextForTopics, topicResponse } from "../topics/_lib";
+import { nativeTopicsViewV1 } from "@/lib/data-os/signal-workspace-topics-native";
+import { loadNativeSignalMentionsV1, nativeMentionsErrorResponseV1 } from "@/lib/data-os/signal-workspace-mentions-native";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +23,23 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request, context: { params: Promise<{ workspaceId: string }> }) {
   const routeStarted = performance.now();
   const { workspaceId } = await context.params;
+  const params = new URL(request.url).searchParams;
+  if (nativeTopicsViewV1(params)) {
+    const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
+    if ("response" in scoped) {
+      scoped.response?.headers.set("Cache-Control", "private, no-store");
+      return scoped.response;
+    }
+    try {
+      const native = await loadNativeSignalMentionsV1({ workspace_id: scoped.workspace.id,
+        actor_user_id: scoped.session.appUser.id }, params);
+      if (native) {
+        const response = topicResponse(native);
+        response.headers.set("Server-Timing", `signal-visible;dur=${Math.round(performance.now() - routeStarted)}`);
+        return response;
+      }
+    } catch (error) { return nativeMentionsErrorResponseV1(error); }
+  }
   const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "mentions", request);
   if ("response" in loaded) return loaded.response;
   try {

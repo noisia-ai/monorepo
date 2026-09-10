@@ -26,6 +26,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { EChartsCoreOption } from "echarts/core";
 import type {
   SignalComparisonV1,
@@ -61,6 +62,7 @@ import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCar
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
 import { SignalV2Settings } from "@/components/signal-v2/SignalV2Settings";
 import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
+import { splitNativeMentionsFocusQuery } from "./native-mentions-navigation";
 import {
   WorkspaceGlobalSidebar,
   WorkspaceAccount,
@@ -147,6 +149,7 @@ export function SignalV2BrandMonitoring({
   initialData,
   initialMention,
   initialMentions,
+  initialNativeMentionsUnavailable = false,
   initialSettings,
   initialTopicsNarratives,
   initialTriggersBarriers,
@@ -167,6 +170,7 @@ export function SignalV2BrandMonitoring({
   initialData: SignalBrandMonitoringV1;
   initialMention: SignalMentionRecordV1 | null;
   initialMentions: SignalMentionsViewData | null;
+  initialNativeMentionsUnavailable?: boolean;
   initialSettings: SignalClientSettingsV1 | null;
   initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
@@ -181,6 +185,8 @@ export function SignalV2BrandMonitoring({
   const t = useTranslations("SignalV2");
   const [data, setData] = useState(initialData);
   const [mentionsData, setMentionsData] = useState(initialMentions);
+  const [nativeMentionsUnavailable, setNativeMentionsUnavailable] = useState(initialNativeMentionsUnavailable);
+  const hasNativeMentions = Boolean(mentionsData?.native);
   const [topicsNarrativesData, setTopicsNarrativesData] = useState(initialTopicsNarratives);
   const [triggersBarriersData, setTriggersBarriersData] = useState(initialTriggersBarriers);
   const [currentStudy, setCurrentStudy] = useState(activeStudy);
@@ -291,6 +297,11 @@ export function SignalV2BrandMonitoring({
     setCurrentStudy(null);
     if (target === "mentions") {
       const mentions = payload as SignalMentionsViewData;
+      setNativeMentionsUnavailable(false);
+      if (mentions.native) {
+        setTopicsNarrativesData(current => current?.contract_version === "signal-workspace-topics-serving-v1"
+          && current.generation_id !== mentions.native!.generation_id ? { ...current, is_current: false } : current);
+      }
       setMentionsData(mentions);
       setData((current) => ({
         ...current,
@@ -300,6 +311,8 @@ export function SignalV2BrandMonitoring({
       return;
     }
     if ((target === "monitoring" || target === "topics") && payload.contract_version === "signal-workspace-topics-serving-v1") {
+      setMentionsData(current => current?.native && current.native.generation_id !== payload.generation_id
+        ? { ...current, records: [], record: null, native: { ...current.native, is_current: false } } : current);
       setTopicsNarrativesData(payload);
       const start = payload.filters.date_from ?? payload.available_dates.date_from;
       const end = payload.filters.date_to ?? payload.available_dates.date_to;
@@ -319,15 +332,31 @@ export function SignalV2BrandMonitoring({
   const updateMentionsData = useCallback((next: SignalMentionsViewData) => {
     beginContentArrival();
     setMentionsData(next);
+    setData(current => ({ ...current, filter: next.filter, comparison: next.comparison,
+      ...(next.native ? { coverage: { date_from: next.native.available_dates.date_from,
+        date_through: next.native.available_dates.date_to, mentions: next.native.metric_denominator } } : {}) }));
   }, [beginContentArrival]);
 
   const invalidateNativeTopicEvidence = useCallback(() => {
+    setMentionsData(current => current?.native ? { ...current, records: [], record: null,
+      native: { ...current.native, is_current: false } } : current);
     setTopicsNarrativesData(current => current?.contract_version === "signal-workspace-topics-serving-v1"
       ? { ...current, is_current: false } : current);
     for (const [key, value] of moduleCacheRef.current) {
-      if (value.contract_version === "signal-workspace-topics-serving-v1") moduleCacheRef.current.delete(key);
+      if (value.contract_version === "signal-workspace-topics-serving-v1" || "native" in value) moduleCacheRef.current.delete(key);
     }
   }, []);
+
+  useEffect(() => {
+    if (viewKey !== "all_conversations" && !hasNativeMentions) return;
+    const clear = () => {
+      navigationSequenceRef.current++; navigationRequestRef.current?.abort();
+      filterSequenceRef.current++; filterRequestRef.current?.abort();
+      flushSync(invalidateNativeTopicEvidence);
+    };
+    window.addEventListener("pagehide", clear);
+    return () => window.removeEventListener("pagehide", clear);
+  }, [viewKey, hasNativeMentions, invalidateNativeTopicEvidence]);
 
   const readNativeTopics = useCallback(async (selection?: SignalAnalyticsFilterSelection) => {
     if (topicsNarrativesData?.contract_version !== "signal-workspace-topics-serving-v1"
@@ -369,6 +398,7 @@ export function SignalV2BrandMonitoring({
     setLoading(true);
     setError(null);
     try {
+      const nativeMentions = currentModule === "mentions" ? mentionsData?.native : undefined;
       const params = new URLSearchParams({
         start: selection.start,
         end: selection.end,
@@ -388,6 +418,13 @@ export function SignalV2BrandMonitoring({
       for (const [dimension, values] of Object.entries(dimensions)) {
         for (const value of values ?? []) params.append(`dimension.${dimension}`, value);
       }
+      if (nativeMentions) {
+        if (Object.entries(dimensions).some(([key, values]) => key !== "platform" && values?.length)) throw new Error(t("errors.load"));
+        params.set("view", "all_conversations"); params.set("timezone", "UTC"); params.set("granularity", "day"); params.set("compare", "none");
+        params.set("sort", "published"); params.set("direction", nativeMentions.sort_direction);
+        params.delete("compareStart"); params.delete("compareEnd"); params.delete("dimension.platform");
+        for (const value of dimensions.platform ?? []) params.append("platform", value);
+      }
       const endpoint = currentModule === "mentions"
         ? `/api/data-os/signal/${data.workspace.id}/mentions`
         : currentModule === "topics"
@@ -404,6 +441,10 @@ export function SignalV2BrandMonitoring({
         cache: "no-store",
         signal: controller.signal
       });
+      if (filterSequenceRef.current !== sequence || controller.signal.aborted) return false;
+      if (!response.ok && nativeMentions && [401, 403, 404, 409].includes(response.status)) {
+        invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+      }
       const payload = await response.json() as (
         SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
       ) & { message?: string };
@@ -456,6 +497,7 @@ export function SignalV2BrandMonitoring({
     data.workspace.id,
     data.workspace.timezone,
     invalidateNativeTopicEvidence,
+    mentionsData?.native,
     readNativeTopics,
     t,
     topicsNarrativesData?.contract_version
@@ -466,7 +508,7 @@ export function SignalV2BrandMonitoring({
     historyMode: "push" | "none" = "push",
     requestedQuery?: URLSearchParams
   ) => {
-    if (pendingModule === target || (target === currentModule && !pendingModule)) return;
+    if (pendingModule === target || (target === currentModule && !pendingModule && historyMode !== "none")) return;
     filterRequestRef.current?.abort(); filterSequenceRef.current++; setLoading(false);
     navigationRequestRef.current?.abort();
     const controller = new AbortController();
@@ -481,7 +523,8 @@ export function SignalV2BrandMonitoring({
       ? buildStudyQuery(window.location.search)
       : previousModule === "settings"
         ? new URLSearchParams()
-        : (previousModule === "monitoring" || previousModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+        : (previousModule === "mentions" && mentionsData?.native)
+          || (previousModule === "monitoring" || previousModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
           ? new URLSearchParams(window.location.search) : buildModuleQuery(window.location.search, data, previousModule);
     const currentPayload = currentModulePayload(
       previousModule,
@@ -494,17 +537,24 @@ export function SignalV2BrandMonitoring({
       moduleCacheRef.current.set(moduleCacheKey(previousModule, previousQuery), currentPayload);
     }
 
-    const nativeTarget = (target === "monitoring" || target === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1";
+    const nativeTarget = (target === "monitoring" || target === "topics" || target === "mentions")
+      && (viewKey === "all_conversations" || Boolean(mentionsData?.native) || topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1");
     const query = requestedQuery ?? (nativeTarget ? new URLSearchParams() : buildModuleQuery(window.location.search, data, target));
     if (nativeTarget) {
       if (!requestedQuery) {
-        if (topicsNarrativesData.filters.date_from) query.set("date_from", topicsNarrativesData.filters.date_from);
-        if (topicsNarrativesData.filters.date_to) query.set("date_to", topicsNarrativesData.filters.date_to);
+        const filters = currentModule === "mentions" ? mentionsData?.native?.filters
+          : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
+        if (filters?.date_from) query.set("date_from", filters.date_from);
+        if (filters?.date_to) query.set("date_to", filters.date_to);
       }
       query.set("view", "all_conversations"); query.set("timezone", "UTC"); query.set("granularity", "day"); query.set("compare", "none");
       query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
+      if (target !== "mentions" && target !== currentModule) {
+        for (const key of ["q", "platform", "sort", "direction", "cursor", "limit", "mention", "scope_digest", "offset"]) query.delete(key);
+      }
     }
-    const cachedPayload = moduleCacheRef.current.get(moduleCacheKey(target, query));
+    // Native mention text is never restored from the navigation cache before authorization revalidation.
+    const cachedPayload = nativeTarget && target === "mentions" ? undefined : moduleCacheRef.current.get(moduleCacheKey(target, query));
     setPendingModule(target);
     setSidebarOpen(false);
     setError(null);
@@ -523,7 +573,9 @@ export function SignalV2BrandMonitoring({
         : target === "topics" || nativeTarget
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
           : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
-      const response = await fetch(`${endpoint}?${query}`, {
+      const { list: requestQuery, focus } = nativeTarget && target === "mentions"
+        ? splitNativeMentionsFocusQuery(query) : { list: new URLSearchParams(query), focus: null };
+      const response = await fetch(`${endpoint}?${requestQuery}`, {
         cache: "no-store",
         signal: controller.signal
       });
@@ -536,13 +588,40 @@ export function SignalV2BrandMonitoring({
         SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
       );
       if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
+      if (nativeTarget && target === "mentions") {
+        const mentions = payload as SignalMentionsViewData;
+        if (!mentions.native || mentions.native.workspace_id !== data.workspace.id) {
+          invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+        }
+        mentions.record = null;
+        if (focus) {
+          const focusQuery = new URLSearchParams(requestQuery); focusQuery.delete("cursor");
+          focusQuery.set("mention", focus); focusQuery.set("scope_digest", mentions.native.scope_digest);
+          const focusedResponse = await fetch(`${endpoint}?${focusQuery}`, { cache: "no-store", signal: controller.signal });
+          if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
+          if (!focusedResponse.ok) {
+            if ([401, 403, 404, 409].includes(focusedResponse.status)) invalidateNativeTopicEvidence();
+            throw new Error(t("errors.load"));
+          }
+          const focused = await focusedResponse.json() as SignalMentionsViewData;
+          if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
+          if (focused.native?.scope_digest !== mentions.native.scope_digest || focused.native.workspace_id !== data.workspace.id
+            || focused.record?.subject_id.toLowerCase() !== focus.toLowerCase()) {
+            invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+          }
+          mentions.record = focused.record;
+        }
+      }
       moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
       applyModulePayload(target, payload);
       setCurrentModule(target);
+      if (historyMode === "none") window.history.replaceState(null, "", moduleHref(data.workspace.slug, target, query));
     } catch (navigationError) {
       if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
       setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
-      if (!cachedPayload) {
+      if (nativeTarget && target === "mentions") {
+        setNativeMentionsUnavailable(true); setCurrentModule("mentions");
+      } else if (!cachedPayload) {
         window.history.replaceState(
           null,
           "",
@@ -564,7 +643,8 @@ export function SignalV2BrandMonitoring({
     pendingModule,
     t,
     topicsNarrativesData,
-    triggersBarriersData
+    triggersBarriersData,
+    viewKey
   ]);
 
   const navigateToStudy = useCallback(async (
@@ -677,7 +757,7 @@ export function SignalV2BrandMonitoring({
         setPendingModule(null);
         return;
       }
-      void navigateToModule(requestedModule, "none");
+      void navigateToModule(requestedModule, "none", new URLSearchParams(window.location.search));
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -1208,7 +1288,13 @@ export function SignalV2BrandMonitoring({
         ) : (currentModule === "monitoring" || currentModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
           <SignalV2WorkspaceTopics data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface={currentModule === "monitoring" ? "summary" : "topics"} refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
-            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")} />
+            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
+            onOpenMention={mentionId => {
+              const params = new URLSearchParams({ view: "all_conversations", mention: mentionId });
+              if (topicsNarrativesData.filters.date_from) params.set("start", topicsNarrativesData.filters.date_from);
+              if (topicsNarrativesData.filters.date_to) params.set("end", topicsNarrativesData.filters.date_to);
+              void navigateToModule("mentions", "push", params);
+            }} />
         ) : emptyWorkspace ? (
           <SignalV2EmptyWorkspace
             brandName={brandName}
@@ -1227,15 +1313,26 @@ export function SignalV2BrandMonitoring({
           />
         ) : currentModule === "study" && currentStudy ? (
           <StrategicStudyContent canonicalHome={canonicalHome} study={currentStudy} />
+        ) : currentModule === "mentions" && nativeMentionsUnavailable ? (
+          <section className="signal-v2-mentions-page">
+            <SignalV2ModuleHeader title={t("mentions.title")} subtitle={t("mentions.native.subtitle")} status={t("mentions.native.unavailable")}
+              icon={<ListMagnifyingGlass size={20} />} controls={<button className="signal-v2-filter" type="button" disabled={Boolean(pendingModule)}
+                onClick={() => { const params = new URLSearchParams(window.location.search);
+                  for (const key of ["mention", "cursor", "scope_digest", "offset"]) params.delete(key);
+                  void navigateToModule("mentions", "none", params);
+                }}>{t("workspaceTopics.refresh")}</button>} />
+            <div className="signal-v2-error" role="alert">{t("mentions.native.unavailableBody")}</div>
+          </section>
         ) : currentModule === "mentions" && mentionsData ? (
           <SignalV2Mentions
             brandName={brandName}
             coverage={data.coverage}
             data={mentionsData}
-            initialMention={initialMention}
-            loading={loading}
+            initialMention={mentionsData.native ? mentionsData.record ?? null : initialMention}
+            loading={loading || Boolean(pendingModule)}
             onApplyFilter={loadFilter}
             onDataChange={updateMentionsData}
+            onInvalidate={invalidateNativeTopicEvidence}
             onOpenControls={() => setControlsOpen(true)}
             workspaceId={data.workspace.id}
           />
