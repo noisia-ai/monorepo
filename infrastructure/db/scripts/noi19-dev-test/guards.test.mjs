@@ -45,7 +45,7 @@ test('an empty population is required for every public table, never just an empt
  assert.throws(()=>guardEmptyTables(rows.map((row,index)=>index===0?{...row,nonempty:null}:row)),/database_not_empty/u);
 });
 test('checked-in entrypoints fail before DNS/PG with the incomplete source seal; stdout is secret-free',()=>{
- assert.equal(shipped.system_identifier,null);assert.equal(shipped.runner_service_id,null);
+ assert.equal(shipped.system_identifier,null);assert.match(shipped.runner_service_id,/^[0-9a-f-]{36}$/u);
  for(const name of ['runner.mjs','bootstrap-readonly.mjs']){
   const result=spawnSync(process.execPath,[new URL(name,import.meta.url).pathname],{env:{...env,DATABASE_URL:'never-print-this-secret'},encoding:'utf8',timeout:5000});
   assert.equal(result.status,1);assert.doesNotMatch(result.stdout+result.stderr,/never-print-this-secret|synthetic-password/u);

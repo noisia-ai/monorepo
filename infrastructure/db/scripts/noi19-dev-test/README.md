@@ -4,9 +4,8 @@ This is a finite test program, not a Worker service. It is not enabled by GET,
 application polling, a scheduler or a product flag. It never opens a public proxy,
 starts Redis, calls a provider, imports customer data or applies a migration.
 
-The checked-in target seal is intentionally incomplete. Neither entry point can
-connect until the dedicated runner's Railway service ID has been reviewed and
-written in `target-seal.json`. The mutating test additionally refuses a missing
+The dedicated runner's reviewed Railway service ID is sealed in
+`target-seal.json`. The mutating test additionally refuses a missing
 PostgreSQL system identifier or schema fingerprint. There is no environment or
 command-line bypass for those checks.
 
@@ -18,8 +17,8 @@ command-line bypass for those checks.
    Workers service/config. Its default command is the read-only bootstrap.
    Keep one replica, restart policy **NEVER**, no public domain/TCP proxy,
    and no automatic redeployment/cron. Build the reviewed branch only.
-2. Record that service's actual ID in `target-seal.json.runner_service_id` and
-   review that source delta. Railway-provided environment/service IDs must match.
+2. Confirm the service ID in `target-seal.json.runner_service_id` remains the
+   actual dedicated runner. Railway-provided environment/service IDs must match.
 3. Set only `DATABASE_URL` via the **private** reference to the dev-test `pgvector`
    service, `NOISIA_DEV_TEST_DATABASE_SERVICE_ID=8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0`,
    and `NOISIA_NOI19_PRIVATE_TEST_APPROVED=true` for the explicit test intent.
