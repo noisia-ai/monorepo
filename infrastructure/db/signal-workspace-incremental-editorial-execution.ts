@@ -40,10 +40,12 @@ function leaseView(row:Awaited<ReturnType<typeof locked>>):Lease{const s=row.inp
  interpretation_admission:{...row.receipt,admission_not_after:new Date(row.receipt.admission_not_after).toISOString()},config:{call_configuration:s.interpretation_configuration,budget_timezone:s.budget_policy.budget_timezone,daily_cap_micro_usd:s.budget_policy.daily_cap_micro_usd},
  numeric_execution_id:s.numeric_execution_id,numeric_checkpoint_digest:s.numeric_checkpoint_digest,evidence_plan_artifact_id:s.evidence_plan_artifact_id,evidence_digest:s.evidence_digest,target_unit_digest:s.target_unit_digest,target_binding_digest:s.target_binding_digest,target_units:s.target_units};}
 /** Explicit server-only dispatch; admission itself remains inert until the consumer is installed. */
-export async function enqueueSignalWorkspaceIncrementalEditorialV1(args:Scope){return tx(args.database,async c=>{const run=await locked(c,args);
+export async function enqueueSignalWorkspaceIncrementalEditorialV1(args:Scope){return tx(args.database,c=>enqueueSignalWorkspaceIncrementalEditorialWithClientV1(c,args));}
+/** Compose admission and its durable dispatch without a commit between them. */
+export async function enqueueSignalWorkspaceIncrementalEditorialWithClientV1(c:PoolClient,args:Scope){const run=await locked(c,args);
  const worker_job_id=`signal-workspace-incremental-editorial-${run.id}-1`;
  if(!['queued','running','ready'].includes(run.status))return fail('dispatch_unavailable');
- await c.query(`INSERT INTO signal_topic_classification_outbox(execution_id,workspace_id,worker_job_id,dispatch_kind) VALUES($1::uuid,$2::uuid,$3,'execution') ON CONFLICT(execution_id,dispatch_kind) DO NOTHING`,[run.id,args.workspace_id,worker_job_id]);return{execution_id:run.id,worker_job_id};});}
+ await c.query(`INSERT INTO signal_topic_classification_outbox(execution_id,workspace_id,worker_job_id,dispatch_kind) VALUES($1::uuid,$2::uuid,$3,'execution') ON CONFLICT(execution_id,dispatch_kind) DO NOTHING`,[run.id,args.workspace_id,worker_job_id]);return{execution_id:run.id,worker_job_id};}
 export async function claimSignalWorkspaceIncrementalEditorialV1(args:{database:SignalWorkspaceEngineDatabaseV1;execution_id:string;worker_job_id:string}):Promise<Lease|{completed:true;execution_id:string;worker_job_id:string}>{return tx(args.database,async c=>{
  const scope=(await c.query<{workspace_id:string;actor_user_id:string}>(`SELECT workspace_id,actor_user_id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND input_contract='workspace-incremental-editorial-v1'`,[args.execution_id])).rows[0];if(!scope)return fail('not_found',404);
  const run=await locked(c,{...scope,execution_id:args.execution_id},undefined,false);
@@ -103,12 +105,32 @@ export async function readSignalWorkspaceIncrementalEditorialEvidenceUnitsV1(arg
 export async function readSignalWorkspaceIncrementalEditorialRequestPlanV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:Lease}){return tx(args.database,async c=>{await locked(c,args.lease,args.lease,false);return(await c.query<{artifact_id:string;plan:Omit<SignalWorkspaceIncrementalEditorialRequestPlanV1,'requests'>;stored:SignalWorkspaceIncrementalEditorialStoredV1}>(`SELECT id artifact_id,metadata->'plan' plan,content-'contract_version' stored FROM analysis_artifacts WHERE engine_execution_id=$1::uuid AND metadata->>'contract_version'='workspace-incremental-editorial-request-plan-v1'`,[args.lease.execution_id])).rows[0]??null;});}
 
 /** Server recovery of a confirmed transport failure only; no permission is renewed. */
-export async function requeueSignalWorkspaceIncrementalEditorialV1(args:Scope&{worker_job_id:string}){return tx(args.database,async c=>{const run=await locked(c,args);
+export async function requeueSignalWorkspaceIncrementalEditorialV1(args:Scope&{worker_job_id:string}){return tx(args.database,c=>requeueSignalWorkspaceIncrementalEditorialWithClientV1(c,args));}
+export async function requeueSignalWorkspaceIncrementalEditorialWithClientV1(c:PoolClient,args:Scope&{worker_job_id:string}){const run=await locked(c,args);
  const dispatch=(await c.query<{worker_job_id:string}>("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND workspace_id=$2::uuid AND dispatch_kind='execution'",[run.id,args.workspace_id])).rows[0];
  if(!dispatch||dispatch.worker_job_id!==args.worker_job_id||run.worker_job_id!==null&&run.worker_job_id!==args.worker_job_id)return fail('lease_conflict');
  if(['queued','running','ready'].includes(run.status))return{execution_id:run.id,worker_job_id:args.worker_job_id,requeued:false};
- const row=(await c.query<{error_code:string;retry_count:number;unknown:boolean}>(`SELECT error_code,COALESCE((result_summary->>'delivery_retry_count')::int,0) retry_count,EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state IN('in_flight','outcome_unknown')) unknown FROM signal_topic_catalog_executions WHERE id=$1::uuid`,[run.id])).rows[0]!;
- if((row.error_code==='workspace_engine_interpretation_receipt_recovery_required'&&!(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='response_persisted' AND response_storage_key IS NOT NULL AND COALESCE((metadata->>'response_complete')::boolean,true) LIMIT 1",[run.id])).rows[0])||(row.error_code==='workspace_engine_interpretation_transport_terminal_confirmed'&&!(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed' AND metadata ? 'provider_terminal_receipt' HAVING count(*)>0 AND NOT EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed' GROUP BY request_digest HAVING count(*)>1)",[run.id])).rows[0])||!['workspace_incremental_editorial_transport_unavailable','workspace_engine_storage_transport_failed','workspace_engine_storage_unavailable','workspace_engine_interpretation_transport_terminal_confirmed','workspace_engine_interpretation_receipt_recovery_required'].includes(row.error_code)||row.retry_count>=8||row.unknown)return fail('retry_unavailable');
+ const row=await readSignalWorkspaceIncrementalEditorialRetryWithQueryableV1(c,run.id);
+ if(!row.can_retry)return fail('retry_unavailable');
  await c.query(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,result_summary=result_summary||jsonb_build_object('delivery_retry_count',$2::int) WHERE id=$1::uuid`,[run.id,row.retry_count+1]);
  const changed=await c.query(`UPDATE signal_topic_classification_outbox SET status='pending',attempt_count=0,available_at=clock_timestamp(),completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL WHERE execution_id=$1::uuid AND dispatch_kind='execution' AND worker_job_id=$2`,[run.id,args.worker_job_id]);if(changed.rowCount!==1)return fail('dispatch_unavailable');
- return{execution_id:run.id,worker_job_id:args.worker_job_id,requeued:true};});}
+ return{execution_id:run.id,worker_job_id:args.worker_job_id,requeued:true};}
+
+/** The UI and mutation share the existing 0149 recovery predicate. No rights are granted here. */
+export async function readSignalWorkspaceIncrementalEditorialRetryWithQueryableV1(c:Pick<PoolClient,'query'>,execution_id:string){
+ const row=(await c.query<{error_code:string|null;retry_count:number;unknown:boolean;persisted_response:boolean;confirmed_terminal:boolean}>(`SELECT error_code,
+  COALESCE((result_summary->>'delivery_retry_count')::int,0) retry_count,
+  EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state IN('in_flight','outcome_unknown')) unknown,
+  EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='response_persisted' AND response_storage_key IS NOT NULL AND COALESCE((metadata->>'response_complete')::boolean,true)) persisted_response,
+  EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed' AND metadata ? 'provider_terminal_receipt'
+   HAVING count(*)>0 AND NOT EXISTS(SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed' GROUP BY request_digest HAVING count(*)>1)) confirmed_terminal
+  FROM signal_topic_catalog_executions WHERE id=$1::uuid`,[execution_id])).rows[0];
+ if(!row)return fail('not_found',404);
+ const can_retry=!row.unknown&&row.retry_count<8&&[
+  'workspace_incremental_editorial_transport_unavailable','workspace_engine_storage_transport_failed','workspace_engine_storage_unavailable',
+  'workspace_engine_interpretation_transport_terminal_confirmed','workspace_engine_interpretation_receipt_recovery_required',
+ ].includes(row.error_code??'')
+  &&(row.error_code!=='workspace_engine_interpretation_receipt_recovery_required'||row.persisted_response)
+  &&(row.error_code!=='workspace_engine_interpretation_transport_terminal_confirmed'||row.confirmed_terminal);
+ return{...row,can_retry};
+}

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
 
@@ -1226,6 +1226,123 @@ export async function materializeSignalWorkspaceEngineTopicsV1(args: {
   lease: import("./signal-workspace-engine").SignalWorkspaceEngineLeaseV1;
   proposals: AsyncIterable<{ artifact_id: string; body: string }>;
 }) { return materializeSignalWorkspaceEngineTopicsCoreV1(args); }
+
+export type SignalWorkspaceIncrementalCatalogReceiptV1 = {
+  contract_version: "workspace-incremental-editorial-catalog-receipt-v1";
+  receipt_id: string; numeric_execution_id: string; serving_editorial_cut_digest: string;
+  output_catalog_profile_id: string; output_catalog_revision: number; mapping_digest: string;
+  topic_count: number; discovered_topic_count: number;
+};
+/** A derived delivery transaction, never a provider/full-fit lease. The Worker
+ * has preflighted the complete bank and private packets; this boundary repeats
+ * paid ownership, bytes, request and citation validation under current scope. */
+export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(args:
+  import("./signal-workspace-incremental-projection").SignalWorkspaceIncrementalProjectionReadV1 & {
+    proposals: AsyncIterable<{ artifact_id: string; body: string }>;
+  }): Promise<{ catalog_receipt: SignalWorkspaceIncrementalCatalogReceiptV1 | null; requires_dispatch_refresh: boolean }> {
+  const client = await args.database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${args.workspace_id}:topic`]);
+    await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE", [args.workspace_id]);
+    const {readSignalWorkspaceIncrementalProjectionDerivationWithClientV1} = await import("./signal-workspace-incremental-projection");
+    const current = await readSignalWorkspaceIncrementalProjectionDerivationWithClientV1(client,args);
+    const key = `incremental-catalog:${args.execution_id}:${current.editorial_cut_digest.slice(7)}`;
+    const expected = (await client.query<{ artifact_id: string; source: NonNullable<import("@noisia/query-engine").SignalWorkspaceIncrementalProjectionProposalV1["source"]> | null;
+      sha256: string; size_bytes: number; request_digest: string; editorial_repair: unknown;
+      configuration: import("@noisia/query-engine").SignalWorkspaceInterpretationConfigurationV1; owner_execution_id: string; unit_keys: string[] }>(`
+      SELECT artifact.id artifact_id,history.source,artifact.content->>'sha256' sha256,(artifact.content->>'size_bytes')::int size_bytes,
+       call.request_digest,call.metadata->'editorial_repair' editorial_repair,call.call_configuration configuration,
+       artifact.engine_execution_id owner_execution_id,artifact.metadata->'unit_keys' unit_keys
+      FROM signal_workspace_incremental_serving_history_v1($1::uuid) history JOIN analysis_artifacts artifact ON artifact.id=history.artifact_id
+      JOIN engine_cost_events call ON call.id::text=artifact.metadata->>'call_id' ORDER BY artifact.id`, [args.execution_id])).rows;
+    if (!expected.some(row=>row.source?.kind==="incremental_editorial")) { await client.query("COMMIT"); return {catalog_receipt:null,requires_dispatch_refresh:false}; }
+    if (!(await client.query<{valid:boolean}>("SELECT signal_workspace_incremental_unit_census_valid_v1($1::uuid,$2) valid",
+      [args.execution_id,args.derivation_digest])).rows[0]?.valid) throw new SignalTopicCatalogError("workspace_incremental_projection_census_incomplete");
+    const refs = new Map(expected.map(row=>[row.artifact_id,row]));
+    const seen = new Set<string>(), seenUnits = new Set<string>(); let bytes = 0;
+    const byOwner = new Map<string, Array<{result:SignalWorkspaceInterpretationV1;artifact_id:string}>>();
+    for await (const packet of args.proposals) {
+      const ref = refs.get(packet.artifact_id); if (!ref) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+      bytes += Buffer.byteLength(packet.body);
+      if (seen.has(packet.artifact_id) || bytes>64*1024*1024 || Buffer.byteLength(packet.body)!==ref.size_bytes
+        || sha256(packet.body)!==ref.sha256) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+      seen.add(packet.artifact_id);
+      if (!ref.source) continue; // retain verified legacy bytes; their Topics already exist
+      const body = JSON.parse(packet.body) as {contract_version:string;context:SignalWorkspaceInterpretationBatchV1["context"];
+        clusters:SignalWorkspaceInterpretationBatchV1["clusters"];interpretations:unknown;editorial_repair?:unknown};
+      if (body.contract_version!=="workspace-incremental-editorial-result-v1" || body.context.workspace_id!==args.workspace_id
+        || body.context.execution_id!==ref.owner_execution_id || body.context.context_digest!==current.snapshot.context_digest)
+        throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+      let batch=buildSignalWorkspaceInterpretationBatchV1(body.context,body.clusters,ref.configuration);
+      if (ref.editorial_repair != null || body.editorial_repair!==undefined) {
+        const repair=parseSignalWorkspaceInterpretationEditorialRepairV1(body.editorial_repair);
+        if (stableJson(repair)!==stableJson(ref.editorial_repair)) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+        batch=buildSignalWorkspaceInterpretationRepairBatchV1(batch,repair);
+      }
+      if (batch.request_digest!==ref.request_digest) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+      const results=validateSignalWorkspaceInterpretationResultV1(batch,{interpretations:body.interpretations});
+      if (stableJson(results.map(row=>row.cluster_id))!==stableJson(ref.unit_keys)) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+      const eligible = new Set((await client.query<{unit_key:string}>(`
+        SELECT census.metadata->'unit'->>'unit_key' unit_key FROM analysis_artifacts census
+        JOIN analysis_artifacts component ON component.engine_execution_id=census.engine_execution_id AND component.workspace_id=census.workspace_id
+         AND component.metadata->>'contract_version'='workspace-incremental-component-v1' AND component.metadata->>'component_key'=census.metadata->>'component_key'
+        JOIN analysis_artifacts claim ON claim.engine_execution_id=$3::uuid AND claim.workspace_id=census.workspace_id
+         AND claim.metadata->>'contract_version'='workspace-incremental-editorial-unit-claim-v1'
+         AND claim.metadata->>'component_key'=component.metadata->>'component_key' AND claim.metadata->'model_origin'=component.metadata->'model_origin'
+         AND claim.metadata->'unit'=census.metadata->'unit'
+        WHERE census.engine_execution_id=$1::uuid AND census.metadata->>'contract_version'='workspace-incremental-unit-census-v1'
+         AND census.metadata->>'derivation_digest'=$2 AND census.metadata->'unit'->>'unit_key'=ANY($4::text[])`,
+      [args.execution_id,args.derivation_digest,ref.owner_execution_id,ref.unit_keys])).rows.map(row=>row.unit_key));
+      for (const result of results) {
+        if (!eligible.has(result.cluster_id)) continue; // complete historical packet, retired unit
+        if (seenUnits.has(result.cluster_id)) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_invalid");
+        seenUnits.add(result.cluster_id);
+        const proposals=byOwner.get(ref.owner_execution_id)??[];proposals.push({result,artifact_id:ref.artifact_id});byOwner.set(ref.owner_execution_id,proposals);
+      }
+    }
+    if (seen.size!==refs.size) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_missing");
+    const prior = await loadLatestProfile(client,args.workspace_id);
+    if (!prior || prior.id!==current.catalog_profile_id) throw new SignalTopicCatalogError("workspace_incremental_projection_inputs_changed");
+    const replay=(await client.query<{result_summary:SignalWorkspaceIncrementalCatalogReceiptV1}>(`
+      SELECT result_summary FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2 AND action='materialize_incremental'`,
+    [args.workspace_id,key])).rows[0];
+    let receipt:SignalWorkspaceIncrementalCatalogReceiptV1;
+    if (replay) receipt=replay.result_summary;
+    else {
+      const inherited=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true});
+      const priorDefinitions=(await loadProfileTerms(client,prior.id)).map(readDefinition);let definitions=priorDefinitions;
+      const mapping:Array<import("@noisia/query-engine").SignalWorkspaceTopicMaterializationMappingV1>=[];
+      for (const [owner,interpretations] of [...byOwner].sort(([a],[b])=>a<b?-1:1)) {
+        const merged=mergeSignalWorkspaceTopicMaterializationV1({prior:definitions,interpretations,execution_id:owner,now:new Date().toISOString(),
+          locale:inherited.locale.primary_locale?.startsWith("en")?"en-US":"es-MX"});
+        definitions=merged.definitions;mapping.push(...merged.mapping);
+      }
+      mapping.sort((a,b)=>a.unit_key<b.unit_key?-1:1);
+      const mapping_digest=sha256(stableJson(mapping));let profileId=prior.id,version=prior.version;
+      if (stableJson(definitions)!==stableJson(priorDefinitions)) {
+        if (prior.status!=="active") {await client.query("UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now() WHERE id=$1::uuid",[prior.id]);
+          await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid",[prior.taxonomy_id]);}
+        const inserted=await insertTopicCatalogDraft(client,args.workspace_id,definitions,classificationDefinitionDigest(definitions,inherited.context_digest),inherited,
+          {source_numeric_execution_id:args.execution_id,serving_editorial_cut_digest:current.editorial_cut_digest,source_mapping_digest:mapping_digest});
+        profileId=inserted.profileId;version=inserted.version;
+      }
+      const active=definitions.filter(row=>row.lifecycle!=="archived");
+      receipt={contract_version:"workspace-incremental-editorial-catalog-receipt-v1",receipt_id:randomUUID(),numeric_execution_id:args.execution_id,
+        serving_editorial_cut_digest:current.editorial_cut_digest,output_catalog_profile_id:profileId,output_catalog_revision:version,mapping_digest,
+        topic_count:active.length,discovered_topic_count:active.filter(row=>row.origin==="workspace_discovery").length};
+      await client.query(`INSERT INTO signal_topic_catalog_operations(id,workspace_id,actor_user_id,action,idempotency_key,request_digest,result_profile_id,result_term_key,result_summary)
+        VALUES($1::uuid,$2::uuid,$3::uuid,'materialize_incremental',$4,$5,$6::uuid,'',$7::jsonb)`,
+      [receipt.receipt_id,args.workspace_id,args.actor_user_id,key,sha256(stableJson({numeric_execution_id:args.execution_id,serving_editorial_cut_digest:current.editorial_cut_digest})),profileId,JSON.stringify(receipt)]);
+    }
+    const desired=(await client.query<{job:string}>(`SELECT 'workspace-incremental-projection-'||$1::text||'-'||substring(workspace_incremental_editorial_digest_v1(jsonb_build_array(
+      $2::text,(SELECT id::text FROM signal_taxonomy_profiles WHERE workspace_id=$3::uuid AND kind='topic' AND status IN('draft','activating','active')
+       AND metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY version DESC LIMIT 1),signal_workspace_incremental_correction_epoch_v1($3::uuid),$4::text)) FROM 8) job`,
+    [args.execution_id,current.numeric_checkpoint.checkpoint_digest,args.workspace_id,current.editorial_cut_digest])).rows[0]!.job;
+    await client.query("COMMIT");return {catalog_receipt:receipt,requires_dispatch_refresh:desired!==args.worker_job_id};
+  } catch(error) {await client.query("ROLLBACK").catch(()=>undefined);throw error;} finally {client.release();}
+}
 
 export async function materializeSignalWorkspaceEngineTopicsProgressV1(args: import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressMaterializeArgsV1):Promise<import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressResultV1> {
   return await materializeSignalWorkspaceEngineTopicsCoreV1(args) as import("./signal-workspace-engine-progress").SignalWorkspaceEngineProgressResultV1;

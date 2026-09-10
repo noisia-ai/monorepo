@@ -6176,7 +6176,7 @@ export const signalClassificationOperations = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true })
   },
   (table) => [
-    check("signal_classification_operations_operation_kind_check", sql`${table.operationKind} IN ('create-generation','append-results','finalize-generation','supersede-assignment','register-labeling-function','register-approval-policy','register-gold-set','register-model','transition-model','evaluate-classifier','evaluate-classifier-slice','project-generation','authorize-interpretation','revoke-interpretation')`),
+    check("signal_classification_operations_operation_kind_check", sql`${table.operationKind} IN ('create-generation','append-results','finalize-generation','supersede-assignment','register-labeling-function','register-approval-policy','register-gold-set','register-model','transition-model','evaluate-classifier','evaluate-classifier-slice','project-generation','authorize-interpretation','revoke-interpretation','prepare-incremental-editorial')`),
     unique("uq_signal_classification_operation").on(table.workspaceId, table.idempotencyKey),
     index("idx_signal_classification_operations_workspace").on(table.workspaceId, table.createdAt)
   ]

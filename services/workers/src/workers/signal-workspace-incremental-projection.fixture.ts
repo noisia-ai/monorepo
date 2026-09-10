@@ -184,12 +184,14 @@ export async function fixture(wave: 2 | 3 | 4 = 2, interpreted = true) {
   };
   const options: Options = { database: {} as Options["database"], stores, storage, scratch_root: scratch };
   const job = { id: scope.worker_job_id, data: { execution_id: scope.execution_id, workspace_id: scope.workspace_id, actor_user_id: scope.actor_user_id }, updateProgress: async () => undefined };
-  const invoke = (override: Options = {}) => {
+  const invoke = async (override: Options = {}) => {
     if (outbox === "failed") {
       assert.equal(failures.at(-1), "workspace_incremental_projection_transport_unavailable", "only an explicit transient failure permits automatic redispatch");
       outbox = "dispatched";
     }
-    return run(job, { ...options, ...override });
+    const result = await run(job, { ...options, ...override });
+    if ("phase" in result) throw new Error("legacy fixture unexpectedly materialized an editorial catalog");
+    return result;
   };
   const assertNumericUnchanged = () => { assert.equal(digest({ snapshot: d.snapshot, checkpoint: d.numeric_checkpoint, artifacts: refs }), immutableBefore);
     for (const [key, hash] of originalObjects) assert.equal(sha(objects.get(key)!), hash); };

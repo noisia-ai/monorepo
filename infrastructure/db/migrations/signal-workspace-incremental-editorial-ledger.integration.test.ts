@@ -3,6 +3,7 @@ import {workspaceProjectionFixtureV1,fixtureSha as sha} from './signal-workspace
 import {incrementalProjectionFixtureV1} from './signal-workspace-incremental-projection.fixture';
 import * as projection from '../signal-workspace-incremental-projection';import * as editorial from '../signal-workspace-incremental-editorial';
 import * as engine from '../signal-workspace-engine';import * as runtime from '../signal-workspace-incremental-editorial-execution';import * as money from '../signal-workspace-engine-interpretation';
+import * as ui from '../signal-workspace-incremental-editorial-status';
 import {signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceInterpretationUniverseDigestV1 as unitDigest,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet,buildSignalWorkspaceInterpretationBatchV1 as buildBatch,buildSignalWorkspaceInterpretationRepairBatchV1 as buildRepair,signalWorkspaceInterpretationReferenceIdV1 as refId,type SignalWorkspaceInterpretationV1} from '@noisia/query-engine';
 const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
 test('incremental editorial sealed requests use the unique monetary ledger, retain receipts and finish without fitting or providers',{skip:!enabled,timeout:120000},async()=>{
@@ -12,6 +13,7 @@ test('incremental editorial sealed requests use the unique monetary ledger, reta
    const f=await incrementalProjectionFixtureV1(base,clusterIds,{emerging_component:true,migrations_applied:true}),{query,database,access}=f;
    await query(await readFile(new URL('./0148_signal_workspace_incremental_editorial.sql',import.meta.url),'utf8'));
    await query(await readFile(new URL('./0149_signal_workspace_incremental_editorial_ledger.sql',import.meta.url),'utf8'));
+   await query(await readFile(new URL('./0151_signal_workspace_incremental_editorial_serving.sql',import.meta.url),'utf8'));
    const scope={...access,numeric_execution_id:f.lease.execution_id};
    const rollback=async(work:()=>Promise<void>)=>{await query('BEGIN');try{await work();}finally{await query('ROLLBACK');}};
    const baseline=async()=>({artifacts:(await query("SELECT to_jsonb(artifact) body FROM analysis_artifacts artifact WHERE engine_execution_id=ANY($1::uuid[]) AND metadata->>'contract_version' IS DISTINCT FROM 'workspace-incremental-unit-census-v1' ORDER BY id",[[base.lease.execution_id,f.lease.execution_id]])).rows,engine:(await query('SELECT to_jsonb(run) body FROM signal_topic_catalog_executions run WHERE id=ANY($1::uuid[]) ORDER BY id',[[base.lease.execution_id,f.lease.execution_id]])).rows,
@@ -55,11 +57,40 @@ test('incremental editorial sealed requests use the unique monetary ledger, reta
    });
    const admitted=await editorial.beginSignalWorkspaceIncrementalEditorialV1(admissionArgs);
    const runScope={...access,execution_id:admitted.execution_id};
+   const inert=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope);
+   assert.equal(inert?.status,'queued');assert.equal(inert.has_pending_work,false);assert.equal(inert.dispatch,null);
    const queued=await runtime.enqueueSignalWorkspaceIncrementalEditorialV1(runScope);
+   assert.equal((await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope))?.has_pending_work,true);
    assert.equal((await runtime.enqueueSignalWorkspaceIncrementalEditorialV1(runScope)).worker_job_id,queued.worker_job_id);
    const exhaustDispatch=async()=>{await query(`WITH dead AS(UPDATE signal_topic_classification_outbox SET status='dead_letter',attempt_count=8,error_code='workspace_incremental_editorial_transport_unavailable',lease_token=NULL,lease_expires_at=NULL WHERE execution_id=$1::uuid AND dispatch_kind='execution' RETURNING execution_id,error_code) UPDATE signal_topic_catalog_executions execution SET status='failed',error_code=dead.error_code,completed_at=clock_timestamp() FROM dead WHERE execution.id=dead.execution_id AND execution.status='queued'`,[admitted.execution_id]);};
    await rollback(async()=>{await assert.rejects(query("UPDATE signal_topic_catalog_executions SET status='failed',error_code='workspace_incremental_editorial_transport_unavailable' WHERE id=$1::uuid",[admitted.execution_id]),/transition_invalid/u);});
    await exhaustDispatch();assert.equal((await query("SELECT result_summary->>'worker_job_id' job,status FROM signal_topic_catalog_executions WHERE id=$1::uuid",[admitted.execution_id])).rows[0]!.job,null);
+   assert.equal((await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope))?.can_retry,true);
+   await rollback(async()=>{
+    const retry={...runScope,expected_worker_job_id:queued.worker_job_id,idempotency_key:randomUUID(),provider_available:true};
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,provider_available:false}),/provider_unavailable/u);
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,actor_user_id:randomUUID()}),/forbidden/u);
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,expected_worker_job_id:'wrong-job'}),/retry_unavailable/u);
+    const rejectReceipt=Object.assign(Object.create(database),{connect:async()=>{const c=await database.connect(),wrapped=Object.create(c);wrapped.release=()=>{};
+     wrapped.query=async(sql:string,values?:unknown[])=>{if(sql.includes('SET result_summary=jsonb_set'))throw Error('local retry receipt rejected');return c.query(sql,values);};return wrapped;}});
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,database:rejectReceipt}),/local retry receipt rejected/u);
+    const afterRejected=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1({...runScope,idempotency_key:retry.idempotency_key});
+    assert.equal(afterRejected?.status,'failed');assert.equal(afterRejected.dispatch?.status,'dead_letter');assert.equal(afterRejected.request,null);
+    let lost=false;const lostRetryAck=Object.assign(Object.create(database),{connect:async()=>{const c=await database.connect(),wrapped=Object.create(c);let committed=false;wrapped.release=()=>{};
+     wrapped.query=async(sql:string,values?:unknown[])=>{if(sql==='ROLLBACK'&&committed)return{rows:[],rowCount:0};const result=await c.query(sql,values);
+      if(sql==='COMMIT'){committed=true;lost=true;throw Error('local retry ACK lost');}return result;};return wrapped;}});
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,database:lostRetryAck}),/local retry ACK lost/u);assert.equal(lost,true);
+    await exhaustDispatch();
+    const replayed=await ui.retrySignalWorkspaceIncrementalEditorialV1(retry);assert.equal(replayed.replayed,true);assert.equal(replayed.receipt.retry_count,1);
+    const acknowledged=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1({...access,idempotency_key:retry.idempotency_key,execution_id:randomUUID()});
+    assert.equal(acknowledged?.execution_id,admitted.execution_id);assert.equal(acknowledged.status,'failed');assert.deepEqual(acknowledged.request?.receipt,replayed.receipt);
+    await assert.rejects(ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,expected_worker_job_id:'different-job'}),/idempotency_conflict/u);
+    await query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[access.workspace_id]);
+    const historical=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1({...access,idempotency_key:retry.idempotency_key});
+    assert.equal(historical?.is_current,false);assert.deepEqual(historical.request?.receipt,replayed.receipt);assert.equal(historical.can_retry,false);
+    assert.equal((await ui.retrySignalWorkspaceIncrementalEditorialV1({...retry,provider_available:false})).replayed,true);
+    assert.equal((await query("SELECT (result_summary->>'delivery_retry_count')::int n FROM signal_topic_catalog_executions WHERE id=$1::uuid",[admitted.execution_id])).rows[0]!.n,1);
+   });
    assert.equal((await runtime.requeueSignalWorkspaceIncrementalEditorialV1({...runScope,worker_job_id:queued.worker_job_id})).requeued,true);
    assert.equal((await query('SELECT attempt_count FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid',[admitted.execution_id])).rows[0]!.attempt_count,0);
    assert.equal((await runtime.requeueSignalWorkspaceIncrementalEditorialV1({...runScope,worker_job_id:queued.worker_job_id})).requeued,false);
@@ -114,6 +145,7 @@ test('incremental editorial sealed requests use the unique monetary ledger, reta
    await rollback(async()=>{await money.markSignalWorkspaceEngineInterpretationSentV1({database,call_id:originalCall.call_id,attempt_token:originalCall.attempt_token,execution_token:lease.execution_token});
     await money.failSignalWorkspaceEngineInterpretationV1({database,call_id:originalCall.call_id,attempt_token:originalCall.attempt_token,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_outcome_unknown'});
     await runtime.failSignalWorkspaceIncrementalEditorialV1({database,lease,error_code:'workspace_incremental_editorial_transport_unavailable'});
+    const uncertain=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope);assert.equal(uncertain?.has_unresolved_call,true);assert.equal(uncertain.can_retry,false);
     await assert.rejects(runtime.requeueSignalWorkspaceIncrementalEditorialV1({...runScope,worker_job_id:lease.worker_job_id}),/retry_unavailable/u);
    });
    await rollback(async()=>{
@@ -163,8 +195,25 @@ test('incremental editorial sealed requests use the unique monetary ledger, reta
    const checkpoint=await runtime.persistSignalWorkspaceIncrementalEditorialCheckpointV1({database,lease,batch:repair,interpretations,call_id:repairCall.call_id,response_sha256:repairResponse.sha256,stored:checkpointStored});
    assert.equal((await runtime.persistSignalWorkspaceIncrementalEditorialCheckpointV1({database,lease,batch:repair,interpretations,call_id:repairCall.call_id,response_sha256:repairResponse.sha256,stored:checkpointStored})).replayed,true);
    assert.equal((await runtime.readSignalWorkspaceIncrementalEditorialCheckpointsV1({database,lease}))[0]?.artifact_id,checkpoint.artifact_id);
+   await rollback(async()=>{
+    const callsBefore=(await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[lease.execution_id])).rows;
+    await runtime.failSignalWorkspaceIncrementalEditorialV1({database,lease,error_code:'workspace_incremental_editorial_transport_unavailable'});
+    const recorded=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope);
+    assert.equal(recorded?.requires_authorization,true);assert.equal(recorded.can_retry,true);assert.equal(recorded.interpreted_units,recorded.expected_units);
+    assert.equal(recorded.recorded_recovery_available,true);
+    const recovered=await ui.retrySignalWorkspaceIncrementalEditorialV1({...runScope,expected_worker_job_id:lease.worker_job_id,idempotency_key:randomUUID(),provider_available:false});
+    assert.equal(recovered.replayed,false);
+    await query("UPDATE signal_topic_classification_outbox SET status='dispatched',dispatched_at=clock_timestamp() WHERE execution_id=$1::uuid",[lease.execution_id]);
+    const finishLease=await runtime.claimSignalWorkspaceIncrementalEditorialV1({...queued,database});assert.ok(!('completed' in finishLease));
+    assert.equal((await runtime.finishSignalWorkspaceIncrementalEditorialV1({database,lease:finishLease})).ready,true);
+    assert.deepEqual((await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[lease.execution_id])).rows,callsBefore);
+   });
    assert.equal((await runtime.finishSignalWorkspaceIncrementalEditorialV1({database,lease})).ready,true);
    assert.equal((await runtime.finishSignalWorkspaceIncrementalEditorialV1({database,lease})).replayed,true);
+   const delivered=await ui.loadSignalWorkspaceIncrementalEditorialStatusV1(runScope);
+   assert.equal(delivered?.status,'ready');assert.equal(delivered.expected_units,1);assert.equal(delivered.interpreted_units,1);
+   assert.equal(delivered.has_pending_work,false);assert.equal(delivered.can_retry,false);assert.equal(delivered.requires_authorization,true);
+   assert.deepEqual(delivered.costs,{confirmed_micro_usd:6300,reserved_micro_usd:0,terminal_reserved_micro_usd:0});
    assert.deepEqual(await runtime.claimSignalWorkspaceIncrementalEditorialV1({...queued,database}),{completed:true,execution_id:lease.execution_id,worker_job_id:lease.worker_job_id});
    const after=await baseline();assert.deepEqual(after.engine,original.engine);assert.deepEqual(after.models,original.models);assert.deepEqual(after.workspace,original.workspace);assert.deepEqual(after.artifacts,original.artifacts);
    assert.equal(after.calls.length-original.calls.length,2);assert.equal((await query('SELECT sum(settled_micro_usd)::int total FROM engine_cost_events WHERE catalog_execution_id=$1::uuid',[lease.execution_id])).rows[0]!.total,6300);

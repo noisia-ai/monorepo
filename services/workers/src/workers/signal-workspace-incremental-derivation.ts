@@ -11,6 +11,7 @@ import {
   heartbeatSignalWorkspaceIncrementalProjectionDispatchV1, failSignalWorkspaceIncrementalProjectionDispatchV1,
   completeSignalWorkspaceIncrementalProjectionDispatchV1,
   persistSignalWorkspaceIncrementalProjectionUnitsPageV1,
+  materializeSignalWorkspaceIncrementalEditorialTopicsV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineArtifactV1,
   type SignalWorkspaceIncrementalProjectionDerivationV1, type SignalWorkspaceIncrementalProjectionProposalRefV1,
 } from "@noisia/db";
@@ -31,7 +32,9 @@ export const workspaceIncrementalDerivationStoresV1 = {
   completeDispatch: completeSignalWorkspaceIncrementalProjectionDispatchV1,
   units: persistSignalWorkspaceIncrementalProjectionUnitsPageV1,
 };
-export type WorkspaceIncrementalDerivationStoresV1 = typeof workspaceIncrementalDerivationStoresV1;
+export type WorkspaceIncrementalDerivationStoresV1 = typeof workspaceIncrementalDerivationStoresV1 & {
+  materialize?: typeof materializeSignalWorkspaceIncrementalEditorialTopicsV1;
+};
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: WorkspaceIncrementalDerivationStoresV1;
   storage?: WorkspaceEngineStorageV1; scratch_root?: string };
 const uuid = z.string().uuid(), maximumMetadata = 8 * 1024 * 1024, maximumEditorialBytes = 64 * 1024 * 1024;
@@ -54,7 +57,7 @@ export async function signalWorkspaceIncrementalDerivationJobV1(
   if (!job.id || ![job.data?.execution_id, job.data?.workspace_id, job.data?.actor_user_id].every(value => uuid.safeParse(value).success))
     invalid("job_invalid");
   const database = options.database ?? (await import("../db/client")).pool;
-  const store = options.stores ?? workspaceIncrementalDerivationStoresV1;
+  const store: WorkspaceIncrementalDerivationStoresV1 = options.stores ?? workspaceIncrementalDerivationStoresV1;
   const scope = { database, ...job.data, worker_job_id: job.id };
   let directory: string | undefined, pending: Promise<unknown> | null = null, failure: unknown;
   const heartbeat = async () => {
@@ -93,6 +96,30 @@ export async function signalWorkspaceIncrementalDerivationJobV1(
       if (!next.done) invalid("population_changed");
     } finally { await roots.return?.(); }
     const { bindings, files } = loaded;
+    async function persistUnits() {
+    // Persist the entire model-bank census, including units with no interpreted
+    // Topic or no current members. These aliases reuse the stored bank bytes.
+    let units: Array<Parameters<typeof store.units>[0]["units"][number]> = [];
+    for (const component of files.manifest.components) for (const unit of component.units) {
+      units.push({ component_key: component.component_key, ...unit });
+      if (units.length === 128) { await store.units({ ...request, units }); units = []; await heartbeat(); }
+    }
+    if (units.length) { await store.units({ ...request, units }); await heartbeat(); }
+    }
+    if (loaded.has_incremental_editorial) {
+      await persistUnits();
+      const result = await (store.materialize ?? materializeSignalWorkspaceIncrementalEditorialTopicsV1)({ ...request,
+        proposals: (async function* () { yield* loaded.packets(); })() });
+      if (result.requires_dispatch_refresh) {
+        // Publishing a catalog changes the dispatch identity. Finish this real
+        // catalog stage; the existing scheduler admits the next scoped stage.
+        if (!result.catalog_receipt) invalid("catalog_receipt_invalid");
+        await store.completeDispatch({ ...request, catalog_receipt: result.catalog_receipt });
+        return { phase: "catalog" as const, catalog_receipt: result.catalog_receipt,
+          binding_artifact_id: null, projection_execution_id: null, generation_id: null, replayed: false };
+      }
+    }
+
     const summary = { binding_digest: bindings.binding_digest, editorial_cut_digest: bindings.editorial_cut_digest,
       interpretation_coverage: bindings.interpretation_coverage,
       discovery_coverage: { state: files.manifest.discovery_status, pending_roots: files.census.pending_roots } };
@@ -104,14 +131,7 @@ export async function signalWorkspaceIncrementalDerivationJobV1(
       sha256: await hashWorkspaceEngineFileV1(path), size_bytes: (await lstat(path)).size, media_type: "application/x-ndjson" });
     const artifact: SignalWorkspaceEngineArtifactV1 = { ...stored, artifact_key: name, artifact_type: "engine_output",
       title: "Current Topics and original interpretation evidence", metadata: {} };
-    // Persist the entire model-bank census, including units with no interpreted
-    // Topic or no current members. These aliases reuse the stored bank bytes.
-    let units: Array<Parameters<typeof store.units>[0]["units"][number]> = [];
-    for (const component of files.manifest.components) for (const unit of component.units) {
-      units.push({ component_key: component.component_key, ...unit });
-      if (units.length === 128) { await store.units({ ...request, units }); units = []; await heartbeat(); }
-    }
-    if (units.length) { await store.units({ ...request, units }); await heartbeat(); }
+    if (!loaded.has_incremental_editorial) await persistUnits();
     for (let offset = 0; offset < bindings.bindings.length; offset += 128) {
       await store.bindings({ ...request, artifact, summary, bindings: bindings.bindings.slice(offset, offset + 128) }); await heartbeat();
     }
@@ -192,5 +212,5 @@ export async function loadWorkspaceIncrementalProjectionInputV1(args: {
   if (bindings.editorial_cut_digest !== d.editorial_cut_digest
     || bindings.interpretation_coverage.expected_unit_count !== files.census.expected_unit_count
     || bindings.interpretation_coverage.expected_unit_digest !== files.census.expected_unit_digest) invalid("binding_coverage_invalid");
-  await heartbeat(); return { files, bindings };
+  await heartbeat(); return { files, bindings, packets, has_incremental_editorial: proposals.some(ref => ref.source?.kind === "incremental_editorial") };
 }

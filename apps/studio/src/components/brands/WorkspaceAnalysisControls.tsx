@@ -5,11 +5,13 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState, workspaceNumericReadinessMessage } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { TopicPreparationControls } from "./TopicPreparationControls";
 import { isWorkspaceAdmissionAction } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
 import { WorkspaceInterpretationAdmissionControls } from "./WorkspaceInterpretationAdmissionControls";
+import { isWorkspaceIncrementalEditorialAction, workspaceIncrementalEditorialHasReceipt } from "@/lib/data-os/signal-workspace-incremental-editorial-ui";
+import { WorkspaceIncrementalEditorialControls } from "./WorkspaceIncrementalEditorialControls";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
 export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onContextPrepared, onAssociationsAvailable, signalHref }: {
@@ -20,6 +22,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
   const analysis = useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled, initial });
   const status = analysis.data;
+  const usesIncremental = workspaceAnalysisUsesIncremental(status);
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
   // Deduplicate only identical receipts from the same execution; distinct or newer
@@ -34,6 +37,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const update = status?.update;
   const admission = status?.numeric_readiness;
   const admissionMessage = admission ? workspaceNumericReadinessMessage(admission) : null;
+  const incrementalIntent = analysis.pending && isWorkspaceIncrementalEditorialAction(analysis.pending.body) ? analysis.pending.body : null;
   const deliveryReplay = Boolean(analysis.canReplay && analysis.pending?.body.action === "retry_incremental_delivery");
   const updateState = update ? analysis.error === "load" ? "unverified" : workspaceAnalysisUpdateState(update) : null;
   const associations = workspaceAnalysisAssociationReceipt(workspaceId, status?.request_scope ?? "", update);
@@ -119,6 +123,9 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           {signalHref ? <Link href={signalHref} prefetch={false}>{t("update.openSignal")}</Link> : null}
         </> : <p className="admin-drawer-form__hint">{t("update.noServing")}</p>}
       </div> : null}
+      {status?.incremental_editorial ? <WorkspaceIncrementalEditorialControls status={status}
+        canSubmit={analysis.canSubmitIncremental} canRevoke={analysis.canRevokeIncremental} submitting={analysis.submitting}
+        pendingRequest={incrementalIntent} canReplay={Boolean(incrementalIntent && analysis.canReplay)} onReplay={analysis.replay} onSubmit={analysis.submitIncremental} /> : null}
       {preflight && preflight.state !== "ready" ? <p role="status" className="admin-drawer-form__hint">{update ? <>{t("update.newAnalysis")} </> : null}{t(preflight.state)}
         {preflight.state !== "missing_context" ? <> <Link href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("openData")}</Link></> : null}
       </p> : null}
@@ -154,7 +161,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {run.claude_cost.unknown_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</p> : null}
         {run.claude_cost.terminal_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</p> : null}
       </div> : null}
-      {preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
+      {!usesIncremental && preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
         <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
@@ -171,7 +178,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       </> : null}
       {unknown ? <p role="status">{t("unknown")}</p> : run?.status === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(run.error_code ?? "failed")}`)}</p> : null}
 
-      {analysis.pending && (isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_incremental_delivery" ? !status?.update?.request_delivery : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
+      {status && analysis.pending && (isWorkspaceIncrementalEditorialAction(analysis.pending.body) ? !workspaceIncrementalEditorialHasReceipt(status, analysis.pending.body) : isWorkspaceAdmissionAction(analysis.pending.body) ? !status?.admission?.request : analysis.pending.body.action === "retry_incremental_delivery" ? !status?.update?.request_delivery : analysis.pending.body.action === "retry_numeric" ? !status?.update?.request_numeric : !status?.request_run) ? <p role="status">{t("pending")}</p> : null}
       {analysis.error ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(analysis.error)}`)}</p> : null}
       {disabled ? <p>{t("saveFirst")}</p> : status && !status.can_execute ? <p>{t("readOnly")}</p> : null}
       {analysis.canRetry && run?.transport_recovery_eligible ? <p className="admin-drawer-form__hint">{t("transportRetry")}</p> : null}
@@ -183,11 +190,11 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           <ArrowClockwise aria-hidden size={15} />{t("retryCatalogSave")}</button> : null}
         {analysis.canRetry ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
           <ArrowClockwise aria-hidden size={15} />{t("retry")}</button>
-          : analysis.canReplay && !deliveryReplay ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
+          : analysis.canReplay && !deliveryReplay && !incrementalIntent ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
             <ArrowClockwise aria-hidden size={15} />{t(analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? "admissionGrant.replay" : analysis.pending?.body.action === "retry_incremental_delivery" ? "update.retryDelivery" : analysis.pending?.body.action === "retry_numeric" ? "update.retry" : analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
-            : <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
+            : !usesIncremental ? <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
-                : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button>}
+                : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button> : null}
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>

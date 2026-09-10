@@ -5,11 +5,15 @@ import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
   loadSignalWorkspaceInterpretationAdmissionV1, authorizeSignalWorkspaceInterpretationAdmissionV1, revokeSignalWorkspaceInterpretationAdmissionV1,
+  loadSignalWorkspaceIncrementalEditorialPreparationV1, requestSignalWorkspaceIncrementalEditorialPreparationV1,
+  loadSignalWorkspaceIncrementalEditorialAdmissionV1, beginAndEnqueueSignalWorkspaceIncrementalEditorialV1, revokeSignalWorkspaceIncrementalEditorialV1,
+  loadSignalWorkspaceIncrementalEditorialStatusV1, retrySignalWorkspaceIncrementalEditorialV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
-  type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
+  type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
+import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
 
 type Database = Pick<Pool, "query" | "connect">;
 type Access = { database?: Database; workspaceId: string; actorUserId: string };
@@ -47,6 +51,29 @@ export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<str
  * kill switch still prevents new sends; an expired legacy env date is not a renewal veto. */
 export function workspaceAnalysisAdmissionProviderAvailableV1(env: Readonly<Record<string, string | undefined>> = process.env) {
   return env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY);
+}
+export function workspaceIncrementalEditorialExecutionViewV1(run: SignalWorkspaceIncrementalEditorialStatusV1 | null, providerAvailable: boolean) {
+  return run ? { ...run, can_retry: run.can_retry && (providerAvailable || run.recorded_recovery_available) } : null;
+}
+const incrementalEditorialReaders = {
+  admission: (args: Parameters<typeof loadSignalWorkspaceIncrementalEditorialAdmissionV1>[0]) => loadSignalWorkspaceIncrementalEditorialAdmissionV1(args),
+  preparation: loadSignalWorkspaceIncrementalEditorialPreparationV1,
+  execution: loadSignalWorkspaceIncrementalEditorialStatusV1
+};
+/** Resolve accepted admission keys before choosing a numeric source. Historical
+ * receipts must not depend on the current preparation or catalog still existing. */
+export async function loadWorkspaceIncrementalEditorialForActorV1(args: {
+  database: Database; workspace_id: string; actor_user_id: string; idempotency_key?: string;
+}, readers = incrementalEditorialReaders): Promise<WorkspaceIncrementalEditorial | null> {
+  const admission = await readers.admission(args);
+  const preparation = await readers.preparation({ ...args,
+    numeric_execution_id: admission?.request?.receipt.numeric_execution_id });
+  const execution = await readers.execution({ ...args,
+    execution_id: admission?.request?.receipt.execution_id ?? admission?.operation?.execution_id });
+  const providerAvailable = workspaceAnalysisAdmissionProviderAvailableV1();
+  return preparation || admission || execution ? { preparation,
+    execution: workspaceIncrementalEditorialExecutionViewV1(execution, providerAvailable),
+    admission: admission ? { ...admission, adapter_available: true, provider_available: providerAvailable } : null } : null;
 }
 export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"], budget?: SignalWorkspaceEngineInterpretationBudgetV1): WorkspaceAnalysisRun | null {
   if (!run) return null;
@@ -88,8 +115,9 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
   const loadedAdmission = await loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey });
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
+  const incremental_editorial = await loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey });
   const latest = view(raw.latest_run);
-  const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, contract_version: "signal-workspace-analysis-v1",
+  const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
     latest_run: latest, active_run: latest && ["queued", "running"].includes(latest.status) ? latest : null,
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
@@ -119,6 +147,23 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
+  } else if (args.body.action === "prepare_incremental_editorial") {
+    await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,
+      expected_source_digest: args.body.expected_source_digest, idempotency_key: args.idempotencyKey });
+  } else if (args.body.action === "begin_incremental_editorial") {
+    await beginAndEnqueueSignalWorkspaceIncrementalEditorialV1({ ...access, numeric_execution_id: args.body.run_id,
+      expected_evidence_plan_artifact_id: args.body.expected_evidence_plan_artifact_id,
+      expected_numeric_checkpoint_digest: args.body.expected_numeric_checkpoint_digest,
+      expected_target_unit_digest: args.body.expected_target_unit_digest, expected_history_cut_digest: args.body.expected_history_cut_digest,
+      cap_micro_usd: args.body.cap_micro_usd, admission_not_after: args.body.admission_not_after, idempotency_key: args.idempotencyKey,
+      provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
+  } else if (args.body.action === "revoke_incremental_editorial") {
+    await revokeSignalWorkspaceIncrementalEditorialV1({ ...access, execution_id: args.body.run_id,
+      expected_admission_operation_id: args.body.expected_admission_operation_id, idempotency_key: args.idempotencyKey });
+  } else if (args.body.action === "retry_incremental_editorial") {
+    await retrySignalWorkspaceIncrementalEditorialV1({ ...access, execution_id: args.body.run_id,
+      expected_worker_job_id: args.body.expected_worker_job_id, idempotency_key: args.idempotencyKey,
+      provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
   } else if (args.body.action === "authorize_interpretation") {
     if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
     await authorizeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,

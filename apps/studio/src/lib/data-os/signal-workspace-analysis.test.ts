@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1 } from "@noisia/db";
-import { loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
+import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1 } from "@noisia/db";
+import { loadWorkspaceIncrementalEditorialForActorV1, workspaceIncrementalEditorialExecutionViewV1, loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
   workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
 const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
@@ -31,6 +31,26 @@ test("import-capable client does not gain engine permission from a zero cost cap
   await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase(granted), workspaceId: id,
     actorUserId: "actor", idempotencyKey: "analysis-test-request", body }),
   (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
+});
+test("incremental evidence and paid admission use the existing scoped authority before any preparation or budget read", async () => {
+  const requests = [
+    { action: "prepare_incremental_editorial", run_id: id, expected_source_digest: hash },
+    { action: "begin_incremental_editorial", run_id: id, expected_evidence_plan_artifact_id: id,
+      expected_numeric_checkpoint_digest: hash, expected_target_unit_digest: hash, expected_history_cut_digest: hash,
+      cap_micro_usd: 1, admission_not_after: "2026-09-10T00:00:00.000Z" },
+    { action: "revoke_incremental_editorial", run_id: id, expected_admission_operation_id: id },
+    { action: "retry_incremental_editorial", run_id: id, expected_worker_job_id: "editorial-owner-job" }
+  ];
+  for (const request of requests) {
+    assert.equal(validateWorkspaceAnalysisRequestV1(request), true);
+    for (const authority of [null, granted, { ...granted, actor_status: "suspended" }, { ...granted, same_organization: false }]) {
+      await assert.rejects(requestWorkspaceAnalysisForActorV1({ database: authorityDatabase(authority), workspaceId: id,
+        actorUserId: "actor", idempotencyKey: "analysis-test-incremental", body: request }),
+      (error: unknown) => error instanceof SignalWorkspaceEngineError && error.status === 403);
+    }
+    assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, model: "claude-sonnet-4-6" }), false);
+    assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, budget_actor_user_id: id }), false);
+  }
 });
 test("analysis request is sealed to saved context and server engine config; retry only targets a run", () => {
   assert.equal(validateWorkspaceAnalysisRequestV1(body), true);
@@ -302,4 +322,112 @@ test("incremental delivery accepts only the numeric execution target and rejects
   for (const patch of [{ phase: "projection" }, { generation_id: id }, { binding_artifact_id: id },
     { claude_cap_micro_usd: 0 }, { actor_user_id: "other" }, { run_id: "invalid" }])
     assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, ...patch }), false);
+});
+
+test("editorial recovery reaches its dedicated store while provider is disabled, without legacy retry or new grant", async () => {
+  const prior = process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED;
+  process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = "false";
+  try {
+    const queries: string[] = [];
+    const query = async (sql: string) => {
+      queries.push(sql);
+      if (sql.includes("workspace.status workspace_status")) return { rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] };
+      if (sql.startsWith("BEGIN") || sql.startsWith("SET LOCAL") || sql === "ROLLBACK") return { rows: [] };
+      if (sql.includes("workspace_interpretation_admission_admin_v1")) return { rows: [{ valid: false }] };
+      throw new Error("Unexpected operation outside editorial recovery authority");
+    };
+    const database = { query, connect: async () => ({ query, release() {} }) } as unknown as Pick<Pool, "query" | "connect">;
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: id, actorUserId: "actor", idempotencyKey: "editorial-retry-test",
+      body: { action: "retry_incremental_editorial", run_id: id, expected_worker_job_id: "editorial-owner-job" } }),
+    (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_incremental_editorial_forbidden" && error.status === 403);
+    assert.ok(queries.some(sql => sql.includes("workspace_interpretation_admission_admin_v1")));
+    assert.ok(!queries.some(sql => /^(INSERT|UPDATE)/u.test(sql)));
+  } finally { if (prior === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = prior; }
+});
+
+test("operating kill switch blocks new editorial sends but preserves server-verified recorded recovery and historical costs", () => {
+  const run = { execution_id: id, status: "failed", error_code: "workspace_engine_storage_transport_failed", is_current: true,
+    has_pending_work: false, has_unresolved_call: false, expected_units: 3, interpreted_units: 1, dispatch: { worker_job_id: "editorial-job", status: "failed" },
+    can_retry: true, requires_authorization: false, recorded_recovery_available: false,
+    costs: { confirmed_micro_usd: 120_000, reserved_micro_usd: 40_000, terminal_reserved_micro_usd: 10_000 }, request: null };
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1(run, false)?.can_retry, false);
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1(run, true)?.can_retry, true);
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1({ ...run, requires_authorization: true, recorded_recovery_available: true }, false)?.can_retry, true);
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1({ ...run, can_retry: false, recorded_recovery_available: true }, true)?.can_retry, false);
+  assert.deepEqual(workspaceIncrementalEditorialExecutionViewV1(run, false)?.costs, run.costs);
+  assert.equal(workspaceIncrementalEditorialExecutionViewV1(null, true), null);
+});
+
+const historicalNumeric = "10000000-0000-4000-8000-000000000001", historicalOwner = "20000000-0000-4000-8000-000000000001";
+const latestNumeric = "30000000-0000-4000-8000-000000000001";
+function historicalAdmission(action: "authorize_interpretation" | "revoke_interpretation"): SignalWorkspaceIncrementalEditorialAdmissionV1 {
+  const receipt = { contract_version: "workspace-incremental-editorial-admission-v1" as const, operation_id: id,
+    execution_id: historicalOwner, workspace_id: id, action, grant_digest: hash, prior_admission_operation_id: action === "revoke_interpretation" ? id : null,
+    authorized_by_user_id: id, budget_actor_user_id: id, input_digest: hash, numeric_execution_id: historicalNumeric,
+    numeric_checkpoint_digest: hash, target_unit_digest: hash, target_binding_digest: hash, evidence_plan_artifact_id: id,
+    configuration_digest: hash, budget_timezone: "UTC", budget_date: "2026-09-09", authorized_at: "2026-09-09T01:00:00.000Z",
+    admission_not_after: "2026-09-09T02:00:00.000Z", grant_cap_micro_usd: action === "revoke_interpretation" ? 0 : 1_000_000,
+    run_cap_micro_usd: 1_000_000, daily_cap_micro_usd: 2_000_000 };
+  return { numeric_execution_id: historicalNumeric, numeric_checkpoint_digest: hash, history_cut_digest: hash,
+    target_unit_digest: hash, target_binding_digest: hash, evidence_plan_artifact_id: id, expected_units: 5, target_units: 0, legacy_units: 2, claimed_units: 3,
+    is_current: false, can_authorize: false, blocked_reason: "workspace_incremental_editorial_source_stale", budget_actor_user_id: id,
+    budget_timezone: "UTC", budget_date: "2026-09-09", maximum_admission_not_after: "2026-09-10T00:00:00.000Z", daily_cap_micro_usd: 2_000_000,
+    confirmed_micro_usd: 100_000, reserved_micro_usd: 40_000, terminal_reserved_micro_usd: 10_000, maximum_grant_micro_usd: 0,
+    model: "claude-sonnet-4-6", adapter_available: false,
+    operation: { execution_id: historicalOwner, status: "failed", is_current: false, can_revoke: action === "authorize_interpretation", requires_authorization: true, receipt },
+    request: { idempotency_key: "historical-admission-key", receipt } };
+}
+for (const action of ["authorize_interpretation", "revoke_interpretation"] as const) test(`service resolves historical ${action} receipt before newer preparation or absent current catalog`, async () => {
+  const loaded = historicalAdmission(action), order: string[] = [];
+  const database = { query: async () => { throw new Error("The adapter must not query the missing live catalog"); },
+    connect: async () => { throw new Error("No adapter-owned transaction"); } } as unknown as Pick<Pool, "query" | "connect">;
+  const args = { database, workspace_id: id, actor_user_id: id, idempotency_key: "historical-admission-key" };
+  const result = await loadWorkspaceIncrementalEditorialForActorV1(args, {
+    admission: async received => { order.push("admission"); assert.deepEqual(received, args); return loaded; },
+    preparation: async received => {
+      order.push("preparation"); assert.equal(received.idempotency_key, args.idempotency_key);
+      assert.equal(received.numeric_execution_id, historicalNumeric, "the latest numeric source must not choose a historical admission owner");
+      return { numeric_execution_id: received.numeric_execution_id ?? latestNumeric, numeric_checkpoint_digest: hash, source_digest: hash,
+        is_current: false, can_prepare: false, blocked_reason: "source_stale", has_pending_work: false, preparation: null, request: null };
+    },
+    execution: async received => {
+      order.push("execution"); assert.equal(received.execution_id, historicalOwner); assert.equal(received.idempotency_key, args.idempotency_key);
+      return { execution_id: historicalOwner, status: "failed", error_code: "workspace_engine_storage_transport_failed", is_current: false,
+        has_pending_work: false, has_unresolved_call: false, expected_units: 3, interpreted_units: 1, dispatch: null,
+        can_retry: false, requires_authorization: true, recorded_recovery_available: false,
+        costs: { confirmed_micro_usd: 100_000, reserved_micro_usd: 40_000, terminal_reserved_micro_usd: 10_000 }, request: null };
+    }
+  });
+  assert.deepEqual(order, ["admission", "preparation", "execution"]);
+  assert.deepEqual(result?.admission?.request, loaded.request);
+  assert.equal(result?.admission?.can_authorize, false); assert.equal(result?.execution?.execution_id, historicalOwner);
+  assert.equal(result?.execution?.interpreted_units, 1); assert.equal(result?.execution?.costs.confirmed_micro_usd, 100_000);
+});
+test("base full-fit without numeric work remains null; preparation/retry keys retain each reader's own priority", async () => {
+  const database = {} as Pick<Pool, "query" | "connect">;
+  for (const requestKey of [undefined, "preparation-request-key", "editorial-retry-request-key"]) {
+    const calls: string[] = [];
+    const result = await loadWorkspaceIncrementalEditorialForActorV1({ database, workspace_id: id, actor_user_id: id, idempotency_key: requestKey }, {
+      admission: async args => { assert.equal(args.idempotency_key, requestKey); calls.push("admission"); return null; },
+      preparation: async args => { assert.equal(args.idempotency_key, requestKey); assert.equal(args.numeric_execution_id, undefined); calls.push("preparation"); return null; },
+      execution: async args => { assert.equal(args.idempotency_key, requestKey); assert.equal(args.execution_id, undefined); calls.push("execution"); return null; }
+    });
+    assert.equal(result, null); assert.deepEqual(calls, ["admission", "preparation", "execution"]);
+  }
+});
+test("begin with provider off reaches the atomic wrapper's replay branch instead of an early Studio rejection", async () => {
+  const previous = process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED;
+  process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = "false";
+  try {
+    let connections = 0; const marker = new Error("Atomic replay lookup reached");
+    const database = { query: async () => ({ rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] }),
+      connect: async () => { connections++; throw marker; } } as unknown as Pick<Pool, "query" | "connect">;
+    const request = { action: "begin_incremental_editorial", run_id: historicalNumeric, expected_evidence_plan_artifact_id: id,
+      expected_numeric_checkpoint_digest: hash, expected_target_unit_digest: hash, expected_history_cut_digest: hash,
+      cap_micro_usd: 1_000_000, admission_not_after: "2026-09-09T02:00:00.000Z" };
+    assert.equal(validateWorkspaceAnalysisRequestV1({ ...request, provider_available: true }), false);
+    await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: id, actorUserId: id,
+      idempotencyKey: "historical-admission-key", body: request }), error => error === marker);
+    assert.equal(connections, 1);
+  } finally { if (previous === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = previous; }
 });

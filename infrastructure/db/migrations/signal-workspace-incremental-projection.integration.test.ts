@@ -133,6 +133,7 @@ test('incremental binding and native projection preserve paid lineage, current e
     await query("UPDATE signal_topic_classification_outbox SET status='dispatched',dispatched_at=clock_timestamp() WHERE execution_id=$1::uuid AND dispatch_kind='incremental_projection'",[f.lease.execution_id]);
     const nextScope={...scope,worker_job_id:next.worker_job_id};
     const rebuilt=await signalWorkspaceIncrementalDerivationJobV1({id:next.worker_job_id,data:nextScope,updateProgress:async()=>{}},{database,storage:f.storage});
+    assert.ok(rebuilt.projection_execution_id);
     await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID()});
     assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[topic.term_key]?.selected,false);
     const queued=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='execution'",[rebuilt.projection_execution_id])).rows[0]!;

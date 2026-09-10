@@ -43,6 +43,11 @@ async function request(client:Queryable,scope:{workspace_id:string;actor_user_id
  WHERE workspace_id=$1::uuid AND actor_user_id=$2::uuid AND idempotency_key=$3 AND result->>'contract_version'='workspace-incremental-editorial-admission-v1'`,
  [scope.workspace_id,scope.actor_user_id,key(idempotency_key)])).rows[0]??null;
 }
+/** Scoped historical receipt lookup also enforces current workspace read authority. */
+export async function readSignalWorkspaceIncrementalEditorialRequestWithQueryableV1(client:Queryable,scope:{workspace_id:string;actor_user_id:string},idempotency_key:string){
+ if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...scope})).can_view)return fail('forbidden',403);
+ return request(client,scope,idempotency_key);
+}
 type Source={id:string;actor_user_id:string;input_snapshot:{context_digest:string;catalog_digest:string};checkpoint:{checkpoint_digest:string;population_digest:string;model_bank_artifact_id:string};bank_sha256:string;
  policy:{source_execution_id:string;budget_actor_user_id:string;budget_timezone:string;daily_cap_micro_usd:number}|null;targets:{expected_units:number;unique_units:number;target_units:number;target_unit_digest:string;legacy_units:number;claimed_units:number};
  census:string|null;history:string;valid:boolean;profile_id:string;input_revision:string};
@@ -57,11 +62,14 @@ async function source(client:Queryable,args:SignalWorkspaceIncrementalEditorialS
  WHERE engine.id=$1::uuid AND engine.workspace_id=$2::uuid AND engine.input_contract='workspace-topic-engine-v1' AND engine.input_snapshot ? 'numeric_descriptor'`,
  [uuid(args.numeric_execution_id),args.workspace_id])).rows[0];if(!row?.checkpoint)return fail('source_not_found',404);return row;
 }
-async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialScopeV1&{idempotency_key?:string}):Promise<SignalWorkspaceIncrementalEditorialAdmissionV1>{
+async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialScopeV1&{idempotency_key?:string},options:{accepted?:Awaited<ReturnType<typeof request>>;historical?:boolean}={}):Promise<SignalWorkspaceIncrementalEditorialAdmissionV1>{
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args})).can_view)return fail('forbidden',403);
- const row=await source(client,args),accepted=await request(client,args,args.idempotency_key);
- const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
- const is_current=row.valid&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
+ const accepted=options.accepted??await request(client,args,args.idempotency_key),row=await source(client,args);
+ let identity:{context_digest:string;catalog_digest:string}|null=null;
+ try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id});}
+ catch(error){if(!options.historical||!(error instanceof Error)||!(error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
+   ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
+ const is_current=row.valid&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
  const isAdmin=(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]!.valid;
  const policy=row.policy;
  const clock=(await client.query<{now:string;date:string;maximum:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now,
@@ -75,7 +83,8 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  const plan=(await client.query<{id:string;metadata:{descriptor:Omit<SignalWorkspaceIncrementalEditorialEvidenceV1,'units'>};valid:boolean}>(`SELECT id,metadata,workspace_incremental_editorial_plan_valid_v1(id) valid FROM analysis_artifacts
  WHERE workspace_id=$1::uuid AND metadata->>'numeric_execution_id'=$2::text AND metadata->>'contract_version'='workspace-incremental-editorial-plan-v1' ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id])).rows[0];
  const operation=(await client.query<{execution_id:string;status:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}>(`SELECT id execution_id,status,workspace_interpretation_admission_receipt_v1(id) receipt FROM signal_topic_catalog_executions
- WHERE workspace_id=$1::uuid AND source_execution_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1' ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id])).rows[0];
+ WHERE workspace_id=$1::uuid AND source_execution_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1'
+  AND ($3::uuid IS NULL OR id=$3::uuid) ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id,options.historical?accepted?.result.execution_id??null:null])).rows[0];
  const blocked_reason=!isAdmin?'workspace_incremental_editorial_forbidden':!is_current?'workspace_incremental_editorial_source_stale':!policy?'workspace_incremental_editorial_budget_policy_missing':!row.census||row.targets.expected_units!==row.targets.unique_units?'workspace_incremental_editorial_census_incomplete':operation?'workspace_incremental_editorial_already_owned':!plan?.valid?'workspace_incremental_editorial_evidence_required':plan.metadata.descriptor.stream.rows===0?'workspace_incremental_editorial_no_new_units':maximum<=0?'workspace_incremental_editorial_cap_exceeded':null;
  return{numeric_execution_id:row.id,numeric_checkpoint_digest:row.checkpoint.checkpoint_digest,history_cut_digest:row.history,target_unit_digest:plan?.metadata.descriptor.target_unit_digest??null,target_binding_digest:plan?.metadata.descriptor.target_binding_digest??null,evidence_plan_artifact_id:plan?.id??null,
  expected_units:row.targets.expected_units,target_units:plan?.metadata.descriptor.stream.rows??0,legacy_units:row.targets.legacy_units,claimed_units:row.targets.claimed_units,is_current,can_authorize:blocked_reason===null,blocked_reason,
@@ -84,10 +93,24 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  operation:operation?.receipt?{...operation,is_current,can_revoke:isAdmin&&operation.receipt.action==='authorize_interpretation',requires_authorization:operation.receipt.action==='revoke_interpretation'||Date.parse(operation.receipt.admission_not_after)<=Date.parse(clock.now)}:null,
  request:accepted?{idempotency_key:args.idempotency_key!,receipt:accepted.result}:null};
 }
-export async function loadSignalWorkspaceIncrementalEditorialAdmissionV1(args:SignalWorkspaceIncrementalEditorialScopeV1&{idempotency_key?:string}){
- const client=await args.database.connect();try{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await view(client,args);await client.query('COMMIT');return result;}
- catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
+type AdmissionReadArgs=Omit<SignalWorkspaceIncrementalEditorialScopeV1,'numeric_execution_id'>&{numeric_execution_id?:string;idempotency_key?:string};
+export function loadSignalWorkspaceIncrementalEditorialAdmissionV1(args:SignalWorkspaceIncrementalEditorialScopeV1&{idempotency_key?:string}):Promise<SignalWorkspaceIncrementalEditorialAdmissionV1>;
+export function loadSignalWorkspaceIncrementalEditorialAdmissionV1(args:AdmissionReadArgs):Promise<SignalWorkspaceIncrementalEditorialAdmissionV1|null>;
+/** Accepted begin/revoke keys locate their own immutable source and owner before
+ * any current-source lookup. Reading a historical receipt cannot admit spending. */
+export async function loadSignalWorkspaceIncrementalEditorialAdmissionV1(args:AdmissionReadArgs):Promise<SignalWorkspaceIncrementalEditorialAdmissionV1|null>{
+ const client=await args.database.connect();try{
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query('SET LOCAL search_path=public,extensions,pg_temp');
+  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args})).can_view)return fail('forbidden',403);
+  const accepted=args.idempotency_key?await readSignalWorkspaceIncrementalEditorialRequestWithQueryableV1(client,args,args.idempotency_key):null;
+  const numeric_execution_id=accepted?.result.numeric_execution_id??args.numeric_execution_id??(await client.query<{id:string}>(`SELECT id FROM signal_topic_catalog_executions
+   WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND input_snapshot ? 'numeric_descriptor'
+    AND result_summary ? 'numeric_checkpoint' ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id])).rows[0]?.id;
+  const result=numeric_execution_id?await view(client,{...args,numeric_execution_id},{accepted,historical:true}):null;
+  await client.query('COMMIT');return result;
+ }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
 }
+
 async function insertReceipt(client:Queryable,args:{workspace_id:string;actor_user_id:string;idempotency_key:string},request_digest:string,body:Omit<SignalWorkspaceIncrementalEditorialReceiptV1,'grant_digest'>){
  const receipt={...body,grant_digest:digest(body)};
  await client.query(`INSERT INTO signal_classification_operations(id,workspace_id,actor_user_id,operation_kind,idempotency_key,request_digest,status,result,completed_at)
@@ -98,12 +121,16 @@ async function insertReceipt(client:Queryable,args:{workspace_id:string;actor_us
 }
 function replay(prior:{request_digest:string;result:SignalWorkspaceIncrementalEditorialReceiptV1},expected:string){if(prior.request_digest!==expected)return fail('idempotency_conflict');return{execution_id:prior.result.execution_id,receipt:prior.result,replayed:true};}
 export async function beginSignalWorkspaceIncrementalEditorialV1(args:SignalWorkspaceIncrementalEditorialBeginArgsV1):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
+ return withSignalWorkspaceEngineTransactionV1(args.database,client=>beginSignalWorkspaceIncrementalEditorialWithClientV1(client,args));
+}
+/** Existing admission body, composed with an enqueue in the same transaction. */
+export async function beginSignalWorkspaceIncrementalEditorialWithClientV1(client:PoolClient,args:SignalWorkspaceIncrementalEditorialBeginArgsV1):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
  const numeric_execution_id=uuid(args.numeric_execution_id),expected_evidence_plan_artifact_id=uuid(args.expected_evidence_plan_artifact_id);key(args.idempotency_key);
  if(!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0||!canonicalDate(args.admission_not_after)
   ||![args.expected_numeric_checkpoint_digest,args.expected_target_unit_digest,args.expected_history_cut_digest].every(value=>hash.test(value)))return fail('request_invalid',422);
  const request_digest=digest({action:'begin_incremental_editorial',numeric_execution_id,expected_evidence_plan_artifact_id,expected_numeric_checkpoint_digest:args.expected_numeric_checkpoint_digest,
  expected_target_unit_digest:args.expected_target_unit_digest,expected_history_cut_digest:args.expected_history_cut_digest,cap_micro_usd:args.cap_micro_usd,admission_not_after:args.admission_not_after});
- return withSignalWorkspaceEngineTransactionV1(args.database,async client=>{
+
   await admin(client,args);const accepted=await request(client,args,args.idempotency_key);if(accepted)return replay(accepted,request_digest);
   const actor=(await client.query<{actor_user_id:string}>('SELECT actor_user_id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid',[numeric_execution_id,args.workspace_id])).rows[0];if(!actor)return fail('source_not_found',404);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`workspace-interpretation-budget:${actor.actor_user_id}`]);
@@ -147,7 +174,7 @@ export async function beginSignalWorkspaceIncrementalEditorialV1(args:SignalWork
    budget_timezone:preview.budget_timezone,budget_date:preview.budget_date,authorized_at:now,admission_not_after:args.admission_not_after,
    grant_cap_micro_usd:args.cap_micro_usd,run_cap_micro_usd:args.cap_micro_usd,daily_cap_micro_usd:preview.daily_cap_micro_usd});
   return{execution_id,receipt,replayed:false};
- });
+
 }
 export async function revokeSignalWorkspaceIncrementalEditorialV1(args:SignalWorkspaceIncrementalEditorialRevokeArgsV1):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
  const execution_id=uuid(args.execution_id),expected=uuid(args.expected_admission_operation_id);key(args.idempotency_key);
@@ -179,6 +206,10 @@ export type SignalWorkspaceIncrementalEditorialEvidenceArgsV1=SignalWorkspaceInc
 /** Server-only adapter boundary: the caller supplies the descriptor returned after
  * complete SHA/EOF validation and verified upload. No browser route accepts it. */
 export async function persistSignalWorkspaceIncrementalEditorialEvidenceV1(args:SignalWorkspaceIncrementalEditorialEvidenceArgsV1){
+ return withSignalWorkspaceEngineTransactionV1(args.database,client=>persistSignalWorkspaceIncrementalEditorialEvidenceWithClientV1(client,args));
+}
+/** Same 0148 validation and locks, allowing a preparation receipt to commit atomically. */
+export async function persistSignalWorkspaceIncrementalEditorialEvidenceWithClientV1(client:PoolClient,args:SignalWorkspaceIncrementalEditorialEvidenceArgsV1){
  const evidence=args.evidence,{evidence_digest,...unsigned}=evidence;
  if(!Array.isArray(evidence.units)||evidence.units.some(unit=>![unit.root_count,unit.chunk_count,unit.local_label].every(n=>Number.isSafeInteger(n)&&n>=0)
   ||unit.chunk_count<unit.root_count||(unit.chunk_count===0)!==(unit.root_count===0))
@@ -189,7 +220,7 @@ export async function persistSignalWorkspaceIncrementalEditorialEvidenceV1(args:
   ||!hash.test(args.stored.sha256)||!Number.isSafeInteger(args.stored.size_bytes)||args.stored.size_bytes<0||args.stored.media_type.length>120
   ||!args.stored.storage_key.startsWith(`workspace-engine/${args.workspace_id}/${evidence.numeric_execution_id}/`)||args.stored.storage_key.includes('..')
   ||Buffer.byteLength(JSON.stringify(evidence))>8*1024*1024)return fail('evidence_invalid',422);
- return withSignalWorkspaceEngineTransactionV1(args.database,async client=>{
+
   await admin(client,args);await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
   await client.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE',[args.workspace_id]);
   const numeric=await source(client,args),identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
@@ -218,5 +249,5 @@ export async function persistSignalWorkspaceIncrementalEditorialEvidenceV1(args:
   if(!(await client.query<{valid:boolean}>('SELECT workspace_incremental_editorial_plan_valid_v1($1::uuid) valid',[plan_id])).rows[0]?.valid)return fail('evidence_invalid');
   await client.query('SET CONSTRAINTS trg_workspace_incremental_editorial_plan_complete IMMEDIATE');await client.query('SET CONSTRAINTS trg_workspace_incremental_editorial_plan_complete DEFERRED');
   return{artifact_id:plan_id,evidence_digest,replayed:false};
- });
+
 }

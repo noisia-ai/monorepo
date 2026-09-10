@@ -17,9 +17,16 @@ const error = (v: unknown) => v === null || typeof v === "string";
 const progress = (v: unknown): v is Record<string, unknown> => object(v) && uuid(v.execution_id)
   && ["queued", "running", "ready", "failed"].includes(String(v.status)) && integer(v.expected_roots)
   && integer(v.processed_roots) && v.processed_roots <= v.expected_roots && typeof v.is_current === "boolean" && error(v.error_code);
+export function validWorkspaceIncrementalCatalogReceipt(value: unknown): boolean {
+  return value === undefined || value === null || object(value) && value.contract_version === "workspace-incremental-editorial-catalog-receipt-v1"
+    && ["receipt_id", "numeric_execution_id", "output_catalog_profile_id"].every(field => uuid(value[field]))
+    && digest(value.serving_editorial_cut_digest) && digest(value.mapping_digest) && integer(value.output_catalog_revision)
+    && integer(value.topic_count) && integer(value.discovered_topic_count) && value.discovered_topic_count <= value.topic_count;
+}
 export function validWorkspaceAnalysisUpdate(value: unknown): value is WorkspaceAnalysisUpdate | null | undefined {
   if (value === undefined || value === null) return true;
   if (!object(value) || !revision(value.desired_revision) || !revision(value.input_revision) || typeof value.has_pending_work !== "boolean"
+    || !validWorkspaceIncrementalCatalogReceipt(value.catalog_receipt)
     || !progress(value.numeric) || (value.numeric.retry_available !== undefined && typeof value.numeric.retry_available !== "boolean")
     || !(value.request_numeric === undefined || value.request_numeric === null || object(value.request_numeric)
       && value.request_numeric.action === "retry_numeric" && uuid(value.request_numeric.execution_id)

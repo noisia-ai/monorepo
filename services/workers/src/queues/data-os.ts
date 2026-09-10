@@ -1,3 +1,5 @@
+import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1 } from '@noisia/db';
+import { signalWorkspaceIncrementalEditorialEvidenceJobV1 } from '../workers/signal-workspace-incremental-editorial-evidence-job';
 import { Queue, Worker } from "bullmq";
 
 import {
@@ -66,6 +68,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_NAME) return signalWorkspaceTopicProjectionJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME) return signalWorkspaceIncrementalDerivationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_PROJECTION_JOB_NAME) return signalWorkspaceIncrementalProjectionJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1) return signalWorkspaceIncrementalEditorialEvidenceJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME) return signalWorkspaceIncrementalEditorialJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);

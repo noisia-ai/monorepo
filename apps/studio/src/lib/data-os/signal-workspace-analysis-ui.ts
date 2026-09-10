@@ -3,6 +3,9 @@ import { isWorkspaceAdmissionAction, validWorkspaceAdmissionRequest, validWorksp
 import type { SignalWorkspaceEngineStatusV1 } from "@noisia/db";
 import { embeddingCapUsdInput, latestCorpusEmbeddingSnapshot, parseEmbeddingCapMicroUsd } from "./workspace-corpus-embeddings-ui";
 import { validWorkspaceAnalysisUpdate, validWorkspaceNumericReadiness, type WorkspaceAnalysisUpdate, type WorkspaceNumericReadiness } from "./signal-workspace-analysis-update-ui";
+import { isWorkspaceIncrementalEditorialAction, validWorkspaceIncrementalEditorial, validWorkspaceIncrementalEditorialRequest,
+  workspaceIncrementalEditorialHasReceipt, workspaceIncrementalEditorialPending,
+  type WorkspaceIncrementalEditorial, type WorkspaceIncrementalEditorialRequest } from "./signal-workspace-incremental-editorial-ui";
 
 export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> & {
   retryable: boolean; outcome_unknown: boolean; transport_recovery_eligible: boolean;
@@ -15,6 +18,7 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
   admission?: WorkspaceInterpretationAdmission | null;
+  incremental_editorial?: WorkspaceIncrementalEditorial | null;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
     cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number; provider_available: boolean };
@@ -28,7 +32,7 @@ export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: stri
   | { action: "retry_progress"; run_id: string }
   | { action: "retry_numeric"; run_id: string }
   | { action: "retry_incremental_delivery"; run_id: string }
-  | WorkspaceInterpretationAdmissionRequest;
+  | WorkspaceInterpretationAdmissionRequest | WorkspaceIncrementalEditorialRequest;
 export type PendingWorkspaceAnalysis = { version: 1; workspace_id: string; request_scope: string;
   key: string; body: WorkspaceAnalysisRequest };
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -50,13 +54,16 @@ export function validWorkspaceAnalysisMaterialization(value: unknown): boolean {
 /** Only a persisted receipt or the complete execution can invalidate the catalog. */
 export function workspaceAnalysisCatalogReceiptKey(status: WorkspaceAnalysisStatus | null) {
   if (!status) return null;
+  const incremental = status.update?.catalog_receipt;
+  const incrementalKey = incremental ? `${incremental.receipt_id}:${incremental.serving_editorial_cut_digest}:${incremental.output_catalog_profile_id}:${incremental.mapping_digest}` : "";
   const run = status.active_run ?? status.latest_run;
   if (run?.status === "ready" && status.latest_complete?.execution_id === run.execution_id) {
-    return `${status.workspace_id}:${status.request_scope}:complete:${run.execution_id}:${run.materialization_progress?.artifact_id ?? ""}:${run.materialization_progress?.mapping_digest ?? ""}`;
+    return `${status.workspace_id}:${status.request_scope}:complete:${run.execution_id}:${run.materialization_progress?.artifact_id ?? ""}:${run.materialization_progress?.mapping_digest ?? ""}${incrementalKey ? `:incremental:${incrementalKey}` : ""}`;
   }
   const progress = run?.materialization_progress;
-  if (progress) return `${status.workspace_id}:${status.request_scope}:${progress.artifact_id}:${progress.mapping_digest}`;
-  return status.latest_complete ? `${status.workspace_id}:${status.request_scope}:complete:${status.latest_complete.execution_id}` : null;
+  if (progress) return `${status.workspace_id}:${status.request_scope}:${progress.artifact_id}:${progress.mapping_digest}${incrementalKey ? `:incremental:${incrementalKey}` : ""}`;
+  const complete = status.latest_complete ? `${status.workspace_id}:${status.request_scope}:complete:${status.latest_complete.execution_id}` : "";
+  return incrementalKey ? `${status.workspace_id}:${status.request_scope}:incremental:${incrementalKey}:${complete}` : complete || null;
 }
 
 export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAnalysisRun | null {
@@ -101,7 +108,8 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
     && (!value.latest_complete || (value.latest_complete as WorkspaceAnalysisRun).status === "ready")
     && nullable(value.latest_complete_execution_id, uuid) && validWorkspaceAnalysisUpdate(value.update) && validWorkspaceNumericReadiness(value.numeric_readiness, value.workspace_id as string)
-    && validWorkspaceInterpretationAdmission(value.admission, value.workspace_id);
+    && validWorkspaceInterpretationAdmission(value.admission, value.workspace_id)
+    && validWorkspaceIncrementalEditorial(value.incremental_editorial, value.workspace_id);
 }
 export function latestWorkspaceAnalysis(current: WorkspaceAnalysisStatus | null, next: WorkspaceAnalysisStatus, workspaceId: string) {
   if (!validWorkspaceAnalysisStatus(next)) return current?.workspace_id === workspaceId ? current : null;
@@ -115,6 +123,8 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     || value.version !== 1 || value.workspace_id !== workspaceId || value.request_scope !== scope
     || typeof value.key !== "string" || !/^[A-Za-z0-9._:-]{8,200}$/u.test(value.key) || !object(value.body)) return null;
   const body = value.body;
+  if (isWorkspaceIncrementalEditorialAction({ action: String(body.action) }))
+    return validWorkspaceIncrementalEditorialRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "authorize_interpretation" || body.action === "revoke_interpretation")
     return validWorkspaceAdmissionRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
@@ -123,7 +133,7 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
   return value as PendingWorkspaceAnalysis;
 }
 export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null) {
-  return [status?.active_run, status?.latest_run, status?.request_run].some((run) => run
+  return Boolean(status?.incremental_editorial?.execution?.has_unresolved_call) || [status?.active_run, status?.latest_run, status?.request_run].some((run) => run
     && (run.outcome_unknown || run.claude_cost.unknown_reserved_micro_usd > 0));
 }
 export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | null) {
@@ -143,10 +153,14 @@ export function workspaceAnalysisCanReleaseChangedRequest(status: WorkspaceAnaly
   return Boolean(run?.status === "failed" && !run.is_current && !workspaceAnalysisUnknown(status)
     && recoveryFailureCodes.includes(run.error_code ?? ""));
 }
+export function workspaceAnalysisUsesIncremental(status: WorkspaceAnalysisStatus | null) {
+  return Boolean(status?.incremental_editorial?.preparation?.is_current || status?.incremental_editorial?.admission?.is_current
+    || status?.incremental_editorial?.execution?.is_current);
+}
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
-  if (!status || !cap || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceAnalysisUnknown(status)
-    || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
+  if (!status || !cap || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceIncrementalEditorialPending(status.incremental_editorial) || workspaceAnalysisUnknown(status)
+    || workspaceAnalysisUsesIncremental(status) || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
   return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
     && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
@@ -200,6 +214,7 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
   // body. Expired deadlines or changed CAS must be rejected by the server, never
   // silently replaced with a new authorization or left impossible to resolve.
   if (isWorkspaceAdmissionAction(request.body)) return !status.admission?.request;
+  if (isWorkspaceIncrementalEditorialAction(request.body)) return !workspaceIncrementalEditorialHasReceipt(status, request.body);
   if (request.body.action === "retry_incremental_delivery") return !status.update?.request_delivery
     && sameNumericExecution(status.update?.numeric.execution_id, request.body.run_id) && workspaceAnalysisCanRetryDelivery(status);
   if (request.body.action === "retry_numeric") return !status.update?.request_numeric
@@ -215,6 +230,11 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
 export function workspaceAnalysisErrorKey(code: string) {
+  if (["workspace_incremental_editorial_source_changed", "workspace_incremental_editorial_source_stale",
+    "workspace_incremental_editorial_preparation_source_changed", "workspace_incremental_editorial_preparation_source_stale"].includes(code)) return "changed";
+  if (code === "workspace_incremental_editorial_cap_or_deadline_invalid" || code === "workspace_incremental_editorial_admission_changed") return "admissionChanged";
+  if (code === "workspace_incremental_editorial_evidence_required") return "incrementalEvidenceRequired";
+  if (code.startsWith("workspace_incremental_editorial_preparation_")) return "incrementalPreparationFailed";
   if (code === "workspace_incremental_projection_delivery_unavailable") return "deliveryUnavailable";
   if (code === "workspace_engine_interpretation_admission_changed" || code === "workspace_engine_interpretation_admission_cap_or_deadline_invalid") return "admissionChanged";
   if (code === "workspace_engine_interpretation_admission_unavailable") return "admissionUnavailable";

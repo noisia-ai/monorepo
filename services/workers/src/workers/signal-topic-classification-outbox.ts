@@ -3,7 +3,7 @@ import { safeWorkspaceClassificationErrorV1 } from "./signal-workspace-classific
 
 import { SIGNAL_TOPIC_CLASSIFICATION_JOB_NAME, SIGNAL_WORKSPACE_ENGINE_JOB_V1 } from "@noisia/query-engine";
 import { scheduleSignalWorkspaceTopicComputationsV1, scheduleSignalWorkspaceTopicProjectionsV1,
-  scheduleSignalWorkspaceNumericUpdatesV1,
+  scheduleSignalWorkspaceNumericUpdatesV1, recoverSignalWorkspaceIncrementalEditorialPreparationsV1, SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1,
   scheduleSignalWorkspaceEngineProgressV1, SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1,
   scheduleSignalWorkspaceIncrementalProjectionsV1,
   SIGNAL_WORKSPACE_TOPIC_PROJECTION_JOB_V1 } from "@noisia/db";
@@ -51,6 +51,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       SET status='dead_letter',error_code=COALESCE(error_code,'dispatch_attempts_exhausted'),
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
       WHERE attempt_count >= $1 AND status IN('pending','failed','dispatching')
+        AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
         AND (status<>'dispatching' OR lease_expires_at<=now())
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
           WHERE editorial.id=signal_topic_classification_outbox.execution_id
@@ -62,6 +63,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
        THEN dead.error_code ELSE 'topic_queue_unavailable' END,completed_at=now(),updated_at=now()
       FROM dead WHERE execution.id=dead.execution_id AND dead.dispatch_kind='execution' AND execution.status='queued'
   `, [maxAttempts]);
+  await recoverSignalWorkspaceIncrementalEditorialPreparationsV1({database});
   const claimed = await database.query<{ outbox_id: string; execution_id: string; workspace_id: string;
     lease_token: string; worker_job_id: string; attempt_count: number; input_contract: string;
     source_projection: boolean; source_projection_contract: string | null; dispatch_kind: string; actor_user_id: string }>(`
@@ -71,6 +73,8 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
           WHERE editorial.id=signal_topic_classification_outbox.execution_id
             AND editorial.input_contract='workspace-incremental-editorial-v1' AND editorial.status NOT IN('queued','running'))
+        AND (dispatch_kind<>'incremental_editorial_evidence' OR status<>'failed' OR error_code='workspace_incremental_editorial_preparation_transport_unavailable')
+        AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
         AND (dispatch_kind<>'incremental_projection' OR status<>'failed' OR error_code IN('workspace_incremental_projection_transport_unavailable','workspace_classification_transport_unavailable'))
         AND ((status IN('pending','failed') AND available_at<=now())
         OR (status='dispatching' AND lease_expires_at<=now()))
@@ -84,13 +88,13 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       outbox.workspace_id::text,outbox.lease_token::text,outbox.worker_job_id,outbox.attempt_count,
       execution.input_contract,execution.input_snapshot->'source_projection' IS NOT NULL source_projection,
       execution.input_snapshot->'source_projection'->>'contract_version' source_projection_contract,
-      outbox.dispatch_kind,execution.actor_user_id::text
+      outbox.dispatch_kind,CASE WHEN outbox.dispatch_kind='incremental_editorial_evidence' THEN (SELECT actor_user_id::text FROM signal_classification_operations WHERE id=outbox.preparation_operation_id) ELSE execution.actor_user_id::text END actor_user_id
   `, [maxAttempts, options.batch_size ?? 20, options.lease_seconds ?? 60]);
   const result = { claimed: claimed.rows.length, dispatched: 0, failed: 0, dead_lettered: 0 };
   for (const row of claimed.rows) {
     try {
       const jobName = topicExecutionJobNameV1(row.input_contract,row.source_projection,row.dispatch_kind,row.source_projection_contract);
-      const data = row.dispatch_kind === 'engine_progress' || row.dispatch_kind === 'incremental_projection'
+      const data = row.dispatch_kind === 'engine_progress' || row.dispatch_kind === 'incremental_projection' || row.dispatch_kind === 'incremental_editorial_evidence'
         ? { execution_id: row.execution_id, workspace_id: row.workspace_id, actor_user_id: row.actor_user_id }
         : { execution_id: row.execution_id };
       const prior = await queue.getJob(row.worker_job_id);
@@ -113,7 +117,8 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       if ((completed.rowCount ?? 0) === 1) result.dispatched += 1;
     } catch (error) {
       const dead = row.attempt_count >= maxAttempts;
-      const errorCode = row.input_contract==='workspace-incremental-editorial-v1'
+      const errorCode = row.dispatch_kind==='incremental_editorial_evidence' && safeWorkspaceClassificationErrorV1(error)==='workspace_classification_transport_unavailable'
+        ? 'workspace_incremental_editorial_preparation_transport_unavailable' : row.input_contract==='workspace-incremental-editorial-v1'
         && safeWorkspaceClassificationErrorV1(error)==='workspace_classification_transport_unavailable'
         ? 'workspace_incremental_editorial_transport_unavailable' : safeError(error);
       if (dead) await database.query(`
@@ -121,6 +126,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
           UPDATE signal_topic_classification_outbox SET status='dead_letter',
             lease_token=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
           WHERE id=$1::uuid AND lease_token=$2::uuid AND status='dispatching'
+            AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
           RETURNING execution_id,dispatch_kind,error_code
         ) UPDATE signal_topic_catalog_executions execution
           SET status='failed',error_code=CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'
@@ -133,6 +139,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
           available_at=now()+make_interval(secs=>$3),lease_token=NULL,lease_expires_at=NULL,
           error_code=$4,updated_at=now()
         WHERE id=$1::uuid AND lease_token=$2::uuid AND status='dispatching'
+          AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
       `, [row.outbox_id, row.lease_token,
         Math.min(900, 5 * (2 ** Math.max(0, row.attempt_count - 1))), errorCode]);
       if (dead) result.dead_lettered += 1;
@@ -143,6 +150,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
 }
 
 export function topicExecutionJobNameV1(inputContract: string, sourceProjection = false, dispatchKind = 'execution', projectionContract?: string | null) {
+  if (dispatchKind === 'incremental_editorial_evidence' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1;
   if (dispatchKind === 'engine_progress' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1;
   if (dispatchKind === 'incremental_projection' && inputContract === 'workspace-topic-engine-v1') return SIGNAL_WORKSPACE_INCREMENTAL_DERIVATION_JOB_NAME;
   if (dispatchKind !== 'execution') throw new Error("topic_dispatch_contract_unknown");

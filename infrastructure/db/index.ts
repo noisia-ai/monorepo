@@ -59,3 +59,8 @@ export * from './signal-workspace-interpretation-admission';
 export * from "./signal-workspace-incremental-editorial";
 
 export * from "./signal-workspace-incremental-editorial-execution";
+
+export * from "./signal-workspace-incremental-editorial-preparation";
+
+export * from "./signal-workspace-incremental-editorial-admission-queue";
+export * from "./signal-workspace-incremental-editorial-status";
