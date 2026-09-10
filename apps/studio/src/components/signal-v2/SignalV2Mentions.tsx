@@ -2,6 +2,7 @@
 
 import {
   ArrowRight,
+  ArrowClockwise,
   ArrowSquareOut,
   Check,
   ChatTeardropText,
@@ -17,7 +18,7 @@ import type {
   SignalComparisonV1,
   SignalFilterV1
 } from "@noisia/query-engine";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   useEffect,
   useMemo,
@@ -57,9 +58,29 @@ import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 
+export type SignalNativeMentionsMetadata = {
+  workspace_id: string;
+  generation_id: string | null;
+  scope_digest: string;
+  is_current: boolean;
+  is_processing: boolean;
+  observed_at?: string;
+  available_dates: { date_from: string | null; date_to: string | null };
+  available_platforms?: string[];
+  page_cursor?: string | null;
+  filters: { date_from: string | null; date_to: string | null; search_query: string | null; platforms: string[] };
+  sort_direction: "asc" | "desc";
+  metric_denominator: number;
+  evidence_visible_total: number;
+  withheld_evidence_count: number;
+  integrity_withheld_count: number;
+};
+
 export type SignalMentionsViewData = SignalMentionsPayloadV1 & {
   filter: SignalFilterV1;
   comparison: SignalComparisonV1;
+  native?: SignalNativeMentionsMetadata;
+  record?: SignalMentionRecordV1 | null;
 };
 
 const DEFAULT_COLUMNS: MentionColumnState[] = [
@@ -105,6 +126,7 @@ export function SignalV2Mentions({
   loading,
   onApplyFilter,
   onDataChange,
+  onInvalidate,
   onOpenControls,
   workspaceId
 }: {
@@ -115,10 +137,14 @@ export function SignalV2Mentions({
   loading: boolean;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onDataChange: (data: SignalMentionsViewData) => void;
+  onInvalidate?: () => void;
   onOpenControls: () => void;
   workspaceId: string;
 }) {
   const t = useTranslations("SignalV2");
+  const locale = useLocale();
+  const native = data.native;
+  const isNative = Boolean(native);
   const [search, setSearch] = useState(data.filter.search_query ?? "");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [activeRecord, setActiveRecord] = useState<SignalMentionRecordV1 | null>(initialMention);
@@ -128,28 +154,72 @@ export function SignalV2Mentions({
   const [pageLoading, setPageLoading] = useState(false);
   const [showEmptyLoadingState, setShowEmptyLoadingState] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [evidenceInvalidated, setEvidenceInvalidated] = useState(false);
+  const [platform, setPlatform] = useState("");
   const searchTimeoutRef = useRef<number | null>(null);
   const pageRequestRef = useRef<AbortController | null>(null);
   const previousFiltersHashRef = useRef(data.filters_hash);
+  const cursorHistory = useRef(new Map<number, string | null>([[0, null]]));
+  const requestEpoch = useRef(0);
+  const refreshRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     const filterChanged = previousFiltersHashRef.current !== data.filters_hash;
     previousFiltersHashRef.current = data.filters_hash;
     setSearch(data.filter.search_query ?? "");
     setSelectedIds([]);
-    if (filterChanged) setActiveRecord(null);
-    setSortKey("publishedDesc");
+    if (filterChanged) { setActiveRecord(null); cursorHistory.current = new Map([[0, null]]); }
+    setSortKey(data.native?.sort_direction === "asc" ? "publishedAsc" : "publishedDesc");
     setPageError(null);
-  }, [data.filters_hash, data.filter.search_query]);
+  }, [data.filters_hash, data.filter.search_query, data.native?.sort_direction]);
 
   useEffect(() => {
-    if (initialMention) setActiveRecord(initialMention);
+    if (native?.is_current && native.page_cursor && data.page.offset > 0) {
+      cursorHistory.current.set(data.page.offset, native.page_cursor);
+    }
+  }, [native?.is_current, native?.page_cursor, data.page.offset, data.filters_hash]);
+
+  useEffect(() => {
+    setActiveRecord(initialMention);
   }, [initialMention]);
+
+  useEffect(() => {
+    if (native && !native.is_current) { setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); }
+    else if (native) setEvidenceInvalidated(false);
+  }, [native]);
+
+  useEffect(() => {
+    if (!isNative) return;
+    const clear = () => {
+      requestEpoch.current++; pageRequestRef.current?.abort(); cursorHistory.current.clear();
+      setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); onInvalidate?.();
+    };
+    const restore = (event: PageTransitionEvent) => { if (event.persisted) { clear(); refreshRef.current(); } };
+    window.addEventListener("pagehide", clear); window.addEventListener("pageshow", restore);
+    return () => { window.removeEventListener("pagehide", clear); window.removeEventListener("pageshow", restore); };
+  }, [isNative, onInvalidate]);
+
+  useEffect(() => {
+    if (!native?.is_processing || loading || pageLoading || pageError) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (document.visibilityState === "visible") timer = setTimeout(() => refreshRef.current(), 10_000);
+    };
+    schedule(); document.addEventListener("visibilitychange", schedule);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", schedule); };
+  }, [data, native?.is_processing, loading, pageLoading, pageError]);
 
   useEffect(() => () => {
     if (searchTimeoutRef.current != null) window.clearTimeout(searchTimeoutRef.current);
     pageRequestRef.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (!loading) return;
+    requestEpoch.current++; pageRequestRef.current?.abort(); setPageLoading(false);
+    if (searchTimeoutRef.current != null) { window.clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+  }, [loading]);
 
   useEffect(() => {
     if ((!loading && !pageLoading) || data.records.length > 0) {
@@ -164,7 +234,8 @@ export function SignalV2Mentions({
     () => data.records.filter((record) => selectedIds.includes(record.subject_id)),
     [data.records, selectedIds]
   );
-  const visibleColumns = columns.filter((column) => column.visible).map((column) => column.key);
+  const allowedColumns = columns.filter(column => !native || ["mention", "platform", "published"].includes(column.key));
+  const visibleColumns = allowedColumns.filter((column) => column.visible).map((column) => column.key);
   const activeFilterCount = Object.values(data.filter.dimensions)
     .reduce((total, values) => total + (values?.length ?? 0), 0)
     + Number(Boolean(data.filter.search_query));
@@ -176,6 +247,7 @@ export function SignalV2Mentions({
   const activateRecord = (record: SignalMentionRecordV1) => {
     setActiveRecord(record);
     const next = new URL(window.location.href);
+    if (native) { next.searchParams.delete("cursor"); next.searchParams.delete("offset"); }
     next.searchParams.set("mention", record.subject_id);
     window.history.replaceState(null, "", next);
   };
@@ -188,27 +260,40 @@ export function SignalV2Mentions({
   };
 
   const applySearch = async () => {
+    if (native) return loadPage({ offset: 0, query: { search_query: search } });
     await onApplyFilter(selectionFromData(data, search));
   };
 
   const loadPage = async ({
     limit = data.page.limit,
     offset,
-    sort = sortKey
+    sort = sortKey,
+    query,
+    fresh = false
   }: {
     limit?: number;
     offset: number;
     sort?: MentionSortKey;
+    query?: Partial<SignalNativeMentionsMetadata["filters"]>;
+    fresh?: boolean;
   }) => {
     pageRequestRef.current?.abort();
     const controller = new AbortController();
     pageRequestRef.current = controller;
+    const epoch = ++requestEpoch.current;
     setPageLoading(true);
     setPageError(null);
     try {
-      const params = mentionQueryParams(data);
+      const params = native ? nativeMentionQueryParams(data, query) : mentionQueryParams(data);
       const parsedSort = mentionSortParams(sort);
-      params.set("offset", String(offset));
+      if (native) {
+        if (!fresh && !query && sort === sortKey && limit === data.page.limit) {
+          const cursor = offset === data.page.next_offset ? data.page.next_cursor : cursorHistory.current.get(offset);
+          if (offset > 0 && !cursor) throw new Error(t("mentions.native.refreshRequired"));
+          if (cursor) params.set("cursor", cursor);
+          params.set("scope_digest", native.scope_digest);
+        }
+      } else params.set("offset", String(offset));
       params.set("limit", String(limit));
       params.set("sort", parsedSort.field);
       params.set("direction", parsedSort.direction);
@@ -216,14 +301,41 @@ export function SignalV2Mentions({
         cache: "no-store",
         signal: controller.signal
       });
-      const payload = await response.json() as SignalMentionsViewData & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? t("mentions.errors.load"));
+      if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
+      if (!response.ok) {
+        if (native && [401, 403, 404, 409].includes(response.status)) {
+          setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
+          throw new Error(t("mentions.native.refreshRequired"));
+        }
+        throw new Error(t("mentions.errors.load"));
+      }
+      const payload = await response.json() as SignalMentionsViewData;
+      if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
+      if (native && (!payload.native || payload.native.workspace_id !== workspaceId
+        || (params.has("scope_digest") && payload.native.scope_digest !== native.scope_digest))) {
+        setActiveRecord(null); setSelectedIds([]); setEvidenceInvalidated(true); cursorHistory.current.clear(); onInvalidate?.();
+        throw new Error(t("mentions.native.refreshRequired"));
+      }
+      if (native) {
+        if (query || fresh || sort !== sortKey || limit !== data.page.limit) cursorHistory.current = new Map([[0, null]]);
+        cursorHistory.current.set(payload.page.offset, params.get("cursor"));
+        if (payload.page.next_offset != null && payload.page.next_cursor) cursorHistory.current.set(payload.page.next_offset, payload.page.next_cursor);
+        const url = new URL(window.location.href);
+        const canonical = nativeMentionQueryParams(payload);
+        canonical.set("sort", "published"); canonical.set("direction", payload.native!.sort_direction);
+        canonical.set("limit", String(payload.page.limit)); url.search = canonical.toString();
+        window.history.replaceState(null, "", url);
+      }
       onDataChange(payload);
+      setEvidenceInvalidated(false);
       setSelectedIds([]);
       setActiveRecord(null);
+      return true;
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || epoch !== requestEpoch.current) return false;
       setPageError(error instanceof Error ? error.message : t("mentions.errors.load"));
+      if (native) setSortKey(native.sort_direction === "asc" ? "publishedAsc" : "publishedDesc");
+      return false;
     } finally {
       if (pageRequestRef.current === controller) {
         pageRequestRef.current = null;
@@ -231,6 +343,14 @@ export function SignalV2Mentions({
       }
     }
   };
+
+  refreshRef.current = () => { void loadPage({ offset: 0, fresh: true }); };
+
+  const updateSearch = (value: string) => native
+    ? loadPage({ offset: 0, query: { search_query: value } })
+    : onApplyFilter(selectionFromData(data, value));
+  const textAvailable = !evidenceInvalidated && (!native || native.is_current);
+  const visibleRecords = textAvailable ? data.records : [];
 
   const goBack = () => {
     void loadPage({
@@ -276,27 +396,44 @@ export function SignalV2Mentions({
   };
 
   return (
-    <section className="signal-v2-mentions-page">
+    <section className={`signal-v2-mentions-page${native ? " signal-v2-mentions-page--native" : ""}`}>
       <SignalV2ModuleHeader
         controls={<>
-          <SignalAnalyticsFilter
+          {(!native || (native.available_dates.date_from && native.available_dates.date_to)) ? <SignalAnalyticsFilter
             comparison={data.comparison}
             coverage={coverage}
             filter={data.filter}
-            loading={loading}
-            onApply={onApplyFilter}
-          />
-          <button className="signal-v2-filter-button" onClick={onOpenControls} type="button">
+            loading={loading || pageLoading}
+            showComparison={!native}
+            periodLabelOverride={native && !native.filters.date_from && !native.filters.date_to ? t("mentions.native.allDates") : undefined}
+            onApply={native ? selection => loadPage({ offset: 0, query: { date_from: selection.start, date_to: selection.end } }) : onApplyFilter}
+          /> : null}
+          {native ? <>
+            {native.filters.date_from || native.filters.date_to ? <button className="signal-v2-filter" type="button"
+              disabled={pageLoading || loading} onClick={() => void loadPage({ offset: 0, query: { date_from: null, date_to: null } })}>{t("mentions.native.allDates")}</button>
+              : !native.available_dates.date_from || !native.available_dates.date_to ? <span>{t("mentions.native.allDates")}</span> : null}
+            <button className="signal-v2-filter" type="button" disabled={pageLoading || loading} onClick={() => refreshRef.current()}><ArrowClockwise size={15} />{t("workspaceTopics.refresh")}</button>
+            <span>{t("workspaceTopics.utc")}</span>
+          </> : <button className="signal-v2-filter-button" onClick={onOpenControls} type="button">
             <Funnel size={15} />
             {t("filters.more")}
             {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : null}
-          </button>
+          </button>}
         </>}
         icon={<ChatTeardropText size={20} weight="fill" />}
-        status={t("mentions.status")}
-        subtitle={t("mentions.subtitle", { brand: brandName })}
+        status={native ? t(native.is_processing ? "workspaceTopics.updating" : "mentions.native.status") : t("mentions.status")}
+        subtitle={native ? t("mentions.native.subtitle") : t("mentions.subtitle", { brand: brandName })}
         title={t("mentions.title")}
       />
+
+      {native ? <div className="signal-v2-mentions-native-summary" role="status">
+        <p>{t("mentions.native.counts", { metrics: native.metric_denominator, visible: native.evidence_visible_total })}</p>
+        <p>{t("mentions.native.unassigned")}</p>
+        {native.withheld_evidence_count > 0 ? <p>{t("mentions.native.withheld", { count: native.withheld_evidence_count })}</p> : null}
+        {native.integrity_withheld_count > 0 ? <p>{t("mentions.native.integrity", { count: native.integrity_withheld_count })}</p> : null}
+        {native.is_processing ? <p>{t("mentions.native.processing")}</p> : null}
+        {evidenceInvalidated ? <p role="alert">{t("mentions.native.refreshRequired")}</p> : null}
+      </div> : null}
 
       <article
         aria-busy={loading || pageLoading}
@@ -324,9 +461,9 @@ export function SignalV2Mentions({
               <button onClick={() => void copySelectedLinks()} type="button">
                 <Copy size={14} />{t("mentions.actions.copyLinks")}
               </button>
-              <button onClick={exportSelection} type="button">
+              {!native ? <button onClick={exportSelection} type="button">
                 <DownloadSimple size={14} />{t("mentions.actions.export")}
-              </button>
+              </button> : null}
             </MentionSelectionBar>
           ) : (
             <>
@@ -340,7 +477,7 @@ export function SignalV2Mentions({
                   }
                   searchTimeoutRef.current = window.setTimeout(() => {
                     searchTimeoutRef.current = null;
-                    void onApplyFilter(selectionFromData(data, nextSearch));
+                    void updateSearch(nextSearch);
                   }, 500);
                 }}
                 onClear={() => {
@@ -349,7 +486,7 @@ export function SignalV2Mentions({
                     searchTimeoutRef.current = null;
                   }
                   setSearch("");
-                  void onApplyFilter(selectionFromData(data, ""));
+                  void updateSearch("");
                 }}
                 onSubmit={() => {
                   if (searchTimeoutRef.current != null) {
@@ -391,7 +528,7 @@ export function SignalV2Mentions({
                   setSortKey(key);
                   void loadPage({ offset: 0, sort: key });
                 }}
-                options={MENTION_SORT_KEYS.map((key, index) => ({
+                options={(native ? MENTION_SORT_KEYS.slice(0, 2) : MENTION_SORT_KEYS).map((key, index) => ({
                   groupStart: index > 1 && index % 2 === 0,
                   key,
                   label: t(`mentions.sort.${key}`)
@@ -399,7 +536,7 @@ export function SignalV2Mentions({
                 value={sortKey}
               />
               <MentionResourceColumns
-                columns={columns}
+                columns={allowedColumns}
                 getLabel={(key) => t(`mentions.table.${key}`)}
                 labels={{
                   action: t("mentions.actions.columns"),
@@ -413,9 +550,9 @@ export function SignalV2Mentions({
                 }}
                 onChange={setColumns}
               />
-              <button className="signal-v2-mentions-export" onClick={exportSelection} type="button">
+              {!native ? <button className="signal-v2-mentions-export" onClick={exportSelection} type="button">
                 <DownloadSimple size={15} />{t("mentions.actions.export")}
-              </button>
+              </button> : null}
             </>
           )}
           {loading || pageLoading ? (
@@ -425,6 +562,21 @@ export function SignalV2Mentions({
             </span>
           ) : null}
         </div>
+
+        {native && (native.available_platforms?.length || native.filters.platforms.length) ? <div className="signal-v2-mentions-platforms">
+          <form onSubmit={event => { event.preventDefault(); if (platform.trim()) {
+            void loadPage({ offset: 0, query: { platforms: [...new Set([...native.filters.platforms, platform.trim()])] } }); setPlatform("");
+          } }}><label htmlFor="signal-mentions-platform">{t("mentions.native.platformLabel")}</label>
+            <select id="signal-mentions-platform" value={platform} onChange={event => setPlatform(event.target.value)}>
+              <option value="">{t("mentions.native.choosePlatform")}</option>
+              {(native.available_platforms ?? []).filter(value => !native.filters.platforms.includes(value)).map(value => <option key={value} value={value}>{pretty(value)}</option>)}
+            </select>
+            <button className="signal-v2-filter" type="submit" disabled={!platform.trim() || pageLoading}>{t("mentions.native.addPlatform")}</button>
+          </form>
+          {native.filters.platforms.map(value => <button className="signal-v2-filter" key={value} type="button" disabled={pageLoading}
+            onClick={() => void loadPage({ offset: 0, query: { platforms: native.filters.platforms.filter(item => item !== value) } })}
+            aria-label={t("mentions.native.removePlatform", { platform: value })}>{value} ×</button>)}
+        </div> : null}
 
         {pageError ? <p className="signal-v2-mentions-error">{pageError}</p> : null}
 
@@ -448,7 +600,9 @@ export function SignalV2Mentions({
                   ? current.filter((id) => id !== record.subject_id)
                   : [...current, record.subject_id]);
               }}
-              records={data.records}
+              records={visibleRecords}
+              renderCell={native ? (column, record) => column === "published"
+                ? <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at, "UTC", locale)}</td> : undefined : undefined}
               selectedIds={selectedIds}
               selectionLabels={{
                 add: t("mentions.selectionAdd"),
@@ -459,6 +613,7 @@ export function SignalV2Mentions({
             />
           ) : (
             <MentionCards
+              timeZone={native ? "UTC" : undefined}
               activeRecord={activeRecord}
               columns={visibleColumns}
               onActivate={activateRecord}
@@ -468,11 +623,11 @@ export function SignalV2Mentions({
                   ? current.filter((id) => id !== record.subject_id)
                   : [...current, record.subject_id]);
               }}
-              records={data.records}
+              records={visibleRecords}
               selectedIds={selectedIds}
             />
           )}
-          {data.records.length === 0 ? (
+          {visibleRecords.length === 0 && !evidenceInvalidated ? (
             <div className="signal-v2-mentions-empty">
               <MagnifyingGlass size={22} />
               <strong>{t("mentions.empty.title")}</strong>
@@ -487,7 +642,7 @@ export function SignalV2Mentions({
         </div>
 
         <MentionResourcePagination
-          disabled={pageLoading}
+          disabled={pageLoading || evidenceInvalidated}
           labels={{
             next: t("mentions.pagination.next"),
             perPage: t("mentions.pagination.perPage"),
@@ -500,7 +655,7 @@ export function SignalV2Mentions({
           onPageSize={(size) => void loadPage({ limit: size, offset: 0 })}
           onPrevious={goBack}
           pageSize={data.page.limit}
-          previousDisabled={data.page.offset === 0}
+          previousDisabled={data.page.offset === 0 || Boolean(native && !cursorHistory.current.has(Math.max(0, data.page.offset - data.page.limit)))}
           rangeLabel={t("mentions.pagination.range", {
             start: pageStart,
             end: pageEnd,
@@ -509,10 +664,11 @@ export function SignalV2Mentions({
         />
       </article>
 
-      {activeRecord ? (
+      {activeRecord && textAvailable ? (
         <SignalMentionDetailDrawer
           onClose={closeActiveRecord}
           record={activeRecord}
+          variant={native ? "workspace" : "signal"}
         />
       ) : null}
     </section>
@@ -525,7 +681,8 @@ function MentionCards({
   onActivate,
   onSelect,
   records,
-  selectedIds
+  selectedIds,
+  timeZone
 }: {
   activeRecord: SignalMentionRecordV1 | null;
   columns: MentionColumn[];
@@ -533,8 +690,10 @@ function MentionCards({
   onSelect: (record: SignalMentionRecordV1) => void;
   records: SignalMentionRecordV1[];
   selectedIds: string[];
+  timeZone?: string;
 }) {
   const t = useTranslations("SignalV2");
+  const locale = useLocale();
   return (
     <div className="signal-v2-mention-cards">
       {records.map((record) => {
@@ -573,7 +732,7 @@ function MentionCards({
                 ? <span className="signal-v2-neutral-chip">{t(`mentions.roles.${record.conversation_role}`)}</span>
                 : null}
               {columns.includes("sentiment") ? <MentionSentiment value={record.sentiment} /> : null}
-              {columns.includes("published") ? <time>{formatDate(record.occurred_at)}</time> : null}
+              {columns.includes("published") ? <time>{formatDate(record.occurred_at, timeZone, timeZone ? locale : undefined)}</time> : null}
             </div>
             {columns.includes("context") ? <MentionContext record={record} /> : null}
             {columns.includes("engagement") ? (
@@ -607,9 +766,10 @@ export function SignalMentionDetailDrawer({
   operatorContent?: ReactNode;
   record: SignalMentionRecordV1;
   technicalContent?: ReactNode;
-  variant?: "operator" | "signal";
+  variant?: "operator" | "signal" | "workspace";
 }) {
   const t = useTranslations("SignalV2");
+  const locale = useLocale();
   const engagement = Object.entries(record.engagement)
     .flatMap(([key, value]) => {
       const numeric = Number(value);
@@ -771,17 +931,17 @@ export function SignalMentionDetailDrawer({
       onClose={onClose}
       panelClassName="signal-v2-mention-drawer"
       scrimClassName="signal-v2-mention-drawer-scrim"
-      title={t("mentions.detail.title")}
+      title={t(variant === "workspace" ? "mentions.native.excerpt" : "mentions.detail.title")}
       footer={footer}
     >
           <section className="signal-v2-mention-drawer__verbatim">
-            <div>
+            {variant !== "workspace" ? <div>
               <span className="signal-v2-neutral-chip">{t(`mentions.roles.${record.conversation_role}`)}</span>
               <MentionSentiment value={record.sentiment} />
-            </div>
+            </div> : null}
             {record.title ? <h2>{record.title}</h2> : null}
             <p>{record.text_snippet || t("mentions.detail.noText")}</p>
-            <small>{formatDateTime(record.occurred_at)}</small>
+            <small>{formatDateTime(record.occurred_at, variant === "workspace" ? "UTC" : undefined, variant === "workspace" ? locale : undefined)}</small>
             {record.url || operatorAction ? (
               <div className="signal-v2-mention-drawer__verbatim-actions">
                 {record.url ? (
@@ -799,7 +959,7 @@ export function SignalMentionDetailDrawer({
           </section>
 
           {operatorContent}
-          {(variant === "operator" ? operatorSections : signalSections).filter(Boolean)}
+          {variant === "workspace" ? null : (variant === "operator" ? operatorSections : signalSections).filter(Boolean)}
           {technicalContent}
     </WorkspaceDrawer>
   );
@@ -877,6 +1037,16 @@ function selectionFromData(data: SignalMentionsViewData, searchQuery: string): S
   };
 }
 
+export function nativeMentionQueryParams(data: SignalMentionsViewData, overrides?: Partial<SignalNativeMentionsMetadata["filters"]>) {
+  const filter = { ...data.native!.filters, ...overrides };
+  const params = new URLSearchParams({ view: "all_conversations", sort: "published", direction: data.native!.sort_direction });
+  if (filter.date_from) params.set("start", filter.date_from);
+  if (filter.date_to) params.set("end", filter.date_to);
+  if (filter.search_query) params.set("q", filter.search_query);
+  for (const platform of filter.platforms) params.append("platform", platform);
+  return params;
+}
+
 function mentionQueryParams(data: SignalMentionsViewData) {
   const params = new URLSearchParams({
     start: data.filter.date_range.start,
@@ -920,14 +1090,16 @@ function groupTags(tags: SignalMentionRecordV1["tags"]) {
   return [...groups.entries()];
 }
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+function formatDate(value: string, timeZone?: string, locale?: string) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "—";
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone }).format(new Date(value));
 }
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
+function formatDateTime(value: string, timeZone?: string, locale?: string) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "—";
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "long",
-    timeStyle: "short"
+    timeStyle: "short", timeZone
   }).format(new Date(value));
 }
 

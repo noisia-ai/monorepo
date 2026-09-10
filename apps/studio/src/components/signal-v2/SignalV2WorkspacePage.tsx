@@ -44,6 +44,8 @@ import {
 } from "@/lib/signal-v2/workspace-navigation";
 import { SignalV2BrandMonitoring } from "@/components/signal-v2/SignalV2BrandMonitoring";
 import { loadNativeSignalTopicsV1 } from "@/lib/data-os/signal-workspace-topics-native";
+import { loadNativeSignalMentionsV1 } from "@/lib/data-os/signal-workspace-mentions-native";
+import { splitNativeMentionsFocusQuery } from "./native-mentions-navigation";
 
 export async function SignalV2WorkspacePage({
   activeModule = "monitoring",
@@ -73,6 +75,50 @@ export async function SignalV2WorkspacePage({
     ? `/studio/brands/${workspace.subject.id}/topics`
     : null;
   const query = await searchParams;
+  if (activeModule === "mentions" && !activeReportKey) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
+    }
+    const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id };
+    let native = null, focused = null, unavailable = false;
+    try {
+      let split = null;
+      try { split = splitNativeMentionsFocusQuery(params); } catch {
+        // The adapter first establishes native ownership. A legacy workspace retains its existing query contract.
+        native = await loadNativeSignalMentionsV1(scope, params);
+      }
+      if (split) native = await loadNativeSignalMentionsV1(scope, split.list);
+      if (native && split?.focus) {
+        const focusQuery = new URLSearchParams(split.list);
+        const mention = split.focus;
+        focusQuery.set("mention", mention); focusQuery.set("scope_digest", native.native.scope_digest);
+        focused = (await loadNativeSignalMentionsV1(scope, focusQuery))?.record ?? null;
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "string"
+        || !/^(workspace_mentions_|workspace_topics_)/.test(error.code)
+        || !("status" in error) || ![403, 404, 409, 422].includes(Number(error.status))) throw error;
+      native = null; focused = null; unavailable = true;
+    }
+    if (native || unavailable) {
+      const [workspaceOptions, releases] = await Promise.all([
+        listSignalWorkspaceOptionsForUser(session.appUser),
+        loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
+      ]);
+      const empty = buildEmptySignalBrandMonitoringV1(workspace);
+      return <SignalV2BrandMonitoring activeModule="mentions" activeStudy={null} brandName={workspace.name}
+        canRefreshInsights={false} initialData={native ? { ...empty, filter: native.filter, comparison: native.comparison,
+          coverage: { date_from: native.native.available_dates.date_from, date_through: native.native.available_dates.date_to,
+            mentions: native.native.metric_denominator } } : empty}
+        initialMention={focused} initialMentions={native ? { ...native, record: focused } : null} initialSettings={null}
+        initialNativeMentionsUnavailable={unavailable}
+        initialTopicsNarratives={null} initialTriggersBarriers={null} legacyOutputId={null} manageTopicsHref={manageTopicsHref}
+        strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
+        userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"} workspaceOptions={workspaceOptions}
+        workspaceSubjectId={workspace.subject.id} viewKey="all_conversations" />;
+    }
+  }
   if ((activeModule === "topics" || activeModule === "monitoring") && !activeReportKey) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {

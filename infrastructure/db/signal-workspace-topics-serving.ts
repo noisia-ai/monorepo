@@ -13,6 +13,27 @@ import { loadSignalWorkspaceClassificationInputV1, SignalWorkspaceClassification
 type Database = Pick<Pool, "connect">;
 type Filters = { date_from?: string | null; date_to?: string | null };
 type Args = Filters & { database: Database; workspace_id: string; actor_user_id: string; include_unselected?: boolean };
+export type SignalWorkspaceMentionsArgsV1 = Omit<Args, "include_unselected"> & {
+  search_query?: string | null; platforms?: string[]; sort_direction?: "asc" | "desc";
+  cursor?: string | null; expected_scope_digest?: string | null; focus_mention_id?: string | null; limit?: number;
+};
+export type SignalWorkspaceMentionV1 = {
+  mention_id: string; occurred_at: string | null; text_snippet: string; text_truncated: boolean;
+  title: string | null; url: string | null; platform: string | null; language: string | null; country: string | null;
+  content_type: string | null; engagement: Record<string, unknown>; thread_key: string;
+  resolution_state: string; has_unresolved_topics: boolean;
+};
+export type SignalWorkspaceMentionsPageV1 = {
+  contract_version: "signal-workspace-mentions-v1"; workspace_id: string; generation_id: string;
+  source_engine_execution_id: string; is_current: true; is_processing: boolean; scope_digest: string;
+  filters: { date_from: string | null; date_to: string | null; search_query: string | null; platforms: string[] };
+  sort: { field: "published"; direction: "asc" | "desc" };
+  available_dates: { date_from: string | null; date_to: string | null };
+  available_platforms: string[];
+  metric_denominator: number; evidence_visible_total: number; total_count: number;
+  withheld_evidence_count: number; integrity_withheld_count: number;
+  items: SignalWorkspaceMentionV1[]; page_offset: number; next_cursor: string | null;
+};
 type Selection = { revision: number; items: Record<string, { selected: boolean; definition_digest: string;
   definition_revision: number; generation_id: string }> };
 type Generation = { id: string; taxonomy_profile_id: string; preparation_run_id: string;
@@ -276,5 +297,140 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
       generation_id: ctx.generation.id, term_key: args.term_key, scope_digest: view.scope_digest, items,
       next_cursor: rows.length > limit ? Buffer.from(JSON.stringify({ root_id: items.at(-1)!.mention_id,
         scope: view.scope_digest, term: args.term_key })).toString("base64url") : null };
+  });
+}
+
+const mentionUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+type MentionsCursor = { version: 1; root_id: string; occurred_at: string | null; scope: string; offset: number };
+function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
+  const limit = args.limit ?? 50, direction = args.sort_direction ?? "desc";
+  if (!mentionUuid.test(args.workspace_id) || !mentionUuid.test(args.actor_user_id)
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !["asc", "desc"].includes(direction)
+    || args.search_query != null && (typeof args.search_query !== "string" || args.search_query.length > 300 || args.search_query.includes("\0"))
+    || args.platforms !== undefined && (!Array.isArray(args.platforms) || args.platforms.length > 32
+      || args.platforms.some(value => typeof value !== "string" || !value.trim() || value.length > 100 || value.includes("\0")))
+    || args.focus_mention_id != null && (!mentionUuid.test(args.focus_mention_id) || args.cursor != null)
+    || args.expected_scope_digest != null && !/^sha256:[a-f0-9]{64}$/u.test(args.expected_scope_digest))
+    return fail("workspace_mentions_request_invalid", 422);
+  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to),
+    search_query: args.search_query?.trim() || null,
+    platforms: [...new Set((args.platforms ?? []).map(value => value.trim().toLowerCase()))].sort() };
+  if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  let cursor: MentionsCursor | null = null;
+  if (args.cursor != null) {
+    try {
+      if (typeof args.cursor !== "string" || args.cursor.length > 2048 || !/^[a-zA-Z0-9_-]+$/u.test(args.cursor))
+        return fail("workspace_mentions_cursor_invalid", 422);
+      const decoded: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(args.cursor, "base64url")));
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return fail("workspace_mentions_cursor_invalid", 422);
+      const row = decoded as MentionsCursor;
+      if (Object.keys(row).sort().join(",") !== "occurred_at,offset,root_id,scope,version" || row.version !== 1
+        || typeof row.root_id !== "string" || !mentionUuid.test(row.root_id)
+        || typeof row.scope !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(row.scope)
+        || !Number.isSafeInteger(row.offset) || row.offset < 0 || row.offset > Number.MAX_SAFE_INTEGER - limit
+        || row.occurred_at !== null && (typeof row.occurred_at !== "string"
+          || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(row.occurred_at)
+          || !Number.isFinite(Date.parse(row.occurred_at))
+          || new Date(row.occurred_at).toISOString().slice(0, 10) !== row.occurred_at.slice(0, 10))) return fail("workspace_mentions_cursor_invalid", 422);
+      cursor = { ...row, root_id: row.root_id.toLowerCase() };
+    } catch (error) { if (error instanceof SignalWorkspaceTopicsServingError) throw error; return fail("workspace_mentions_cursor_invalid", 422); }
+  }
+  return { limit, direction, filters, cursor, focus: args.focus_mention_id?.toLowerCase() ?? null };
+}
+
+/** A global generation population, independent of selected Topics. Text rights
+ * and prepared SHA are checked before searching or returning canonical content.
+ * Only root metadata is materialized; complete document bodies stay in Postgres. */
+const mentionsPopulationSql = `${populationSql}, mention_roots AS MATERIALIZED (
+  SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,
+    CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=
+      'sha256:'||encode(sha256(convert_to(mention.text_clean,'UTF8')),'hex'),false) ELSE false END text_valid
+  FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+  JOIN source_generation generation ON true
+  LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
+    AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
+), visible_mentions AS MATERIALIZED (
+  SELECT root.* FROM mention_roots root WHERE root.metrics AND root.evidence AND root.text_valid
+), filtered_mentions AS MATERIALIZED (
+  SELECT root.* FROM visible_mentions root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+  WHERE ($6::text IS NULL OR strpos(lower(mention.text_clean),lower($6::text))>0)
+    AND (cardinality($7::text[])=0 OR lower(btrim(root.platform))=ANY($7::text[]))
+)`;
+type MentionsSummary = {
+  metric_denominator: number; evidence_visible_total: number; total_count: number;
+  withheld_evidence_count: number; integrity_withheld_count: number; rights_digest: string; population_digest: string;
+  date_from: string | null; date_to: string | null; available_platforms: string[]; cursor_exists: boolean; cursor_offset: number;
+};
+
+/** List or focus only roots in the same current native generation as Signal.
+ * Cursor data locates a page; every request repeats scope and rights checks. */
+export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1): Promise<SignalWorkspaceMentionsPageV1 | null> {
+  const request = mentionsRequest(args);
+  const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
+    date_from: request.filters.date_from, date_to: request.filters.date_to };
+  return transaction(args.database, async client => {
+    const ctx = await context(client, access);
+    if (!ctx.native) return null;
+    if (!ctx.generation) return fail("workspace_mentions_generation_unavailable", 404);
+    if (!ctx.is_current) return fail("workspace_mentions_stale");
+    // Empty visible_terms intentionally avoids every membership/selection join.
+    const params = [access.workspace_id, ctx.generation.id, ctx.filters.date_from, ctx.filters.date_to, "[]",
+      request.filters.search_query, request.filters.platforms];
+    const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
+    const before = request.direction === "asc" ? "<" : ">";
+    const summary = (await client.query<MentionsSummary>(`${mentionsPopulationSql}
+      SELECT count(*) FILTER(WHERE root.metrics)::int metric_denominator,
+        count(*) FILTER(WHERE root.metrics AND root.evidence AND root.text_valid)::int evidence_visible_total,
+        (SELECT count(*)::int FROM filtered_mentions) total_count,
+        count(*) FILTER(WHERE root.metrics AND NOT root.evidence)::int withheld_evidence_count,
+        count(*) FILTER(WHERE root.metrics AND root.evidence AND NOT root.text_valid)::int integrity_withheld_count,
+        'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
+          '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
+        'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root.root_id,root.metrics,root.evidence,
+          root.text_valid,root.published_at,root.platform)::text,'' ORDER BY root.root_id),''),'UTF8')),'hex') population_digest,
+        (SELECT to_char(min(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
+        (SELECT to_char(max(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
+        ARRAY(SELECT DISTINCT lower(btrim(platform)) FROM visible_mentions
+          WHERE platform IS NOT NULL AND btrim(platform)<>'' ORDER BY 1) available_platforms,
+        ($8::uuid IS NULL OR EXISTS(SELECT 1 FROM filtered_mentions cursor_root WHERE cursor_root.root_id=$8::uuid
+          AND cursor_root.published_at IS NOT DISTINCT FROM $9::timestamptz)) cursor_exists,
+        (SELECT count(*)::int FROM filtered_mentions prior WHERE $8::uuid IS NOT NULL AND
+          (($9::timestamptz IS NULL AND (prior.published_at IS NOT NULL OR prior.root_id<=$8::uuid))
+           OR ($9::timestamptz IS NOT NULL AND (prior.published_at ${before} $9::timestamptz
+             OR (prior.published_at=$9::timestamptz AND prior.root_id<=$8::uuid))))) cursor_offset
+      FROM mention_roots root`, [...params, request.cursor?.root_id ?? null, request.cursor?.occurred_at ?? null])).rows[0]!;
+    const scope = hash({ contract_version: "signal-workspace-mentions-v1", workspace: access.workspace_id, actor: access.actor_user_id,
+      generation: ctx.generation.id, finalized_digest: ctx.generation.finalized_digest, input_revision: ctx.generation.current_revision,
+      rights: summary.rights_digest, population: summary.population_digest, filters: request.filters, direction: request.direction });
+    if (args.expected_scope_digest && args.expected_scope_digest !== scope || request.cursor && request.cursor.scope !== scope
+      || !summary.cursor_exists || request.cursor && request.cursor.offset !== summary.cursor_offset) return fail("workspace_mentions_scope_changed");
+    const rows = (await client.query<SignalWorkspaceMentionV1>(`${mentionsPopulationSql}, page AS MATERIALIZED (
+      SELECT root.* FROM filtered_mentions root
+      WHERE ($8::uuid IS NULL OR ($9::timestamptz IS NULL AND root.published_at IS NULL AND root.root_id>$8::uuid)
+        OR ($9::timestamptz IS NOT NULL AND (root.published_at IS NULL OR root.published_at ${operator} $9::timestamptz
+          OR (root.published_at=$9::timestamptz AND root.root_id>$8::uuid))))
+        AND ($10::uuid IS NULL OR root.root_id=$10::uuid)
+      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC LIMIT $11
+    ) SELECT root.root_id mention_id,to_char(root.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,
+      left(mention.text_clean,2000) text_snippet,char_length(mention.text_clean)>2000 text_truncated,
+      mention.title,mention.url,root.platform,mention.language,mention.country,mention.content_type,
+      CASE WHEN jsonb_typeof(mention.engagement)='object' THEN mention.engagement ELSE '{}'::jsonb END engagement,
+      COALESCE(NULLIF(mention.raw_metadata->'row'->>'thread id',''),mention.id::text) thread_key,
+      root.resolution_state,root.has_unresolved_topics
+      FROM page root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC`, [...params, request.cursor?.root_id ?? null,
+      request.cursor?.occurred_at ?? null, request.focus, request.focus ? 1 : request.limit + 1])).rows;
+    if (request.focus && rows.length !== 1) return fail("workspace_mentions_mention_unavailable", 404);
+    const items = rows.slice(0, request.limit), offset = request.cursor?.offset ?? 0, last = items.at(-1);
+    return { contract_version: "signal-workspace-mentions-v1", workspace_id: access.workspace_id, generation_id: ctx.generation.id,
+      source_engine_execution_id: ctx.generation.source_engine_execution_id, is_current: true, is_processing: ctx.is_processing,
+      scope_digest: scope, filters: request.filters, sort: { field: "published", direction: request.direction },
+      available_dates: { date_from: summary.date_from, date_to: summary.date_to }, available_platforms: summary.available_platforms,
+      metric_denominator: summary.metric_denominator,
+      evidence_visible_total: summary.evidence_visible_total, total_count: summary.total_count,
+      withheld_evidence_count: summary.withheld_evidence_count, integrity_withheld_count: summary.integrity_withheld_count,
+      items, page_offset: offset, next_cursor: rows.length > request.limit && last
+        ? Buffer.from(JSON.stringify({ version: 1, root_id: last.mention_id, occurred_at: last.occurred_at,
+          scope, offset: offset + items.length } satisfies MentionsCursor)).toString("base64url") : null };
   });
 }
