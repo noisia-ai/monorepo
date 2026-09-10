@@ -33,6 +33,8 @@ command-line bypass for those checks.
    It emits only the nonsecret database system identifier, schema SHA, counts
    and verification status. The connection is pinned to a resolved private IP;
    `inet_server_addr()` must agree with it. No application modules are imported.
+   A rejection prints only a fixed `noi19_dev_test_*` stage code, never the
+   connection URL, environment, query, row or underlying error text.
 5. Compare the output with the intended service. Seal `system_identifier` and
    `schema_sha256` in source and review the delta. A reset/replacement of the
    database requires a new read-only observation and source review; never copy

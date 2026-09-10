@@ -21,8 +21,10 @@ try{
  await client.query('ROLLBACK');
  process.stdout.write(JSON.stringify({contract_version:'noi19-private-bootstrap-v1',status:'verified',
   system_identifier:identity.system_identifier,schema_sha256,tables:tables.length,empty:true,read_only:true})+'\n');
-}catch{
- process.stderr.write('noi19_dev_test_bootstrap_rejected\n');process.exitCode=1;
+}catch(error){
+ const fixed=/^noi19_dev_test_[a-z_]+$/u.test(error?.message??'')
+  ?error.message:'noi19_dev_test_bootstrap_rejected';
+ process.stderr.write(fixed+'\n');process.exitCode=1;
 }finally{
  if(client){await client.query('ROLLBACK').catch(()=>{});client.release();}
  if(pool)await pool.end().catch(()=>{});
