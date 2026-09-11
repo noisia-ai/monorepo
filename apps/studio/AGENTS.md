@@ -1,5 +1,11 @@
 # AGENTS.md — apps/studio
 
+> **Source fencing Brand Context UAT rollout marker — 2026-09-11.** SQL0159 se aplicó una sola
+> vez después de un preflight sin actividad; SHA
+> `0be97f5bc9dfe4c0b20e7347a828807bd6fb95a96582f7e97e5b158007bfc8e7`. Worker `f77a316`
+> debe estar activo antes de este despliegue Studio. La UI reconcilia cambios de fuente, liga la
+> confirmación a una cotización opaca exacta y recupera intentos DNC sin conceder autoridad ni gasto.
+
 > **Brand Context composed UAT rollout marker — 2026-09-11.** SQL0156–0158 were applied
 > exactly once to `noisia-staging`; do not reapply them. Worker `f13529e` was active before this
 > Studio-only marker. The UI now exposes the free Claude proposal stage and a separate exact
