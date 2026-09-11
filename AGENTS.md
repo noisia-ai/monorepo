@@ -4,6 +4,18 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Cotización Brand Context visible en UAT — 2026-09-11 20:06 UTC.** Studio ejecuta
+> `5b22d606c707998f55b12acdcf6823eef034619b`, deployment
+> `2c697195-3578-46c3-bd37-bdfd8d4691a3`; Worker conserva `cdd93bd` porque Railway saltó el corte
+> sin cambios de Worker. El cliente ve la preparación semántica de marca separada de los vectores del
+> corpus, con DTO allowlist, errores saneados, actualización coordinada y `can_start:false`; no hay POST,
+> reserva, ejecución ni proveedor. QA real conserva 7,396/6,826/570, 32 Topics de 357 y costos históricos
+> USD1.918865 + USD1.6818. Suite Studio959, focal18, TC/lint/build y revisión 0P0/P1/P2 cerrados. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_BRAND_CONTEXT_QUOTE_UAT_2026-09-11.md` y
+> `PLAN_BRAND_CONTEXT_COMPOSED_ADMISSION_2026-09-11.md`. SQL0156 está LOCAL: cerrar PG IANA/DST,
+> concurrencia monetaria, replay/CAS y rollback antes de POST o UAT. No repetir SQL0153–0155 ni activar
+> proveedores desde cableado parcial. Loop continúa ACTIVE en este chat.
+
 > **Preparación cliente activa en UAT — 2026-09-11 19:22 UTC.** Studio ejecuta
 > `276c2f7edfe56904eb7b92859d6d0836486e24ef`, deployment
 > `cf87d7d1-f466-4f9e-bdc1-fd50ef15c40f`; Worker conserva `485aed8`/
