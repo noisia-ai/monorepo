@@ -48,9 +48,8 @@ async function tx<T>(database:SignalWorkspaceEngineDatabaseV1,work:(client:PoolC
 const sameCoverage=(a:SignalWorkspaceEngineUnitManifestV1,b:SignalWorkspaceEngineUnitManifestV1)=>a.unit_count===b.unit_count&&a.unit_digest===b.unit_digest;
 async function source(client:PoolClient,args:SignalWorkspaceEngineProgressScopeV1):Promise<SignalWorkspaceEngineProgressSourceV1>{
  const {run,snapshot,fit,coverage}=await loadSignalWorkspaceEngineProgressInputWithClientV1(client,args);
- const profile=(await client.query<{id:string}>(`SELECT id FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
-  AND status IN('draft','activating','active') AND metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY version DESC LIMIT 1`,[args.workspace_id])).rows[0];
- if(!profile)return fail('workspace_engine_progress_catalog_required');
+ const profile=(await client.query<{id:string}>(`SELECT signal_workspace_incremental_operational_profile_v1($2::uuid)::text id FROM signal_topic_catalog_executions WHERE id=$2::uuid AND workspace_id=$1::uuid`,[args.workspace_id,args.execution_id])).rows[0];
+ if(!profile?.id)return fail('workspace_engine_progress_catalog_required');
  const confirmed=(await client.query<{exists:boolean}>(`SELECT EXISTS(SELECT 1 FROM analysis_artifacts WHERE engine_execution_id=$1::uuid
   AND metadata->>'contract_version' IN('workspace-topic-materialization-progress-v1','workspace-topic-materialization-v1')
   AND metadata->>'output_catalog_profile_id'=$4 AND metadata->>'interpretation_units_digest'=$2
@@ -133,8 +132,7 @@ export async function scheduleSignalWorkspaceEngineProgressV1(args:{database:Sig
  return tx(args.database,async client=>{
   const rows=(await client.query<{id:string;workspace_id:string;actor_user_id:string;coverage_digest:string;catalog_profile_id:string;observed_job_id:string|null}>(`SELECT execution.id,execution.workspace_id,execution.actor_user_id,coverage.unit_digest coverage_digest,catalog.id catalog_profile_id,dispatch.worker_job_id observed_job_id
    FROM signal_topic_catalog_executions execution CROSS JOIN LATERAL signal_workspace_engine_interpretation_coverage_v1(execution.id) coverage
-   JOIN LATERAL(SELECT id FROM signal_taxonomy_profiles profile WHERE profile.workspace_id=execution.workspace_id AND profile.kind='topic'
-    AND profile.status IN('draft','activating','active') AND profile.metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY profile.version DESC LIMIT 1) catalog ON true
+   JOIN LATERAL(SELECT signal_workspace_incremental_operational_profile_v1(execution.id) id) catalog ON catalog.id IS NOT NULL
    LEFT JOIN signal_topic_classification_outbox dispatch ON dispatch.execution_id=execution.id AND dispatch.dispatch_kind='engine_progress'
    WHERE execution.input_contract='workspace-topic-engine-v1' AND execution.status IN('running','failed','ready')
     AND execution.result_summary ? 'fit_checkpoint' AND (${signalWorkspaceEngineProgressOwnerPredicateV1})

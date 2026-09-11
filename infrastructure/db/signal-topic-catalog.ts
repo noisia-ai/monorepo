@@ -85,6 +85,10 @@ export type SignalTopicCatalogStoreV1 = {
   workspace_id: string;
   profile: CatalogProfileRow | null;
   active_profile_id: string | null;
+  working_profile_id: string | null;
+  serving_profile_id: string | null;
+  /** A different editorial version awaits explicit processing; never an authorization. */
+  requires_recompute: boolean;
   topics: SignalTopicCatalogTopicStoreV1[];
   execution: SignalTopicCatalogExecutionStoreV1 | null;
   search_execution_id: string | null;
@@ -500,22 +504,46 @@ export async function loadLegacySignalTopicDiscoveryCandidatesStoreV1(args: {
 export async function loadSignalTopicCatalogStoreV1(args: {
   queryable: Queryable;
   workspace_id: string;
+  /** Exact immutable operation result, including retired profiles; always workspace scoped. */
+  taxonomy_profile_id?: string;
 }): Promise<SignalTopicCatalogStoreV1> {
   const [profile, imports] = await Promise.all([
-    loadLatestProfile(args.queryable, args.workspace_id),
+    args.taxonomy_profile_id ? loadCatalogProfileById(args.queryable, args.workspace_id, args.taxonomy_profile_id)
+      : loadLatestProfile(args.queryable, args.workspace_id),
     loadTopicImportReadiness(args.queryable, args.workspace_id)
   ]);
-  const active = (await args.queryable.query<{ id: string }>(`
-    SELECT id::text FROM signal_taxonomy_profiles
+  const activeProfile = (await args.queryable.query<{ id: string; context_hash: string }>(`
+    SELECT id::text,context_hash FROM signal_taxonomy_profiles
     WHERE workspace_id=$1::uuid AND kind='topic' AND status='active'
       AND metadata->>'contract_version'='signal-topic-catalog-v1'
     ORDER BY version DESC LIMIT 1
-  `, [args.workspace_id])).rows[0]?.id ?? null;
+  `, [args.workspace_id])).rows[0] ?? null;
+  const active = activeProfile?.id ?? null;
+  // Native serving is pinned to its completed generation/receipt, independent
+  // of newer working catalogs. Legacy brands retain their active profile.
+  const serving = (await args.queryable.query<{ id: string; context_hash: string }>(`
+    SELECT profile.id::text,profile.context_hash FROM signal_classification_generations generation
+    JOIN signal_topic_catalog_executions execution ON execution.generation_id=generation.id
+      AND execution.workspace_id=generation.workspace_id AND execution.status='ready'
+    JOIN signal_taxonomy_profiles profile ON profile.id=generation.taxonomy_profile_id
+      AND profile.workspace_id=generation.workspace_id AND profile.kind='topic'
+      AND profile.metadata->>'contract_version'='signal-topic-catalog-v1'
+    WHERE generation.workspace_id=$1::uuid AND generation.input_contract='workspace-topic-classification-v1'
+      AND generation.status='ready'
+      AND generation.input_snapshot->'source_projection'->>'contract_version'
+        IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
+      AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item
+        WHERE item.generation_id=generation.id AND item.resolution_state='error')
+    ORDER BY generation.generation_version DESC LIMIT 1
+  `, [args.workspace_id])).rows[0] ?? activeProfile;
   if (!profile) return {
     contract_version: SIGNAL_TOPIC_CATALOG_CONTRACT_V1,
     workspace_id: args.workspace_id,
     profile: null,
     active_profile_id: active,
+    working_profile_id: null,
+    serving_profile_id: serving?.id ?? null,
+    requires_recompute: false,
     topics: [],
     execution: null,
     search_execution_id: null,
@@ -541,6 +569,9 @@ export async function loadSignalTopicCatalogStoreV1(args: {
     workspace_id: args.workspace_id,
     profile,
     active_profile_id: active,
+    working_profile_id: profile.id,
+    serving_profile_id: serving?.id ?? null,
+    requires_recompute: profile.id !== (serving?.id ?? null),
     execution,
     search_execution_id: search.id,
     search_is_current: search.is_current,
@@ -644,15 +675,11 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
   idempotency_key: string;
   input: AdoptSignalTopicCandidateInputV1;
 }) {
-  await assertActor(args.pool, args.workspace_id, args.actor_user_id, "can_adopt_topics");
-  const existing = await findTopicBySource(args.pool, args.workspace_id, args.input.run_key, args.input.candidate_key);
-  if (existing) return { ...(await loadSignalTopicCatalogStoreV1({ queryable: args.pool,
-    workspace_id: args.workspace_id })), term_key: existing, reused: true };
-  const candidate = await loadAdoptionCandidate(args);
-  const result = await mutateCatalog(args, { action: "adopt", payload: args.input }, ({ definitions, now }) => {
+  const result = await mutateCatalog(args, { action: "adopt", payload: args.input }, async ({ definitions, now, client }) => {
     const duplicate = definitions.find((item) => item.source?.run_key === args.input.run_key
       && item.source.candidate_key === args.input.candidate_key);
     if (duplicate) return { term_key: duplicate.term_key, semantic_changed: false };
+    const candidate = await loadAdoptionCandidate({ ...args, pool: client });
     const termKey = uniqueSignalTopicTermKey(candidate.title, definitions);
     const semantic = {
       term_key: termKey,
@@ -682,11 +709,11 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
     definitions.push(parsed.data);
     return { term_key: termKey, semantic_changed: true };
   });
-  return { ...result, reused: false };
+  return { ...result, reused: !result.semantic_changed };
 }
 
 async function loadAdoptionCandidate(args: {
-  pool: Pool;
+  pool: Queryable;
   workspace_id: string;
   actor_user_id: string;
   input: AdoptSignalTopicCandidateInputV1;
@@ -761,11 +788,13 @@ export async function updateSignalTopicStoreV1(args: {
     const index = definitions.findIndex((item) => item.term_key === args.term_key);
     const current = definitions[index];
     if (!current) throw new SignalTopicCatalogError("topic_not_found", 404);
-    if (current.definition_revision !== args.input.expected_definition_revision) {
+    if (current.definition_revision !== args.input.expected_definition_revision
+      || current.definition_digest !== args.input.expected_definition_digest) {
       throw new SignalTopicCatalogError("topic_revision_conflict", 409);
     }
     const nextBase = { ...current, ...args.input, updated_at: now };
     delete (nextBase as Partial<UpdateSignalTopicInputV1>).expected_definition_revision;
+    delete (nextBase as Partial<UpdateSignalTopicInputV1>).expected_definition_digest;
     const nextSemantic = {
       term_key: current.term_key,
       label: nextBase.label,
@@ -782,9 +811,13 @@ export async function updateSignalTopicStoreV1(args: {
     };
     const digest = signalTopicDefinitionDigestV1(nextSemantic);
     const semanticChanged = digest !== current.definition_digest;
+    const { definition_revision: _revision, definition_digest: _digest,
+      created_at: _created, updated_at: _updated, ...currentEditorial } = current;
+    const editorialChanged = stableJson(nextSemantic) !== stableJson(currentEditorial);
+    if (!editorialChanged) return { term_key: current.term_key, semantic_changed: false };
     definitions[index] = signalTopicDefinitionSchemaV1.parse({
       ...nextSemantic,
-      definition_revision: current.definition_revision + (semanticChanged ? 1 : 0),
+      definition_revision: current.definition_revision + 1,
       definition_digest: digest,
       created_at: current.created_at,
       updated_at: now
@@ -800,12 +833,20 @@ export async function setSignalTopicLifecycleStoreV1(args: {
   idempotency_key: string;
   term_key: string;
   lifecycle: "draft" | "archived";
+  expected_definition_revision: number;
+  expected_definition_digest: string;
 }) {
   return mutateCatalog(args, { action: args.lifecycle === "archived" ? "archive" : "restore",
-    payload: { term_key: args.term_key, lifecycle: args.lifecycle } }, ({ definitions, now }) => {
+    payload: { term_key: args.term_key, lifecycle: args.lifecycle,
+      expected_definition_revision: args.expected_definition_revision,
+      expected_definition_digest: args.expected_definition_digest } }, ({ definitions, now }) => {
     const index = definitions.findIndex((item) => item.term_key === args.term_key);
     const current = definitions[index];
     if (!current) throw new SignalTopicCatalogError("topic_not_found", 404);
+    if (current.definition_revision !== args.expected_definition_revision
+      || current.definition_digest !== args.expected_definition_digest) {
+      throw new SignalTopicCatalogError("topic_revision_conflict", 409);
+    }
     if (current.lifecycle === args.lifecycle) return { term_key: current.term_key, semantic_changed: false };
     const semantic = { ...current, lifecycle: args.lifecycle };
     const digest = signalTopicDefinitionDigestV1(semantic);
@@ -1148,17 +1189,23 @@ async function mutateCatalog<T extends { term_key: string; semantic_changed: boo
   actor_user_id: string;
   idempotency_key: string;
 }, operation: { action: "create" | "adopt" | "update" | "archive" | "restore"; payload: unknown },
-mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
+mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string; client: PoolClient }) => T | Promise<T>) {
   const client = await args.pool.connect();
   try {
     await client.query("BEGIN");
-    await assertActor(client, args.workspace_id, args.actor_user_id);
+    await assertActor(client, args.workspace_id, args.actor_user_id,
+      operation.action === "adopt" ? "can_adopt_topics" : "can_edit_topics");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
       [`signal-taxonomy:${args.workspace_id}:topic`]);
+    const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client,
+      workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, lock_authority: true });
+    if (!capabilities.can_edit_topics || (operation.action === "adopt" && !capabilities.can_adopt_topics)) {
+      throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
+    }
     const operationDigest = sha256(stableJson({ action: operation.action, payload: operation.payload }));
     const replay = (await client.query<{ actor_user_id: string; action: string; request_digest: string;
-      result_term_key: string; result_summary: unknown }>(`
-      SELECT actor_user_id::text,action,request_digest,result_term_key,result_summary
+      result_profile_id: string; result_term_key: string; result_summary: unknown }>(`
+      SELECT actor_user_id::text,action,request_digest,result_profile_id::text,result_term_key,result_summary
       FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2
     `, [args.workspace_id, args.idempotency_key])).rows[0];
     if (replay) {
@@ -1167,9 +1214,10 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
         throw new SignalTopicCatalogError("topic_catalog_idempotency_conflict", 409);
       }
       const summary = objectValue(replay.result_summary);
+      const catalog = await loadSignalTopicCatalogStoreV1({ queryable: client,
+        workspace_id: args.workspace_id, taxonomy_profile_id: replay.result_profile_id });
       await client.query("COMMIT");
-      return { ...(await loadSignalTopicCatalogStoreV1({ queryable: args.pool,
-        workspace_id: args.workspace_id })), term_key: replay.result_term_key,
+      return { ...catalog, result_profile_id: replay.result_profile_id, term_key: replay.result_term_key,
         semantic_changed: summary.semantic_changed === true,
         prior_profile_status: typeof summary.prior_profile_status === "string"
           ? summary.prior_profile_status : null,
@@ -1178,64 +1226,58 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string }) => T) {
           ? summary.reused_search_execution_id : null, replayed: true };
     }
     const prior = await loadLatestProfile(client, args.workspace_id);
-    if (prior && (await client.query<{ busy: boolean }>(`
-      SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
-        WHERE taxonomy_profile_id=$1::uuid AND status IN ('queued','running')
-          AND NOT (input_contract='workspace-topic-classification-v1'
-            AND input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
-            AND input_snapshot->'source_projection'->'interpretation_coverage' IS NOT NULL)) busy
-    `, [prior.id])).rows[0]?.busy) throw new SignalTopicCatalogError("topic_catalog_busy", 409);
     const definitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const priorHadReadySearch = prior ? Boolean((await client.query<{ available: boolean }>(`
       SELECT EXISTS(SELECT 1 FROM signal_topic_catalog_executions
         WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
           AND input_contract='legacy-topic-catalog-v1') available
     `, [prior.id])).rows[0]?.available) : false;
-    const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client,
-      workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
-    if (!capabilities.can_execute_topics && (priorHadReadySearch || (await client.query<{ active: boolean }>(`
-      SELECT EXISTS(SELECT 1 FROM signal_taxonomy_profiles
-        WHERE workspace_id=$1::uuid AND kind='topic' AND status='active'
-          AND metadata->>'contract_version'='signal-topic-catalog-v1') active
-    `, [args.workspace_id])).rows[0]?.active)) {
-      throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
+    const priorDefinitions = stableJson(definitions);
+    const outcome = await mutate({ definitions, now: new Date().toISOString(), client });
+    let resultProfileId = prior?.id;
+    if (!prior || stableJson(definitions) !== priorDefinitions) {
+      const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client,
+        workspace_id: args.workspace_id });
+      const contextHash = classificationDefinitionDigest(definitions, inherited.context_digest);
+      const preservePrior = prior && prior.status !== "active" && Boolean((await client.query<{ preserve_profile: boolean }>(`
+        SELECT (EXISTS(SELECT 1 FROM signal_topic_catalog_executions execution
+          WHERE execution.workspace_id=$1::uuid AND execution.taxonomy_profile_id=$2::uuid)
+          OR EXISTS(SELECT 1 FROM signal_classification_generations generation
+            WHERE generation.workspace_id=$1::uuid AND generation.taxonomy_profile_id=$2::uuid)
+          OR EXISTS(SELECT 1 FROM signal_taxonomy_profiles profile
+            JOIN signal_topic_catalog_executions owner ON owner.workspace_id=profile.workspace_id
+              AND (owner.id::text=profile.metadata->>'source_engine_execution_id'
+                OR owner.id::text=profile.metadata->>'source_numeric_execution_id')
+            WHERE profile.workspace_id=$1::uuid AND profile.id=$2::uuid)) AS preserve_profile
+      `, [args.workspace_id, prior.id])).rows[0]?.preserve_profile);
+      // Materialized catalogs may still be draft while already serving. A new
+      // human head must not retire their exact execution/generation inputs.
+      if (prior && prior.status !== "active" && !preservePrior) {
+        await client.query(`UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now()
+          WHERE id=$1::uuid`, [prior.id]);
+        await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid", [prior.taxonomy_id]);
+      }
+      const inserted = await insertTopicCatalogDraft(client, args.workspace_id, definitions,
+        contextHash, inherited, { catalog_role: "working" });
+      resultProfileId = inserted.profileId;
     }
-    const outcome = mutate({ definitions, now: new Date().toISOString() });
-    const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client,
-      workspace_id: args.workspace_id });
-    const contextHash = classificationDefinitionDigest(definitions, inherited.context_digest);
-    if (prior && prior.status !== "active") {
-      await client.query(`UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now()
-        WHERE id=$1::uuid`, [prior.id]);
-      await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid", [prior.taxonomy_id]);
-    }
-    const inserted = await insertTopicCatalogDraft(client, args.workspace_id, definitions,
-      contextHash, inherited);
-    let reusedSearchExecutionId: string | null = null;
-    if (!outcome.semantic_changed && prior) {
-      reusedSearchExecutionId = await cloneReadySearchExecution(client, {
-        workspace_id: args.workspace_id,
-        actor_user_id: args.actor_user_id,
-        prior_profile_id: prior.id,
-        next_profile_id: inserted.profileId,
-        next_taxonomy_id: inserted.taxonomyId,
-        definition_digest: contextHash
-      });
-    }
+    if (!resultProfileId) throw new SignalTopicCatalogError("topic_profile_not_found", 404);
+    const reusedSearchExecutionId = null;
     await client.query(`
       INSERT INTO signal_topic_catalog_operations(workspace_id,actor_user_id,action,idempotency_key,
         request_digest,result_profile_id,result_term_key,result_summary)
       VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7,$8::jsonb)
     `, [args.workspace_id, args.actor_user_id, operation.action, args.idempotency_key,
-      operationDigest, inserted.profileId, outcome.term_key, JSON.stringify({
+      operationDigest, resultProfileId, outcome.term_key, JSON.stringify({
         semantic_changed: outcome.semantic_changed,
         prior_profile_status: prior?.status ?? null,
         prior_had_ready_search: priorHadReadySearch,
         reused_search_execution_id: reusedSearchExecutionId
       })]);
+    const catalog = await loadSignalTopicCatalogStoreV1({ queryable: client,
+      workspace_id: args.workspace_id, taxonomy_profile_id: resultProfileId });
     await client.query("COMMIT");
-    return { ...(await loadSignalTopicCatalogStoreV1({ queryable: args.pool,
-      workspace_id: args.workspace_id })), term_key: outcome.term_key,
+    return { ...catalog, result_profile_id: resultProfileId, term_key: outcome.term_key,
       semantic_changed: outcome.semantic_changed, reused_search_execution_id: reusedSearchExecutionId,
       prior_profile_status: prior?.status ?? null, prior_had_ready_search: priorHadReadySearch,
       replayed: false };
@@ -1350,7 +1392,9 @@ export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(arg
       }
     }
     if (seen.size!==refs.size) throw new SignalTopicCatalogError("workspace_incremental_projection_proposal_missing");
-    const prior = await loadLatestProfile(client,args.workspace_id);
+    const prior = (await client.query<CatalogProfileRow>(`SELECT id::text,taxonomy_id::text,version,status,context_hash,created_at::text,updated_at::text
+      FROM signal_taxonomy_profiles WHERE id=$1::uuid AND workspace_id=$2::uuid AND kind='topic'
+       AND metadata->>'contract_version'='signal-topic-catalog-v1'`,[current.catalog_profile_id,args.workspace_id])).rows[0];
     if (!prior || prior.id!==current.catalog_profile_id) throw new SignalTopicCatalogError("workspace_incremental_projection_inputs_changed");
     const replay=(await client.query<{result_summary:SignalWorkspaceIncrementalCatalogReceiptV1}>(`
       SELECT result_summary FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2 AND action='materialize_incremental'`,
@@ -1369,10 +1413,8 @@ export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(arg
       mapping.sort((a,b)=>a.unit_key<b.unit_key?-1:1);
       const mapping_digest=sha256(stableJson(mapping));let profileId=prior.id,version=prior.version;
       if (stableJson(definitions)!==stableJson(priorDefinitions)) {
-        if (prior.status!=="active") {await client.query("UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now() WHERE id=$1::uuid",[prior.id]);
-          await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid",[prior.taxonomy_id]);}
         const inserted=await insertTopicCatalogDraft(client,args.workspace_id,definitions,classificationDefinitionDigest(definitions,inherited.context_digest),inherited,
-          {source_numeric_execution_id:args.execution_id,serving_editorial_cut_digest:current.editorial_cut_digest,source_mapping_digest:mapping_digest});
+          {catalog_role:"incremental",source_catalog_profile_id:prior.id,source_numeric_execution_id:args.execution_id,serving_editorial_cut_digest:current.editorial_cut_digest,source_mapping_digest:mapping_digest});
         profileId=inserted.profileId;version=inserted.version;
       }
       const active=definitions.filter(row=>row.lifecycle!=="archived");
@@ -1384,8 +1426,7 @@ export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(arg
       [receipt.receipt_id,args.workspace_id,args.actor_user_id,key,sha256(stableJson({numeric_execution_id:args.execution_id,serving_editorial_cut_digest:current.editorial_cut_digest})),profileId,JSON.stringify(receipt)]);
     }
     const desired=(await client.query<{job:string}>(`SELECT 'workspace-incremental-projection-'||$1::text||'-'||substring(workspace_incremental_editorial_digest_v1(jsonb_build_array(
-      $2::text,(SELECT id::text FROM signal_taxonomy_profiles WHERE workspace_id=$3::uuid AND kind='topic' AND status IN('draft','activating','active')
-       AND metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY version DESC LIMIT 1),signal_workspace_incremental_correction_epoch_v1($3::uuid),$4::text)) FROM 8) job`,
+      $2::text,signal_workspace_incremental_operational_profile_v1($1::uuid)::text,signal_workspace_incremental_correction_epoch_v1($3::uuid),$4::text)) FROM 8) job`,
     [args.execution_id,current.numeric_checkpoint.checkpoint_digest,args.workspace_id,current.editorial_cut_digest])).rows[0]!.job;
     await client.query("COMMIT");return {catalog_receipt:receipt,requires_dispatch_refresh:desired!==args.worker_job_id};
   } catch(error) {await client.query("ROLLBACK").catch(()=>undefined);throw error;} finally {client.release();}
@@ -1421,7 +1462,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     const fit = run.result_summary.fit_checkpoint as import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1|undefined;
     if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
     const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");
-    const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id });
+    const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id,taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id });
     if (current.catalog_digest !== run.input_snapshot.catalog_digest || current.context_digest !== run.input_snapshot.context_digest) {
       throw new SignalTopicCatalogError("workspace_engine_inputs_stale");
     }
@@ -1478,7 +1519,10 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
       throw new SignalTopicCatalogError(progress ? "workspace_engine_progress_coverage_changed" : "workspace_engine_analysis_incomplete");
     }
     if(progress&&proposals.length===0)throw new SignalTopicCatalogError("workspace_engine_progress_empty");
-    const prior = await loadLatestProfile(client, lease.workspace_id);
+    const prior = (await client.query<CatalogProfileRow>(`SELECT id::text,taxonomy_id::text,version,status,context_hash,created_at::text,updated_at::text
+      FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND id=signal_workspace_incremental_operational_profile_v1($2::uuid)
+       AND kind='topic' AND metadata->>'contract_version'='signal-topic-catalog-v1'`,[lease.workspace_id,lease.execution_id])).rows[0];
+    if(!prior)throw new SignalTopicCatalogError("workspace_engine_operational_profile_required");
     if(progress&&prior?.id!==args.expected_catalog_profile_id)throw new SignalTopicCatalogError("workspace_engine_progress_catalog_changed");
     const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true });
@@ -1494,12 +1538,9 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
       if (replay.id !== prior?.id || replay.metadata.source_mapping_digest !== mappingDigest) throw new SignalTopicCatalogError("workspace_engine_materialization_conflict");
       profileId = replay.id; version = replay.version;
     } else {
-      if (prior && prior.status !== "active") {
-        await client.query("UPDATE signal_taxonomy_profiles SET status='retired',updated_at=now() WHERE id=$1::uuid", [prior.id]);
-        await client.query("UPDATE taxonomies SET status='retired' WHERE id=$1::uuid", [prior.taxonomy_id]);
-      }
       const inserted = await insertTopicCatalogDraft(client, lease.workspace_id, merged.definitions,
         classificationDefinitionDigest(merged.definitions, inherited.context_digest), inherited, {
+          catalog_role: "analysis_materialized", source_catalog_profile_id: run.input_snapshot.taxonomy_profile_id,
           source_engine_execution_id: lease.execution_id, source_interpretation_units_digest: universe, source_mapping_digest: mappingDigest });
       profileId = inserted.profileId; version = inserted.version;
     }
@@ -1544,63 +1585,6 @@ async function insertTopicCatalogDraft(client: PoolClient, workspaceId: string,
       locale: inherited.locale, ...profileMetadata },
     context_refs: inherited.context_refs
   });
-}
-
-async function cloneReadySearchExecution(client: PoolClient, args: {
-  workspace_id: string; actor_user_id: string; prior_profile_id: string; next_profile_id: string;
-  next_taxonomy_id: string; definition_digest: string;
-}) {
-  const source = (await client.query<{ id: string; study_corpus_id: string; population_digest: string;
-    watermark_digest: string; identity_catalog_digest: string; denominator: number;
-    embedding_model: string | null; result_summary: unknown }>(`
-    SELECT id::text,study_corpus_id::text,population_digest,watermark_digest,
-      identity_catalog_digest,denominator,embedding_model,result_summary
-    FROM signal_topic_catalog_executions
-    WHERE taxonomy_profile_id=$1::uuid AND intent='search' AND status='ready'
-      AND input_contract='legacy-topic-catalog-v1'
-      AND definition_digest=$2
-      AND watermark_digest=signal_classification_watermark_digest_v1(workspace_id,study_corpus_id)
-      AND result_summary->>'correction_digest'=
-        signal_topic_membership_override_digest_v1(workspace_id,taxonomy_profile_id)
-    ORDER BY completed_at DESC,id DESC LIMIT 1
-  `, [args.prior_profile_id, args.definition_digest])).rows[0];
-  if (!source) return null;
-  await client.query("SELECT (prepare_signal_topic_catalog_profile_v1($1::uuid,$2::uuid)).id",
-    [args.next_profile_id, args.actor_user_id]);
-  const requestDigest = sha256(stableJson({ source_execution_id: source.id,
-    next_profile_id: args.next_profile_id, definition_digest: args.definition_digest }));
-  const next = (await client.query<{ id: string }>(`
-    INSERT INTO signal_topic_catalog_executions(workspace_id,taxonomy_profile_id,study_corpus_id,
-      actor_user_id,intent,idempotency_key,request_digest,status,progress,population_digest,
-      watermark_digest,identity_catalog_digest,definition_digest,denominator,embedding_model,
-      result_summary,started_at,completed_at)
-    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'search',$5,$6,'ready',100,$7,$8,$9,$10,$11,$12,$13::jsonb,now(),now())
-    RETURNING id::text
-  `, [args.workspace_id, args.next_profile_id, source.study_corpus_id, args.actor_user_id,
-    `topic-search-clone:${source.id}:${args.next_profile_id}`, requestDigest, source.population_digest,
-    source.watermark_digest, source.identity_catalog_digest, args.definition_digest, source.denominator,
-    source.embedding_model, JSON.stringify(source.result_summary ?? {})])).rows[0];
-  if (!next) return null;
-  await client.query(`
-    INSERT INTO signal_topic_classification_items(execution_id,workspace_id,canonical_root_id,
-      resolution_state,best_score,technical_error_code,item_digest)
-    SELECT $1::uuid,workspace_id,canonical_root_id,resolution_state,best_score,technical_error_code,item_digest
-    FROM signal_topic_classification_items WHERE execution_id=$2::uuid
-  `, [next.id, source.id]);
-  await client.query(`
-    INSERT INTO signal_topic_classification_suggestions(execution_id,workspace_id,canonical_root_id,
-      taxonomy_term_id,term_key,disposition,method,semantic_score,lexical_match,excluded_by_rule,
-      negative_semantic_score,excluded_by_negative,evidence_digest,lineage_digest)
-    SELECT $1::uuid,suggestion.workspace_id,suggestion.canonical_root_id,next_term.id,
-      suggestion.term_key,suggestion.disposition,suggestion.method,suggestion.semantic_score,
-      suggestion.lexical_match,suggestion.excluded_by_rule,suggestion.negative_semantic_score,
-      suggestion.excluded_by_negative,suggestion.evidence_digest,suggestion.lineage_digest
-    FROM signal_topic_classification_suggestions suggestion
-    JOIN taxonomy_terms next_term ON next_term.taxonomy_id=$3::uuid
-      AND next_term.term_key=suggestion.term_key
-    WHERE suggestion.execution_id=$2::uuid
-  `, [next.id, source.id, args.next_taxonomy_id]);
-  return next.id;
 }
 
 async function resolveTopicPopulation(client: Queryable, workspaceId: string, profileId: string) {
@@ -1648,14 +1632,46 @@ async function resolveTopicPopulation(client: Queryable, workspaceId: string, pr
     roots };
 }
 
-async function loadLatestProfile(queryable: Queryable, workspaceId: string): Promise<CatalogProfileRow | null> {
-  return (await queryable.query<CatalogProfileRow>(`
-    SELECT id::text,taxonomy_id::text,version,status,context_hash,created_at::text,updated_at::text
+/** Internal composition seam; callers retain their actor/transaction boundary. */
+export async function loadSignalTopicWorkingProfileWithQueryableV1(args: {
+  queryable: Parameters<typeof loadSignalTopicInheritedContextStoreV1>[0]["queryable"]; workspace_id: string;
+}): Promise<CatalogProfileRow | null> {
+  return loadLatestProfile(args.queryable, args.workspace_id);
+}
+
+async function loadLatestProfile(queryable: Parameters<typeof loadSignalTopicInheritedContextStoreV1>[0]["queryable"], workspaceId: string): Promise<CatalogProfileRow | null> {
+  type LineageProfile = CatalogProfileRow & { catalog_role: string | null; source_catalog_profile_id: string | null };
+  const profiles = (await queryable.query<LineageProfile>(`
+    SELECT id::text,taxonomy_id::text,version,status,context_hash,created_at::text,updated_at::text,
+      metadata->>'catalog_role' catalog_role,metadata->>'source_catalog_profile_id' source_catalog_profile_id
     FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
-      AND status IN('draft','activating','active')
+      AND status IN('draft','activating','active','retired')
       AND metadata->>'contract_version'='signal-topic-catalog-v1'
-    ORDER BY version DESC LIMIT 1
-  `, [workspaceId])).rows[0] ?? null;
+    ORDER BY version DESC,id DESC
+  `, [workspaceId])).rows;
+  // Human edits are a new head. Paid/incremental results may advance only the
+  // catalog they actually consumed, never hide an unrelated pending edit.
+  let head = profiles.find(profile => profile.catalog_role === "working")
+    ?? profiles.find(profile => !profile.catalog_role);
+  if (!head) return null;
+  for (;;) {
+    const child = profiles.find(profile => ["analysis_materialized", "incremental"].includes(profile.catalog_role ?? "")
+      && profile.source_catalog_profile_id === head!.id && profile.version > head!.version);
+    if (!child) break;
+    head = child;
+  }
+  const { catalog_role: _role, source_catalog_profile_id: _source, ...profile } = head;
+  return profile;
+}
+
+async function loadCatalogProfileById(queryable: Queryable, workspaceId: string, profileId: string): Promise<CatalogProfileRow> {
+  const row = (await queryable.query<CatalogProfileRow>(`
+    SELECT id::text,taxonomy_id::text,version,status,context_hash,created_at::text,updated_at::text
+    FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND id=$2::uuid AND kind='topic'
+      AND metadata->>'contract_version'='signal-topic-catalog-v1'
+  `, [workspaceId, profileId])).rows[0];
+  if (!row) throw new SignalTopicCatalogError("topic_profile_not_found", 404);
+  return row;
 }
 
 async function loadProfileTerms(queryable: Queryable, profileId: string) {
@@ -1757,17 +1773,6 @@ async function loadLatestReadySearch(queryable: Queryable, workspaceId: string, 
   }
 }
 
-async function findTopicBySource(queryable: Queryable, workspaceId: string, runKey: string, candidateKey: string) {
-  return (await queryable.query<{ term_key: string }>(`
-    SELECT term.term_key FROM signal_taxonomy_profiles profile
-    JOIN taxonomy_terms term ON term.taxonomy_id=profile.taxonomy_id
-    WHERE profile.workspace_id=$1::uuid AND profile.kind='topic'
-      AND term.metadata->'topic'->'source'->>'run_key'=$2
-      AND term.metadata->'topic'->'source'->>'candidate_key'=$3
-    ORDER BY profile.version DESC LIMIT 1
-  `, [workspaceId, runKey, candidateKey])).rows[0]?.term_key ?? null;
-}
-
 async function assertActor(queryable: Queryable, workspaceId: string, actorUserId: string,
   capability: "can_edit_topics" | "can_execute_topics" | "can_adopt_topics" = "can_edit_topics") {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable,
@@ -1792,7 +1797,7 @@ function topicStatus(profile: CatalogProfileRow, term: CatalogTermRow,
   searchIsCurrent: boolean, searchPublished = false) {
   if (term.status === "archived") {
     const replacementPending = activeProfileId !== null && activeProfileId !== profile.id;
-    if (replacementPending && (!execution || execution.status === "failed")) return "failed" as const;
+    if (replacementPending && execution?.status === "failed") return "failed" as const;
     if (replacementPending && execution && ["queued", "running"].includes(execution.status)) {
       return "updating" as const;
     }

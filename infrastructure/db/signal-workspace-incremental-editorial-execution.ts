@@ -32,7 +32,7 @@ async function locked(c:PoolClient,scope:{workspace_id:string;actor_user_id:stri
  const row=(await c.query<{id:string;workspace_id:string;actor_user_id:string;status:string;input_digest:string;input_snapshot:Snapshot;execution_token:string|null;lease_live:boolean;worker_job_id:string|null;result_summary:Record<string,unknown>;current:boolean;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}>(`SELECT *,result_summary->>'worker_job_id' worker_job_id,execution_expires_at>clock_timestamp() lease_live,workspace_incremental_editorial_execution_current_v1(id) current,workspace_interpretation_admission_receipt_v1(id) receipt FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1' FOR UPDATE`,[scope.execution_id,scope.workspace_id])).rows[0];
  if(!row||row.actor_user_id!==scope.actor_user_id)return fail('not_found',404);
  if(lease&&(row.status!=='running'||!row.lease_live||row.execution_token!==lease.execution_token||row.worker_job_id!==lease.worker_job_id))return fail('lease_conflict');
- if(current){if(!row.current)return fail('source_stale');const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,...scope});
+ if(current){if(!row.current)return fail('source_stale');const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,...scope,execution_id:row.id});
   if(identity.context_digest!==row.input_snapshot.context_digest||identity.catalog_digest!==row.input_snapshot.catalog_input_digest)return fail('source_stale');}
  return row;
 }

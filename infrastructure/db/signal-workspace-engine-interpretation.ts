@@ -61,7 +61,7 @@ async function execution(c:PoolClient,workspace:string,id:string,actor:string,ch
   if(editorial.actor_user_id!==actor)return fail('workspace_engine_interpretation_forbidden',403);
   if(editorial.status!=='running'||!executionToken||editorial.execution_token!==executionToken||!editorial.lease_live)return fail('workspace_engine_interpretation_lease_conflict');
   if(checkCurrent){if(!editorial.current)return fail('workspace_engine_interpretation_inputs_stale');
-   const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
+   const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:workspace,actor_user_id:actor,execution_id:id});
    if(identity.context_digest!==editorial.input_snapshot.context_digest||identity.catalog_digest!==editorial.input_snapshot.catalog_input_digest)return fail('workspace_engine_interpretation_inputs_stale');}
   return{...editorial,fit_checkpoint:null,interpretation_revision:null,input_snapshot:{context_digest:editorial.input_snapshot.context_digest,catalog_digest:editorial.input_snapshot.catalog_input_digest,claude_cap_micro_usd:editorial.input_snapshot.claude_cap_micro_usd,
    interpretation_config:{call_configuration:editorial.input_snapshot.interpretation_configuration,...editorial.input_snapshot.budget_policy}}};
@@ -80,7 +80,7 @@ async function execution(c:PoolClient,workspace:string,id:string,actor:string,ch
   if(!executionToken||row.execution_token!==executionToken||!row.lease_live)return fail('workspace_engine_interpretation_lease_conflict');
  }else if(row.status!=='ready')return fail('workspace_engine_interpretation_fit_required');
  if(checkCurrent){if(!row.current)return fail('workspace_engine_interpretation_inputs_stale');
-  const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
+  const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:workspace,actor_user_id:actor,execution_id:id});
   if(identity.context_digest!==row.input_snapshot.context_digest||identity.catalog_digest!==row.input_snapshot.catalog_digest)return fail('workspace_engine_interpretation_inputs_stale');}
  return row;
 }

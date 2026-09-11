@@ -72,8 +72,7 @@ export async function loadSignalTopicsManagementProductV1(args: {
     topics: catalog.topics.map((topic) => ({ ...topic,
       origin: signalTopicPublicOriginV1(topic.origin, topic.source) })),
     capabilities: { can_view: capabilities.can_view,
-      can_edit: capabilities.can_edit_topics && (capabilities.can_execute_topics
-        || (!catalog.active_profile_id && !catalog.search_execution_id)),
+      can_edit: capabilities.can_edit_topics,
       can_execute: capabilities.can_execute_topics,
       can_adopt: capabilities.can_adopt_topics },
     workspace: { id: args.workspace.id, slug: args.workspace.slug, name: args.workspace.name,
@@ -114,58 +113,28 @@ export async function adoptSignalTopicProductV1(args: {
 
 export async function updateSignalTopicProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
-  termKey: string; input: unknown; embeddingCostCapMicroUsd?: number;
+  termKey: string; input: unknown;
 }) {
   await requireTopicCapability(args.workspace.id, args.actor, "can_edit_topics");
   const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
-  const updated = await updateSignalTopicStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
+  return updateSignalTopicStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
     idempotency_key: args.idempotencyKey, term_key: args.termKey,
     input: updateSignalTopicInputSchemaV1.parse(args.input) });
-  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) return updated;
-  if (updated.semantic_changed) {
-    if (!updated.prior_had_ready_search) return updated;
-    const execution = await startSignalTopicCatalogExecutionProductV1({
-      workspace: args.workspace,
-      actor: args.actor,
-      idempotencyKey: `${args.idempotencyKey}:semantic-replace`,
-      intent: "search",
-      publishWhenReady: updated.prior_profile_status === "active",
-      embeddingCostCapMicroUsd: args.embeddingCostCapMicroUsd
-    });
-    return { ...updated, replacement_execution: execution };
-  }
-  if (updated.prior_profile_status !== "active") return updated;
-  const execution = await startSignalTopicCatalogExecutionProductV1({
-    workspace: args.workspace,
-    actor: args.actor,
-    idempotencyKey: `${args.idempotencyKey}:replace`,
-    intent: "publish"
-  });
-  return { ...updated, replacement_execution: execution };
 }
 
 export async function setSignalTopicLifecycleProductV1(args: {
   workspace: ResolvedSignalWorkspace; actor: SignalWorkspaceUser; idempotencyKey: string;
   termKey: string; lifecycle: "draft" | "archived";
+  expectedDefinitionRevision: number; expectedDefinitionDigest: string;
 }) {
   await requireTopicCapability(args.workspace.id, args.actor, "can_edit_topics");
   const actorId = args.actor.id;
   const { pool } = await import("@/lib/db");
-  const updated = await setSignalTopicLifecycleStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
-    idempotency_key: args.idempotencyKey, term_key: args.termKey, lifecycle: args.lifecycle });
-  if (await isSignalWorkspaceTopicSearchModeV1(pool, args.workspace.id)) return updated;
-  const wasPublished = updated.prior_profile_status === "active"
-    || (updated.active_profile_id !== null && updated.profile?.id !== updated.active_profile_id);
-  if (!wasPublished || args.lifecycle !== "archived") return updated;
-  const execution = await startSignalTopicCatalogExecutionProductV1({
-    workspace: args.workspace,
-    actor: args.actor,
-    idempotencyKey: `${args.idempotencyKey}:archive-replace`,
-    intent: "search",
-    publishWhenReady: true
-  });
-  return { ...updated, replacement_execution: execution };
+  return setSignalTopicLifecycleStoreV1({ pool, workspace_id: args.workspace.id, actor_user_id: actorId,
+    idempotency_key: args.idempotencyKey, term_key: args.termKey, lifecycle: args.lifecycle,
+    expected_definition_revision: args.expectedDefinitionRevision,
+    expected_definition_digest: args.expectedDefinitionDigest });
 }
 
 export async function startSignalTopicCatalogExecutionProductV1(args: {

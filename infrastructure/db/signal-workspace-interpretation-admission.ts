@@ -76,7 +76,7 @@ async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string
   COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND budget_date=$3::date AND ${releasable}),0)::text releasable_day
  FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND actor_user_id=$2::uuid`,[row.id,row.actor_user_id,clock.date])).rows[0]!;
  let identity:Awaited<ReturnType<typeof loadSignalWorkspaceEngineInputIdentityV1>>|null=null;
- try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});}
+ try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,execution_id:row.id});}
  catch(error){if(!historical||!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error))throw error;}
  const current=row.is_current&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
  const runCap=Number(row.input_snapshot.claude_cap_micro_usd??0),dayCap=Number(row.config?.daily_cap_micro_usd??0);

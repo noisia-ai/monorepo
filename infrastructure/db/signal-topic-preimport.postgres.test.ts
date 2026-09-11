@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './migrations/signal-topic-definition-cas.fixture';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -55,23 +56,23 @@ test("PostgreSQL: a new brand saves interests before imports with scoped authori
     assert.equal(created.embedding_preflight.requires_paid_call, false);
     assert.equal((await createSignalTopicStoreV1({ ...args, input, idempotency_key: "preimport-create" })).replayed, true);
     const edited = await updateSignalTopicStoreV1({ ...args, term_key: created.term_key,
-      idempotency_key: "preimport-edit", input: { expected_definition_revision: 1,
+      idempotency_key: "preimport-edit", input: { ...(await currentTopicDefinitionCasV1({...args,term_key: created.term_key})),
         definition: "Packages that arrived after the promised delivery date", scope: "competitor" } });
     assert.equal(edited.topics[0]!.definition_revision, 2);
     assert.equal(edited.topics[0]!.scope, "competitor");
     assert.equal(edited.execution, null);
     const concurrent = await Promise.allSettled(["one", "two"].map((meaning) => updateSignalTopicStoreV1({
       ...args, term_key: created.term_key, idempotency_key: `preimport-concurrent-${meaning}`,
-      input: { expected_definition_revision: 2, definition: `Delivery expectation ${meaning}` }
+      input: { expected_definition_revision:edited.topics[0]!.definition_revision,expected_definition_digest:edited.topics[0]!.definition_digest, definition: `Delivery expectation ${meaning}` }
     })));
     assert.equal(concurrent.filter((result) => result.status === "fulfilled").length, 1);
     const rejected = concurrent.find((result) => result.status === "rejected");
     assert.equal(rejected?.status === "rejected" && rejected.reason.code, "topic_revision_conflict");
     const archived = await setSignalTopicLifecycleStoreV1({ ...args, term_key: created.term_key,
-      idempotency_key: "preimport-archive", lifecycle: "archived" });
+      idempotency_key: "preimport-archive", lifecycle: "archived" ,...(await currentTopicDefinitionCasV1({...args,term_key: created.term_key}))});
     assert.equal(archived.topics[0]!.status, "archived");
     const restored = await setSignalTopicLifecycleStoreV1({ ...args, term_key: created.term_key,
-      idempotency_key: "preimport-restore", lifecycle: "draft" });
+      idempotency_key: "preimport-restore", lifecycle: "draft" ,...(await currentTopicDefinitionCasV1({...args,term_key: created.term_key}))});
     assert.equal(restored.topics[0]!.status, "draft");
     for (const actor_user_id of [viewerId, foreignId]) await assert.rejects(
       createSignalTopicStoreV1({ ...args, actor_user_id, input, idempotency_key: `denied-${actor_user_id}` }),

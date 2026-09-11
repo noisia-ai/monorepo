@@ -77,9 +77,10 @@ test("result decoder accepts only evidence candidates, finite scores and the req
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  const render = (initialComputation: WorkspaceTopicComputationStatus | null, initial = management) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+  const render = (initialComputation: WorkspaceTopicComputationStatus | null, initial = management,
+    navigation?: { dataHref: string; signalHref: string; brandOsHref: string }) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager,
-      { brandId: "new-brand", workspaceId: status.workspace_id, initial, initialComputation })));
+      { brandId: "new-brand", workspaceId: status.workspace_id, initial, initialComputation, navigation })));
   test(`${locale}: complete workspace search replaces legacy readiness, costs and publication controls inside Topics`, () => {
     const html = render({ ...status, latest_ready: ready, latest_run: ready, is_current: true });
     assert.ok(html.includes(messages.AdminWorkspace.topics.computation.resultsTitle));
@@ -134,5 +135,22 @@ for (const locale of ["es-MX", "en-US"]) {
       { ...management, topics: management.topics.map((topic) => ({ ...topic, status: "draft" })) });
     assert.ok(html.includes(messages.AdminWorkspace.topics.computation.available));
     assert.ok(!html.includes(messages.AdminWorkspace.topics.list.notSearched));
+  });
+  test(`${locale}: client editing keeps the previous Signal visible and hides execution and cost controls`, () => {
+    const separated = { ...management, working_profile_id: "working", serving_profile_id: "serving",
+      requires_recompute: true, capabilities: { ...management.capabilities, can_execute: false },
+      topics: management.topics.map((topic) => ({ ...topic, status: "searching" as const })) } as unknown as SignalTopicsManagementProductV1;
+    const html = render({ ...status, latest_ready: ready, latest_run: ready, is_current: false }, separated,
+      { dataHref: "/signal/new-brand/manage/data", signalHref: "/signal/new-brand",
+        brandOsHref: "/signal/new-brand/manage/brand-os" });
+    assert.ok(html.includes(messages.AdminWorkspace.topics.editor.pendingTitle));
+    assert.ok(html.includes(messages.AdminWorkspace.topics.editor.pendingBody));
+    assert.ok(html.includes(messages.AdminWorkspace.topics.signalSelection.openSignal));
+    for (const hidden of [messages.AdminWorkspace.topics.computation.resultsTitle,
+      messages.AdminWorkspace.topics.computation.readyBody,
+      messages.AdminWorkspace.topics.states.searching]) {
+      assert.ok(!html.includes(hidden), `client must not see execution UI: ${hidden}`);
+    }
+    assert.doesNotMatch(html, /0[.,]005000/u);
   });
 }

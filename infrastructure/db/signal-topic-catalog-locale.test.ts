@@ -162,6 +162,13 @@ function stores(context:ReturnType<typeof source>){
     if(sql.startsWith('BEGIN')||['COMMIT','ROLLBACK'].includes(sql)||sql.startsWith('SET LOCAL')||sql.includes('pg_advisory_xact_lock')){}
     else if(sql.includes('actor.status actor_status'))rows=[{workspace_status:'active',brand_status:'active',actor_status:'active',user_type:'noisia_internal',primary_role:'noisia_admin'}];
     else if(sql.startsWith('SELECT id,taxonomy_id FROM signal_taxonomy_profiles'))rows=hasCatalog?[{id:workspaceId,taxonomy_id:workspaceId}]:[];
+    else if(sql.includes("metadata->>'catalog_role' catalog_role,metadata->>'source_catalog_profile_id' source_catalog_profile_id")){
+      assert.deepEqual(values,[workspaceId]);
+      assert.match(sql,/FROM signal_taxonomy_profiles WHERE workspace_id=\$1::uuid AND kind='topic'/u);
+      assert.match(sql,/metadata->>'contract_version'='signal-topic-catalog-v1'/u);
+      rows=hasCatalog?[{id:workspaceId,taxonomy_id:workspaceId,version:1,status:'draft',context_hash:sha('working catalog'),
+        created_at:now,updated_at:now,catalog_role:'working',source_catalog_profile_id:null}]:[];
+    }
     else if(sql.startsWith('SELECT id,metadata,status FROM taxonomy_terms'))rows=[];
     else if(sql.startsWith('SELECT signal_topic_membership_override_digest_v1'))rows=[{digest:sha('corrections')}];
     else if(sql.startsWith('SELECT chunk_sha256 FROM signal_workspace_chunk_embeddings'))rows=[];

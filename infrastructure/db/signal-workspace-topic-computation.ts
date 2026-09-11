@@ -26,7 +26,7 @@ import {assertSignalWorkspaceEmbeddingProfileV1,assertSignalWorkspaceTopicSearch
  compileSignalWorkspaceTopicInputsV1, signalTopicGuidesDiscoveryV1,signalTopicDefinitionSchemaV1,signalWorkspaceEmbeddingDigestV1,
  SIGNAL_WORKSPACE_TOPIC_SEARCH_PROFILE_V1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1} from "@noisia/query-engine";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
-import {loadSignalTopicInheritedContextStoreV1} from "./signal-topic-catalog";
+import {loadSignalTopicInheritedContextStoreV1,loadSignalTopicWorkingProfileWithQueryableV1} from "./signal-topic-catalog";
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceTopicComputationError(code,status);};
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text,"utf8").digest("hex")}`;
 const natural=(value:unknown):number=>{const n=Number(value);if(!Number.isSafeInteger(n)||n<0)return fail("workspace_topic_count_invalid",503);return n;};
@@ -77,8 +77,8 @@ async function requireLease(client:PoolClient,lease:SignalWorkspaceTopicLeaseV1)
  return run;
 }
 async function contextSnapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profileId?:string){
- const profile=(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
-  WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','activating','active')
+ const profile=!profileId?await loadSignalTopicWorkingProfileWithQueryableV1({queryable:client,workspace_id:workspace}):(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
+  WHERE workspace_id=$1::uuid AND kind='topic' AND (status IN('draft','activating','active') OR ($2::uuid IS NOT NULL AND status='retired'))
    AND metadata->>'contract_version'='signal-topic-catalog-v1' AND ($2::uuid IS NULL OR id=$2::uuid)
   ORDER BY version DESC LIMIT 1`,[workspace,profileId??null])).rows[0];
  if(!profile)return fail("workspace_topic_catalog_required");
@@ -161,8 +161,8 @@ export async function readSignalWorkspaceTopicRootChunksV1(args:{database:Signal
  });
 }
 
-async function snapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1,allowEmpty=false,inputInterestsOnly=false){
- const current=await contextSnapshot(client,workspace),texts:Record<string,string>={};
+async function snapshot(client:SignalWorkspaceTopicQueryableV1,workspace:string,profile:SignalWorkspaceEmbeddingProfileV1,allowEmpty=false,inputInterestsOnly=false,taxonomyProfileId?:string){
+ const current=await contextSnapshot(client,workspace,taxonomyProfileId),texts:Record<string,string>={};
  const topics=current.topics.filter(topic=>!inputInterestsOnly||signalTopicGuidesDiscoveryV1(topic.definition)).map(topic=>{
   const compiled=compileSignalWorkspaceTopicInputsV1({topic:topic.definition,
    context:{...current.context.embedding_contexts[topic.definition.scope],context_refs:current.context.context_refs},profile});
@@ -185,10 +185,10 @@ export async function loadSignalWorkspaceTopicInputSnapshotV1(args:{database:Sig
  return transaction(args.database,client=>loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,queryable:client}));
 }
 /** Caller owns transaction/snapshot consistency. This read never creates a run or another pool. */
-export async function loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args:{queryable:SignalWorkspaceTopicQueryableV1;workspace_id:string;actor_user_id:string;allow_empty?:boolean;input_interests_only?:boolean}){
+export async function loadSignalWorkspaceTopicInputSnapshotWithQueryableV1(args:{queryable:SignalWorkspaceTopicQueryableV1;workspace_id:string;actor_user_id:string;allow_empty?:boolean;input_interests_only?:boolean;taxonomy_profile_id?:string}){
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:args.queryable,
   workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_view)return fail("workspace_topic_forbidden",403);
- return snapshot(args.queryable,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,args.allow_empty,args.input_interests_only);
+ return snapshot(args.queryable,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,args.allow_empty,args.input_interests_only,args.taxonomy_profile_id);
 }
 export async function requestSignalWorkspaceTopicComputationV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string;
  idempotency_key:string;embedding_run_id:string;algorithm_profile?:SignalWorkspaceTopicSearchProfileV1}):Promise<{execution_id:string;replayed:boolean}>{

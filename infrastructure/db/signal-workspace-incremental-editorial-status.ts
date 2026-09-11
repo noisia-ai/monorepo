@@ -45,7 +45,7 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
  const run=await readRun(c,args,idempotency_key);if(!run)return null;
  const ownerCapabilities=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id});
  let identity:{context_digest:string;catalog_digest:string}|null=null;
- if(run.current&&ownerCapabilities.can_execute_topics){try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id});}
+ if(run.current&&ownerCapabilities.can_execute_topics){try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id,execution_id:run.id});}
   catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
    &&(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}}
  const is_current=run.current&&ownerCapabilities.can_execute_topics&&identity?.context_digest===run.context_digest&&identity?.catalog_digest===run.catalog_digest;

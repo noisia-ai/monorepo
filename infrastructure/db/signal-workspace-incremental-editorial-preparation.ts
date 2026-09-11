@@ -69,7 +69,7 @@ async function source(c: PoolClient, args: Target, historical = false): Promise<
     FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid
       AND input_contract='workspace-topic-engine-v1' AND input_snapshot ? 'numeric_descriptor' AND result_summary ? 'numeric_checkpoint'`, [args.numeric_execution_id, args.workspace_id])).rows[0];
   if (!run) return fail('not_found', 404);
-  try { const identity = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: c, ...args });
+  try { const identity = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: c, ...args, execution_id:run.id });
     run.valid &&= identity.context_digest === run.input_snapshot.context_digest && identity.catalog_digest === run.input_snapshot.catalog_digest;
   } catch(error) { if(historical && (isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error) || error instanceof SignalWorkspaceEngineError && [404,409].includes(error.status)
     || error instanceof Error && ['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))) run.valid=false; else throw error; }

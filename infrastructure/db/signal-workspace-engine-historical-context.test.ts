@@ -40,15 +40,16 @@ function fixture(identityError:Error,denied=false){
       ||sql.startsWith('SELECT workspace_id FROM signal_corpus_preparation_input_state'))return{rows:[],rowCount:0};
     if(sql.includes('workspace.status workspace_status'))return{rows:[{workspace_status:'active',brand_status:'active',actor_status:denied?'inactive':'active',
       user_type:'noisia_internal',primary_role:'noisia_admin',same_organization:true,brand_access_level:null}]};
-    if(sql.includes('SELECT id,taxonomy_id FROM signal_taxonomy_profiles')){identities++;throw identityError;}
+    if(sql.includes("SELECT CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'"))return{rows:[{profile_id:operation}]};
+    if(sql.includes('SELECT id,taxonomy_id FROM signal_taxonomy_profiles')||sql.includes('SELECT id::text,taxonomy_id::text,version,status,context_hash')){identities++;throw identityError;}
     if(sql.includes('transaction_timestamp()'))return{rows:[{observed_at:stamp}]};
     if(sql.includes('SELECT input_revision::text'))return{rows:[{input_revision:'2'}]};
-    if(sql.includes('SELECT id, actor_user_id, input_revision::text'))return{rows:[{id:owner,actor_user_id:actor,input_revision:'1',input_snapshot:{context_digest:sha,catalog_digest:sha}}]};
+    if(sql.includes('SELECT id, actor_user_id, input_revision::text'))return{rows:[{id:owner,actor_user_id:actor,input_revision:'1',input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha}}]};
     if(sql.includes('SELECT id FROM signal_topic_catalog_executions')&&sql.includes('input_revision=$2::bigint'))return{rows:[]};
     if(sql.includes('SELECT id,status,')&&sql.includes('policy_current'))return{rows:[{id:operation,status:'completed',policy_current:true}]};
     if(sql.includes('signal_workspace_incremental_serving_current_v1'))return{rows:[{execution_id:numeric,status:'failed',phase:'numeric',progress:40,
       expected_roots:9,processed_roots:4,error_code:'workspace_engine_process_failed',input_revision:'2',desired_revision:'2',
-      context_digest:sha,catalog_digest:sha,is_current:true,history_current:true}]};
+      context_digest:sha,catalog_digest:sha,taxonomy_profile_id:operation,operational_profile_id:operation,is_current:true,history_current:true}]};
     if(sql.includes('FROM signal_topic_catalog_operations'))return{rows:[{result_summary:catalogReceipt}]};
     if(sql.includes('SELECT id,engine_request_keys'))return{rows:[{id:numeric,alias:{actor_user_id:actor,request_digest:digest({action:'retry_numeric',execution_id:numeric})}}]};
     if(sql.includes('WITH runs AS('))return{rows:[{execution_id:owner,generation_id:operation,source_engine_execution_id:numeric,
@@ -56,19 +57,19 @@ function fixture(identityError:Error,denied=false){
     if(sql.includes('SELECT dispatch.status,dispatch.error_code'))return{rows:[{status:'failed',error_code:'workspace_incremental_projection_transport_unavailable',attempt_count:8,profile_current:true}]};
     if(sql.includes('FROM signal_classification_generations WHERE id='))return{rows:[{input_revision:'2',interpretation_coverage:{interpreted_units:4},discovery_coverage:null}]};
     if(sql.includes('workspace_interpretation_admission_eligible_v1'))return{rows:[{id:owner,actor_user_id:actor,input_digest:sha,
-      input_snapshot:{context_digest:sha,catalog_digest:sha,claude_cap_micro_usd:900},config:{budget_timezone:'UTC',daily_cap_micro_usd:2000,call_configuration:{model:'claude-sonnet-4-6'}},
+      input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha,claude_cap_micro_usd:900},config:{budget_timezone:'UTC',daily_cap_micro_usd:2000,call_configuration:{model:'claude-sonnet-4-6'}},
       eligible:true,requires_authorization:true,is_current:true,is_admin:true,receipt:admission}]};
     if(sql.startsWith('SELECT actor_user_id FROM signal_topic_catalog_executions'))return{rows:[{actor_user_id:actor}]};
     if(sql.includes('SELECT input_digest,input_snapshot,interpretation_revision,'))return{rows:[{input_digest:sha,input_snapshot:{claude_cap_micro_usd:900},interpretation_admission_operation_id:operation,receipt:admission}]};
     if(sql.includes('WITH selected AS MATERIALIZED'))return{rows:[{id:owner,actor_user_id:actor,status:'failed',progress:40,
       denominator:9,expected_chunks:'9',processed_roots:4,processed_chunks:'4',error_code:'workspace_engine_storage_unavailable',
-      result_summary:{phase:'interpretation',interpreted_units:4},input_snapshot:{context_digest:sha,catalog_digest:sha,expected_guides:2,claude_cap_micro_usd:900},
+      result_summary:{phase:'interpretation',interpreted_units:4},input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha,expected_guides:2,claude_cap_micro_usd:900},
       revision_live:true,policy_live:true,artifact_count:'2',is_latest:true,is_request:true,progress_owner:false,progress_coverage:{unit_count:4,unit_digest:sha},
       latest_catalog_profile_id:null,latest_materialization_progress:null,progress_dispatch:null}]};
     if(sql.includes('workspace_incremental_editorial_preparation_source_v1'))return{rows:[{id:numeric,actor_user_id:actor,
-      input_snapshot:{context_digest:sha,catalog_digest:sha},checkpoint:{checkpoint_digest:sha},seal:sourceSeal,valid:true}]};
+      input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha},checkpoint:{checkpoint_digest:sha},seal:sourceSeal,valid:true}]};
     if(sql.includes('workspace_incremental_editorial_policy_v1'))return{rows:[{id:numeric,actor_user_id:actor,
-      input_snapshot:{context_digest:sha,catalog_digest:sha},checkpoint:{checkpoint_digest:sha},history:sha,census:sha,valid:true,
+      input_snapshot:{taxonomy_profile_id:operation,context_digest:sha,catalog_digest:sha},checkpoint:{checkpoint_digest:sha},profile_id:operation,history:sha,census:sha,valid:true,
       targets:{expected_units:9,unique_units:9,target_units:5,legacy_units:0,claimed_units:4},
       policy:{budget_timezone:'UTC',daily_cap_micro_usd:2000}}]};
     if(sql.includes('workspace_incremental_editorial_execution_current_v1'))return{rows:[{id:owner,actor_user_id:actor,status:'failed',

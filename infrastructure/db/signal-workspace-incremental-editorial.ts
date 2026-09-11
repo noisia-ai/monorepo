@@ -48,16 +48,16 @@ export async function readSignalWorkspaceIncrementalEditorialRequestWithQueryabl
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...scope})).can_view)return fail('forbidden',403);
  return request(client,scope,idempotency_key);
 }
-type Source={id:string;actor_user_id:string;input_snapshot:{context_digest:string;catalog_digest:string};checkpoint:{checkpoint_digest:string;population_digest:string;model_bank_artifact_id:string};bank_sha256:string;
+type Source={id:string;actor_user_id:string;input_snapshot:{taxonomy_profile_id:string;context_digest:string;catalog_digest:string};checkpoint:{checkpoint_digest:string;population_digest:string;model_bank_artifact_id:string};bank_sha256:string;
  policy:{source_execution_id:string;budget_actor_user_id:string;budget_timezone:string;daily_cap_micro_usd:number}|null;targets:{expected_units:number;unique_units:number;target_units:number;target_unit_digest:string;legacy_units:number;claimed_units:number};
- census:string|null;history:string;valid:boolean;profile_id:string;input_revision:string};
+ census:string|null;history:string;valid:boolean;profile_id:string|null;input_revision:string};
 async function source(client:Queryable,args:SignalWorkspaceIncrementalEditorialScopeV1):Promise<Source>{
  const row=(await client.query<Source>(`SELECT engine.id,engine.actor_user_id,engine.input_snapshot-'guides' input_snapshot,engine.input_revision::text,
  engine.result_summary->'numeric_checkpoint' checkpoint,bank.content->>'sha256' bank_sha256,
  workspace_incremental_editorial_policy_v1(engine.id) policy,workspace_incremental_editorial_targets_v1(engine.id) targets,
  workspace_incremental_editorial_census_v1(engine.id) census,signal_workspace_incremental_projection_editorial_digest_v1(engine.id) history,
  workspace_incremental_editorial_source_v1(engine.id) valid,
- (SELECT id::text FROM signal_taxonomy_profiles WHERE workspace_id=engine.workspace_id AND kind='topic' AND status IN('draft','activating','active') AND metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY version DESC LIMIT 1) profile_id
+ signal_workspace_incremental_operational_profile_v1(engine.id)::text profile_id
  FROM signal_topic_catalog_executions engine LEFT JOIN analysis_artifacts bank ON bank.id::text=engine.result_summary->'numeric_checkpoint'->>'model_bank_artifact_id'
  WHERE engine.id=$1::uuid AND engine.workspace_id=$2::uuid AND engine.input_contract='workspace-topic-engine-v1' AND engine.input_snapshot ? 'numeric_descriptor'`,
  [uuid(args.numeric_execution_id),args.workspace_id])).rows[0];if(!row?.checkpoint)return fail('source_not_found',404);return row;
@@ -66,10 +66,10 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args})).can_view)return fail('forbidden',403);
  const accepted=options.accepted??await request(client,args,args.idempotency_key),row=await source(client,args);
  let identity:{context_digest:string;catalog_digest:string}|null=null;
- try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id});}
+ try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id,taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id});}
  catch(error){if(!options.historical||!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
    ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
- const is_current=row.valid&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
+ const is_current=row.profile_id!==null&&row.valid&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
  const isAdmin=(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]!.valid;
  const policy=row.policy;
  const clock=(await client.query<{now:string;date:string;maximum:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now,
@@ -85,7 +85,7 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  const operation=(await client.query<{execution_id:string;status:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}>(`SELECT id execution_id,status,workspace_interpretation_admission_receipt_v1(id) receipt FROM signal_topic_catalog_executions
  WHERE workspace_id=$1::uuid AND source_execution_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1'
   AND ($3::uuid IS NULL OR id=$3::uuid) ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id,options.historical?accepted?.result.execution_id??null:null])).rows[0];
- const blocked_reason=!isAdmin?'workspace_incremental_editorial_forbidden':!is_current?'workspace_incremental_editorial_source_stale':!policy?'workspace_incremental_editorial_budget_policy_missing':!row.census||row.targets.expected_units!==row.targets.unique_units?'workspace_incremental_editorial_census_incomplete':operation?'workspace_incremental_editorial_already_owned':!plan?.valid?'workspace_incremental_editorial_evidence_required':plan.metadata.descriptor.stream.rows===0?'workspace_incremental_editorial_no_new_units':maximum<=0?'workspace_incremental_editorial_cap_exceeded':null;
+ const blocked_reason=!isAdmin?'workspace_incremental_editorial_forbidden':!row.profile_id?'workspace_incremental_editorial_operational_profile_required':!is_current?'workspace_incremental_editorial_source_stale':!policy?'workspace_incremental_editorial_budget_policy_missing':!row.census||row.targets.expected_units!==row.targets.unique_units?'workspace_incremental_editorial_census_incomplete':operation?'workspace_incremental_editorial_already_owned':!plan?.valid?'workspace_incremental_editorial_evidence_required':plan.metadata.descriptor.stream.rows===0?'workspace_incremental_editorial_no_new_units':maximum<=0?'workspace_incremental_editorial_cap_exceeded':null;
  return{numeric_execution_id:row.id,numeric_checkpoint_digest:row.checkpoint.checkpoint_digest,history_cut_digest:row.history,target_unit_digest:plan?.metadata.descriptor.target_unit_digest??null,target_binding_digest:plan?.metadata.descriptor.target_binding_digest??null,evidence_plan_artifact_id:plan?.id??null,
  expected_units:row.targets.expected_units,target_units:plan?.metadata.descriptor.stream.rows??0,legacy_units:row.targets.legacy_units,claimed_units:row.targets.claimed_units,is_current,can_authorize:blocked_reason===null,blocked_reason,
  budget_actor_user_id:row.actor_user_id,budget_timezone:policy?.budget_timezone??'UTC',budget_date:clock.date,maximum_admission_not_after:clock.maximum,daily_cap_micro_usd:Number(policy?.daily_cap_micro_usd??0),
@@ -223,7 +223,7 @@ export async function persistSignalWorkspaceIncrementalEditorialEvidenceWithClie
 
   await admin(client,args);await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
   await client.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE',[args.workspace_id]);
-  const numeric=await source(client,args),identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
+  const numeric=await source(client,args),identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,taxonomy_profile_id:numeric.input_snapshot.taxonomy_profile_id});
   if(!numeric.valid||numeric.checkpoint.checkpoint_digest!==evidence.numeric_checkpoint_digest||identity.context_digest!==numeric.input_snapshot.context_digest||identity.catalog_digest!==numeric.input_snapshot.catalog_digest)return fail('source_stale');
   const content={contract_version:'workspace-engine-private-artifact-v1',...args.stored};
   const prior=(await client.query<{id:string;content:unknown}>(`SELECT id,content FROM analysis_artifacts WHERE workspace_id=$1::uuid AND metadata->>'numeric_execution_id'=$2::text

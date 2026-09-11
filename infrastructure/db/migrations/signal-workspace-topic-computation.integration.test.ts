@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import assert from "node:assert/strict";
 import {createHash,randomUUID} from "node:crypto";
 import test from "node:test";
@@ -126,10 +127,10 @@ test("native ready evidence never enters legacy readers/corrections and scoped e
   assert.equal(caps.can_edit_topics,true);assert.equal(caps.can_execute_topics,false);
   const before=(await f.query("SELECT count(*)::int count FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].count;
   const args={pool:f.database,workspace_id:f.workspace_id,actor_user_id:actor,term_key:topic.term_key};
-  const updated=await updateSignalTopicStoreV1({...args,idempotency_key:randomUUID(),input:{expected_definition_revision:topic.definition_revision,
+  const updated=await updateSignalTopicStoreV1({...args,idempotency_key:randomUUID(),input:{...(await currentTopicDefinitionCasV1({...args})),
    definition:topic.definition+" Revisión editorial posterior a búsqueda sin aprobar."}});
   assert.equal(updated.topics.find(item=>item.term_key===topic.term_key)!.definition_revision,topic.definition_revision+1);
-  const archived=await setSignalTopicLifecycleStoreV1({...args,idempotency_key:randomUUID(),lifecycle:"archived"});
+  const archived=await setSignalTopicLifecycleStoreV1({...args,idempotency_key:randomUUID(),lifecycle:"archived",...(await currentTopicDefinitionCasV1({...args}))});
   assert.equal(archived.topics.find(item=>item.term_key===topic.term_key)!.status,"archived");
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].count,before);
   assert.equal((await f.query("SELECT status FROM signal_topic_catalog_executions WHERE id=$1::uuid",[ready.id])).rows[0].status,"ready");

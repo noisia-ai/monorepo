@@ -22,16 +22,21 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** No connection, credentials, files, import exports or provider are read here.
  * The dedicated runner owns target/empty-schema guards and the physical rollback.
  * These invented rights and usage receipts are TEST DATA, never product grants. */
-export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1){
+export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
+ projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
+}={}){
  const {database,query,scoped,cleanup}=tx;
- const org=randomUUID(),brand=randomUUID(),actor_user_id=randomUUID(),source=randomUUID(),batch=randomUUID();
+ const org=options.identity?.organization_id??randomUUID(),brand=options.identity?.brand_id??randomUUID(),actor_user_id=options.identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
+ if(!options.identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
  await query("INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status) VALUES($1,$2,'Synthetic fixture operator','noisia_internal','noisia_admin',$3,'active')",[actor_user_id,`${actor_user_id}@example.test`,org]);
  await query("INSERT INTO brands(id,organization_id,slug,name,description,status) VALUES($1,$2,$3,'Synthetic bicycle brand','Invented test context; no customer data','active')",[brand,org,`noi19-${brand}`]);
+ }
  const workspace_id=(await query('SELECT id FROM signal_workspaces WHERE brand_id=$1 AND organization_id=$2',[brand,org])).rows[0]?.id as string;
  assert.ok(workspace_id,'brand provisioning trigger must create a workspace');
  await query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status)
- VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Synthetic fixture source',$5,'active')`,[source,workspace_id,org,brand,`noi19-${source}`]);
+ VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Synthetic fixture source',$5,'active')`,[source,workspace_id,org,brand,`source-sha256-${fixtureSha(source).slice(7)}`]);
  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
  record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
  VALUES($1,$2,$3,'synthetic','invented-three-roots.txt',$4,'completed',3,3,0,0,$5)`,[batch,workspace_id,source,fixtureSha(NOI19_SYNTHETIC_TEXTS.join('\n')),actor_user_id]);
@@ -42,7 +47,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included')`,
    [root,workspace_id,source,`noi19-${root}-${index}`,batch,fixtureSha(text),text,text.length]);
   await query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
-   VALUES($1,$2,$3,$4,'included')`,[workspace_id,root,batch,source]);
+   VALUES($1,$2,$3,$4,'included') ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,[workspace_id,root,batch,source]);
  }
  const quality=randomUUID(),retention=randomUUID(),license=randomUUID();
  const q={workspace_id,policy_key:'noi19-synthetic-quality',policy_version:1,min_quality_score:null,
@@ -87,7 +92,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  await embedSyntheticRunV1(tx,requested.run_id);
  // No migrations: the private runner requires the restored current schema. The
  // existing projection body uses real guards/receipts with explicit numerical data.
- return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id});
+ return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);
 }
 async function embedSyntheticRunV1(tx:SyntheticTransactionV1,run_id:string){
  const {database,query}=tx;

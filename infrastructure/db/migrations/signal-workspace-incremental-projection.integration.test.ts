@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';
 import {workspaceProjectionFixtureV1} from './signal-workspace-topic-projection.fixture';
 import {incrementalProjectionFixtureV1} from './signal-workspace-incremental-projection.fixture';
@@ -122,23 +123,20 @@ test('incremental binding and native projection preserve paid lineage, current e
    await rollback(async()=>{await assert.rejects(query('DELETE FROM incremental_trigger_probe WHERE id=$1::uuid',[result.binding_artifact_id]),/history_immutable/u);});
    assert.equal((await query('DELETE FROM incremental_trigger_probe WHERE id=$1::uuid RETURNING id',[unrelated])).rowCount,1);
    await rollback(async()=>{
-    // A queued derived classification must not lock the editable main catalog.
-    await updateSignalTopicStoreV1({pool:database,...access,term_key:topic.term_key,idempotency_key:randomUUID(),input:{expected_definition_revision:topic.definition_revision,label:'Renamed incremental Topic'}});
+    const before=(await query('SELECT to_jsonb(e) body FROM signal_topic_catalog_executions e WHERE workspace_id=$1 ORDER BY id',[access.workspace_id])).rows;
+    await updateSignalTopicStoreV1({pool:database,...access,term_key:topic.term_key,idempotency_key:randomUUID(),input:{...(await currentTopicDefinitionCasV1({pool:database,...access,term_key:topic.term_key})),label:'Renamed incremental Topic'}});
     const renamed=await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access});
-    assert.equal(renamed.topics[0]!.definition.definition_digest,topic.definition_digest);assert.equal(renamed.topics[0]!.definition.definition_revision,topic.definition_revision);
-    assert.equal((await serving.loadSignalWorkspaceTopicsOverviewV1(access))?.terms.find(row=>row.term_key===topic.term_key)?.mention_count,3);
-    assert.equal((await store.loadSignalWorkspaceAnalysisUpdateV1(access))?.has_pending_work,true);
-    assert.equal(await store.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),1);
-    const next=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='incremental_projection'",[f.lease.execution_id])).rows[0]!;
-    await query("UPDATE signal_topic_classification_outbox SET status='dispatched',dispatched_at=clock_timestamp() WHERE execution_id=$1::uuid AND dispatch_kind='incremental_projection'",[f.lease.execution_id]);
-    const nextScope={...scope,worker_job_id:next.worker_job_id};
-    const rebuilt=await signalWorkspaceIncrementalDerivationJobV1({id:next.worker_job_id,data:nextScope,updateProgress:async()=>{}},{database,storage:f.storage});
-    assert.ok(rebuilt.projection_execution_id);
-    await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID()});
-    assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[topic.term_key]?.selected,false);
-    const queued=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='execution'",[rebuilt.projection_execution_id])).rows[0]!;
-    assert.equal(await store.claimSignalWorkspaceIncrementalProjectionV1({database,execution_id:rebuilt.projection_execution_id,worker_job_id:queued.worker_job_id}),null,'edited catalog invalidates old queued generation before work');
-    await assert.rejects(store.readSignalWorkspaceIncrementalProjectionTopicsV1({...nextScope,derivation_digest:source.derivation_digest}),/inputs_changed/u);
+    const renamedTopic=renamed.topics.find(row=>row.definition.term_key===topic.term_key)!.definition;
+    assert.equal(renamedTopic.definition_digest,topic.definition_digest);assert.equal(renamedTopic.definition_revision,topic.definition_revision+1);
+    const served=await serving.loadSignalWorkspaceTopicsOverviewV1(access);assert.equal(served?.is_current,true);
+    assert.equal(served?.terms.find(row=>row.term_key===topic.term_key)?.mention_count,3);
+    assert.equal(served?.terms.find(row=>row.term_key===topic.term_key)?.label,topic.label);
+    assert.equal(await store.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),0,'working rename does not create a derived generation');
+    await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:database,...access,term_key:topic.term_key}))});
+    assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[topic.term_key]?.selected,true,'working archive does not deselect served A');
+    assert.equal((await serving.loadSignalWorkspaceTopicsOverviewV1(access))?.is_current,true);
+    assert.equal(await store.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),0);
+    assert.deepEqual((await query('SELECT to_jsonb(e) body FROM signal_topic_catalog_executions e WHERE workspace_id=$1 ORDER BY id',[access.workspace_id])).rows,before);
    });
    passed=true;throw done;
   }}),error=>{if(error!==done)console.error(error);return error===done;});assert.equal(passed,true);

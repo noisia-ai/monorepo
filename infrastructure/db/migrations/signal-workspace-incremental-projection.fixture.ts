@@ -13,6 +13,8 @@ import {type WorkspaceProjectionCheckpointFixtureV1,fixtureSha} from './signal-w
  * bytes. No model is loaded and no provider is called by this fixture. */
 export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckpointFixtureV1,clusterIds:readonly[string,string],options:{
  emerging_component?:boolean;migrations_applied?:boolean;editorial_evidence?:boolean;emerging_units?:number;
+ onParentMaterialized?:(profile_id:string)=>Promise<void>;
+ onParentProjection?:(args:{generation_id:string;catalog_profile_id:string})=>Promise<void>;
  onInputCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onOutputIndex?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;artifact_id:string})=>Promise<engine.SignalWorkspaceEngineLeaseV1>;
  onNumericCheckpoint?:(args:{lease:engine.SignalWorkspaceEngineLeaseV1;checkpoint:numeric.SignalWorkspaceIncrementalCheckpointV1})=>Promise<void>;
@@ -35,6 +37,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
  async function* packets(){yield*f.proposals;}
  const materialized=await progress.materializeSignalWorkspaceEngineTopicsProgressV1({...scope,expected_coverage:current.coverage,
   expected_catalog_profile_id:current.catalog_profile_id,proposals:packets()});
+ await options.onParentMaterialized?.(materialized.output_catalog_profile_id);
  const {mapping,replayed:_replayed,...metadata}=materialized;
  const progressArtifact=artifact(source,`materialization-progress-${materialized.output_catalog_profile_id}.json`,'engine_proposals',JSON.stringify({...metadata,mapping}),metadata);
  progressArtifact.metadata=metadata;
@@ -45,6 +48,7 @@ export async function incrementalProjectionFixtureV1(f:WorkspaceProjectionCheckp
    const storage_key=`workspace-engine/${workspace_id}/${execution_id}/${basename(file)}`;bodies.set(storage_key,await readFile(file,'utf8'));return{storage_key,sha256,size_bytes,media_type};}};
  const oldJob=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='execution'",[old.projection_execution_id])).rows[0]!.worker_job_id;
  await signalWorkspaceTopicProjectionJobV1({id:oldJob,data:{execution_id:old.projection_execution_id},updateProgress:async()=>{}},{database,storage,stores:{claim:projection.claimSignalWorkspaceTopicProjectionV1,heartbeat:projection.heartbeatSignalWorkspaceTopicProjectionV1,readTopics:projection.readSignalWorkspaceTopicProjectionTopicsV1,readProposals:projection.readSignalWorkspaceTopicProjectionProposalsV1,readPage:classification.readSignalWorkspaceClassificationPageV1,readChunksPage:classification.readSignalWorkspaceClassificationChunksPageV1,commitPage:classification.commitSignalWorkspaceClassificationPageV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1}});
+ await options.onParentProjection?.({generation_id:old.generation_id,catalog_profile_id:materialized.output_catalog_profile_id});
  await engine.failSignalWorkspaceEngineV1({database,lease:source,error_code:'workspace_engine_interpretation_daily_authority_expired'});
  const request=await numeric.beginSignalWorkspaceIncrementalEngineV1({...access,idempotency_key:randomUUID(),embedding_run_id:source.snapshot.embedding_run_id,
   expected_context_digest:source.snapshot.context_digest,expected_catalog_digest:source.snapshot.catalog_digest,engine_config:source.snapshot.engine_config,close_requested:false});

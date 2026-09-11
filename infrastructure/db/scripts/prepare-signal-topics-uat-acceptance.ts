@@ -92,7 +92,7 @@ try {
     idempotency_key: "uat-topics-2026-09-07-edit-delivery-v1",
     term_key: adopted.term_key,
     input: {
-      expected_definition_revision: 1,
+      expected_definition_revision:adoptedTopic.definition_revision,expected_definition_digest:adoptedTopic.definition_digest,
       definition: "Experiencias con órdenes de productos para mascotas en las que el envío se retrasa, no llega, llega incompleto o carece de seguimiento. Excluye usos de entrega sin relación con un pedido.",
       inclusion: ["pedido", "envío", "guía", "sigo esperando", "todavía no llega"],
       exclusion: ["entrega de premios", "entrega de documentos", "entrega de proyecto"]

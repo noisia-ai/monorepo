@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import test from 'node:test';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';
 import {writeFile} from 'node:fs/promises';
 import {updateSignalTopicStoreV1,setSignalTopicLifecycleStoreV1} from '../signal-topic-catalog';
@@ -80,12 +81,12 @@ test('native projection retains all chunks, pending multilabel membership, durab
   const {loadSignalWorkspaceTopicsOverviewV1}=await import('../signal-workspace-topics-serving');
   assert.equal((await loadSignalWorkspaceTopicsOverviewV1(f.access))?.terms.find(row=>row.term_key===topic.term_key)?.mention_count,3,'new compatible generation refreshes the existing selection');
   await updateSignalTopicStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,idempotency_key:randomUUID(),
-   input:{expected_definition_revision:topic.definition_revision,label:'Renamed locally'}});
+   input:{...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key})),label:'Renamed locally'}});
   assert.equal((await projection.loadSignalWorkspaceTopicProjectionStatusV1(f.access)).latest_complete?.is_current,true);
   await selection.selectSignalWorkspaceTopicV1({...select,generation_id:next.generation_id,expected_selection_revision:1,idempotency_key:randomUUID()});
-  await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID()});
+  await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key}))});
   const archived=await selection.loadSignalWorkspaceTopicSelectionV1(f.access);assert.equal(archived.items[topic.term_key]?.selected,false);
-  await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'draft',idempotency_key:randomUUID()});
+  await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'draft',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key}))});
   assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).items[topic.term_key]?.selected,false);
  }finally{await f.cleanup();}
 });

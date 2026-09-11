@@ -15,6 +15,9 @@ export type SignalWorkspaceCapabilityAuthorityV1 = {
   primary_role: string;
   same_organization: boolean;
   brand_access_level: string | null;
+  /** Missing values cannot authorize editorial writes; historical read consumers may omit them. */
+  organization_status?: string | null;
+  brand_same_organization?: boolean;
 };
 
 /** Roles and grants come from our database, never from the request body or identity token. */
@@ -37,22 +40,47 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const hasGrant = ["read", "comment", "admin"].includes(authority.brand_access_level ?? "");
   const canEdit = administrator && ["comment", "admin"].includes(authority.brand_access_level ?? "");
   return { ...denied, can_view: (administrator || viewer) && hasGrant,
-    can_edit_topics: canEdit, can_import_mentions: canEdit, can_select_signal: canEdit };
+    can_edit_topics: canEdit && authority.primary_role === "client_admin"
+      && authority.organization_status === "active" && authority.brand_same_organization === true,
+    can_import_mentions: canEdit, can_select_signal: canEdit };
 }
 
 export async function loadSignalWorkspaceCapabilitiesStoreV1(args: {
   queryable: { query<Row extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: Row[] }> };
   workspace_id: string;
   actor_user_id: string;
+  /** Mutations call this only inside their transaction, after the taxonomy advisory lock. */
+  lock_authority?: boolean;
 }): Promise<SignalWorkspaceCapabilitiesV1> {
+  if (args.lock_authority) {
+    // Hold mutable authority through the receipt/result read and commit. A grant
+    // revocation or organization/role change cannot pass between check and write.
+    await args.queryable.query(`
+      SELECT actor.id FROM users actor
+      JOIN signal_workspaces workspace ON workspace.id=$1::uuid
+      JOIN brands brand ON brand.id=workspace.brand_id
+      JOIN organizations organization ON organization.id=workspace.organization_id
+      WHERE actor.id=$2::uuid
+      FOR SHARE OF actor,organization,brand,workspace
+    `, [args.workspace_id, args.actor_user_id]);
+    await args.queryable.query(`
+      SELECT access.id FROM user_brand_access access
+      JOIN signal_workspaces workspace ON workspace.brand_id=access.brand_id
+      WHERE workspace.id=$1::uuid AND access.user_id=$2::uuid AND access.revoked_at IS NULL
+      ORDER BY access.id FOR SHARE OF access
+    `, [args.workspace_id, args.actor_user_id]);
+  }
   const authority = (await args.queryable.query<SignalWorkspaceCapabilityAuthorityV1>(`
     SELECT workspace.status workspace_status,brand.status brand_status,
+      organization.status organization_status,
+      (brand.organization_id=workspace.organization_id) brand_same_organization,
       actor.status actor_status,actor.user_type,actor.primary_role,
       (actor.organization_id=workspace.organization_id) same_organization,
       grant_access.access_level brand_access_level
     FROM signal_workspaces workspace
     JOIN users actor ON actor.id=$2::uuid
     LEFT JOIN brands brand ON brand.id=workspace.brand_id
+    LEFT JOIN organizations organization ON organization.id=workspace.organization_id
     LEFT JOIN LATERAL (
       SELECT access.access_level FROM user_brand_access access
       WHERE access.user_id=actor.id AND access.brand_id=workspace.brand_id
@@ -88,11 +116,14 @@ export async function listSignalBrandWorkspaceEntriesStoreV1(args: {
       COALESCE(brand.display_name,brand.name,workspace.slug) name,
       workspace.brand_id,workspace.organization_id,workspace.timezone,
       workspace.status workspace_status,brand.status brand_status,
+      organization.status organization_status,
+      (brand.organization_id=workspace.organization_id) brand_same_organization,
       actor.status actor_status,actor.user_type,actor.primary_role,
       (actor.organization_id=workspace.organization_id) same_organization,
       grant_access.access_level brand_access_level
     FROM signal_workspaces workspace
     JOIN brands brand ON brand.id=workspace.brand_id AND brand.organization_id=workspace.organization_id
+    JOIN organizations organization ON organization.id=workspace.organization_id
     JOIN users actor ON actor.id=$1::uuid AND actor.status='active'
     LEFT JOIN LATERAL (
       SELECT access.access_level FROM user_brand_access access

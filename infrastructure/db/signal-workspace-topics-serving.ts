@@ -38,7 +38,8 @@ type Selection = { revision: number; items: Record<string, { selected: boolean; 
   definition_revision: number; generation_id: string }> };
 type Generation = { id: string; taxonomy_profile_id: string; preparation_run_id: string;
   input_revision: string; current_revision: string; finalized_digest: string; policy_live: boolean;
-  source_engine_execution_id: string; interpretation_coverage: unknown; identity: SignalWorkspaceClassificationIdentityV1; correction_digest: string; source_valid: boolean };
+  source_engine_execution_id: string; interpretation_coverage: unknown; identity: SignalWorkspaceClassificationIdentityV1;
+  correction_digest: string; source_valid: boolean };
 type Context = { generation: Generation | null; topics: SignalTopicDefinitionV1[]; selection: Selection;
   is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null }; native: boolean };
 
@@ -86,12 +87,6 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       AND run.input_contract IN('workspace-topic-engine-v1','workspace-topic-classification-v1')) native
     FROM signal_workspaces workspace WHERE id=$1::uuid`, [args.workspace_id])).rows[0]!;
   const selection = workspace.selection ?? { revision: 0, items: {} };
-  const topicRows = (await client.query<{ definition: unknown }>(`SELECT term.metadata->'topic' definition
-    FROM (SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
-      AND status IN('draft','activating','active') AND metadata->>'contract_version'='signal-topic-catalog-v1'
-      ORDER BY version DESC LIMIT 1) profile JOIN taxonomy_terms term ON term.taxonomy_id=profile.taxonomy_id
-    ORDER BY term.term_key`, [args.workspace_id])).rows;
-  const topics = topicRows.map(row => signalTopicDefinitionSchemaV1.parse(row.definition)).filter(topic => topic.lifecycle !== "archived");
   const generation = (await client.query<Generation>(`SELECT generation.id,generation.taxonomy_profile_id,generation.preparation_run_id,
     generation.input_revision::text,state.input_revision::text current_revision,generation.finalized_digest,
     (generation.policy_valid_until IS NULL OR generation.policy_valid_until>now()) policy_live,
@@ -105,13 +100,22 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       AND generation.status='ready' AND generation.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
       AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item WHERE item.generation_id=generation.id AND item.resolution_state='error')
     ORDER BY generation.generation_version DESC LIMIT 1`, [args.workspace_id])).rows[0] ?? null;
+  const topicRows = (await client.query<{ definition: unknown }>(`SELECT term.metadata->'topic' definition
+    FROM (SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
+      AND metadata->>'contract_version'='signal-topic-catalog-v1'
+      AND (($2::uuid IS NOT NULL AND id=$2::uuid) OR ($2::uuid IS NULL AND status IN('draft','activating','active')))
+      ORDER BY version DESC LIMIT 1) profile JOIN taxonomy_terms term ON term.taxonomy_id=profile.taxonomy_id
+    ORDER BY term.term_key`, [args.workspace_id, generation?.taxonomy_profile_id ?? null])).rows;
+  const topics = topicRows.map(row => signalTopicDefinitionSchemaV1.parse(row.definition)).filter(topic => topic.lifecycle !== "archived");
   let isCurrent = false;
   if (generation) {
-    const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args }).catch(error => {
+    const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
+      taxonomy_profile_id: generation.taxonomy_profile_id }).catch(error => {
       if (error instanceof SignalWorkspaceClassificationError && error.code === "workspace_classification_catalog_unavailable") return null;
       throw error;
     });
-    isCurrent = input !== null && generation.source_valid && generation.policy_live && generation.input_revision === generation.current_revision
+    isCurrent = input !== null && generation.source_valid && generation.policy_live
+      && generation.input_revision === generation.current_revision
       && generation.correction_digest === input.correction_digest
       && generation.identity.catalog_digest === input.catalog_digest && generation.identity.compiler_digest === input.compiler_digest
       && generation.identity.context_digest === input.context_digest && generation.identity.embedding_config_digest === input.embedding_config_digest;

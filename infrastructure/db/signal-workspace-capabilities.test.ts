@@ -7,7 +7,8 @@ import { loadSignalWorkspaceCapabilitiesStoreV1, listSignalBrandWorkspaceEntries
 
 const client: SignalWorkspaceCapabilityAuthorityV1 = {
   workspace_status: "active", brand_status: "active", actor_status: "active", user_type: "client",
-  primary_role: "client_admin", same_organization: true, brand_access_level: "comment"
+  primary_role: "client_admin", same_organization: true, brand_access_level: "comment",
+  organization_status: "active", brand_same_organization: true
 };
 
 test("a scoped client administrator can prepare interests and imports without processing authority", () => {
@@ -16,7 +17,14 @@ test("a scoped client administrator can prepare interests and imports without pr
     can_execute_topics: false, can_adopt_topics: false, can_select_signal: true
   });
   for (const alias of ["brand_manager", "client_owner"]) assert.equal(
-    resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role: alias }).can_edit_topics, true);
+    resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role: alias }).can_edit_topics, false);
+});
+
+test("manual topic editing requires an active organization and exact brand-workspace tenant", () => {
+  for (const overrides of [{ organization_status: "inactive" }, { organization_status: null },
+    { organization_status: undefined }, { brand_same_organization: false }, { brand_same_organization: undefined }]) {
+    assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...client, ...overrides }).can_edit_topics, false);
+  }
 });
 
 test("viewer roles and read-only grants never become writers", () => {
@@ -63,6 +71,8 @@ test("the store reads the actor and live grant from DB using the requested works
     assert.match(sql, /workspace\.id=\$1::uuid/u);
     assert.match(sql, /access\.brand_id=workspace\.brand_id/u);
     assert.match(sql, /access\.revoked_at IS NULL/u);
+    assert.match(sql, /organization\.status organization_status/u);
+    assert.match(sql, /brand\.organization_id=workspace\.organization_id/u);
     return { rows: [client] };
   } } as unknown as Pick<Pool, "query">;
   assert.equal((await loadSignalWorkspaceCapabilitiesStoreV1({ queryable, workspace_id: "workspace-id",

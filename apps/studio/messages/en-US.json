@@ -2915,7 +2915,8 @@
         "saveFirst": "Save your changes before changing the selection.", "pending": "The request is awaiting confirmation. The same request is retained to avoid duplicates.",
         "forbidden": "You do not have access to this action or the Topic is no longer available.", "conflict": "The Topic or selection changed. Refresh its status before continuing.",
         "load": "We could not verify the status. Refresh to try again.", "save": "We could not confirm the change. Check the request before continuing.",
-        "processing": "Preparing the associated mentions. This action will update when it finishes."
+        "processing": "Preparing the associated mentions. This action will update when it finishes.",
+        "previousVersion": "Signal keeps the previously calculated version while these changes are pending."
       },
       "computation": {
         "available": "Candidates available",
@@ -3025,7 +3026,9 @@
         "select": "Choose a topic or create a new one.",
         "newEyebrow": "New definition",
         "newTitle": "Create topic",
-        "source": "Added from candidate {candidate}. Its definition is editable."
+        "source": "Added from candidate {candidate}. Its definition is editable.",
+        "pendingTitle": "Changes saved; calculation pending",
+        "pendingBody": "Signal continues to show the last calculated version. The new definition will apply when an authorized person starts the calculation."
       },
       "fields": {
         "discoveryGuidance": "Use as an interest in future analyses",

@@ -24,8 +24,9 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
       aside={<Link className="admin-button" href={entry.navigation.dataHref} prefetch={false}>
         {t("back")}<ArrowRight aria-hidden size={14} /></Link>} />
     <BrandMonitoringJourney brandId={entry.brandId} current="topics" destinations={{
-      topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref, brandOs: null }} />
+      topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
+      brandOs: entry.navigation.brandOsHref }} />
     <TopicsManager key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} initial={initial}
-      navigation={{ ...entry.navigation, brandOsHref: null }} requestScope={entry.requestScope} />
+      navigation={entry.navigation} requestScope={entry.requestScope} />
   </div>;
 }

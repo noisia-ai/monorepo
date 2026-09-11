@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -41,8 +42,10 @@ test('explicit incremental delivery recovery preserves ready numeric evidence, e
    await rollback(async()=>{await query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[access.workspace_id]);await assert.rejects(retry(),/source_unavailable/u);});
    await rollback(async()=>{await query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1::uuid",[access.workspace_id]);await assert.rejects(retry(),/source_unavailable/u);});
    await rollback(async()=>{const topic=(await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access})).topics[0]!.definition;
-    await updateSignalTopicStoreV1({pool:database,...access,term_key:topic.term_key,idempotency_key:randomUUID(),input:{expected_definition_revision:topic.definition_revision,label:'Changed after exhausted dispatch'}});
-    await assert.rejects(retry(),/inputs_changed/u);});
+    await updateSignalTopicStoreV1({pool:database,...access,term_key:topic.term_key,idempotency_key:randomUUID(),input:{...(await currentTopicDefinitionCasV1({pool:database,...access,term_key:topic.term_key})),label:'Changed after exhausted dispatch'}});
+    const beforeRetry=(await engines()).rows;
+    const retained=await retry();assert.equal(retained.worker_job_id,dispatch.worker_job_id);
+    assert.deepEqual((await engines()).rows,beforeRetry,'working rename cannot retarget numeric evidence');});
    const key=randomUUID();let lost=false,committed=false;
    const ackDatabase=Object.assign(Object.create(database),{connect:async()=>{const client=await database.connect();return Object.assign(Object.create(client),{
     query:async(sql:string,params?:unknown[])=>{if(sql==='ROLLBACK'&&committed){committed=false;return{rows:[],rowCount:0};}const result=await query(sql,params);if(sql==='COMMIT'&&!lost){lost=true;committed=true;throw Object.assign(new Error('accepted retry ACK lost'),{code:'ECONNRESET'});}return result;}

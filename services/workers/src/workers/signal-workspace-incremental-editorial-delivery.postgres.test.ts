@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from '../../../../infrastructure/db/migrations/signal-topic-definition-cas.fixture';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
@@ -200,18 +201,17 @@ test('paid editorial outputs deliver Topics and current-root Signal without chan
       // Meaning edits and archives remain owned by the operator. Replaying the
       // paid catalog receipt cannot recreate its old profile or source text.
       await query('BEGIN');try{
-        await updateSignalTopicStoreV1({pool:database,...access,term_key:added.term_key,idempotency_key:randomUUID(),input:{expected_definition_revision:added.definition_revision,definition:'A deliberately different operator meaning.'}});
+        await updateSignalTopicStoreV1({pool:database,...access,term_key:added.term_key,idempotency_key:randomUUID(),input:{...await currentTopicDefinitionCasV1({pool:database,...access,term_key:added.term_key}),definition:'A deliberately different operator meaning.'}});
         const edited=await loadSignalTopicCatalogStoreV1({queryable:database,workspace_id:access.workspace_id});
-        assert.equal(await projection.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),1);delivery=await dispatch();
-        const remapped=await derive({id:delivery.worker_job_id,data:delivery,updateProgress:async()=>{}},{database,storage:f.storage});assert.ok(remapped.projection_execution_id);
+        assert.equal(await projection.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),0,'working B must not reproject operational A');
+        const sameReady=await derive({id:delivery.worker_job_id,data:delivery,updateProgress:async()=>{}},{database,storage:{get:async()=>assert.fail('working edit downloaded'),put:async()=>assert.fail('working edit uploaded')}});
+        assert.equal(sameReady.generation_id,result.generation_id);assert.equal(sameReady.replayed,true);
         assert.equal((await loadSignalTopicCatalogStoreV1({queryable:database,workspace_id:access.workspace_id})).profile!.id,edited.profile!.id);
-        const newJob=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='execution'",[remapped.projection_execution_id])).rows[0];
-        await project({id:newJob.worker_job_id,data:{execution_id:remapped.projection_execution_id},updateProgress:async()=>{}},{database,storage:f.storage});
-        assert.equal((await query("SELECT count(*)::int n FROM signal_classification_assignments WHERE generation_id=$1::uuid AND membership_metadata->>'proposal_owner_execution_id'=$2",[remapped.generation_id,job.execution_id])).rows[0].n,0,'changed meaning never inherits the old numerical membership');
-        await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:added.term_key,lifecycle:'archived',idempotency_key:randomUUID()});
+        await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:added.term_key,...await currentTopicDefinitionCasV1({pool:database,...access,term_key:added.term_key}),lifecycle:'archived',idempotency_key:randomUUID()});
         const archived=await loadSignalTopicCatalogStoreV1({queryable:database,workspace_id:access.workspace_id});
-        assert.equal(await projection.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),1);delivery=await dispatch();
-        await derive({id:delivery.worker_job_id,data:delivery,updateProgress:async()=>{}},{database,storage:f.storage});
+        assert.equal(await projection.scheduleSignalWorkspaceIncrementalProjectionsV1({database}),0,'working archive remains pending');
+        const retained=await derive({id:delivery.worker_job_id,data:delivery,updateProgress:async()=>{}},{database,storage:{get:async()=>assert.fail('working archive downloaded'),put:async()=>assert.fail('working archive uploaded')}});
+        assert.equal(retained.generation_id,result.generation_id);assert.equal(retained.replayed,true);
         const after=await loadSignalTopicCatalogStoreV1({queryable:database,workspace_id:access.workspace_id});assert.equal(after.profile!.id,archived.profile!.id);
         assert.equal(after.topics.find(topic=>topic.term_key===added.term_key)!.lifecycle,'archived');
         assert.equal((await query("SELECT count(*)::int n FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND action='materialize_incremental'",[access.workspace_id])).rows[0].n,1);

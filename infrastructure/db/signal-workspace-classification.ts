@@ -82,7 +82,7 @@ async function correctionsDigest(queryable: Queryable, workspace: string) {
    WHERE workspace_id=$1::uuid AND origin_input_contract='workspace-topic-classification-v1'`, [workspace])).rows[0]!.digest;
 }
 /** Semantic identities deliberately omit profile/term row IDs and ingestion run IDs. */
-export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string}) {
+export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string; taxonomy_profile_id?: string}) {
   if (!(await loadSignalWorkspaceCapabilitiesStoreV1(args)).can_view) return fail("workspace_classification_forbidden",403);
   const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,allow_empty:true}).catch(error=>{
     if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_required","workspace_topic_catalog_empty"].includes(error.code))
@@ -105,7 +105,7 @@ type Run = {
   status: string; execution_token: string | null; execution_live: boolean; cursor_root_id: string | null;
   current_revision: string; policy_live: boolean; sources_complete: boolean; projection_current:boolean; identity: SignalWorkspaceClassificationIdentityV1;
   context_digest: string; correction_digest: string; denominator: number; expected_chunks: string; processed_roots: number;
-  worker_job_id:string;
+  worker_job_id:string; incremental_projection:boolean;
 };
 async function lockRun(client: PoolClient, id: string): Promise<Run> {
   const scope = (await client.query<{workspace_id: string}>("SELECT workspace_id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND input_contract=$2", [id, contract])).rows[0];
@@ -118,6 +118,7 @@ async function lockRun(client: PoolClient, id: string): Promise<Run> {
    (embedding.input_contract='corpus' AND embedding.status='completed' AND prep.status='completed') sources_complete,
    (execution.input_snapshot->'source_projection' IS NULL OR (SELECT signal_workspace_projection_source_current_v1(generation)
     FROM signal_classification_generations generation WHERE generation.id=execution.generation_id)) projection_current,
+   (execution.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')) incremental_projection,
    execution.input_snapshot->'identity' identity,execution.input_snapshot->>'context_digest' context_digest,
    execution.input_snapshot->>'correction_digest' correction_digest,execution.denominator,execution.expected_chunks::text,execution.processed_roots,
    COALESCE(outbox.worker_job_id,'workspace-classification-'||execution.id::text) worker_job_id
@@ -136,7 +137,8 @@ async function current(client: PoolClient, run: Run, full = true) {
   await authorize(client, run.workspace_id, run.actor_user_id);
   if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete || !run.projection_current) return fail("workspace_classification_inputs_changed");
   if (!full) return;
-  const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id});
+  const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id,
+    ...(run.incremental_projection?{taxonomy_profile_id:run.taxonomy_profile_id}:{})});
   if (latest.taxonomy_profile_id !== run.taxonomy_profile_id || latest.catalog_digest !== run.identity.catalog_digest
     || latest.compiler_digest !== run.identity.compiler_digest || latest.context_digest !== run.identity.context_digest
     || latest.embedding_config_digest !== run.identity.embedding_config_digest || latest.correction_digest !== run.correction_digest) return fail("workspace_classification_context_changed");
@@ -181,7 +183,15 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
       if (prior.input_contract !== contract || prior.actor_user_id !== args.actor_user_id || prior.request_digest !== requestDigest) return fail("workspace_classification_idempotency_conflict");
       return {execution_id: prior.id, generation_id: prior.generation_id, worker_job_id: `workspace-classification-${prior.id}`, replayed: true};
     }
-    const inputs = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: args.workspace_id, actor_user_id: args.actor_user_id});
+    let taxonomy_profile_id:string|undefined;
+    if(args.source_projection){
+      const operational=(await client.query<{id:string|null}>(`SELECT signal_workspace_incremental_operational_profile_v1(id)::text id
+        FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid`,
+        [args.source_projection.engine_execution_id,args.workspace_id])).rows[0]?.id;
+      if(!operational)return fail('workspace_incremental_projection_operational_profile_required');
+      taxonomy_profile_id=operational;
+    }
+    const inputs = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: args.workspace_id, actor_user_id: args.actor_user_id,taxonomy_profile_id});
     for (const key of ["catalog_digest","compiler_digest","context_digest","embedding_config_digest"] as const) {
       if (identity[key] !== inputs[key]) return fail("workspace_classification_identity_invalid");
     }

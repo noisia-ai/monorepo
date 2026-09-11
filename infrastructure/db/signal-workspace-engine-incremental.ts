@@ -142,10 +142,10 @@ export async function buildSignalWorkspaceIncrementalDescriptorWithClientV1(args
 }
 export async function beginSignalWorkspaceIncrementalEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;
  idempotency_key:string;embedding_run_id:string;expected_context_digest:string;expected_catalog_digest:string;
- engine_config:Record<string,unknown>;close_requested:boolean;parent_execution_id?:string;
+ engine_config:Record<string,unknown>;close_requested:boolean;parent_execution_id?:string;taxonomy_profile_id?:string;
  automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}){
  return beginSignalWorkspaceEngineV1({...args,claude_cap_micro_usd:0,
-  incremental_options:{close_requested:args.close_requested,parent_execution_id:args.parent_execution_id,
+  incremental_options:{close_requested:args.close_requested,parent_execution_id:args.parent_execution_id,taxonomy_profile_id:args.taxonomy_profile_id,
    automatic_admission:args.automatic_admission}});
 }
 
@@ -417,15 +417,15 @@ export async function loadSignalWorkspaceIncrementalStatusV1(args:{database:Sign
  return withSignalWorkspaceEngineTransactionV1(args.database,async client=>{
   if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args})).can_view)return fail('forbidden',403);
   const row=(await client.query<{execution_id:string;status:'queued'|'running'|'failed'|'ready';phase:string;error_code:string|null;
-   numeric_checkpoint:SignalWorkspaceIncrementalCheckpointV1|null;input_revision:string;is_current:boolean;context_digest:string;catalog_digest:string}>(`SELECT id execution_id,status,result_summary->>'phase' phase,error_code,
-    result_summary->'numeric_checkpoint' numeric_checkpoint,input_revision::text,input_snapshot->>'context_digest' context_digest,input_snapshot->>'catalog_digest' catalog_digest,
+   numeric_checkpoint:SignalWorkspaceIncrementalCheckpointV1|null;input_revision:string;is_current:boolean;context_digest:string;catalog_digest:string;taxonomy_profile_id:string}>(`SELECT id execution_id,status,result_summary->>'phase' phase,error_code,
+    result_summary->'numeric_checkpoint' numeric_checkpoint,input_revision::text,input_snapshot->>'context_digest' context_digest,input_snapshot->>'catalog_digest' catalog_digest,input_snapshot->>'taxonomy_profile_id' taxonomy_profile_id,
     input_revision=(SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid)
      AND (policy_valid_until IS NULL OR policy_valid_until>clock_timestamp()) AND signal_workspace_incremental_execution_current_v1(id) is_current
     FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND id=$2::uuid AND input_contract='workspace-topic-engine-v1'
      AND input_snapshot ? 'numeric_descriptor'`,[args.workspace_id,args.execution_id])).rows[0];
   if(!row)return null;
-  const {context_digest,catalog_digest,...view}=row;
-  if(view.is_current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
+  const {context_digest,catalog_digest,taxonomy_profile_id,...view}=row;
+  if(view.is_current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,taxonomy_profile_id});
    view.is_current=identity.context_digest===context_digest&&identity.catalog_digest===catalog_digest;
   }catch(error){if(error instanceof Error&&['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))view.is_current=false;else throw error;}}
   return{...view,numeric_complete:!!row.numeric_checkpoint,analysis_complete:false as const};

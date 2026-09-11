@@ -16,7 +16,8 @@ export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:str
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
 export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;migrations?:string[];
- model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
+ interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
+ onMaterialized?:(profile_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
 export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
@@ -47,7 +48,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  const catalog=async(terms:SignalTopicDefinitionV1[]=[],metadata:Record<string,unknown>={})=>insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('projection-catalog'),
   terms:terms.map(topic=>({term_key:topic.term_key,label:topic.label,definition:topic.definition,status:topic.lifecycle==='archived'?'archived':'candidate',metadata:{topic}})),rules:{topics:terms},rule_set_metadata:{},provider:'operator',model_version:'local',
   prompt_hash:fixtureSha('local'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1',...metadata},context_refs:context.context_refs});
- await catalog();
+ if(!options.preserve_catalog)await catalog();
  const access={database,workspace_id,actor_user_id};
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
  const configuration=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
@@ -93,7 +94,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
    representatives:[{...identity,ref_id,text:row.text,strength:0.8,selection_reason:'high_affiliation'}]};
   const batch=buildSignalWorkspaceInterpretationBatchV1(governed.context,[cluster]);
   const body=JSON.stringify({contract_version:'workspace-engine-interpretation-result-v1',execution_id:started.execution_id,context:batch.context,clusters:batch.clusters,
-   interpretations:[{cluster_id:key,cluster_digest:cluster.cluster_digest,status:'coherent',name:`Fixture ${key}`,definition:'Conversation evidenced by the full numerical fixture.',inclusion:[{text:'The documented conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]});
+   interpretations:[{cluster_id:key,cluster_digest:cluster.cluster_digest,status:'coherent',name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.',inclusion:[{text:'The documented conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]});
   const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...access,...started,idempotency_key:randomUUID(),request_digest:batch.request_digest,configuration,
    reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000,execution_token:lease.execution_token});
   const token={database,call_id:call.call_id,attempt_token:call.attempt_token};
@@ -106,6 +107,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  }
  async function* pages(){yield* proposals;}
  const materialization=await materializeSignalWorkspaceEngineTopicsV1({database,lease,proposals:pages()});
+ await options.onMaterialized?.(materialization.output_catalog_profile_id);
  const materialized=await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:artifact('materialization.json','engine_proposals',JSON.stringify(materialization),{
   contract_version:'workspace-topic-materialization-v1',execution_id:started.execution_id,interpretation_units_digest:unit_digest,output_catalog_profile_id:materialization.output_catalog_profile_id,
   output_catalog_revision:materialization.output_catalog_revision,topic_count:materialization.topic_count,mapping_digest:materialization.mapping_digest})});

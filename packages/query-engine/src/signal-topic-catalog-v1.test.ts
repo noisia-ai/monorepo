@@ -16,8 +16,31 @@ import {
   signalTopicTermKeyV1,
   signalTopicPublicOriginV1,
   adoptSignalTopicCandidateInputSchemaV1,
-  createSignalTopicInputSchemaV1
+  createSignalTopicInputSchemaV1,
+  updateSignalTopicInputSchemaV1,
+  signalTopicCommandSchemaV1
 } from "./signal-topic-catalog-v1";
+
+test("editorial update and lifecycle commands require both definition CAS values", () => {
+  const cas = { expected_definition_revision: 3, expected_definition_digest: `sha256:${"a".repeat(64)}` };
+  assert.equal(updateSignalTopicInputSchemaV1.safeParse({ label: "New label", ...cas }).success, true);
+  for (const missing of ["expected_definition_revision", "expected_definition_digest"] as const) {
+    const partial: Partial<typeof cas> = { ...cas }; delete partial[missing];
+    assert.equal(updateSignalTopicInputSchemaV1.safeParse({ label: "New label", ...partial }).success, false);
+    for (const action of ["archive", "restore"]) assert.equal(signalTopicCommandSchemaV1.safeParse({
+      action, idempotency_key: "editorial-request", ...partial
+    }).success, false);
+  }
+  for (const action of ["archive", "restore"]) {
+    assert.equal(signalTopicCommandSchemaV1.safeParse({ action, idempotency_key: "editorial-request", ...cas }).success, true);
+    assert.equal(signalTopicCommandSchemaV1.safeParse({ action, idempotency_key: "editorial-request", ...cas,
+      embedding_cost_cap_micro_usd: 100 }).success, false);
+  }
+  assert.equal(updateSignalTopicInputSchemaV1.safeParse({ ...cas, expected_definition_digest: "fabricated" }).success, false);
+  for (const action of ["search", "follow", "retry"]) assert.equal(signalTopicCommandSchemaV1.safeParse({
+    action, idempotency_key: "execution-request", embedding_cost_cap_micro_usd: 100
+  }).success, true);
+});
 
 test("public provenance distinguishes historical taxonomy from candidates without computational lineage", () => {
   assert.equal(signalTopicPublicOriginV1("manual", null), "manual");

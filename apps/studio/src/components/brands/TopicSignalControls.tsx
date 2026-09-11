@@ -7,6 +7,15 @@ import { acceptTopicSignalSelectionV1, canSelectTopicSignalV1, parseTopicSignalS
   topicSignalSelectionStorageKeyV1, shouldPollTopicSignalV1, type TopicSignalSelectionV1, type TopicSignalSelectionIntentV1
 } from "@/lib/data-os/signal-topic-selection-ui";
 
+export function canChangeTopicSignalSelectionV1(state: TopicSignalSelectionV1 | null,
+  working: { definitionRevision: number; definitionDigest: string }, blocked: boolean) {
+  if (!state?.can_select || blocked) return false;
+  if (state.selected) return true;
+  return state.definition_revision === working.definitionRevision
+    && state.definition_digest === working.definitionDigest
+    && canSelectTopicSignalV1(state, false, false);
+}
+
 export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null, refreshKey = null, onAccessDenied }: {
   workspaceId: string; termKey: string; definitionRevision: number; definitionDigest: string; dirty: boolean; disabled?: boolean; signalHref?: string | null; refreshKey?: string | null; onAccessDenied?: () => void;
 }) {
@@ -94,8 +103,9 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
 
   const send = async () => {
     const state = current.current;
-    if (sending.current || busy || disabled || dirty || !state?.can_select || error ||
-      state.definition_revision !== definitionRevision || state.definition_digest !== definitionDigest) return;
+    if (sending.current || busy || disabled || error
+      || !canChangeTopicSignalSelectionV1(state, { definitionRevision, definitionDigest }, dirty)) return;
+    if (!state) return;
     let value = intent.current;
     if (!value) {
       if (!canSelectTopicSignalV1(state, dirty, false)) return;
@@ -129,17 +139,20 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
   };
   const state = data?.workspace_id === workspaceId && data.term_key === termKey ? data : null;
   const matches = state?.definition_revision === definitionRevision && state.definition_digest === definitionDigest;
+  const canChange = canChangeTopicSignalSelectionV1(state, { definitionRevision, definitionDigest },
+    dirty || busy || disabled || Boolean(error));
   return <div className="topics-manager__cost-notice" aria-busy={busy}>
     <div className="admin-form-actions">
       <button className="admin-button" type="button" onClick={() => void send()}
-        disabled={busy || disabled || dirty || !matches || Boolean(error) || (!pending && !canSelectTopicSignalV1(state, dirty, false)) || !state?.can_select}>
+        disabled={!canChange}>
         {busy ? t("saving") : pending ? t("resend") : state?.selected ? t("remove") : t("show")}
       </button>
       <button className="admin-button" type="button" disabled={busy} onClick={() => void read()}>{t(pending ? "recover" : "refresh")}</button>
     </div>
-    {state?.is_current && matches && !error && state.mention_count !== null ? <p><strong>{t("memberships", { count: state.mention_count })}</strong></p> : null}
+    {state?.is_current && !error && state.mention_count !== null ? <p><strong>{t("memberships", { count: state.mention_count })}</strong></p> : null}
     <p>{t("basis")}</p>
-    {state?.selected && state.is_current && matches && !error && !dirty && signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("openSignal")}</Link> : null}
+    {state?.selected && state.is_current && !error && !dirty && signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("openSignal")}</Link> : null}
+    {state?.selected && !matches ? <p role="status">{t("previousVersion")}</p> : null}
     {state?.selected ? <p role="status">{t("selected")}{!state.is_current ? ` ${t("stale")}` : ""}</p> : null}
     {state && !state.selected && !state.is_current ? <p role={state.is_processing ? "status" : undefined}>{t(state.is_processing ? "processing" : "prepare")}</p> : null}
     {state && !state.selected && state.is_current && state.mention_count === 0 ? <p>{t("noMemberships")}</p> : null}

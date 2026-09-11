@@ -87,7 +87,8 @@ export const createSignalTopicInputSchemaV1 = z.object({
 }).strict();
 
 export const updateSignalTopicInputSchemaV1 = createSignalTopicInputSchemaV1.partial().extend({
-  expected_definition_revision: z.number().int().positive()
+  expected_definition_revision: z.number().int().positive(),
+  expected_definition_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u)
 }).strict();
 
 export const adoptSignalTopicCandidateInputSchemaV1 = z.object({
@@ -96,11 +97,16 @@ export const adoptSignalTopicCandidateInputSchemaV1 = z.object({
   scope: signalTopicScopeSchemaV1.optional()
 }).strict();
 
-export const signalTopicCommandSchemaV1 = z.object({
-  action: z.enum(["search", "follow", "archive", "restore", "retry"]),
+export const signalTopicCommandSchemaV1 = z.union([z.object({
+  action: z.enum(["search", "follow", "retry"]),
   idempotency_key: z.string().trim().min(8).max(200),
   embedding_cost_cap_micro_usd: z.number().int().positive().max(1_000_000).optional()
-}).strict();
+}).strict(), z.object({
+  action: z.enum(["archive", "restore"]),
+  idempotency_key: z.string().trim().min(8).max(200),
+  expected_definition_revision: z.number().int().positive(),
+  expected_definition_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u)
+}).strict()]);
 
 export const signalTopicCorrectionSchemaV1 = z.object({
   disposition: z.enum(["belongs", "excluded"]),

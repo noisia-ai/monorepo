@@ -12,7 +12,7 @@ export type SignalWorkspaceNumericReadinessV1 = {
   reason_code: string | null; has_pending_work: boolean; execution_id: string | null; embedding_run_id: string | null;
 };
 type Seed = { id: string; actor_user_id: string; input_revision: string;
-  input_snapshot: { context_digest: string; catalog_digest: string; engine_config: Record<string, unknown>;
+  input_snapshot: { taxonomy_profile_id: string; context_digest: string; catalog_digest: string; engine_config: Record<string, unknown>;
     guides: Array<{guide_key: string; role: string; input_digest: string}> } };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEngineError(code, status); };
 
@@ -76,7 +76,9 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
   if (embedding.status === 'queued' || embedding.status === 'running') return change('waiting_embeddings', null, true);
   if (embedding.status !== 'completed' || !embedding.policy_current) return change('blocked', 'corpus_embeddings_not_current');
   try {
-    const preflight = await loadSignalWorkspaceEnginePreflightV1({ database, workspace_id, actor_user_id: opted.actor_user_id });
+    if(!opted.input_snapshot.taxonomy_profile_id)return change('blocked','workspace_engine_operational_profile_required');
+    const preflight = await loadSignalWorkspaceEnginePreflightV1({ database, workspace_id, actor_user_id: opted.actor_user_id,
+      taxonomy_profile_id:opted.input_snapshot.taxonomy_profile_id });
     if (preflight.expected_context_digest !== opted.input_snapshot.context_digest
       || preflight.expected_catalog_digest !== opted.input_snapshot.catalog_digest) return change('blocked', 'numeric_parent_context_changed');
     if (preflight.missing_guides) return change('blocked', 'workspace_engine_guides_required');
@@ -90,7 +92,7 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
     return { view, start: { database, workspace_id, actor_user_id: opted.actor_user_id,
       idempotency_key: `workspace-numeric-auto:${workspace_id}:${state.input_revision}`, embedding_run_id: embedding.id,
       expected_context_digest: preflight.expected_context_digest, expected_catalog_digest: preflight.expected_catalog_digest,
-      engine_config: opted.input_snapshot.engine_config, close_requested: true,
+      engine_config: opted.input_snapshot.engine_config, close_requested: true, taxonomy_profile_id:opted.input_snapshot.taxonomy_profile_id,
       automatic_admission: { opt_in_execution_id: opted.id, input_revision: state.input_revision } } };
   } catch (error) {
     if (historical && isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)) return change('blocked', error.code);

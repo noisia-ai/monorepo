@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -121,7 +122,7 @@ test("prototype stale context retains sent cost but does not publish aliases or 
   await core.markSignalWorkspaceEmbeddingCallSentV1({ database: f.database, lease, call_id: call.call_id, attempt_token: call.attempt_token });
   if (change === "actor") await f.query("UPDATE users SET status='suspended' WHERE id=$1::uuid", [f.actor_user_id]);
   else await updateSignalTopicStoreV1({ pool: f.database, workspace_id: f.workspace_id, actor_user_id: f.actor_user_id,
-   term_key: f.topics[0]!.term_key, idempotency_key: randomUUID(), input: { expected_definition_revision: 1, definition: "Nueva definición posterior al envío" } });
+   term_key: f.topics[0]!.term_key, idempotency_key: randomUUID(), input: { ...(await currentTopicDefinitionCasV1({pool: f.database,workspace_id: f.workspace_id,actor_user_id: f.actor_user_id,term_key: f.topics[0]!.term_key})), definition: "Nueva definición posterior al envío" } });
   await core.persistSignalWorkspaceEmbeddingResponseV1({ database: f.database, call_id: call.call_id, attempt_token: call.attempt_token, response: answer.raw });
   await assert.rejects(core.commitSignalWorkspaceEmbeddingBatchV1({ database: f.database, lease, batch, call_id: call.call_id, attempt_token: call.attempt_token, validated: answer.validated }),
    change === "actor" ? /workspace_embedding_forbidden/u : /workspace_embedding_inputs_changed/u);

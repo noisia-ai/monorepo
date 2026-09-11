@@ -8,7 +8,7 @@ import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1,
 /** The catalog may be empty. Brand OS context has its own semantic aliases and
  * shares physical text cache/call receipts with interest and corpus embeddings. */
 export async function loadSignalWorkspaceTopicPrototypePlanV1(args: {
-  queryable: SignalWorkspaceTopicQueryableV1; workspace_id: string; actor_user_id: string; input_interests_only?: boolean;
+  queryable: SignalWorkspaceTopicQueryableV1; workspace_id: string; actor_user_id: string; input_interests_only?: boolean; taxonomy_profile_id?: string;
 }) {
   const snapshot = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({ ...args, allow_empty: true, input_interests_only: args.input_interests_only ?? true });
   const autonomous = await loadSignalWorkspaceAutonomousContextInputsV1(args);

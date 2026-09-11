@@ -37,7 +37,7 @@ export async function readSignalWorkspaceIncrementalEditorialRenewalWithQueryabl
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,...args})).can_view)return fail('forbidden',403);
  const row=await state(c,args);if(!row)return null;
  let current=row.is_current;
- if(current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:row.budget_actor_user_id});
+ if(current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:row.budget_actor_user_id,execution_id:args.execution_id});
   current=identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
  }catch(error){if(!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
   ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;current=false;}}

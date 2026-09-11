@@ -2915,7 +2915,8 @@
         "saveFirst": "Guarda los cambios antes de cambiar su selección.", "pending": "La solicitud está pendiente de confirmar. Se conserva la misma solicitud para evitar duplicados.",
         "forbidden": "No tienes acceso a esta acción o el Topic ya no está disponible.", "conflict": "El Topic o la selección cambió. Actualiza el estado antes de continuar.",
         "load": "No pudimos verificar el estado. Actualiza para volver a intentarlo.", "save": "No pudimos confirmar el cambio. Verifica la solicitud antes de continuar.",
-        "processing": "Preparando las menciones asociadas. Esta acción se actualizará al terminar."
+        "processing": "Preparando las menciones asociadas. Esta acción se actualizará al terminar.",
+        "previousVersion": "Signal conserva la versión calculada anterior mientras estos cambios están pendientes."
       },
       "computation": {
         "available": "Candidatos disponibles",
@@ -3025,7 +3026,9 @@
         "select": "Elige un tópico o crea uno nuevo.",
         "newEyebrow": "Definición nueva",
         "newTitle": "Crear tópico",
-        "source": "Incorporado del candidato {candidate}. Puedes editar su definición."
+        "source": "Incorporado del candidato {candidate}. Puedes editar su definición.",
+        "pendingTitle": "Cambios guardados; cálculo pendiente",
+        "pendingBody": "Signal sigue mostrando la última versión calculada. La nueva definición se aplicará cuando una persona autorizada inicie el cálculo."
       },
       "fields": {
         "discoveryGuidance": "Usar como interés en próximos análisis",

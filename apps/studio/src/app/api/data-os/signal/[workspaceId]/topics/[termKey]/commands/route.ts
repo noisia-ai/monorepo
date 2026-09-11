@@ -57,7 +57,9 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
       return topicResponse(await setSignalTopicLifecycleProductV1({
         workspace: loaded.workspace, actor: loaded.session.appUser,
         idempotencyKey: command.idempotency_key, termKey,
-        lifecycle: command.action === "archive" ? "archived" : "draft"
+        lifecycle: command.action === "archive" ? "archived" : "draft",
+        expectedDefinitionRevision: command.expected_definition_revision,
+        expectedDefinitionDigest: command.expected_definition_digest
       }));
     }
     const intent = command.action === "follow"
@@ -74,7 +76,8 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
       workspace: loaded.workspace, actor: loaded.session.appUser,
       idempotencyKey: command.idempotency_key, intent,
       publishWhenReady,
-      embeddingCostCapMicroUsd: command.embedding_cost_cap_micro_usd
+      embeddingCostCapMicroUsd: "embedding_cost_cap_micro_usd" in command
+        ? command.embedding_cost_cap_micro_usd : undefined
     }), 202);
   } catch (error) {
     return topicError(error, "topic_command_rejected");

@@ -1,3 +1,4 @@
+import {currentTopicDefinitionCasV1} from './signal-topic-definition-cas.fixture';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -18,38 +19,23 @@ const projectionStores={claim:projection.claimSignalWorkspaceTopicProjectionV1,h
  readTopics:projection.readSignalWorkspaceTopicProjectionTopicsV1,readProposals:projection.readSignalWorkspaceTopicProjectionProposalsV1,
  readPage:classification.readSignalWorkspaceClassificationPageV1,
  readChunksPage:classification.readSignalWorkspaceClassificationChunksPageV1,commitPage:classification.commitSignalWorkspaceClassificationPageV1,finish:classification.finishSignalWorkspaceClassificationV1,fail:classification.failSignalWorkspaceClassificationV1};
-async function deriveEditedCatalog(f:Pick<WorkspaceProjectionCheckpointFixtureV1,'database'|'query'|'access'|'bodies'>&{execution_id:string}){
- const {database,query,access,bodies}=f,scope={...access,execution_id:f.execution_id};
- const current=await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);assert.equal(current.needs_materialization,true);
- assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(access)).latest_run?.materialization_pending,true);
- const before=(await query('SELECT to_jsonb(execution) body FROM signal_topic_catalog_executions execution WHERE id=$1::uuid',[f.execution_id])).rows[0]!.body;
- const costs=(await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[f.execution_id])).rows;
- assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),1);
- await query("UPDATE signal_topic_classification_outbox SET available_at=transaction_timestamp() WHERE execution_id=$1::uuid AND dispatch_kind='engine_progress'",[f.execution_id]);
- let jobId='';
- await drainSignalTopicClassificationOutboxV1({database,schedule:async()=>({requeued:0}),queue:{getJob:async()=>null,add:async(name,payload,options)=>{
-  assert.equal(name,progress.SIGNAL_WORKSPACE_ENGINE_PROGRESS_JOB_V1);assert.equal((payload as typeof scope).execution_id,f.execution_id);jobId=String(options.jobId);
- }}});assert.ok(jobId);
- const storage={get:async({stored,destination}:{stored:{storage_key:string};destination:string})=>{const body=bodies.get(stored.storage_key);assert.notEqual(body,undefined);await writeFile(destination,body!);},
-  put:async({file,sha256,size_bytes,media_type}:{file:string;sha256:string;size_bytes:number;media_type:string})=>{
-   const {basename}=await import('node:path');const body=await readFile(file,'utf8');assert.equal(fixtureSha(body),sha256);
-   const storage_key=`workspace-engine/${access.workspace_id}/${f.execution_id}/${basename(file)}`;bodies.set(storage_key,body);return{storage_key,sha256,size_bytes,media_type};}};
- await signalWorkspaceEngineProgressJobV1({id:jobId,data:scope,updateProgress:async()=>{}},{database,storage});
+async function assertWorkingEditRetainsOperationalV1(f:Pick<WorkspaceProjectionCheckpointFixtureV1,'database'|'query'|'access'|'bodies'>&{execution_id:string}){
+ const {database,query,access}=f,scope={...access,execution_id:f.execution_id};
+ const current=await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);
+ assert.equal(current.needs_materialization,false,'a working edit does not rematerialize paid A');
  const status=await engine.loadSignalWorkspaceEngineStatusV1(access),receipt=status.latest_run!.materialization_progress!;assert.ok(receipt);
- assert.equal(receipt.interpreted_unit_count,current.coverage.unit_count);assert.equal(status.latest_run!.materialization_pending,false);
- const dispatch=(await query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='execution'",[receipt.projection_execution_id])).rows[0]!;
- await signalWorkspaceTopicProjectionJobV1({id:dispatch.worker_job_id,data:{execution_id:receipt.projection_execution_id},updateProgress:async()=>{}},
-  {database,stores:projectionStores,storage});
+ assert.equal(status.latest_run!.materialization_pending,false);
+ const before=(await query('SELECT to_jsonb(execution) body FROM signal_topic_catalog_executions execution WHERE id=$1::uuid',[f.execution_id])).rows;
+ const costs=(await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[f.execution_id])).rows;
+ assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),0);
+ assert.deepEqual((await query('SELECT to_jsonb(execution) body FROM signal_topic_catalog_executions execution WHERE id=$1::uuid',[f.execution_id])).rows,before);
+ assert.deepEqual((await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[f.execution_id])).rows,costs);
  assert.equal((await projection.loadSignalWorkspaceTopicProjectionStatusV1(access)).latest_complete?.generation_id,receipt.generation_id);
  assert.equal((await projection.loadSignalWorkspaceTopicProjectionStatusV1(access)).latest_complete?.is_current,true);
- assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),0,'the materializer-created profile does not create a self-loop');
- assert.equal((await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope)).needs_materialization,false);
- if(before.status==='ready')assert.deepEqual((await query('SELECT to_jsonb(execution) body FROM signal_topic_catalog_executions execution WHERE id=$1::uuid',[f.execution_id])).rows[0]!.body,before,'ready engine and its full checkpoint stay immutable');
- assert.deepEqual((await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE catalog_execution_id=$1::uuid ORDER BY id',[f.execution_id])).rows,costs);
  return receipt;
 }
 
-test('progressive paid checkpoints preserve catalog edits and engine authority, coalesce dispatch and converge to the full main catalog', {skip:!enabled,timeout:90_000},async()=>{
+test('progressive paid checkpoints retain operational A and pending working edits without automatic recompute', {skip:!enabled,timeout:90_000},async()=>{
  let firstTerm='',firstKey='',firstGeneration='',lastProgressGeneration='';
  const f=await workspaceProjectionFixtureV1({migrations:['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql',
   '0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql'],onCheckpoint:async checkpoint=>{
@@ -69,37 +55,36 @@ test('progressive paid checkpoints preserve catalog edits and engine authority, 
   await assert.rejects(progress.readSignalWorkspaceEngineMaterializationSourceV1({...scope,workspace_id:randomUUID()}),/forbidden/u);
   async function* packets(){yield*proposals;}
   const args={...scope,expected_coverage:source.coverage,expected_catalog_profile_id:source.catalog_profile_id,proposals:packets()};
-  let materialized=await progress.materializeSignalWorkspaceEngineTopicsProgressV1(args);
+  const materialized=await progress.materializeSignalWorkspaceEngineTopicsProgressV1(args);
   assert.equal(materialized.interpreted_unit_count,proposals.length);assert.equal(materialized.interpretation_complete,proposals.length===2);
   if(proposals.length===1){
    firstTerm=materialized.mapping[0]!.term_key;firstKey=materialized.mapping[0]!.unit_key;
-   // An operator edit between catalog creation and receipt persistence is a real
-   // compare-and-swap failure. Recovery merges that edit into the next version.
+   // A human edit creates working B while the paid materialization receipt
+   // remains bound to A, even before that receipt is persisted.
    await updateSignalTopicStoreV1({pool:database,workspace_id:access.workspace_id,actor_user_id:access.actor_user_id,term_key:firstTerm,idempotency_key:randomUUID(),
-    input:{expected_definition_revision:1,label:'Operator name preserved'}});
+    input:{...(await currentTopicDefinitionCasV1({pool:database,workspace_id:access.workspace_id,actor_user_id:access.actor_user_id,term_key:firstTerm})),label:'Operator name preserved'}});
   }
   const makeArtifact=(value:typeof materialized)=>{const {replayed:_replayed,mapping,...metadata}=value;
    const body=JSON.stringify({...metadata,mapping}),key=`materialization-progress-${value.output_catalog_profile_id}.json`,storage_key=`workspace-engine/${access.workspace_id}/${lease.execution_id}/${key}`;
    bodies.set(storage_key,body);return{artifact_key:key,artifact_type:'engine_proposals' as const,title:'Paid checkpoint progress',storage_key,sha256:fixtureSha(body),size_bytes:Buffer.byteLength(body),media_type:'application/json',metadata};};
   if(proposals.length===1){
-   await assert.rejects(progress.persistSignalWorkspaceEngineTopicsProgressV1({...scope,expected_coverage:source.coverage,artifact:makeArtifact(materialized)}),/catalog_changed/u);
-   const latest=await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);
-   materialized=await progress.materializeSignalWorkspaceEngineTopicsProgressV1({...args,expected_catalog_profile_id:latest.catalog_profile_id,proposals:packets()});
-   await assert.rejects(progress.materializeSignalWorkspaceEngineTopicsProgressV1({...args,proposals:packets()}),/catalog_changed/u);
+   const operational=await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);
+   assert.equal(operational.catalog_profile_id,materialized.output_catalog_profile_id);
+   assert.notEqual((await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access})).taxonomy_profile_id,operational.catalog_profile_id);
   }
   const replay=await progress.materializeSignalWorkspaceEngineTopicsProgressV1({...args,expected_catalog_profile_id:materialized.output_catalog_profile_id,proposals:packets()});assert.equal(replay.replayed,true);assert.equal(replay.output_catalog_profile_id,materialized.output_catalog_profile_id);
   const artifact=makeArtifact(materialized);
   if(proposals.length===1){
    await query('BEGIN');try{
-    // Lost dispatch + changed input interest: quarantine the observed old job even
-    // when its catalog profile differs, so it cannot occupy the scheduler head.
+    // A lost A dispatch remains recoverable after a new working interest B;
+    // saving B is not a context change or a request to execute it.
     await query("UPDATE signal_topic_classification_outbox SET status='dispatched',updated_at=clock_timestamp()-interval '181 seconds' WHERE execution_id=$1::uuid AND dispatch_kind='engine_progress'",[lease.execution_id]);
     await createSignalTopicStoreV1({pool:database,...access,idempotency_key:randomUUID(),input:{label:'New input interest',definition:'A changed monitoring scope.',
      scope:'primary_brand',discovery_guidance:true,inclusion:[],exclusion:[],positive_examples:[],negative_examples:[]}});
-    assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),0);
+    assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),1);
     assert.deepEqual((await query("SELECT status,attempt_count,error_code FROM signal_topic_classification_outbox WHERE execution_id=$1::uuid AND dispatch_kind='engine_progress'",[lease.execution_id])).rows[0],
-     {status:'dead_letter',attempt_count:8,error_code:'workspace_engine_progress_inputs_stale'});
-    assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),0,'quarantined stale coverage is excluded before the candidate limit');
+     {status:'pending',attempt_count:0,error_code:null});
+    assert.equal(await progress.scheduleSignalWorkspaceEngineProgressV1({database}),0,'the recovered A dispatch coalesces without consuming B');
    }finally{await query('ROLLBACK');}
    // A failed editorial run and an unrelated unknown paid call do not become
    // 'ready' or settled just because earlier validated units can be derived.
@@ -196,47 +181,48 @@ test('progressive paid checkpoints preserve catalog edits and engine authority, 
   const grouped=(await query(`SELECT resolution_state,outcome_metadata->>'has_unresolved_topics' unresolved,count(*)::int n
    FROM signal_classification_generation_items WHERE generation_id=$1::uuid GROUP BY resolution_state,outcome_metadata->>'has_unresolved_topics'`,[persisted.generation_id])).rows;
   assert.equal(grouped.reduce((sum,row)=>sum+row.n,0),3);assert.ok(grouped.every(row=>row.unresolved===(proposals.length===1?'true':'false')));
-  assert.deepEqual((await query("SELECT membership_basis,disposition,count(*)::int n FROM signal_classification_assignments WHERE generation_id=$1::uuid GROUP BY membership_basis,disposition",[persisted.generation_id])).rows,[{membership_basis:'computed_cluster',disposition:'pending',n:3}]);
-  if(proposals.length===1){const topic=(await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access})).topics.find(row=>row.definition.term_key===firstTerm)!.definition;
+  assert.deepEqual((await query("SELECT membership_basis,disposition,count(*)::int n FROM signal_classification_assignments WHERE generation_id=$1::uuid GROUP BY membership_basis,disposition",[persisted.generation_id])).rows,[{membership_basis:'computed_cluster',disposition:'pending',n:3*proposals.length}]);
+  if(proposals.length===1){const topic=(await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access,taxonomy_profile_id:materialized.output_catalog_profile_id})).topics.find(row=>row.definition.term_key===firstTerm)!.definition;
    await selection.selectSignalWorkspaceTopicV1({...access,term_key:firstTerm,selected:true,expected_selection_revision:0,expected_definition_revision:topic.definition_revision,
     expected_definition_digest:topic.definition_digest,generation_id:persisted.generation_id,idempotency_key:randomUUID()});
    assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[firstTerm]?.selected,true,'a real partial membership can be selected explicitly');
-  }else assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[firstTerm]?.selected,false,'progress never restores an archived selection');
+  }else assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[firstTerm]?.selected,true,'archiving working B leaves the prior explicit A selection intact');
   if(proposals.length===1){
    const input=await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access});assert.equal(input.topics[0]!.definition.label,'Operator name preserved');
-   await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:firstTerm,lifecycle:'archived',idempotency_key:randomUUID()});
-   const edited=await deriveEditedCatalog({...checkpoint,execution_id:lease.execution_id});
-   assert.equal(edited.interpreted_unit_count,1);assert.equal(edited.interpretation_complete,false);assert.equal(edited.topic_count,0);
-   assert.equal((await query('SELECT count(*)::int n FROM signal_classification_assignments WHERE generation_id=$1::uuid',[edited.generation_id])).rows[0]!.n,0);
+   await setSignalTopicLifecycleStoreV1({pool:database,...access,term_key:firstTerm,lifecycle:'archived',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:database,...access,term_key:firstTerm}))});
+   const edited=await assertWorkingEditRetainsOperationalV1({...checkpoint,execution_id:lease.execution_id});
+   assert.equal(edited.interpreted_unit_count,1);assert.equal(edited.interpretation_complete,false);assert.equal(edited.topic_count,1);
+   assert.equal((await query('SELECT count(*)::int n FROM signal_classification_assignments WHERE generation_id=$1::uuid',[edited.generation_id])).rows[0]!.n,3);
    assert.equal((await query("SELECT count(*)::int n FROM signal_classification_generation_items WHERE generation_id=$1::uuid AND outcome_metadata->>'has_unresolved_topics'='true'",[edited.generation_id])).rows[0]!.n,3);
-   assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[firstTerm]?.selected,false);
+   assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(access)).items[firstTerm]?.selected,true);
    // The editorial engine still owns its original context/interests and lease.
    assert.equal((await engine.readSignalWorkspaceEngineInterpretationContextV1({database,lease})).context.context_digest,lease.snapshot.context_digest);
   }else{
    const terms=(await query('SELECT metadata->\'topic\' topic FROM taxonomy_terms WHERE taxonomy_id=(SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE id=$1::uuid)',[materialized.output_catalog_profile_id])).rows;
-   const prior=terms.find(row=>row.topic.term_key===firstTerm)!.topic;assert.equal(prior.label,'Operator name preserved');assert.equal(prior.lifecycle,'archived');
+   const prior=terms.find(row=>row.topic.term_key===firstTerm)!.topic;assert.notEqual(prior.label,'Operator name preserved');assert.equal(prior.lifecycle,'draft');
+   const working=(await classification.loadSignalWorkspaceClassificationInputV1({queryable:database,...access}));
+   assert.notEqual(working.taxonomy_profile_id,materialized.output_catalog_profile_id);
+   assert.equal(working.topics.some(row=>row.definition.term_key===firstTerm),false,'working archive stays pending');
    assert.equal(materialized.mapping.find(row=>row.unit_key===firstKey)?.term_key,firstTerm,'coverage growth never changes an existing Topic identity');
   }
  }});
  try{
   assert.ok(firstGeneration&&lastProgressGeneration);
-  assert.equal(f.materialization.topic_count,1);assert.equal(f.materialization.mapping.length,2);
+  assert.equal(f.materialization.topic_count,2);assert.equal(f.materialization.mapping.length,2);
   const status=await engine.loadSignalWorkspaceEngineStatusV1(f.access);assert.equal(status.latest_run?.status,'ready');assert.equal(status.latest_run?.is_current,true);
   const requested=await projection.requestSignalWorkspaceTopicProjectionV1({...f.access,engine_execution_id:f.engine_execution_id,idempotency_key:`workspace-projection:${f.engine_execution_id}`});
   assert.equal(requested.generation_id,lastProgressGeneration,'full promotion reuses the complete progressive projection');
-  const finalInput=await classification.loadSignalWorkspaceClassificationInputV1({queryable:f.database,...f.access});
-  const finalTopic=finalInput.topics.find(row=>row.definition.term_key!==firstTerm)!.definition;
-  await updateSignalTopicStoreV1({pool:f.database,...f.access,term_key:finalTopic.term_key,idempotency_key:randomUUID(),
-   input:{expected_definition_revision:finalTopic.definition_revision,label:'Ready catalog operator rename'}});
-  const readyEdited=await deriveEditedCatalog({...f,execution_id:f.engine_execution_id});
+  const finalInput=await classification.loadSignalWorkspaceClassificationInputV1({queryable:f.database,...f.access,taxonomy_profile_id:f.materialization.output_catalog_profile_id});
+  const finalTopic=finalInput.topics.find(row=>row.definition.term_key===firstTerm)!.definition;
+  await updateSignalTopicStoreV1({pool:f.database,...f.access,term_key:firstTerm,idempotency_key:randomUUID(),
+   input:{...(await currentTopicDefinitionCasV1({pool:f.database,...f.access,term_key:firstTerm})),label:'Ready catalog operator rename'}});
+  const readyEdited=await assertWorkingEditRetainsOperationalV1({...f,execution_id:f.engine_execution_id});
   assert.equal(readyEdited.interpretation_complete,true);assert.equal(readyEdited.interpreted_unit_count,2);
-  assert.equal((await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_complete?.materialization_progress?.artifact_id,readyEdited.artifact_id);
-  const renamed=(await classification.loadSignalWorkspaceClassificationInputV1({queryable:f.database,...f.access})).topics.find(row=>row.definition.term_key===finalTopic.term_key)!.definition;
-  assert.equal(renamed.label,'Ready catalog operator rename');
-  await selection.selectSignalWorkspaceTopicV1({...f.access,term_key:renamed.term_key,selected:true,
-   expected_selection_revision:(await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).revision,expected_definition_revision:renamed.definition_revision,
-   expected_definition_digest:renamed.definition_digest,generation_id:readyEdited.generation_id,idempotency_key:randomUUID()});
-  assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).items[renamed.term_key]?.selected,true);
+  assert.equal(readyEdited.generation_id,lastProgressGeneration);
+  await selection.selectSignalWorkspaceTopicV1({...f.access,term_key:finalTopic.term_key,selected:false,
+   expected_selection_revision:(await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).revision,expected_definition_revision:finalTopic.definition_revision,
+   expected_definition_digest:finalTopic.definition_digest,generation_id:readyEdited.generation_id,idempotency_key:randomUUID()});
+  assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).items[firstTerm]?.selected,false);
   const generations=(await f.query(`SELECT generation.id,generation.denominator,count(DISTINCT item.id)::int roots,
    count(DISTINCT assignment.id)::int assignments,count(DISTINCT assignment.id) FILTER(WHERE assignment.disposition='approved')::int approved
    FROM signal_classification_generations generation LEFT JOIN signal_classification_generation_items item ON item.generation_id=generation.id
@@ -250,6 +236,6 @@ test('progressive paid checkpoints preserve catalog edits and engine authority, 
    population:{roots:3,chunks:133,expected_units:2},progression:[1,2],generations,final_mapping_digest:f.materialization.mapping_digest,
    accounting,actual_provider_calls:0,numerical_fit_calls:0,private_storage:'in-memory transport',postgres:'outer rollback; scheduled availability aligned to outer transaction clock',
    result:'passed',proved:['scheduler/outbox/Worker materialization','full corpus partial projection','explicit partial selection','unknown reservation preserved','failed engine remains failed',
-    'catalog edit CAS','stable term key and archived state','derived dead-letter isolation','same-coverage retry limit','heartbeat dispatch CAS','SQL coverage and checkpoint binding','final promotion idempotency','same paid coverage after archive','ready catalog rename reprojects without mutating engine','pending before outbox','explicit delivery retry receipt and replay','stale lost-dispatch quarantine with observed job CAS']},null,2)+'\n');
+    'working edit does not invalidate A receipt','stable operational term key and pending working archive','derived dead-letter isolation','same-coverage retry limit','heartbeat dispatch CAS','SQL coverage and checkpoint binding','final promotion idempotency','same paid coverage after working archive','ready catalog rename stays pending without mutating engine','pending before outbox','explicit delivery retry receipt and replay','lost A dispatch recovers with working B pending']},null,2)+'\n');
  }finally{await f.cleanup();}
 });
