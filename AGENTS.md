@@ -4,6 +4,35 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Preparación cliente activa en UAT — 2026-09-11 19:22 UTC.** Studio ejecuta
+> `276c2f7edfe56904eb7b92859d6d0836486e24ef`, deployment
+> `cf87d7d1-f466-4f9e-bdc1-fd50ef15c40f`; Worker conserva `485aed8`/
+> `32c7e097-7677-439b-8477-8d42941c3d4b`. El cliente ya consulta y solicita la preparación gratuita
+> del corpus con autoridad de importación, idempotencia y recuperación; Claude/Voyage siguen
+> deshabilitados. QA real mostró 7,396 menciones, 6,826 preparadas y 570 excluidas, sin duplicar trabajo
+> ni crear gasto. Suite Studio 953, focal25, typecheck/lint/build y revisión cerrados; el P2 de estado
+> entre workspaces quedó corregido. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_CLIENT_CORPUS_PREPARATION_UAT_2026-09-11.md`. Siguiente:
+> quote Brand Context de sólo lectura y SQL0156 para admisión Claude+Voyage compuesta; la cotización no
+> concede autoridad. No repetir SQL0153–0155 ni activar proveedores desde una conexión parcial.
+
+> **REANUDADO POR EL OPERADOR — 2026-09-11.** La pausa inmediatamente inferior queda como
+> historia: el operador pidió continuar, reactivar el agente de interfaz y el loop. Heartbeat
+> `noisia-topics-to-signal-uat-loop` ACTIVE sobre este chat hasta que el operador vuelva a pedir
+> una pausa; el límite histórico de las 18:35 UTC ya venció y fue retirado al reanudar. Retomar el árbol local descrito en
+> `SAFE_PAUSE_CLIENT_CORPUS_PREPARATION_2026-09-11.md`: cerrar preparación gratuita del corpus,
+> luego Brand Context workspace-scoped con admisiones Claude+Voyage atómicas. No repetir
+> SQL0153–0155 ni gates cerrados, no activar proveedores desde una conexión parcial.
+
+> **PAUSA EXPRESA DEL OPERADOR — 2026-09-11 14:57 UTC.** Loop
+> `noisia-topics-to-signal-uat-loop` PAUSED por la app y agente UI detenido. No reanudar
+> desarrollo, automatización, despliegues, SQL ni proveedores hasta nueva instrucción. UAT
+> permanece en `485aed8` con SQL0155 aplicado una vez y cero actividad/costo nuevo; el commit
+> documental `4954125` es el HEAD de ambas ramas remotas. La conexión cliente de preparación
+> gratuita quedó LOCAL, sin probar ni commit, en siete archivos del Studio; conservarla y leer
+> `docs/product/PROMPT_LOOPING/SAFE_PAUSE_CLIENT_CORPUS_PREPARATION_2026-09-11.md` antes de
+> continuar. No repetir SQL0153–0155, imports, Voyage, fit ni gates cerrados.
+
 > **Política self-service instalada sin activación — 2026-09-11 14:52 UTC.** Studio y Worker
 > ejecutan `485aed831bc5b7212d23383e6f1a5317b50e5ce1`; deployments Studio
 > `6cedd576-1427-4645-91f9-3ec386215a4b` y Worker `32c7e097-7677-439b-8477-8d42941c3d4b` activos.
