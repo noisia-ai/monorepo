@@ -4,7 +4,7 @@ import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 import { DEFAULT_WORKSPACE_TIMEZONE, isIanaTimezone } from "@/lib/timezone-catalog";
 import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { Icon } from "@/components/ui/Icon";
@@ -52,7 +52,7 @@ export function BrandEditForm({
   const t = useTranslations("BrandEdit");
   const brandT = useTranslations("BrandOs.form");
   const router = useRouter();
-  const preparation = useBrandContextPreparation(!clientContext);
+  const preparation = useBrandContextPreparation(false);
   const [organizationOptions, setOrganizationOptions] = useState(organizations);
   const [selectedOrgId, setSelectedOrgId] = useState(brand.organizationId);
   const [showOrgCreate, setShowOrgCreate] = useState(false);
@@ -149,9 +149,7 @@ export function BrandEditForm({
 
     try {
       const action = `edit-brand:${brand.id}`;
-      const intent = clientContext
-        ? preparation.forUnfundedRequest(action, payload)
-        : preparation.forRequest(action, payload);
+      const intent = preparation.forUnfundedRequest(action, payload);
       const res = await fetch(`/api/brands/${brand.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
@@ -355,7 +353,6 @@ export function BrandEditForm({
         />
         </div>
 
-        {!clientContext ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
         <footer className="workspace-form__section-footer">
           {error && (
             <p className="workspace-form__error" role="alert">

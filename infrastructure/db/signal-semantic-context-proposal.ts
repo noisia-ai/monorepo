@@ -216,6 +216,16 @@ export async function loadSignalSemanticContextProposalPreflightRuntimeV1(args: 
   runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean };
 }) {
   assertActor(args.actor);
+  return loadSignalSemanticContextProposalPreflightRuntimeCoreV1(args);
+}
+
+async function loadSignalSemanticContextProposalPreflightRuntimeCoreV1(args: {
+  queryable: SignalSemanticContextQueryable;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  generation_key?: string;
+  configuration: SignalSemanticContextProposalRuntimeConfigurationV1;
+  runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean };
+}) {
   const generation = await loadGeneration(args.queryable, args.workspace.id, args.generation_key);
   const blockers: string[] = [];
   if (!generation) blockers.push("semantic_context_draft_required");
@@ -566,6 +576,232 @@ export type SignalSemanticContextStartRunArgsV1 = {
   configuration: SignalSemanticContextProposalRuntimeConfigurationV1;
   runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean };
 };
+
+export type SignalBrandContextComposedSemanticStartArgsV1 = {
+  pool: Pick<Pool, "connect">;
+  workspace: SignalSemanticContextProposalWorkspaceV1;
+  actor: { id: string; user_type: "client" };
+  idempotency_key: string;
+  quote_digest: string;
+  confirmation: "prepare_brand_context_within_shown_cap";
+  configuration: SignalSemanticContextProposalRuntimeConfigurationV1;
+  runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean;
+    prototype_available: boolean };
+};
+
+type BrandContextComposedAuthorizationV1 = {
+  replayed: boolean;
+  receipt: {
+    id: string; workspace_id: string; organization_id: string; brand_id: string;
+    actor_user_id: string; generation_id: string; semantic_admission_id: string;
+    semantic_run_id: string; quote_digest: string; semantic_cap_micro_usd: string | number;
+  };
+  run_contract?: {
+    semantic_run_id: string; generation_id: string; generation_key: string;
+    policy_configuration: Record<string, unknown>; semantic_cap_micro_usd: string | number;
+  };
+};
+
+const composedUuidV1 = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const composedDigestV1 = /^sha256:[0-9a-f]{64}$/u;
+
+function brandContextComposedErrorV1(error: unknown): never {
+  const message = error instanceof Error ? error.message : "";
+  if (/^(?:brand_context|processing)_[a-z_]+$/u.test(message)) {
+    throw new SignalSemanticContextProposalExecutionError(message,
+      message === "processing_forbidden" ? 403
+        : message === "brand_context_processing_request_invalid" ? 422 : 409);
+  }
+  throw error;
+}
+
+function brandContextComposedRuntimeAvailableV1(args: SignalBrandContextComposedSemanticStartArgsV1) {
+  const configuration = args.configuration;
+  return args.runtime.queue_configured && args.runtime.worker_alive && args.runtime.recovery_alive
+    && args.runtime.prototype_available && configuration.available
+    && configuration.provider === "anthropic" && configuration.model === "claude-sonnet-4-6"
+    && Number.isSafeInteger(configuration.max_input_tokens) && configuration.max_input_tokens > 0
+    && Number.isSafeInteger(configuration.max_output_tokens) && configuration.max_output_tokens > 0
+    && Number.isSafeInteger(configuration.model_max_output_tokens) && configuration.model_max_output_tokens > 0
+    && configuration.platform_hard_cap_micro_usd > 0n;
+}
+
+function brandContextComposedConfigurationV1(
+  configuration: SignalSemanticContextProposalRuntimeConfigurationV1
+) {
+  return {
+    provider: configuration.provider,
+    model: configuration.model,
+    model_version: configuration.model_version,
+    pricing_version: configuration.pricing_version,
+    max_input_tokens: configuration.max_input_tokens,
+    max_output_tokens: configuration.max_output_tokens,
+    input_usd_per_million_tokens: configuration.input_usd_per_million_tokens,
+    output_usd_per_million_tokens: configuration.output_usd_per_million_tokens
+  };
+}
+
+/**
+ * Server-only client path for the Claude half of composed Brand Context processing.
+ * The SQL receipt is created first and every following write is bound to its exact
+ * admission/run ids. The deferred receipt constraint rejects any partial bundle.
+ * Existing internal callers still pass through assertActor in the original path.
+ */
+export async function startSignalBrandContextComposedSemanticRunV1(
+  args: SignalBrandContextComposedSemanticStartArgsV1
+) {
+  if (!composedUuidV1.test(args.workspace.id) || !composedUuidV1.test(args.workspace.organization_id)
+    || !composedUuidV1.test(args.workspace.brand_id) || !composedUuidV1.test(args.actor.id)
+    || !/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)
+    || !composedDigestV1.test(args.quote_digest)
+    || args.confirmation !== "prepare_brand_context_within_shown_cap") {
+    throw new SignalSemanticContextProposalExecutionError("brand_context_processing_request_invalid", 422);
+  }
+  const client = await args.pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    if (!brandContextComposedRuntimeAvailableV1(args)) {
+      throw new SignalSemanticContextProposalExecutionError("brand_context_processing_runtime_unavailable", 503);
+    }
+    let authorization: BrandContextComposedAuthorizationV1;
+    try {
+      const selected = await client.query<{ result: BrandContextComposedAuthorizationV1 }>(
+        "SELECT authorize_signal_brand_context_processing_v1($1::uuid,$2::uuid,$3,$4,$5) result",
+        [args.workspace.id, args.actor.id, args.idempotency_key, args.quote_digest, args.confirmation]
+      );
+      const result = selected.rows[0]?.result;
+      if (!result) {
+        throw new SignalSemanticContextProposalExecutionError("brand_context_processing_receipt_missing", 409);
+      }
+      authorization = result;
+    } catch (error) {
+      brandContextComposedErrorV1(error);
+    }
+    const receipt = authorization!.receipt;
+    if (!receipt || !composedUuidV1.test(receipt.id) || !composedUuidV1.test(receipt.semantic_admission_id)
+      || !composedUuidV1.test(receipt.semantic_run_id) || receipt.workspace_id !== args.workspace.id
+      || receipt.organization_id !== args.workspace.organization_id || receipt.brand_id !== args.workspace.brand_id
+      || receipt.actor_user_id !== args.actor.id || receipt.quote_digest !== args.quote_digest) {
+      throw new SignalSemanticContextProposalExecutionError("brand_context_processing_receipt_invalid", 409);
+    }
+    if (authorization!.replayed) {
+      const selected = await client.query<RunRow>(`${runSelect}
+        FROM signal_semantic_context_proposal_runs run
+        JOIN signal_brand_context_processing_receipts receipt ON receipt.semantic_run_id=run.id
+        WHERE receipt.id=$1::uuid AND receipt.workspace_id=$2::uuid AND receipt.actor_user_id=$3::uuid`,
+      [receipt.id, args.workspace.id, args.actor.id]);
+      const run = selected.rows[0];
+      if (!run) throw new SignalSemanticContextProposalExecutionError("brand_context_processing_replay_incomplete", 409);
+      await client.query("COMMIT");
+      return { ...publicRun(run), receipt_id: receipt.id, admission_id: receipt.semantic_admission_id,
+        run_id: run.id, replayed: true };
+    }
+    const contract = authorization!.run_contract;
+    if (!contract || contract.semantic_run_id !== receipt.semantic_run_id
+      || contract.generation_id !== receipt.generation_id || !contract.generation_key
+      || String(contract.semantic_cap_micro_usd) !== String(receipt.semantic_cap_micro_usd)) {
+      throw new SignalSemanticContextProposalExecutionError("brand_context_processing_receipt_invalid", 409);
+    }
+    const actualConfiguration = brandContextComposedConfigurationV1(args.configuration);
+    const configurationAllowed = (await client.query<{ allowed: boolean }>(
+      "SELECT signal_processing_configuration_allows_v1('brand_context_proposal',$1::jsonb,$2::jsonb) allowed",
+      [JSON.stringify(contract.policy_configuration), JSON.stringify(actualConfiguration)]
+    )).rows[0]?.allowed;
+    const semanticCap = BigInt(String(receipt.semantic_cap_micro_usd));
+    if (!configurationAllowed || semanticCap <= 0n
+      || semanticCap > args.configuration.platform_hard_cap_micro_usd) {
+      throw new SignalSemanticContextProposalExecutionError("brand_context_processing_runtime_drift", 409);
+    }
+    const preflight = await loadSignalSemanticContextProposalPreflightRuntimeCoreV1({
+      queryable: client, workspace: args.workspace, generation_key: contract.generation_key,
+      configuration: args.configuration,
+      runtime: { queue_configured: args.runtime.queue_configured,
+        worker_alive: args.runtime.worker_alive, recovery_alive: args.runtime.recovery_alive }
+    });
+    if (preflight.readiness !== "ready" || preflight.estimated_input_tokens_upper_bound === null) {
+      throw new SignalSemanticContextProposalExecutionError(
+        preflight.blockers[0] ?? "semantic_context_preflight_blocked", 409
+      );
+    }
+    const reservation = BigInt(preflight.estimated_max_cost_micro_usd);
+    if (reservation <= 0n || reservation > semanticCap) {
+      throw new SignalSemanticContextProposalExecutionError("semantic_context_hard_cap_insufficient", 422);
+    }
+    const prepared = await prepareSignalSemanticContextProposalInputV1({
+      queryable: client, workspace: args.workspace, generation_key: contract.generation_key
+    });
+    const providerLineage = buildSignalSemanticContextProposalRuntimeLineageV1(
+      args.configuration, prepared.capacity
+    );
+    if (!signalSemanticContextProviderFullLineageMatchesV1(prepared.generation, providerLineage)) {
+      throw new SignalSemanticContextProposalExecutionError("provider_lineage_drift", 409);
+    }
+    const providerRequestIdentity = signalSemanticContextProposalDigestV1({
+      contract_version: "signal-semantic-context-provider-request-v1",
+      generation_key: contract.generation_key, preflight_digest: preflight.preflight_digest,
+      input_digest: prepared.input_digest, prompt_digest: providerLineage.prompt.digest,
+      provider_lineage_digest: providerLineage.lineage_digest,
+      model: providerLineage.model, model_version: providerLineage.model_version
+    });
+    const operation = await beginOperation(client, {
+      workspace: args.workspace, actor: args.actor, action: "start-semantic-context-proposal-run",
+      idempotency_key: `brand-context-composed:${receipt.id}`,
+      input: { generation_key: contract.generation_key, preflight_digest: preflight.preflight_digest,
+        confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
+        hard_cap_micro_usd: semanticCap.toString() }
+    });
+    if (operation.replay) {
+      throw new SignalSemanticContextProposalExecutionError("brand_context_processing_operation_conflict", 409);
+    }
+    const runKey = `semantic-context-proposal-${providerRequestIdentity.slice(7, 23)}`;
+    const inserted = await client.query<RunRow>(`WITH inserted AS (
+      INSERT INTO signal_semantic_context_proposal_runs(
+        id,workspace_id,generation_id,operation_id,run_key,status,preflight_digest,brand_os_digest,
+        knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
+        model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
+        output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
+        provider_lineage_digest,provider_request_identity,created_by_user_id,processing_admission_id,
+        brand_context_preparation_operation_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'queued',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+        $16,$17,$18,$19,$20,$21,$22,$23,$24::uuid,$25::uuid,NULL) RETURNING *)
+      ${runSelect} FROM inserted run`, [
+      contract.semantic_run_id, args.workspace.id, prepared.generation.id, operation.operation_id, runKey,
+      preflight.preflight_digest, prepared.generation.brand_os_digest, prepared.generation.knowledge_digest,
+      prepared.generation.locale_context_digest, providerLineage.prompt.digest, prepared.input_digest,
+      providerLineage.provider, providerLineage.model, providerLineage.model_version,
+      providerLineage.pricing.version, providerLineage.token_ceilings.max_input_tokens,
+      prepared.capacity.output_token_budget, providerLineage.pricing.input_usd_per_million_tokens,
+      providerLineage.pricing.output_usd_per_million_tokens, semanticCap.toString(), reservation.toString(),
+      providerLineage.lineage_digest, providerRequestIdentity, args.actor.id, receipt.semantic_admission_id
+    ]);
+    const run = inserted.rows[0];
+    if (!run) throw new SignalSemanticContextProposalExecutionError("brand_context_processing_run_missing", 409);
+    const reservationDigest = signalSemanticContextProposalDigestV1({ run_id: run.id,
+      reservation_micro_usd: reservation.toString(),
+      max_input_tokens: preflight.estimated_input_tokens_upper_bound,
+      max_output_tokens: prepared.capacity.output_token_budget });
+    await client.query(`INSERT INTO signal_semantic_context_budget_reservations(
+      workspace_id,run_id,reservation_micro_usd,reserved_input_tokens,reserved_output_tokens,reservation_digest)
+      VALUES($1::uuid,$2::uuid,$3,$4,$5,$6)`, [args.workspace.id, run.id, reservation.toString(),
+      preflight.estimated_input_tokens_upper_bound, prepared.capacity.output_token_budget, reservationDigest]);
+    await client.query(`INSERT INTO signal_semantic_context_proposal_outbox(
+      workspace_id,run_id,worker_job_id) VALUES($1::uuid,$2::uuid,$3)`,
+    [args.workspace.id, run.id, buildSignalSemanticContextProposalJobIdV1(run.id)]);
+    await insertRunEvent(client, run, "queued", "queued", { provider_calls: 0 });
+    const result = publicRun(run);
+    await completeOperation(client, args.workspace.id, operation.key, result);
+    await client.query("COMMIT");
+    return { ...result, receipt_id: receipt.id, admission_id: receipt.semantic_admission_id,
+      run_id: run.id, replayed: false };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (error instanceof SignalSemanticContextProposalExecutionError) throw error;
+    brandContextComposedErrorV1(error);
+  } finally {
+    client.release();
+  }
+}
+
 export async function startSignalSemanticContextProposalRunV1(args: SignalSemanticContextStartRunArgsV1) {
   const client=await args.pool.connect();
   try { await client.query("BEGIN"); const result=await startSignalSemanticContextProposalRunWithClientV1(client,args);
@@ -1241,9 +1477,15 @@ async function appendSignalSemanticContextProposalsInternalV1(args: {
   if (args.automatic_run_authority && !authorityInput) {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_automatic_policy_unavailable", 409);
   }
-  const operation = await beginOperation(args.queryable, { workspace: args.workspace, actor: args.actor,
-    action: "append-semantic-context-proposals", idempotency_key: args.idempotency_key,
-    input: operationInput, authority_input: authorityInput });
+  const operation = args.automatic_run_authority && authorityInput
+    ? await beginComposedPaidResponseOperationV1(args.queryable, {
+      workspace: args.workspace, actor: args.actor, generation_id: generation.id,
+      idempotency_key: args.idempotency_key, input: operationInput,
+      authority_input: authorityInput, run_authority: args.automatic_run_authority
+    })
+    : await beginOperation(args.queryable, { workspace: args.workspace, actor: args.actor,
+      action: "append-semantic-context-proposals", idempotency_key: args.idempotency_key,
+      input: operationInput });
   if (operation.replay) return operation.replay as { generation_key: string; created: number;
     ready: number; exceptions: number; draft_digest: string; operation_id: string };
   const policyTimestamp = automaticPolicy ? (await args.queryable.query<{ value: string }>(
@@ -1758,7 +2000,7 @@ async function loadGeneration(queryable: SignalSemanticContextQueryable, workspa
 }
 
 async function beginOperation(queryable: SignalSemanticContextQueryable, args: {
-  workspace: SignalSemanticContextProposalWorkspaceV1; actor: SignalSemanticContextProposalActorV1;
+  workspace: SignalSemanticContextProposalWorkspaceV1; actor: { id: string };
   action: "start-semantic-context-proposal-run" | "retry-semantic-context-proposal-run"
     | "append-semantic-context-proposals" | "revalidate-semantic-context-proposal-run";
   idempotency_key: string; input: unknown; authority_input?: Record<string, unknown>;
@@ -1806,6 +2048,114 @@ async function beginOperation(queryable: SignalSemanticContextQueryable, args: {
   }
   if (row.status === "completed" && row.result) return { key, operation_id: row.id, replay: row.result };
   if (row.status !== "in_progress") throw new SignalSemanticContextProposalExecutionError("operation_state_invalid");
+  return { key, operation_id: row.id, replay: null };
+}
+
+/** A provider response is paid evidence once it is durably persisted. Revoking
+ * future spending cannot discard it. This private seam opens only the append
+ * operation bound to the exact composed receipt/run/reservation; it neither
+ * validates new-work capacity nor creates a provider call or descendant. */
+async function beginComposedPaidResponseOperationV1(queryable: SignalSemanticContextQueryable, args: {
+  workspace: SignalSemanticContextProposalWorkspaceV1; actor: { id: string };
+  generation_id: string; idempotency_key: string; input: unknown;
+  authority_input: Record<string, unknown>; run_authority: AutomaticRunAuthorityV1;
+}) {
+  const normalized = args.idempotency_key.trim();
+  if (normalized.length < 8 || normalized.length > 500) {
+    throw new SignalSemanticContextProposalExecutionError("idempotency_key_invalid", 422);
+  }
+  const key = sha256(`signal-product-operation-v1\u001f${normalized}`);
+  const requestDigest = signalSemanticContextProposalDigestV1({
+    contract_version: "signal-product-operation-v1", workspace_id: args.workspace.id,
+    action: "append-semantic-context-proposals", input: args.input
+  });
+  const authorityDigest = signalSemanticContextProposalDigestV1(args.authority_input);
+  await queryable.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+    [`signal-product-operation:${args.workspace.id}:${key}`]);
+  const selectOperation = async () => (await queryable.query<{ id: string; actor_user_id: string;
+    action: string; request_digest: string; status: string; result: unknown;
+    semantic_context_decision_input_digest: string | null }>(`SELECT id::text,actor_user_id::text,
+      action,request_digest,status,result,semantic_context_decision_input_digest
+      FROM signal_governance_control_operations
+      WHERE workspace_id=$1::uuid AND idempotency_key=$2 FOR UPDATE`,
+    [args.workspace.id, key])).rows[0];
+  let row = await selectOperation();
+  if (row) {
+    if (row.actor_user_id !== args.actor.id || row.action !== "append-semantic-context-proposals"
+      || row.request_digest !== requestDigest
+      || row.semantic_context_decision_input_digest !== authorityDigest) {
+      throw new SignalSemanticContextProposalExecutionError("idempotency_key_incompatible", 409);
+    }
+    if (row.status === "completed" && row.result) {
+      return { key, operation_id: row.id, replay: row.result };
+    }
+    if (row.status !== "in_progress") {
+      throw new SignalSemanticContextProposalExecutionError("operation_state_invalid");
+    }
+  }
+  const proof = (await queryable.query<{ allowed: boolean }>(`SELECT EXISTS(
+    SELECT 1 FROM signal_brand_context_processing_receipts receipt
+    JOIN signal_processing_admissions admission
+      ON admission.id=receipt.semantic_admission_id
+      AND admission.brand_context_processing_receipt_id=receipt.id
+      AND admission.action='brand_context_proposal'
+    JOIN signal_semantic_context_proposal_runs run
+      ON run.id=receipt.semantic_run_id AND run.processing_admission_id=admission.id
+    JOIN signal_semantic_context_budget_reservations reservation
+      ON reservation.run_id=run.id AND reservation.workspace_id=run.workspace_id
+    WHERE receipt.workspace_id=$1::uuid AND receipt.organization_id=$2::uuid
+      AND receipt.brand_id=$3::uuid AND receipt.actor_user_id=$4::uuid
+      AND receipt.generation_id=$5::uuid AND receipt.semantic_run_id=$6::uuid
+      AND admission.target_id=run.id AND run.workspace_id=receipt.workspace_id
+      AND run.generation_id=receipt.generation_id AND run.created_by_user_id=receipt.actor_user_id
+      AND run.run_key=$7 AND run.status='validating' AND run.provider_call_state='response_persisted'
+      AND run.provider_call_count=1 AND run.provider_response_private IS NOT NULL
+      AND run.appended_operation_id IS NULL
+      AND run.provider_response_digest=signal_semantic_context_digest_json_v2(to_jsonb(run.provider_response_private))
+      AND run.provider_response_digest=$8 AND run.provider_lineage_digest=$9
+      AND run.provider_request_identity=$10 AND run.brand_os_digest=$11
+      AND run.knowledge_digest=$12 AND run.locale_context_digest=$13
+      AND run.prompt_digest=$14 AND run.context_input_digest=$15
+      AND reservation.status='reserved'
+      AND reservation.reservation_micro_usd=run.reservation_micro_usd
+      AND $16::bigint>=0 AND $16::bigint<=reservation.reservation_micro_usd
+  ) allowed`, [args.workspace.id, args.workspace.organization_id, args.workspace.brand_id,
+    args.actor.id, args.generation_id, args.run_authority.run_id, args.run_authority.run_key,
+    args.run_authority.response_digest, args.run_authority.provider_lineage_digest,
+    args.run_authority.provider_request_identity, args.run_authority.brand_os_digest,
+    args.run_authority.knowledge_digest, args.run_authority.locale_context_digest,
+    args.run_authority.prompt_digest, args.run_authority.context_input_digest,
+    args.run_authority.settled_micro_usd])).rows[0]?.allowed;
+  if (!proof) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "brand_context_paid_response_receipt_invalid", 409);
+  }
+  if (!row) {
+    await queryable.query(`INSERT INTO signal_governance_control_operations(
+      workspace_id,actor_user_id,action,request_digest,idempotency_key,status,
+      semantic_context_decision_input,semantic_context_decision_input_digest)
+      VALUES($1::uuid,$2::uuid,'append-semantic-context-proposals',$3,$4,'in_progress',$5::jsonb,$6)
+      ON CONFLICT(workspace_id,idempotency_key) DO NOTHING`, [args.workspace.id,args.actor.id,
+      requestDigest,key,JSON.stringify(args.authority_input),authorityDigest]);
+    row = await selectOperation();
+  }
+  if (!row || row.actor_user_id !== args.actor.id || row.action !== "append-semantic-context-proposals"
+    || row.request_digest !== requestDigest || row.semantic_context_decision_input_digest !== authorityDigest) {
+    throw new SignalSemanticContextProposalExecutionError("idempotency_key_incompatible", 409);
+  }
+  if (row.status === "completed" && row.result) {
+    return { key, operation_id: row.id, replay: row.result };
+  }
+  if (row.status !== "in_progress") {
+    throw new SignalSemanticContextProposalExecutionError("operation_state_invalid");
+  }
+  const sealed = (await queryable.query<{ allowed: boolean }>(
+    "SELECT signal_brand_context_composed_append_actor_v1($1::uuid,$2::uuid,$3::uuid) allowed",
+    [row.id,args.generation_id,args.actor.id])).rows[0]?.allowed;
+  if (!sealed) {
+    throw new SignalSemanticContextProposalExecutionError(
+      "brand_context_paid_response_receipt_invalid", 409);
+  }
   return { key, operation_id: row.id, replay: null };
 }
 

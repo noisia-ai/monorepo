@@ -19,7 +19,8 @@ test("semantic context outbox dispatches the closed job once and completes its l
   const queued: unknown[] = [];
   const result = await drainSignalSemanticContextProposalOutboxV1({ database: database as never,
     queue: { async add(name, data, options) { queued.push({ name, data, options }); return {}; } } });
-  assert.deepEqual(result, { claimed: 1, dispatched: 1, failed: 0, dead_lettered: 0 });
+  assert.deepEqual(result, { claimed: 1, dispatched: 1, failed: 0, dead_lettered: 0,
+    composed_advanced:0,composed_blocked:0,composed_runtime_unavailable:0 });
   assert.deepEqual(queued[0], { name: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
     data: { contract_version: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION,
       run_id: "11111111-1111-4111-8111-111111111111" },
@@ -41,7 +42,8 @@ test("semantic context outbox records a failed dispatch without logging payloads
   } };
   const result = await drainSignalSemanticContextProposalOutboxV1({ database: database as never,
     queue: { async add() { throw new Error("fixture queue unavailable"); } } });
-  assert.deepEqual(result, { claimed: 1, dispatched: 0, failed: 1, dead_lettered: 0 });
+  assert.deepEqual(result, { claimed: 1, dispatched: 0, failed: 1, dead_lettered: 0,
+    composed_advanced:0,composed_blocked:0,composed_runtime_unavailable:0 });
   assert.ok(calls.some((sql) => sql.includes("fail_signal_semantic_context")));
 });
 
@@ -71,4 +73,22 @@ test("a coordinator failure is recorded and retried instead of being hidden by a
   assert.ok(calls.some(call=>call.sql==='ROLLBACK'));
   assert.ok(calls.some(call=>call.sql.includes('SET brand_context_progress=')&&call.values?.[1]==='brand_context_forbidden'));
   assert.ok(calls.some(call=>call.sql.includes('claim_signal_semantic_context_proposal_dispatch')));
+});
+
+test("the recovery drainer advances settled composed parents without a proposal dispatch",async()=>{
+  const database={async query(){return{rows:[],rowCount:0};},async connect(){throw new Error("injected composed seam owns recovery");}};
+  const result=await drainSignalSemanticContextProposalOutboxV1({database:database as never,
+    queue:{async add(){throw new Error("no dispatch");}},
+    composed:{database:database as never,provider_available:true},
+    advance_composed_pending:async(args)=>{
+      assert.equal(args.provider_available,true);
+      return[
+        {contract_version:"brand-context-composed-advance-v1",state:"queued",semantic_run_id:crypto.randomUUID(),
+          prototype_run_id:crypto.randomUUID(),prototype_receipt_id:crypto.randomUUID(),replayed:false},
+        {contract_version:"brand-context-composed-advance-v1",state:"runtime_unavailable",semantic_run_id:crypto.randomUUID(),replayed:false},
+        {contract_version:"brand-context-composed-advance-v1",state:"blocked",semantic_run_id:crypto.randomUUID(),error_code:"processing_authorization_required"}
+      ];
+    }});
+  assert.deepEqual(result,{claimed:0,dispatched:0,failed:0,dead_lettered:0,
+    composed_advanced:1,composed_blocked:1,composed_runtime_unavailable:1});
 });

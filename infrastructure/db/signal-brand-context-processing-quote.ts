@@ -95,6 +95,7 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
   const prototype = selected.find(action => action.action === "topic_prototype_embeddings");
   const compatible = semantic?.kind === "provider" && semantic.provider === "anthropic" && semantic.model === "claude-sonnet-4-6"
     && prototype?.kind === "provider" && prototype.provider === "voyage" && prototype.model === "voyage-4-large"
+    && prototype.automatic_allowed === true
     && selected.every(action => /^sha256:[0-9a-f]{64}$/u.test(action.configuration_digest)
       && /^(0|[1-9][0-9]{0,14})$/u.test(action.max_execution_micro_usd))
     && BigInt(semantic.max_execution_micro_usd) > 0n;
@@ -128,6 +129,89 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
   return result;
 }
 
+type DatabaseQuoteRowV1 = {
+  quote_digest: string; observed_at: string; quote_expires_at: string; budget_date: string;
+  remaining_micro_usd: string; confirmed_micro_usd: string; reserved_micro_usd: string;
+  ambiguous_micro_usd: string; total_micro_usd: string; policy_id: string; policy_version: string;
+  policy_digest: string; semantic_configuration_digest: string; prototype_configuration_digest: string;
+  semantic_cap_micro_usd: string; prototype_cap_micro_usd: string; source_authority_digest: string;
+};
+
+function databaseBlockedStatus(error: unknown): SignalBrandContextProcessingQuoteStatusV1 | null {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "processing_forbidden") return "processing_forbidden";
+  if (message === "processing_policy_missing") return "policy_missing";
+  if (message === "processing_policy_expired" || message === "processing_quote_expired") return "policy_expired";
+  if (message === "processing_action_unavailable") return "action_missing";
+  if (message === "processing_action_incompatible") return "action_incompatible";
+  if (message === "processing_daily_cap_exhausted") return "daily_cap_insufficient";
+  if (message === "brand_context_generation_required") return "source_required";
+  if (message === "brand_context_source_stale") return "source_stale";
+  return null;
+}
+
+/**
+ * Rebuild the actionable digest in PostgreSQL after the product-facing reader has
+ * established a compatible display state. Only sanitized text columns leave the
+ * query; quote_snapshot and action configuration remain inside PostgreSQL.
+ */
+export async function readSignalBrandContextProcessingDatabaseQuoteWithQueryableV1(
+  args: ReadArgs
+): Promise<SignalBrandContextProcessingQuoteV1> {
+  const display = await readSignalBrandContextProcessingQuoteWithQueryableV1(args);
+  if (display.quote_status !== "quoted") return display;
+  let row: DatabaseQuoteRowV1 | undefined;
+  try {
+    row = (await args.queryable.query<DatabaseQuoteRowV1>(`WITH quoted AS (
+      SELECT signal_brand_context_processing_quote_v1($1::uuid,$2::uuid) value
+    ) SELECT value->>'quote_digest' quote_digest,clock_timestamp()::text observed_at,
+      value#>>'{quote_snapshot,quote_expires_at}' quote_expires_at,
+      value#>>'{quote_snapshot,budget_date}' budget_date,
+      value#>>'{quote_snapshot,remaining_micro_usd}' remaining_micro_usd,
+      value#>>'{quote_snapshot,exposure,confirmed_micro_usd}' confirmed_micro_usd,
+      value#>>'{quote_snapshot,exposure,reserved_micro_usd}' reserved_micro_usd,
+      value#>>'{quote_snapshot,exposure,ambiguous_micro_usd}' ambiguous_micro_usd,
+      value#>>'{quote_snapshot,exposure,total_micro_usd}' total_micro_usd,
+      value#>>'{quote_snapshot,policy_id}' policy_id,
+      value#>>'{quote_snapshot,policy_version}' policy_version,
+      value#>>'{quote_snapshot,policy_digest}' policy_digest,
+      value#>>'{quote_snapshot,semantic_action,configuration_digest}' semantic_configuration_digest,
+      value#>>'{quote_snapshot,prototype_action,configuration_digest}' prototype_configuration_digest,
+      value#>>'{quote_snapshot,semantic_action,max_execution_micro_usd}' semantic_cap_micro_usd,
+      value#>>'{quote_snapshot,prototype_action,max_execution_micro_usd}' prototype_cap_micro_usd,
+      value#>>'{quote_snapshot,source_authority_digest}' source_authority_digest FROM quoted`,
+    [args.workspace_id, args.actor_user_id])).rows[0];
+  } catch (error) {
+    const status = databaseBlockedStatus(error);
+    if (!status) throw error;
+    return { ...display, quote_status: status, quote_digest: null, quote_expires_at: null };
+  }
+  const semantic = display.actions.find(action => action.action === "brand_context_proposal");
+  const prototype = display.actions.find(action => action.action === "topic_prototype_embeddings");
+  if (!row || !composedDigest(row.quote_digest) || !display.policy || !display.source || !semantic || !prototype
+    || row.policy_id !== display.policy.id || row.policy_version !== display.policy.version
+    || row.policy_digest !== display.policy.digest || row.budget_date !== display.budget_date
+    || row.semantic_configuration_digest !== semantic.configuration_digest
+    || row.prototype_configuration_digest !== prototype.configuration_digest
+    || row.semantic_cap_micro_usd !== semantic.max_execution_micro_usd
+    || row.prototype_cap_micro_usd !== prototype.max_execution_micro_usd
+    || row.source_authority_digest !== display.source.authority_digest) {
+    throw new SignalProcessingPolicyError("processing_quote_changed", 409);
+  }
+  const exposure = { confirmed_micro_usd: row.confirmed_micro_usd, reserved_micro_usd: row.reserved_micro_usd,
+    ambiguous_micro_usd: row.ambiguous_micro_usd, total_micro_usd: row.total_micro_usd };
+  const maximum = BigInt(row.semantic_cap_micro_usd) + BigInt(row.prototype_cap_micro_usd);
+  return { ...display, quote_digest: row.quote_digest,
+    quoted_at: new Date(row.observed_at).toISOString(),
+    quote_expires_at: new Date(row.quote_expires_at).toISOString(),
+    budget_date: row.budget_date, exposure, remaining_micro_usd: row.remaining_micro_usd,
+    maximum_total_micro_usd: maximum.toString() };
+}
+
+function composedDigest(value: unknown): value is string {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
+}
+
 /** No environment lookup or default database: the server must supply the connection and exact action health. */
 export async function loadSignalBrandContextProcessingQuoteV1(args: Omit<ReadArgs, "queryable"> & {
   database: Pick<Pool, "connect">;
@@ -135,7 +219,7 @@ export async function loadSignalBrandContextProcessingQuoteV1(args: Omit<ReadArg
   const client = await args.database.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const result = await readSignalBrandContextProcessingQuoteWithQueryableV1({ ...args, queryable: client });
+    const result = await readSignalBrandContextProcessingDatabaseQuoteWithQueryableV1({ ...args, queryable: client });
     await client.query("COMMIT");
     return result;
   } catch (error) {

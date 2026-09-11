@@ -11,6 +11,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
+import { ClientBrandContextProcessingQuote } from "@/components/brands/ClientBrandContextProcessingQuote";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
 import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
 import { requireStudioUser } from "@/lib/auth/guards";
@@ -60,6 +61,8 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
         <>
+          <ClientBrandContextProcessingQuote workspaceId={workspace.summary.workspaceId}
+            refreshSignal={new Date().toISOString()} authorizeFromEndpoint />
           <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
           <AdminResourceSection
             actions={<Link className="admin-button admin-button--primary" href={`/studio/brands/${brand.id}/topics`} prefetch={false}>

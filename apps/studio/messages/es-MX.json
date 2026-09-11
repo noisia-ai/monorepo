@@ -3981,11 +3981,16 @@
     "refresh": "Actualizar",
     "loadError": "No pudimos consultar la preparación semántica.",
     "refreshError": "No pudimos actualizarla. Se conserva la última lectura visible.",
+    "requestError": "No pudimos confirmar la solicitud. Al reintentar se comprobará la misma solicitud para evitar duplicados.",
     "forbidden": "Tu acceso a esta marca ya no está disponible.",
     "maximum": "Tope máximo de esta preparación",
     "availableToday": "Disponible hoy",
     "expires": "Cotización válida hasta {time}.",
     "informational": "Esta lectura es informativa. Todavía no inicia procesamiento, no reserva saldo y no envía información a modelos.",
+    "authorization": "Autorizas un máximo de {maximum}. Disponible hoy: {available}.",
+    "authorizationPrototypes": "El contexto ya está listo. Autorizas hasta {maximum} para preparar los intereses de esta versión. Disponible hoy: {available}.",
+    "confirm": "Confirmar y preparar",
+    "confirming": "Confirmando…",
     "states": {
       "quote_available": "Costo máximo calculado",
       "access_required": "Acceso requerido",
@@ -3997,7 +4002,14 @@
       "brand_context_outdated": "Contexto por actualizar",
       "market_language_required": "Define mercado e idioma",
       "preparation_required": "Preparación pendiente",
-      "temporarily_unavailable": "No disponible temporalmente"
+      "temporarily_unavailable": "No disponible temporalmente",
+      "queued": "Solicitud guardada",
+      "running": "Preparando contexto",
+      "recovering": "Recuperando el proceso",
+      "awaiting_authorization": "Intereses listos para autorizar",
+      "completed": "Contexto listo",
+      "stale": "Contexto por actualizar",
+      "failed": "Preparación interrumpida"
     },
     "help": {
       "quote_available": "El sistema calculó el tope máximo. La activación desde tu cuenta todavía está pendiente.",
@@ -4010,7 +4022,20 @@
       "brand_context_outdated": "Brand OS o sus fuentes cambiaron. La siguiente preparación usará el contexto actualizado.",
       "market_language_required": "Define al menos un mercado y un idioma principal para preparar el contexto.",
       "preparation_required": "Los intereses todavía necesitan una base semántica completa antes de continuar.",
-      "temporarily_unavailable": "Actualiza la lectura cuando la preparación vuelva a estar disponible."
+      "temporarily_unavailable": "Actualiza la lectura cuando la preparación vuelva a estar disponible.",
+      "queued": "La solicitud quedó guardada y espera capacidad de procesamiento.",
+      "running": "La preparación avanza con el tope que confirmaste.",
+      "recovering": "El sistema está comprobando la misma solicitud. No necesita otra autorización.",
+      "awaiting_authorization": "El contexto de marca ya está listo. Autoriza la preparación de sus intereses con el tope vigente para completar esta versión.",
+      "completed": "El contexto y los intereses quedaron preparados para los siguientes análisis.",
+      "stale": "Brand OS o sus fuentes cambiaron. El resultado anterior se conserva hasta preparar la nueva versión.",
+      "failed": "La solicitud se interrumpió. El progreso y los resultados guardados se conservan."
+    },
+    "phases": {
+      "waiting": "Esperando capacidad de procesamiento.",
+      "preparing_context": "Construyendo la base semántica de la marca.",
+      "preparing_interests": "Preparando los intereses como un conjunto reutilizable.",
+      "finalizing": "Validando y guardando la nueva versión."
     }
   },
   "ClientProcessing": {

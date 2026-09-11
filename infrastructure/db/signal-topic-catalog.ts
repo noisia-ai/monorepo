@@ -1307,6 +1307,46 @@ export async function ensureSignalTopicCatalogStoreV1(args: {
   return { taxonomy_profile_id: created.profileId, created: true };
 }
 
+/** Stage2-only empty catalog bootstrap. The caller owns the transaction and must
+ * already have published the exact composed generation. This proof is deliberately
+ * independent from can_execute_topics: it creates an empty input container and
+ * grants neither execution capability nor provider authority. */
+export async function ensureSignalBrandContextPrototypeCatalogStoreV1(args: {
+  client: PoolClient; workspace_id: string; actor_user_id: string;
+  parent_receipt_id: string; generation_id: string; pack_digest: string;
+}): Promise<{ taxonomy_profile_id: string; created: boolean }> {
+  const proof = (await args.client.query<{ allowed: boolean }>(`SELECT EXISTS(
+    SELECT 1 FROM signal_brand_context_processing_receipts receipt
+    JOIN signal_semantic_context_generations generation
+      ON generation.id=receipt.generation_id AND generation.workspace_id=receipt.workspace_id
+    WHERE receipt.id=$1::uuid AND receipt.workspace_id=$2::uuid
+      AND receipt.actor_user_id=$3::uuid AND receipt.generation_id=$4::uuid
+      AND generation.status='published' AND generation.pack_digest=$5
+      AND generation.publication_schema_version='signal-semantic-context-publication-v2'
+      AND generation.semantic_context_pack_digest=$5
+      AND signal_brand_context_processing_actor_v1(receipt.workspace_id,receipt.actor_user_id)
+      AND signal_brand_context_processing_source_current_v1(generation.id)
+      AND signal_brand_context_composed_generation_valid_v1(generation.id)
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.workspace_id=generation.workspace_id
+          AND successor.supersedes_generation_id=generation.id)
+  ) allowed`, [args.parent_receipt_id, args.workspace_id, args.actor_user_id,
+    args.generation_id, args.pack_digest])).rows[0]?.allowed;
+  if (!proof) throw new SignalTopicCatalogError("brand_context_prototype_catalog_forbidden", 403);
+  await args.client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+    [`signal-taxonomy:${args.workspace_id}:topic`]);
+  const prior = await loadLatestProfile(args.client, args.workspace_id);
+  if (prior) return { taxonomy_profile_id: prior.id, created: false };
+  const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: args.client,
+    workspace_id: args.workspace_id, complete_context: true,
+    require_current_semantic_authority: true });
+  const created = await insertTopicCatalogDraft(args.client, args.workspace_id, [],
+    sha256(stableJson({ topics: [], context_digest: inherited.context_digest })), inherited,
+    { catalog_role: "working", source_generation_id: args.generation_id,
+      source_pack_digest: args.pack_digest });
+  return { taxonomy_profile_id: created.profileId, created: true };
+}
+
 /** Worker-only batch write. The immutable, paid interpretation checkpoints are
  * the source of proposals; a request cannot submit arbitrary browser definitions.
  * All groups produce one catalog version, preserving existing editable objects. */

@@ -239,7 +239,11 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/actions\.prepareSuccessor/u);
   assert.match(manager,/terminalSuccessor\.message/u);
   assert.match(manager,/forUnfundedRequest\(action, requestIdentity\)/u,
-    "terminal recovery cannot silently include a provider quote or confirmation");
+    "reconciliation cannot silently include a provider quote or confirmation");
+  assert.match(manager,/useBrandContextPreparation\(false\)/u,
+    "the editable manager must not fetch or render a price before the composed quote surface");
+  assert.doesNotMatch(manager,/<BrandContextPreparationNotice|\.forRequest\(/u,
+    "Brand OS has one composed quote surface rather than repeated legacy notices");
   assert.match(manager,/expected_generation_key: activeGenerationKey/u,
     "terminal recovery is bound to the generation the operator inspected");
   assert.match(reconcileRoute,/brand_context_terminal_recovery_admission_forbidden/u,

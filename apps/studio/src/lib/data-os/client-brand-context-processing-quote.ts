@@ -29,6 +29,63 @@ export type ClientBrandContextProcessingQuoteViewV1 = {
   quote_expires_at: string | null;
 };
 
+export type ClientBrandContextProcessingOperationStateV1 =
+  | "queued"
+  | "running"
+  | "recovering"
+  | "awaiting_authorization"
+  | "completed"
+  | "stale"
+  | "failed";
+export type ClientBrandContextProcessingPhaseV1 =
+  | "waiting"
+  | "preparing_context"
+  | "preparing_interests"
+  | "finalizing";
+export type ClientBrandContextProcessingViewV1 = {
+  contract_version: "client-brand-context-processing-view-v1";
+  workspace_id: string;
+  observed_at: string;
+  /** Remains false until the server owns both composed stages. */
+  can_start: boolean;
+  status: ClientBrandContextProcessingQuoteStatusV1;
+  quote: null | {
+    maximum_micro_usd: string;
+    available_today_micro_usd: string;
+    expires_at: string;
+  };
+  operation: null | {
+    state: ClientBrandContextProcessingOperationStateV1;
+    phase: ClientBrandContextProcessingPhaseV1 | null;
+    request_observed: boolean;
+  };
+};
+
+export type ClientBrandContextProcessingPendingRequestV1 = {
+  workspaceId: string;
+  key: string;
+  confirmation: ClientBrandContextProcessingConfirmationKindV1;
+  quoteObservedAt: string;
+  maximumMicroUsd: string;
+  availableTodayMicroUsd: string;
+  expiresAt: string;
+};
+
+export type ClientBrandContextProcessingConfirmationKindV1 =
+  | "prepare_brand_context_within_shown_cap"
+  | "prepare_brand_context_prototypes_within_shown_cap";
+
+export type ClientBrandContextProcessingConfirmationV1 = {
+  contract_version: "client-brand-context-processing-request-v1";
+  confirmation: ClientBrandContextProcessingConfirmationKindV1;
+  expected_quote: {
+    observed_at: string;
+    maximum_micro_usd: string;
+    available_today_micro_usd: string;
+    expires_at: string;
+  };
+};
+
 const publicStatuses = new Set<ClientBrandContextProcessingQuoteStatusV1>([
   "quote_available", "access_required", "configuration_required", "configuration_expired",
   "processing_paused", "daily_limit_reached", "brand_context_required", "brand_context_outdated",
@@ -43,6 +100,16 @@ const timestamp = (value: unknown) => typeof value === "string"
   && Number.isFinite(Date.parse(value));
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value
   && typeof value === "object" && !Array.isArray(value));
+const operationStates = new Set<ClientBrandContextProcessingOperationStateV1>([
+  "queued", "running", "recovering", "awaiting_authorization", "completed", "stale", "failed"
+]);
+const confirmationKinds = new Set<ClientBrandContextProcessingConfirmationKindV1>([
+  "prepare_brand_context_within_shown_cap", "prepare_brand_context_prototypes_within_shown_cap"
+]);
+const phases = new Set<ClientBrandContextProcessingPhaseV1>([
+  "waiting", "preparing_context", "preparing_interests", "finalizing"
+]);
+const viewKeys = ["can_start", "contract_version", "observed_at", "operation", "quote", "status", "workspace_id"];
 
 export function validClientBrandContextProcessingQuoteViewV1(
   value: unknown
@@ -64,6 +131,125 @@ export function clientBrandContextProcessingQuoteForWorkspaceV1(
   workspaceId: string
 ) {
   return value?.workspace_id === workspaceId && validClientBrandContextProcessingQuoteViewV1(value) ? value : null;
+}
+
+function validOperation(value: unknown): value is NonNullable<ClientBrandContextProcessingViewV1["operation"]> {
+  if (!object(value) || Object.keys(value).sort().join(",") !== "phase,request_observed,state"
+    || typeof value.state !== "string" || !operationStates.has(value.state as ClientBrandContextProcessingOperationStateV1)
+    || typeof value.request_observed !== "boolean"
+    || !(value.phase === null || typeof value.phase === "string" && phases.has(value.phase as ClientBrandContextProcessingPhaseV1))) return false;
+  if (value.state === "queued") return value.phase === "waiting";
+  if (value.state === "running") return value.phase !== null && value.phase !== "waiting";
+  if (value.state === "recovering") return value.phase !== null;
+  return value.phase === null;
+}
+
+export function validClientBrandContextProcessingViewV1(value: unknown): value is ClientBrandContextProcessingViewV1 {
+  const operation = object(value) ? value.operation : undefined;
+  if (!object(value) || Object.keys(value).sort().join(",") !== viewKeys.join(",")
+    || value.contract_version !== "client-brand-context-processing-view-v1"
+    || typeof value.workspace_id !== "string" || !uuid.test(value.workspace_id)
+    || !timestamp(value.observed_at) || typeof value.can_start !== "boolean"
+    || typeof value.status !== "string" || !publicStatuses.has(value.status as ClientBrandContextProcessingQuoteStatusV1)
+    || !(operation === null || validOperation(operation))) return false;
+  if (value.quote !== null && (!object(value.quote)
+    || Object.keys(value.quote).sort().join(",") !== "available_today_micro_usd,expires_at,maximum_micro_usd"
+    || !money(value.quote.maximum_micro_usd) || !money(value.quote.available_today_micro_usd)
+    || !timestamp(value.quote.expires_at))) return false;
+  if (value.status === "quote_available" && value.quote === null) return false;
+  if (operation?.state === "awaiting_authorization" && value.can_start !== true) return false;
+  if (value.can_start && (value.status !== "quote_available" || value.quote === null
+    || operation && !["awaiting_authorization", "stale", "failed"].includes(operation.state))) return false;
+  return !operation || !["queued", "running", "recovering", "completed"].includes(operation.state)
+    || value.can_start === false;
+}
+
+export function clientBrandContextProcessingViewFromQuoteV1(
+  quote: ClientBrandContextProcessingQuoteViewV1
+): ClientBrandContextProcessingViewV1 {
+  return {
+    contract_version: "client-brand-context-processing-view-v1",
+    workspace_id: quote.workspace_id,
+    observed_at: quote.observed_at,
+    can_start: false,
+    status: quote.status,
+    quote: quote.status === "quote_available" && quote.maximum_micro_usd !== null
+      && quote.available_today_micro_usd !== null && quote.quote_expires_at !== null ? {
+        maximum_micro_usd: quote.maximum_micro_usd,
+        available_today_micro_usd: quote.available_today_micro_usd,
+        expires_at: quote.quote_expires_at
+      } : null,
+    operation: null
+  };
+}
+
+export function clientBrandContextProcessingViewForWorkspaceV1(
+  value: ClientBrandContextProcessingViewV1 | null,
+  workspaceId: string
+) {
+  return value?.workspace_id === workspaceId && validClientBrandContextProcessingViewV1(value) ? value : null;
+}
+
+export function latestClientBrandContextProcessingViewV1(current: ClientBrandContextProcessingViewV1 | null,
+  next: ClientBrandContextProcessingViewV1, workspaceId: string) {
+  const previous = clientBrandContextProcessingViewForWorkspaceV1(current, workspaceId);
+  if (!clientBrandContextProcessingViewForWorkspaceV1(next, workspaceId)) return previous;
+  return previous && Date.parse(previous.observed_at) > Date.parse(next.observed_at) ? previous : next;
+}
+
+export function clientBrandContextProcessingPollDelayV1(view: ClientBrandContextProcessingViewV1 | null) {
+  return view?.operation && ["queued", "running", "recovering"].includes(view.operation.state) ? 4_000 : null;
+}
+
+export function clientBrandContextProcessingCanConfirmV1(view: ClientBrandContextProcessingViewV1 | null,
+  submitting = false) {
+  return Boolean(view?.can_start && view.status === "quote_available" && view.quote
+    && Date.parse(view.quote.expires_at) > Date.now() && !submitting
+    && (!view.operation || ["awaiting_authorization", "stale", "failed"].includes(view.operation.state)));
+}
+
+export function clientBrandContextProcessingConfirmationKindV1(
+  view: ClientBrandContextProcessingViewV1
+): ClientBrandContextProcessingConfirmationKindV1 {
+  return view.operation?.state === "awaiting_authorization"
+    ? "prepare_brand_context_prototypes_within_shown_cap"
+    : "prepare_brand_context_within_shown_cap";
+}
+
+export function clientBrandContextProcessingRequestV1(current: ClientBrandContextProcessingPendingRequestV1 | null,
+  view: ClientBrandContextProcessingViewV1, createKey: () => string): ClientBrandContextProcessingPendingRequestV1 {
+  if (!view.quote) throw new Error("brand_context_processing_quote_required");
+  const confirmation = clientBrandContextProcessingConfirmationKindV1(view);
+  if (current?.workspaceId === view.workspace_id && current.confirmation === confirmation) return current;
+  return { workspaceId: view.workspace_id, key: createKey(), confirmation, quoteObservedAt: view.observed_at,
+    maximumMicroUsd: view.quote.maximum_micro_usd, availableTodayMicroUsd: view.quote.available_today_micro_usd,
+    expiresAt: view.quote.expires_at };
+}
+
+export function clientBrandContextProcessingConfirmationV1(
+  request: ClientBrandContextProcessingPendingRequestV1
+): ClientBrandContextProcessingConfirmationV1 {
+  return { contract_version: "client-brand-context-processing-request-v1",
+    confirmation: request.confirmation, expected_quote: {
+      observed_at: request.quoteObservedAt, maximum_micro_usd: request.maximumMicroUsd,
+      available_today_micro_usd: request.availableTodayMicroUsd, expires_at: request.expiresAt
+    } };
+}
+
+export function validClientBrandContextProcessingConfirmationV1(
+  value: unknown
+): value is ClientBrandContextProcessingConfirmationV1 {
+  if (!object(value) || Object.keys(value).sort().join(",") !== "confirmation,contract_version,expected_quote"
+    || value.contract_version !== "client-brand-context-processing-request-v1"
+    || typeof value.confirmation !== "string"
+    || !confirmationKinds.has(value.confirmation as ClientBrandContextProcessingConfirmationKindV1)
+    || !object(value.expected_quote)
+    || Object.keys(value.expected_quote).sort().join(",")
+      !== "available_today_micro_usd,expires_at,maximum_micro_usd,observed_at") return false;
+  return money(value.expected_quote.maximum_micro_usd)
+    && money(value.expected_quote.available_today_micro_usd)
+    && timestamp(value.expected_quote.observed_at)
+    && timestamp(value.expected_quote.expires_at);
 }
 
 const publicStatus: Record<SignalBrandContextProcessingQuoteStatusV1,

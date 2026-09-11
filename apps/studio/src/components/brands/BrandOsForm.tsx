@@ -4,7 +4,7 @@ import { type ClipboardEvent, type FormEvent, type KeyboardEvent, useEffect, use
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { browserWorkspaceTimezone, DEFAULT_WORKSPACE_TIMEZONE } from "@/lib/timezone-catalog";
 import { Icon } from "@/components/ui/Icon";
@@ -32,7 +32,7 @@ export function BrandOsForm({ clientContext }: {
 }) {
   const t = useTranslations("BrandOs.form");
   const router = useRouter();
-  const preparation = useBrandContextPreparation(!clientContext);
+  const preparation = useBrandContextPreparation(false);
   const [brandValue, setBrandValue] = useState("");
   const [displayNameValue, setDisplayNameValue] = useState("");
   const [organizationValue, setOrganizationValue] = useState("");
@@ -94,9 +94,7 @@ export function BrandOsForm({ clientContext }: {
     };
 
     try {
-      const intent = clientContext
-        ? preparation.forUnfundedRequest("create-brand", requestPayload)
-        : preparation.forRequest("create-brand", requestPayload);
+      const intent = preparation.forUnfundedRequest("create-brand", requestPayload);
       const res = await fetch("/api/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
@@ -235,11 +233,10 @@ export function BrandOsForm({ clientContext }: {
 
       <footer className="new-study-actions admin-intake-actions">
         {error && (
-          <p className="new-study-error">
+          <p className="new-study-error" role="alert">
             <Icon name="alert" size={14} /> {error}
           </p>
         )}
-        {!clientContext ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
         <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? (
             <>

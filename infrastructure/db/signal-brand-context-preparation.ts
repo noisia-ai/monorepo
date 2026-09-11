@@ -401,3 +401,42 @@ export async function activateSignalBrandContextGenerationWithQueryableV1(args:S
   if(gen.brand_os_digest!==live.brandOsDigest||gen.knowledge_digest!==live.knowledgeDigest||gen.locale_context_digest!==live.localeContextDigest)return fail('brand_context_source_stale');
   return activate(args.queryable,args,gen,live);
 }
+
+/**
+ * Publish the direct result of a composed client request. The receipt/run proof,
+ * rather than the legacy execute-topics capability, is the only entry point.
+ * The caller owns the READ COMMITTED transaction so publication and the Stage2
+ * plan can share one snapshot and the same semantic-context lock.
+ */
+export async function publishSignalBrandContextComposedGenerationWithQueryableV1(args:{
+  queryable:SignalSemanticContextQueryable;parent_receipt_id:string;actor_user_id:string;
+}){
+  const parent=(await args.queryable.query<{workspace_id:string;organization_id:string;brand_id:string;generation_id:string}>(`
+    SELECT receipt.workspace_id::text,receipt.organization_id::text,receipt.brand_id::text,receipt.generation_id::text
+    FROM signal_brand_context_processing_receipts receipt
+    WHERE receipt.id=$1::uuid AND receipt.actor_user_id=$2::uuid`,[args.parent_receipt_id,args.actor_user_id])).rows[0];
+  if(!parent)return fail('processing_forbidden',403);
+  await args.queryable.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+    [`signal-semantic-context:${parent.workspace_id}`]);
+  const proven=(await args.queryable.query<{valid:boolean}>(
+    'SELECT signal_brand_context_composed_generation_valid_v1($1::uuid) valid',[parent.generation_id])).rows[0]?.valid;
+  if(!proven)return fail('brand_context_semantic_result_not_ready');
+  const gen=(await args.queryable.query<Generation>(`SELECT * FROM signal_semantic_context_generations
+    WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`,[parent.generation_id,parent.workspace_id])).rows[0];
+  if(!gen)return fail('brand_context_generation_not_found',404);
+  const ws:BrandContextWorkspaceV1={id:parent.workspace_id,organizationId:parent.organization_id,
+    subject:{type:'brand',id:parent.brand_id},timezone:(await args.queryable.query<{timezone:string}>(
+      `SELECT timezone FROM signal_workspaces WHERE id=$1::uuid AND organization_id=$2::uuid AND brand_id=$3::uuid AND status='active'`,
+      [parent.workspace_id,parent.organization_id,parent.brand_id])).rows[0]?.timezone??''};
+  if(!ws.timezone)return fail('processing_forbidden',403);
+  const live=await resolveSignalBrandContextAuthorityV1({queryable:args.queryable,workspace:ws});
+  if(gen.brand_os_digest!==live.brandOsDigest||gen.knowledge_digest!==live.knowledgeDigest
+    ||gen.locale_context_digest!==live.localeContextDigest)return fail('brand_context_source_stale');
+  if(gen.status==='draft')await activate(args.queryable,{workspace_id:parent.workspace_id,actor_user_id:args.actor_user_id},gen,live);
+  const published=(await args.queryable.query<{status:string;semantic_context_pack_digest:string|null}>(`
+    SELECT status,semantic_context_pack_digest FROM signal_semantic_context_generations
+    WHERE id=$1::uuid AND workspace_id=$2::uuid`,[parent.generation_id,parent.workspace_id])).rows[0];
+  if(published?.status!=='published'||!published.semantic_context_pack_digest)return fail('brand_context_prototype_publication_required');
+  return{workspace_id:parent.workspace_id,organization_id:parent.organization_id,brand_id:parent.brand_id,
+    generation_id:parent.generation_id,pack_digest:published.semantic_context_pack_digest};
+}

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
 
 import { Icon } from "@/components/ui/Icon";
-import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 
 type Competitor = {
   id: string;
@@ -23,7 +23,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
 }) {
   const t = useTranslations("CompetitorManager");
   const router = useRouter();
-  const preparation = useBrandContextPreparation(!unfunded);
+  const preparation = useBrandContextPreparation(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -35,7 +35,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
     if (!workspaceId) return false;
     const recoveryAction = `recover-competitor-context:${action}`;
     const requestIdentity = { reason: "operator_requested_reconciliation", source_action: action };
-    const intent = preparation.forRequest(recoveryAction, requestIdentity);
+    const intent = preparation.forUnfundedRequest(recoveryAction, requestIdentity);
     try {
       const response = await fetch(`/api/data-os/signal/${workspaceId}/semantic-context/reconcile`, {
         method: "POST",
@@ -57,9 +57,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
     const form = new FormData(targetForm);
     const names = splitList(String(form.get("competitors") ?? ""));
     const action = `add-competitors:${brandId}`;
-    const intent = unfunded
-      ? preparation.forUnfundedRequest(action, { competitors: names })
-      : preparation.forRequest(action, { competitors: names });
+    const intent = preparation.forUnfundedRequest(action, { competitors: names });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "POST",
@@ -88,9 +86,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
     setError(null);
     setPendingId(competitorId);
     const action = `remove-competitor:${competitorId}`;
-    const intent = unfunded
-      ? preparation.forUnfundedRequest(action, { competitor_id: competitorId })
-      : preparation.forRequest(action, { competitor_id: competitorId });
+    const intent = preparation.forUnfundedRequest(action, { competitor_id: competitorId });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors/${competitorId}`, {
         method: "DELETE",
@@ -117,9 +113,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
     setError(null);
     setIsClearing(true);
     const action = `clear-competitors:${brandId}`;
-    const intent = unfunded
-      ? preparation.forUnfundedRequest(action, { competitor_ids: "all-current" })
-      : preparation.forRequest(action, { competitor_ids: "all-current" });
+    const intent = preparation.forUnfundedRequest(action, { competitor_ids: "all-current" });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "DELETE",
@@ -156,7 +150,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
       </header>
       <div className="workspace-resource-section__body">
       {error && (
-        <p className="workspace-form__error">
+        <p className="workspace-form__error" role="alert">
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
@@ -175,7 +169,6 @@ export function CompetitorManager({ brandId, workspaceId, competitors, unfunded 
           <Icon name={isAdding ? "spinner" : "tag"} size={13} /> {t("add")}
         </button>
       </form>
-      {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
       {competitors.length === 0 ? (
         <div className="admin-empty workspace-resource-section__empty">
           <Icon name="info" size={18} />

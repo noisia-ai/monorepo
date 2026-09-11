@@ -72,7 +72,8 @@ async function transaction<T>(database:SignalWorkspaceEmbeddingsDatabaseV1,work:
 type Run={id:string;workspace_id:string;preparation_run_id:string|null;actor_user_id:string;status:string;profile:SignalWorkspaceEmbeddingProfileV1;
  input_contract:SignalWorkspaceEmbeddingInputContractV1;taxonomy_profile_id:string|null;topic_input_digest:string|null;cursor_input_sha256:string|null;
  input_revision:string|null;current_revision:string|null;policy_live:boolean;preparation_complete:boolean;execution_live:boolean;execution_token:string|null;
- worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;
+ worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;processing_admission_id:string|null;
+ brand_context_preparation_operation_id:string|null;hard_cap_micro_usd:string;
  counts:SignalWorkspaceEmbeddingCountsV1|SignalWorkspaceTopicPrototypeCountsV1;observed_exception_micro_usd:string};
 function corpusCursor(run:Run):SignalWorkspaceCorpusEmbeddingCursorV1{return run.cursor_asset_sha256===null?null:{asset_sha256:run.cursor_asset_sha256,chunk_index:run.cursor_chunk_index!};}
 function prototypeCursor(run:Run):SignalWorkspacePrototypeEmbeddingCursorV1{return run.cursor_input_sha256===null?null:{input_sha256:run.cursor_input_sha256};}
@@ -91,6 +92,7 @@ async function lockRun(client:PoolClient,id:string):Promise<Run>{
  const run=(await client.query<Run>(`SELECT run.id,run.workspace_id,run.preparation_run_id,run.actor_user_id,run.status,run.profile,
   run.input_contract,run.taxonomy_profile_id,run.topic_input_digest,run.cursor_input_sha256,
   run.execution_token,run.worker_job_id,run.cursor_asset_sha256,run.cursor_chunk_index,run.counts,run.observed_exception_micro_usd,
+  run.processing_admission_id::text,run.brand_context_preparation_operation_id::text,run.hard_cap_micro_usd::text,
   run.input_revision::text,state.input_revision::text current_revision,
   (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp()) policy_live,
   prep.status='completed' preparation_complete,run.execution_expires_at>clock_timestamp() execution_live
@@ -107,11 +109,58 @@ async function inputsCurrent(client:PoolClient,run:Run):Promise<boolean>{
  catch(error){if(error instanceof SignalTopicCatalogError&&["brand_context_source_stale","brand_context_semantic_context_required"].includes(error.code))return false;
   if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_empty","workspace_topic_catalog_required"].includes(error.code))return false;throw error;}
 }
-async function requireLease(client:PoolClient,lease:SignalWorkspaceEmbeddingLeaseV1):Promise<Run>{
+async function composedPrototypeReceiptExact(client:PoolClient,run:Run):Promise<boolean>{
+ if(run.input_contract!=="topic_prototypes"||run.brand_context_preparation_operation_id!==null||!run.processing_admission_id)return false;
+ return (await client.query<{valid:boolean}>(`SELECT EXISTS(SELECT 1
+   FROM signal_brand_context_prototype_receipts receipt
+   JOIN signal_processing_admissions admission ON admission.id=receipt.admission_id
+   JOIN signal_brand_context_processing_receipts parent ON parent.id=receipt.parent_receipt_id
+   JOIN signal_workspace_embedding_runs owner ON owner.id=receipt.run_id
+   WHERE receipt.run_id=$1::uuid AND receipt.workspace_id=$2::uuid AND receipt.actor_user_id=$3::uuid
+    AND receipt.admission_id=$4::uuid AND receipt.generation_id=parent.generation_id
+    AND receipt.plan_digest=$5 AND receipt.plan->'embedding_profile'=$6::jsonb AND receipt.execution_cap_micro_usd=$7::bigint
+    AND owner.workspace_id=receipt.workspace_id AND owner.actor_user_id=receipt.actor_user_id
+    AND owner.processing_admission_id=receipt.admission_id AND owner.input_contract='topic_prototypes'
+    AND owner.brand_context_preparation_operation_id IS NULL AND owner.taxonomy_profile_id=receipt.taxonomy_profile_id
+    AND owner.topic_input_snapshot=receipt.plan AND owner.topic_input_digest=receipt.plan_digest
+    AND owner.profile=receipt.plan->'embedding_profile' AND owner.hard_cap_micro_usd=receipt.execution_cap_micro_usd
+    AND admission.id=$4::uuid AND admission.target_id=$1::uuid AND admission.workspace_id=$2::uuid
+    AND admission.actor_user_id=$3::uuid AND admission.action='topic_prototype_embeddings' AND admission.automatic
+    AND admission.brand_context_processing_receipt_id=parent.id
+    AND admission.brand_context_prototype_receipt_id=receipt.id
+    AND admission.configuration=receipt.plan->'embedding_profile'
+    AND admission.configuration_digest=receipt.configuration_digest
+    AND admission.execution_cap_micro_usd=receipt.execution_cap_micro_usd
+    AND parent.workspace_id=receipt.workspace_id AND parent.actor_user_id=receipt.actor_user_id) valid`,
+   [run.id,run.workspace_id,run.actor_user_id,run.processing_admission_id,run.topic_input_digest,JSON.stringify(run.profile),run.hard_cap_micro_usd])).rows[0]?.valid??false;
+}
+function capacityError(error:unknown):never{
+ const message=error instanceof Error?error.message:"";
+ if(message==="processing_execution_cap_exhausted"||message==="processing_daily_cap_exhausted")return fail("workspace_embedding_budget_violation");
+ if(/^processing_|^brand_context_admission_/u.test(message))return fail("workspace_embedding_forbidden",403);
+ throw error;
+}
+async function requireRunAuthority(client:PoolClient,run:Run,newWork:boolean){
+ // Historical internal prototype runs have neither a composed admission nor a
+ // preparation pointer. They remain governed by can_execute_topics. A client
+ // composed run is recognizable only by its immutable processing admission.
+ if(run.input_contract!=="topic_prototypes"||run.brand_context_preparation_operation_id!==null
+   ||run.processing_admission_id===null){
+  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_execute_topics)
+   return fail("workspace_embedding_forbidden",403);
+  return;
+ }
+ if(!await composedPrototypeReceiptExact(client,run))return fail("workspace_embedding_forbidden",403);
+ if(newWork){try{await client.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+   ARRAY['topic_prototype_embeddings'],$5,$6,$7::jsonb,$8::bigint)`,[run.workspace_id,run.actor_user_id,run.id,
+   run.processing_admission_id,run.profile.provider,run.profile.model,JSON.stringify(run.profile),run.hard_cap_micro_usd]);}
+  catch(error){capacityError(error);}}
+}
+async function requireLease(client:PoolClient,lease:SignalWorkspaceEmbeddingLeaseV1,newWork=true):Promise<Run>{
  const run=await lockRun(client,lease.run_id);
  if(run.workspace_id!==lease.workspace_id||run.input_contract!==(lease.input_contract??"corpus")||run.status!=="running"||run.execution_token!==lease.execution_token||!run.execution_live)return fail("workspace_embedding_lease_lost");
- if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_execute_topics)return fail("workspace_embedding_forbidden",403);
- if(!await inputsCurrent(client,run))return fail("workspace_embedding_inputs_changed");
+ await requireRunAuthority(client,run,newWork);
+ if(newWork&&!await inputsCurrent(client,run))return fail("workspace_embedding_inputs_changed");
  if(Number(run.observed_exception_micro_usd)>0)return fail("workspace_embedding_budget_violation");
  if(!same(cursor(run),lease.cursor))return fail("workspace_embedding_checkpoint_conflict");
  await client.query("UPDATE signal_workspace_embedding_runs SET execution_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1::uuid",[run.id]);return run;
@@ -119,7 +168,8 @@ async function requireLease(client:PoolClient,lease:SignalWorkspaceEmbeddingLeas
 export async function claimSignalWorkspaceEmbeddingRunV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;run_id:string;worker_job_id:string}):Promise<SignalWorkspaceEmbeddingLeaseV1|null>{
  return transaction(args.database,async client=>{const run=await lockRun(client,args.run_id);
   if(run.worker_job_id!==args.worker_job_id||!["queued","running"].includes(run.status)||run.status==="running"&&run.execution_live)return null;
-  const allowed=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_execute_topics;
+  let allowed=true;try{await requireRunAuthority(client,run,true);}catch(error){
+   if(error instanceof SignalWorkspaceEmbeddingsError&&error.code==="workspace_embedding_forbidden")allowed=false;else throw error;}
   const stale=allowed?!await inputsCurrent(client,run):false;
   if(!allowed||stale){await client.query(`UPDATE signal_workspace_embedding_runs SET status=$2,error_code=$3,execution_token=NULL,execution_expires_at=NULL,
    updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id,stale?"stale":"failed",stale?"workspace_embedding_inputs_changed":"workspace_embedding_forbidden"]);return null;}
@@ -369,7 +419,7 @@ export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:Signa
    validateStoredVectors(call,args.validated);return settleCall(client,call,args.validated.total_tokens);
   });if(!settled)return fail("workspace_embedding_budget_violation");
  }
- return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,false);
   const batch=await verifyBatch(client,run,args.batch);
   if(batch.inputs.length>0&&!args.call_id)return fail("workspace_embedding_page_incomplete");
   let inserted=0;
@@ -409,7 +459,7 @@ export async function commitSignalWorkspaceEmbeddingBatchV1(args:{database:Signa
  });
 }
 export async function finishSignalWorkspaceEmbeddingsV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1}):Promise<{status:"completed"}>{
- return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,false);
   if(run.input_contract==="topic_prototypes"){
    const counts=run.counts as SignalWorkspaceTopicPrototypeCountsV1,coverage=await prototypeCoverage(client,run);
    if(counts.completed_topics!==counts.total_topics||counts.processed_unique_inputs!==counts.total_unique_inputs
@@ -462,9 +512,14 @@ export async function failSignalWorkspaceEmbeddingCallV1(args:{database:SignalWo
 
 export async function claimSignalWorkspaceEmbeddingsDispatchV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;limit?:number}):Promise<SignalWorkspaceEmbeddingDispatchV1[]>{
  return transaction(args.database,async client=>(await client.query<SignalWorkspaceEmbeddingDispatchV1>(`WITH selected AS (
-  SELECT id FROM signal_workspace_embedding_runs WHERE status IN('queued','running') AND available_at<=clock_timestamp()
+  SELECT run.id FROM signal_workspace_embedding_runs run WHERE run.status IN('queued','running') AND run.available_at<=clock_timestamp()
    AND (dispatch_status='pending' OR dispatch_status='dispatching' AND dispatch_expires_at<clock_timestamp())
-  ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $1
+   AND (run.input_contract<>'topic_prototypes' OR run.brand_context_preparation_operation_id IS NOT NULL OR EXISTS(
+    SELECT 1 FROM signal_brand_context_prototype_receipts receipt JOIN signal_processing_admissions admission ON admission.id=receipt.admission_id
+    WHERE receipt.run_id=run.id AND receipt.admission_id=run.processing_admission_id AND receipt.workspace_id=run.workspace_id
+     AND receipt.actor_user_id=run.actor_user_id AND admission.target_id=run.id AND admission.brand_context_prototype_receipt_id=receipt.id
+     AND admission.brand_context_processing_receipt_id=receipt.parent_receipt_id AND admission.action='topic_prototype_embeddings'))
+  ORDER BY run.created_at,run.id FOR UPDATE OF run SKIP LOCKED LIMIT $1
  ) UPDATE signal_workspace_embedding_runs run SET dispatch_status='dispatching',dispatch_token=gen_random_uuid(),dispatch_attempts=dispatch_attempts+1,
   dispatch_expires_at=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp() FROM selected WHERE run.id=selected.id
   RETURNING run.id run_id,run.workspace_id,run.worker_job_id,run.dispatch_token`,[Math.max(1,Math.min(32,args.limit??8))])).rows);

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { ArrowLeft, ArrowRight, Buildings, Plus } from "@phosphor-icons/react/dist/ssr";
 import { getLocale, getTranslations } from "next-intl/server";
 
@@ -23,18 +24,45 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function BrandsPage({ searchParams }: { searchParams?: StudioSearchParams }) {
-  const [t, locale, session, params] = await Promise.all([
+  const [t, session, params] = await Promise.all([
     getTranslations("AdminWorkspace"),
-    getLocale(),
     requireStudioUser("/studio/brands"),
     resolveSearchParams(searchParams)
   ]);
+  return (
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <Link className="admin-button admin-button--primary" href="/studio/brands/new" prefetch={false}>
+            <Plus aria-hidden size={15} weight="bold" />{t("brands.actions.create")}
+          </Link>
+        )}
+        eyebrow={t("brands.eyebrow")}
+        icon={<Buildings aria-hidden size={21} weight="fill" />}
+        subtitle={t("loading.brands.subtitle")}
+        title={t("brands.title")}
+      />
+
+      <Suspense fallback={<section aria-busy="true" aria-live="polite" className="admin-section">
+        <p className="admin-table__muted" role="status">{t("loading.brands.subtitle")}</p>
+      </section>}>
+        <BrandWorkspaceResults params={params} user={session.appUser} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function BrandWorkspaceResults({ params, user }: {
+  params: Record<string, string | string[] | undefined>;
+  user: Awaited<ReturnType<typeof requireStudioUser>>["appUser"];
+}) {
+  const [t, locale] = await Promise.all([getTranslations("AdminWorkspace"), getLocale()]);
   const query = getSearchParam(params, "q")?.trim().toLocaleLowerCase() ?? "";
   const organization = getSearchParam(params, "organization")?.trim().toLocaleLowerCase() ?? "";
   const status = getSearchParam(params, "status") ?? "";
   const page = getPositiveNumber(getSearchParam(params, "page"), 1);
   const pageSize = 30;
-  const rows = (await listAdminBrandWorkspaces(session.appUser)).filter((brand) => {
+  const rows = (await listAdminBrandWorkspaces(user)).filter((brand) => {
     const queryMatches = !query || [brand.brandName, brand.brandSlug, brand.industry]
       .some((value) => value?.toLocaleLowerCase().includes(query));
     const organizationMatches = !organization
@@ -46,20 +74,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
   const safePage = Math.min(page, totalPages);
   const visible = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  return (
-    <div className="admin-workspace-page">
-      <AdminWorkspaceHeader
-        actions={(
-          <Link className="admin-button admin-button--primary" href="/studio/brands/new" prefetch={false}>
-            <Plus aria-hidden size={15} weight="bold" />{t("brands.actions.create")}
-          </Link>
-        )}
-        eyebrow={t("brands.eyebrow")}
-        icon={<Buildings aria-hidden size={21} weight="fill" />}
-        subtitle={t("brands.subtitle", { count: rows.length })}
-        title={t("brands.title")}
-      />
-
+  return <>
       <AdminResourceSection
         actions={<span className="admin-table__muted">{t("brands.table.count", { count: rows.length })}</span>}
         className="admin-brands-index"
@@ -144,8 +159,7 @@ export default async function BrandsPage({ searchParams }: { searchParams?: Stud
           </Link>
         </nav>
       ) : null}
-    </div>
-  );
+    </>;
 }
 
 function pageHref(params: Record<string, string | string[] | undefined>, page: number) {

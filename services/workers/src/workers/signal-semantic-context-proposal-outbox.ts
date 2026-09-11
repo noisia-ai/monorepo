@@ -3,11 +3,14 @@ import type { Pool } from "pg";
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION } from "@noisia/query-engine";
 
-import { advanceSignalBrandContextPreparationsV1, signalBrandContextPreparationRuntimeFromEnvV1,
+import { advancePendingSignalBrandContextComposedProcessingV1, advanceSignalBrandContextPreparationsV1,
+  signalBrandContextPreparationRuntimeFromEnvV1,
   type SignalBrandContextPreparationRuntimeV1 } from '@noisia/db';
 type QueueLike = { add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown> };
 type Options = { database?: Pick<Pool, "query">; queue?: QueueLike; interval_ms?: number;
   preparation?:{database:Pick<Pool,"connect"|"query">;runtime:SignalBrandContextPreparationRuntimeV1};
+  composed?:{database:Pick<Pool,"connect"|"query">;provider_available:boolean};
+  advance_composed_pending?:typeof advancePendingSignalBrandContextComposedProcessingV1;
   run_immediately?: boolean; batch_size?: number; lease_seconds?: number; max_attempts?: number };
 
 export async function drainSignalSemanticContextProposalOutboxV1(options: Options = {}) {
@@ -17,13 +20,21 @@ export async function drainSignalSemanticContextProposalOutboxV1(options: Option
   const preparation=options.preparation??(!options.database?{database:(await import('../db/client')).pool,
     runtime:signalBrandContextPreparationRuntimeFromEnvV1(process.env,{queue_configured:true,worker_alive:true,recovery_alive:true})}:null);
   const preparationResults=preparation?await advanceSignalBrandContextPreparationsV1(preparation):[];
+  const composed=options.composed??(!options.database&&preparation?{database:preparation.database,
+    provider_available:preparation.runtime.prototype.available}:null);
+  const composedResults=composed?await (options.advance_composed_pending
+    ?? advancePendingSignalBrandContextComposedProcessingV1)({
+    database:composed.database,provider_available:composed.provider_available}):[];
   const claimed = await database.query<{ outbox_id: string; run_id: string; workspace_id: string;
     lease_token: string; worker_job_id: string; dispatch_attempt: number }>(`
     SELECT outbox_id::text,run_id::text,workspace_id::text,lease_token::text,worker_job_id,dispatch_attempt
     FROM claim_signal_semantic_context_proposal_dispatch_v1($1,$2,$3)`, [
     options.batch_size ?? 20, options.lease_seconds ?? 60, options.max_attempts ?? 5
   ]);
-  const result = { claimed: claimed.rows.length, dispatched: 0, failed: 0, dead_lettered: 0 };
+  const result = { claimed: claimed.rows.length, dispatched: 0, failed: 0, dead_lettered: 0,
+    composed_advanced:composedResults.filter(item=>!["blocked","runtime_unavailable","not_applicable"].includes(item.state)).length,
+    composed_blocked:composedResults.filter(item=>item.state==="blocked").length,
+    composed_runtime_unavailable:composedResults.filter(item=>item.state==="runtime_unavailable").length };
   for (const row of claimed.rows) {
     try {
       await queue.add(SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME, {

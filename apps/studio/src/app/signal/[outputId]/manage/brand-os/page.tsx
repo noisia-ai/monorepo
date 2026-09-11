@@ -53,7 +53,8 @@ export default async function ClientBrandOsPage({ params }: { params: Promise<{ 
     />
     <CompetitorManager brandId={brand.id} workspaceId={entry.workspaceId} competitors={brand.competitors} unfunded />
     <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} unfunded />
-    <ClientBrandContextProcessingQuote workspaceId={entry.workspaceId} refreshSignal={new Date().toISOString()} />
+    <ClientBrandContextProcessingQuote workspaceId={entry.workspaceId} refreshSignal={new Date().toISOString()}
+      authorizeFromEndpoint />
     <AdminResourceSection
       actions={<Link className="admin-button admin-button--primary" href={entry.navigation.topicsHref} prefetch={false}>
         {t("brandOs.topics.action")}<ArrowRight aria-hidden size={14} />

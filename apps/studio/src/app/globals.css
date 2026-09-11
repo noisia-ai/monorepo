@@ -21133,6 +21133,9 @@ body:has(.signal-report)::before { display: none; }
 .client-brand-context-quote__amounts div { display: grid; gap: 2px; }
 .client-brand-context-quote__amounts dt { color: var(--neutral-08); font-size: 11px; }
 .client-brand-context-quote__amounts dd { margin: 0; color: var(--neutral-12); font-size: 14px; font-weight: 700; }
+.client-brand-context-quote__phase { margin: 10px 0 0; color: var(--neutral-11); font-size: 13px; font-weight: 600; }
+.client-brand-context-quote__confirmation { display: grid; justify-items: start; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--neutral-04); }
+.client-brand-context-quote__confirmation p { margin: 0; color: var(--neutral-10); font-size: 13px; line-height: 1.5; }
 .brand-monitoring-advanced { padding: 18px; }
 .brand-monitoring-advanced > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
 .brand-monitoring-advanced[open] > summary { margin-bottom: 16px; }
@@ -21146,6 +21149,9 @@ body:has(.signal-report)::before { display: none; }
   .brand-monitoring-journey ol, .brand-monitoring-journey li, .brand-monitoring-journey a { width: 100%; }
   .brand-monitoring-journey a { box-sizing: border-box; }
   .client-processing-journey__steps { grid-template-columns: 1fr; }
+  .client-brand-context-quote__head { flex-direction: column; }
+  .client-brand-context-quote__amounts { display: grid; grid-template-columns: 1fr; }
+  .client-brand-context-quote__confirmation, .client-brand-context-quote__confirmation .admin-button { width: 100%; }
 }
 
 .self-service-import-fields, fieldset.topics-manager__form { margin: 0; padding: 0; border: 0; min-width: 0; }

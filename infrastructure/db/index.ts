@@ -69,6 +69,7 @@ export * from "./signal-workspace-incremental-editorial-renewal";
 
 export * from "./signal-brand-context-authority";
 export * from "./signal-brand-context-preparation";
+export * from "./signal-brand-context-prototype-processing";
 export * from './signal-brand-os-snapshot';
 
 export * from "./signal-processing-policy";

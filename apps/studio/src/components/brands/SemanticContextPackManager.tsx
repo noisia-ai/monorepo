@@ -1,7 +1,7 @@
 "use client";
 
 import type { SignalBrandContextPreparationV1 } from "@noisia/db";
-import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 
 import {
   ArrowClockwise,
@@ -213,7 +213,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
   const locale = useLocale();
   const base = `/api/data-os/signal/${workspaceId}/semantic-context`;
-  const preparationQuote = useBrandContextPreparation();
+  const preparationIntent = useBrandContextPreparation(false);
   const [preparation, setPreparation] = useState<SignalBrandContextPreparationV1 | null>(null);
   const [preparationLoading, setPreparationLoading] = useState(true);
   const [preparationError, setPreparationError] = useState(false);
@@ -375,24 +375,20 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
     try {
       const action = `reconcile:${workspaceId}`;
       const requestIdentity = {reason, generation_key: activeGenerationKey};
-      const intent = reasonOverride
-        ? preparationQuote.forUnfundedRequest(action, requestIdentity)
-        : preparationQuote.forRequest(action, requestIdentity);
+      const intent = preparationIntent.forUnfundedRequest(action, requestIdentity);
       await requestJson(`${base}/reconcile`, { method: "POST", headers: {
         "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key
       }, body: JSON.stringify({ reason, preparation: intent,
         ...(reasonOverride ? { expected_generation_key: activeGenerationKey } : {}) }) });
-      preparationQuote.accepted(action);
+      preparationIntent.accepted(action);
       window.sessionStorage.removeItem(runStorageKey);
       setBoundRun(null); setDrawer(null); setPreflight(null); setBudgetConfirmed(false);
       setTerminalSuccessorOpen(false); await Promise.all([load(), loadPreparation()]);
     } catch (reconcileError) {
       const code = reconcileError && typeof reconcileError === "object" && "code" in reconcileError
         ? String(reconcileError.code) : null;
-      if (code === "brand_context_quote_changed") {
-        await preparationQuote.refresh(`reconcile:${workspaceId}`, { renewIntent: true });
-        setError(t("errors.quoteChanged"));
-      } else setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
+      if (code === "brand_context_quote_changed") setError(t("errors.quoteChanged"));
+      else setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
     } finally { setBusy(null); }
   }
 
@@ -447,10 +443,8 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
             <p>{t(preparation.state === "ready" ? "automatic.readyBody" : preparation.state === "awaiting_authorization" ? "automatic.awaitingBody" : preparation.state === "failed" ? "automatic.failedBody" : "automatic.preparationBody")}</p></div>
         </div> : null}
         {!preparationPending && (preparation?.state === "awaiting_authorization" || !generation) ? <>
-          <BrandContextPreparationNotice quote={preparationQuote.quote} loading={preparationQuote.loading}/>
           {generation ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.continue")}</button> : null}
         </> : !preparationPending ? <details className="semantic-context-pack__regenerate"><summary>{t("automatic.regenerate")}</summary>
-          <BrandContextPreparationNotice quote={preparationQuote.quote} loading={preparationQuote.loading}/>
           <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.regenerate")}</button>
         </details> : null}
       </div> : null}

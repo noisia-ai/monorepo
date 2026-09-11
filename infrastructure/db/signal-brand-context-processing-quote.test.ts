@@ -17,7 +17,7 @@ const authority = { workspace_status: "active", brand_status: "active", actor_st
 const semantic = { action: "brand_context_proposal", kind: "provider", provider: "anthropic", model: "claude-sonnet-4-6",
   configuration_digest: hash("a"), max_execution_micro_usd: "500000", automatic_allowed: false };
 const prototype = { action: "topic_prototype_embeddings", kind: "provider", provider: "voyage", model: "voyage-4-large",
-  configuration_digest: hash("b"), max_execution_micro_usd: "20000", automatic_allowed: false };
+  configuration_digest: hash("b"), max_execution_micro_usd: "20000", automatic_allowed: true };
 const policy = { id: policyId, version: "9007199254740993", status: "active", policy_digest: hash("c"),
   valid_from: "2026-09-11T00:00:00Z", valid_until: "2026-09-12T23:00:00Z", budget_timezone: "America/Mexico_City",
   daily_cap_micro_usd: "1000000", budget_date: "2026-09-11", current: true,
@@ -120,6 +120,7 @@ test("missing action and incompatible model/config digest fail closed without su
   for (const entry of [ { actions: [semantic], status: "action_missing" },
     { actions: [{ ...semantic, action: "topic_interpretation" }, prototype], status: "action_missing" },
     { actions: [semantic, { ...prototype, model: "voyage-4" }], status: "action_incompatible" },
+    { actions: [semantic, { ...prototype, automatic_allowed: false }], status: "action_incompatible" },
     { actions: [{ ...semantic, configuration_digest: "unsealed" }, prototype], status: "action_incompatible" },
     { actions: [{ ...semantic, max_execution_micro_usd: "0" }, prototype], status: "action_incompatible" } ]) {
     const value = await read({ policy: { ...policy, actions: entry.actions } });
@@ -206,7 +207,26 @@ test("database clock controls expiry; budget rollover cannot reuse previous-day 
 test("public loader owns one read-only snapshot and always releases; no admissions or run writes", async () => {
   for (const fail of [false, true]) {
     const f = fixture(fail ? { authority: { same_organization: false } } : {});
-    const database = { async connect() { return { query: f.queryable.query,
+    const expected = fail ? null : await readSignalBrandContextProcessingQuoteWithQueryableV1({
+      ...fixture(), workspace_id: workspace, actor_user_id: actor, action_availability: health
+    });
+    const query = async (sql: string, values?: unknown[]) => {
+      if (sql.includes("signal_brand_context_processing_quote_v1")) {
+        assert.deepEqual(values, [workspace, actor]);
+        return { rows: [{ quote_digest: hash("f"), observed_at: "2026-09-11T18:00:00Z",
+          quote_expires_at: "2026-09-11T18:05:00Z", budget_date: expected!.budget_date,
+          remaining_micro_usd: expected!.remaining_micro_usd,
+          ...expected!.exposure, policy_id: expected!.policy!.id, policy_version: expected!.policy!.version,
+          policy_digest: expected!.policy!.digest,
+          semantic_configuration_digest: expected!.actions[0]!.configuration_digest,
+          prototype_configuration_digest: expected!.actions[1]!.configuration_digest,
+          semantic_cap_micro_usd: expected!.actions[0]!.max_execution_micro_usd,
+          prototype_cap_micro_usd: expected!.actions[1]!.max_execution_micro_usd,
+          source_authority_digest: expected!.source!.authority_digest }], rowCount: 1 };
+      }
+      return f.queryable.query(sql, values);
+    };
+    const database = { async connect() { return { query,
       release() { f.statements.push("release"); } }; } } as unknown as Parameters<typeof loadSignalBrandContextProcessingQuoteV1>[0]["database"];
     const promise = loadSignalBrandContextProcessingQuoteV1({ database, workspace_id: workspace, actor_user_id: actor, action_availability: health });
     if (fail) await assert.rejects(promise); else assert.equal((await promise).can_start, false);

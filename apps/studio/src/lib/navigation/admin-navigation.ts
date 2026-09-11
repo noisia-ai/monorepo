@@ -71,8 +71,6 @@ export function buildBrandContextNavigation(brandId: string): BrandContextNaviga
     { key: "topics", href: `${base}/topics` },
     { key: "data", href: `${base}/data` },
     { key: "data-mentions", href: `${base}/data/mentions`, depth: 1 },
-    { key: "data-review", href: `${base}/data/review`, depth: 1 },
-    { key: "data-discovery-review", href: `${base}/data/discovery-review`, depth: 1 },
     { key: "reports", href: `${base}/reports` },
     { key: "settings", href: `${base}/settings` }
   ];

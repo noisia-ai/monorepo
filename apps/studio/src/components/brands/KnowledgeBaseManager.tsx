@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 import { Icon } from "@/components/ui/Icon";
 import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 import { BRAND_KNOWLEDGE_SOURCE_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
@@ -17,14 +17,14 @@ type KnowledgeSource = {
   status: string;
 };
 
-export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
+export function KnowledgeBaseManager({ brandId, sources }: {
   brandId: string;
   sources: KnowledgeSource[];
   unfunded?: boolean;
 }) {
   const t = useTranslations("KnowledgeBaseManager");
   const router = useRouter();
-  const preparation = useBrandContextPreparation(!unfunded);
+  const preparation = useBrandContextPreparation(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
     const form = new FormData(targetForm);
     const payload = payloadFromForm(form);
     const action = `add-knowledge:${brandId}`;
-    const intent = unfunded ? preparation.forUnfundedRequest(action, payload) : preparation.forRequest(action, payload);
+    const intent = preparation.forUnfundedRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge`, {
         method: "POST",
@@ -74,7 +74,7 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
     const form = new FormData(event.currentTarget);
     const action = `edit-knowledge:${sourceId}`;
     const payload = payloadFromForm(form);
-    const intent = unfunded ? preparation.forUnfundedRequest(action, payload) : preparation.forRequest(action, payload);
+    const intent = preparation.forUnfundedRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, {
         method: "PATCH",
@@ -98,9 +98,7 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
     setPendingId(sourceId);
 
     const action = `delete-knowledge:${sourceId}`;
-    const intent = unfunded
-      ? preparation.forUnfundedRequest(action, { source_id: sourceId })
-      : preparation.forRequest(action, { source_id: sourceId });
+    const intent = preparation.forUnfundedRequest(action, { source_id: sourceId });
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, { method: "DELETE",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
@@ -129,7 +127,7 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
       </header>
       <div className="workspace-resource-section__body">
       {error && (
-        <p className="workspace-form__error">
+        <p className="workspace-form__error" role="alert">
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
@@ -159,7 +157,6 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
             <span>{t("content")}</span>
             <textarea className="workspace-control workspace-control--textarea" name="raw_text" required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} placeholder={t("contentPlaceholder")} rows={4} />
           </label>
-          {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
           <div className="workspace-form__actions">
             <button className="admin-button admin-button--primary" type="submit" disabled={isAdding}>
               <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
@@ -201,7 +198,6 @@ export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
                   <span>{t("content")}</span>
                   <textarea className="workspace-control workspace-control--textarea" name="raw_text" defaultValue={source.rawText ?? ""} required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} rows={5} />
                 </label>
-                {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
                 <div className="workspace-form__actions workspace-form__actions--between">
                   <button className="admin-button admin-button--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
                     <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}

@@ -3981,11 +3981,16 @@
     "refresh": "Refresh",
     "loadError": "We could not load semantic preparation.",
     "refreshError": "We could not refresh it. The last visible reading is preserved.",
+    "requestError": "We could not confirm the request. Retrying will check the same request to prevent duplicates.",
     "forbidden": "Your access to this brand is no longer available.",
     "maximum": "Maximum for this preparation",
     "availableToday": "Available today",
     "expires": "Quote valid until {time}.",
     "informational": "This reading is informational. It does not start processing, reserve budget, or send information to models.",
+    "authorization": "You authorize up to {maximum}. Available today: {available}.",
+    "authorizationPrototypes": "The context is ready. You authorize up to {maximum} to prepare the interests for this version. Available today: {available}.",
+    "confirm": "Confirm and prepare",
+    "confirming": "Confirming…",
     "states": {
       "quote_available": "Maximum cost calculated",
       "access_required": "Access required",
@@ -3997,7 +4002,14 @@
       "brand_context_outdated": "Context update required",
       "market_language_required": "Define market and language",
       "preparation_required": "Preparation pending",
-      "temporarily_unavailable": "Temporarily unavailable"
+      "temporarily_unavailable": "Temporarily unavailable",
+      "queued": "Request saved",
+      "running": "Preparing context",
+      "recovering": "Recovering preparation",
+      "awaiting_authorization": "Interests ready to authorize",
+      "completed": "Context ready",
+      "stale": "Context update required",
+      "failed": "Preparation interrupted"
     },
     "help": {
       "quote_available": "The system calculated the maximum cap. Activation from your account is still pending.",
@@ -4010,7 +4022,20 @@
       "brand_context_outdated": "Brand OS or its sources changed. The next preparation will use the updated context.",
       "market_language_required": "Define at least one market and a primary language to prepare context.",
       "preparation_required": "Interests still need a complete semantic foundation before you continue.",
-      "temporarily_unavailable": "Refresh the reading when preparation becomes available again."
+      "temporarily_unavailable": "Refresh the reading when preparation becomes available again.",
+      "queued": "The request was saved and is waiting for processing capacity.",
+      "running": "Preparation is progressing within the cap you confirmed.",
+      "recovering": "The system is checking the same request. It does not need another authorization.",
+      "awaiting_authorization": "Brand context is ready. Authorize its interest preparation within the current cap to complete this version.",
+      "completed": "Context and interests are prepared for the next analyses.",
+      "stale": "Brand OS or its sources changed. The previous result remains available until the new version is prepared.",
+      "failed": "The request was interrupted. Saved progress and results remain available."
+    },
+    "phases": {
+      "waiting": "Waiting for processing capacity.",
+      "preparing_context": "Building the brand semantic foundation.",
+      "preparing_interests": "Preparing interests as a reusable set.",
+      "finalizing": "Validating and saving the new version."
     }
   },
   "ClientProcessing": {

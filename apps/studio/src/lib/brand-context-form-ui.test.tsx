@@ -7,6 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { BrandOsForm } from "../components/brands/BrandOsForm";
 import { BrandEditForm } from "../components/brands/BrandEditForm";
+import { CompetitorManager } from "../components/brands/CompetitorManager";
 import { KnowledgeBaseManager } from "../components/brands/KnowledgeBaseManager";
 import { WorkspaceTimezoneField } from "../components/admin/WorkspaceTimezoneField";
 import { BrandContextPreparationNotice, brandContextPreparationIntent, parseBrandContextPreparationQuote, refreshedBrandContextPreparationIntent } from "../components/brands/BrandContextPreparationNotice";
@@ -59,15 +60,22 @@ test("quote refresh preserves a committed request intent and explicit reauthoriz
 
 test("a committed brand mutation does not ask the user to submit it again when preparation is pending", async () => {
   const components = await Promise.all([
-    "BrandOsForm.tsx", "BrandEditForm.tsx", "KnowledgeBaseManager.tsx", "CompetitorManager.tsx"
+    "BrandOsForm.tsx", "BrandEditForm.tsx", "KnowledgeBaseManager.tsx", "CompetitorManager.tsx", "SemanticContextPackManager.tsx"
   ].map(name => readFile(new URL(`../components/brands/${name}`, import.meta.url), "utf8")));
   for (const source of components) {
     assert.doesNotMatch(source, /brand_context_preparation\?\.error_code[\s\S]{0,220}throw new Error\(t\("contextPending"\)\)/u);
-    assert.match(source, /preparation\.accepted\(/u);
+    assert.match(source, /preparation(?:Intent)?\.accepted\(/u);
+    assert.match(source, /useBrandContextPreparation\(false\)/u);
+    assert.match(source, /preparation(?:Intent)?\.forUnfundedRequest\(/u);
+    assert.doesNotMatch(source, /<BrandContextPreparationNotice|preparation(?:Intent)?\.forRequest\(/u);
   }
   assert.match(components[0]!, /`\/studio\/brands\/\$\{json\.data\.id\}\/brand-os`/u);
   assert.match(components[0]!, /knowledge_notes:\s*rawKnowledgeNotes/u);
   assert.doesNotMatch(components[0]!, /withRawContext/u);
+  assert.match(components[0]!, /className="new-study-error" role="alert"/u);
+  for (const source of [components[2]!, components[3]!]) {
+    assert.match(source, /className="workspace-form__error" role="alert"/u);
+  }
 });
 
 test("domain and preparation idempotency identities cannot diverge on compound writes", async () => {
@@ -246,11 +254,13 @@ for (const locale of ["es-MX", "en-US"]) {
     for (const key of ["brand", "aliases", "competitors", "description", "notes"] as const) {
       assert.ok(created.includes(messages.BrandOs.form[key]));
     }
+    assert.doesNotMatch(created, /brand-context-preparation-notice|USD 101/u);
     const edited = render(<BrandEditForm brand={{ id: "brand-one", organizationId: "org-one", slug: "brand-one", name: "Client brand", displayName: null,
       industry: null, industrySub: null, countries: ["MX"], description: null, brandSeedHandles: null, status: "active", timezone: "Asia/Tokyo" }}
       organizations={[{ id: "org-one", name: "Client organization" }]} />);
     assert.match(edited, /name="timezone" type="hidden" value="Asia\/Tokyo"/u);
     assert.doesNotMatch(edited, /name="timezone"[^>]*maxLength/u);
+    assert.doesNotMatch(edited, /brand-context-preparation-notice|USD 101/u);
     const invalid = render(<BrandEditForm brand={{ id: "brand-one", organizationId: "org-one", slug: "brand-one", name: "Client brand", displayName: null,
       industry: null, industrySub: null, countries: ["MX"], description: null, brandSeedHandles: null, status: "active", timezone: "invalid/legacy" }}
       organizations={[{ id: "org-one", name: "Client organization" }]} />);
@@ -283,11 +293,18 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html,/<select[^>]*name="source_kind"/u);
     assert.doesNotMatch(html,/<input class="workspace-control" name="source_kind"/u);
     assert.doesNotMatch(html, /<details[^>]* open/u, "adding is explicit; no form opens or submits on mount");
+    assert.doesNotMatch(html, /brand-context-preparation-notice|USD 101/u);
   });
   test(`${locale}: empty knowledge state still offers the same add action`, () => {
     const html = render(<KnowledgeBaseManager brandId="brand-one" sources={[]} />);
     assert.ok(html.includes(messages.KnowledgeBaseManager.addNew));
     assert.ok(html.includes(messages.KnowledgeBaseManager.empty));
+    assert.doesNotMatch(html, /brand-context-preparation-notice|USD 101/u);
+  });
+  test(`${locale}: competitor editing remains available without a legacy price notice`, () => {
+    const html = render(<CompetitorManager brandId="brand-one" workspaceId={null} competitors={[]} />);
+    assert.ok(html.includes(messages.CompetitorManager.add));
+    assert.doesNotMatch(html, /brand-context-preparation-notice|USD 101/u);
   });
 }
 
