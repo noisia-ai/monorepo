@@ -5,6 +5,7 @@ import { ArrowRight, IdentificationCard } from "@phosphor-icons/react/dist/ssr";
 
 import { AdminResourceSection, AdminWorkspaceHeader } from "@/components/admin/AdminWorkspacePrimitives";
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
+import { ClientBrandContextProcessingQuote } from "@/components/brands/ClientBrandContextProcessingQuote";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
@@ -52,6 +53,7 @@ export default async function ClientBrandOsPage({ params }: { params: Promise<{ 
     />
     <CompetitorManager brandId={brand.id} workspaceId={entry.workspaceId} competitors={brand.competitors} unfunded />
     <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} unfunded />
+    <ClientBrandContextProcessingQuote workspaceId={entry.workspaceId} refreshSignal={new Date().toISOString()} />
     <AdminResourceSection
       actions={<Link className="admin-button admin-button--primary" href={entry.navigation.topicsHref} prefetch={false}>
         {t("brandOs.topics.action")}<ArrowRight aria-hidden size={14} />

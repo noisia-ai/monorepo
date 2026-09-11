@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import React, { createElement, type ComponentProps } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NextIntlClientProvider } from "next-intl";
 import type { SignalBrandContextPreparationRuntimeV1, SignalBrandContextProcessingQuoteV1 } from "@noisia/db";
+import { ClientBrandContextProcessingQuote } from "../../components/brands/ClientBrandContextProcessingQuote";
 import { createClientBrandContextProcessingQuoteGetV1 } from "./client-brand-context-processing-quote-route";
-import { toClientBrandContextProcessingQuoteViewV1 } from "./client-brand-context-processing-quote";
+import { clientBrandContextProcessingQuoteForWorkspaceV1, toClientBrandContextProcessingQuoteViewV1,
+  validClientBrandContextProcessingQuoteViewV1 } from "./client-brand-context-processing-quote";
 import { signalBrandContextProcessingActionAvailabilityV1 } from "./signal-brand-context-processing-quote";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -22,6 +28,8 @@ const internal = {
     locale_context_digest: digest, primary_locale: "es-MX", locale_variants: ["es-MX"], markets: ["MX"] }
 } as SignalBrandContextProcessingQuoteV1;
 
+Object.assign(globalThis, { React });
+
 test("public Brand Context quote is an exact allowlist and remains non-executable", () => {
   const view = toClientBrandContextProcessingQuoteViewV1(internal);
   assert.deepEqual(Object.keys(view).sort(), ["available_today_micro_usd", "can_start", "contract_version",
@@ -31,6 +39,15 @@ test("public Brand Context quote is an exact allowlist and remains non-executabl
   const json = JSON.stringify(view);
   for (const privateValue of ["anthropic", "private-model", "private-policy", digest, "America/Mexico_City", "es-MX"])
     assert.doesNotMatch(json, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
+  assert.equal(validClientBrandContextProcessingQuoteViewV1(view), true);
+  assert.equal(clientBrandContextProcessingQuoteForWorkspaceV1(view, workspaceId), view);
+  assert.equal(clientBrandContextProcessingQuoteForWorkspaceV1(view,
+    "00000000-0000-4000-8000-000000000099"), null);
+  for (const invalid of [{ ...view, can_start: true }, { ...view, provider: "hidden" },
+    { ...view, workspace_id: "not-a-workspace" }, { ...view, observed_at: "yesterday" },
+    { ...view, quote_expires_at: null }, { ...view, maximum_micro_usd: "0.10" }]) {
+    assert.equal(validClientBrandContextProcessingQuoteViewV1(invalid), false);
+  }
 });
 
 test("internal blockers collapse to stable client product states", () => {
@@ -126,3 +143,26 @@ test("workspace-scoped GET uses resolved authority, no-store and sanitized error
   assert.equal(wrongWorkspace.status, 503);
   assert.deepEqual(await wrongWorkspace.json(), { error: "brand_context_processing_quote_unavailable" });
 });
+
+for (const locale of ["es-MX", "en-US"] as const) {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const copy = messages.ClientBrandContextProcessing;
+  const render = (variant: "full" | "compact") => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(ClientBrandContextProcessingQuote, {
+      workspaceId, variant, initial: toClientBrandContextProcessingQuoteViewV1(internal)
+    })));
+
+  test(`${locale}: the Brand Context quote is read-only, sanitized and distinct from corpus vectors`, () => {
+    for (const html of [render("full"), render("compact")]) {
+      assert.ok(html.includes(copy.title));
+      assert.ok(html.includes(copy.states.quote_available));
+      assert.ok(html.includes(copy.informational));
+      assert.match(html, /data-quote-can-start="false"/u);
+      assert.doesNotMatch(html, /anthropic|private-model|private-policy|sha256:|data-processing-stage=/u);
+      assert.doesNotMatch(html, /<form|admin-button--primary/u);
+    }
+    assert.ok(render("full").includes(copy.body));
+    assert.ok(render("compact").includes(copy.compactBody));
+  });
+}

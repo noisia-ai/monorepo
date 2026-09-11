@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowClockwise } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
+import { ClientBrandContextProcessingQuote } from "./ClientBrandContextProcessingQuote";
 import { ClientCorpusPreparationStep, type ClientCorpusPreparationViewV1 } from "./ClientCorpusPreparationStep";
 import { clientProcessingPolicyForWorkspaceV1, clientProcessingRouteMaximumMicroUsdV1, clientProcessingStageStateV1,
   formatClientProcessingMicroUsdV1, validClientProcessingPolicyViewV1,
@@ -23,6 +24,7 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
   const [view, setView] = useState(() => initial?.workspace_id === workspaceId ? initial : null);
   const [loading, setLoading] = useState(initial === null);
   const [error, setError] = useState(false);
+  const [quoteRefreshSignal, setQuoteRefreshSignal] = useState(0);
   const request = useRef<AbortController | null>(null);
   const denied = useRef(onAccessDenied); denied.current = onAccessDenied;
   const endpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/processing-policy`;
@@ -47,6 +49,11 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
     }
   }, [endpoint, workspaceId]);
 
+  const refreshAll = useCallback(() => {
+    setQuoteRefreshSignal(value => value + 1);
+    void refresh();
+  }, [refresh]);
+
   useEffect(() => {
     if (initial?.workspace_id === workspaceId) {
       setView(initial); setLoading(false); setError(false);
@@ -64,7 +71,7 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div>
       <div className="admin-section__actions">
         {status ? <AdminStatus state={status === "ready" ? "good" : "warning"}>{t(`states.${status}`)}</AdminStatus> : null}
-        <button className="admin-button admin-button--compact" disabled={loading} onClick={() => void refresh()} type="button">
+        <button className="admin-button admin-button--compact" disabled={loading} onClick={refreshAll} type="button">
           <ArrowClockwise aria-hidden size={15}/>{t("refresh")}
         </button>
       </div>
@@ -87,6 +94,8 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
         </>}
         {canRequest ? <p className="admin-drawer-form__hint">{t("quoteNotice")}</p> : null}
       </> : null}
+      <ClientBrandContextProcessingQuote workspaceId={workspaceId} variant="compact"
+        refreshSignal={String(quoteRefreshSignal)} onAccessDenied={onAccessDenied}/>
       <ol className="client-processing-journey__steps">
         <ClientCorpusPreparationStep workspaceId={workspaceId} index={0} initial={initialPreparation}
           onAccessDenied={onAccessDenied}/>

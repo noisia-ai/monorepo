@@ -3973,6 +3973,46 @@
       "permissions": { "title": "Permissions", "subtitle": "Navigation follows role; every route still authorizes server-side.", "role": "Current role", "team": "Team administration", "manage": "Manage team" }
     }
   },
+  "ClientBrandContextProcessing": {
+    "title": "Brand semantic preparation",
+    "body": "Turn Brand OS context and knowledge sources into a reusable semantic foundation for Topics.",
+    "compactBody": "Check that brand context and interests are ready before creating corpus vectors.",
+    "loading": "Checking semantic preparation…",
+    "refresh": "Refresh",
+    "loadError": "We could not load semantic preparation.",
+    "refreshError": "We could not refresh it. The last visible reading is preserved.",
+    "forbidden": "Your access to this brand is no longer available.",
+    "maximum": "Maximum for this preparation",
+    "availableToday": "Available today",
+    "expires": "Quote valid until {time}.",
+    "informational": "This reading is informational. It does not start processing, reserve budget, or send information to models.",
+    "states": {
+      "quote_available": "Maximum cost calculated",
+      "access_required": "Access required",
+      "configuration_required": "Processing not configured",
+      "configuration_expired": "Access expired",
+      "processing_paused": "Processing paused",
+      "daily_limit_reached": "Insufficient daily balance",
+      "brand_context_required": "Complete Brand OS",
+      "brand_context_outdated": "Context update required",
+      "market_language_required": "Define market and language",
+      "preparation_required": "Preparation pending",
+      "temporarily_unavailable": "Temporarily unavailable"
+    },
+    "help": {
+      "quote_available": "The system calculated the maximum cap. Activation from your account is still pending.",
+      "access_required": "You can keep and view existing context, but your current access cannot request processing.",
+      "configuration_required": "The complete processing policy for this preparation has not been configured.",
+      "configuration_expired": "Configuration for new processing has expired. Saved context remains available.",
+      "processing_paused": "External preparation is paused. No calls or reservations will be created.",
+      "daily_limit_reached": "The available daily balance does not cover the full cap for this preparation.",
+      "brand_context_required": "Complete the brand identity, context, and knowledge sources.",
+      "brand_context_outdated": "Brand OS or its sources changed. The next preparation will use the updated context.",
+      "market_language_required": "Define at least one market and a primary language to prepare context.",
+      "preparation_required": "Interests still need a complete semantic foundation before you continue.",
+      "temporarily_unavailable": "Refresh the reading when preparation becomes available again."
+    }
+  },
   "ClientProcessing": {
     "title": "Prepare conversations for Topics",
     "body": "Review the path that turns your files into analyzable Topics. Every step checks access and budget before it starts.",

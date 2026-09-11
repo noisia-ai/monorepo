@@ -3973,6 +3973,46 @@
       "permissions": { "title": "Permisos", "subtitle": "La navegación sigue el rol; cada ruta también autoriza server-side.", "role": "Rol actual", "team": "Administración de equipo", "manage": "Gestionar equipo" }
     }
   },
+  "ClientBrandContextProcessing": {
+    "title": "Preparación semántica de la marca",
+    "body": "Convierte el contexto de Brand OS y tus fuentes de conocimiento en una base semántica reutilizable para Topics.",
+    "compactBody": "Comprueba que el contexto de marca y los intereses estén listos antes de crear los vectores del corpus.",
+    "loading": "Consultando la preparación semántica…",
+    "refresh": "Actualizar",
+    "loadError": "No pudimos consultar la preparación semántica.",
+    "refreshError": "No pudimos actualizarla. Se conserva la última lectura visible.",
+    "forbidden": "Tu acceso a esta marca ya no está disponible.",
+    "maximum": "Tope máximo de esta preparación",
+    "availableToday": "Disponible hoy",
+    "expires": "Cotización válida hasta {time}.",
+    "informational": "Esta lectura es informativa. Todavía no inicia procesamiento, no reserva saldo y no envía información a modelos.",
+    "states": {
+      "quote_available": "Costo máximo calculado",
+      "access_required": "Acceso requerido",
+      "configuration_required": "Procesamiento sin configurar",
+      "configuration_expired": "Acceso vencido",
+      "processing_paused": "Procesamiento pausado",
+      "daily_limit_reached": "Saldo diario insuficiente",
+      "brand_context_required": "Completa Brand OS",
+      "brand_context_outdated": "Contexto por actualizar",
+      "market_language_required": "Define mercado e idioma",
+      "preparation_required": "Preparación pendiente",
+      "temporarily_unavailable": "No disponible temporalmente"
+    },
+    "help": {
+      "quote_available": "El sistema calculó el tope máximo. La activación desde tu cuenta todavía está pendiente.",
+      "access_required": "Puedes conservar y consultar el contexto existente, pero tu acceso actual no permite solicitar procesamiento.",
+      "configuration_required": "Falta configurar la política completa para esta preparación.",
+      "configuration_expired": "La configuración para iniciar procesamiento nuevo venció. El contexto guardado se conserva.",
+      "processing_paused": "La preparación externa está pausada. No se crearán llamadas ni reservas.",
+      "daily_limit_reached": "El saldo diario disponible no cubre el tope completo de esta preparación.",
+      "brand_context_required": "Completa la identidad, el contexto y las fuentes de conocimiento de la marca.",
+      "brand_context_outdated": "Brand OS o sus fuentes cambiaron. La siguiente preparación usará el contexto actualizado.",
+      "market_language_required": "Define al menos un mercado y un idioma principal para preparar el contexto.",
+      "preparation_required": "Los intereses todavía necesitan una base semántica completa antes de continuar.",
+      "temporarily_unavailable": "Actualiza la lectura cuando la preparación vuelva a estar disponible."
+    }
+  },
   "ClientProcessing": {
     "title": "Preparar conversaciones para Topics",
     "body": "Revisa el recorrido que convierte tus archivos en Topics analizables. Cada paso valida acceso y presupuesto antes de comenzar.",
