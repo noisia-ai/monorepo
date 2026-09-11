@@ -5,6 +5,7 @@ import { quoteSignalBrandContextPreparationV1, signalBrandContextPreparationRunt
   type SignalBrandContextPreparationRuntimeV1 } from './signal-brand-context-preparation';
 import { canonicalBrandContextLocaleV1, resolveSignalBrandContextAuthorityV1 } from './signal-brand-context-authority';
 import type { SignalSemanticContextQueryable } from './signal-semantic-context-proposal';
+import { SignalSemanticContextProposalExecutionError } from './signal-semantic-context-proposal';
 const runtime:SignalBrandContextPreparationRuntimeV1={semantic:{available:true,provider:'anthropic',model:'claude-sonnet-4-6',model_version:'claude-sonnet-4-6',
   pricing_version:'synthetic-v1',max_input_tokens:20000,max_output_tokens:16000,model_max_output_tokens:64000,
   input_usd_per_million_tokens:'3',output_usd_per_million_tokens:'15',platform_hard_cap_micro_usd:500000n},
@@ -52,6 +53,13 @@ test('Brand OS and KB provide sufficient authority without any acquisition brief
  const override=await resolveSignalBrandContextAuthorityV1({queryable:fakeAuthority(['MX']),workspace:ws,primary_locale:'en-US'});
  assert.equal(override.primaryLocale,'en-US');assert.deepEqual(override.localeVariants,['en-US','es-MX']);
  assert.notEqual(authority.localeContextDigest,override.localeContextDigest);
+});
+test('invalid stored country cannot escape authority resolution as an Intl RangeError',async()=>{
+ for(const country of ['1X','12','M-','419','éX']) {
+  await assert.rejects(resolveSignalBrandContextAuthorityV1({queryable:fakeAuthority([country]),workspace:ws}),
+   (error:unknown)=>error instanceof SignalSemanticContextProposalExecutionError
+     &&error.code==='locale_market_authority_required'&&error.status===422);
+ }
 });
 test('a previously inferred locale never survives a Brand OS country change as an implicit override',async()=>{
  const changed=await resolveSignalBrandContextAuthorityV1({

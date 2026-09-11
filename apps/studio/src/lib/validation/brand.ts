@@ -5,8 +5,11 @@ import {
   STUDY_SOURCE_SNAPSHOT_MAX_CHARS
 } from "@/lib/study-intake-context";
 import { BRAND_KNOWLEDGE_NOTES_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
+import { COUNTRY_CATALOG } from "@/lib/country-catalog";
 
-const countryCodeSchema = z.string().length(2).transform((value) => value.toUpperCase());
+const countryCodes = new Set<string>(COUNTRY_CATALOG.map((country) => country.code));
+const countryCodeSchema = z.string().regex(/^[a-z]{2}$/iu).transform((value) => value.toUpperCase())
+  .refine((value) => countryCodes.has(value), "Selecciona un código de país ISO alpha-2 válido.");
 const optionalText = (max: number, min = 0) =>
   z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),

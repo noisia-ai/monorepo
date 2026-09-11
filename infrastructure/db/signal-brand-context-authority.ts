@@ -8,10 +8,21 @@ knowledgeGenerationKey:string;knowledgeDigest:string;localeContextDigest:string;
 localeVariants:string[];markets:string[];timezone:string;sourceAuthorityDigest:string};
 const digestPattern=/^sha256:[0-9a-f]{64}$/u;
 const localePattern=/^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?$/u;
+const countryPattern=/^[A-Z]{2}$/u;
 export function canonicalBrandContextLocaleV1(value:string):string {
   try { const locale=new Intl.Locale(value); const canonical=locale.region?`${locale.language}-${locale.region}`:locale.language;
     if(!localePattern.test(canonical))throw new Error(); return canonical;
   } catch {throw new SignalSemanticContextProposalExecutionError('locale_market_authority_required',422);}
+}
+function inferredCountryLocale(country:string):string {
+  try {
+    // Persisted/imported snapshots can predate API validation. Do not let Intl
+    // parse arbitrary region subtags or leak RangeError out of the authority.
+    if(!countryPattern.test(country))throw new RangeError();
+    return canonicalBrandContextLocaleV1(new Intl.Locale(`und-${country}`).maximize().baseName);
+  } catch {
+    throw new SignalSemanticContextProposalExecutionError('locale_market_authority_required',422);
+  }
 }
 const normalizeStrings=(value:unknown):string[]=>Array.isArray(value)?[...new Set(value.filter((v):v is string=>typeof v==='string'&&v.trim().length>0).map(v=>v.trim()))].sort():[];
 const canonicalDigest=signalSemanticContextProposalDigestV1;
@@ -36,7 +47,7 @@ export async function resolveSignalBrandContextAuthorityV1(args:{queryable:Signa
     WHERE workspace_id=$1::uuid AND acquisition_brief IS NOT NULL
       AND status IN ('current','draft')
     ORDER BY CASE status WHEN 'current' THEN 0 ELSE 1 END,plan_version DESC LIMIT 1`,[args.workspace.id]);
-  const inferred=active.countries.map(country=>canonicalBrandContextLocaleV1(new Intl.Locale(`und-${country}`).maximize().baseName));
+  const inferred=active.countries.map(inferredCountryLocale);
   // A generated locale is an output of the current Brand OS authority, not a
   // durable user override. Reusing it from an older preparation would pin the
   // first country forever after the brand changes. An explicit request or a
@@ -48,7 +59,7 @@ export async function resolveSignalBrandContextAuthorityV1(args:{queryable:Signa
   const primaryLocale=typeof brief.primary_locale==="string"?brief.primary_locale:
     locales[0]?.includes("-")?locales[0]:markets[0]&&locales[0]?`${locales[0].slice(0,2).toLowerCase()}-${markets[0]}`:"";
   const timezone=typeof brief.timezone==="string"?brief.timezone:args.workspace.timezone;
-  if(!localePattern.test(primaryLocale)||locales.length<1||markets.length<1||!timezone){
+  if(!localePattern.test(primaryLocale)||locales.length<1||markets.length<1||markets.some(market=>!countryPattern.test(market))||!timezone){
     throw new SignalSemanticContextProposalExecutionError("locale_market_authority_required",409);
   }
   const localeVariants=[...new Set([primaryLocale,...locales.filter((value)=>localePattern.test(value))])].sort();
