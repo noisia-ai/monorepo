@@ -4,6 +4,19 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Política self-service instalada sin activación — 2026-09-11 14:52 UTC.** Studio y Worker
+> ejecutan `485aed831bc5b7212d23383e6f1a5317b50e5ce1`; deployments Studio
+> `6cedd576-1427-4645-91f9-3ec386215a4b` y Worker `32c7e097-7677-439b-8477-8d42941c3d4b` activos.
+> SQL0155 SHA `4e4014f1…20ee9` aplicado/verificado una sola vez; no reaplicar. Hay cero políticas,
+> acciones, admisiones, ejecuciones o costos nuevos. El producto separa `can_request_processing` de
+> la ejecución interna, agrega exposición Claude/Voyage/interpretación por organización/día y muestra
+> `Preparar → Vectores → Analizar` en superficies cliente sin secretos ni mutaciones pagadas. PG20,
+> DB513, Studio948, TC/lint/build y revisión 0P0/P1/P2 cerrados. National conserva 16 CSV/7,396
+> menciones/6,826 preparadas, 32 Topics de 32/357 y dos seleccionados/98 en Signal. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_CLIENT_PROCESSING_POLICY_UAT_2026-09-11.md`. Siguiente:
+> conectar preparación gratuita; después Brand Context workspace-scoped con admisiones Claude+Voyage
+> atómicas. No activar proveedores, repetir SQL0155/imports/Voyage/fit/gates ni usar National como fin.
+
 > **Catálogo editorial de Topics separado de Signal activo en UAT — 2026-09-11 13:39 UTC.**
 > Worker ejecuta `3782be7` y Studio `7b49a00`; SQL0154 aplicado/verificado una vez, no reaplicar.
 > Create/update/archive/restore guardan catálogo de trabajo con CAS sin ejecución, outbox, gasto o
