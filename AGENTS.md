@@ -4,6 +4,21 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Alta de marca y entrada cliente activas en UAT — 2026-09-11 11:52 UTC.** Studio y Worker
+> ejecutan `c1e40d387c4a3679a67ee01060e509e561dcf0b7` (deployments Studio
+> `9c0138cc-bd0a-48a7-8219-a83f7ef8ddcd`, Worker
+> `e408c438-8804-41b8-a524-89dedef366c2`). `client_admin` activo puede crear marca/workspace/contexto/
+> KB/concesión en una transacción y gestionar Brand OS, varias KB y competidores dentro de su
+> organización. La entrada cliente a Datos usa `can_import_mentions` y oculta configuración, queries,
+> promoción y ejecución. Session/org-sync no crean, restauran ni amplían grants; revocación y aislamiento
+> siguen fail-closed. 936 tests, typecheck, lint sin errores, build y revisión 0P0/P1/P2 cerrados. QA UAT
+> conserva National: 16 archivos, 9,131 filas, 7,396 únicas, 6,826 preparadas, 20,821 fragmentos y 32
+> Topics de 32/357; recibo posterior 0/0/0/0 proveedores. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_CLIENT_BRAND_SETUP_IMPORT_UAT_2026-09-11.md`. No se creó marca
+> ficticia ni se alteró un rol real. Siguiente corte: edición manual de Topics separada de recomputación,
+> cola y proveedores; después experimento real con marca/corpus elegidos por el operador. No reaplicar
+> SQL0153, no repetir imports/Voyage/fit/gates, no Opus ni producción.
+
 > **Recuperación reusable de Topics activa en UAT — 2026-09-11 11:08 UTC.** Studio y Worker
 > ejecutan `19e2f321286b4bf578f975bb4db54f5a1270a1ea`. National conserva 32 Topics, 32/357
 > grupos y sus recibos; Brand Context faltante/obsoleto ahora aparece como paso reparable y una
