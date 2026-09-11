@@ -19,9 +19,10 @@ export function latestCorpusReadinessSnapshot(
   return previous && previous.observed_at > incoming.observed_at ? previous : incoming;
 }
 
-export function WorkspaceCorpusReadinessPanel({ initial, workspaceId, canProcess = true, onAccessDenied }: {
+export function WorkspaceCorpusReadinessPanel({ initial, workspaceId, canProcess = true,
+  showProcessingControls = true, onAccessDenied }: {
   initial: SignalWorkspaceCorpusReadinessV1 | null;
-  workspaceId: string; canProcess?: boolean; onAccessDenied?: () => void;
+  workspaceId: string; canProcess?: boolean; showProcessingControls?: boolean; onAccessDenied?: () => void;
 }) {
   const t = useTranslations("AdminWorkspace.data.corpusReadiness");
   const locale = useLocale();
@@ -85,7 +86,8 @@ export function WorkspaceCorpusReadinessPanel({ initial, workspaceId, canProcess
         <div className="admin-section__body admin-drawer-form">
         <p className="admin-drawer-form__hint">{t(data.state === "awaiting_import" ? "empty" : "countsHelp")}</p>
         {data.reconciliation_errors.length ? <p className="workspace-form__error" role="alert">{t("reconciliation")}</p> : null}
-        <WorkspaceCorpusPreparationPanel canProcess={canProcess} onAccessDenied={onAccessDenied} workspaceId={workspaceId} hasReceivedFiles={data.accepted_files > 0} receiptObservedAt={data.observed_at} />
+        {showProcessingControls ? <WorkspaceCorpusPreparationPanel canProcess={canProcess} onAccessDenied={onAccessDenied}
+          workspaceId={workspaceId} hasReceivedFiles={data.accepted_files > 0} receiptObservedAt={data.observed_at} /> : null}
         <details>
           <summary>{t("details.title")}</summary>
           <dl className="admin-summary-strip admin-summary-strip--compact">

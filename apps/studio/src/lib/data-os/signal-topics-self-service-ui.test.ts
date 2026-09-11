@@ -16,7 +16,8 @@ Object.assign(globalThis, { React });
 const base = {
   workspace: { id: "workspace-test", slug: "new-brand", name: "New brand", timezone: "UTC", operational_corpus: null },
   profile: null, active_profile_id: null, topics: [], execution: null, search_execution_id: null, search_is_current: false,
-  capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false },
+  capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false,
+    can_request_processing: true },
   readiness: { state: "awaiting_import", canonical_mentions: 0, operational_corpus_id: null,
     next_action: "import_mentions", reason_code: "topic_mentions_required" },
   embedding_preflight: { status: "blocked", requires_paid_call: false, missing_inputs: 0, estimated_micro_usd: 0,

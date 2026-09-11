@@ -3973,6 +3973,45 @@
       "permissions": { "title": "Permisos", "subtitle": "La navegación sigue el rol; cada ruta también autoriza server-side.", "role": "Rol actual", "team": "Administración de equipo", "manage": "Gestionar equipo" }
     }
   },
+  "ClientProcessing": {
+    "title": "Preparar conversaciones para Topics",
+    "body": "Revisa el recorrido que convierte tus archivos en Topics analizables. Cada paso valida acceso y presupuesto antes de comenzar.",
+    "loading": "Consultando disponibilidad y límites…",
+    "refresh": "Actualizar",
+    "loadError": "No pudimos consultar la disponibilidad del procesamiento.",
+    "refreshError": "No pudimos actualizar el estado. Se conserva la última lectura visible.",
+    "readOnly": "Puedes consultar los resultados existentes. Tu acceso actual no permite solicitar nuevo procesamiento.",
+    "quoteNotice": "Antes de iniciar una ejecución verás su cotización exacta. Esta vista no inicia procesos ni reserva saldo.",
+    "states": {
+      "ready": "Disponible",
+      "missing": "Sin configurar",
+      "expired": "Acceso vencido",
+      "revoked": "Procesamiento desactivado",
+      "daily_cap_exhausted": "Saldo diario agotado",
+      "provider_unavailable": "Procesamiento pausado"
+    },
+    "stateHelp": {
+      "ready": "El procesamiento está disponible. Los pasos marcados podrán solicitarse cuando se habilite su ejecución desde este recorrido.",
+      "missing": "El procesamiento todavía no está configurado para esta organización. Tus archivos y resultados anteriores se conservan.",
+      "expired": "El acceso a nuevo procesamiento venció. Tus archivos, Topics y resultados anteriores siguen disponibles.",
+      "revoked": "El procesamiento está desactivado. No se crearán nuevas ejecuciones ni reservas.",
+      "daily_cap_exhausted": "El límite agregado de hoy ya está comprometido. Los pasos sin costo pueden seguir disponibles.",
+      "provider_unavailable": "Las acciones externas están pausadas. No se crearán llamadas ni reservas mientras continúen así."
+    },
+    "budget": {
+      "routeMaximum": "Tope máximo del recorrido",
+      "availableToday": "Disponible hoy",
+      "usedToday": "Uso y reservas de hoy",
+      "dailyMaximum": "Tope diario",
+      "period": "Fecha presupuestaria: {date} · Zona horaria: {timezone}"
+    },
+    "stages": {
+      "prepare": { "title": "Preparar", "body": "Organiza el texto completo y valida qué menciones pueden analizarse." },
+      "vectors": { "title": "Vectores", "body": "Prepara en el mismo espacio semántico el corpus, el contexto de marca y los intereses." },
+      "analyze": { "title": "Analizar", "body": "Agrupa el corpus completo, interpreta la evidencia y genera Topics editables." }
+    },
+    "stageStates": { "ready": "Disponible", "blocked": "Bloqueado", "unavailable": "No habilitado" }
+  },
   "ClientWorkspaceEntry": {
     "skip": "Ir al contenido",
     "account": "Cuenta",

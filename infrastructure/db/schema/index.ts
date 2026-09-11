@@ -3424,6 +3424,7 @@ export const engineCostEvents = pgTable(
   "engine_cost_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    processingOrganizationId: uuid("processing_organization_id"),
     engineAnalysisId: uuid("engine_analysis_id")
       .notNull()
       .references(() => engineAnalyses.id, { onDelete: "cascade" }),
@@ -3439,6 +3440,8 @@ export const engineCostEvents = pgTable(
     createdAt: now()
   },
   (table) => [
+  foreignKey({ name: "fk_engine_cost_processing_org", columns: [table.processingOrganizationId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+
     index("idx_engine_cost_events_analysis").on(table.engineAnalysisId, table.createdAt),
     index("idx_engine_cost_events_step").on(table.pipelineStepId),
     index("idx_engine_cost_events_operation").on(table.operation, table.provider, table.model)
@@ -5629,6 +5632,7 @@ export const signalSemanticContextProposalRuns = pgTable(
   "signal_semantic_context_proposal_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    processingAdmissionId: uuid("processing_admission_id"),
     workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
     generationId: uuid("generation_id").notNull().references(() => signalSemanticContextGenerations.id, { onDelete: "restrict" }),
     operationId: uuid("operation_id").notNull().references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
@@ -5663,7 +5667,9 @@ export const signalSemanticContextProposalRuns = pgTable(
     staleAt: timestamp("stale_at", { withTimezone: true }), deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
     createdAt: now(), updatedAt: updatedAt()
   },
-  (table) => [unique("uq_signal_semantic_context_proposal_run_generation").on(table.generationId),
+  (table) => [
+  foreignKey({ name: "fk_semantic_run_processing_admission", columns: [table.processingAdmissionId], foreignColumns: [signalProcessingAdmissions.id] }).onDelete("restrict"),
+unique("uq_signal_semantic_context_proposal_run_generation").on(table.generationId),
     unique("uq_signal_semantic_context_proposal_run_key").on(table.workspaceId, table.runKey),
     check("signal_semantic_context_run_automatic_counts_valid_v1", sql`
       (${table.automaticPolicyContractVersion} IS NULL
@@ -5680,6 +5686,7 @@ export const signalSemanticContextProposalRuns = pgTable(
 export const signalSemanticContextBudgetReservations = pgTable(
   "signal_semantic_context_budget_reservations",
   { id: uuid("id").primaryKey().defaultRandom(),
+    processingOrganizationId: uuid("processing_organization_id"),
     workspaceId: uuid("workspace_id").notNull().references(() => signalWorkspaces.id, { onDelete: "restrict" }),
     runId: uuid("run_id").notNull().references(() => signalSemanticContextProposalRuns.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("reserved"),
@@ -5691,7 +5698,9 @@ export const signalSemanticContextBudgetReservations = pgTable(
     reservedAt: timestamp("reserved_at", { withTimezone: true }).notNull().defaultNow(),
     settledAt: timestamp("settled_at", { withTimezone: true }), releasedAt: timestamp("released_at", { withTimezone: true }),
     releaseReason: text("release_reason") },
-  (table) => [unique("uq_signal_semantic_context_budget_run").on(table.runId)]
+  (table) => [
+  foreignKey({ name: "fk_semantic_budget_processing_org", columns: [table.processingOrganizationId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+unique("uq_signal_semantic_context_budget_run").on(table.runId)]
 );
 
 export const signalSemanticContextProposalOutbox = pgTable(
@@ -7473,3 +7482,84 @@ export const brandsRelations = relations(brands, ({ one, many }) => ({
   competitors: many(competitors),
   corpora: many(studyCorpora)
 }));
+
+/** SQL0155 policy metadata. Monetary state remains in existing provider ledgers.
+ * Embedding, corpus preparation and catalog execution owners use handwritten SQL
+ * stores and are not modeled here; their optional admission FKs remain in 0155. */
+export const signalProcessingPolicyVersions = pgTable("signal_processing_policy_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull(),
+  version: bigint("version", { mode: "bigint" }).notNull(), status: text("status").notNull().default("draft"),
+  validFrom: timestamp("valid_from", { withTimezone: true }).notNull(),
+  validUntil: timestamp("valid_until", { withTimezone: true }).notNull(), budgetTimezone: text("budget_timezone").notNull(),
+  dailyCapMicroUsd: bigint("daily_cap_micro_usd", { mode: "bigint" }).notNull(), policyDigest: text("policy_digest"),
+  createdByUserId: uuid("created_by_user_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  revokedAt: timestamp("revoked_at", { withTimezone: true })
+}, table => [
+  foreignKey({ name: "fk_processing_policy_org", columns: [table.organizationId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+  foreignKey({ name: "fk_processing_policy_creator", columns: [table.createdByUserId], foreignColumns: [users.id] }).onDelete("restrict"),
+
+  unique("signal_processing_policy_versions_organization_id_version_key").on(table.organizationId, table.version),
+  unique("signal_processing_policy_versions_organization_id_id_key").on(table.organizationId, table.id),
+  uniqueIndex("uq_signal_processing_policy_active").on(table.organizationId).where(sql`${table.status}='active'`),
+  check("signal_processing_policy_version_positive", sql`${table.version}>0`),
+  check("signal_processing_policy_status", sql`${table.status} IN ('draft','active','revoked')`),
+  check("signal_processing_policy_window", sql`${table.validFrom}<${table.validUntil}`),
+  check("signal_processing_policy_cap", sql`${table.dailyCapMicroUsd}>=0`),
+  check("signal_processing_policy_digest", sql`${table.policyDigest}~'^sha256:[0-9a-f]{64}$'`),
+  check("signal_processing_policy_sealed", sql`${table.status}='draft' OR ${table.policyDigest} IS NOT NULL`),
+  check("signal_processing_policy_revoked", sql`(${table.status}='revoked')=(${table.revokedAt} IS NOT NULL)`)
+]);
+export const signalProcessingPolicyActions = pgTable("signal_processing_policy_actions", {
+  policyVersionId: uuid("policy_version_id").notNull(),
+  action: text("action").notNull(), kind: text("kind").notNull(), provider: text("provider"), model: text("model"),
+  configuration: jsonb("configuration").notNull(), configurationDigest: text("configuration_digest").notNull(),
+  maxExecutionMicroUsd: bigint("max_execution_micro_usd", { mode: "bigint" }).notNull(),
+  automaticAllowed: boolean("automatic_allowed").notNull().default(false)
+}, table => [
+  foreignKey({ name: "fk_processing_action_policy", columns: [table.policyVersionId], foreignColumns: [signalProcessingPolicyVersions.id] }).onDelete("restrict"),
+primaryKey({ name: "pk_processing_policy_actions", columns: [table.policyVersionId, table.action] }),
+  check("signal_processing_action_name", sql`${table.action} IN ('brand_context_proposal','topic_prototype_embeddings','corpus_preparation','corpus_embeddings','topic_fit','topic_interpretation','topic_fit_incremental','topic_interpretation_incremental')`),
+  check("signal_processing_action_kind", sql`${table.kind} IN ('free','provider')`),
+  check("signal_processing_action_configuration", sql`jsonb_typeof(${table.configuration})='object' AND pg_column_size(${table.configuration})<=32768`),
+  check("signal_processing_action_digest", sql`${table.configurationDigest}~'^sha256:[0-9a-f]{64}$'`),
+  check("signal_processing_action_cap", sql`${table.maxExecutionMicroUsd}>=0`),
+  check("signal_processing_action_provider", sql`(${table.kind}='free' AND ${table.action} IN ('corpus_preparation','topic_fit','topic_fit_incremental')
+    AND ${table.provider} IS NULL AND ${table.model} IS NULL AND ${table.maxExecutionMicroUsd}=0)
+   OR (${table.kind}='provider' AND ${table.provider} IS NOT NULL AND ${table.model} IS NOT NULL
+    AND ((${table.action} IN ('brand_context_proposal','topic_interpretation','topic_interpretation_incremental')
+       AND ${table.provider}='anthropic' AND ${table.model}='claude-sonnet-4-6')
+      OR (${table.action} IN ('topic_prototype_embeddings','corpus_embeddings') AND ${table.provider}='voyage' AND ${table.model}='voyage-4-large')))`)
+]);
+export const signalProcessingAdmissions = pgTable("signal_processing_admissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull(),
+  workspaceId: uuid("workspace_id").notNull(),
+  brandId: uuid("brand_id").notNull(),
+  actorUserId: uuid("actor_user_id").notNull(),
+  policyVersionId: uuid("policy_version_id").notNull(),
+  action: text("action").notNull(), targetId: uuid("target_id").notNull(), idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(), provider: text("provider"), model: text("model"),
+  configuration: jsonb("configuration").notNull(), configurationDigest: text("configuration_digest").notNull(),
+  executionCapMicroUsd: bigint("execution_cap_micro_usd", { mode: "bigint" }).notNull(),
+  budgetDate: date("budget_date").notNull(), budgetTimezone: text("budget_timezone").notNull(),
+  admissionNotAfter: timestamp("admission_not_after", { withTimezone: true }).notNull(),
+  automatic: boolean("automatic").notNull().default(false), receiptDigest: text("receipt_digest").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`)
+}, table => [
+  foreignKey({ name: "fk_processing_admission_org", columns: [table.organizationId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+  foreignKey({ name: "fk_processing_admission_workspace", columns: [table.workspaceId], foreignColumns: [signalWorkspaces.id] }).onDelete("restrict"),
+  foreignKey({ name: "fk_processing_admission_brand", columns: [table.brandId], foreignColumns: [brands.id] }).onDelete("restrict"),
+  foreignKey({ name: "fk_processing_admission_actor", columns: [table.actorUserId], foreignColumns: [users.id] }).onDelete("restrict"),
+
+  unique("uq_signal_processing_admission_idempotency").on(table.workspaceId, table.actorUserId, table.idempotencyKey),
+  unique("signal_processing_admissions_workspace_id_id_key").on(table.workspaceId, table.id),
+  foreignKey({ name: "fk_processing_admission_policy_scope", columns: [table.organizationId, table.policyVersionId],
+    foreignColumns: [signalProcessingPolicyVersions.organizationId, signalProcessingPolicyVersions.id] }).onDelete("restrict"),
+  foreignKey({ name: "fk_processing_admission_policy_action", columns: [table.policyVersionId, table.action],
+    foreignColumns: [signalProcessingPolicyActions.policyVersionId, signalProcessingPolicyActions.action] }).onDelete("restrict"),
+  check("signal_processing_admission_cap", sql`${table.executionCapMicroUsd}>=0`),
+  check("signal_processing_admission_key", sql`${table.idempotencyKey}~'^[A-Za-z0-9._:-]{8,200}$'`),
+  check("signal_processing_admission_request_digest", sql`${table.requestDigest}~'^sha256:[0-9a-f]{64}$'`)
+]);

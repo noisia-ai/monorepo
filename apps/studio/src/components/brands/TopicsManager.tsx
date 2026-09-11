@@ -11,6 +11,7 @@ import { TopicCandidateEvidence } from "@/components/brands/TopicCandidateEviden
 import { useWorkspaceTopicComputation } from "./useWorkspaceTopicComputation";
 import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
 import { TopicSignalControls } from "./TopicSignalControls";
+import { ClientProcessingJourney } from "./ClientProcessingJourney";
 import type { WorkspaceTopicComputationStatus } from "@/lib/data-os/signal-workspace-topic-computation-ui";
 import { SIGNAL_TOPIC_EDITOR_SCOPES_V1, emptyTopicEditorV1 as emptyEditor,
   topicEditorFromDefinitionV1 as editorFromTopic, topicEditorPayloadV1 as editorPayload,
@@ -71,7 +72,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
   const clearAccess = useCallback(() => {
     progressReader.current?.abort(); refreshReader.current?.abort();
     setData(current => ({ ...current, topics: [], discovered: { ...current.discovered, items: [] },
-      capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false } }));
+      capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false,
+        can_request_processing: false } }));
     setSelectedKey(null); setCreating(false); setEditor(emptyEditor()); setResults([]); setResultsStatus("idle");
     setBusy(null); setFeedback({ tone: "error", text: t("requestErrors.forbidden") });
   }, [t]);
@@ -295,6 +297,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
 
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
   return <div className="topics-manager">
+    {navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess} /> : null}
     {!workspaceSearch && data.readiness.state !== "ready" ? <section className="topics-manager__preparation">
       <div><strong>{t(`readiness.${data.readiness.state}.title`)}</strong><p>{t(`readiness.${data.readiness.state}.body`)}</p></div>
       {data.readiness.next_action === "prepare_mentions"

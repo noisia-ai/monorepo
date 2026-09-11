@@ -3973,6 +3973,45 @@
       "permissions": { "title": "Permissions", "subtitle": "Navigation follows role; every route still authorizes server-side.", "role": "Current role", "team": "Team administration", "manage": "Manage team" }
     }
   },
+  "ClientProcessing": {
+    "title": "Prepare conversations for Topics",
+    "body": "Review the path that turns your files into analyzable Topics. Every step checks access and budget before it starts.",
+    "loading": "Checking availability and limits…",
+    "refresh": "Refresh",
+    "loadError": "We could not check processing availability.",
+    "refreshError": "We could not refresh the status. The last visible reading is preserved.",
+    "readOnly": "You can view existing results. Your current access does not allow requesting new processing.",
+    "quoteNotice": "You will see the exact quote before starting a run. This view does not start processing or reserve budget.",
+    "states": {
+      "ready": "Available",
+      "missing": "Not configured",
+      "expired": "Access expired",
+      "revoked": "Processing disabled",
+      "daily_cap_exhausted": "Daily balance exhausted",
+      "provider_unavailable": "Processing paused"
+    },
+    "stateHelp": {
+      "ready": "Processing is available. Marked steps can be requested when execution is enabled in this journey.",
+      "missing": "Processing is not configured for this organization yet. Your files and previous results are preserved.",
+      "expired": "Access to new processing has expired. Your files, Topics and previous results remain available.",
+      "revoked": "Processing is disabled. No new runs or reservations will be created.",
+      "daily_cap_exhausted": "Today's aggregate limit is already committed. Free steps may remain available.",
+      "provider_unavailable": "External actions are paused. No calls or reservations will be created while they remain unavailable."
+    },
+    "budget": {
+      "routeMaximum": "Maximum journey cap",
+      "availableToday": "Available today",
+      "usedToday": "Today's usage and reservations",
+      "dailyMaximum": "Daily cap",
+      "period": "Budget date: {date} · Timezone: {timezone}"
+    },
+    "stages": {
+      "prepare": { "title": "Prepare", "body": "Organize the full text and verify which mentions can be analyzed." },
+      "vectors": { "title": "Vectors", "body": "Prepare the corpus, brand context and interests in the same semantic space." },
+      "analyze": { "title": "Analyze", "body": "Cluster the full corpus, interpret the evidence and create editable Topics." }
+    },
+    "stageStates": { "ready": "Available", "blocked": "Blocked", "unavailable": "Not enabled" }
+  },
   "ClientWorkspaceEntry": {
     "skip": "Skip to content",
     "account": "Account",

@@ -5,6 +5,7 @@ export type SignalWorkspaceCapabilitiesV1 = {
   can_execute_topics: boolean;
   can_adopt_topics: boolean;
   can_select_signal: boolean;
+  can_request_processing: boolean;
 };
 
 export type SignalWorkspaceCapabilityAuthorityV1 = {
@@ -25,7 +26,7 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   authority: SignalWorkspaceCapabilityAuthorityV1 | null
 ): SignalWorkspaceCapabilitiesV1 {
   const denied: SignalWorkspaceCapabilitiesV1 = { can_view: false, can_edit_topics: false,
-    can_import_mentions: false, can_execute_topics: false, can_adopt_topics: false, can_select_signal: false };
+    can_import_mentions: false, can_execute_topics: false, can_adopt_topics: false, can_select_signal: false, can_request_processing: false };
   if (!authority || authority.workspace_status !== "active" || authority.brand_status !== "active"
     || authority.actor_status !== "active") return denied;
   const internalRoles = ["noisia_admin", "analyst", "founder", "admin", "kam",
@@ -33,7 +34,7 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const internal = authority.user_type === "noisia_internal"
     && internalRoles.includes(authority.primary_role);
   if (internal) return { can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_execute_topics: true, can_adopt_topics: true, can_select_signal: true };
+    can_execute_topics: true, can_adopt_topics: true, can_select_signal: true, can_request_processing: false };
   if (authority.user_type !== "client" || !authority.same_organization) return denied;
   const administrator = ["client_admin", "brand_manager", "client_owner"].includes(authority.primary_role);
   const viewer = ["client_viewer", "agency_insights"].includes(authority.primary_role);
@@ -42,7 +43,9 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   return { ...denied, can_view: (administrator || viewer) && hasGrant,
     can_edit_topics: canEdit && authority.primary_role === "client_admin"
       && authority.organization_status === "active" && authority.brand_same_organization === true,
-    can_import_mentions: canEdit, can_select_signal: canEdit };
+    can_import_mentions: canEdit, can_select_signal: canEdit,
+    can_request_processing: authority.primary_role === "client_admin" && authority.brand_access_level === "admin"
+      && authority.organization_status === "active" && authority.brand_same_organization === true };
 }
 
 export async function loadSignalWorkspaceCapabilitiesStoreV1(args: {

@@ -8,6 +8,7 @@ import type { AdminCorpusSummary } from "@/lib/data/admin-corpus-presentation";
 import { AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
 import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpusReadinessPanel";
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
+import { ClientProcessingJourney } from "@/components/brands/ClientProcessingJourney";
 
 type Props = { entry: ClientBrandWorkspaceEntryV1; initialReadiness: SignalWorkspaceCorpusReadinessV1 | null; corpus: AdminCorpusSummary | null };
 export function ClientBrandWorkspaceData(props: Props) {
@@ -21,9 +22,11 @@ function ScopedBrandData({ entry, initialReadiness, corpus }: Props) {
   return <div className="admin-drawer-form">
     <AdminCorpusSummaryStrip corpus={corpus} />
     <WorkspaceCorpusReadinessPanel initial={initialReadiness} workspaceId={entry.workspaceId}
-      canProcess={entry.capabilities.can_execute_topics} onAccessDenied={revoke} />
+      canProcess={false} showProcessingControls={false} onAccessDenied={revoke} />
     {entry.capabilities.can_import_mentions ? <SelfServiceImportManager brandId={entry.brandId} workspaceId={entry.workspaceId}
-      timezone={entry.timezone} requestScope={entry.requestScope} canImport canProcess={entry.capabilities.can_execute_topics} topicsHref={entry.navigation.topicsHref} onAccessDenied={revoke} />
+      timezone={entry.timezone} requestScope={entry.requestScope} canImport canProcess={false}
+      topicsHref={entry.navigation.topicsHref} onAccessDenied={revoke} />
       : <p role="status">{t("dataReadOnly")}</p>}
+    <ClientProcessingJourney workspaceId={entry.workspaceId} onAccessDenied={revoke} />
   </div>;
 }

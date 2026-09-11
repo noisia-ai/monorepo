@@ -26,7 +26,8 @@ const ready: NonNullable<WorkspaceTopicComputationStatus["latest_ready"]> = {
 const management = {
   workspace: { id: status.workspace_id, slug: "new-brand", name: "New brand", timezone: "UTC", operational_corpus: null },
   profile: { id: "catalog", version: 1 }, active_profile_id: null, execution: null, search_execution_id: "completed-search", search_is_current: true,
-  capabilities: { can_view: true, can_edit: true, can_execute: true, can_adopt: false },
+  capabilities: { can_view: true, can_edit: true, can_execute: true, can_adopt: false,
+    can_request_processing: false },
   readiness: { state: "needs_preparation", canonical_mentions: 40, operational_corpus_id: null, next_action: "prepare_mentions", reason_code: null },
   embedding_preflight: { requires_paid_call: true, estimated_micro_usd: 5000, missing_inputs: 3 },
   discovered: { run_key: null, items: [], available: false },

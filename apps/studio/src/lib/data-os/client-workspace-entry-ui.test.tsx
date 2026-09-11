@@ -17,11 +17,13 @@ const router = { back() {}, forward() {}, refresh() {}, hmrRefresh() {}, push() 
 const entry: ClientBrandWorkspaceEntryV1 = { workspaceId: "abcdef01-0000-4000-8000-000000000001", workspaceSlug: "brand-one",
   brandId: "abcdef02-0000-4000-8000-000000000002", name: "First assigned brand", timezone: "UTC", requestScope: "actor-one-workspace-one",
   canManageBrandContext: true,
-  capabilities: { can_view: true, can_edit_topics: true, can_import_mentions: true, can_select_signal: true, can_execute_topics: false, can_adopt_topics: false },
+  capabilities: { can_view: true, can_edit_topics: true, can_import_mentions: true, can_select_signal: true,
+    can_execute_topics: false, can_adopt_topics: false, can_request_processing: true },
   navigation: { brandOsHref: "/signal/brand-one/manage/brand-os", topicsHref: "/signal/brand-one/manage/topics", dataHref: "/signal/brand-one/manage/data", signalHref: "/signal/brand-one" } };
 const catalog = JSON.parse(JSON.stringify({ workspace: { id: entry.workspaceId, slug: entry.workspaceSlug, name: entry.name, timezone: "UTC", operational_corpus: null },
   profile: null, active_profile_id: null, topics: [], execution: null, search_execution_id: null, search_is_current: false,
-  capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false },
+  capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false,
+    can_request_processing: true },
   readiness: { state: "awaiting_import", canonical_mentions: 0, operational_corpus_id: null, next_action: "import_mentions", reason_code: "topic_mentions_required" },
   embedding_preflight: { status: "blocked", requires_paid_call: false, missing_inputs: 0, estimated_micro_usd: 0, embedding_model: null, pricing_version: null, error_code: "topic_mentions_required" },
   discovered: { run_key: null, items: [], available: false } })) as SignalTopicsManagementProductV1;
@@ -55,7 +57,8 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.doesNotMatch(html, /data-analysis-receipt|data-incremental-editorial|\/studio|admin-topic-analysis/u);
     assert.ok(!html.includes(messages.AdminWorkspace.topics.actions.search));
     const denied = render(<TopicsManager brandId={entry.brandId} workspaceId={entry.workspaceId} initial={{ ...catalog,
-      capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false } }} requestScope={entry.requestScope} navigation={entry.navigation} />);
+      capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false,
+        can_request_processing: false } }} requestScope={entry.requestScope} navigation={entry.navigation} />);
     assert.match(denied, /role="alert"/u); assert.doesNotMatch(denied, /<input|<button/u);
   });
   test(`${locale}: viewer data exposes unknown receipt honestly without import or model controls`, () => {
@@ -86,4 +89,11 @@ test("internal Signal home retains the report entrance without querying client w
   assert.match(page, /const isInternalUser = session\.appUser\.userType === "noisia_internal"/u);
   assert.match(page, /isInternalUser \? Promise\.resolve\(\[\]\) : listClientBrandWorkspaceEntriesV1\(session\.appUser\)/u);
   assert.match(page, /!isInternalUser \? <ClientBrandWorkspaceList entries=\{entries\}[\s\S]{0,160}clientBrandCreationDecisionV1\(session\.appUser\)\.allowed/u);
+});
+
+test("client Data keeps legacy processing and acquisition controls outside the policy view", async () => {
+  const source = await readFile(new URL("../../components/brands/ClientBrandWorkspaceData.tsx", import.meta.url), "utf8");
+  assert.match(source, /WorkspaceCorpusReadinessPanel[\s\S]{0,180}showProcessingControls=\{false\}/u);
+  assert.match(source, /SelfServiceImportManager[\s\S]{0,220}canProcess=\{false\}/u);
+  assert.match(source, /<ClientProcessingJourney workspaceId=\{entry\.workspaceId\}/u);
 });

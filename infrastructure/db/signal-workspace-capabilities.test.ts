@@ -14,7 +14,7 @@ const client: SignalWorkspaceCapabilityAuthorityV1 = {
 test("a scoped client administrator can prepare interests and imports without processing authority", () => {
   assert.deepEqual(resolveSignalWorkspaceCapabilitiesV1(client), {
     can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_execute_topics: false, can_adopt_topics: false, can_select_signal: true
+    can_execute_topics: false, can_adopt_topics: false, can_select_signal: true, can_request_processing: false
   });
   for (const alias of ["brand_manager", "client_owner"]) assert.equal(
     resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role: alias }).can_edit_topics, false);
@@ -127,4 +127,18 @@ test("a scoped entry lookup passes the canonical slug into the bulk query", asyn
   assert.equal(queries, 1);
   assert.deepEqual(await listSignalBrandWorkspaceEntriesStoreV1({ queryable, actor_user_id: "actor-id", workspace_slug: "Brand A" }), []);
   assert.equal(queries, 1);
+});
+
+
+test("processing requests require exact client admin and administrative live grant without internal execution", () => {
+  const admitted = { ...client, brand_access_level: "admin" };
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_request_processing, true);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_execute_topics, false);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_adopt_topics, false);
+  for (const override of [{ brand_access_level: "comment" }, { brand_access_level: null },
+    { primary_role: "brand_manager" }, { primary_role: "client_owner" }, { primary_role: "client_viewer" },
+    { organization_status: "suspended" }, { brand_same_organization: false }, { same_organization: false },
+    { actor_status: "suspended" }, { user_type: "noisia_internal", primary_role: "noisia_admin" }]) {
+    assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...admitted, ...override }).can_request_processing, false);
+  }
 });

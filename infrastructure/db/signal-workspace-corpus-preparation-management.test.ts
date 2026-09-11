@@ -63,3 +63,17 @@ test("only transient worker or queue failures offer retry; integrity and authori
     assert.equal(isSignalCorpusPreparationRetryableV1("failed", code), false);
   }
 });
+
+test("a relational free-preparation denial is typed after rollback and cannot become an ambiguous route 503", async () => {
+  const { requestSignalWorkspaceCorpusPreparationStoreV1 } = await import("./signal-workspace-corpus-preparation-management");
+  for (const code of ["corpus_preparation_forbidden", "processing_forbidden", "processing_admission_required"]) {
+    const statements: string[] = [];
+    const database = { async connect() { return { async query(sql: string) {
+      statements.push(sql); if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      throw new Error(code);
+    }, release() { statements.push("release"); } }; } } as unknown as Parameters<typeof requestSignalWorkspaceCorpusPreparationStoreV1>[0]["database"];
+    await assert.rejects(requestSignalWorkspaceCorpusPreparationStoreV1({ database, workspace_id: "workspace", actor_user_id: "actor", idempotency_key: "request-key" }),
+      { code, status: code.endsWith("forbidden") ? 403 : 409 });
+    assert.deepEqual(statements.slice(-2), ["ROLLBACK", "release"]);
+  }
+});

@@ -172,6 +172,11 @@ export async function requestSignalWorkspaceCorpusPreparationStoreV1(args: {
     return { run_id: runId, replayed: false };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
+    if (error && typeof error === "object" && "message" in error && typeof error.message === "string"
+      && (error.message === "corpus_preparation_forbidden" || /^processing_[a-z_]+$/u.test(error.message))) {
+      throw new SignalWorkspaceCorpusPreparationError(error.message,
+        error.message === "corpus_preparation_forbidden" || error.message === "processing_forbidden" ? 403 : 409);
+    }
     throw error;
   } finally { client.release(); }
 }

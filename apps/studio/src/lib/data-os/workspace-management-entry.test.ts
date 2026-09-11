@@ -13,7 +13,8 @@ const actor = { id: "actor-one", userType: "client", primaryRole: "client_admin"
 const row: SignalBrandWorkspaceEntryV1 = { workspace_id: "workspace-one", workspace_slug: "new-brand",
   brand_id: "brand-one", organization_id: "org-one", name: "New brand", timezone: "UTC",
   capabilities: { can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_select_signal: true, can_execute_topics: false, can_adopt_topics: false } };
+    can_select_signal: true, can_execute_topics: false, can_adopt_topics: false,
+    can_request_processing: true } };
 const workspace: ResolvedSignalWorkspace = { contractVersion: "signal-backend-v1", id: row.workspace_id,
   slug: row.workspace_slug, name: row.name, organizationId: row.organization_id, subject: { type: "brand", id: row.brand_id },
   timezone: row.timezone, status: "active", corpora: [] };
