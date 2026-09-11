@@ -1,5 +1,11 @@
 # AGENTS.md — apps/studio
 
+> **Brand Context composed UAT rollout marker — 2026-09-11.** SQL0156–0158 were applied
+> exactly once to `noisia-staging`; do not reapply them. Worker `f13529e` was active before this
+> Studio-only marker. The UI now exposes the free Claude proposal stage and a separate exact
+> Voyage quote without auto-authorizing either provider; rollout itself creates no policy,
+> admission, provider call or spend.
+
 > **Preparación gratuita de corpus cliente cerrada LOCAL — 2026-09-11.** El paso `Preparar`
 > usa el GET/POST workspace-scoped existente, conserva una clave idempotente ante respuesta
 > incierta, hace polling sólo mientras hay una corrida activa y limpia todo al cambiar workspace o
