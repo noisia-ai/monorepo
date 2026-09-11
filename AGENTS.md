@@ -4,6 +4,17 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Catálogo editorial de Topics separado de Signal activo en UAT — 2026-09-11 13:39 UTC.**
+> Worker ejecuta `3782be7` y Studio `7b49a00`; SQL0154 aplicado/verificado una vez, no reaplicar.
+> Create/update/archive/restore guardan catálogo de trabajo con CAS sin ejecución, outbox, gasto o
+> proveedor. Signal e incremental conservan el perfil operativo exacto hasta recomputación explícita;
+> selección y lifecycle respetan la identidad servida. PG40/40, suites DB497/Worker603/Query473/
+> Studio941, typecheck/lint/build y revisión 0P0/P1/P2 cerrados. UI UAT conserva 32 Topics de 32/357,
+> dos seleccionados/98 asociaciones y evidencia navegable a 6,826 Menciones; cero actividad o costos
+> nuevos. Leer `docs/product/PROMPT_LOOPING/DELIVERY_TOPIC_WORKING_SERVING_SEPARATION_UAT_2026-09-11.md`.
+> Siguiente corte: política autoservicio de procesamiento y presupuesto para una marca nueva, sin
+> activar proveedores. National sólo valida compatibilidad. No repetir SQL0154/imports/Voyage/fit/gates.
+
 > **Catálogo de trabajo vs. operativo en desarrollo LOCAL — 2026-09-11 11:55 UTC.** Base UAT
 > `c1e40d3`, docs `866e0d9`. Objetivo: create/update/archive/restore de Topics guardan versiones
 > editoriales sin ejecución, outbox, gasto ni proveedor; Signal e incremental conservan el perfil de
