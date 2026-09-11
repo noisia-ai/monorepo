@@ -3980,8 +3980,8 @@
     "refresh": "Refresh",
     "loadError": "We could not check processing availability.",
     "refreshError": "We could not refresh the status. The last visible reading is preserved.",
-    "readOnly": "You can view existing results. Your current access does not allow requesting new processing.",
-    "quoteNotice": "You will see the exact quote before starting a run. This view does not start processing or reserve budget.",
+    "readOnly": "You can view existing results. Model actions require administrator access; text preparation keeps its own permissions.",
+    "quoteNotice": "You will see the exact quote before starting a model step. Text preparation does not use models or reserve budget.",
     "states": {
       "ready": "Available",
       "missing": "Not configured",
@@ -4006,7 +4006,50 @@
       "period": "Budget date: {date} · Timezone: {timezone}"
     },
     "stages": {
-      "prepare": { "title": "Prepare", "body": "Organize the full text and verify which mentions can be analyzed." },
+      "prepare": {
+        "title": "Prepare",
+        "body": "Organize the full text and verify which mentions can be analyzed.",
+        "loading": "Loading text preparation…",
+        "states": {
+          "loading": "Checking", "awaiting_import": "No mentions", "pending": "Pending",
+          "queued": "Queued", "running": "Preparing", "completed": "Prepared",
+          "failed": "Interrupted", "outdated": "New data pending", "read_only": "Read only",
+          "last_known": "Last received status"
+        },
+        "help": {
+          "loading": "Checking this brand’s saved status.",
+          "awaiting_import": "Import conversations to enable this step.",
+          "pending": "The received conversations are ready for text preparation.",
+          "queued": "The request is saved and will continue in the background.",
+          "running": "You can leave this page without interrupting preparation.",
+          "completed": "The current text is prepared for the next steps.",
+          "failed": "Saved progress is preserved. Use the available recovery action when it appears.",
+          "outdated": "The previous result is preserved; incorporate new conversations to continue.",
+          "read_only": "You can view status, but your access does not allow starting preparation."
+        },
+        "actions": {
+          "prepare": "Prepare text", "update": "Incorporate new data", "resume": "Resume preparation",
+          "restart": "Prepare again", "confirm": "Check the same request",
+          "requesting": "Confirming request…", "refresh": "Check status"
+        },
+        "errors": {
+          "load": "We could not load text preparation.",
+          "refresh": "We could not refresh status. The last visible reading is preserved.",
+          "request": "We could not confirm the request. You can check it or retry the same request.",
+          "forbidden": "Your access to this brand is no longer available."
+        },
+        "failures": {
+          "permissions": "Preparation stopped because your access to this brand changed.",
+          "integrity": "We could not verify the text or saved progress. Check the files before trying again.",
+          "import": "Import conversations for this brand first.",
+          "conflict": "The request belongs to another preparation. Check status before trying again."
+        },
+        "progressLabel": "Text preparation progress",
+        "progress": "{processed} of {total} mentions reviewed",
+        "lastCompleted": "Last result: {prepared} mentions prepared · {excluded} excluded.",
+        "preserved": "Saved progress: {count} mentions reviewed.",
+        "free": "This step does not use AI models or reserve budget."
+      },
       "vectors": { "title": "Vectors", "body": "Prepare the corpus, brand context and interests in the same semantic space." },
       "analyze": { "title": "Analyze", "body": "Cluster the full corpus, interpret the evidence and create editable Topics." }
     },

@@ -18,6 +18,11 @@ export type ClientProcessingPolicyViewV1 = SignalProcessingPolicyViewV1;
 export type ClientProcessingStageV1 = "prepare" | "vectors" | "analyze";
 export type ClientProcessingStageStateV1 = "ready" | "blocked" | "unavailable";
 
+export function clientProcessingPolicyForWorkspaceV1(view: ClientProcessingPolicyViewV1 | null,
+  workspaceId: string) {
+  return view?.workspace_id === workspaceId ? view : null;
+}
+
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value
   && typeof value === "object" && !Array.isArray(value));
 const micros = (value: unknown): value is string => typeof value === "string" && /^(?:0|[1-9][0-9]*)$/u.test(value);

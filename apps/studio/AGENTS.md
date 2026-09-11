@@ -1,5 +1,20 @@
 # AGENTS.md — apps/studio
 
+> **Preparación gratuita de corpus cliente cerrada LOCAL — 2026-09-11.** El paso `Preparar`
+> usa el GET/POST workspace-scoped existente, conserva una clave idempotente ante respuesta
+> incierta, hace polling sólo mientras hay una corrida activa y limpia todo al cambiar workspace o
+> revocar acceso. No llama modelos, no reserva presupuesto y no amplía `can_execute_topics`.
+> Studio953/946PASS/7skip, focal25/25, typecheck/lint/build y revisión sin P0/P1 cerrados.
+> Entregar sólo como corte Studio; Brand Context/Voyage/Topics pagados siguen bloqueados hasta
+> admisiones conjuntas atómicas.
+
+> **Client processing policy UAT marker — 2026-09-11.** Studio and Worker run `485aed8`.
+> SQL0155 has been applied once to `noisia-staging`; do not reapply it. No processing policy,
+> admission or provider action is active. Client Data and Topics may read the simple processing
+> journey; paid actions remain unavailable until their admissions are created atomically with the
+> existing owners and ledgers. Read
+> `docs/product/PROMPT_LOOPING/DELIVERY_CLIENT_PROCESSING_POLICY_UAT_2026-09-11.md`.
+
 > **Ordered UAT rollout marker — 2026-09-11.** Commit `3782be7` requires SQL0154 and
 > Worker rollout before Studio. SQL0154 has been applied once to `noisia-staging`; do not
 > reapply it. This cut keeps the served topic catalog stable while client edits remain a

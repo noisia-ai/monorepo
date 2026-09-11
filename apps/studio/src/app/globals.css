@@ -21120,6 +21120,9 @@ body:has(.signal-report)::before { display: none; }
 .client-processing-journey__steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .client-processing-journey__steps > li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; padding: 14px; border: 1px solid var(--neutral-04); border-radius: 10px; background: #fff; }
 .client-processing-journey__steps > li > .admin-status { grid-column: 2; justify-self: start; }
+.client-processing-journey__stage-detail { grid-column: 1 / -1; min-width: 0; }
+.client-processing-journey__stage-detail .admin-form-actions { margin-top: 10px; }
+.client-processing-journey__stage-detail .admin-report-run-progress { margin-top: 10px; }
 .client-processing-journey__steps p { margin: 4px 0 0; color: var(--neutral-09); font-size: 12px; line-height: 1.45; }
 .client-processing-journey__number { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 999px; background: var(--neutral-03); color: var(--neutral-10); font-size: 12px; font-weight: 700; }
 .client-processing-journey [data-processing-stage-state="ready"] .client-processing-journey__number { background: rgba(0,138,138,.1); color: var(--signal-dark); }

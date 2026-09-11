@@ -3980,8 +3980,8 @@
     "refresh": "Actualizar",
     "loadError": "No pudimos consultar la disponibilidad del procesamiento.",
     "refreshError": "No pudimos actualizar el estado. Se conserva la última lectura visible.",
-    "readOnly": "Puedes consultar los resultados existentes. Tu acceso actual no permite solicitar nuevo procesamiento.",
-    "quoteNotice": "Antes de iniciar una ejecución verás su cotización exacta. Esta vista no inicia procesos ni reserva saldo.",
+    "readOnly": "Puedes consultar los resultados existentes. Las acciones con modelos requieren acceso de administrador; la preparación de texto conserva sus permisos propios.",
+    "quoteNotice": "Antes de iniciar un paso con modelos verás su cotización exacta. Preparar el texto no usa modelos ni reserva saldo.",
     "states": {
       "ready": "Disponible",
       "missing": "Sin configurar",
@@ -4006,7 +4006,50 @@
       "period": "Fecha presupuestaria: {date} · Zona horaria: {timezone}"
     },
     "stages": {
-      "prepare": { "title": "Preparar", "body": "Organiza el texto completo y valida qué menciones pueden analizarse." },
+      "prepare": {
+        "title": "Preparar",
+        "body": "Organiza el texto completo y valida qué menciones pueden analizarse.",
+        "loading": "Consultando la preparación del texto…",
+        "states": {
+          "loading": "Consultando", "awaiting_import": "Sin menciones", "pending": "Pendiente",
+          "queued": "En cola", "running": "En preparación", "completed": "Preparado",
+          "failed": "Interrumpido", "outdated": "Nuevos datos pendientes", "read_only": "Sólo lectura",
+          "last_known": "Último estado recibido"
+        },
+        "help": {
+          "loading": "Consultando el estado guardado de esta marca.",
+          "awaiting_import": "Importa conversaciones para habilitar este paso.",
+          "pending": "Las conversaciones recibidas están listas para preparar su texto.",
+          "queued": "La solicitud está guardada y continuará en segundo plano.",
+          "running": "Puedes salir de esta página sin interrumpir la preparación.",
+          "completed": "El texto vigente ya está preparado para los siguientes pasos.",
+          "failed": "El avance guardado se conserva. Usa la recuperación disponible cuando aparezca.",
+          "outdated": "El resultado anterior se conserva; incorpora las conversaciones nuevas para continuar.",
+          "read_only": "Puedes consultar el estado, pero tu acceso no permite iniciar la preparación."
+        },
+        "actions": {
+          "prepare": "Preparar texto", "update": "Incorporar nuevos datos", "resume": "Reanudar preparación",
+          "restart": "Preparar de nuevo", "confirm": "Comprobar la misma solicitud",
+          "requesting": "Confirmando solicitud…", "refresh": "Consultar estado"
+        },
+        "errors": {
+          "load": "No pudimos consultar la preparación del texto.",
+          "refresh": "No pudimos actualizar el estado. Se conserva la última lectura visible.",
+          "request": "No pudimos confirmar la solicitud. Puedes comprobarla o reintentar con la misma solicitud.",
+          "forbidden": "Tu acceso a esta marca ya no está disponible."
+        },
+        "failures": {
+          "permissions": "La preparación se detuvo porque cambió tu acceso a esta marca.",
+          "integrity": "No pudimos verificar el texto o el avance guardado. Revisa los archivos antes de intentarlo otra vez.",
+          "import": "Primero importa conversaciones para esta marca.",
+          "conflict": "La solicitud pertenece a otra preparación. Consulta el estado antes de volver a intentarlo."
+        },
+        "progressLabel": "Progreso de preparación del texto",
+        "progress": "{processed} de {total} menciones recorridas",
+        "lastCompleted": "Último resultado: {prepared} menciones preparadas · {excluded} excluidas.",
+        "preserved": "Avance conservado: {count} menciones recorridas.",
+        "free": "Este paso no usa modelos de IA ni reserva presupuesto."
+      },
       "vectors": { "title": "Vectores", "body": "Prepara en el mismo espacio semántico el corpus, el contexto de marca y los intereses." },
       "analyze": { "title": "Analizar", "body": "Agrupa el corpus completo, interpreta la evidencia y genera Topics editables." }
     },
