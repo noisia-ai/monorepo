@@ -8,11 +8,11 @@ import { WorkspaceShell, WorkspaceSkipLink, WorkspaceTopbar, WorkspaceProductBra
 import type { ClientBrandWorkspaceEntryV1 } from "@/lib/data-os/workspace-management-entry";
 
 export function ClientBrandWorkspaceShell({ entry, current, children, userName }: {
-  entry: Pick<ClientBrandWorkspaceEntryV1, "name" | "navigation" | "requestScope">;
-  current?: "topics" | "data"; children: ReactNode; userName?: string;
+  entry: Pick<ClientBrandWorkspaceEntryV1, "name" | "navigation" | "requestScope" | "canManageBrandContext">;
+  current?: "brand-os" | "topics" | "data"; children: ReactNode; userName?: string;
 }) {
   const t = useTranslations("ClientWorkspaceEntry"), pathname = usePathname();
-  const active = current ?? (pathname?.endsWith("/data") ? "data" : "topics");
+  const active = current ?? (pathname?.endsWith("/brand-os") ? "brand-os" : pathname?.endsWith("/data") ? "data" : "topics");
   return <WorkspaceShell className="client-brand-workspace">
     <WorkspaceSkipLink href="#client-workspace-main">{t("skip")}</WorkspaceSkipLink>
     <WorkspaceTopbar><WorkspaceProductBrand href="/signal" product="Signal" />
@@ -21,6 +21,9 @@ export function ClientBrandWorkspaceShell({ entry, current, children, userName }
     <div className="client-brand-workspace__body">
       <WorkspaceNavigation aria-label={t("navigation")} className="client-brand-workspace__navigation">
         <strong>{entry.name}</strong>
+        {entry.canManageBrandContext
+          ? <WorkspaceNavLink href={entry.navigation.brandOsHref} active={active === "brand-os"} label={t("brandOs")} />
+          : null}
         <WorkspaceNavLink href={entry.navigation.topicsHref} active={active === "topics"} label={t("topics")} />
         <WorkspaceNavLink href={entry.navigation.dataHref} active={active === "data"} label={t("data")} />
         <WorkspaceNavLink href={entry.navigation.signalHref} label="Signal" />

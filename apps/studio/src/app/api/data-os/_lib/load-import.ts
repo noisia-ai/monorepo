@@ -1,6 +1,6 @@
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "@noisia/db";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
-import { canViewClientOutputs } from "@/lib/auth/roles";
+import { canManageCorpus, canViewClientOutputs } from "@/lib/auth/roles";
 import { isSignalWorkspaceApiEnabled } from "@/lib/data-os/serving";
 import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
 import { loadSignalWorkspaceContextWithDependencies, type SignalWorkspaceSession } from "@/lib/data-os/signal-workspace-context";
@@ -13,6 +13,24 @@ export async function loadSignalWorkspaceContextForImport(workspaceId: string) {
     resolveWorkspace: resolveSignalWorkspaceForUser
   });
   if ("response" in loaded) return loaded;
+  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: pool,
+    workspace_id: loaded.workspace.id, actor_user_id: loaded.session.appUser.id });
+  if (!capabilities.can_import_mentions) return { response: Response.json({ error: "forbidden" }, { status: 403 }) } as const;
+  return loaded;
+}
+
+/** Source inventory is also used by internal theme workspaces, while client reads
+ * still require the explicit per-brand import capability. */
+export async function loadSignalWorkspaceContextForSourceRead(workspaceId: string) {
+  const loaded = await loadSignalWorkspaceContextWithDependencies(workspaceId, {
+    getSession: getAuthenticatedAppUser as () => Promise<SignalWorkspaceSession | null>,
+    isEnabled: isSignalWorkspaceApiEnabled,
+    canView: (role) => canManageCorpus(role) || canViewClientOutputs(role),
+    resolveWorkspace: resolveSignalWorkspaceForUser
+  });
+  if ("response" in loaded) return loaded;
+  if (loaded.session.appUser.userType === "noisia_internal"
+      && canManageCorpus(loaded.session.appUser.primaryRole)) return loaded;
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: pool,
     workspace_id: loaded.workspace.id, actor_user_id: loaded.session.appUser.id });
   if (!capabilities.can_import_mentions) return { response: Response.json({ error: "forbidden" }, { status: 403 }) } as const;

@@ -9,7 +9,7 @@ import type { ResolvedSignalWorkspace } from "./signal-workspace";
 process.env.DATABASE_URL ??= "postgres://unit:test@localhost:5432/noisia_test";
 const { listClientBrandWorkspaceEntriesV1, loadClientBrandWorkspaceEntryV1 } = await import("./workspace-management-entry");
 
-const actor = { id: "actor-one", userType: "client", organizationId: "org-one" };
+const actor = { id: "actor-one", userType: "client", primaryRole: "client_admin", organizationId: "org-one", status: "active" };
 const row: SignalBrandWorkspaceEntryV1 = { workspace_id: "workspace-one", workspace_slug: "new-brand",
   brand_id: "brand-one", organization_id: "org-one", name: "New brand", timezone: "UTC",
   capabilities: { can_view: true, can_edit_topics: true, can_import_mentions: true,
@@ -26,9 +26,10 @@ test("an assigned brand without corpus or published report has independent Topic
   const entry = await loadClientBrandWorkspaceEntryV1(actor, "new-brand", deps);
   assert.equal(items.length, 1); assert.ok(entry);
   assert.deepEqual(reads, [[actor.id, undefined], [actor.id, "new-brand"]]);
-  assert.deepEqual(entry.navigation, { topicsHref: "/signal/new-brand/manage/topics", dataHref: "/signal/new-brand/manage/data", signalHref: "/signal/new-brand" });
+  assert.deepEqual(entry.navigation, { brandOsHref: "/signal/new-brand/manage/brand-os", topicsHref: "/signal/new-brand/manage/topics", dataHref: "/signal/new-brand/manage/data", signalHref: "/signal/new-brand" });
   assert.deepEqual(entry.workspace.corpora, []);
   assert.equal(entry.capabilities.can_select_signal, true); assert.equal(entry.capabilities.can_execute_topics, false);
+  assert.equal(entry.canManageBrandContext, true);
   assert.equal("organization_id" in items[0]!, false);
   assert.equal("workspace" in items[0]!, false);
   const otherActor = await listClientBrandWorkspaceEntriesV1({ ...actor, id: "actor-two" }, deps);
@@ -71,4 +72,8 @@ test("view-only inventory keeps operational capabilities denied and different wo
   assert.equal(entries.length, 2); assert.equal(entries[0]!.capabilities.can_select_signal, false);
   assert.equal(entries[0]!.capabilities.can_execute_topics, false);
   assert.notEqual(entries[0]!.requestScope, entries[1]!.requestScope);
+  const legacy = await listClientBrandWorkspaceEntriesV1({ ...actor, primaryRole: "brand_manager" }, {
+    enabled: () => true, list: async () => [row]
+  });
+  assert.equal(legacy[0]!.canManageBrandContext, false);
 });

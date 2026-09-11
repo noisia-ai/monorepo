@@ -48,12 +48,18 @@ export async function listBrandsForUser(appUser: AppUser, filters: BrandFilters 
   const rows =
     appUser.userType === "noisia_internal"
       ? await db.select(baseSelect).from(brands).innerJoin(organizations, eq(organizations.id, brands.organizationId))
-      : await db
+      : !appUser.organizationId
+        ? []
+        : await db
           .select(baseSelect)
           .from(userBrandAccess)
           .innerJoin(brands, eq(brands.id, userBrandAccess.brandId))
           .innerJoin(organizations, eq(organizations.id, brands.organizationId))
-          .where(and(eq(userBrandAccess.userId, appUser.id), isNull(userBrandAccess.revokedAt)));
+          .where(and(
+            eq(userBrandAccess.userId, appUser.id),
+            isNull(userBrandAccess.revokedAt),
+            eq(brands.organizationId, appUser.organizationId)
+          ));
 
   // TODO mejora-futura: mover filtros/paginacion a SQL cuando la lista pase
   // de cientos de marcas. En MVP favorecemos claridad y filtros flexibles.

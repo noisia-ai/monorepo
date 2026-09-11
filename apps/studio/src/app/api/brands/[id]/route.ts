@@ -4,6 +4,8 @@ import { brandKnowledgeSources, brandSeeds, brands, competitors as competitorRel
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { syncClientBrandAccessForMovedBrand } from "@/lib/auth/org-sync";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
+import { canonicalClientBrandUpdateRequestV1, clientBrandCreationDecisionV1 } from "@/lib/auth/client-brand-self-service";
+import { loadClientBrandContextAccessV1, lockClientBrandContextAccessV1 } from "@/lib/auth/client-brand-self-service-server";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
 import { buildAutomaticBrandContextText } from "@/lib/data-os/brand-automatic-knowledge";
@@ -22,7 +24,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
-  if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
+  const internalEdit = canCreateBrandOrTheme(session.appUser.primaryRole);
+  const clientEdit = clientBrandCreationDecisionV1(session.appUser);
+  if (!internalEdit && !clientEdit.allowed) return forbidden();
 
   const { id } = await context.params;
   const current = await getBrandDetailForUser(session.appUser, id);
@@ -33,8 +37,34 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       { status: 404 }
     );
   }
+  if (clientEdit.allowed && !await loadClientBrandContextAccessV1(session.appUser, current.id)) {
+    return Response.json(
+      { error: "not_found", message: "Brand not found or not accessible." },
+      { status: 404 }
+    );
+  }
 
-  const parsed = updateBrandSchema.safeParse(await request.json().catch(() => ({})));
+  const rawInput = asObject(await request.json().catch(() => ({})));
+  const requestedKey = request.headers.get("Idempotency-Key")?.trim() ?? "";
+  const canonicalInput = clientEdit.allowed
+    ? canonicalClientBrandUpdateRequestV1({
+        actor: session.appUser,
+        current: {
+          organizationId: current.organizationId,
+          slug: current.slug,
+          status: current.status
+        },
+        mutationId: requestedKey,
+        input: rawInput
+      })
+    : { ok: true as const, value: rawInput };
+  if (!canonicalInput.ok) {
+    return Response.json({
+      error: "client_brand_scope_forbidden",
+      message: "La organización, el identificador y el estado de la marca se administran por separado."
+    }, { status: 403 });
+  }
+  const parsed = updateBrandSchema.safeParse(canonicalInput.value);
 
   if (!parsed.success) {
     return validationError(parsed.error);
@@ -45,10 +75,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   } catch (error) {
     return brandContextDomainMutationErrorResponse(error);
   }
-  const mutationInput = {
+  const editableMutationInput = {
     brand_id: current.id,
-    organization_id: parsed.data.organization_id,
-    slug: parsed.data.slug,
     name: parsed.data.name,
     display_name: parsed.data.display_name ?? null,
     industry: parsed.data.industry ?? null,
@@ -56,7 +84,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     countries: parsed.data.countries,
     description: parsed.data.description ?? null,
     brand_seed_handles: parsed.data.brand_seed_handles,
-    timezone: parsed.data.timezone,
+    timezone: parsed.data.timezone
+  };
+  const mutationInput = clientEdit.allowed ? editableMutationInput : {
+    ...editableMutationInput,
+    organization_id: parsed.data.organization_id,
+    slug: parsed.data.slug,
     status: parsed.data.status
   };
 
@@ -72,6 +105,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   try {
     const mutation = await db.transaction(async (tx) => {
+      if (clientEdit.allowed && !await lockClientBrandContextAccessV1(tx, session.appUser, current.id)) {
+        throw new ClientBrandContextAuthorityChanged();
+      }
       const [workspace] = await tx.select({ id: signalWorkspaces.id }).from(signalWorkspaces)
         .where(eq(signalWorkspaces.brandId, current.id)).limit(1);
       if (!workspace) throw new Error("Signal workspace not found for brand mutation.");
@@ -87,8 +123,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const [row] = await tx
         .update(brands)
         .set({
-          organizationId: parsed.data.organization_id,
-          slug: parsed.data.slug,
+          ...(clientEdit.allowed ? {} : {
+            organizationId: parsed.data.organization_id,
+            slug: parsed.data.slug,
+            status: parsed.data.status
+          }),
           name: parsed.data.name,
           displayName: parsed.data.display_name,
           industry: parsed.data.industry,
@@ -96,7 +135,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           countries: parsed.data.countries,
           description: parsed.data.description,
           brandSeedHandles: parsed.data.brand_seed_handles,
-          status: parsed.data.status,
           updatedAt: new Date()
         })
         .where(eq(brands.id, current.id))
@@ -117,10 +155,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await tx
         .update(signalWorkspaces)
         .set({
-          organizationId: parsed.data.organization_id,
-          slug: parsed.data.slug,
+          ...(clientEdit.allowed ? {} : {
+            organizationId: parsed.data.organization_id,
+            slug: parsed.data.slug,
+            status: parsed.data.status
+          }),
           timezone: parsed.data.timezone,
-          status: parsed.data.status,
           updatedAt: new Date()
         })
         .where(eq(signalWorkspaces.brandId, current.id));
@@ -202,6 +242,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     return Response.json({ data: mutation.row, replayed: mutation.replayed, brand_context_preparation: preparation });
   } catch (err) {
+    if (err instanceof ClientBrandContextAuthorityChanged) {
+      return Response.json({ error: "not_found", message: "Brand not found or not accessible." }, { status: 404 });
+    }
     if (err instanceof BrandContextDomainMutationError) return brandContextDomainMutationErrorResponse(err);
     if (isUniqueViolation(err)) {
       return Response.json(
@@ -215,6 +258,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     throw err;
   }
 }
+
+class ClientBrandContextAuthorityChanged extends Error {}
 
 function brandContextDomainMutationErrorResponse(error: unknown) {
   const required = error instanceof BrandContextDomainMutationError && error.code === "idempotency_key_required";

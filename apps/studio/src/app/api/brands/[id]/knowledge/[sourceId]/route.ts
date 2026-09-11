@@ -3,6 +3,8 @@ import { brandKnowledgeSources, signalWorkspaces } from "@noisia/db";
 
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
+import { clientBrandCreationDecisionV1 } from "@/lib/auth/client-brand-self-service";
+import { loadClientBrandContextAccessV1, lockClientBrandContextAccessV1 } from "@/lib/auth/client-brand-self-service-server";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
 import { BRAND_KNOWLEDGE_SOURCE_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
@@ -20,7 +22,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
-  if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
+  const internal = canCreateBrandOrTheme(session.appUser.primaryRole);
+  const client = clientBrandCreationDecisionV1(session.appUser);
+  if (!internal && !client.allowed) return forbidden();
 
   const { id, sourceId } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -30,6 +34,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       { error: "not_found", message: "Brand not found or not accessible." },
       { status: 404 }
     );
+  }
+  if (client.allowed && !await loadClientBrandContextAccessV1(session.appUser, brand.id)) {
+    return Response.json({ error: "not_found", message: "Brand not found or not accessible." }, { status: 404 });
   }
 
   const body = await request.json().catch(() => ({}));
@@ -54,6 +61,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   try {
     const mutation = await db.transaction(async (tx) => {
+      if (client.allowed && !await lockClientBrandContextAccessV1(tx, session.appUser, brand.id)) {
+        throw new ClientBrandContextAuthorityChanged();
+      }
       const [workspace] = await tx.select({ id: signalWorkspaces.id }).from(signalWorkspaces)
         .where(eq(signalWorkspaces.brandId, brand.id)).limit(1);
       if (!workspace) throw new KnowledgeSourceNotFound();
@@ -93,12 +103,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const preparation = await reconcileAndEnsureBrandContextAfterCommittedMutationV1({
       brandId: brand.id,
       actor: session.appUser,
-      preparation: parsedPreparation.data,
+      preparation: client.allowed ? { idempotency_key: idempotencyKey } : parsedPreparation.data,
       fallbackIdempotencyKey: `${idempotencyKey}:prepare`,
       reconciliationIdempotencyKey: `${idempotencyKey}:brand-os`
     });
     return Response.json({ data: mutation.row, replayed: mutation.replayed, brand_context_preparation: preparation });
   } catch (error) {
+    if (error instanceof ClientBrandContextAuthorityChanged) return knowledgeSourceNotFound();
     if (error instanceof KnowledgeSourceNotFound) return knowledgeSourceNotFound();
     if (error instanceof BrandContextDomainMutationError) return domainMutationErrorResponse(error);
     throw error;
@@ -109,7 +120,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
-  if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
+  const internal = canCreateBrandOrTheme(session.appUser.primaryRole);
+  const client = clientBrandCreationDecisionV1(session.appUser);
+  if (!internal && !client.allowed) return forbidden();
 
   const { id, sourceId } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -119,6 +132,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       { error: "not_found", message: "Brand not found or not accessible." },
       { status: 404 }
     );
+  }
+  if (client.allowed && !await loadClientBrandContextAccessV1(session.appUser, brand.id)) {
+    return Response.json({ error: "not_found", message: "Brand not found or not accessible." }, { status: 404 });
   }
 
   const body = await request.json().catch(() => ({}));
@@ -132,6 +148,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   }
   try {
     const mutation = await db.transaction(async (tx) => {
+      if (client.allowed && !await lockClientBrandContextAccessV1(tx, session.appUser, brand.id)) {
+        throw new ClientBrandContextAuthorityChanged();
+      }
       const [workspace] = await tx.select({ id: signalWorkspaces.id }).from(signalWorkspaces)
         .where(eq(signalWorkspaces.brandId, brand.id)).limit(1);
       if (!workspace) throw new KnowledgeSourceNotFound();
@@ -160,12 +179,13 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const preparation = await reconcileAndEnsureBrandContextAfterCommittedMutationV1({
       brandId: brand.id,
       actor: session.appUser,
-      preparation: parsedPreparation.data,
+      preparation: client.allowed ? { idempotency_key: idempotencyKey } : parsedPreparation.data,
       fallbackIdempotencyKey: `${idempotencyKey}:prepare`,
       reconciliationIdempotencyKey: `${idempotencyKey}:brand-os`
     });
     return Response.json({ data: mutation.row, replayed: mutation.replayed, brand_context_preparation: preparation });
   } catch (error) {
+    if (error instanceof ClientBrandContextAuthorityChanged) return knowledgeSourceNotFound();
     if (error instanceof KnowledgeSourceNotFound) return knowledgeSourceNotFound();
     if (error instanceof BrandContextDomainMutationError) return domainMutationErrorResponse(error);
     throw error;
@@ -173,6 +193,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 }
 
 class KnowledgeSourceNotFound extends Error {}
+class ClientBrandContextAuthorityChanged extends Error {}
 
 function knowledgeSourceNotFound() {
   return Response.json(

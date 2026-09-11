@@ -17,10 +17,14 @@ type KnowledgeSource = {
   status: string;
 };
 
-export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; sources: KnowledgeSource[] }) {
+export function KnowledgeBaseManager({ brandId, sources, unfunded = false }: {
+  brandId: string;
+  sources: KnowledgeSource[];
+  unfunded?: boolean;
+}) {
   const t = useTranslations("KnowledgeBaseManager");
   const router = useRouter();
-  const preparation = useBrandContextPreparation();
+  const preparation = useBrandContextPreparation(!unfunded);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +45,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
     const form = new FormData(targetForm);
     const payload = payloadFromForm(form);
     const action = `add-knowledge:${brandId}`;
-    const intent = preparation.forRequest(action, payload);
+    const intent = unfunded ? preparation.forUnfundedRequest(action, payload) : preparation.forRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge`, {
         method: "POST",
@@ -70,7 +74,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
     const form = new FormData(event.currentTarget);
     const action = `edit-knowledge:${sourceId}`;
     const payload = payloadFromForm(form);
-    const intent = preparation.forRequest(action, payload);
+    const intent = unfunded ? preparation.forUnfundedRequest(action, payload) : preparation.forRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, {
         method: "PATCH",
@@ -94,7 +98,9 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
     setPendingId(sourceId);
 
     const action = `delete-knowledge:${sourceId}`;
-    const intent = preparation.forRequest(action, { source_id: sourceId });
+    const intent = unfunded
+      ? preparation.forUnfundedRequest(action, { source_id: sourceId })
+      : preparation.forRequest(action, { source_id: sourceId });
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, { method: "DELETE",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
@@ -153,7 +159,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
             <span>{t("content")}</span>
             <textarea className="workspace-control workspace-control--textarea" name="raw_text" required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} placeholder={t("contentPlaceholder")} rows={4} />
           </label>
-          <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
+          {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
           <div className="workspace-form__actions">
             <button className="admin-button admin-button--primary" type="submit" disabled={isAdding}>
               <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
@@ -195,7 +201,7 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
                   <span>{t("content")}</span>
                   <textarea className="workspace-control workspace-control--textarea" name="raw_text" defaultValue={source.rawText ?? ""} required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} rows={5} />
                 </label>
-                <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
+                {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
                 <div className="workspace-form__actions workspace-form__actions--between">
                   <button className="admin-button admin-button--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
                     <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}

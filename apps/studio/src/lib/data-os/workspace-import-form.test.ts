@@ -11,14 +11,22 @@ type Props = ComponentProps<typeof ImportForm>;
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  function Fixture({ result = null, busy = false }: { result?: Props["result"]; busy?: boolean }) {
+  function Fixture({ result = null, busy = false, canRegisterQuery = true }: { result?: Props["result"]; busy?: boolean; canRegisterQuery?: boolean }) {
     const t = useTranslations("AdminWorkspace.data.acquisition");
     return createElement(ImportForm, { locale, t, result, busy, timezone: "Europe/Madrid", simple: true,
       readyForImport: true, queries: [], connectors: [], error: null, canCancelUpload: false,
-      onCancelUpload() {}, onRefreshStatus() {}, onRegisterQuery() {}, onSubmit() {} });
+      onCancelUpload() {}, onRefreshStatus() {}, onRegisterQuery: canRegisterQuery ? () => {} : undefined, onSubmit() {} });
   }
   const render = (props: ComponentProps<typeof Fixture> = {}) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(Fixture, props)));
+  test(`${locale}: import-only client can supply a file and its scope without an internal query command`, () => {
+    const html = render({ canRegisterQuery: false });
+    assert.ok(!html.includes(messages.AdminWorkspace.data.acquisition.queryEvidence.registerExecuted));
+    for (const name of ["file", "source_key", "period_start", "period_end", "timezone", "query_evidence_class", "operator_confirmed"])
+      assert.ok(html.includes(`name="${name}"`), name);
+    assert.ok(render().includes(messages.AdminWorkspace.data.acquisition.queryEvidence.registerExecuted),
+      "internal query registration remains available when its callback is supplied");
+  });
   test(`${locale}: the file zone uses the searchable IANA catalog and initializes from its workspace`, () => {
     const html = render();
     const input = html.match(/<input[^>]*name="timezone"[^>]*>/u)?.[0];

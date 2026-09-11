@@ -3977,6 +3977,8 @@
     "allBrands": "Mis marcas",
     "topics": "Topics",
     "data": "Datos",
+    "brandOs": "Contexto de marca",
+    "createBrand": "Crear marca",
     "forbidden": "Tu acceso a esta marca ya no está disponible. Vuelve a Mis marcas para consultar tus accesos actuales.",
     "dataReadOnly": "Puedes consultar los datos recibidos. Tu acceso no permite importar ni preparar nuevos archivos.",
     "brandsTitle": "Tus marcas",

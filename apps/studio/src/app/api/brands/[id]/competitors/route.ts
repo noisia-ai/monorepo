@@ -1,5 +1,7 @@
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
+import { clientBrandCreationDecisionV1 } from "@/lib/auth/client-brand-self-service";
+import { loadClientBrandContextAccessV1 } from "@/lib/auth/client-brand-self-service-server";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
 import { refreshAutomaticBrandContextKnowledgeV1 } from "@/lib/data-os/brand-automatic-knowledge-server";
@@ -11,8 +13,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
-  if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
-  if (session.appUser.userType!=="noisia_internal") return forbidden();
+  const internal = canCreateBrandOrTheme(session.appUser.primaryRole);
+  const client = clientBrandCreationDecisionV1(session.appUser);
+  if (!internal && !client.allowed) return forbidden();
 
   const { id } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -22,6 +25,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       { error: "not_found", message: "Brand not found or not accessible." },
       { status: 404 }
     );
+  }
+  if (client.allowed && !await loadClientBrandContextAccessV1(session.appUser, brand.id)) {
+    return Response.json({ error: "not_found", message: "Brand not found or not accessible." }, { status: 404 });
   }
 
   const body = await request.json().catch(() => ({}));
@@ -45,7 +51,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     country:brand.countries?.[0]??"MX"});
 
   const preparation = await prepareAfterCompetitorMutation({ brandId: brand.id,
-    actor: session.appUser, preparation: parsedPreparation.data, idempotencyKey });
+    actor: session.appUser, preparation: client.allowed ? { idempotency_key: idempotencyKey } : parsedPreparation.data, idempotencyKey });
 
   return Response.json({ data: result, brand_context_preparation: preparation }, { status: 201 });
 }
@@ -54,8 +60,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   const session = await getAuthenticatedAppUser();
 
   if (!session) return unauthorized();
-  if (!canCreateBrandOrTheme(session.appUser.primaryRole)) return forbidden();
-  if (session.appUser.userType!=="noisia_internal") return forbidden();
+  const internal = canCreateBrandOrTheme(session.appUser.primaryRole);
+  const client = clientBrandCreationDecisionV1(session.appUser);
+  if (!internal && !client.allowed) return forbidden();
 
   const { id } = await context.params;
   const brand = await getBrandDetailForUser(session.appUser, id);
@@ -65,6 +72,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       { error: "not_found", message: "Brand not found or not accessible." },
       { status: 404 }
     );
+  }
+  if (client.allowed && !await loadClientBrandContextAccessV1(session.appUser, brand.id)) {
+    return Response.json({ error: "not_found", message: "Brand not found or not accessible." }, { status: 404 });
   }
 
   const idempotencyKey=request.headers.get("Idempotency-Key")?.trim()??"";
@@ -78,7 +88,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     idempotencyKey,competitorIds:null,evidence:"Brand OS bulk retirement"});
 
   const preparation = await prepareAfterCompetitorMutation({ brandId: brand.id,
-    actor: session.appUser, preparation: parsedPreparation.data, idempotencyKey });
+    actor: session.appUser, preparation: client.allowed ? { idempotency_key: idempotencyKey } : parsedPreparation.data, idempotencyKey });
 
   return Response.json({ data: retired, brand_context_preparation: preparation });
 }

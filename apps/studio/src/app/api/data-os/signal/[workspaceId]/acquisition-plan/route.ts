@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { loadSignalWorkspaceContextForManagement } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceContextForImport } from "@/app/api/data-os/_lib/load-import";
 import {
   loadSignalAcquisitionPlanProductV1,
   reconcileSignalAcquisitionPlanDraftV1,
@@ -16,11 +17,11 @@ const reconcile = z.object({
 }).strict();
 
 export async function GET(_request: Request,context: { params: Promise<{ workspaceId: string }> }) {
-  const loaded = await managed(await context.params);
+  const loaded = await loadSignalWorkspaceContextForImport((await context.params).workspaceId);
   if ("response" in loaded) return loaded.response;
   try {
     const result = await loadSignalAcquisitionPlanProductV1({
-      workspace: loaded.workspace,actor: loaded.session.appUser
+      workspace: loaded.workspace,actor: loaded.session.appUser,access: "manual-import"
     });
     return Response.json(result,{ headers: privateHeaders() });
   } catch { return rejected("acquisition_plan_unavailable"); }

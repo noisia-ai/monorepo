@@ -32,7 +32,6 @@ export default async function ClientBrandDataPage({ params }: { params: Promise<
         {t("data.actions.openMentions")}<ArrowRight aria-hidden size={14} /></Link>} />
     <BrandMonitoringJourney brandId={entry.brandId} current="data" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref, brandOs: null }} />
-    <ClientBrandWorkspaceData key={entry.requestScope} entry={{ workspaceId: entry.workspaceId, workspaceSlug: entry.workspaceSlug, brandId: entry.brandId,
-      name: entry.name, timezone: entry.timezone, capabilities: entry.capabilities, navigation: entry.navigation, requestScope: entry.requestScope }} initialReadiness={readiness} corpus={corpus} />
+    <ClientBrandWorkspaceData key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
   </div>;
 }

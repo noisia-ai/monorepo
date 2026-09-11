@@ -3977,6 +3977,8 @@
     "allBrands": "My brands",
     "topics": "Topics",
     "data": "Data",
+    "brandOs": "Brand context",
+    "createBrand": "Create brand",
     "forbidden": "Your access to this brand is no longer available. Return to My brands to see your current access.",
     "dataReadOnly": "You can view received data. Your access does not allow importing or preparing new files.",
     "brandsTitle": "Your brands",

@@ -6,6 +6,7 @@ import {
 } from "@noisia/query-engine";
 
 import { loadSignalWorkspaceContextForManagement } from "@/app/api/data-os/_lib/load";
+import { loadSignalWorkspaceContextForSourceRead } from "@/app/api/data-os/_lib/load-import";
 import {
   createWorkspaceDataSourceProductInTransactionV1,
   createWorkspaceConnectorSourceProductInTransactionV1,
@@ -18,7 +19,7 @@ export async function GET(
   context: { params: Promise<{ workspaceId: string }> }
 ) {
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForManagement(workspaceId);
+  const loaded = await loadSignalWorkspaceContextForSourceRead(workspaceId);
   if ("response" in loaded) return loaded.response;
 
   const rows = await listWorkspaceDataSources(loaded.workspace.id);

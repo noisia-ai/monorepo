@@ -15,10 +15,15 @@ type Competitor = {
   subVertical: string | null;
 };
 
-export function CompetitorManager({ brandId, workspaceId, competitors }: { brandId: string; workspaceId: string | null; competitors: Competitor[] }) {
+export function CompetitorManager({ brandId, workspaceId, competitors, unfunded = false }: {
+  brandId: string;
+  workspaceId: string | null;
+  competitors: Competitor[];
+  unfunded?: boolean;
+}) {
   const t = useTranslations("CompetitorManager");
   const router = useRouter();
-  const preparation = useBrandContextPreparation();
+  const preparation = useBrandContextPreparation(!unfunded);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -26,6 +31,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors }: { brand
 
   async function recoverAutomaticKnowledge(action: string, errorCode: unknown) {
     if (errorCode !== "brand_context_knowledge_refresh_unavailable") return true;
+    if (unfunded) return false;
     if (!workspaceId) return false;
     const recoveryAction = `recover-competitor-context:${action}`;
     const requestIdentity = { reason: "operator_requested_reconciliation", source_action: action };
@@ -51,7 +57,9 @@ export function CompetitorManager({ brandId, workspaceId, competitors }: { brand
     const form = new FormData(targetForm);
     const names = splitList(String(form.get("competitors") ?? ""));
     const action = `add-competitors:${brandId}`;
-    const intent = preparation.forRequest(action, { competitors: names });
+    const intent = unfunded
+      ? preparation.forUnfundedRequest(action, { competitors: names })
+      : preparation.forRequest(action, { competitors: names });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "POST",
@@ -80,7 +88,9 @@ export function CompetitorManager({ brandId, workspaceId, competitors }: { brand
     setError(null);
     setPendingId(competitorId);
     const action = `remove-competitor:${competitorId}`;
-    const intent = preparation.forRequest(action, { competitor_id: competitorId });
+    const intent = unfunded
+      ? preparation.forUnfundedRequest(action, { competitor_id: competitorId })
+      : preparation.forRequest(action, { competitor_id: competitorId });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors/${competitorId}`, {
         method: "DELETE",
@@ -107,7 +117,9 @@ export function CompetitorManager({ brandId, workspaceId, competitors }: { brand
     setError(null);
     setIsClearing(true);
     const action = `clear-competitors:${brandId}`;
-    const intent = preparation.forRequest(action, { competitor_ids: "all-current" });
+    const intent = unfunded
+      ? preparation.forUnfundedRequest(action, { competitor_ids: "all-current" })
+      : preparation.forRequest(action, { competitor_ids: "all-current" });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "DELETE",
@@ -163,7 +175,7 @@ export function CompetitorManager({ brandId, workspaceId, competitors }: { brand
           <Icon name={isAdding ? "spinner" : "tag"} size={13} /> {t("add")}
         </button>
       </form>
-      <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
+      {!unfunded ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
       {competitors.length === 0 ? (
         <div className="admin-empty workspace-resource-section__empty">
           <Icon name="info" size={18} />

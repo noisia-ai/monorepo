@@ -42,15 +42,17 @@ const industryOptions: ComboOption[] = INDUSTRY_OPTIONS.map((industry) => ({
 
 export function BrandEditForm({
   brand,
-  organizations
+  organizations,
+  clientContext
 }: {
   brand: EditableBrand;
   organizations: OrganizationOption[];
+  clientContext?: { workspaceSlug: string; organizationName: string };
 }) {
   const t = useTranslations("BrandEdit");
   const brandT = useTranslations("BrandOs.form");
   const router = useRouter();
-  const preparation = useBrandContextPreparation();
+  const preparation = useBrandContextPreparation(!clientContext);
   const [organizationOptions, setOrganizationOptions] = useState(organizations);
   const [selectedOrgId, setSelectedOrgId] = useState(brand.organizationId);
   const [showOrgCreate, setShowOrgCreate] = useState(false);
@@ -128,9 +130,7 @@ export function BrandEditForm({
     setIsSubmitting(true);
 
     const form = new FormData(event.currentTarget);
-    const payload = {
-      organization_id: selectedOrgId,
-      slug: slugify(String(form.get("slug") ?? "").trim()),
+    const editablePayload = {
       name: String(form.get("name") ?? "").trim(),
       display_name: String(form.get("display_name") ?? "").trim(),
       industry: industryValue.trim(),
@@ -138,13 +138,20 @@ export function BrandEditForm({
       countries: countryValues.map((item) => item.toUpperCase()),
       description: String(form.get("description") ?? "").trim(),
       brand_seed_handles: aliasValues,
-      timezone: String(form.get("timezone") ?? brand.timezone),
+      timezone: String(form.get("timezone") ?? brand.timezone)
+    };
+    const payload = clientContext ? editablePayload : {
+      ...editablePayload,
+      organization_id: selectedOrgId,
+      slug: slugify(String(form.get("slug") ?? "").trim()),
       status: String(form.get("status") ?? "active")
     };
 
     try {
       const action = `edit-brand:${brand.id}`;
-      const intent = preparation.forRequest(action, payload);
+      const intent = clientContext
+        ? preparation.forUnfundedRequest(action, payload)
+        : preparation.forRequest(action, payload);
       const res = await fetch(`/api/brands/${brand.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
@@ -153,9 +160,11 @@ export function BrandEditForm({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackSaveError"), brandT("fieldFallback"), brandT("invalidFallback")));
       preparation.accepted(action);
-      router.push(json?.brand_context_preparation?.error_code
-        ? `/studio/brands/${brand.id}/brand-os`
-        : `/studio/brands/${brand.id}`);
+      router.push(clientContext
+        ? `/signal/${encodeURIComponent(clientContext.workspaceSlug)}/manage/brand-os`
+        : json?.brand_context_preparation?.error_code
+          ? `/studio/brands/${brand.id}/brand-os`
+          : `/studio/brands/${brand.id}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackSaveError"));
@@ -177,7 +186,7 @@ export function BrandEditForm({
         <div className="workspace-form__grid">
           <div className="workspace-field workspace-field--wide">
             <span>{brandT("organization")}</span>
-            <div className="workspace-connected-control">
+            {clientContext ? <span className="workspace-control" aria-readonly="true">{clientContext.organizationName}</span> : <div className="workspace-connected-control">
               <WorkspaceSelect
                 ariaLabel={brandT("organization")}
                 className="workspace-connected-control__select"
@@ -197,7 +206,7 @@ export function BrandEditForm({
                 <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
                 {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
               </button>
-            </div>
+            </div>}
           </div>
           <label className="workspace-field">
             <span>{brandT("brand")}</span>
@@ -211,7 +220,7 @@ export function BrandEditForm({
           <WorkspaceTimezoneField value={timezoneValue} onChange={setTimezoneValue} disabled={isSubmitting} />
         </div>
 
-        {showOrgCreate ? (
+        {!clientContext && showOrgCreate ? (
           <div className="workspace-form__nested">
             <div className="workspace-form__nested-head">
               <p className="workspace-form__eyebrow">{t("createOrganizationEyebrow")}</p>
@@ -264,7 +273,7 @@ export function BrandEditForm({
           </div>
         ) : null}
 
-        <div className="workspace-form__grid">
+        {!clientContext ? <div className="workspace-form__grid">
           <label className="workspace-field">
             <span>{brandT("slug")}</span>
             <input className="workspace-control" name="slug" required defaultValue={brand.slug} />
@@ -281,7 +290,7 @@ export function BrandEditForm({
             ]}
             value={statusValue}
           />
-        </div>
+        </div> : null}
 
         <div className="workspace-form__grid">
           <CatalogCombobox
@@ -346,14 +355,16 @@ export function BrandEditForm({
         />
         </div>
 
-        <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
+        {!clientContext ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
         <footer className="workspace-form__section-footer">
           {error && (
             <p className="workspace-form__error" role="alert">
               <Icon name="alert" size={14} /> {error}
             </p>
           )}
-          <button className="admin-button" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
+          <button className="admin-button" type="button" onClick={() => router.push(clientContext
+            ? `/signal/${encodeURIComponent(clientContext.workspaceSlug)}`
+            : `/studio/brands/${brand.id}`)}>
             {t("cancel")}
           </button>
           <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>

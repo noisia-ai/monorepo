@@ -7,6 +7,7 @@ import { SessionBadge } from "@/components/layout/SessionBadge";
 import { Icon } from "@/components/ui/Icon";
 import { requirePortalUser } from "@/lib/auth/guards";
 import { canAccessStudio, displayRole } from "@/lib/auth/roles";
+import { clientBrandCreationDecisionV1 } from "@/lib/auth/client-brand-self-service";
 import { listSignalOutputsForUser } from "@/lib/data/signal";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +52,8 @@ export default async function SignalPage() {
         </div>
       </section>
 
-      {!isInternalUser ? <ClientBrandWorkspaceList entries={entries} /> : null}
+      {!isInternalUser ? <ClientBrandWorkspaceList entries={entries}
+        canCreateBrand={clientBrandCreationDecisionV1(session.appUser).allowed} /> : null}
       <h2>{t("reports")}</h2>
       {outputs.length > 0 ? (
         <section className="signal-output-grid">

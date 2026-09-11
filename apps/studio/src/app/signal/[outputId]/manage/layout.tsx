@@ -15,6 +15,7 @@ export default async function ClientBrandManagementLayout({ params, children }: 
   const session = await requirePortalUser(`/signal/${encodeURIComponent(outputId)}/manage/topics`);
   const entry = await loadClientBrandWorkspaceEntryV1(session.appUser, outputId);
   if (!entry) notFound();
-  return <ClientBrandWorkspaceShell key={entry.requestScope} entry={{ name: entry.name, navigation: entry.navigation, requestScope: entry.requestScope }}
+  return <ClientBrandWorkspaceShell key={entry.requestScope} entry={{ name: entry.name, navigation: entry.navigation,
+    requestScope: entry.requestScope, canManageBrandContext: entry.canManageBrandContext }}
     userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"}>{children}</ClientBrandWorkspaceShell>;
 }

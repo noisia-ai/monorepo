@@ -52,7 +52,7 @@ export async function beginSignalProductOperationV1<T>(args: {
   workspace: ResolvedSignalWorkspace;
   actor: SignalWorkspaceUser;
   action: SignalProductOperationActionV1;
-  access?: "manual-import";
+  access?: "manual-import" | "brand-context-editor";
   idempotencyKey: string;
   input: unknown;
   semanticContextDecisionInput?: { payload: unknown; digest: string };
@@ -77,8 +77,27 @@ export async function beginSignalProductOperationV1<T>(args: {
     args.workspace.subject.type === "brand" ? args.workspace.subject.id : null,args.actor.id]);
   const manualImport = args.access === "manual-import"
     && ["create-source", "reconcile-acquisition-plan", "promote-acquisition-plan"].includes(args.action);
+  const brandContextEditor = args.access === "brand-context-editor"
+    && ["create-competitor", "retire-competitor", "reactivate-competitor"].includes(args.action);
   if (manualImport) await assertWorkspaceImportAuthorityV1(args);
-  if (authority.rows[0]?.allowed !== true || (!manualImport && args.actor.userType !== "noisia_internal")) {
+  if (brandContextEditor && args.actor.userType !== "noisia_internal") {
+    const editAuthority = await args.queryable.query<{ allowed: boolean }>(`
+      SELECT EXISTS(
+        SELECT 1 FROM users app_user
+        JOIN organizations organization ON organization.id=app_user.organization_id
+        JOIN user_brand_access access ON access.user_id=app_user.id AND access.brand_id=$2::uuid
+        WHERE app_user.id=$1::uuid AND app_user.user_type='client'
+          AND app_user.primary_role='client_admin' AND app_user.status='active'
+          AND app_user.organization_id=$3::uuid AND organization.status='active'
+          AND access.revoked_at IS NULL AND access.access_level IN ('comment','admin')
+      ) AS allowed
+    `, [args.actor.id,
+      args.workspace.subject.type === "brand" ? args.workspace.subject.id : null,
+      args.workspace.organizationId]);
+    if (editAuthority.rows[0]?.allowed !== true) throw new Error("Product operation is cross-workspace or unauthorized.");
+  }
+  if (authority.rows[0]?.allowed !== true
+      || (!manualImport && !brandContextEditor && args.actor.userType !== "noisia_internal")) {
     throw new Error("Product operation is cross-workspace or unauthorized.");
   }
   const decisionInputRequired = args.action === "decide-semantic-context-element"

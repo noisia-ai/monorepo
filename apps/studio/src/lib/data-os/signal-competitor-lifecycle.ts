@@ -14,6 +14,7 @@ export async function createOrReactivateSignalCompetitorsV1(args:{
   const workspace=await resolveWorkspace(client,args.brandId,args.actor);
   const operation=await beginSignalProductOperationV1<{created_count:number;reactivated_count:number}>({
     queryable:client,workspace,actor:args.actor,action:"create-competitor",idempotencyKey:args.idempotencyKey,
+    access:"brand-context-editor",
     input:{names:args.names.map((name)=>name.normalize("NFKC").trim()),vertical:args.vertical,sub_vertical:args.subVertical,country:args.country}
   });
   if(operation.replay)return operation.replay;
@@ -26,19 +27,22 @@ export async function createOrReactivateSignalCompetitorsV1(args:{
     const seed=await client.query<{id:string}>(`
       INSERT INTO brand_seeds(canonical_name,aliases,detection_patterns,vertical,sub_vertical,country,active)
       VALUES($1,ARRAY[]::text[],ARRAY[$1]::text[],$2,$3,$4,true)
-      ON CONFLICT(canonical_name) DO UPDATE SET vertical=EXCLUDED.vertical,
-        sub_vertical=EXCLUDED.sub_vertical,active=true RETURNING id::text
+      ON CONFLICT(canonical_name) DO NOTHING RETURNING id::text
     `,[name,args.vertical,args.subVertical,args.country]);
+    const seedId=seed.rows[0]?.id??(await client.query<{id:string}>(`
+      SELECT id::text FROM brand_seeds WHERE canonical_name=$1 LIMIT 1
+    `,[name])).rows[0]?.id;
+    if(!seedId)throw new Error("Competitor seed could not be resolved.");
     const prior=await client.query<{id:string;status:string}>(`
       SELECT id::text,status FROM competitors WHERE brand_id=$1::uuid AND competitor_brand_seed_id=$2::uuid FOR UPDATE
-    `,[args.brandId,seed.rows[0]!.id]);
+    `,[args.brandId,seedId]);
     let competitorId=prior.rows[0]?.id;let kind:"created"|"reactivated";
     if(!competitorId){
       const inserted=await client.query<{id:string}>(`
         INSERT INTO competitors(brand_id,competitor_brand_seed_id,priority,notes,status,effective_from,updated_at)
         VALUES($1::uuid,$2::uuid,$3,'Created from Brand OS editor.','current',clock_timestamp(),clock_timestamp())
         RETURNING id::text
-      `,[args.brandId,seed.rows[0]!.id,index+1]);competitorId=inserted.rows[0]!.id;created+=1;kind="created";
+      `,[args.brandId,seedId,index+1]);competitorId=inserted.rows[0]!.id;created+=1;kind="created";
     }else if(prior.rows[0]!.status==="retired"){
       await client.query(`UPDATE competitors SET status='current',effective_from=clock_timestamp(),effective_to=NULL,
         retired_by_user_id=NULL,updated_at=clock_timestamp() WHERE id=$1::uuid`,[competitorId]);
@@ -64,7 +68,7 @@ export async function retireSignalCompetitorsV1(args:{
  return transaction(async(client)=>{
   const workspace=await resolveWorkspace(client,args.brandId,args.actor);
   const operation=await beginSignalProductOperationV1<{retired_count:number}>({queryable:client,workspace,actor:args.actor,
-    action:"retire-competitor",idempotencyKey:args.idempotencyKey,input:{
+    action:"retire-competitor",access:"brand-context-editor",idempotencyKey:args.idempotencyKey,input:{
       competitor_refs:args.competitorIds?.map(sha256).sort()??"all-current",evidence_hash:sha256(args.evidence)}});
   if(operation.replay)return operation.replay;
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-competitors:${workspace.id}`]);
@@ -94,9 +98,24 @@ async function resolveWorkspace(queryable:{query:<T=Record<string,unknown>>(text
  const result=await queryable.query<WorkspaceRow>(`SELECT workspace.id::text,workspace.organization_id::text,
    workspace.slug,brand.display_name AS name,workspace.timezone,workspace.status,workspace.brand_id::text
    FROM signal_workspaces workspace JOIN brands brand ON brand.id=workspace.brand_id
-   WHERE workspace.brand_id=$1::uuid AND workspace.status='active'
-   ORDER BY workspace.created_at,workspace.id LIMIT 1 FOR SHARE OF workspace`,[brandId]);
- const row=result.rows[0];if(!row||actor.userType!=="noisia_internal")throw new Error("Competitor lifecycle is unauthorized.");
+   JOIN organizations organization ON organization.id=workspace.organization_id
+   WHERE workspace.brand_id=$1::uuid AND workspace.status='active' AND brand.status='active'
+     AND brand.organization_id=workspace.organization_id AND organization.status='active'
+   ORDER BY workspace.created_at,workspace.id LIMIT 1 FOR SHARE OF workspace,brand,organization`,[brandId]);
+ const row=result.rows[0];if(!row)throw new Error("Competitor lifecycle is unauthorized.");
+ if(actor.userType!=="noisia_internal"){
+  const authority=await queryable.query<{id:string}>(`
+    SELECT access.id::text
+    FROM users app_user
+    JOIN user_brand_access access ON access.user_id=app_user.id AND access.brand_id=$2::uuid
+    WHERE app_user.id=$1::uuid AND app_user.user_type='client' AND app_user.primary_role='client_admin'
+      AND app_user.status='active' AND app_user.organization_id=$3::uuid
+      AND access.revoked_at IS NULL AND access.access_level IN ('comment','admin')
+    FOR SHARE OF app_user,access
+  `,[actor.id,brandId,row.organization_id]);
+  if(authority.rows.length!==1||actor.organizationId!==row.organization_id)
+    throw new Error("Competitor lifecycle is unauthorized.");
+ }
  return{contractVersion:"signal-backend-v1",id:row.id,organizationId:row.organization_id,slug:row.slug,name:row.name,
    subject:{type:"brand",id:row.brand_id},timezone:row.timezone,status:row.status,corpora:[]};
 }

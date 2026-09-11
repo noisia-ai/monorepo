@@ -27,10 +27,12 @@ const industryOptions = INDUSTRY_OPTIONS.map((industry) => ({
   keywords: INDUSTRY_SEARCH_ALIASES.get(industry) ?? []
 }));
 
-export function BrandOsForm() {
+export function BrandOsForm({ clientContext }: {
+  clientContext?: { organizationId: string; organizationName: string };
+}) {
   const t = useTranslations("BrandOs.form");
   const router = useRouter();
-  const preparation = useBrandContextPreparation();
+  const preparation = useBrandContextPreparation(!clientContext);
   const [brandValue, setBrandValue] = useState("");
   const [displayNameValue, setDisplayNameValue] = useState("");
   const [organizationValue, setOrganizationValue] = useState("");
@@ -73,7 +75,6 @@ export function BrandOsForm() {
     const rawAliases = aliasValues.join("\n");
     const rawKnowledgeNotes = knowledgeNotesValue.trim();
     const payload = {
-      organization_name: organizationValue.trim(),
       slug,
       name,
       display_name: displayNameValue.trim() || name,
@@ -87,18 +88,26 @@ export function BrandOsForm() {
       timezone: timezoneValue,
       status: "active"
     };
+    const requestPayload = clientContext ? payload : {
+      ...payload,
+      organization_name: organizationValue.trim()
+    };
 
     try {
-      const intent = preparation.forRequest("create-brand", payload);
+      const intent = clientContext
+        ? preparation.forUnfundedRequest("create-brand", requestPayload)
+        : preparation.forRequest("create-brand", requestPayload);
       const res = await fetch("/api/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
-        body: JSON.stringify({ ...payload, preparation: intent })
+        body: JSON.stringify({ ...requestPayload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackCreateError"), t("fieldFallback"), t("invalidFallback")));
       preparation.accepted("create-brand");
-      router.push(`/studio/brands/${json.data.id}/brand-os`);
+      router.push(clientContext
+        ? `/signal/${encodeURIComponent(json.signal_workspace.slug)}/manage/brand-os`
+        : `/studio/brands/${json.data.id}/brand-os`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackCreateError"));
@@ -128,7 +137,9 @@ export function BrandOsForm() {
         <div className="new-study-grid">
           <label className="new-study-field">
             <span>{t("organization")}</span>
-            <input className="filter-input new-study-input" name="organization_name" required minLength={2} maxLength={180} value={organizationValue} onChange={(event) => setOrganizationValue(event.target.value)} />
+            {clientContext
+              ? <span className="filter-input new-study-input" aria-readonly="true">{clientContext.organizationName}</span>
+              : <input className="filter-input new-study-input" name="organization_name" required minLength={2} maxLength={180} value={organizationValue} onChange={(event) => setOrganizationValue(event.target.value)} />}
           </label>
           <label className="new-study-field">
             <span>{t("slug")}</span>
@@ -228,7 +239,7 @@ export function BrandOsForm() {
             <Icon name="alert" size={14} /> {error}
           </p>
         )}
-        <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
+        {!clientContext ? <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} /> : null}
         <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? (
             <>

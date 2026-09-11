@@ -1,10 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
 import { brands, userBrandAccess, users } from "@noisia/db";
 import { db } from "@/lib/db";
-import { brandAccessLevelForRole, isInternalRole, normalizeRole } from "@/lib/auth/roles";
+import { isInternalRole, normalizeRole } from "@/lib/auth/roles";
 
-type OrganizationSyncDatabase = Pick<typeof db, "execute" | "insert" | "select">;
+type OrganizationSyncDatabase = Pick<typeof db, "execute">;
 
 export async function syncClientBrandAccessForOrganization(args: {
   userId: string;
@@ -14,32 +14,39 @@ export async function syncClientBrandAccessForOrganization(args: {
   const canonicalRole = normalizeRole(args.role);
   if (!canonicalRole || isInternalRole(canonicalRole) || !args.organizationId) return;
 
-  const brandRows = await db
-    .select({ id: brands.id })
-    .from(brands)
-    .where(and(eq(brands.organizationId, args.organizationId), eq(brands.status, "active")));
+  // Reconciliation may revoke stale tenant access, but it must never create,
+  // restore, or widen a per-brand assignment.
+  await revokeClientBrandAccessOutsideOrganization({
+    userId: args.userId,
+    organizationId: args.organizationId
+  });
+}
 
-  // TODO mejora-futura: reemplazar este grant por invitaciones con scope por marca.
-  // Para MVP, un cliente dentro de la organizacion Kinde recibe acceso read/comment
-  // a las marcas activas de esa organizacion en Noisia.
-  const accessLevel = brandAccessLevelForRole(canonicalRole);
+export async function revokeClientBrandAccessOutsideOrganization(args: {
+  userId: string;
+  organizationId: string | null;
+}, database: OrganizationSyncDatabase = db) {
+  await database.execute(sql`
+    UPDATE ${userBrandAccess}
+    SET revoked_at = COALESCE(revoked_at, now())
+    FROM ${brands}
+    WHERE ${userBrandAccess.brandId} = ${brands.id}
+      AND ${userBrandAccess.userId} = ${args.userId}
+      AND ${userBrandAccess.revokedAt} IS NULL
+      AND (${args.organizationId}::uuid IS NULL OR ${brands.organizationId} <> ${args.organizationId}::uuid)
+  `);
+}
 
-  for (const brand of brandRows) {
-    await db
-      .insert(userBrandAccess)
-      .values({
-        userId: args.userId,
-        brandId: brand.id,
-        accessLevel
-      })
-      .onConflictDoUpdate({
-        target: [userBrandAccess.userId, userBrandAccess.brandId],
-        set: {
-          accessLevel,
-          revokedAt: null
-        }
-      });
-  }
+export async function revokeAllClientBrandAccess(
+  userId: string,
+  database: OrganizationSyncDatabase = db
+) {
+  await database.execute(sql`
+    UPDATE ${userBrandAccess}
+    SET revoked_at = COALESCE(revoked_at, now())
+    WHERE ${userBrandAccess.userId} = ${userId}
+      AND ${userBrandAccess.revokedAt} IS NULL
+  `);
 }
 
 export async function syncClientBrandAccessForMovedBrand(args: {
@@ -56,29 +63,4 @@ export async function syncClientBrandAccessForMovedBrand(args: {
       AND (${users.organizationId} IS NULL OR ${users.organizationId} <> ${args.organizationId})
   `);
 
-  const clientRows = await database
-    .select({
-      id: users.id,
-      primaryRole: users.primaryRole
-    })
-    .from(users)
-    .where(and(eq(users.organizationId, args.organizationId), eq(users.userType, "client"), eq(users.status, "active")));
-
-  for (const user of clientRows) {
-    const accessLevel = brandAccessLevelForRole(user.primaryRole);
-    await database
-      .insert(userBrandAccess)
-      .values({
-        userId: user.id,
-        brandId: args.brandId,
-        accessLevel
-      })
-      .onConflictDoUpdate({
-        target: [userBrandAccess.userId, userBrandAccess.brandId],
-        set: {
-          accessLevel,
-          revokedAt: null
-        }
-      });
-  }
 }

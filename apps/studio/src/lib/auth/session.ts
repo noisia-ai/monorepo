@@ -9,7 +9,6 @@ import {
   normalizeRole
 } from "@/lib/auth/roles";
 import { isLocalAuthOverrideEnabled } from "@/lib/auth/local-auth";
-import { syncClientBrandAccessForOrganization } from "@/lib/auth/org-sync";
 import { resolveKindeSessionSnapshot } from "@/lib/auth/session-lifecycle";
 
 export async function getAuthenticatedAppUser() {
@@ -111,12 +110,6 @@ export async function resolveAuthenticatedAppSession() {
           })
           .where(eq(invitations.id, invitation.id));
       }
-
-      await syncClientBrandAccessForOrganization({
-        userId: appUser.id,
-        role: primaryRole,
-        organizationId: appUser.organizationId
-      });
 
       return {
         appUser,

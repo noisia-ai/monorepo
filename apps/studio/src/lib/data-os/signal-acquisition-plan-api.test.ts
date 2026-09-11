@@ -15,7 +15,8 @@ const routeFiles=[
 test("acquisition management routes are workspace-scoped and never own database authority",async()=>{
   for(const relative of routeFiles){
     const source=await readFile(join(root,relative),"utf8");
-    assert.match(source,/loadSignalWorkspaceContextForManagement/u,relative);
+    assert.match(source,relative.startsWith("imports/")
+      ? /loadSignalWorkspaceContextForImport/u : /loadSignalWorkspaceContextForManagement/u,relative);
     assert.doesNotMatch(source,/from\s+["']@\/lib\/db["']/u,relative);
     assert.doesNotMatch(source,/\bpool\.(?:query|connect)\b/u,relative);
     assert.match(source,/private, no-store/u,relative);
@@ -61,13 +62,16 @@ test("Admin acquisition UI uses plan slots and typed import routes end to end",a
     "src/app/studio/brands/[id]/data/page.tsx"),"utf8");
   const imports=await readFile(join(root,"imports/route.ts"),"utf8");
 
-  assert.match(page,/AcquisitionPlanManager/u);
+  assert.match(page,/SelfServiceImportManager/u);
+  const importManager=await readFile(join(process.cwd(),
+    "src/components/admin/SelfServiceImportManager.tsx"),"utf8");
+  assert.match(importManager,/AcquisitionPlanManager/u);
   assert.doesNotMatch(page,/WorkspaceSourcesManager/u);
   assert.match(component,/buildAdminWorkspaceConnectorInput/u);
   assert.match(component,/acquisition-plan\/slots\/\$\{encodeURIComponent\(slot\.slotKey\)\}\/query-versions/u);
   assert.match(component,/acquisition-plan\/imports/u);
   assert.match(component,/slot_key:slot\.slotKey/u);
-  assert.match(component,/period:\{start,end,timezone\}/u);
+  assert.match(component,/period:\{start,end,timezone:fileTimezone\}/u);
   assert.match(component,/retry-from-storage/u);
   assert.match(component,/operator_attested/u);
   assert.match(component,/historical_export/u);

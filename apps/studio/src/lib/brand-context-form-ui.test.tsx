@@ -65,7 +65,7 @@ test("a committed brand mutation does not ask the user to submit it again when p
     assert.doesNotMatch(source, /brand_context_preparation\?\.error_code[\s\S]{0,220}throw new Error\(t\("contextPending"\)\)/u);
     assert.match(source, /preparation\.accepted\(/u);
   }
-  assert.match(components[0]!, /router\.push\(`\/studio\/brands\/\$\{json\.data\.id\}\/brand-os`\)/u);
+  assert.match(components[0]!, /`\/studio\/brands\/\$\{json\.data\.id\}\/brand-os`/u);
   assert.match(components[0]!, /knowledge_notes:\s*rawKnowledgeNotes/u);
   assert.doesNotMatch(components[0]!, /withRawContext/u);
 });
@@ -255,6 +255,18 @@ for (const locale of ["es-MX", "en-US"]) {
       industry: null, industrySub: null, countries: ["MX"], description: null, brandSeedHandles: null, status: "active", timezone: "invalid/legacy" }}
       organizations={[{ id: "org-one", name: "Client organization" }]} />);
     assert.match(invalid, /name="timezone" type="hidden" value="UTC"/u);assert.ok(!invalid.includes("invalid/legacy"));
+  });
+  test(`${locale}: client admin Brand OS is organization-scoped and never renders paid preparation`, () => {
+    const created = render(<BrandOsForm clientContext={{ organizationId: "org-one", organizationName: "Client organization" }} />);
+    assert.ok(created.includes("Client organization"));
+    assert.doesNotMatch(created, /name="organization_name"|brand-context-preparation-notice|\/studio/u);
+    const edited = render(<BrandEditForm brand={{ id: "brand-one", organizationId: "org-one", slug: "brand-one", name: "Client brand", displayName: null,
+      industry: "Retail", industrySub: null, countries: ["MX"], description: "Context", brandSeedHandles: [], status: "active", timezone: "UTC" }}
+      organizations={[]} clientContext={{ workspaceSlug: "brand-one", organizationName: "Client organization" }} />);
+    assert.ok(edited.includes("Client organization"));
+    assert.doesNotMatch(edited, /name="organization_id"|name="slug"|name="status"|brand-context-preparation-notice|\/studio/u);
+    const knowledge = render(<KnowledgeBaseManager brandId="brand-one" sources={[]} unfunded />);
+    assert.doesNotMatch(knowledge, /brand-context-preparation-notice/u);
   });
   test(`${locale}: adding knowledge is visible and preserves all existing sources independently`, () => {
     const html = render(<KnowledgeBaseManager brandId="brand-one" sources={[

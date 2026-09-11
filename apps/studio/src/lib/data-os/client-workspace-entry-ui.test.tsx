@@ -16,8 +16,9 @@ Object.assign(globalThis, { React });
 const router = { back() {}, forward() {}, refresh() {}, hmrRefresh() {}, push() {}, replace() {}, prefetch() {} };
 const entry: ClientBrandWorkspaceEntryV1 = { workspaceId: "abcdef01-0000-4000-8000-000000000001", workspaceSlug: "brand-one",
   brandId: "abcdef02-0000-4000-8000-000000000002", name: "First assigned brand", timezone: "UTC", requestScope: "actor-one-workspace-one",
+  canManageBrandContext: true,
   capabilities: { can_view: true, can_edit_topics: true, can_import_mentions: true, can_select_signal: true, can_execute_topics: false, can_adopt_topics: false },
-  navigation: { topicsHref: "/signal/brand-one/manage/topics", dataHref: "/signal/brand-one/manage/data", signalHref: "/signal/brand-one" } };
+  navigation: { brandOsHref: "/signal/brand-one/manage/brand-os", topicsHref: "/signal/brand-one/manage/topics", dataHref: "/signal/brand-one/manage/data", signalHref: "/signal/brand-one" } };
 const catalog = JSON.parse(JSON.stringify({ workspace: { id: entry.workspaceId, slug: entry.workspaceSlug, name: entry.name, timezone: "UTC", operational_corpus: null },
   profile: null, active_profile_id: null, topics: [], execution: null, search_execution_id: null, search_is_current: false,
   capabilities: { can_view: true, can_edit: true, can_execute: false, can_adopt: false },
@@ -31,10 +32,11 @@ for (const locale of ["es-MX", "en-US"]) {
   </NextIntlClientProvider>);
   test(`${locale}: brand inventory does not require published outputs or expose global administration`, () => {
     const other = { ...entry, workspaceId: "abcdef03-0000-4000-8000-000000000003", name: "Second assigned brand", navigation: {
-      topicsHref: "/signal/second-brand/manage/topics", dataHref: "/signal/second-brand/manage/data", signalHref: "/signal/second-brand" } };
-    const html = render(<ClientBrandWorkspaceList entries={[entry, other]} />);
+      brandOsHref: "/signal/second-brand/manage/brand-os", topicsHref: "/signal/second-brand/manage/topics", dataHref: "/signal/second-brand/manage/data", signalHref: "/signal/second-brand" } };
+    const html = render(<ClientBrandWorkspaceList entries={[entry, other]} canCreateBrand />);
     for (const target of [entry, other]) for (const href of Object.values(target.navigation)) assert.ok(html.includes(`href="${href}"`));
     assert.doesNotMatch(html, /\/studio|client_admin|published_outputs|ANALYZE/u);
+    assert.ok(html.includes('href="/signal/brands/new"'));
     const empty = render(<ClientBrandWorkspaceList entries={[]} />);
     assert.ok(empty.includes(messages.ClientWorkspaceEntry.emptyTitle));
     assert.doesNotMatch(empty, /href=|First assigned brand/u);
@@ -57,18 +59,24 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(denied, /role="alert"/u); assert.doesNotMatch(denied, /<input|<button/u);
   });
   test(`${locale}: viewer data exposes unknown receipt honestly without import or model controls`, () => {
-    const viewer = { ...entry, capabilities: { ...entry.capabilities, can_import_mentions: false, can_edit_topics: false, can_select_signal: false } };
+    const viewer = { ...entry, canManageBrandContext: false,
+      capabilities: { ...entry.capabilities, can_import_mentions: false, can_edit_topics: false, can_select_signal: false } };
+    const inventory = render(<ClientBrandWorkspaceList entries={[viewer]} />);
+    assert.doesNotMatch(inventory, /\/signal\/brands\/new|\/manage\/brand-os/u);
     const html = render(<ClientBrandWorkspaceData entry={viewer} corpus={null} initialReadiness={null} />);
     assert.ok(html.includes(messages.ClientWorkspaceEntry.dataReadOnly));
     assert.doesNotMatch(html, /<form|type="file"|query-generation|data-incremental-editorial/u);
     assert.ok(html.includes("—"));
   });
-  test(`${locale}: imports-only query generation controls respect processing capability independently of import`, () => {
-    const denied = render(<AcquisitionPlanManager workspaceId={entry.workspaceId} timezone="UTC" importsOnly canProcess={false} />);
-    assert.ok(!denied.includes(messages.AdminWorkspace.data.acquisition.manualImport.prepareQueries));
-    assert.ok(denied.includes(messages.AdminWorkspace.data.acquisition.manualImport.configuration));
+  test(`${locale}: import-only clients have no configuration or generation command, while internal controls remain`, () => {
+    const denied = render(<AcquisitionPlanManager workspaceId={entry.workspaceId} timezone="UTC" importsOnly canProcess={false} configurationRequest={1} />);
+    const acquisition = messages.AdminWorkspace.data.acquisition;
+    for (const text of [acquisition.manualImport.prepareQueries, acquisition.manualImport.configuration,
+      acquisition.actions.prepare, acquisition.actions.addConnector, acquisition.actions.promote])
+      assert.ok(!denied.includes(text), text);
     const internal = render(<AcquisitionPlanManager workspaceId={entry.workspaceId} timezone="UTC" importsOnly />);
-    assert.ok(internal.includes(messages.AdminWorkspace.data.acquisition.manualImport.prepareQueries), "internal default remains unchanged");
+    assert.ok(internal.includes(acquisition.manualImport.prepareQueries), "internal default remains unchanged");
+    assert.ok(internal.includes(acquisition.manualImport.configuration));
   });
 }
 
@@ -77,5 +85,5 @@ test("internal Signal home retains the report entrance without querying client w
   const page = await readFile(new URL("../../app/signal/page.tsx", import.meta.url), "utf8");
   assert.match(page, /const isInternalUser = session\.appUser\.userType === "noisia_internal"/u);
   assert.match(page, /isInternalUser \? Promise\.resolve\(\[\]\) : listClientBrandWorkspaceEntriesV1\(session\.appUser\)/u);
-  assert.match(page, /!isInternalUser \? <ClientBrandWorkspaceList entries=\{entries\} \/> : null/u);
+  assert.match(page, /!isInternalUser \? <ClientBrandWorkspaceList entries=\{entries\}[\s\S]{0,160}clientBrandCreationDecisionV1\(session\.appUser\)\.allowed/u);
 });

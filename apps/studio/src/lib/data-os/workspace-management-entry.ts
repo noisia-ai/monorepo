@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { listSignalBrandWorkspaceEntriesStoreV1, type SignalBrandWorkspaceEntryV1 } from "@noisia/db";
+import { clientBrandCreationDecisionV1 } from "@/lib/auth/client-brand-self-service";
 import { resolveSignalWorkspaceForUser, type ResolvedSignalWorkspace, type SignalWorkspaceUser } from "./signal-workspace";
 import { isSignalWorkspaceApiEnabled } from "./serving";
 
@@ -10,7 +11,8 @@ export type ClientBrandWorkspaceEntryV1 = {
   name: string;
   timezone: string;
   capabilities: SignalBrandWorkspaceEntryV1["capabilities"];
-  navigation: { topicsHref: string; dataHref: string; signalHref: string };
+  canManageBrandContext: boolean;
+  navigation: { brandOsHref: string; topicsHref: string; dataHref: string; signalHref: string };
   requestScope: string;
 };
 type EntryDependencies = {
@@ -28,24 +30,27 @@ const defaults: EntryDependencies = {
   resolve: (actor, workspaceSlug) => resolveSignalWorkspaceForUser(actor, { workspaceSlug })
 };
 
-function publicEntry(actorUserId: string, row: SignalBrandWorkspaceEntryV1): ClientBrandWorkspaceEntryV1 {
+type ClientWorkspaceActor = SignalWorkspaceUser & { primaryRole: string; status: string };
+
+function publicEntry(actor: ClientWorkspaceActor, row: SignalBrandWorkspaceEntryV1): ClientBrandWorkspaceEntryV1 {
   const base = `/signal/${encodeURIComponent(row.workspace_slug)}`;
   return { workspaceId: row.workspace_id, workspaceSlug: row.workspace_slug, brandId: row.brand_id,
     name: row.name, timezone: row.timezone, capabilities: row.capabilities,
-    navigation: { topicsHref: `${base}/manage/topics`, dataHref: `${base}/manage/data`, signalHref: base },
-    requestScope: createHash("sha256").update(`${actorUserId}:${row.workspace_id}`).digest("hex") };
+    canManageBrandContext: clientBrandCreationDecisionV1(actor).allowed && row.capabilities.can_edit_topics,
+    navigation: { brandOsHref: `${base}/manage/brand-os`, topicsHref: `${base}/manage/topics`, dataHref: `${base}/manage/data`, signalHref: base },
+    requestScope: createHash("sha256").update(`${actor.id}:${row.workspace_id}`).digest("hex") };
 }
 
 /** Assigned brands are an authenticated workspace inventory, independent of published reports. */
-export async function listClientBrandWorkspaceEntriesV1(actor: SignalWorkspaceUser,
+export async function listClientBrandWorkspaceEntriesV1(actor: ClientWorkspaceActor,
   dependencies: Pick<EntryDependencies, "list" | "enabled"> = defaults): Promise<ClientBrandWorkspaceEntryV1[]> {
   if (!dependencies.enabled()) return [];
   const rows = await dependencies.list(actor.id);
-  return rows.filter(row => row.capabilities.can_view).map(row => publicEntry(actor.id, row));
+  return rows.filter(row => row.capabilities.can_view).map(row => publicEntry(actor, row));
 }
 
 /** Management always resolves an explicit authorized brand slug, never a legacy output fallback. */
-export async function loadClientBrandWorkspaceEntryV1(actor: SignalWorkspaceUser, workspaceSlug: string,
+export async function loadClientBrandWorkspaceEntryV1(actor: ClientWorkspaceActor, workspaceSlug: string,
   dependencies: EntryDependencies = defaults): Promise<(ClientBrandWorkspaceEntryV1 & { workspace: ResolvedSignalWorkspace }) | null> {
   if (!dependencies.enabled() || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(workspaceSlug)) return null;
   const rows = await dependencies.list(actor.id, workspaceSlug);
@@ -57,5 +62,5 @@ export async function loadClientBrandWorkspaceEntryV1(actor: SignalWorkspaceUser
   if (!workspace || workspace.status !== "active" || workspace.subject.type !== "brand"
     || workspace.id !== row.workspace_id || workspace.subject.id !== row.brand_id
     || workspace.slug !== row.workspace_slug || workspace.organizationId !== row.organization_id) return null;
-  return { ...publicEntry(actor.id, row), workspace };
+  return { ...publicEntry(actor, row), workspace };
 }

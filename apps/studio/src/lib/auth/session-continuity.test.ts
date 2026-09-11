@@ -773,7 +773,7 @@ test("auth source preserves DB authorization and closes unsafe SDK surfaces", as
   assert.match(sessionSource, /resolveKindeSessionSnapshot/);
   assert.match(sessionSource, /CASE WHEN .*status.*'suspended'.*THEN 'suspended'/s);
   assert.match(sessionSource, /\.from\(users\)/);
-  assert.match(sessionSource, /syncClientBrandAccessForOrganization/);
+  assert.doesNotMatch(sessionSource, /syncClientBrandAccessForOrganization/);
   assert.match(guardsSource, /session\.appUser\.status === "suspended"/);
   assert.match(guardsSource, /sessionRefreshPath\(next\)/);
   assert.equal((guardsSource.match(/resolveAuthenticatedAppSession\(\)/g) ?? []).length, 2);

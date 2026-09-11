@@ -36,11 +36,16 @@ export function brandContextPreparationIntent(quote: BrandContextPreparationQuot
     : { idempotency_key: key };
 }
 
-export function useBrandContextPreparation() {
+export function useBrandContextPreparation(enabled = true) {
   const [quote, setQuote] = useState<BrandContextPreparationQuote | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const intents = useRef(new Map<string, BrandContextPreparationIntentRecord>());
   useEffect(() => {
+    if (!enabled) {
+      setQuote(null);
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     void (async () => {
       try {
@@ -52,7 +57,7 @@ export function useBrandContextPreparation() {
       finally { if (!controller.signal.aborted) setLoading(false); }
     })();
     return () => controller.abort();
-  }, []);
+  }, [enabled]);
   return { quote, loading,
     async refresh(action?: string, options?: { renewIntent?: boolean }) {
       setLoading(true);

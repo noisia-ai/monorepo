@@ -793,7 +793,7 @@ function isSerializationFailure(error:unknown){
 }
 
 export async function loadSignalAcquisitionPlanProductV1(args:{
-  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;access?: "manual-import";
 }){
   const {pool}=await import("@/lib/db");
   return loadSignalAcquisitionPlanV1({queryable:pool,...args});
