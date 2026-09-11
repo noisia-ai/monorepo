@@ -1,5 +1,10 @@
 # AGENTS.md — apps/studio
 
+> **Ordered UAT rollout marker — 2026-09-11.** Commit `3782be7` requires SQL0154 and
+> Worker rollout before Studio. SQL0154 has been applied once to `noisia-staging`; do not
+> reapply it. This cut keeps the served topic catalog stable while client edits remain a
+> pending working version, and it must not start imports, provider calls or analysis.
+
 > **UAT Brand Context release marker — 2026-09-11.** SQL0153 was applied once to
 > `noisia-staging` before application rollout; do not reapply it. Worker `44eeab5` was active
 > before this Studio deployment trigger. The release adds automatic Brand Context preparation,
