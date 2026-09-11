@@ -4,6 +4,19 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Brand Context → Topics activo en UAT — 2026-09-11 10:31 UTC.** Studio ejecuta
+> `9e88bb5ec37e24cc3a592799839e987c1cb77ca4` (deployment
+> `aa05d21c-439e-434a-b5e3-c8ade8bf1e3b`) y Worker conserva `44eeab5` (deployment
+> `b10b07a2-5b23-410b-9706-3d40f4a4183b`). SQL0153 se aplicó y verificó una sola vez: no
+> reaplicar. Nueva marca tiene zona IANA buscable, KB automática y múltiples KB; Brand OS
+> prepara contexto automático y Topics exige su versión vigente. El drift histórico
+> `brand_os_snapshot_required/stale` ya es recuperable por UI; auth/red/locale/mercado siguen
+> cerrados. Recibo posterior: cero operaciones `prepare-brand-context`, cero corridas Claude y
+> cero corridas Voyage vinculadas. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_BRAND_CONTEXT_E2E_UAT_2026-09-11.md`. Siguiente: un
+> experimento real con otra marca por UI hasta Topics/importación/cómputo/Signal. National es
+> descartable y no tiene lógica propia. No producción, no Opus y no repetir SQL0153 ni gates.
+
 ## Current branch priority: DATA OS CUT 1 sobre SIGNAL PULSE
 
 This branch implements **Noisia Data OS Cut 1** on top of `codex/signal-pulse`: a live
