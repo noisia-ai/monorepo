@@ -1,5 +1,12 @@
 # AGENTS.md — apps/studio
 
+> **UAT Brand Context release marker — 2026-09-11.** SQL0153 was applied once to
+> `noisia-staging` before application rollout; do not reapply it. Worker `44eeab5` was active
+> before this Studio deployment trigger. The release adds automatic Brand Context preparation,
+> exact context authority in Topics, multiple knowledge sources and searchable IANA timezones,
+> with zero provider calls during delivery. Read
+> `docs/product/PROMPT_LOOPING/DELIVERY_BRAND_CONTEXT_E2E_LOCAL_2026-09-11.md`.
+
 Next.js 15 App Router product app (Studio + Signal + Signal Pulse + public reporting API).
 Inherits the root `AGENTS.md`. Read that first. Runs on **:3001** (`pnpm dev:studio`).
 
