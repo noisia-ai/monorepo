@@ -16,12 +16,12 @@ type Receipt={id:string;parent_receipt_id:string;workspace_id:string;generation_
   admission_id:string;run_id:string;pack_digest:string;plan:Record<string,unknown>;quote_digest:string;confirmation:string|null};
 type Authorization={replayed:boolean;run_id:string;receipt:Receipt};
 type Quote={quote_digest:string;quote_snapshot:{requires_provider:boolean;requires_confirmation:boolean;
-  authorization_state:string;pack_digest:string;execution_cap_micro_usd:number|string;quote_expires_at:string;
+  authorization_state:string;pack_digest:string;supersedes_receipt_id:string|null;execution_cap_micro_usd:number|string;quote_expires_at:string;
   exposure:{confirmed_micro_usd:number|string;reserved_micro_usd:number|string;
     ambiguous_micro_usd:number|string;total_micro_usd:number|string}}};
 
 export type SignalBrandContextPrototypeQuoteV1={contract_version:"brand-context-prototype-quote-v1";
-  parent_receipt_id:string;workspace_id:string;quote_digest:string;quoted_at:string;quote_expires_at:string;
+  parent_receipt_id:string;workspace_id:string;supersedes_receipt_id:string|null;quote_digest:string;quoted_at:string;quote_expires_at:string;
   maximum_micro_usd:string;available_today_micro_usd:string;requires_provider:boolean;requires_confirmation:boolean;
   authorization_state:"automatic_ready"|"awaiting_authorization"};
 
@@ -41,8 +41,9 @@ async function authorize(client:PoolClient,args:{parent_receipt_id:string;actor_
     args.pack_digest,JSON.stringify(args.plan),args.quote_digest,args.confirmation])).rows[0]?.result;
 }
 
+const prototypeStates=["queued","running","completed","failed","canceled","stale","outcome_unknown"] as const;
 export type SignalBrandContextPrototypeProcessingV1={contract_version:"brand-context-prototype-processing-v1";
-  workspace_id:string;generation_id:string;run_id:string;receipt_id:string;state:"queued"|"running"|"completed";
+  workspace_id:string;generation_id:string;run_id:string;receipt_id:string;state:typeof prototypeStates[number];
   replayed:boolean;requires_provider:boolean};
 
 type CompletedSemanticParent={parent_receipt_id:string;workspace_id:string;actor_user_id:string;
@@ -86,7 +87,8 @@ function prototypeQuoteView(parent:{parent_receipt_id:string;workspace_id:string
   const snapshot=quoted.quote_snapshot;const exposure=BigInt(String(snapshot.exposure.total_micro_usd));
   const dailyCap=BigInt(dailyCapMicroUsd);
   return{contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parent.parent_receipt_id,
-    workspace_id:parent.workspace_id,quote_digest:quoted.quote_digest,quoted_at:new Date(observedAt).toISOString(),
+    workspace_id:parent.workspace_id,supersedes_receipt_id:snapshot.supersedes_receipt_id,
+    quote_digest:quoted.quote_digest,quoted_at:new Date(observedAt).toISOString(),
     quote_expires_at:new Date(snapshot.quote_expires_at).toISOString(),maximum_micro_usd:String(snapshot.execution_cap_micro_usd),
     available_today_micro_usd:(dailyCap>exposure?dailyCap-exposure:0n).toString(),
     requires_provider:snapshot.requires_provider,requires_confirmation:snapshot.requires_confirmation,
@@ -101,7 +103,9 @@ async function quotePreparedPrototypePlanV1(client:PoolClient,parent:{parent_rec
     FROM quoted JOIN signal_brand_context_processing_receipts receipt ON receipt.id=$1::uuid
     JOIN signal_processing_policy_versions policy ON policy.id=(value#>>'{quote_snapshot,policy_version_id}')::uuid`,
     [parent.parent_receipt_id,parent.actor_user_id,JSON.stringify(plan)])).rows[0];
-  if(!row||!digest.test(row.value.quote_digest)||row.value.quote_snapshot.authorization_state!=="automatic_ready"
+  if(!row||!digest.test(row.value.quote_digest)
+    ||row.value.quote_snapshot.supersedes_receipt_id!==null&&!uuid.test(row.value.quote_snapshot.supersedes_receipt_id)
+    ||row.value.quote_snapshot.authorization_state!=="automatic_ready"
     &&row.value.quote_snapshot.authorization_state!=="awaiting_authorization")return fail("brand_context_prototype_quote_invalid");
   return{internal:row.value,public:prototypeQuoteView(parent,row.value,row.observed_at,row.daily_cap_micro_usd)};
 }
@@ -169,17 +173,24 @@ export async function advanceSignalBrandContextComposedProcessingV1(args:{databa
     return{contract_version:"brand-context-composed-advance-v1" as const,state:"completed" as const,
       semantic_run_id:args.semantic_run_id,prototype_run_id:parent.child_run_id,
       prototype_receipt_id:parent.child_receipt_id,replayed:true};
-  if(parent.child_receipt_id)return{contract_version:"brand-context-composed-advance-v1" as const,
-    state:"blocked" as const,semantic_run_id:args.semantic_run_id,error_code:"brand_context_prototype_prior_run_unresolved"};
-  const idempotencyKey=`brand-context-prototypes:${parent.parent_receipt_id}`;
+  if(parent.child_receipt_id&&(!parent.child_run_id||!['failed','canceled'].includes(parent.child_status??'')))
+    return{contract_version:"brand-context-composed-advance-v1" as const,
+      state:"blocked" as const,semantic_run_id:args.semantic_run_id,error_code:"brand_context_prototype_prior_run_unresolved"};
   try{
     const quote=await (args.prepare_quote??prepareSignalBrandContextPrototypeQuoteV1)({database:args.database,
       parent_receipt_id:parent.parent_receipt_id,actor_user_id:parent.actor_user_id});
+    if(parent.child_receipt_id&&quote.supersedes_receipt_id!==parent.child_receipt_id)
+      return{contract_version:"brand-context-composed-advance-v1" as const,
+        state:"blocked" as const,semantic_run_id:args.semantic_run_id,error_code:"brand_context_prototype_prior_run_unresolved"};
     if(quote.requires_confirmation)return{contract_version:"brand-context-composed-advance-v1" as const,
       state:"awaiting_authorization" as const,semantic_run_id:args.semantic_run_id,replayed:false};
+    const idempotencyKey=parent.child_receipt_id
+      ?`brand-context-prototypes:${parent.parent_receipt_id}:${parent.child_receipt_id}`
+      :`brand-context-prototypes:${parent.parent_receipt_id}`;
     const started=await (args.start_processing??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
       parent_receipt_id:parent.parent_receipt_id,actor_user_id:parent.actor_user_id,
-      idempotency_key:idempotencyKey,confirmation:undefined,provider_available:args.provider_available});
+      idempotency_key:idempotencyKey,confirmation:undefined,provider_available:args.provider_available,
+      expected_quote_digest:parent.child_receipt_id?quote.quote_digest:undefined});
     return{contract_version:"brand-context-composed-advance-v1" as const,state:started.state,
       semantic_run_id:args.semantic_run_id,prototype_run_id:started.run_id,
       prototype_receipt_id:started.receipt_id,replayed:started.replayed};
@@ -193,8 +204,8 @@ export async function advanceSignalBrandContextComposedProcessingV1(args:{databa
 }
 
 /** Periodic recovery seam for a worker drainer. It discovers only settled
- * composed parents that still have no Stage2 receipt and advances each with the
- * same deterministic key used by the semantic job. */
+ * composed parents with no Stage2 receipt, or a latest DNC-safe Stage2 leaf, and
+ * advances each with a deterministic key derived only from immutable receipts. */
 export async function advancePendingSignalBrandContextComposedProcessingV1(args:{database:Database;
   provider_available:boolean;batch_size?:number}){
   const batchSize=Math.max(1,Math.min(args.batch_size??20,100));
@@ -206,8 +217,13 @@ export async function advancePendingSignalBrandContextComposedProcessingV1(args:
     WHERE run.status='completed' AND run.provider_call_state='settled' AND run.provider_call_count=1
      AND run.appended_operation_id IS NOT NULL AND run.result_digest IS NOT NULL
      AND reservation.status='settled' AND reservation.actual_micro_usd=run.settled_micro_usd
-     AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts child
+     AND (NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts child
        WHERE child.parent_receipt_id=receipt.id)
+      OR EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts child
+       WHERE child.parent_receipt_id=receipt.id
+        AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts successor
+          WHERE successor.supersedes_receipt_id=child.id)
+        AND signal_brand_context_prototype_retry_safe_v1(child.run_id)))
     ORDER BY run.completed_at,run.id LIMIT $1`,[batchSize])).rows.map(row=>row.id);
     await client.query("COMMIT");
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
@@ -223,12 +239,18 @@ export async function advancePendingSignalBrandContextComposedProcessingV1(args:
 
 /** Server-only Stage2 adapter. Its caller supplies identity, intent and runtime
  * health only; all plan bytes, profile, provider, model, quote and caps are read
- * or rebuilt inside this transaction. */
+ * or rebuilt inside this transaction. A successor uses a new key and the exact
+ * quote digest obtained server-side; SQL0157 proves the latest child is DNC.
+ * Historical replay reports its current status and never rearms the old run. */
 export async function startSignalBrandContextPrototypeProcessingV1(args:{database:Database;parent_receipt_id:string;
-  actor_user_id:string;idempotency_key:string;confirmation?:typeof confirmation;provider_available:boolean
-}):Promise<SignalBrandContextPrototypeProcessingV1>{
+  actor_user_id:string;idempotency_key:string;confirmation?:typeof confirmation;provider_available:boolean;
+  expected_quote_digest?:string
+},dependencies:{publish?:typeof publishSignalBrandContextComposedGenerationWithQueryableV1;
+  ensure_catalog?:typeof ensureSignalBrandContextPrototypeCatalogStoreV1;
+  load_plan?:typeof loadSignalWorkspaceTopicPrototypePlanV1}={}):Promise<SignalBrandContextPrototypeProcessingV1>{
   if(!uuid.test(args.parent_receipt_id)||!uuid.test(args.actor_user_id)||!key.test(args.idempotency_key)
-    ||args.confirmation!==undefined&&args.confirmation!==confirmation)return fail("brand_context_prototype_request_invalid",422);
+    ||args.confirmation!==undefined&&args.confirmation!==confirmation
+    ||args.expected_quote_digest!==undefined&&!digest.test(args.expected_quote_digest))return fail("brand_context_prototype_request_invalid",422);
   const client=await args.database.connect();
   try{
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
@@ -242,7 +264,9 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
       [parent.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
     let result:Authorization|undefined;let requiresProvider:boolean;
     if(prior){
-      if(prior.parent_receipt_id!==args.parent_receipt_id)return fail("processing_idempotency_conflict");
+      if(prior.parent_receipt_id!==args.parent_receipt_id||(args.confirmation??null)!==prior.confirmation
+        ||args.expected_quote_digest!==undefined&&args.expected_quote_digest!==prior.quote_digest)
+        return fail("processing_idempotency_conflict");
       result=await authorize(client,{...args,pack_digest:prior.pack_digest,plan:prior.plan,
         quote_digest:prior.quote_digest,confirmation:prior.confirmation});
       requiresProvider=(await client.query<{required:boolean}>(`SELECT EXISTS(SELECT 1 FROM jsonb_object_keys($1::jsonb->'texts') input(text_sha256)
@@ -250,17 +274,23 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
           AND cache.config_digest=$1::jsonb->'embedding_profile'->>'config_digest' AND cache.chunk_sha256=input.text_sha256)) required`,
         [JSON.stringify(prior.plan),parent.workspace_id])).rows[0]?.required??true;
     }else{
-      const published=await publishSignalBrandContextComposedGenerationWithQueryableV1({queryable:client,
+      const published=await (dependencies.publish??publishSignalBrandContextComposedGenerationWithQueryableV1)({queryable:client,
         parent_receipt_id:args.parent_receipt_id,actor_user_id:args.actor_user_id});
-      await ensureSignalBrandContextPrototypeCatalogStoreV1({client,workspace_id:parent.workspace_id,
+      await (dependencies.ensure_catalog??ensureSignalBrandContextPrototypeCatalogStoreV1)({client,workspace_id:parent.workspace_id,
         actor_user_id:args.actor_user_id,parent_receipt_id:args.parent_receipt_id,
         generation_id:published.generation_id,pack_digest:published.pack_digest});
-      const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:client,workspace_id:parent.workspace_id,
+      const plan=await (dependencies.load_plan??loadSignalWorkspaceTopicPrototypePlanV1)({queryable:client,workspace_id:parent.workspace_id,
         actor_user_id:args.actor_user_id});
       const quoted=(await client.query<{value:Quote}>("SELECT quote_signal_brand_context_prototypes_v1($1::uuid,$2::uuid,$3::jsonb) value",
         [args.parent_receipt_id,args.actor_user_id,JSON.stringify(plan)])).rows[0]?.value;
-      if(!quoted||!digest.test(quoted.quote_digest)||quoted.quote_snapshot.pack_digest!==published.pack_digest)
+      if(!quoted||!digest.test(quoted.quote_digest)||quoted.quote_snapshot.pack_digest!==published.pack_digest
+        ||quoted.quote_snapshot.supersedes_receipt_id!==null&&!uuid.test(quoted.quote_snapshot.supersedes_receipt_id))
         return fail("brand_context_prototype_quote_invalid");
+      // The quote itself checks the latest child with the DB DNC predicate.
+      // Do not infer retryability from a generic failed status or an error code.
+      if(quoted.quote_snapshot.supersedes_receipt_id!==null&&args.expected_quote_digest===undefined
+        ||args.expected_quote_digest!==undefined&&args.expected_quote_digest!==quoted.quote_digest)
+        return fail("brand_context_prototype_quote_changed");
       requiresProvider=quoted.quote_snapshot.requires_provider===true;
       if(requiresProvider&&!args.provider_available)return fail("brand_context_prototype_runtime_unavailable",503);
       result=await authorize(client,{parent_receipt_id:args.parent_receipt_id,actor_user_id:args.actor_user_id,
@@ -275,12 +305,13 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
     const run=(await client.query<{status:string;processing_admission_id:string}>(`SELECT status,processing_admission_id::text
       FROM signal_workspace_embedding_runs WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='topic_prototypes'`,
       [receipt.run_id,parent.workspace_id])).rows[0];
-    if(!run||run.processing_admission_id!==receipt.admission_id||!["queued","running","completed"].includes(run.status))
+    if(!run||run.processing_admission_id!==receipt.admission_id||!prototypeStates.some(state=>state===run.status)
+      ||!result.replayed&&run.status!=="queued")
       return fail("brand_context_prototype_receipt_invalid");
     await client.query("COMMIT");
     return{contract_version:"brand-context-prototype-processing-v1",workspace_id:parent.workspace_id,
       generation_id:parent.generation_id,run_id:receipt.run_id,receipt_id:receipt.id,
-      state:run.status as "queued"|"running"|"completed",replayed:result.replayed,requires_provider:requiresProvider};
+      state:run.status as SignalBrandContextPrototypeProcessingV1["state"],replayed:result.replayed,requires_provider:requiresProvider};
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);mapError(error);}finally{client.release();}
 }
 

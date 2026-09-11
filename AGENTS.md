@@ -4,6 +4,16 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Source fencing Brand Context cerrado LOCAL — 2026-09-11.** Checkout
+> `noisia-brand-context-e2e-2026-09-10`, base UAT `76fecc1`. SQL0159 reconcilia cambios de Brand OS,
+> KB y competidores, exige la cotización opaca exacta y vuelve a validar la fuente antes del envío.
+> Stage1 DNC rearma el mismo Claude; Stage2 DNC usa sucesor Voyage y puede completar desde caché.
+> PG28/28, Studio978/7, Worker564/42, DB502/93, focales, TC/lint/build e interfaz cerrados; revisión
+> sin bloqueadores UAT. Leer `DELIVERY_BRAND_CONTEXT_SOURCE_FENCING_UAT_2026-09-11.md`. SQL0159 aún
+> NO está aplicado en UAT en este punto; aplicar una vez DB → Worker → Studio y dejar proveedores
+> inactivos. Gate preproducción: renovación explícita de una admisión Stage1 vencida y recuperación de
+> polling largo. No reaplicar SQL0156–0158 ni repetir gates cerrados. Loop ACTIVE en este chat.
+
 > **Cotización Brand Context visible en UAT — 2026-09-11 20:06 UTC.** Studio ejecuta
 > `5b22d606c707998f55b12acdcf6823eef034619b`, deployment
 > `2c697195-3578-46c3-bd37-bdfd8d4691a3`; Worker conserva `cdd93bd` porque Railway saltó el corte

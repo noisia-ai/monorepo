@@ -4019,7 +4019,7 @@
       "processing_paused": "La preparación externa está pausada. No se crearán llamadas ni reservas.",
       "daily_limit_reached": "El saldo diario disponible no cubre el tope completo de esta preparación.",
       "brand_context_required": "Completa la identidad, el contexto y las fuentes de conocimiento de la marca.",
-      "brand_context_outdated": "Brand OS o sus fuentes cambiaron. La siguiente preparación usará el contexto actualizado.",
+      "brand_context_outdated": "Tus cambios requieren una nueva versión del contexto. Conservamos la anterior mientras calculamos una cotización vigente.",
       "market_language_required": "Define al menos un mercado y un idioma principal para preparar el contexto.",
       "preparation_required": "Los intereses todavía necesitan una base semántica completa antes de continuar.",
       "temporarily_unavailable": "Actualiza la lectura cuando la preparación vuelva a estar disponible.",
@@ -4028,8 +4028,15 @@
       "recovering": "El sistema está comprobando la misma solicitud. No necesita otra autorización.",
       "awaiting_authorization": "El contexto de marca ya está listo. Autoriza la preparación de sus intereses con el tope vigente para completar esta versión.",
       "completed": "El contexto y los intereses quedaron preparados para los siguientes análisis.",
-      "stale": "Brand OS o sus fuentes cambiaron. El resultado anterior se conserva hasta preparar la nueva versión.",
+      "stale": "Tus cambios requieren una nueva versión del contexto. El resultado anterior se conserva; cuando aparezca la cotización vigente, revísala y confirma la preparación.",
       "failed": "La solicitud se interrumpió. El progreso y los resultados guardados se conservan."
+    },
+    "reconciliation": {
+      "idle": "La versión anterior se conserva mientras preparamos la actualización.",
+      "checking": "Tus cambios están guardados. Estamos creando gratuitamente la nueva versión y actualizando su cotización.",
+      "waiting": "Tus cambios están guardados. Esperamos que termine la solicitud anterior antes de crear la nueva versión. Esta comprobación no envía datos ni requiere otra autorización.",
+      "retrying": "La actualización gratuita aún no responde. Volveremos a comprobarla de forma acotada sin duplicar la solicitud.",
+      "exhausted": "La solicitud anterior aún puede estar cerrándose. Pulsa Actualizar para volver a comprobarla; tus cambios y el resultado previo se conservan."
     },
     "phases": {
       "waiting": "Esperando capacidad de procesamiento.",

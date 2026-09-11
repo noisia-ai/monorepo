@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
 import {readFileSync} from "node:fs";
 import test from "node:test";
-import {advanceSignalBrandContextComposedProcessingV1} from "./signal-brand-context-prototype-processing";
+import {advanceSignalBrandContextComposedProcessingV1,startSignalBrandContextPrototypeProcessingV1} from "./signal-brand-context-prototype-processing";
+import type {Pool} from "pg";
 
 const adapter=readFileSync(new URL("./signal-brand-context-prototype-processing.ts",import.meta.url),"utf8");
 const preparation=readFileSync(new URL("./signal-brand-context-preparation.ts",import.meta.url),"utf8");
@@ -27,7 +28,9 @@ test("Stage2 accepts only identity, intent, confirmation and server runtime heal
   const start=body(adapter,"startSignalBrandContextPrototypeProcessingV1");
   assert.match(start,/database:Database;parent_receipt_id:string;\s*actor_user_id:string;idempotency_key:string;confirmation\?/u);
   assert.match(start,/provider_available:boolean/u);
-  assert.doesNotMatch(start.split("}):Promise")[0]??"",/workspace_id|plan:|profile:|provider:|model:|cap|quote_digest/u);
+  const input=start.slice(0,start.indexOf("},dependencies"));
+  assert.match(input,/expected_quote_digest\?:string/u);
+  assert.doesNotMatch(input,/workspace_id|plan:|profile:|provider:|model:|cap/u);
   assert.match(start,/BEGIN ISOLATION LEVEL READ COMMITTED/u);
   const fresh=start.slice(start.indexOf("}else{"));
   const order=["publishSignalBrandContextComposedGenerationWithQueryableV1",
@@ -146,6 +149,7 @@ test("settled Stage1 advances automatically with DB-owned actor and deterministi
   assert.match(advance,/state:"runtime_unavailable"/u);
   const pending=body(adapter,"advancePendingSignalBrandContextComposedProcessingV1");
   assert.match(pending,/NOT EXISTS\(SELECT 1 FROM signal_brand_context_prototype_receipts child/u);
+  assert.match(pending,/signal_brand_context_prototype_retry_safe_v1\(child\.run_id\)/u);
   assert.match(pending,/advanceSignalBrandContextComposedProcessingV1/u);
 });
 
@@ -169,7 +173,7 @@ test("an expired Stage1 parent stops before Stage2 admission until the user conf
     load_parent:async()=>({parent_receipt_id:parentReceipt,workspace_id:workspace,actor_user_id:actor,
       child_receipt_id:null,child_run_id:null,child_status:null,child_idempotency_key:null}),
     prepare_quote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parentReceipt,
-      workspace_id:workspace,quote_digest:`sha256:${"a".repeat(64)}`,quoted_at:"2026-09-11T12:00:00.000Z",
+      workspace_id:workspace,supersedes_receipt_id:null,quote_digest:`sha256:${"a".repeat(64)}`,quoted_at:"2026-09-11T12:00:00.000Z",
       quote_expires_at:"2026-09-11T12:05:00.000Z",maximum_micro_usd:"100000",
       available_today_micro_usd:"900000",requires_provider:true,requires_confirmation:true,
       authorization_state:"awaiting_authorization"}),
@@ -178,4 +182,185 @@ test("an expired Stage1 parent stops before Stage2 admission until the user conf
   assert.deepEqual(result,{contract_version:"brand-context-composed-advance-v1",state:"awaiting_authorization",
     semantic_run_id:semanticRun,replayed:false});
   assert.equal(starts,0,"no Stage2 admission, reservation or provider work may start without a fresh confirmation");
+});
+
+test("a DNC Stage2 leaf advances from cache without engineering or another confirmation",async()=>{
+  const semanticRun=randomUUID(),parentReceipt=randomUUID(),childReceipt=randomUUID();
+  const childRun=randomUUID(),workspace=randomUUID(),actor=randomUUID();
+  const quoteDigest=`sha256:${"a".repeat(64)}`;const starts:Record<string,unknown>[]=[];
+  const result=await advanceSignalBrandContextComposedProcessingV1({database:{} as never,
+    semantic_run_id:semanticRun,provider_available:false,
+    load_parent:async()=>({parent_receipt_id:parentReceipt,workspace_id:workspace,actor_user_id:actor,
+      child_receipt_id:childReceipt,child_run_id:childRun,child_status:"failed",child_idempotency_key:"old-key"}),
+    prepare_quote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parentReceipt,
+      workspace_id:workspace,supersedes_receipt_id:childReceipt,quote_digest:quoteDigest,
+      quoted_at:"2026-09-11T12:00:00.000Z",quote_expires_at:"2026-09-11T12:05:00.000Z",
+      maximum_micro_usd:"0",available_today_micro_usd:"900000",requires_provider:false,
+      requires_confirmation:false,authorization_state:"automatic_ready"}),
+    start_processing:async input=>{starts.push(input);return{contract_version:"brand-context-prototype-processing-v1",
+      workspace_id:workspace,generation_id:randomUUID(),run_id:randomUUID(),receipt_id:randomUUID(),
+      state:"queued",replayed:false,requires_provider:false};}
+  });
+  assert.equal(result.state,"queued");assert.equal(starts.length,1);
+  assert.equal(starts[0]!.confirmation,undefined);assert.equal(starts[0]!.provider_available,false);
+  assert.equal(starts[0]!.expected_quote_digest,quoteDigest);
+  assert.equal(starts[0]!.idempotency_key,`brand-context-prototypes:${parentReceipt}:${childReceipt}`);
+});
+
+test("a DNC Stage2 leaf with uncached inputs remains an explicit authorization",async()=>{
+  const semanticRun=randomUUID(),parentReceipt=randomUUID(),childReceipt=randomUUID();let starts=0;
+  const result=await advanceSignalBrandContextComposedProcessingV1({database:{} as never,
+    semantic_run_id:semanticRun,provider_available:true,
+    load_parent:async()=>({parent_receipt_id:parentReceipt,workspace_id:randomUUID(),actor_user_id:randomUUID(),
+      child_receipt_id:childReceipt,child_run_id:randomUUID(),child_status:"canceled",child_idempotency_key:"old-key"}),
+    prepare_quote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parentReceipt,
+      workspace_id:randomUUID(),supersedes_receipt_id:childReceipt,quote_digest:`sha256:${"a".repeat(64)}`,
+      quoted_at:"2026-09-11T12:00:00.000Z",quote_expires_at:"2026-09-11T12:05:00.000Z",
+      maximum_micro_usd:"100",available_today_micro_usd:"900000",requires_provider:true,
+      requires_confirmation:true,authorization_state:"awaiting_authorization"}),
+    start_processing:async()=>{starts++;throw new Error("must_not_start");}
+  });
+  assert.equal(result.state,"awaiting_authorization");assert.equal(starts,0);
+});
+
+// Adapter tests only: PostgreSQL remains the authority for the DNC predicate,
+// live permissions and the atomic bundle. These doubles expose those decisions
+// without opening a socket or manufacturing provider/cost history.
+function recoveryAdapterFixture(){
+  const parent=randomUUID(),workspace=randomUUID(),generation=randomUUID(),actor=randomUUID();
+  const predecessor=randomUUID(),profile=randomUUID(),pack=`sha256:${"a".repeat(64)}`,quoteDigest=`sha256:${"b".repeat(64)}`;
+  const plan={contract_version:"signal-workspace-topic-prototype-plan-v1",taxonomy_profile_id:profile,
+    texts:{},embedding_profile:{config_digest:`sha256:${"c".repeat(64)}`}};
+  const confirmation="prepare_brand_context_prototypes_within_shown_cap" as const;
+  type Row={id:string;parent_receipt_id:string;workspace_id:string;generation_id:string;actor_user_id:string;
+    admission_id:string;run_id:string;pack_digest:string;plan:typeof plan;quote_digest:string;confirmation:string|null};
+  const receipts=new Map<string,Row>();const states=new Map<string,string>();
+  const counters={quotes:0,authorizations:0,creates:0,publish:0,catalog:0,plan:0,rollbacks:0};
+  let sqlDenial:string|null=null,actorAllowed=true,ackLost=false,uncached=true;
+  let latestChild:string|null=predecessor;
+  let snapshot:{receipts:Array<[string,Row]>;states:Array<[string,string]>;creates:number}|null=null;
+  const query=async(sql:string,values:unknown[]=[])=>{
+    if(sql.startsWith("BEGIN")){snapshot={receipts:structuredClone([...receipts]),states:[...states],creates:counters.creates};return{rows:[]};}
+    if(sql==="COMMIT"){snapshot=null;if(ackLost){ackLost=false;throw new Error("synthetic_commit_ack_lost");}return{rows:[]};}
+    if(sql==="ROLLBACK"){counters.rollbacks++;if(snapshot){receipts.clear();states.clear();snapshot.receipts.forEach(([k,v])=>receipts.set(k,v));
+      snapshot.states.forEach(([k,v])=>states.set(k,v));counters.creates=snapshot.creates;snapshot=null;}return{rows:[]};}
+    if(sql.includes("SELECT pg_advisory_xact_lock"))return{rows:[]};
+    if(sql.includes("FROM signal_brand_context_processing_receipts WHERE")){
+      assert.deepEqual(values,[parent,actor]);return{rows:[{workspace_id:workspace,generation_id:generation}]};}
+    if(sql.includes("SELECT receipt.* FROM signal_brand_context_prototype_receipts")){
+      assert.deepEqual(values.slice(0,2),[workspace,actor]);const prior=receipts.get(String(values[2]));return{rows:prior?[prior]:[]};}
+    if(sql.includes("quote_signal_brand_context_prototypes_v1")){
+      counters.quotes++;assert.deepEqual(values.slice(0,2),[parent,actor]);
+      if(sqlDenial)throw new Error(sqlDenial);
+      return{rows:[{value:{quote_digest:quoteDigest,quote_snapshot:{pack_digest:pack,
+        supersedes_receipt_id:latestChild,requires_provider:uncached,requires_confirmation:uncached&&latestChild!==null}}}]};}
+    if(sql.includes("authorize_signal_brand_context_prototypes_v1")){
+      counters.authorizations++;assert.equal(values[0],parent);assert.equal(values[1],actor);
+      if(!actorAllowed)throw new Error("processing_forbidden");
+      const key=String(values[2]),prior=receipts.get(key);
+      if(prior)return{rows:[{result:{replayed:true,run_id:prior.run_id,receipt:prior}}]};
+      assert.equal(values[5],quoteDigest);
+      if(uncached&&latestChild!==null&&values[6]!==confirmation)throw new Error("brand_context_prototype_awaiting_authorization");
+      if(receipts.size)throw new Error("brand_context_prototype_prior_run_unresolved");
+      const receipt:Row={id:randomUUID(),parent_receipt_id:parent,workspace_id:workspace,generation_id:generation,
+        actor_user_id:actor,admission_id:randomUUID(),run_id:randomUUID(),pack_digest:pack,plan,
+        quote_digest:quoteDigest,confirmation:values[6] as string|null};
+      receipts.set(key,receipt);states.set(receipt.run_id,"queued");counters.creates++;
+      return{rows:[{result:{replayed:false,run_id:receipt.run_id,receipt}}]};}
+    if(sql.includes("SELECT EXISTS(SELECT 1 FROM jsonb_object_keys"))return{rows:[{required:uncached}]};
+    if(sql.includes("SELECT status,processing_admission_id::text")){
+      const receipt=[...receipts.values()].find(value=>value.run_id===values[0]);assert.ok(receipt);
+      return{rows:[{status:states.get(receipt.run_id),processing_admission_id:receipt.admission_id}]};}
+    throw new Error("unexpected_adapter_query");
+  };
+  const database={connect:async()=>({query,release:()=>{}})} as unknown as Pool;
+  const dependencies={
+    publish:async()=>{counters.publish++;return{workspace_id:workspace,organization_id:randomUUID(),brand_id:randomUUID(),generation_id:generation,pack_digest:pack};},
+    ensure_catalog:async()=>{counters.catalog++;return{taxonomy_profile_id:profile,created:false};},
+    load_plan:async()=>{counters.plan++;return plan as never;}
+  };
+  const args={database,parent_receipt_id:parent,actor_user_id:actor,idempotency_key:randomUUID(),confirmation,
+    expected_quote_digest:quoteDigest,provider_available:true};
+  return{args,dependencies,counters,receipts,states,quoteDigest,predecessor,
+    deny:(code:string)=>{sqlDenial=code;},revoke:()=>{actorAllowed=false;},loseAck:()=>{ackLost=true;},cache:()=>{uncached=false;},
+    initial:()=>{latestChild=null;}};
+}
+
+test("DNC successor uses the current server quote and one new decision key",async()=>{
+  const f=recoveryAdapterFixture();const first=await startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies);
+  assert.equal(first.replayed,false);assert.equal(first.state,"queued");assert.equal(f.counters.creates,1);
+  const before=structuredClone(f.counters);
+  const replay=await startSignalBrandContextPrototypeProcessingV1({...f.args,provider_available:false},f.dependencies);
+  assert.deepEqual(replay,{...first,replayed:true});assert.equal(f.counters.creates,1);
+  assert.equal(f.counters.quotes,before.quotes);assert.equal(f.counters.publish,before.publish);
+  assert.equal(f.counters.catalog,before.catalog);assert.equal(f.counters.plan,before.plan);
+  await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1({...f.args,idempotency_key:randomUUID()},f.dependencies),
+    {message:"brand_context_prototype_prior_run_unresolved"});assert.equal(f.counters.creates,1);
+});
+
+test("DNC successor requires the exact expected quote even if displayed amounts are unchanged",async()=>{
+  for(const expected_quote_digest of [undefined,`sha256:${"d".repeat(64)}`]){
+    const f=recoveryAdapterFixture();await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(
+      {...f.args,expected_quote_digest},f.dependencies),{message:"brand_context_prototype_quote_changed"});
+    assert.equal(f.counters.authorizations,0);assert.equal(f.receipts.size,0);
+  }
+});
+
+test("exact replay returns historical terminal status after a fast failure without another admission",async()=>{
+  for(const state of ["failed","canceled","stale","outcome_unknown","completed"]){
+    const f=recoveryAdapterFixture();const first=await startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies);
+    f.states.set(first.run_id,state);const prior=structuredClone([...f.receipts]);const quoteCalls=f.counters.quotes;
+    f.deny("brand_context_prototype_authorization_expired");
+    const replay=await startSignalBrandContextPrototypeProcessingV1({...f.args,provider_available:false},f.dependencies);
+    assert.equal(replay.state,state);assert.equal(replay.replayed,true);assert.equal(replay.receipt_id,first.receipt_id);
+    assert.deepEqual([...f.receipts],prior);assert.equal(f.counters.creates,1);assert.equal(f.counters.quotes,quoteCalls);
+  }
+});
+
+test("COMMIT ACK loss followed by fast failure replays the one accepted successor",async()=>{
+  const f=recoveryAdapterFixture();f.loseAck();
+  await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies),/synthetic_commit_ack_lost/u);
+  const accepted=f.receipts.get(f.args.idempotency_key)!;assert.ok(accepted);f.states.set(accepted.run_id,"failed");
+  const replay=await startSignalBrandContextPrototypeProcessingV1({...f.args,provider_available:false},f.dependencies);
+  assert.equal(replay.receipt_id,accepted.id);assert.equal(replay.state,"failed");assert.equal(replay.replayed,true);
+  assert.equal(f.counters.creates,1);
+});
+
+test("replay rejects a changed confirmation or expected quote and still enforces SQL actor scope",async()=>{
+  const f=recoveryAdapterFixture();await startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies);
+  for(const changed of [{confirmation:undefined},{expected_quote_digest:`sha256:${"d".repeat(64)}`}]){
+    await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1({...f.args,...changed},f.dependencies),
+      {message:"processing_idempotency_conflict"});
+  }
+  f.revoke();await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies),
+    (error:unknown)=>error instanceof Error&&error.message==="processing_forbidden"&&"status" in error&&error.status===403);
+  assert.equal(f.counters.creates,1);
+});
+
+test("unsafe previous call, revoked policy and stale publication remain SQL denials before a successor",async()=>{
+  for(const code of ["brand_context_prototype_prior_run_unresolved","brand_context_prototype_prior_call_unresolved",
+    "brand_context_prototype_authorization_expired","brand_context_prototype_publication_required"]){
+    const f=recoveryAdapterFixture();f.deny(code);
+    await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(f.args,f.dependencies),{message:code});
+    assert.equal(f.receipts.size,0);assert.equal(f.counters.authorizations,0);
+  }
+});
+
+test("provider off blocks a new paid successor but preserves a server-proven cached continuation",async()=>{
+  const f=recoveryAdapterFixture();await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(
+    {...f.args,provider_available:false},f.dependencies),{message:"brand_context_prototype_runtime_unavailable"});
+  assert.equal(f.counters.creates,0);assert.equal(f.counters.authorizations,0);
+  f.cache();const free=await startSignalBrandContextPrototypeProcessingV1(
+    {...f.args,confirmation:undefined,provider_available:false},f.dependencies);
+  assert.equal(free.requires_provider,false);assert.equal(f.counters.creates,1);
+});
+
+test("initial automatic Stage2 is unchanged, but a paid DNC successor still needs confirmation",async()=>{
+  const initial=recoveryAdapterFixture();initial.initial();
+  const accepted=await startSignalBrandContextPrototypeProcessingV1(
+    {...initial.args,confirmation:undefined,expected_quote_digest:undefined},initial.dependencies);
+  assert.equal(accepted.state,"queued");assert.equal(initial.counters.creates,1);
+  const retry=recoveryAdapterFixture();await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(
+    {...retry.args,confirmation:undefined},retry.dependencies),{message:"brand_context_prototype_awaiting_authorization"});
+  assert.equal(retry.receipts.size,0);assert.equal(retry.counters.creates,0);
 });

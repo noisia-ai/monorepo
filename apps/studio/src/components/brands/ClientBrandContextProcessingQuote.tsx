@@ -6,6 +6,9 @@ import { useLocale, useTranslations } from "next-intl";
 
 import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
 import {
+  clientBrandContextReconciliationAwaitingSettlementV1,
+  clientBrandContextReconciliationCycleV1,
+  clientBrandContextReconciliationRetryDelayV1,
   clientBrandContextProcessingCanConfirmV1,
   clientBrandContextProcessingConfirmationV1,
   clientBrandContextProcessingPollDelayV1,
@@ -18,11 +21,13 @@ import {
   type ClientBrandContextProcessingConfirmationV1,
   type ClientBrandContextProcessingPendingRequestV1,
   type ClientBrandContextProcessingQuoteViewV1,
+  type ClientBrandContextReconciliationCycleV1,
   type ClientBrandContextProcessingViewV1
 } from "@/lib/data-os/client-brand-context-processing-quote";
 import { formatClientProcessingMicroUsdV1 } from "@/lib/data-os/signal-processing-policy-ui";
 
 type ErrorState = "load" | "request" | "forbidden" | null;
+type ReconciliationState = "idle" | "checking" | "waiting" | "retrying" | "exhausted";
 type Authorization = (request: { idempotencyKey: string; body: ClientBrandContextProcessingConfirmationV1 }) => Promise<unknown>;
 
 function initialProcessingView(value: ClientBrandContextProcessingViewV1 | ClientBrandContextProcessingQuoteViewV1 | null,
@@ -52,13 +57,19 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<ErrorState>(null);
   const [expired, setExpired] = useState(false);
+  const [reconciliationState, setReconciliationState] = useState<ReconciliationState>("idle");
+  const [reconciliationRevision, setReconciliationRevision] = useState(0);
   const request = useRef<AbortController | null>(null);
   const scope = useRef(0);
   const submission = useRef(false);
   const requestKey = useRef<ClientBrandContextProcessingPendingRequestV1 | null>(null);
+  const reconciliation = useRef<ClientBrandContextReconciliationCycleV1 | null>(null);
+  const pollingAttempts = useRef(0);
+  const pollingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const denied = useRef(onAccessDenied); denied.current = onAccessDenied;
   const previousWorkspace = useRef<string | null>(null);
   const endpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/brand-context/processing-quote`;
+  const reconciliationEndpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/semantic-context/reconcile`;
   const submitAuthorization: Authorization | undefined = authorize ?? (authorizeFromEndpoint
     ? async ({ idempotencyKey, body }) => {
       const response = await fetch(endpoint, { method: "POST", cache: "no-store",
@@ -103,17 +114,75 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     if (workspaceChanged) {
       setView(initialProcessingView(initial, workspaceId));
       setExpired(false); setError(null); setSubmitting(false); submission.current = false; requestKey.current = null;
+      reconciliation.current = null; pollingAttempts.current = 0; setReconciliationState("idle");
     }
     void read();
     return () => { scope.current += 1; request.current?.abort(); };
   }, [initial, read, refreshSignal, workspaceId]);
 
   const current = clientBrandContextProcessingViewForWorkspaceV1(view, workspaceId);
+  const sourceStale = current?.operation?.state === "stale" || current?.status === "brand_context_outdated";
+  const needsSourceReconciliation = sourceStale && current?.can_start !== true;
   useEffect(() => {
-    const delay = clientBrandContextProcessingPollDelayV1(current);
-    if (delay === null) return;
-    const timer = setTimeout(() => void read(), delay);
-    return () => clearTimeout(timer);
+    if (!needsSourceReconciliation) { reconciliation.current = null; return; }
+    const cycle = clientBrandContextReconciliationCycleV1(reconciliation.current, workspaceId,
+      () => crypto.randomUUID());
+    reconciliation.current = cycle;
+    const delay = clientBrandContextReconciliationRetryDelayV1(cycle.attempts);
+    if (delay === null) { setReconciliationState("exhausted"); return; }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      reconciliation.current = { ...cycle, attempts: cycle.attempts + 1 };
+      setReconciliationState("checking");
+      void (async () => {
+        let retry = true;
+        try {
+          const response = await fetch(reconciliationEndpoint, {
+            method: "POST", cache: "no-store", signal: controller.signal,
+            headers: { "Content-Type": "application/json", "Idempotency-Key": cycle.idempotencyKey },
+            body: JSON.stringify({ reason: "operator_requested_reconciliation",
+              preparation: { idempotency_key: cycle.idempotencyKey } })
+          });
+          const body: unknown = await response.json().catch(() => null);
+          if (controller.signal.aborted) return;
+          const awaitingSettlement = clientBrandContextReconciliationAwaitingSettlementV1(body);
+          if (!response.ok && !awaitingSettlement && response.status < 500
+            && ![408, 425, 429].includes(response.status)) {
+            retry = false; setReconciliationState("exhausted"); return;
+          }
+          if (awaitingSettlement) {
+            // The server acknowledged this free reconciliation. A later check is
+            // a new command, while transport retries of this request keep its key.
+            reconciliation.current = clientBrandContextReconciliationCycleV1(reconciliation.current,
+              workspaceId, () => crypto.randomUUID(), true);
+            setReconciliationState("waiting");
+          } else setReconciliationState(response.ok ? "checking" : "retrying");
+          await read();
+        } catch {
+          if (!controller.signal.aborted) setReconciliationState("retrying");
+        } finally {
+          if (!controller.signal.aborted && retry) setReconciliationRevision(value => value + 1);
+        }
+      })();
+    }, delay);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [read, reconciliationEndpoint, reconciliationRevision, needsSourceReconciliation, workspaceId]);
+  useEffect(() => {
+    const delay = clientBrandContextProcessingPollDelayV1(current, pollingAttempts.current);
+    if (delay === null) {
+      if (!current?.operation || !["queued", "running", "recovering"].includes(current.operation.state))
+        pollingAttempts.current = 0;
+      return;
+    }
+    pollingTimer.current = setTimeout(() => {
+      pollingTimer.current = null;
+      pollingAttempts.current += 1;
+      void read();
+    }, delay);
+    return () => {
+      if (pollingTimer.current) clearTimeout(pollingTimer.current);
+      pollingTimer.current = null;
+    };
   }, [current, read]);
   useEffect(() => {
     if (!current?.quote || current.operation
@@ -140,6 +209,16 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     finally { submission.current = false; if (currentScope === scope.current) setSubmitting(false); }
   }
 
+  function refresh() {
+    if (!needsSourceReconciliation) {
+      if (pollingTimer.current) clearTimeout(pollingTimer.current);
+      pollingTimer.current = null; pollingAttempts.current = 0; void read(); return;
+    }
+    reconciliation.current = null;
+    setReconciliationState("checking");
+    setReconciliationRevision(value => value + 1);
+  }
+
   const displayState = expired ? "temporarily_unavailable" : current?.operation?.state ?? current?.status;
   const statusState = displayState === "completed" ? "good"
     : displayState === "temporarily_unavailable" || displayState === "failed" ? "not_available" : "warning";
@@ -157,6 +236,9 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
       : error === "request" ? "requestError" : current ? "refreshError" : "loadError")}</p> : null}
     {current ? <>
       <p className="admin-drawer-form__hint" role="status">{t(`help.${displayState}`)}</p>
+      {needsSourceReconciliation && reconciliationState !== "idle" ? <p className="admin-drawer-form__hint" role="status">
+        {t(`reconciliation.${reconciliationState}`)}
+      </p> : null}
       {current.operation?.phase ? <p className="client-brand-context-quote__phase">{t(`phases.${current.operation.phase}`)}</p> : null}
       {showAmounts && current.quote ?
         <dl className="client-brand-context-quote__amounts">
@@ -193,7 +275,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     <header className="admin-section__head"><div><h2>{t("title")}</h2><p>{t("body")}</p></div>
       <div className="admin-section__actions">
         {displayState ? <AdminStatus state={statusState}>{t(`states.${displayState}`)}</AdminStatus> : null}
-        <button className="admin-button admin-button--compact" disabled={loading} onClick={() => void read()} type="button">
+        <button className="admin-button admin-button--compact" disabled={loading} onClick={refresh} type="button">
           <ArrowClockwise aria-hidden size={15}/>{t("refresh")}
         </button>
       </div>

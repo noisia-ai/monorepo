@@ -1,6 +1,7 @@
 import {
   loadSignalBrandContextProcessingQuoteV1,
   loadSignalBrandContextPrototypeQuoteV1,
+  retrySignalBrandContextComposedSemanticRunV1,
   startSignalBrandContextComposedSemanticRunV1,
   startSignalBrandContextPrototypeProcessingV1,
   signalBrandContextPreparationRuntimeFromEnvV1,
@@ -11,6 +12,7 @@ import type { Pool } from "pg";
 
 import { loadSemanticContextProposalRuntimeReadiness } from "@/lib/queue/data-os";
 import {
+  clientBrandContextProcessingQuoteReferenceV1,
   toClientBrandContextProcessingQuoteViewV1,
   type ClientBrandContextProcessingConfirmationV1,
   type ClientBrandContextProcessingOperationStateV1,
@@ -69,10 +71,12 @@ type ProcessingRowV1 = {
   semantic_cap_micro_usd: string;
   prototype_cap_micro_usd: string;
   available_today_micro_usd: string;
+  quote_digest?: string;
   authorization_current: boolean;
   source_current: boolean;
   generation_status: string;
   semantic_status: string;
+  semantic_retry_safe?: boolean;
   child_receipt_id: string | null;
   child_idempotency_key: string | null;
   prototype_status: string | null;
@@ -86,16 +90,16 @@ function operationState(row: ProcessingRowV1, prototypeAvailable: boolean,
   if (!row.source_current || row.semantic_status === "stale" || row.prototype_status === "stale") {
     return { state: "stale", phase: null };
   }
-  if (["failed", "dead_letter", "canceled"].includes(row.prototype_status ?? "")
-    || ["failed", "dead_letter", "canceled"].includes(row.semantic_status)) {
+  if (row.semantic_status === "completed" && prototypeQuote?.requires_confirmation && prototypeAvailable) return {
+    state: "awaiting_authorization", phase: null
+  };
+  if (["failed", "dead_letter", "canceled", "outcome_unknown"].includes(row.prototype_status ?? "")
+    || ["failed", "dead_letter", "canceled", "outcome_unknown"].includes(row.semantic_status)) {
     return { state: "failed", phase: null };
   }
   if (row.prototype_status === "completed") return { state: "completed", phase: null };
   if (row.prototype_status === "running") return { state: "running", phase: "preparing_interests" };
   if (row.prototype_status === "queued") return { state: "queued", phase: "waiting" };
-  if (row.semantic_status === "completed" && prototypeQuote?.requires_confirmation && prototypeAvailable) return {
-    state: "awaiting_authorization", phase: null
-  };
   if (row.semantic_status === "completed") return {
     state: prototypeAvailable ? "running" : "recovering",
     phase: row.generation_status === "published" ? "preparing_interests" : "finalizing"
@@ -109,6 +113,7 @@ function operationState(row: ProcessingRowV1, prototypeAvailable: boolean,
 async function loadLatestProcessingRowV1(database: Database, workspaceId: string, actorUserId: string) {
   const result = await database.query<ProcessingRowV1>(`SELECT clock_timestamp()::text observed_at,
     receipt.id::text receipt_id,receipt.authorization_not_after::text,
+    receipt.quote_digest,
     receipt.authorization_not_after>clock_timestamp() authorization_current,
     receipt.semantic_cap_micro_usd::text,receipt.prototype_cap_micro_usd::text,
     greatest(policy.daily_cap_micro_usd-(signal_processing_org_exposure_v1(receipt.organization_id,
@@ -116,6 +121,9 @@ async function loadLatestProcessingRowV1(database: Database, workspaceId: string
       available_today_micro_usd,
     signal_brand_context_processing_source_current_v1(receipt.generation_id) source_current,
     generation.status generation_status,semantic.status semantic_status,
+    semantic.status='failed' AND semantic.provider_call_state='not_started'
+      AND semantic.provider_call_count=0 AND semantic.provider_response_private IS NULL
+      AND semantic.lease_token IS NULL semantic_retry_safe,
     child.id::text child_receipt_id,child.idempotency_key child_idempotency_key,prototype.status prototype_status
    FROM signal_brand_context_processing_receipts receipt
    JOIN signal_semantic_context_generations generation ON generation.id=receipt.generation_id
@@ -145,8 +153,7 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     loadLatestProcessingRowV1(database, args.workspaceId, args.actorUserId)
   ]);
   let prototypeQuote: Awaited<ReturnType<typeof loadSignalBrandContextPrototypeQuoteV1>> | null = null;
-  if (operation?.semantic_status === "completed" && operation.generation_status === "published"
-    && !operation.child_receipt_id) {
+  if (operation?.semantic_status === "completed" && operation.generation_status === "published") {
     try { prototypeQuote = await loadSignalBrandContextPrototypeQuoteV1({ database,
       parent_receipt_id: operation.receipt_id, actor_user_id: args.actorUserId }); }
     catch { /* The Worker may still be finalizing publication/catalog. Polling remains read-only here. */ }
@@ -154,22 +161,34 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
   const current = operation ? operationState(operation, runtime.prototype.available, prototypeQuote) : null;
   const canStartStage2 = current?.state === "awaiting_authorization" && Boolean(prototypeQuote)
     && runtime.prototype.available && Date.parse(prototypeQuote!.quote_expires_at) > Date.now();
+  const retryReference=clientBrandContextProcessingQuoteReferenceV1(operation?.quote_digest);
+  const canRetryStage1 = current?.state === "failed" && operation?.semantic_retry_safe === true
+    && retryReference!==null
+    && operation.source_current && operation.authorization_current
+    && runtime.queue_configured && runtime.worker_alive && runtime.recovery_alive && runtime.semantic.available;
   const canStartStage1 = quote.status === "quote_available" && Boolean(quote.quote_expires_at)
     && (!current || ["stale", "failed"].includes(current.state));
-  const canStart = canStartStage1 || canStartStage2;
+  const canStart = canRetryStage1 || canStartStage1 || canStartStage2;
   const immutableQuote = operation ? {
+    reference: null,
     maximum_micro_usd: (BigInt(operation.semantic_cap_micro_usd)
       + BigInt(operation.prototype_cap_micro_usd)).toString(),
     available_today_micro_usd: operation.available_today_micro_usd,
     expires_at: new Date(operation.authorization_not_after).toISOString()
   } : null;
   const activeQuote = prototypeQuote?.requires_confirmation ? {
+    reference: clientBrandContextProcessingQuoteReferenceV1(prototypeQuote.quote_digest),
     maximum_micro_usd: prototypeQuote.maximum_micro_usd,
     available_today_micro_usd: prototypeQuote.available_today_micro_usd,
     expires_at: prototypeQuote.quote_expires_at
-  } : operation ? immutableQuote
-    : quote.status === "quote_available" && quote.maximum_micro_usd && quote.available_today_micro_usd
+  } : canRetryStage1 ? {
+    reference: retryReference!,
+    maximum_micro_usd: immutableQuote!.maximum_micro_usd,
+    available_today_micro_usd: immutableQuote!.available_today_micro_usd,
+    expires_at: immutableQuote!.expires_at
+  } : canStartStage1 && quote.maximum_micro_usd && quote.available_today_micro_usd
     && quote.quote_expires_at ? {
+      reference: quote.quote_reference,
       maximum_micro_usd: quote.maximum_micro_usd,
       available_today_micro_usd: quote.available_today_micro_usd,
       expires_at: quote.quote_expires_at
@@ -180,7 +199,7 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     observed_at: prototypeQuote?.requires_confirmation ? prototypeQuote.quoted_at
       : operation ? new Date(operation.observed_at).toISOString() : quote.observed_at,
     can_start: canStart,
-    status: canStartStage2 ? "quote_available" : quote.status,
+    status: canStartStage2 || canRetryStage1 ? "quote_available" : quote.status,
     quote: activeQuote,
     operation: operation && current ? { ...current, request_observed: true } : null
   };
@@ -188,9 +207,10 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
 
 function expectedQuoteMatchesV1(body: ClientBrandContextProcessingConfirmationV1,
   quote: { observed_at:string;maximum_micro_usd:string|null;available_today_micro_usd:string|null;
-    quote_expires_at:string|null }) {
+    quote_expires_at:string|null;quote_digest:string|null }) {
   const observed = Date.parse(body.expected_quote.observed_at);
   return quote.maximum_micro_usd !== null && quote.available_today_micro_usd !== null && quote.quote_expires_at !== null
+    && body.expected_quote.reference === clientBrandContextProcessingQuoteReferenceV1(quote.quote_digest)
     && body.expected_quote.maximum_micro_usd === quote.maximum_micro_usd
     && body.expected_quote.available_today_micro_usd === quote.available_today_micro_usd
     && body.expected_quote.expires_at === quote.quote_expires_at
@@ -209,13 +229,13 @@ export async function startClientBrandContextPrototypeProcessingForActorV1(args:
   if(!operation||operation.semantic_status!=="completed"||operation.generation_status!=="published")
     throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_quote_changed",409);
   if(operation.child_receipt_id){
-    if(operation.child_idempotency_key!==args.idempotencyKey)
-      throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_quote_changed",409);
-    await (dependencies.start??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
-      parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
-      confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available});
-    return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspaceId,
-      actorUserId:args.actorUserId,database:args.database,runtimeLoader:async()=>args.runtime});
+    if(operation.child_idempotency_key===args.idempotencyKey){
+      await (dependencies.start??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
+        parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
+        confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available});
+      return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspaceId,
+        actorUserId:args.actorUserId,database:args.database,runtimeLoader:async()=>args.runtime});
+    }
   }
   if(!args.runtime.prototype.available)
     throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_runtime_unavailable",503);
@@ -224,11 +244,12 @@ export async function startClientBrandContextPrototypeProcessingForActorV1(args:
   if(!prototypeQuote.requires_confirmation||!expectedQuoteMatchesV1(args.body,{
     observed_at:prototypeQuote.quoted_at,maximum_micro_usd:prototypeQuote.maximum_micro_usd,
     available_today_micro_usd:prototypeQuote.available_today_micro_usd,
-    quote_expires_at:prototypeQuote.quote_expires_at
+    quote_expires_at:prototypeQuote.quote_expires_at,quote_digest:prototypeQuote.quote_digest
   }))throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_quote_changed",409);
   await (dependencies.start??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
     parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
-    confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available});
+    confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available,
+    expected_quote_digest:prototypeQuote.quote_digest});
   return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspaceId,
     actorUserId:args.actorUserId,database:args.database,runtimeLoader:async()=>args.runtime});
 }
@@ -240,27 +261,52 @@ export async function startClientBrandContextProcessingForActorV1(args: {
   body: ClientBrandContextProcessingConfirmationV1;
   database?: Database;
   runtimeLoader?: () => Promise<SignalBrandContextPreparationRuntimeV1>;
-}) {
+},dependencies:{loadOperation?:typeof loadLatestProcessingRowV1;
+  retry?:typeof retrySignalBrandContextComposedSemanticRunV1;
+  loadQuote?:typeof loadSignalBrandContextProcessingQuoteV1;
+  start?:typeof startSignalBrandContextComposedSemanticRunV1;
+  loadView?:typeof loadClientBrandContextProcessingViewForActorV1}={}) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const runtime = await (args.runtimeLoader ?? loadSignalBrandContextProcessingRuntimeV1)();
   if (args.body.confirmation === "prepare_brand_context_prototypes_within_shown_cap") {
     return startClientBrandContextPrototypeProcessingForActorV1({workspaceId:args.workspace.id,
       actorUserId:args.actorUserId,idempotencyKey:args.idempotencyKey,body:args.body,database,runtime});
   }
-  const internal = await loadSignalBrandContextProcessingQuoteV1({ database,
+  const operation=await (dependencies.loadOperation??loadLatestProcessingRowV1)(database,args.workspace.id,args.actorUserId);
+  if(operation?.semantic_retry_safe){
+    const retryQuote={observed_at:new Date(operation.observed_at).toISOString(),
+      maximum_micro_usd:(BigInt(operation.semantic_cap_micro_usd)+BigInt(operation.prototype_cap_micro_usd)).toString(),
+      available_today_micro_usd:operation.available_today_micro_usd,
+      quote_expires_at:new Date(operation.authorization_not_after).toISOString(),quote_digest:operation.quote_digest??null};
+    if(!operation.source_current||!operation.authorization_current||!expectedQuoteMatchesV1(args.body,retryQuote))
+      throw new SignalSemanticContextProposalExecutionError("brand_context_quote_changed",409);
+    await (dependencies.retry??retrySignalBrandContextComposedSemanticRunV1)({database,parent_receipt_id:operation.receipt_id,
+      actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,configuration:runtime.semantic,
+      runtime:{queue_configured:runtime.queue_configured,worker_alive:runtime.worker_alive,
+        recovery_alive:runtime.recovery_alive}});
+    return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspace.id,
+      actorUserId:args.actorUserId,database,runtimeLoader:async()=>runtime});
+  }
+  const internal = await (dependencies.loadQuote??loadSignalBrandContextProcessingQuoteV1)({ database,
     workspace_id: args.workspace.id, actor_user_id: args.actorUserId,
     action_availability: signalBrandContextProcessingActionAvailabilityV1(runtime) });
   const publicQuote = toClientBrandContextProcessingQuoteViewV1(internal);
-  if (!internal.quote_digest || !expectedQuoteMatchesV1(args.body, publicQuote)) {
+  if (!internal.quote_digest || !expectedQuoteMatchesV1(args.body, {
+    observed_at: publicQuote.observed_at,
+    maximum_micro_usd: publicQuote.maximum_micro_usd,
+    available_today_micro_usd: publicQuote.available_today_micro_usd,
+    quote_expires_at: publicQuote.quote_expires_at,
+    quote_digest: internal.quote_digest
+  })) {
     throw new SignalSemanticContextProposalExecutionError("brand_context_quote_changed", 409);
   }
-  await startSignalBrandContextComposedSemanticRunV1({ pool: database,
+  await (dependencies.start??startSignalBrandContextComposedSemanticRunV1)({ pool: database,
     workspace: { id: args.workspace.id, organization_id: args.workspace.organizationId,
       brand_id: args.workspace.brandId }, actor: { id: args.actorUserId, user_type: "client" },
     idempotency_key: args.idempotencyKey, quote_digest: internal.quote_digest,
     confirmation: args.body.confirmation, configuration: runtime.semantic,
     runtime: { queue_configured: runtime.queue_configured, worker_alive: runtime.worker_alive,
       recovery_alive: runtime.recovery_alive, prototype_available: runtime.prototype.available } });
-  return loadClientBrandContextProcessingViewForActorV1({ workspaceId: args.workspace.id,
+  return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({ workspaceId: args.workspace.id,
     actorUserId: args.actorUserId, database, runtimeLoader: async () => runtime });
 }

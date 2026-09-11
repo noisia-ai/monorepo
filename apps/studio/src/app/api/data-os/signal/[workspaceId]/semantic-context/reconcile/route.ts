@@ -4,7 +4,8 @@ import {
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
   ensureBrandContextPreparationForWorkspaceV1,
-  loadBrandContextPreparationForWorkspaceV1
+  loadBrandContextPreparationForWorkspaceV1,
+  reconcileClientBrandContextForWorkspaceV1
 } from "@/lib/data-os/signal-brand-context-preparation";
 import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { refreshAutomaticBrandContextKnowledgeV1 } from "@/lib/data-os/brand-automatic-knowledge-server";
@@ -15,6 +16,7 @@ import {
   semanticContextError,
   semanticContextResponse
 } from "../_lib";
+import { loadSignalWorkspaceContextForTopics } from "../../topics/_lib";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +41,10 @@ export async function GET(request: Request,
 export async function POST(request: Request,
   context: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = await context.params;
-  const loaded = await loadSignalWorkspaceContextForSemanticContextManagement(workspaceId);
+  // This command has its own DB-enforced capability for writable client Brand
+  // Context. Resolve the tenant assignment here; the internal-only loader would
+  // make the client branch below unreachable.
+  const loaded = await loadSignalWorkspaceContextForTopics(workspaceId);
   if ("response" in loaded) return loaded.response;
   const idempotencyKey = requireIdempotencyKey(request);
   if (!idempotencyKey) return semanticContextResponse({ error: "idempotency_key_required",
@@ -82,6 +87,13 @@ export async function POST(request: Request,
     }, 422);
   }
   try {
+    if (loaded.session.appUser.userType === "client" && reason !== "terminal_provider_run") {
+      return semanticContextResponse(await reconcileClientBrandContextForWorkspaceV1({
+        workspaceId,
+        actor: loaded.session.appUser,
+        idempotencyKey
+      }));
+    }
     if (reason !== "terminal_provider_run") {
       if (loaded.workspace.subject.type !== "brand") {
         return semanticContextResponse({

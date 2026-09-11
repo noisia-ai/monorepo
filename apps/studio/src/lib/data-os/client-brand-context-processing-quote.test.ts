@@ -9,6 +9,9 @@ import { ClientBrandContextProcessingQuote } from "../../components/brands/Clien
 import { createClientBrandContextProcessingPostV1,
   createClientBrandContextProcessingQuoteGetV1 } from "./client-brand-context-processing-quote-route";
 import {
+  clientBrandContextReconciliationAwaitingSettlementV1,
+  clientBrandContextReconciliationCycleV1,
+  clientBrandContextReconciliationRetryDelayV1,
   clientBrandContextProcessingCanConfirmV1,
   clientBrandContextProcessingConfirmationV1,
   clientBrandContextProcessingPollDelayV1,
@@ -30,6 +33,7 @@ import { signalBrandContextProcessingActionAvailabilityV1,
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const digest = `sha256:${"a".repeat(64)}`;
+const reference = `qv1_${"a".repeat(64)}`;
 const internal = {
   contract_version: "brand-context-processing-quote-v1", workspace_id: workspaceId,
   can_request_processing: true, can_start: false, blocked_reason: "joint_admission_required",
@@ -47,13 +51,15 @@ const internal = {
 
 Object.assign(globalThis, { React });
 const serverAdapter = await readFile(new URL("./signal-brand-context-processing-quote.ts", import.meta.url), "utf8");
+const clientComponent = await readFile(new URL("../../components/brands/ClientBrandContextProcessingQuote.tsx",
+  import.meta.url), "utf8");
 
 const publicQuote = toClientBrandContextProcessingQuoteViewV1(internal);
 const availableView: ClientBrandContextProcessingViewV1 = {
   ...clientBrandContextProcessingViewFromQuoteV1(publicQuote),
   observed_at: "2026-09-11T12:00:00.000Z",
   can_start: true,
-  quote: { maximum_micro_usd: "700000", available_today_micro_usd: "4999400",
+  quote: { reference, maximum_micro_usd: "700000", available_today_micro_usd: "4999400",
     expires_at: "2999-09-11T12:05:00.000Z" }
 };
 
@@ -70,9 +76,10 @@ function operationView(state: ClientBrandContextProcessingOperationStateV1,
 test("public Brand Context quote is an exact allowlist and remains non-executable", () => {
   const view = publicQuote;
   assert.deepEqual(Object.keys(view).sort(), ["available_today_micro_usd", "can_start", "contract_version",
-    "maximum_micro_usd", "observed_at", "quote_expires_at", "status", "workspace_id"]);
+    "maximum_micro_usd", "observed_at", "quote_expires_at", "quote_reference", "status", "workspace_id"]);
   assert.equal(view.status, "quote_available");
   assert.equal(view.can_start, false);
+  assert.equal(view.quote_reference, reference);
   const json = JSON.stringify(view);
   for (const privateValue of ["anthropic", "private-model", "private-policy", digest, "America/Mexico_City", "es-MX"])
     assert.doesNotMatch(json, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
@@ -132,7 +139,7 @@ test("confirmation helpers preserve one request key and the displayed quote", ()
   assert.deepEqual(confirmation, {
     contract_version: "client-brand-context-processing-request-v1",
     confirmation: "prepare_brand_context_within_shown_cap",
-    expected_quote: { observed_at: availableView.observed_at, maximum_micro_usd: "700000",
+    expected_quote: { observed_at: availableView.observed_at, reference, maximum_micro_usd: "700000",
       available_today_micro_usd: "4999400", expires_at: "2999-09-11T12:05:00.000Z" }
   });
   assert.equal(validClientBrandContextProcessingConfirmationV1(confirmation), true);
@@ -145,7 +152,7 @@ test("confirmation helpers preserve one request key and the displayed quote", ()
   assert.deepEqual(prototypeConfirmation, {
     contract_version: "client-brand-context-processing-request-v1",
     confirmation: "prepare_brand_context_prototypes_within_shown_cap",
-    expected_quote: { observed_at: prototypeAuthorizationView.observed_at, maximum_micro_usd: "700000",
+    expected_quote: { observed_at: prototypeAuthorizationView.observed_at, reference, maximum_micro_usd: "700000",
       available_today_micro_usd: "4999400", expires_at: "2999-09-11T12:05:00.000Z" }
   });
   assert.equal(validClientBrandContextProcessingConfirmationV1(prototypeConfirmation), true);
@@ -162,6 +169,9 @@ test("confirmation helpers preserve one request key and the displayed quote", ()
 
   const refreshed = { ...availableView, observed_at: "2026-09-11T12:01:00.000Z" };
   assert.equal(clientBrandContextProcessingRequestV1(first, refreshed, () => "must-not-run").key, "request-1");
+  const changedQuote = { ...refreshed, quote: { ...refreshed.quote!, reference: `qv1_${"b".repeat(64)}` } };
+  assert.equal(clientBrandContextProcessingRequestV1(first, changedQuote, () => "request-new-quote").key,
+    "request-new-quote");
   assert.equal(clientBrandContextProcessingRequestV1(null, refreshed, () => "request-2").key, "request-2");
   const otherWorkspace = { ...availableView, workspace_id: "00000000-0000-4000-8000-000000000099" };
   assert.equal(clientBrandContextProcessingRequestV1(first, otherWorkspace, () => "request-3").key, "request-3");
@@ -238,12 +248,14 @@ test("lost Stage 2 HTTP acknowledgement replays only the same parent, actor and 
       source_current:true,generation_status:"published",semantic_status:"completed",
       child_receipt_id:created?"00000000-0000-4000-8000-000000000006":null,
       child_idempotency_key:created?"stage2-request-key":null,prototype_status:created?"queued":null}),
-    loadQuote:async()=>({contract_version:"brand-context-prototype-quote-v1" as const,parent_receipt_id:receipt,
+    loadQuote:async()=>{if(created)throw Object.assign(new Error("prior run unresolved"),{status:409});return({
+      contract_version:"brand-context-prototype-quote-v1" as const,parent_receipt_id:receipt,
       workspace_id:workspaceId,quote_digest:digest,quoted_at:prototypeAuthorizationView.observed_at,
       quote_expires_at:prototypeAuthorizationView.quote!.expires_at,
       maximum_micro_usd:prototypeAuthorizationView.quote!.maximum_micro_usd,
       available_today_micro_usd:prototypeAuthorizationView.quote!.available_today_micro_usd,
-      requires_provider:true,requires_confirmation:true,authorization_state:"awaiting_authorization" as const}),
+      requires_provider:true,requires_confirmation:true,authorization_state:"awaiting_authorization" as const,
+      supersedes_receipt_id:null});},
     start:async(input:unknown)=>{starts.push(input);created=true;return{} as never;},
     loadView:async()=>operationView("queued","waiting")
   };
@@ -257,11 +269,50 @@ test("lost Stage 2 HTTP acknowledgement replays only the same parent, actor and 
   await assert.rejects(()=>startClientBrandContextPrototypeProcessingForActorV1({...args,idempotencyKey:"another-key"},dependencies),
     (error:unknown)=>error instanceof Error&&"status" in error&&error.status===409);
   assert.equal(starts.length,2,"a different key never reaches the DB replay adapter");
+
+  created=false;
+  const changedReference={...request,expected_quote:{...request.expected_quote,reference:`qv1_${"b".repeat(64)}`}};
+  assert.equal(validClientBrandContextProcessingConfirmationV1(changedReference),true,
+    "a quote reference is opaque syntax at the browser boundary");
+  await assert.rejects(()=>startClientBrandContextPrototypeProcessingForActorV1({...args,body:changedReference},dependencies),
+    (error:unknown)=>error instanceof Error&&"status" in error&&error.status===409);
+  assert.equal(starts.length,2,"the server rejects a syntactically valid reference for another quote");
+});
+
+test("a new Stage 2 decision can replace only a server-quoted DNC leaf",async()=>{
+  const receipt="00000000-0000-4000-8000-000000000005";
+  const failedReceipt="00000000-0000-4000-8000-000000000006";
+  const body=clientBrandContextProcessingConfirmationV1(
+    clientBrandContextProcessingRequestV1(null,prototypeAuthorizationView,()=>"stage2-successor-key"));
+  const starts:unknown[]=[];
+  const result=await startClientBrandContextPrototypeProcessingForActorV1({workspaceId,
+    actorUserId:"00000000-0000-4000-8000-000000000004",idempotencyKey:"stage2-successor-key",body,
+    database:{} as never,runtime:{prototype:{available:true}} as SignalBrandContextPreparationRuntimeV1},{
+    loadOperation:async()=>({observed_at:"2026-09-11T12:00:00.000Z",receipt_id:receipt,
+      authorization_not_after:"2026-09-11T12:05:00.000Z",semantic_cap_micro_usd:"600000",
+      prototype_cap_micro_usd:"100000",available_today_micro_usd:"4999400",authorization_current:false,
+      source_current:true,generation_status:"published",semantic_status:"completed",child_receipt_id:failedReceipt,
+      child_idempotency_key:"stage2-old-key",prototype_status:"failed"}),
+    loadQuote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:receipt,
+      workspace_id:workspaceId,supersedes_receipt_id:failedReceipt,quote_digest:digest,
+      quoted_at:prototypeAuthorizationView.observed_at,quote_expires_at:prototypeAuthorizationView.quote!.expires_at,
+      maximum_micro_usd:prototypeAuthorizationView.quote!.maximum_micro_usd,
+      available_today_micro_usd:prototypeAuthorizationView.quote!.available_today_micro_usd,
+      requires_provider:true,requires_confirmation:true,authorization_state:"awaiting_authorization"}),
+    start:async input=>{starts.push(input);return{} as never;},
+    loadView:async()=>operationView("queued","waiting")
+  });
+  assert.deepEqual(result,operationView("queued","waiting"));
+  assert.equal(starts.length,1);
+  assert.equal((starts[0] as {expected_quote_digest:string}).expected_quote_digest,digest);
 });
 
 test("active operations poll while workspace scope and newest observation win", () => {
   for (const view of [operationView("queued", "waiting"), operationView("running", "preparing_interests"),
     operationView("recovering", "finalizing")]) assert.equal(clientBrandContextProcessingPollDelayV1(view), 4_000);
+  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 1), 8_000);
+  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 4), 60_000);
+  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 5), null);
   for (const view of [null, operationView("completed", null), operationView("stale", null),
     operationView("failed", null), prototypeAuthorizationView])
     assert.equal(clientBrandContextProcessingPollDelayV1(view), null);
@@ -273,6 +324,61 @@ test("active operations poll while workspace scope and newest observation win", 
   assert.equal(latestClientBrandContextProcessingViewV1(availableView,
     { ...availableView, workspace_id: "00000000-0000-4000-8000-000000000099" }, workspaceId), availableView);
   assert.equal(latestClientBrandContextProcessingViewV1(null, availableView, workspaceId), availableView);
+});
+
+test("stale source reconciliation keeps transport identity and uses bounded timer backoff", t => {
+  const keys = ["reconcile-one", "reconcile-two"];
+  const first = clientBrandContextReconciliationCycleV1(null, workspaceId, () => keys.shift()!);
+  assert.equal(first.idempotencyKey, "reconcile-one");
+  assert.equal(clientBrandContextReconciliationCycleV1(first, workspaceId, () => "must-not-run"), first);
+  const attempted = { ...first, attempts: 1 };
+  const renewed = clientBrandContextReconciliationCycleV1(attempted, workspaceId, () => keys.shift()!, true);
+  assert.equal(renewed.idempotencyKey, "reconcile-two");
+  assert.equal(renewed.attempts, 1, "an acknowledged wait rotates identity without resetting the bounded cycle");
+  assert.notEqual(clientBrandContextReconciliationCycleV1(renewed,
+    "00000000-0000-4000-8000-000000000099", () => "other-workspace"), renewed);
+
+  assert.equal(clientBrandContextReconciliationRetryDelayV1(-1), null);
+  assert.equal(clientBrandContextReconciliationRetryDelayV1(3), null);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const fired: number[] = [];
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const delay = clientBrandContextReconciliationRetryDelayV1(attempt);
+      if (delay !== null) setTimeout(() => fired.push(attempt), delay);
+    }
+    t.mock.timers.tick(0); assert.deepEqual(fired, [0]);
+    t.mock.timers.tick(1_999); assert.deepEqual(fired, [0]);
+    t.mock.timers.tick(1); assert.deepEqual(fired, [0, 1]);
+    t.mock.timers.tick(5_999); assert.deepEqual(fired, [0, 1]);
+    t.mock.timers.tick(1); assert.deepEqual(fired, [0, 1, 2]);
+  } finally { t.mock.timers.reset(); }
+});
+
+test("only an explicit reconciliation settlement response rotates the free retry", () => {
+  for (const value of [
+    { state: "awaiting_settlement" },
+    { reconciliation: { state: "awaiting_settlement" } },
+    { error: "brand_context_reconciliation_awaiting_settlement" },
+    { error_code: "brand_context_reconciliation_awaiting_settlement" },
+    { brand_context_preparation: { error_code: "brand_context_reconciliation_awaiting_settlement" } }
+  ]) assert.equal(clientBrandContextReconciliationAwaitingSettlementV1(value), true);
+  for (const value of [null, {}, { state: "stale" }, { error: "temporary_failure" }])
+    assert.equal(clientBrandContextReconciliationAwaitingSettlementV1(value), false);
+});
+
+test("stale recovery calls only the free reconciliation contract and keeps Refresh as an escape", () => {
+  const start = clientComponent.indexOf("const sourceStale");
+  const end = clientComponent.indexOf("clientBrandContextProcessingPollDelayV1(current", start);
+  assert.ok(start >= 0 && end > start);
+  const branch = clientComponent.slice(start, end);
+  assert.match(clientComponent, /semantic-context\/reconcile/u);
+  assert.match(branch, /operation\?\.state === "stale" \|\| current\?\.status === "brand_context_outdated"/u);
+  for (const marker of ["operator_requested_reconciliation",
+    "Idempotency-Key", "clientBrandContextReconciliationRetryDelayV1", "attempts: cycle.attempts + 1"])
+    assert.ok(branch.includes(marker), marker);
+  assert.doesNotMatch(branch, /quoteReference|maximum_micro_usd|prepare_brand_context_within_shown_cap/u);
+  assert.match(clientComponent, /function refresh\(\)[\s\S]{0,360}reconciliation\.current = null/u);
 });
 
 test("internal blockers collapse to stable client product states", () => {
@@ -386,7 +492,7 @@ for (const locale of ["es-MX", "en-US"] as const) {
       assert.ok(html.includes(copy.states.quote_available));
       assert.ok(html.includes(copy.informational));
       assert.match(html, /data-quote-can-start="false"/u);
-      assert.doesNotMatch(html, /anthropic|private-model|private-policy|sha256:|data-processing-stage=/u);
+      assert.doesNotMatch(html, /anthropic|private-model|private-policy|sha256:|qv1_|quote_reference|data-processing-stage=/u);
       assert.doesNotMatch(html, /<form|admin-button--primary/u);
     }
     assert.ok(render("full").includes(copy.body));
@@ -403,7 +509,7 @@ for (const locale of ["es-MX", "en-US"] as const) {
       assert.ok(html.includes(copy.states[state]));
       assert.ok(html.includes(copy.help[state]));
       if (phase) assert.ok(html.includes(copy.phases[phase]));
-      assert.doesNotMatch(html, /admin-button--primary|provider|model|digest|ledger|sha256:/u);
+      assert.doesNotMatch(html, /admin-button--primary|provider|model|digest|ledger|sha256:|qv1_|quote_reference/u);
     }
   });
 

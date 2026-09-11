@@ -27,6 +27,8 @@ export type ClientBrandContextProcessingQuoteViewV1 = {
   available_today_micro_usd: string | null;
   observed_at: string;
   quote_expires_at: string | null;
+  /** Opaque identity for the exact server-owned quote. It grants no authority. */
+  quote_reference: string | null;
 };
 
 export type ClientBrandContextProcessingOperationStateV1 =
@@ -50,6 +52,7 @@ export type ClientBrandContextProcessingViewV1 = {
   can_start: boolean;
   status: ClientBrandContextProcessingQuoteStatusV1;
   quote: null | {
+    reference: string | null;
     maximum_micro_usd: string;
     available_today_micro_usd: string;
     expires_at: string;
@@ -66,9 +69,16 @@ export type ClientBrandContextProcessingPendingRequestV1 = {
   key: string;
   confirmation: ClientBrandContextProcessingConfirmationKindV1;
   quoteObservedAt: string;
+  quoteReference: string;
   maximumMicroUsd: string;
   availableTodayMicroUsd: string;
   expiresAt: string;
+};
+
+export type ClientBrandContextReconciliationCycleV1 = {
+  workspaceId: string;
+  idempotencyKey: string;
+  attempts: number;
 };
 
 export type ClientBrandContextProcessingConfirmationKindV1 =
@@ -80,6 +90,7 @@ export type ClientBrandContextProcessingConfirmationV1 = {
   confirmation: ClientBrandContextProcessingConfirmationKindV1;
   expected_quote: {
     observed_at: string;
+    reference: string;
     maximum_micro_usd: string;
     available_today_micro_usd: string;
     expires_at: string;
@@ -92,12 +103,13 @@ const publicStatuses = new Set<ClientBrandContextProcessingQuoteStatusV1>([
   "market_language_required", "preparation_required", "temporarily_unavailable"
 ]);
 const publicKeys = ["available_today_micro_usd", "can_start", "contract_version", "maximum_micro_usd",
-  "observed_at", "quote_expires_at", "status", "workspace_id"];
+  "observed_at", "quote_expires_at", "quote_reference", "status", "workspace_id"];
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const money = (value: unknown) => typeof value === "string" && /^(0|[1-9][0-9]{0,17})$/u.test(value);
 const timestamp = (value: unknown) => typeof value === "string"
   && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
   && Number.isFinite(Date.parse(value));
+const quoteReference = (value: unknown) => typeof value === "string" && /^qv1_[0-9a-f]{64}$/u.test(value);
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value
   && typeof value === "object" && !Array.isArray(value));
 const operationStates = new Set<ClientBrandContextProcessingOperationStateV1>([
@@ -120,10 +132,12 @@ export function validClientBrandContextProcessingQuoteViewV1(
     || typeof value.status !== "string" || !publicStatuses.has(value.status as ClientBrandContextProcessingQuoteStatusV1)
     || value.can_start !== false || !(value.maximum_micro_usd === null || money(value.maximum_micro_usd))
     || !(value.available_today_micro_usd === null || money(value.available_today_micro_usd))
-    || !timestamp(value.observed_at) || !(value.quote_expires_at === null || timestamp(value.quote_expires_at))) return false;
+    || !timestamp(value.observed_at) || !(value.quote_expires_at === null || timestamp(value.quote_expires_at))
+    || !(value.quote_reference === null || quoteReference(value.quote_reference))) return false;
   return value.status === "quote_available"
-    ? value.maximum_micro_usd !== null && value.available_today_micro_usd !== null && value.quote_expires_at !== null
-    : value.quote_expires_at === null;
+    ? value.maximum_micro_usd !== null && value.available_today_micro_usd !== null
+      && value.quote_expires_at !== null && value.quote_reference !== null
+    : value.quote_expires_at === null && value.quote_reference === null;
 }
 
 export function clientBrandContextProcessingQuoteForWorkspaceV1(
@@ -153,12 +167,14 @@ export function validClientBrandContextProcessingViewV1(value: unknown): value i
     || typeof value.status !== "string" || !publicStatuses.has(value.status as ClientBrandContextProcessingQuoteStatusV1)
     || !(operation === null || validOperation(operation))) return false;
   if (value.quote !== null && (!object(value.quote)
-    || Object.keys(value.quote).sort().join(",") !== "available_today_micro_usd,expires_at,maximum_micro_usd"
+    || Object.keys(value.quote).sort().join(",") !== "available_today_micro_usd,expires_at,maximum_micro_usd,reference"
     || !money(value.quote.maximum_micro_usd) || !money(value.quote.available_today_micro_usd)
-    || !timestamp(value.quote.expires_at))) return false;
+    || !timestamp(value.quote.expires_at)
+    || !(value.quote.reference === null || quoteReference(value.quote.reference)))) return false;
   if (value.status === "quote_available" && value.quote === null) return false;
   if (operation?.state === "awaiting_authorization" && value.can_start !== true) return false;
   if (value.can_start && (value.status !== "quote_available" || value.quote === null
+    || value.quote.reference === null
     || operation && !["awaiting_authorization", "stale", "failed"].includes(operation.state))) return false;
   return !operation || !["queued", "running", "recovering", "completed"].includes(operation.state)
     || value.can_start === false;
@@ -175,9 +191,10 @@ export function clientBrandContextProcessingViewFromQuoteV1(
     status: quote.status,
     quote: quote.status === "quote_available" && quote.maximum_micro_usd !== null
       && quote.available_today_micro_usd !== null && quote.quote_expires_at !== null ? {
-        maximum_micro_usd: quote.maximum_micro_usd,
-        available_today_micro_usd: quote.available_today_micro_usd,
-        expires_at: quote.quote_expires_at
+      maximum_micro_usd: quote.maximum_micro_usd,
+      available_today_micro_usd: quote.available_today_micro_usd,
+      expires_at: quote.quote_expires_at,
+      reference: quote.quote_reference
       } : null,
     operation: null
   };
@@ -197,8 +214,38 @@ export function latestClientBrandContextProcessingViewV1(current: ClientBrandCon
   return previous && Date.parse(previous.observed_at) > Date.parse(next.observed_at) ? previous : next;
 }
 
-export function clientBrandContextProcessingPollDelayV1(view: ClientBrandContextProcessingViewV1 | null) {
-  return view?.operation && ["queued", "running", "recovering"].includes(view.operation.state) ? 4_000 : null;
+const processingPollDelays = [4_000, 8_000, 16_000, 30_000, 60_000] as const;
+
+export function clientBrandContextProcessingPollDelayV1(view: ClientBrandContextProcessingViewV1 | null,
+  attempts = 0) {
+  return view?.operation && ["queued", "running", "recovering"].includes(view.operation.state)
+    && Number.isInteger(attempts) && attempts >= 0 ? processingPollDelays[attempts] ?? null : null;
+}
+
+const reconciliationRetryDelays = [0, 2_000, 8_000] as const;
+
+export function clientBrandContextReconciliationCycleV1(current: ClientBrandContextReconciliationCycleV1 | null,
+  workspaceId: string, createKey: () => string, renewIdentity = false): ClientBrandContextReconciliationCycleV1 {
+  if (current?.workspaceId === workspaceId) return renewIdentity
+    ? { ...current, idempotencyKey: createKey() }
+    : current;
+  return { workspaceId, idempotencyKey: createKey(), attempts: 0 };
+}
+
+export function clientBrandContextReconciliationRetryDelayV1(attempts: number) {
+  return Number.isInteger(attempts) && attempts >= 0
+    ? reconciliationRetryDelays[attempts] ?? null
+    : null;
+}
+
+export function clientBrandContextReconciliationAwaitingSettlementV1(value: unknown) {
+  if (!object(value)) return false;
+  if (value.state === "awaiting_settlement"
+    || value.error === "brand_context_reconciliation_awaiting_settlement"
+    || value.error_code === "brand_context_reconciliation_awaiting_settlement") return true;
+  return object(value.reconciliation) && value.reconciliation.state === "awaiting_settlement"
+    || object(value.brand_context_preparation)
+      && value.brand_context_preparation.error_code === "brand_context_reconciliation_awaiting_settlement";
 }
 
 export function clientBrandContextProcessingCanConfirmV1(view: ClientBrandContextProcessingViewV1 | null,
@@ -218,10 +265,12 @@ export function clientBrandContextProcessingConfirmationKindV1(
 
 export function clientBrandContextProcessingRequestV1(current: ClientBrandContextProcessingPendingRequestV1 | null,
   view: ClientBrandContextProcessingViewV1, createKey: () => string): ClientBrandContextProcessingPendingRequestV1 {
-  if (!view.quote) throw new Error("brand_context_processing_quote_required");
+  if (!view.quote || !view.quote.reference) throw new Error("brand_context_processing_quote_required");
   const confirmation = clientBrandContextProcessingConfirmationKindV1(view);
-  if (current?.workspaceId === view.workspace_id && current.confirmation === confirmation) return current;
+  if (current?.workspaceId === view.workspace_id && current.confirmation === confirmation
+    && current.quoteReference === view.quote.reference) return current;
   return { workspaceId: view.workspace_id, key: createKey(), confirmation, quoteObservedAt: view.observed_at,
+    quoteReference: view.quote.reference,
     maximumMicroUsd: view.quote.maximum_micro_usd, availableTodayMicroUsd: view.quote.available_today_micro_usd,
     expiresAt: view.quote.expires_at };
 }
@@ -231,7 +280,8 @@ export function clientBrandContextProcessingConfirmationV1(
 ): ClientBrandContextProcessingConfirmationV1 {
   return { contract_version: "client-brand-context-processing-request-v1",
     confirmation: request.confirmation, expected_quote: {
-      observed_at: request.quoteObservedAt, maximum_micro_usd: request.maximumMicroUsd,
+      observed_at: request.quoteObservedAt, reference: request.quoteReference,
+      maximum_micro_usd: request.maximumMicroUsd,
       available_today_micro_usd: request.availableTodayMicroUsd, expires_at: request.expiresAt
     } };
 }
@@ -245,11 +295,17 @@ export function validClientBrandContextProcessingConfirmationV1(
     || !confirmationKinds.has(value.confirmation as ClientBrandContextProcessingConfirmationKindV1)
     || !object(value.expected_quote)
     || Object.keys(value.expected_quote).sort().join(",")
-      !== "available_today_micro_usd,expires_at,maximum_micro_usd,observed_at") return false;
+      !== "available_today_micro_usd,expires_at,maximum_micro_usd,observed_at,reference") return false;
   return money(value.expected_quote.maximum_micro_usd)
     && money(value.expected_quote.available_today_micro_usd)
     && timestamp(value.expected_quote.observed_at)
-    && timestamp(value.expected_quote.expires_at);
+    && timestamp(value.expected_quote.expires_at)
+    && quoteReference(value.expected_quote.reference);
+}
+
+export function clientBrandContextProcessingQuoteReferenceV1(value: string | null | undefined) {
+  return typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value)
+    ? `qv1_${value.slice("sha256:".length)}` : null;
 }
 
 const publicStatus: Record<SignalBrandContextProcessingQuoteStatusV1,
@@ -289,6 +345,8 @@ export function toClientBrandContextProcessingQuoteViewV1(
     maximum_micro_usd: monetaryStateCurrent ? quote.maximum_total_micro_usd : null,
     available_today_micro_usd: monetaryStateCurrent && quote.policy ? quote.remaining_micro_usd : null,
     observed_at: quote.quoted_at,
-    quote_expires_at: quote.quote_expires_at
+    quote_expires_at: quote.quote_expires_at,
+    quote_reference: monetaryStateCurrent && quote.quote_status === "quoted"
+      ? clientBrandContextProcessingQuoteReferenceV1(quote.quote_digest) : null
   };
 }

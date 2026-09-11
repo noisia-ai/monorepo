@@ -3,6 +3,7 @@ import {
   ensureSignalBrandContextPreparationV1,
   loadSignalBrandContextPreparationV1,
   quoteSignalBrandContextPreparationV1,
+  reconcileSignalBrandContextSourceV1,
   signalBrandContextPreparationRuntimeFromEnvV1,
   type SignalBrandContextPreparationAdmissionV1,
   type SignalBrandContextPreparationRuntimeV1,
@@ -113,9 +114,16 @@ export async function ensureBrandContextAfterCommittedMutationV1(args: {
   fallbackIdempotencyKey: string;
   enabled?: boolean;
 }): Promise<BrandContextPreparationMutationResultV1> {
-  if (args.enabled === false || args.actor.userType !== "noisia_internal") {
+  if (args.enabled === false) {
     return { preparation: null, advancement: [], error_code: null };
   }
+  if (args.actor.userType === "client") {
+    return reconcileClientBrandContextAfterCommittedMutationV1({ brandId: args.brandId,
+      actor: args.actor, idempotencyKey: args.fallbackIdempotencyKey });
+  }
+  if (args.actor.userType !== "noisia_internal") return {
+    preparation: null, advancement: [], error_code: null
+  };
   let workspaceId: string | null = null;
   try {
     const lookup = await pool.query<{ workspace_id: string }>(`
@@ -163,9 +171,16 @@ export async function reconcileAndEnsureBrandContextAfterCommittedMutationV1(arg
   reconciliationIdempotencyKey: string;
   enabled?: boolean;
 }): Promise<BrandContextPreparationMutationResultV1> {
-  if (args.enabled === false || args.actor.userType !== "noisia_internal") {
+  if (args.enabled === false) {
     return { preparation: null, advancement: [], error_code: null };
   }
+  if (args.actor.userType === "client") {
+    return reconcileClientBrandContextAfterCommittedMutationV1({ brandId: args.brandId,
+      actor: args.actor, idempotencyKey: args.reconciliationIdempotencyKey });
+  }
+  if (args.actor.userType !== "noisia_internal") return {
+    preparation: null, advancement: [], error_code: null
+  };
   try {
     await reconcileSignalBrandOsForBrandMutationV1({
       brandId: args.brandId,
@@ -179,4 +194,76 @@ export async function reconcileAndEnsureBrandContextAfterCommittedMutationV1(arg
     return { preparation: null, advancement: [], error_code: code };
   }
   return ensureBrandContextAfterCommittedMutationV1(args);
+}
+
+async function reconcileClientBrandContextAfterCommittedMutationV1(args: {
+  brandId: string;
+  actor: SignalWorkspaceUser;
+  idempotencyKey: string;
+}): Promise<BrandContextPreparationMutationResultV1> {
+  let workspaceId: string | null = null;
+  try {
+    const lookup = await pool.query<{ workspace_id: string }>(`
+      SELECT id::text AS workspace_id
+      FROM signal_workspaces
+      WHERE brand_id=$1::uuid AND status='active'
+    `, [args.brandId]);
+    if (lookup.rowCount !== 1) return {
+      preparation: null, advancement: [], error_code: "brand_context_workspace_unavailable"
+    };
+    workspaceId = lookup.rows[0]!.workspace_id;
+    return reconcileClientBrandContextForWorkspaceV1({ workspaceId,
+      actor: args.actor, idempotencyKey: args.idempotencyKey });
+  } catch (error) {
+    const code = error instanceof Error && "code" in error
+      ? String((error as Error & { code: unknown }).code)
+      : error instanceof Error && /^(brand_context|processing)_[a-z_]+$/u.test(error.message)
+        ? error.message : "brand_context_reconciliation_unavailable";
+    return { preparation: null, advancement: [], error_code: code };
+  }
+}
+
+export async function reconcileClientBrandContextForWorkspaceV1(args: {
+  workspaceId: string;
+  actor: SignalWorkspaceUser;
+  idempotencyKey: string;
+}): Promise<BrandContextPreparationMutationResultV1> {
+  if (args.actor.userType !== "client") return {
+    preparation: null, advancement: [], error_code: "brand_context_reconciliation_forbidden"
+  };
+  try {
+    const head = await pool.query<{ generation_id: string }>(`
+      SELECT id::text AS generation_id
+      FROM signal_semantic_context_generations
+      WHERE workspace_id=$1::uuid
+      ORDER BY generation_version DESC
+      LIMIT 1
+    `, [args.workspaceId]);
+    const runtime = await loadBrandContextPreparationRuntimeV1();
+    const reconciliation = await reconcileSignalBrandContextSourceV1({
+      database: pool,
+      workspace_id: args.workspaceId,
+      actor_user_id: args.actor.id,
+      idempotency_key: args.idempotencyKey,
+      expected_generation_id: head.rows[0]?.generation_id ?? null,
+      configuration: runtime.semantic
+    });
+    const loaded = await loadSignalBrandContextPreparationV1({
+      database: pool,
+      workspace_id: args.workspaceId,
+      actor_user_id: args.actor.id
+    }).catch(() => null);
+    return {
+      preparation: loaded?.request ?? loaded?.current ?? null,
+      advancement: [],
+      error_code: reconciliation.state === "awaiting_settlement"
+        ? "brand_context_reconciliation_awaiting_settlement" : null
+    };
+  } catch (error) {
+    const code = error instanceof Error && "code" in error
+      ? String((error as Error & { code: unknown }).code)
+      : error instanceof Error && /^(brand_context|processing)_[a-z_]+$/u.test(error.message)
+        ? error.message : "brand_context_reconciliation_unavailable";
+    return { preparation: null, advancement: [], error_code: code };
+  }
 }

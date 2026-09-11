@@ -118,6 +118,7 @@ type RunRow = {
   automatic_policy_contract_version: string | null;
   automatic_ready_count: number | null; automatic_exception_count: number | null;
   brand_context_preparation_operation_id:string|null;
+  processing_admission_id?:string|null;
   attempt_count: number; lease_token: string | null; lease_expires_at: Date | string | null;
   error_code: string | null; error_summary: string | null; created_by_user_id: string;
   queued_at: Date | string; started_at: Date | string | null; validating_at: Date | string | null;
@@ -1206,6 +1207,7 @@ export async function processSignalSemanticContextProposalRunV1(args: {
         || prepared.generation.locale_context_digest !== run.locale_context_digest) {
       await markRunStale(lease.client, run, lease.token, "semantic_context_authority_drift");
       await lease.client.query("COMMIT");
+      lease.client.release();
       return { status: "stale" as const };
     }
     await lease.client.query("COMMIT");
@@ -1231,6 +1233,15 @@ export async function processSignalSemanticContextProposalRunV1(args: {
         FOR UPDATE`, [run.id, lease.token]);
       run = started.rows[0]!;
       if (!run) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_lease_lost");
+      // Rebuild source authority inside the send transaction, after locking the
+      // owner. The earlier prepared transaction may have committed before a
+      // client changed only country/timezone or a manually maintained Brand OS.
+      const source = run.processing_admission_id ? (await startClient.query<{ stale: boolean }>(`SELECT NOT EXISTS(
+        SELECT 1 FROM signal_brand_context_processing_receipts receipt
+        WHERE receipt.semantic_run_id=$1::uuid
+          AND receipt.semantic_admission_id=$2::uuid
+          AND signal_brand_context_processing_source_current_v1(receipt.generation_id)) stale`, [run.id,run.processing_admission_id])).rows[0] : null;
+      if (run.processing_admission_id && source?.stale !== false) throw new SignalSemanticContextProposalExecutionError("brand_context_source_stale", 409);
       if(run.brand_context_preparation_operation_id){
         const admission=(await startClient.query<{valid:boolean}>(`SELECT signal_brand_context_admission_valid_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,'anthropic',$5::bigint) valid`,
           [run.brand_context_preparation_operation_id,run.workspace_id,run.created_by_user_id,run.generation_id,run.hard_cap_micro_usd])).rows[0];
@@ -1247,6 +1258,16 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       await startClient.query("ROLLBACK").catch(() => undefined);startFailed=true;startFailure=error;
     } finally { startClient.release(); }
     if(startFailed){
+      const sourceStale = startFailure instanceof SignalSemanticContextProposalExecutionError
+        && startFailure.code === "brand_context_source_stale"
+        || startFailure instanceof Error && 'code' in startFailure && startFailure.code === '23514'
+          && startFailure.message === 'brand_context_source_stale';
+      if(sourceStale){
+        // Only the exact pre-send refusal reaches here. Already-persisted paid
+        // responses skip this branch and retain their settlement/recovery path.
+        await markRunStaleById(args.pool,run.id,'brand_context_source_stale',lease.token);
+        return {status:'stale' as const};
+      }
       const expired=startFailure instanceof SignalSemanticContextProviderCallError&&startFailure.definitelyNotSent
         || startFailure instanceof Error&&'code' in startFailure&&startFailure.code==='23514'&&startFailure.message==='brand_context_admission_expired';
       if(expired)await handleProviderFailure(args.pool,run.id,lease.token,new SignalSemanticContextProviderCallError('brand_context_admission_expired',true));
@@ -1806,13 +1827,18 @@ async function markRunStale(queryable: SignalSemanticContextQueryable, run: RunR
   await insertRunEvent(queryable, run, `stale-${code}`, "stale", { reason: code });
 }
 
-async function markRunStaleById(pool: Pick<Pool, "connect">, runId: string, code: string) {
+async function markRunStaleById(pool: Pick<Pool, "connect">, runId: string, code: string, expectedUnsentToken?:string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const result = await client.query<RunRow>(`${runSelect} FROM signal_semantic_context_proposal_runs run
       WHERE run.id=$1::uuid FOR UPDATE`, [runId]);
     const run = result.rows[0];
+    if (expectedUnsentToken && run && (run.lease_token !== expectedUnsentToken
+      || run.provider_call_state !== 'not_started' || run.provider_call_count !== 0
+      || run.provider_response_private !== null)) {
+      throw new SignalSemanticContextProposalExecutionError('semantic_context_proposal_lease_lost');
+    }
     if (run && !["completed", "stale", "dead_letter"].includes(run.status)) {
       const actual = run.provider_call_state === "response_persisted" ? runActualCost(run) : null;
       if (actual !== null) await settleExactReservation(client, run.id, run, actual);
@@ -2343,6 +2369,7 @@ const runSelect = `SELECT run.id::text,run.workspace_id::text,run.generation_id:
   NULLIF(to_jsonb(run)->>'automatic_ready_count','')::int automatic_ready_count,
   NULLIF(to_jsonb(run)->>'automatic_exception_count','')::int automatic_exception_count,
   run.attempt_count,to_jsonb(run)->>'brand_context_preparation_operation_id' brand_context_preparation_operation_id,
+  to_jsonb(run)->>'processing_admission_id' processing_admission_id,
   run.lease_token::text,run.lease_expires_at,
   run.error_code,run.error_summary,run.created_by_user_id::text,run.queued_at,run.started_at,
   run.validating_at,run.completed_at,run.failed_at,run.stale_at,run.dead_lettered_at`;

@@ -174,3 +174,23 @@ test("client Brand OS routes recheck exact writable authority and expose no glob
   assert.match(productOperation, /access\?: "manual-import" \| "brand-context-editor"/u);
   assert.doesNotMatch(productOperation, /brand-context-editor[\s\S]{0,300}(?:execute-topics|prepare-brand-context)/u);
 });
+
+test("committed client Brand OS mutations reconcile source authority without admitting provider work", async () => {
+  const [source, route] = await Promise.all([
+    readFile(new URL("../data-os/signal-brand-context-preparation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../app/api/data-os/signal/[workspaceId]/semantic-context/reconcile/route.ts", import.meta.url), "utf8")
+  ]);
+  assert.match(source, /args\.actor\.userType === "client"[\s\S]{0,220}reconcileClientBrandContextAfterCommittedMutationV1/u);
+  assert.match(source, /FROM signal_semantic_context_generations[\s\S]{0,180}ORDER BY generation_version DESC/u);
+  assert.match(source, /reconcileSignalBrandContextSourceV1\(\{[\s\S]{0,360}expected_generation_id:\s*head\.rows\[0\]\?\.generation_id \?\? null/u);
+  assert.match(source, /reconciliation\.state === "awaiting_settlement"/u);
+  const clientBranch = source.slice(source.indexOf("async function reconcileClientBrandContextAfterCommittedMutationV1"));
+  assert.doesNotMatch(clientBranch, /advanceSignalBrandContextPreparationsV1|quote_digest|processing_admission/u);
+  const postRoute=route.slice(route.indexOf("export async function POST"));
+  assert.match(postRoute, /loadSignalWorkspaceContextForTopics\(workspaceId\)/u);
+  assert.doesNotMatch(postRoute.slice(0,postRoute.indexOf("const idempotencyKey")),
+    /loadSignalWorkspaceContextForSemanticContextManagement/u);
+  assert.match(route, /appUser\.userType === "client"[\s\S]{0,260}reconcileClientBrandContextForWorkspaceV1/u);
+  assert.ok(route.indexOf("reconcileClientBrandContextForWorkspaceV1({")
+    < route.indexOf("refreshAutomaticBrandContextKnowledgeV1("));
+});

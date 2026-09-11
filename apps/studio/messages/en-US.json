@@ -4019,7 +4019,7 @@
       "processing_paused": "External preparation is paused. No calls or reservations will be created.",
       "daily_limit_reached": "The available daily balance does not cover the full cap for this preparation.",
       "brand_context_required": "Complete the brand identity, context, and knowledge sources.",
-      "brand_context_outdated": "Brand OS or its sources changed. The next preparation will use the updated context.",
+      "brand_context_outdated": "Your changes require a new context version. We keep the previous version while calculating a current quote.",
       "market_language_required": "Define at least one market and a primary language to prepare context.",
       "preparation_required": "Interests still need a complete semantic foundation before you continue.",
       "temporarily_unavailable": "Refresh the reading when preparation becomes available again.",
@@ -4028,8 +4028,15 @@
       "recovering": "The system is checking the same request. It does not need another authorization.",
       "awaiting_authorization": "Brand context is ready. Authorize its interest preparation within the current cap to complete this version.",
       "completed": "Context and interests are prepared for the next analyses.",
-      "stale": "Brand OS or its sources changed. The previous result remains available until the new version is prepared.",
+      "stale": "Your changes require a new context version. The previous result remains available; when the current quote appears, review it and confirm preparation.",
       "failed": "The request was interrupted. Saved progress and results remain available."
+    },
+    "reconciliation": {
+      "idle": "The previous version remains available while we prepare the update.",
+      "checking": "Your changes are saved. We are creating the new version at no cost and refreshing its quote.",
+      "waiting": "Your changes are saved. We are waiting for the previous request to finish before creating the new version. This check sends no data and needs no further authorization.",
+      "retrying": "The free update has not responded yet. We will retry a limited number of times without duplicating the request.",
+      "exhausted": "The previous request may still be finishing. Select Refresh to check again; your changes and previous result remain available."
     },
     "phases": {
       "waiting": "Waiting for processing capacity.",
