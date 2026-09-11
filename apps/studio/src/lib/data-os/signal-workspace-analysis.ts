@@ -10,6 +10,7 @@ import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   renewAndEnqueueSignalWorkspaceIncrementalEditorialV1,
   loadSignalWorkspaceIncrementalEditorialStatusV1, retrySignalWorkspaceIncrementalEditorialV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
+  SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
@@ -90,6 +91,9 @@ export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["l
       unknown_reserved_micro_usd: budget?.unknown_reserved_micro_usd ?? 0,
       terminal_reserved_micro_usd: budget?.terminal_reserved_micro_usd ?? 0 } };
 }
+export function workspaceAnalysisActiveRunV1(run: WorkspaceAnalysisRun | null): WorkspaceAnalysisRun | null {
+  return run?.is_current && ["queued", "running"].includes(run.status) ? run : null;
+}
 export function workspaceAnalysisPreflightStateV1(args: {
   received: boolean; prepared: boolean; embeddingRunId: string | null; missingGuides: number;
 }): WorkspaceAnalysisStatus["preflight"]["state"] {
@@ -97,6 +101,24 @@ export function workspaceAnalysisPreflightStateV1(args: {
   if (!args.prepared) return "needs_preparation";
   if (!args.embeddingRunId) return "missing_embeddings";
   return args.missingGuides > 0 ? "missing_context" : "ready";
+}
+/** A missing or stale Brand Context is an expected, repairable preflight state.
+ * Reads keep historical runs and cost receipts visible; execution still reaches
+ * the strict DB preflight and cannot start until current authority exists. */
+export function workspaceAnalysisContextPreflightStateV1(error: unknown): WorkspaceAnalysisStatus["preflight"]["state"] | null {
+  return error instanceof SignalTopicCatalogError
+    && ["brand_context_semantic_context_required", "brand_context_source_stale"].includes(error.code)
+    ? "missing_context" : null;
+}
+export async function loadWorkspaceAnalysisPreflightForReadV1<T>(loader: () => Promise<T>): Promise<{
+  value: T | null; state: WorkspaceAnalysisStatus["preflight"]["state"] | null;
+}> {
+  try { return { value: await loader(), state: null }; }
+  catch (error) {
+    const state = workspaceAnalysisContextPreflightStateV1(error);
+    if (!state) throw error;
+    return { value: null, state };
+  }
 }
 export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempotencyKey?: string }): Promise<WorkspaceAnalysisStatus> {
   if (args.idempotencyKey !== undefined && !requestKeyPattern.test(args.idempotencyKey)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
@@ -108,7 +130,8 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const preparation = await loadSignalWorkspaceCorpusPreparationStoreV1({ queryable: access.database, workspace_id: args.workspaceId });
   const received = (await access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
     WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])).rows[0]?.received === true;
-  const preflight = await loadSignalWorkspaceEnginePreflightV1(access);
+  const preflightRead = await loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access));
+  const preflight = preflightRead.value;
   const policy = workspaceAnalysisInterpretationPolicyV1();
   const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
   const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd > 0);
@@ -122,13 +145,13 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
-    latest_run: latest, active_run: latest && ["queued", "running"].includes(latest.status) ? latest : null,
+    latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
-      state: workspaceAnalysisPreflightStateV1({ received, prepared: preparation.is_current,
-        embeddingRunId: preflight.embedding_run_id, missingGuides: preflight.missing_guides }),
-      embedding_run_id: preflight.embedding_run_id, context_digest: preflight.expected_context_digest,
-      catalog_digest: preflight.expected_catalog_digest,
+      state: preflightRead.state ?? workspaceAnalysisPreflightStateV1({ received, prepared: preparation.is_current,
+        embeddingRunId: preflight?.embedding_run_id ?? null, missingGuides: preflight?.missing_guides ?? 0 }),
+      embedding_run_id: preflight?.embedding_run_id ?? null, context_digest: preflight?.expected_context_digest ?? null,
+      catalog_digest: preflight?.expected_catalog_digest ?? null,
       cost: { claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
         voyage: { estimated_upper_micro_usd: 0 } }
     } };

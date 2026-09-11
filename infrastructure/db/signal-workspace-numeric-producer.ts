@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
 import { beginSignalWorkspaceIncrementalEngineV1, loadSignalWorkspaceIncrementalParentV1 } from './signal-workspace-engine-incremental';
-import { loadSignalWorkspaceEnginePreflightV1, SignalWorkspaceEngineError,
+import { loadSignalWorkspaceEnginePreflightV1, SignalWorkspaceEngineError, isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
   type SignalWorkspaceEngineDatabaseV1 } from './signal-workspace-engine';
 
 type Queryable = Pick<PoolClient, 'query'>;
@@ -40,7 +40,7 @@ export async function assertSignalWorkspaceNumericAdmissionWithClientV1(args: {
   if (handled) fail('workspace_numeric_revision_already_handled');
 }
 
-async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: string) {
+async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: string, historical = false) {
   const state = (await database.query<{ input_revision: string }>(`SELECT input_revision::text
     FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid`, [workspace_id])).rows[0];
   const view: SignalWorkspaceNumericReadinessV1 = { contract_version: 'workspace-numeric-readiness-v1', workspace_id,
@@ -93,6 +93,7 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
       engine_config: opted.input_snapshot.engine_config, close_requested: true,
       automatic_admission: { opt_in_execution_id: opted.id, input_revision: state.input_revision } } };
   } catch (error) {
+    if (historical && isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)) return change('blocked', error.code);
     if (error instanceof SignalWorkspaceEngineError) return change('blocked', error.code);
     throw error;
   }
@@ -104,7 +105,7 @@ export async function loadSignalWorkspaceNumericReadinessV1(args: {
 }) {
   const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: args.database, ...args });
   if (!capability.can_view) fail('workspace_engine_forbidden', 403);
-  return (await plan(args.database, args.workspace_id)).view;
+  return (await plan(args.database, args.workspace_id, true)).view;
 }
 
 /** Every candidate is revalidated by begin under its existing locks. No paid calls or retries. */

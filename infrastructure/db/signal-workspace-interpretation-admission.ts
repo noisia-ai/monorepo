@@ -27,7 +27,7 @@ export type SignalWorkspaceInterpretationAdmissionResultV1={execution_id:string;
 import {randomUUID} from 'node:crypto';
 import {SignalWorkspaceEngineInterpretationError} from './signal-workspace-engine-interpretation';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1} from './signal-workspace-engine';
+import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1} from './signal-workspace-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_engine_interpretation_${code}`,status);};
 const keyValid=(key:string)=>/^[A-Za-z0-9._:-]{8,200}$/u.test(key);
@@ -48,7 +48,7 @@ async function receiptByKey(c:Queryable,workspace:string,actor:string,key?:strin
  return(await c.query<{request_digest:string;result:SignalWorkspaceInterpretationAdmissionV1}>(`SELECT request_digest,result FROM signal_classification_operations
  WHERE workspace_id=$1::uuid AND actor_user_id=$2::uuid AND idempotency_key=$3 AND operation_kind IN('authorize-interpretation','revoke-interpretation')`,[workspace,actor,operationKey(key)])).rows[0]??null;
 }
-async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string;execution_id?:string;idempotency_key?:string}):Promise<SignalWorkspaceInterpretationAdmissionStatusV1|null>{
+async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string;execution_id?:string;idempotency_key?:string},historical=false):Promise<SignalWorkspaceInterpretationAdmissionStatusV1|null>{
  const capability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,...args});if(!capability.can_view)return fail('admission_forbidden',403);
  const row=(await c.query<{id:string;actor_user_id:string;input_digest:string;input_snapshot:{context_digest:string;catalog_digest:string;claude_cap_micro_usd:number;interpretation_config?:{budget_timezone:string;daily_cap_micro_usd:number;call_configuration:{model:string}}};
   config:{budget_timezone:string;daily_cap_micro_usd:number;call_configuration:{model:string}};eligible:boolean;requires_authorization:boolean;is_current:boolean;is_admin:boolean;receipt:SignalWorkspaceInterpretationAdmissionV1|null}>(`
@@ -75,8 +75,10 @@ async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string
   COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND ${releasable}),0)::text releasable_run,
   COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND budget_date=$3::date AND ${releasable}),0)::text releasable_day
  FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND actor_user_id=$2::uuid`,[row.id,row.actor_user_id,clock.date])).rows[0]!;
- const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
- const current=row.is_current&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
+ let identity:Awaited<ReturnType<typeof loadSignalWorkspaceEngineInputIdentityV1>>|null=null;
+ try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});}
+ catch(error){if(!historical||!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error))throw error;}
+ const current=row.is_current&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
  const runCap=Number(row.input_snapshot.claude_cap_micro_usd??0),dayCap=Number(row.config?.daily_cap_micro_usd??0);
  const max=Math.max(0,Math.min(runCap-Number(money.run_spent)+Number(money.releasable_run),dayCap-Number(money.day_spent)+Number(money.releasable_day)));
  return{execution_id:row.id,is_current:current,requires_authorization:row.requires_authorization,can_authorize:row.is_admin&&current&&row.eligible&&max>0,
@@ -87,7 +89,7 @@ async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string
   run_cap_micro_usd:runCap,daily_cap_micro_usd:dayCap,maximum_grant_micro_usd:max};
 }
 export async function loadSignalWorkspaceInterpretationAdmissionV1(args:Omit<SignalWorkspaceInterpretationAdmissionScopeV1,'execution_id'>&{execution_id?:string;idempotency_key?:string}){
- const c=await args.database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await status(c,args);await c.query('COMMIT');return result;}
+ const c=await args.database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await status(c,args,true);await c.query('COMMIT');return result;}
  catch(error){await c.query('ROLLBACK').catch(()=>undefined);throw error;}finally{c.release();}
 }
 async function mutate(args:SignalWorkspaceInterpretationAdmissionAuthorizeArgsV1|SignalWorkspaceInterpretationAdmissionRevokeArgsV1,action:'authorize_interpretation'|'revoke_interpretation'):Promise<SignalWorkspaceInterpretationAdmissionResultV1>{

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1, type SignalWorkspaceIncrementalEditorialRenewalV1 } from "@noisia/db";
-import { loadWorkspaceIncrementalEditorialForActorV1, workspaceIncrementalEditorialExecutionViewV1, loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
-  workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
+import { SignalTopicCatalogError, SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1, type SignalWorkspaceIncrementalEditorialRenewalV1 } from "@noisia/db";
+import { loadWorkspaceAnalysisPreflightForReadV1, loadWorkspaceIncrementalEditorialForActorV1, workspaceIncrementalEditorialExecutionViewV1, loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
+  workspaceAnalysisActiveRunV1, workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisContextPreflightStateV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
 const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
 const body = { action: "start", embedding_run_id: id, expected_context_digest: hash, expected_catalog_digest: hash, claude_cap_micro_usd: 0 };
@@ -82,6 +82,35 @@ test("preflight distinguishes accepted files, complete preparation, embedding ca
   assert.equal(workspaceAnalysisPreflightStateV1({ ...inputs, missingGuides: 3 }), "missing_context");
   assert.notEqual(workspaceAnalysisRequestScopeV1(id, "a"), workspaceAnalysisRequestScopeV1(id, "b"));
   assert.notEqual(workspaceAnalysisRequestScopeV1(id, "a"), workspaceAnalysisRequestScopeV1("other", "a"));
+});
+test("read-only analysis keeps history readable when Brand Context must be prepared again", () => {
+  for (const code of ["brand_context_semantic_context_required", "brand_context_source_stale"])
+    assert.equal(workspaceAnalysisContextPreflightStateV1(new SignalTopicCatalogError(code)), "missing_context");
+  for (const error of [new SignalTopicCatalogError("topic_mention_embeddings_incomplete"),
+    new SignalWorkspaceEngineError("workspace_engine_forbidden", 403), new Error("brand_context_source_stale")])
+    assert.equal(workspaceAnalysisContextPreflightStateV1(error), null,
+      "only typed Brand Context preflight blockers may degrade a read into an actionable status");
+});
+test("read-only preflight degrades only Brand Context blockers and preserves strict failures", async () => {
+  const blocked = await loadWorkspaceAnalysisPreflightForReadV1(async () => {
+    throw new SignalTopicCatalogError("brand_context_source_stale");
+  });
+  assert.deepEqual(blocked, { value: null, state: "missing_context" });
+  await assert.rejects(loadWorkspaceAnalysisPreflightForReadV1(async () => {
+    throw new SignalTopicCatalogError("topic_mention_embeddings_incomplete");
+  }), (error: unknown) => error instanceof SignalTopicCatalogError && error.code === "topic_mention_embeddings_incomplete");
+});
+test("a queued historical run stays readable but cannot keep polling or block a current successor", () => {
+  const queued = workspaceAnalysisRunViewV1({
+    execution_id: id, status: "queued", phase: "queued", progress: 0,
+    expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 0, processed_chunks: 0,
+    error_code: null, is_current: true, model_version_id: null, artifact_count: 0,
+    claude_cap_micro_usd: 0, result_kind: null, fit_completed: false,
+    expected_interpretation_units: 0, interpreted_units: 0, materialized_topics: 0
+  })!;
+  assert.equal(workspaceAnalysisActiveRunV1(queued), queued);
+  assert.equal(workspaceAnalysisActiveRunV1({ ...queued, is_current: false }), null);
+  assert.equal(workspaceAnalysisActiveRunV1({ ...queued, status: "failed", phase: "failed" }), null);
 });
 test("run view does not fabricate a Claude reservation and only exposes retry for a current transient failure", () => {
   const run: NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> = { execution_id: id, status: "failed", phase: "failed",

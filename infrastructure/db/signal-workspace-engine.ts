@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1, type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
-import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1 } from "./signal-topic-catalog";
+import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
 import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
 import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1 } from "./signal-workspace-topic-computation";
 import type { SignalWorkspaceEngineInterpretationConfigurationV1 } from "./signal-workspace-engine-interpretation";
@@ -252,6 +252,12 @@ async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, a
 export async function loadSignalWorkspaceEngineInputIdentityV1(args:{queryable:Pick<PoolClient,'query'>;workspace_id:string;actor_user_id:string}) {
   const input=await buildInput(args.queryable,args.workspace_id,args.actor_user_id);
   return {context_digest:input.context_digest,catalog_digest:input.catalog_digest};
+}
+/** Historical readers may retain receipts when semantic authority is unavailable.
+ * New execution and transport paths must still reject the original error. */
+export function isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error:unknown):error is SignalTopicCatalogError {
+  return error instanceof SignalTopicCatalogError && error.status===409
+    && ['brand_context_source_stale','brand_context_semantic_context_required'].includes(error.code);
 }
 export async function readSignalWorkspaceEngineInterpretationContextV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1}) {
   return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
@@ -715,7 +721,8 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
       [args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows;
     let inputIdentity:{context_digest:string;catalog_digest:string}|null=null;
     if(rows.length){try{inputIdentity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});}
-      catch(error){if(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))throw error;}}
+      catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
+        && (!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}}
     const view=async(row:typeof rows[number]):Promise<NonNullable<SignalWorkspaceEngineStatusV1['latest_run']>>=>{
       const actorCanExecute=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:row.actor_user_id})).can_execute_topics;
       const isCurrent=row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute;

@@ -1,5 +1,14 @@
 /** Cancelling a status reader never mutates the server-side import. */
 export type ImportStatusSnapshot = { id: string; status: string; phase?: string };
+export type ImportTerminalCounts = { completed_count: number; failed_count: number; already_imported_count?: number };
+export function shouldRefreshAfterImportSummary(previous: ImportTerminalCounts | null, next: ImportTerminalCounts) {
+  // A file may complete after SSR but before the first history read. Catch up
+  // readiness once; unchanged polling receipts must not refresh the page again.
+  if (previous === null) return next.completed_count > 0;
+  return previous.completed_count !== next.completed_count
+    || previous.failed_count !== next.failed_count
+    || (previous.already_imported_count ?? 0) !== (next.already_imported_count ?? 0);
+}
 export function isImportTerminal(value: ImportStatusSnapshot) {
   return value.status === "completed" || value.status === "failed";
 }

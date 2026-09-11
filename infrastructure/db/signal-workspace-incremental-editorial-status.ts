@@ -1,6 +1,6 @@
 import type {PoolClient} from 'pg';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,
+import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
  type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import type {SignalWorkspaceIncrementalEditorialReceiptV1} from './signal-workspace-incremental-editorial';
@@ -46,7 +46,8 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
  const ownerCapabilities=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id});
  let identity:{context_digest:string;catalog_digest:string}|null=null;
  if(run.current&&ownerCapabilities.can_execute_topics){try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id});}
-  catch(error){if(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))throw error;}}
+  catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
+   &&(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}}
  const is_current=run.current&&ownerCapabilities.can_execute_topics&&identity?.context_digest===run.context_digest&&identity?.catalog_digest===run.catalog_digest;
  const dispatch=(await c.query<Dispatch>(`SELECT worker_job_id,status FROM signal_topic_classification_outbox
   WHERE execution_id=$1::uuid AND workspace_id=$2::uuid AND dispatch_kind='execution'`,[run.id,args.workspace_id])).rows[0]??null;

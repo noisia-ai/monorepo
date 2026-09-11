@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { signalWorkspaceEmbeddingDigestV1 as digest, type SignalWorkspaceIncrementalRootV1 } from '@noisia/query-engine';
-import { SignalWorkspaceEngineError, loadSignalWorkspaceEngineInputIdentityV1,
+import { SignalWorkspaceEngineError, loadSignalWorkspaceEngineInputIdentityV1, isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
   withSignalWorkspaceEngineTransactionV1 as tx, type SignalWorkspaceEngineDatabaseV1,
   type SignalWorkspaceEngineSnapshotV1 } from './signal-workspace-engine';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
@@ -71,7 +71,7 @@ async function source(c: PoolClient, args: Target, historical = false): Promise<
   if (!run) return fail('not_found', 404);
   try { const identity = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: c, ...args });
     run.valid &&= identity.context_digest === run.input_snapshot.context_digest && identity.catalog_digest === run.input_snapshot.catalog_digest;
-  } catch(error) { if(historical && (error instanceof SignalWorkspaceEngineError && [404,409].includes(error.status)
+  } catch(error) { if(historical && (isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error) || error instanceof SignalWorkspaceEngineError && [404,409].includes(error.status)
     || error instanceof Error && ['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))) run.valid=false; else throw error; }
   return run;
 }

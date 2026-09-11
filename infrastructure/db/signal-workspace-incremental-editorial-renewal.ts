@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {SignalWorkspaceEngineError,loadSignalWorkspaceEngineInputIdentityV1,
+import {SignalWorkspaceEngineError,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
  type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import {readSignalWorkspaceIncrementalEditorialRequestWithQueryableV1,
@@ -39,7 +39,7 @@ export async function readSignalWorkspaceIncrementalEditorialRenewalWithQueryabl
  let current=row.is_current;
  if(current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:row.budget_actor_user_id});
   current=identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
- }catch(error){if(!(error instanceof Error)||!(error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
+ }catch(error){if(!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
   ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;current=false;}}
  const admin=(await c.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]?.valid===true;
  const blocked_reason=!admin?'workspace_incremental_editorial_forbidden':!current?'workspace_incremental_editorial_source_stale':row.blocked_reason;

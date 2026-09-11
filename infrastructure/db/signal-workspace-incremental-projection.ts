@@ -4,7 +4,7 @@ import type {SignalWorkspaceIncrementalProjectionSourceV1,SignalWorkspaceIncreme
  SignalWorkspaceClassificationIdentityV1,SignalWorkspaceIncrementalRootV1} from '@noisia/query-engine';
 import {signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceIncrementalProjectionSourceSchemaV1} from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
-import {loadSignalWorkspaceEngineInputIdentityV1,withSignalWorkspaceEngineTransactionV1,
+import {loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,withSignalWorkspaceEngineTransactionV1,
  persistSignalWorkspaceEngineArtifactWithClientV1,
  type SignalWorkspaceEngineDatabaseV1,type SignalWorkspaceEngineArtifactV1,type SignalWorkspaceEngineSnapshotV1} from './signal-workspace-engine';
 import type {SignalWorkspaceIncrementalCheckpointV1,SignalWorkspaceIncrementalArtifactRefV1} from './signal-workspace-engine-incremental';
@@ -443,8 +443,10 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
   const requestNumeric:SignalWorkspaceAnalysisUpdateV1['request_numeric']=accepted?.alias?.actor_user_id===args.actor_user_id
    &&accepted.alias.request_digest===digest({action:'retry_numeric',execution_id:accepted.id})
    ?{action:'retry_numeric',execution_id:accepted.id,idempotency_key:args.idempotency_key!}:null;
-  const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});
-  const current=row.is_current&&identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
+  let identity:Awaited<ReturnType<typeof loadSignalWorkspaceEngineInputIdentityV1>>|null=null;
+  try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args});}
+  catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error))throw error;}
+  const current=row.is_current&&identity!==null&&identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
   const numericRecovery=current&&row.status==='failed'&&capabilities.can_execute_topics
    ?await readSignalWorkspaceNumericRecoveryWithQueryableV1({queryable:client,...args,execution_id:row.execution_id}):null;
   const {loadSignalWorkspaceTopicProjectionStatusWithQueryableV1}=await import('./signal-workspace-topic-projection');
@@ -472,8 +474,8 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
    numeric:{execution_id:row.execution_id,status:row.status,phase:row.phase,progress:row.progress,expected_roots:row.expected_roots,processed_roots:row.processed_roots,is_current:current,error_code:row.error_code,retry_available:numericRecovery?.retry_available===true},
    request_numeric:requestNumeric,delivery,request_delivery:requestDelivery,
    derivation:!row.history_current?{status:'blocked',error_code:'workspace_incremental_projection_history_changed'}:dispatch?{status:dispatch.status,error_code:dispatch.error_code}:null,
-   projection:latest?{execution_id:latest.execution_id,generation_id:latest.generation_id,status:latest.status,expected_roots:latest.denominator,processed_roots:latest.processed_roots,is_current:latest.is_current,error_code:latest.error_code}:null,
-   serving:complete&&served?{generation_id:complete.generation_id,input_revision:served.input_revision,is_current:complete.is_current,
+   projection:latest?{execution_id:latest.execution_id,generation_id:latest.generation_id,status:latest.status,expected_roots:latest.denominator,processed_roots:latest.processed_roots,is_current:identity!==null&&latest.is_current,error_code:latest.error_code}:null,
+   serving:complete&&served?{generation_id:complete.generation_id,input_revision:served.input_revision,is_current:identity!==null&&complete.is_current,
     interpretation_coverage:served.interpretation_coverage,discovery_coverage:served.discovery_coverage}:null};
   await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}

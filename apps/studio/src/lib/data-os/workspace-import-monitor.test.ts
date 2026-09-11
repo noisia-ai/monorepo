@@ -1,6 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canConfirmImportUpload, confirmWorkspaceImportUpload, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure } from "./workspace-import-monitor";
+import { canConfirmImportUpload, confirmWorkspaceImportUpload, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure, shouldRefreshAfterImportSummary } from "./workspace-import-monitor";
+
+test("a file completed between SSR and the first history GET refreshes its stale empty readiness once", () => {
+  const firstRead = { completed_count: 1, failed_count: 0, already_imported_count: 0 };
+  assert.equal(shouldRefreshAfterImportSummary(null, firstRead), true);
+  assert.equal(shouldRefreshAfterImportSummary(firstRead, { ...firstRead }), false);
+});
+
+test("empty, pending, rejected and duplicate attempts never imply a first accepted import", () => {
+  for (const firstRead of [{ completed_count: 0, failed_count: 0 },
+    { completed_count: 0, failed_count: 1, already_imported_count: 2 }]) {
+    assert.equal(shouldRefreshAfterImportSummary(null, firstRead), false);
+    assert.equal(shouldRefreshAfterImportSummary(firstRead, { ...firstRead }), false);
+  }
+});
+
+test("partial imports refresh when a later file completes, with errors and duplicate receipts counted separately", () => {
+  const partial = { completed_count: 1, failed_count: 1, already_imported_count: 1 };
+  const secondFile = { ...partial, completed_count: 2 };
+  assert.equal(shouldRefreshAfterImportSummary(partial, secondFile), true);
+  assert.equal(shouldRefreshAfterImportSummary(secondFile, { ...secondFile }), false);
+  assert.equal(shouldRefreshAfterImportSummary(secondFile, { ...secondFile, failed_count: 2 }), true);
+  assert.equal(shouldRefreshAfterImportSummary(secondFile, { ...secondFile, already_imported_count: 2 }), true);
+});
 
 test("a prior file cannot replace the visible result of a later upload", () => {
   const first = { id: "first", status: "completed" }, second = { id: "second", status: "processing" };

@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
-import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
+import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 
 /** Admission only. No full-fit lease, provider route or dispatch is created. */
@@ -67,7 +67,7 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  const accepted=options.accepted??await request(client,args,args.idempotency_key),row=await source(client,args);
  let identity:{context_digest:string;catalog_digest:string}|null=null;
  try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id});}
- catch(error){if(!options.historical||!(error instanceof Error)||!(error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
+ catch(error){if(!options.historical||!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
    ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
  const is_current=row.valid&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
  const isAdmin=(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]!.valid;

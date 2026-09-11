@@ -29,7 +29,7 @@ import {
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
-import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure } from "@/lib/data-os/workspace-import-monitor";
+import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure, shouldRefreshAfterImportSummary, type ImportTerminalCounts } from "@/lib/data-os/workspace-import-monitor";
 import { acquisitionSlotActions, buildAcquisitionSlotViews, groupAcquisitionBlockers } from "@/lib/data-os/workspace-acquisition-slot-view";
 import { buildAdminWorkspaceConnectorInput } from "@/lib/data-os/admin-workspace-source-contract";
 import { DEFAULT_WORKSPACE_TIMEZONE, isIanaTimezone } from "@/lib/timezone-catalog";
@@ -237,7 +237,7 @@ export function AcquisitionPlanManager({
   const [uploadTransferActive, setUploadTransferActive] = useState(false);
   const historyController = useRef<AbortController | null>(null);
   const historyHasMorePages = useRef(false);
-  const summaryPrevious = useRef<string | null>(null);
+  const summaryPrevious = useRef<ImportTerminalCounts | null>(null);
   const [generationPreflight,setGenerationPreflight] = useState<QueryGenerationPreflight | null>(null);
   const [generationConfirmed,setGenerationConfirmed] = useState(false);
   const [generationHardCap,setGenerationHardCap] = useState("1.00");
@@ -337,9 +337,11 @@ export function AcquisitionPlanManager({
         const payload = await response.json() as ImportHistoryPayload;
         if (controller.signal.aborted) return;
         setImportSummary(payload.summary); setSummaryError(false);
-        const terminalRevision = `${payload.summary.totals.completed_count}:${payload.summary.totals.failed_count}:${payload.summary.totals.already_imported_count ?? 0}`;
-        if (summaryPrevious.current !== null && summaryPrevious.current !== terminalRevision) router.refresh();
-        summaryPrevious.current = terminalRevision;
+        const next = payload.summary.totals;
+        const refreshPage = shouldRefreshAfterImportSummary(summaryPrevious.current, next);
+        summaryPrevious.current = { completed_count: next.completed_count, failed_count: next.failed_count,
+          already_imported_count: next.already_imported_count };
+        if (refreshPage) router.refresh();
         if (payload.summary.totals.processing_count + (payload.summary.totals.uploading_count ?? 0) > 0)
           timer = window.setTimeout(() => void load(), 2_500);
       } catch { if (!controller.signal.aborted) setSummaryError(true); }

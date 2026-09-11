@@ -1,7 +1,7 @@
 import type {PoolClient} from 'pg';
 import {signalWorkspaceEmbeddingDigestV1 as digest,type SignalTopicDefinitionV1,type SignalWorkspaceClassificationIdentityV1} from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
-import {loadSignalWorkspaceEngineInputIdentityV1,type SignalWorkspaceEngineSnapshotV1} from './signal-workspace-engine';
+import {loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,type SignalWorkspaceEngineSnapshotV1} from './signal-workspace-engine';
 import {beginSignalWorkspaceClassificationWithClientV1,claimSignalWorkspaceClassificationV1,heartbeatSignalWorkspaceClassificationV1,
  loadSignalWorkspaceClassificationInputV1,SignalWorkspaceClassificationError,
  type SignalWorkspaceClassificationDatabaseV1,type SignalWorkspaceClassificationLeaseV1,type SignalWorkspaceClassificationFitProjectionV1 as SignalWorkspaceClassificationProjectionV1} from './signal-workspace-classification';
@@ -168,7 +168,8 @@ export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(ar
  SELECT * FROM runs WHERE execution_id=(SELECT execution_id FROM runs ORDER BY generation_version DESC LIMIT 1)
   OR execution_id=(SELECT execution_id FROM runs WHERE complete ORDER BY generation_version DESC LIMIT 1) ORDER BY generation_version DESC`,[args.workspace_id,contract])).rows;
  let current:Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>>|null=null;
- if(rows.length){try{current=await loadSignalWorkspaceClassificationInputV1(args);}catch(error){if(!(error instanceof SignalWorkspaceClassificationError)||error.code!=='workspace_classification_catalog_unavailable')throw error;}}
+ if(rows.length){try{current=await loadSignalWorkspaceClassificationInputV1(args);}catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
+  &&(!(error instanceof SignalWorkspaceClassificationError)||error.code!=='workspace_classification_catalog_unavailable'))throw error;}}
  const views=rows.map(({identity,correction_digest,generation_version:_version,source_current,...row})=>({...row,is_current:Boolean(source_current&&current
   &&current.catalog_digest===identity.catalog_digest&&current.compiler_digest===identity.compiler_digest
   &&current.context_digest===identity.context_digest&&current.embedding_config_digest===identity.embedding_config_digest&&current.correction_digest===correction_digest)}));
