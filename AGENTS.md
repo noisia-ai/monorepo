@@ -4,6 +4,15 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Catálogo de trabajo vs. operativo en desarrollo LOCAL — 2026-09-11 11:55 UTC.** Base UAT
+> `c1e40d3`, docs `866e0d9`. Objetivo: create/update/archive/restore de Topics guardan versiones
+> editoriales sin ejecución, outbox, gasto ni proveedor; Signal e incremental conservan el perfil de
+> la última generación válida hasta recomputación explícita. Revalidar actor/org/brand/workspace/grant
+> bajo lock y añadir CAS a lifecycle. Leer
+> `docs/product/PROMPT_LOOPING/PLAN_TOPIC_WORKING_SERVING_SEPARATION_2026-09-11.md`. Si se requiere
+> SQL, usar 0154 nuevo y mantenerlo LOCAL hasta gates compuestos; no modificar ni reaplicar 0148–0153.
+> National es compatibilidad, no objetivo. Cero proveedores, imports o fit durante este corte.
+
 > **Alta de marca y entrada cliente activas en UAT — 2026-09-11 11:52 UTC.** Studio y Worker
 > ejecutan `c1e40d387c4a3679a67ee01060e509e561dcf0b7` (deployments Studio
 > `9c0138cc-bd0a-48a7-8219-a83f7ef8ddcd`, Worker
