@@ -195,6 +195,20 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+const recoverableBrandContextAuthorityErrorsV1 = new Set([
+  "brand_os_snapshot_required",
+  "brand_os_snapshot_stale"
+]);
+
+export function isRecoverableBrandContextAuthorityErrorV1(value: unknown) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && "code" in value
+    && recoverableBrandContextAuthorityErrorsV1.has(String(value.code))
+  );
+}
+
 export function SemanticContextPackManager({ workspaceId }: { workspaceId: string }) {
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
   const locale = useLocale();
@@ -247,6 +261,13 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
         : null);
     } catch (loadError) {
       if (sequence !== summaryLoadSequence.current) return;
+      if (isRecoverableBrandContextAuthorityErrorV1(loadError)) {
+        setReadiness(null);
+        setGeneration(null);
+        setBoundRun(null);
+        setError(null);
+        return;
+      }
       if (loadError instanceof Error && "status" in loadError && [401, 403, 404].includes(Number(loadError.status))) {
         preparationLoadSequence.current += 1;
         setPreparation(null); setGeneration(null); setReadiness(null); setBoundRun(null); setPreparationError(true); setPreparationLoading(false);
@@ -264,8 +285,14 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       setPreparation(result.preparation.current); setPreparationError(false);
     } catch (statusError) {
       if (sequence === preparationLoadSequence.current) {
-        setPreparationError(true);
-        if (statusError instanceof Error && "status" in statusError && [401, 403, 404].includes(Number(statusError.status))) {
+        if (isRecoverableBrandContextAuthorityErrorV1(statusError)) {
+          setPreparation(null);
+          setPreparationError(false);
+        } else {
+          setPreparationError(true);
+        }
+        if (!isRecoverableBrandContextAuthorityErrorV1(statusError)
+          && statusError instanceof Error && "status" in statusError && [401, 403, 404].includes(Number(statusError.status))) {
           summaryLoadSequence.current += 1;
           setPreparation(null); setGeneration(null); setReadiness(null); setBoundRun(null); setInitialLoading(false);
           setError(t("automatic.statusUnavailable"));

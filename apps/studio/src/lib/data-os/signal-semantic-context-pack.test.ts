@@ -8,6 +8,7 @@ import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query
 
 import {
   formatSignalSemanticContextUsdPerMillionTokensV1,
+  isRecoverableBrandContextAuthorityErrorV1,
   signalSemanticContextPackEmptyStateV1
 } from "@/components/brands/SemanticContextPackManager";
 import {
@@ -56,6 +57,17 @@ test("Brand OS treats a governed brand without a generation as ready to prepare"
   assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false,
     error: "unexpected_summary_failure", hasGeneration: false, unavailableReason: null }), "error",
   "an actual request failure always wins over an empty-state reason");
+});
+
+test("Brand OS keeps a missing or stale canonical snapshot actionable", () => {
+  for (const code of ["brand_os_snapshot_required", "brand_os_snapshot_stale"]) {
+    assert.equal(isRecoverableBrandContextAuthorityErrorV1({ code }), true,
+      `${code} can be rebuilt by the existing preparation command`);
+  }
+  assert.equal(isRecoverableBrandContextAuthorityErrorV1({ code: "locale_market_authority_required" }), false,
+    "invalid locale or market input still needs an explicit correction");
+  assert.equal(isRecoverableBrandContextAuthorityErrorV1(new Error("network")), false,
+    "transport failures must remain visible errors");
 });
 
 test("an explicitly automatic empty publication remains ready while legacy empty packs stay closed", () => {
