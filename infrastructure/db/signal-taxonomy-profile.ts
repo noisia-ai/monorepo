@@ -152,7 +152,7 @@ export async function loadSignalTaxonomyDiscoveryContextStoreV1(args: {
     WHERE assertion.status = 'active'
       AND (
         source.study_corpus_id = $2::uuid
-        OR (scope.brand_id IS NOT NULL AND source.brand_id = scope.brand_id)
+        OR (scope.brand_id IS NOT NULL AND source.brand_id = scope.brand_id AND source.study_corpus_id IS NULL)
       )
     ORDER BY source_type, source_id
   `, [args.workspace_id, args.study_corpus_id]);

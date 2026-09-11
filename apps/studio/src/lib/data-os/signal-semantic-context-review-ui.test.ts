@@ -167,6 +167,8 @@ test("ordinary editing rejects invalid applicability before network and closes l
 function findElement(root: ReactNode, predicate: (element: ReactElement)=>boolean,
   visited=new WeakSet<object>()): ReactElement | null {
   if(Array.isArray(root)){
+    if(visited.has(root))return null;
+    visited.add(root);
     for(const child of root){const found=findElement(child,predicate,visited);if(found)return found;}
     return null;
   }
@@ -339,6 +341,28 @@ test("rendered locale authority opens deliberately and only a complete explicit 
   assert.equal(requests,1,"one complete locale decision crosses exactly one request boundary");
 });
 
+test("published automatic context offers carried edits without draft-only create, annotation or locale actions",()=>{
+  const t=((key:string)=>key) as never;
+  const baseElement=(renderedDecisionDetail as unknown as {element:Record<string,unknown>}).element;
+  const detail={...(renderedDecisionDetail as unknown as Record<string,unknown>),element:{...baseElement,
+    disposition:"approved",lifecycle_state:"active",locale:null,undo_target_version:null,
+    automatic_policy:{outcome:"ready",reasons:[]},
+    locale_authority:{state:"unresolved",locale:null,lifecycle:"not_decided",basis:null}
+  }} as never;
+  const view=ElementReviewDetail({automaticMode:true,activeFormRef:{current:null},
+    annotationResolutionDraft:null,busy:null,detail,draftWritable:false,locale:"es-MX",mode:"view",
+    onAnnotate:()=>undefined,onApprove:()=>undefined,onBeginResolution:()=>undefined,
+    onCancelResolution:()=>undefined,onCorrect:()=>undefined,onLocaleAuthority:()=>undefined,
+    onMode:()=>undefined,onOrdinaryAction:()=>undefined,onReject:()=>undefined,onResolve:()=>undefined,
+    reviewWritable:true,t});
+  const button=(key:string)=>findElement(view,(element)=>element.type==="button"
+    &&String(element.props.children??"").includes(key));
+  assert.equal(button("reviewWorkbench.annotations.action"),null);
+  assert.equal(button("reviewWorkbench.localeAuthority.action"),null);
+  assert.ok(button("actions.edit"));
+  assert.ok(button("actions.archive"));
+});
+
 test("workspace-inherited applicability renders its sealed markets and locales and exposes no locale decision form",()=>{
   const t=((key:string,values?:Record<string,unknown>)=>values?.markets
     ?`${key}:${values.markets}:${values.locales??""}`:key) as never;
@@ -428,6 +452,10 @@ test("rendered annotation resolution first click only opens a deliberate form", 
   const resolutionButton=findElement(view,(element)=>element.type==="button"
     &&String(element.props.children??"").includes("context_sufficient"));
   assert.ok(resolutionButton);(resolutionButton.props as {onClick:()=>void}).onClick();
+  const published=AnnotationsList({busy:null,items:[annotation] as never,
+    onBeginResolution:()=>{requests+=1;},t,writable:false});
+  assert.equal(findElement(published,(element)=>element.type==="button"),null,
+    "published annotation history remains readable without a draft-only resolution action");
   assert.equal(mode,"resolve_annotation");assert.equal(requests,0,"the first resolution click cannot write");
   const form=renderDetail();assert.match(renderToStaticMarkup(form),/admin-drawer-form/u);
   assert.match(renderToStaticMarkup(form),/resolve_semantic_context_annotation_with_deliberate_basis/u);

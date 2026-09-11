@@ -16,7 +16,7 @@ export type SignalWorkspaceTopicPrototypeRunV1 = {
 export type SignalWorkspaceTopicPrototypesStatusV1 = {
   contract_version: "signal-workspace-topic-prototypes-v1";
   workspace_id: string; observed_at: string; current_plan_digest: string | null;
-  availability: "available" | "no_topics";
+  availability: "available" | "no_topics" | "context_required" | "context_stale";
   active_run: SignalWorkspaceTopicPrototypeRunV1 | null;
   latest_run: SignalWorkspaceTopicPrototypeRunV1 | null;
   latest_completed: SignalWorkspaceTopicPrototypeRunV1 | null;

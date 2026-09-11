@@ -21,6 +21,9 @@ export type SignalProductOperationActionV1 =
   | "create-competitor"
   | "retire-competitor"
   | "reactivate-competitor"
+  | "update-brand-context"
+  | "update-brand-knowledge"
+  | "delete-brand-knowledge"
   | "seal-acquisition-import"
   | "authorize-acquisition-benchmark"
   | "register-topic-discovery-review"
@@ -41,6 +44,7 @@ export type SignalProductOperationActionV1 =
   | "decide-semantic-context-locale-authority"
   | "edit-semantic-context-element-v1"
   | "create-semantic-context-element-v1"
+  | "prepare-brand-context"
   | "publish-semantic-context-generation";
 
 export async function beginSignalProductOperationV1<T>(args: {

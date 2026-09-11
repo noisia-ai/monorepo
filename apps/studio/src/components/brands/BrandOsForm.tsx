@@ -1,13 +1,17 @@
 "use client";
 
-import { type ClipboardEvent, type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useId, useMemo, useState } from "react";
+import { type ClipboardEvent, type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
+import { browserWorkspaceTimezone, DEFAULT_WORKSPACE_TIMEZONE } from "@/lib/timezone-catalog";
 import { Icon } from "@/components/ui/Icon";
 import { COUNTRY_OPTIONS } from "@/lib/country-catalog";
 import { INDUSTRY_OPTIONS, INDUSTRY_SEARCH_ALIASES, subindustriesForIndustry } from "@/lib/industry-catalog";
 import { slugify } from "@/lib/slug";
+import { BRAND_KNOWLEDGE_NOTES_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
 
 export type ComboOption = {
   value: string;
@@ -16,14 +20,6 @@ export type ComboOption = {
 };
 
 export type BrandFormSurface = "study" | "workspace";
-
-type BrandIntakeAiDraft = {
-  strategic_description: string;
-  aliases: string[];
-  competitors: string[];
-  knowledge_base_notes: string;
-  research_assumptions: string[];
-};
 
 const industryOptions = INDUSTRY_OPTIONS.map((industry) => ({
   value: industry,
@@ -34,6 +30,7 @@ const industryOptions = INDUSTRY_OPTIONS.map((industry) => ({
 export function BrandOsForm() {
   const t = useTranslations("BrandOs.form");
   const router = useRouter();
+  const preparation = useBrandContextPreparation();
   const [brandValue, setBrandValue] = useState("");
   const [displayNameValue, setDisplayNameValue] = useState("");
   const [organizationValue, setOrganizationValue] = useState("");
@@ -44,11 +41,8 @@ export function BrandOsForm() {
   const [aliasValues, setAliasValues] = useState<string[]>([]);
   const [competitorValues, setCompetitorValues] = useState<string[]>([]);
   const [knowledgeNotesValue, setKnowledgeNotesValue] = useState("");
-  const [timezoneValue, setTimezoneValue] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-  const [aiDraft, setAiDraft] = useState<BrandIntakeAiDraft | null>(null);
-  const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiRefineInstruction, setAiRefineInstruction] = useState("");
+  const [timezoneValue, setTimezoneValue] = useState(DEFAULT_WORKSPACE_TIMEZONE);
+  useEffect(() => { setTimezoneValue(browserWorkspaceTimezone()); }, []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const subindustryOptions = useMemo(
@@ -58,63 +52,6 @@ export function BrandOsForm() {
 
   function updateIndustry(value: string) {
     setIndustryValue(value);
-  }
-
-  const aiContextReady = brandValue.trim().length >= 2
-    && organizationValue.trim().length >= 2
-    && industryValue.trim().length >= 2
-    && subindustryValues.length > 0;
-  const generateIntakeDraft = useCallback(async (refineInstruction = "") => {
-    if (!aiContextReady) return;
-    setAiStatus("loading");
-    setAiError(null);
-    try {
-      const res = await fetch("/api/brands/intake-suggestions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brand: brandValue.trim(),
-          display_name: displayNameValue.trim(),
-          organization_name: organizationValue.trim(),
-          countries: countryValues,
-          industry: industryValue.trim(),
-          subindustries: subindustryValues,
-          description: descriptionValue,
-          aliases: aliasValues,
-          competitors: competitorValues,
-          knowledge_notes: knowledgeNotesValue,
-          refine_instruction: refineInstruction.trim() || undefined
-        })
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.message || json.error || t("aiError"));
-      setAiDraft(json.suggestions as BrandIntakeAiDraft);
-      setAiStatus("ready");
-    } catch (err) {
-      setAiStatus("error");
-      setAiError(err instanceof Error ? err.message : t("aiError"));
-    }
-  }, [
-    aiContextReady,
-    aliasValues,
-    brandValue,
-    competitorValues,
-    countryValues,
-    descriptionValue,
-    displayNameValue,
-    industryValue,
-    knowledgeNotesValue,
-    organizationValue,
-    subindustryValues,
-    t
-  ]);
-
-  function acceptListSuggestions(current: string[], suggestions: string[], setter: (values: string[]) => void) {
-    setter(Array.from(new Set([...current, ...suggestions])).slice(0, 80));
-  }
-
-  function updateAiDraft(patch: Partial<BrandIntakeAiDraft>) {
-    setAiDraft((current) => (current ? { ...current, ...patch } : current));
   }
 
   function preventImplicitSubmit(event: KeyboardEvent<HTMLFormElement>) {
@@ -146,19 +83,21 @@ export function BrandOsForm() {
       description: descriptionValue.trim(),
       brand_seed_handles: extractSeeds(rawAliases, 32),
       competitors: extractSeeds(rawCompetitors, 24),
-      knowledge_notes: withRawContext(rawKnowledgeNotes, "Competidores / research pegado", rawCompetitors),
+      knowledge_notes: rawKnowledgeNotes,
       timezone: timezoneValue,
       status: "active"
     };
 
     try {
+      const intent = preparation.forRequest("create-brand", payload);
       const res = await fetch("/api/brands", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ ...payload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackCreateError"), t("fieldFallback"), t("invalidFallback")));
+      preparation.accepted("create-brand");
       router.push(`/studio/brands/${json.data.id}/brand-os`);
       router.refresh();
     } catch (err) {
@@ -218,11 +157,7 @@ export function BrandOsForm() {
         </div>
 
         <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{t("timezone")}</span>
-            <input className="filter-input new-study-input" name="timezone" required maxLength={120} value={timezoneValue} onChange={(event) => setTimezoneValue(event.target.value)} />
-            <small>{t("timezoneHelp")}</small>
-          </label>
+          <WorkspaceTimezoneField value={timezoneValue} onChange={setTimezoneValue} surface="study" disabled={isSubmitting} />
           <div aria-hidden="true" />
         </div>
 
@@ -240,27 +175,6 @@ export function BrandOsForm() {
           />
           <div aria-hidden="true" />
         </div>
-        <div className="brand-ai-start">
-          <div>
-            <p className="vitals-eyebrow">{t("aiEyebrow")}</p>
-            <strong>{t("aiStartTitle")}</strong>
-            {aiStatus === "error" && (
-              <span className="brand-ai-inline-error">
-                <Icon name="alert" size={13} /> {aiError ?? t("aiError")}
-              </span>
-            )}
-          </div>
-          <button
-            className="admin-button"
-            type="button"
-            disabled={!aiContextReady || aiStatus === "loading"}
-            onClick={() => {
-              void generateIntakeDraft();
-            }}
-          >
-            <Icon name={aiStatus === "loading" ? "spinner" : "sparkle"} size={14} /> {t("aiStart")}
-          </button>
-        </div>
       </section>
 
       <section className="admin-section admin-intake-section">
@@ -275,15 +189,6 @@ export function BrandOsForm() {
             name="brand_seed_handles"
             placeholder={t("aliasesPlaceholder")}
             values={aliasValues}
-            loading={aiStatus === "loading" && aliasValues.length === 0}
-            suggestionTitle={t("aiAliasesTitle")}
-            suggestionValues={aiDraft?.aliases}
-            suggestionLabels={{ accept: t("aiAccept"), discard: t("aiDiscard") }}
-            onAcceptSuggestion={() => {
-              acceptListSuggestions(aliasValues, aiDraft?.aliases ?? [], setAliasValues);
-              updateAiDraft({ aliases: [] });
-            }}
-            onDiscardSuggestion={() => updateAiDraft({ aliases: [] })}
             onChange={setAliasValues}
           />
           <TokenInputField
@@ -291,33 +196,15 @@ export function BrandOsForm() {
             name="competitors"
             placeholder="Ulta Beauty, Liverpool, Palacio de Hierro..."
             values={competitorValues}
-            loading={aiStatus === "loading" && competitorValues.length === 0}
-            suggestionTitle={t("aiCompetitorsTitle")}
-            suggestionValues={aiDraft?.competitors}
-            suggestionLabels={{ accept: t("aiAccept"), discard: t("aiDiscard") }}
-            onAcceptSuggestion={() => {
-              acceptListSuggestions(competitorValues, aiDraft?.competitors ?? [], setCompetitorValues);
-              updateAiDraft({ competitors: [] });
-            }}
-            onDiscardSuggestion={() => updateAiDraft({ competitors: [] })}
             onChange={setCompetitorValues}
           />
         </div>
 
         <SmartTextareaField
           label={t("description")}
-          loading={aiStatus === "loading" && !descriptionValue.trim()}
           maxLength={12000}
           name="description"
-          suggestionText={aiDraft?.strategic_description}
-          suggestionTitle={t("aiDescriptionTitle")}
-          suggestionLabels={{ accept: t("aiAccept"), discard: t("aiDiscard") }}
           value={descriptionValue}
-          onAcceptSuggestion={() => {
-            setDescriptionValue(aiDraft?.strategic_description ?? "");
-            updateAiDraft({ strategic_description: "" });
-          }}
-          onDiscardSuggestion={() => updateAiDraft({ strategic_description: "" })}
           onChange={setDescriptionValue}
         />
 
@@ -327,42 +214,12 @@ export function BrandOsForm() {
 
         <SmartTextareaField
           label={t("notes")}
-          loading={aiStatus === "loading" && !knowledgeNotesValue.trim()}
+          maxLength={BRAND_KNOWLEDGE_NOTES_MAX_CHARS}
           name="knowledge_notes"
           placeholder={t("notesPlaceholder")}
-          suggestionText={aiDraft?.knowledge_base_notes}
-          suggestionTitle={t("aiKnowledgeTitle")}
-          suggestionLabels={{ accept: t("aiAccept"), discard: t("aiDiscard") }}
           value={knowledgeNotesValue}
-          onAcceptSuggestion={() => {
-            setKnowledgeNotesValue(aiDraft?.knowledge_base_notes ?? "");
-            updateAiDraft({ knowledge_base_notes: "", research_assumptions: [] });
-          }}
-          onDiscardSuggestion={() => updateAiDraft({ knowledge_base_notes: "", research_assumptions: [] })}
           onChange={setKnowledgeNotesValue}
         />
-        <div className="brand-ai-refine">
-          <div>
-            <p className="vitals-eyebrow">{t("aiEyebrow")}</p>
-            <strong>{aiStatus === "loading" ? t("aiGenerating") : t("aiRefineTitle")}</strong>
-          </div>
-          <input
-            className="filter-input new-study-input"
-            placeholder={t("aiRefinePlaceholder")}
-            value={aiRefineInstruction}
-            onChange={(event) => setAiRefineInstruction(event.target.value)}
-          />
-          <button
-            className="admin-button brand-ai-refine-button"
-            type="button"
-            disabled={!aiContextReady || aiStatus === "loading"}
-            onClick={() => {
-              void generateIntakeDraft(aiRefineInstruction);
-            }}
-          >
-            <Icon name={aiStatus === "loading" ? "spinner" : "sparkle"} size={14} /> {t("aiRegenerate")}
-          </button>
-        </div>
       </section>
 
       <footer className="new-study-actions admin-intake-actions">
@@ -371,6 +228,7 @@ export function BrandOsForm() {
             <Icon name="alert" size={14} /> {error}
           </p>
         )}
+        <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
         <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? (
             <>
@@ -389,32 +247,19 @@ export function BrandOsForm() {
 
 function SmartTextareaField({
   label,
-  loading,
   maxLength,
   name,
   placeholder,
-  suggestionLabels,
-  suggestionText,
-  suggestionTitle,
   value,
-  onAcceptSuggestion,
-  onChange,
-  onDiscardSuggestion
+  onChange
 }: {
   label: string;
-  loading: boolean;
   maxLength?: number;
   name: string;
   placeholder?: string;
-  suggestionLabels?: { accept: string; discard: string };
-  suggestionText?: string;
-  suggestionTitle?: string;
   value: string;
-  onAcceptSuggestion?: () => void;
   onChange: (value: string) => void;
-  onDiscardSuggestion?: () => void;
 }) {
-  const suggestionReady = Boolean(suggestionText?.trim() && suggestionLabels && suggestionTitle && onAcceptSuggestion && onDiscardSuggestion);
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -433,28 +278,11 @@ function SmartTextareaField({
           className="filter-input new-study-textarea new-study-textarea--expandable"
           maxLength={maxLength}
           name={name}
-          placeholder={loading ? "" : placeholder}
+          placeholder={placeholder}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
-        {loading && (
-          <div className="smart-field-skeleton smart-field-skeleton--textarea" aria-hidden="true">
-            <span className="smart-skeleton-line smart-skeleton-line--wide" />
-            <span className="smart-skeleton-line" />
-            <span className="smart-skeleton-line smart-skeleton-line--short" />
-          </div>
-        )}
       </div>
-      {suggestionReady && suggestionLabels && suggestionTitle && onAcceptSuggestion && onDiscardSuggestion && (
-        <InlineAiSuggestion
-          labels={suggestionLabels}
-          title={suggestionTitle}
-          onAccept={onAcceptSuggestion}
-          onDiscard={onDiscardSuggestion}
-        >
-          <pre>{suggestionText}</pre>
-        </InlineAiSuggestion>
-      )}
     </label>
   );
 }
@@ -512,33 +340,6 @@ export function ExpandableTextareaField({
         />
       </div>
     </label>
-  );
-}
-
-function InlineAiSuggestion({
-  children,
-  title,
-  labels,
-  onAccept,
-  onDiscard
-}: {
-  children: ReactNode;
-  title: string;
-  labels: { accept: string; discard: string };
-  onAccept: () => void;
-  onDiscard: () => void;
-}) {
-  return (
-    <div className="field-ai-suggestion">
-      <div className="field-ai-suggestion-head">
-        <span><Icon name="sparkle" size={13} /> {title}</span>
-        <div>
-          <button type="button" onClick={onAccept}>{labels.accept}</button>
-          <button type="button" onClick={onDiscard}>{labels.discard}</button>
-        </div>
-      </div>
-      {children}
-    </div>
   );
 }
 
@@ -889,33 +690,20 @@ export function TokenCatalogField({
 
 export function TokenInputField({
   label,
-  loading = false,
   name,
   placeholder,
-  suggestionLabels,
-  suggestionTitle,
-  suggestionValues,
   surface = "study",
   values,
-  onAcceptSuggestion,
-  onDiscardSuggestion,
   onChange
 }: {
   label: string;
-  loading?: boolean;
   name: string;
   placeholder: string;
-  suggestionLabels?: { accept: string; discard: string };
-  suggestionTitle?: string;
-  suggestionValues?: string[];
   surface?: BrandFormSurface;
   values: string[];
-  onAcceptSuggestion?: () => void;
-  onDiscardSuggestion?: () => void;
   onChange: (values: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
-  const suggestionReady = Boolean(suggestionValues?.length && suggestionLabels && suggestionTitle && onAcceptSuggestion && onDiscardSuggestion);
 
   function addMany(raw: string) {
     const next = extractSeeds(raw, 80);
@@ -957,16 +745,10 @@ export function TokenInputField({
         {values.map((value) => (
           <Token key={value} label={value} onRemove={() => remove(value)} surface={surface} />
         ))}
-        {loading && (
-          <div className="token-input-skeleton" aria-hidden="true">
-            <span className="smart-skeleton-line smart-skeleton-line--chip" />
-            <span className="smart-skeleton-line smart-skeleton-line--short" />
-          </div>
-        )}
         <input
           autoComplete="off"
           className="token-input"
-          placeholder={loading ? "" : values.length === 0 ? placeholder : ""}
+          placeholder={values.length === 0 ? placeholder : ""}
           value={draft}
           onBlur={() => addMany(draft)}
           onChange={(event) => setDraft(event.target.value)}
@@ -974,18 +756,6 @@ export function TokenInputField({
           onPaste={onPaste}
         />
       </div>
-      {suggestionReady && suggestionLabels && suggestionTitle && onAcceptSuggestion && onDiscardSuggestion && (
-        <InlineAiSuggestion
-          labels={suggestionLabels}
-          title={suggestionTitle}
-          onAccept={onAcceptSuggestion}
-          onDiscard={onDiscardSuggestion}
-        >
-          <div className="field-ai-chip-preview">
-            {suggestionValues?.map((value) => <span key={value}>{value}</span>)}
-          </div>
-        </InlineAiSuggestion>
-      )}
     </label>
   );
 }
@@ -1069,12 +839,6 @@ function cleanSeedCandidate(raw: string) {
 
   if (looksLikeContext || item.length < 2) return null;
   return item.slice(0, 240);
-}
-
-function withRawContext(notes: string, label: string, raw: string) {
-  if (!raw) return notes;
-  const section = `${label}:\n${raw}`;
-  return [notes, section].filter(Boolean).join("\n\n").slice(0, 50000);
 }
 
 function formatApiError(

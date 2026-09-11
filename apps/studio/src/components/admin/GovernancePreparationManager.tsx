@@ -11,6 +11,7 @@ import {
   AdminStatus,
   formatAdminDate
 } from "@/components/admin/AdminWorkspacePrimitives";
+import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import type {
   SignalGovernancePreparationV1
@@ -323,10 +324,12 @@ function IdentityForm({ busy, error, submit }: FormProps) {
   </DecisionForm>;
 }
 
-function TimezoneForm({ busy, error, initial, submit }: FormProps & { initial: string }) {
+export function TimezoneForm({ busy, error, initial, submit }: FormProps & { initial: string }) {
   const t = useTranslations("AdminWorkspace.data.preparation");
+  const [timezone, setTimezone] = useState(initial);
   return <DecisionForm busy={busy} error={error} onSubmit={(form) => submit({ action: "update-timezone", timezone: String(form.get("timezone")) })}>
-    <label className="workspace-field"><span>{t("fields.timezone")}</span><input className="workspace-control" defaultValue={initial} maxLength={120} name="timezone" required /><small>{t("fields.timezoneHelp")}</small></label>
+    <WorkspaceTimezoneField ariaLabel={t("fields.timezone")} disabled={busy} hint={t("fields.timezoneHelp")}
+      label={t("fields.timezone")} onChange={setTimezone} value={timezone} />
   </DecisionForm>;
 }
 

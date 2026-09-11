@@ -102,6 +102,19 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initialStatus = status, initialQuote: TopicPreparationQuote | null = quote, disabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicPreparationControls,
       { workspaceId: status.workspace_id, catalogVersion: "catalog:1", initialStatus, initialQuote, disabled })));
+  for (const availability of ["context_required", "context_stale"] as const) test(`${locale}: ${availability} explains the semantic blocker and disables preparation without hiding receipts`, () => {
+    const blocked: TopicPreparationStatus = { ...status, availability, current_plan_digest: null,
+      latest_completed: { ...run, status: "completed" } };
+    assert.equal(validTopicPreparationStatus(blocked), true);
+    assert.equal(topicPreparationCanExecute(blocked, quote, "0"), false);
+    assert.equal(topicPreparationCanReplay(blocked, pending, quote), false);
+    const html = render(blocked, null), buttons = html.match(/<button\b[^]*?<\/button>/gu) ?? [];
+    assert.ok(html.includes(text[availability === "context_required" ? "contextRequired" : "contextStale"]));
+    assert.ok(!html.includes(text.noInputs));
+    assert.match(buttons.find(button => button.includes(text.quote))!, /disabled/u);
+    assert.doesNotMatch(buttons.find(button => button.includes(text.refresh))!, /disabled/u);
+    assert.ok(html.includes(text.previous.split("{")[0]));
+  });
   test(`${locale}: before-import inline controls quote the cost and do not claim Topics/Signal output`, () => {
     const html = render(); assert.ok(html.includes(text.body));
     const prepare = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(locale === "es-MX" ? "Preparar contexto e intereses" : "Prepare context and interests"));

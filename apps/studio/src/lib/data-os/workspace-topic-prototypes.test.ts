@@ -5,6 +5,8 @@ import { loadWorkspaceTopicPrototypesForActorV1, quoteWorkspaceTopicPrototypesFo
   requestWorkspaceTopicPrototypesForActorV1, validateWorkspaceTopicPrototypeRequestV1,
   initializeWorkspaceTopicPrototypeContextForActorV1, isWorkspaceTopicPrototypeContextInitializationV1 } from "./workspace-topic-prototypes";
 import { WorkspaceCorpusEmbeddingsError } from "./workspace-corpus-embeddings";
+import { SignalTopicCatalogError } from "@noisia/db";
+import { prototypeFailedResponse } from "../../app/api/data-os/signal/[workspaceId]/topics/preparation/_response";
 const granted = { workspace_status: "active", brand_status: "active", actor_status: "active", user_type: "client",
   primary_role: "client_admin", same_organization: true, brand_access_level: "admin" };
 const body = { plan_digest: `sha256:${"a".repeat(64)}`, quote_digest: `sha256:${"b".repeat(64)}`, hard_cap_micro_usd: 0 };
@@ -49,4 +51,13 @@ test("context initialization accepts only its explicit action, never terms, prov
     assert.equal(isWorkspaceTopicPrototypeContextInitializationV1(value), false);
   await assert.rejects(initializeWorkspaceTopicPrototypeContextForActorV1({ database: authorityDatabase(granted),
     workspaceId: "workspace", actorUserId: "actor" }), (error: unknown) => error instanceof WorkspaceCorpusEmbeddingsError && error.status === 403);
+});
+test("semantic authority failures retain typed 409 responses with private no-store caching", async () => {
+  for (const code of ["brand_context_source_stale", "brand_context_semantic_context_required"]) {
+    const response = prototypeFailedResponse(new SignalTopicCatalogError(code));
+    assert.equal(response.status, 409); assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+    assert.deepEqual(await response.json(), { error: code });
+  }
+  const unknown = prototypeFailedResponse(new Error("private transport detail"));
+  assert.equal(unknown.status, 503); assert.deepEqual(await unknown.json(), { error: "workspace_embedding_unavailable" });
 });

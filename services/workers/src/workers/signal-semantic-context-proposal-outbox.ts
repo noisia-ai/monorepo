@@ -3,13 +3,20 @@ import type { Pool } from "pg";
 import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_JOB_NAME,
   SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_RUN_CONTRACT_VERSION } from "@noisia/query-engine";
 
+import { advanceSignalBrandContextPreparationsV1, signalBrandContextPreparationRuntimeFromEnvV1,
+  type SignalBrandContextPreparationRuntimeV1 } from '@noisia/db';
 type QueueLike = { add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown> };
 type Options = { database?: Pick<Pool, "query">; queue?: QueueLike; interval_ms?: number;
+  preparation?:{database:Pick<Pool,"connect"|"query">;runtime:SignalBrandContextPreparationRuntimeV1};
   run_immediately?: boolean; batch_size?: number; lease_seconds?: number; max_attempts?: number };
 
 export async function drainSignalSemanticContextProposalOutboxV1(options: Options = {}) {
   const database = options.database ?? (await import("../db/client")).pool;
   const queue = options.queue ?? (await import("../queues/data-os")).dataOsProducer;
+  // The existing recovery loop advances sealed DB intents, including after proposal dispatch completed.
+  const preparation=options.preparation??(!options.database?{database:(await import('../db/client')).pool,
+    runtime:signalBrandContextPreparationRuntimeFromEnvV1(process.env,{queue_configured:true,worker_alive:true,recovery_alive:true})}:null);
+  const preparationResults=preparation?await advanceSignalBrandContextPreparationsV1(preparation):[];
   const claimed = await database.query<{ outbox_id: string; run_id: string; workspace_id: string;
     lease_token: string; worker_job_id: string; dispatch_attempt: number }>(`
     SELECT outbox_id::text,run_id::text,workspace_id::text,lease_token::text,worker_job_id,dispatch_attempt
@@ -38,6 +45,8 @@ export async function drainSignalSemanticContextProposalOutboxV1(options: Option
       else result.failed += 1;
     }
   }
+  const failedPreparation=preparationResults.find(item=>item.state==='failed');
+  if(failedPreparation)throw new Error(failedPreparation.error_code??'brand_context_coordinator_failed');
   return result;
 }
 
@@ -52,8 +61,9 @@ export function startSignalSemanticContextProposalOutboxDrainerV1(options: Optio
   const heartbeat = async () => { const runtime = await import("../queues/data-os");
     const key = `noisia:drainer-alive:${runtime.dataOsQueueName}:semantic-context-proposal-outbox`;
     await runtime.redisConnection.set(key, String(Date.now()), "EX", 45).catch(() => undefined); };
-  const timer = setInterval(() => { void heartbeat(); void drainNow(); }, options.interval_ms ?? 5_000);
-  timer.unref?.(); void heartbeat(); if (options.run_immediately !== false) void drainNow();
+  const backgroundDrain=()=>{void drainNow().catch(()=>console.error('Semantic context recovery tick failed; durable intent remains pending.'));};
+  const timer = setInterval(() => { void heartbeat(); backgroundDrain(); }, options.interval_ms ?? 5_000);
+  timer.unref?.(); void heartbeat(); if (options.run_immediately !== false) backgroundDrain();
   return { drainNow, close: async () => { closed = true; clearInterval(timer); await inFlight; } };
 }
 

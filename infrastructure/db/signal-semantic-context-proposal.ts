@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import {
   SIGNAL_SEMANTIC_CONTEXT_AUTOMATIC_AUDIT_VERSION,
@@ -36,7 +36,7 @@ import {
 } from "@noisia/query-engine";
 
 export type SignalSemanticContextQueryable = {
-  query<T = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }>;
+  query<T extends Record<string, unknown> = Record<string, unknown>>(text: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }>;
 };
 
 export type SignalSemanticContextProposalRuntimeConfigurationV1 = {
@@ -117,6 +117,7 @@ type RunRow = {
   proposal_count: number | null; result_digest: string | null;
   automatic_policy_contract_version: string | null;
   automatic_ready_count: number | null; automatic_exception_count: number | null;
+  brand_context_preparation_operation_id:string|null;
   attempt_count: number; lease_token: string | null; lease_expires_at: Date | string | null;
   error_code: string | null; error_summary: string | null; created_by_user_id: string;
   queued_at: Date | string; started_at: Date | string | null; validating_at: Date | string | null;
@@ -345,6 +346,21 @@ export async function planSignalSemanticContextProposalCapacityForAuthorityV1(ar
   })).capacity;
 }
 
+/** Preserve the complete source in bounded schema blocks, including inter-fragment whitespace.
+ * Array order and the single source alias are stable; capacity overflow is explicit. */
+export function fragmentSignalSemanticContextSourceBlocksV1<T extends {text:string}>(sources:readonly T[]):T[]{
+  const blocks:T[]=[];
+  for(const source of sources){
+    for(let start=0;start<source.text.length;){
+      let end=Math.min(source.text.length,start+4000);
+      if(end<source.text.length&&/[\uD800-\uDBFF]/u.test(source.text[end-1]!)&&/[\uDC00-\uDFFF]/u.test(source.text[end]!))end--;
+      blocks.push({...source,text:source.text.slice(start,end)});start=end;
+      if(blocks.length>240)throw new SignalSemanticContextProposalExecutionError('semantic_context_knowledge_capacity_exceeded',422);
+    }
+  }
+  return blocks;
+}
+
 async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
   queryable: SignalSemanticContextQueryable;
   workspace: SignalSemanticContextProposalWorkspaceV1;
@@ -355,12 +371,20 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
   // client.query calls are unsupported and previously emitted a pg warning.
   const profileResult = await args.queryable.query<{
     id: string; display_name: string; aliases: string[]; industry: string | null;
-      industry_sub: string | null; metadata: Record<string, unknown> }>(`
-      SELECT profile.id::text,COALESCE(brand.display_name,brand.name) display_name,
+      industry_sub: string | null; description: string | null; metadata: Record<string, unknown> }>(`
+      SELECT profile.id::text,
+        COALESCE(NULLIF(profile.metadata->>'display_name',''),
+          regexp_replace(profile.name,'[[:space:]]+Brand OS$','','i'),profile.name) display_name,
         CASE WHEN jsonb_typeof(profile.metadata->'aliases')='array'
           THEN ARRAY(SELECT jsonb_array_elements_text(profile.metadata->'aliases'))
-          ELSE '{}'::text[] END aliases,brand.industry,brand.industry_sub,profile.metadata
-      FROM brand_os_profiles profile JOIN brands brand ON brand.id=profile.brand_id
+          ELSE '{}'::text[] END aliases,NULLIF(profile.metadata->>'industry','') industry,
+        CASE jsonb_typeof(profile.metadata->'industry_sub')
+          WHEN 'string' THEN NULLIF(profile.metadata->>'industry_sub','')
+          WHEN 'array' THEN NULLIF(array_to_string(
+            ARRAY(SELECT jsonb_array_elements_text(profile.metadata->'industry_sub')),', '),'')
+          ELSE NULL END industry_sub,
+        NULLIF(profile.metadata->>'description','') description,profile.metadata
+      FROM brand_os_profiles profile
       WHERE profile.id=$1::uuid AND profile.brand_id=$2::uuid`,
   [generation.brand_os_profile_id, args.workspace.brand_id]);
   const productsResult = await args.queryable.query<{
@@ -383,19 +407,19 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
     source_type: SourceAuthorityRef["source_type"]; id: string;
       parent_id: string | null; content_kind: string; title: string; body: string }>(`
       SELECT 'knowledge_source'::text source_type,source.id::text id,NULL::text parent_id,
-        source.source_kind content_kind,source.title,left(COALESCE(source.raw_text,''),4000) body
+        source.source_kind content_kind,source.title,COALESCE(source.raw_text,'') body
       FROM brand_knowledge_sources source
       WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
         AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
       UNION ALL
       SELECT 'knowledge_chunk',chunk.id::text,source.id::text,'chunk',source.title,
-        left(chunk.chunk_text,4000)
+        chunk.chunk_text
       FROM knowledge_chunks chunk JOIN brand_knowledge_sources source ON source.id=chunk.knowledge_source_id
       WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
         AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
       UNION ALL
       SELECT 'knowledge_assertion',assertion.id::text,source.id::text,assertion.assertion_type,
-        source.title,left(assertion.assertion_text,4000)
+        source.title,assertion.assertion_text
       FROM knowledge_assertions assertion JOIN brand_knowledge_sources source ON source.id=assertion.knowledge_source_id
       WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
         AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
@@ -432,13 +456,15 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
   if (liveKnowledgeDigest !== generation.knowledge_digest) {
     throw new SignalSemanticContextProposalExecutionError("knowledge_drift");
   }
-  const refs = ([
+  const refCandidates = ([
     { source_alias: "", source_type: "brand_os_profile" as const, source_id: profile.id },
     ...productsResult.rows.map((row) => ({ source_alias: "", source_type: "brand_os_product" as const, source_id: row.id })),
     ...competitorsResult.rows.map((row) => ({ source_alias: "", source_type: "brand_os_competitor" as const, source_id: row.id })),
     ...seedTermsResult.rows.map((row) => ({ source_alias: "", source_type: "brand_os_seed_term" as const, source_id: row.id })),
     ...knowledgeResult.rows.map((row) => ({ source_alias: "", source_type: row.source_type, source_id: row.id }))
-  ] satisfies SourceAuthorityRef[]).sort((a, b) => a.source_type.localeCompare(b.source_type) || a.source_id.localeCompare(b.source_id))
+  ] satisfies SourceAuthorityRef[]);
+  const refs = [...new Map(refCandidates.map(ref=>[`${ref.source_type}\u001f${ref.source_id}`,ref])).values()]
+    .sort((a, b) => a.source_type.localeCompare(b.source_type) || a.source_id.localeCompare(b.source_id))
     .map((ref, index) => ({ ...ref, source_alias: `src.${String(index + 1).padStart(4, "0")}` }));
   const sourceRefs = new Map(refs.map((ref) => [ref.source_alias, ref]));
   const aliasFor = (type: SourceAuthorityRef["source_type"], id: string) =>
@@ -460,10 +486,10 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
     "strategic_questions", "limitations"] as const;
   const structuredContext = Object.fromEntries(structuredKeys.map((key) => [key,
     metadataList(key).map((value, index) => namedTerm(`${key}.${index + 1}`, value, profileAlias))]));
-  const knowledgeBlocks = [
+  const knowledgeBlocks = fragmentSignalSemanticContextSourceBlocksV1([
     { source_alias: profileAlias, source_kind: "brand_os_profile" as const,
       content_kind: "identity", title: "Brand identity", text: [profile.display_name,
-        profile.industry, profile.industry_sub].filter(Boolean).join(" · ") },
+        profile.industry, profile.industry_sub, profile.description].filter(Boolean).join(" · ") },
     ...productsResult.rows.filter((row) => row.description).map((row) => ({
       source_alias: aliasFor("brand_os_product", row.id), source_kind: "brand_os_product" as const,
       content_kind: row.product_type ?? "product", title: row.name, text: row.description! })),
@@ -476,7 +502,7 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
     ...knowledgeResult.rows.filter((row) => row.body.trim()).map((row) => ({
       source_alias: aliasFor(row.source_type, row.id), source_kind: row.source_type,
       content_kind: row.content_kind || "knowledge", title: row.title, text: row.body }))
-  ];
+  ]);
   const authority = { brand_os_digest: generation.brand_os_digest,
     knowledge_digest: generation.knowledge_digest,
     locale_context_digest: generation.locale_context_digest };
@@ -527,7 +553,8 @@ async function prepareSignalSemanticContextProposalInputForGenerationV1(args: {
     source_refs: sourceRefs, entity_refs: entityRefs, generation, capacity };
 }
 
-export async function startSignalSemanticContextProposalRunV1(args: {
+export type SignalSemanticContextStartRunArgsV1 = {
+  brand_context_preparation_operation_id?:string;
   pool: Pick<Pool, "connect">;
   workspace: SignalSemanticContextProposalWorkspaceV1;
   actor: SignalSemanticContextProposalActorV1;
@@ -538,7 +565,15 @@ export async function startSignalSemanticContextProposalRunV1(args: {
   hard_cap_micro_usd: bigint;
   configuration: SignalSemanticContextProposalRuntimeConfigurationV1;
   runtime: { queue_configured: boolean; worker_alive: boolean; recovery_alive: boolean };
-}) {
+};
+export async function startSignalSemanticContextProposalRunV1(args: SignalSemanticContextStartRunArgsV1) {
+  const client=await args.pool.connect();
+  try { await client.query("BEGIN"); const result=await startSignalSemanticContextProposalRunWithClientV1(client,args);
+    await client.query("COMMIT"); return result;
+  } catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}
+}
+/** Caller owns the transaction; the original run ledger and admission are unchanged. */
+export async function startSignalSemanticContextProposalRunWithClientV1(client:PoolClient,args:SignalSemanticContextStartRunArgsV1) {
   assertActor(args.actor);
   if (args.confirmation !== SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION) {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_confirmation_required", 422);
@@ -547,9 +582,6 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       || args.hard_cap_micro_usd > args.configuration.platform_hard_cap_micro_usd) {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_hard_cap_invalid", 422);
   }
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
       [`signal-semantic-context:${args.workspace.id}`]);
     const operation = await beginOperation(client, {
@@ -559,7 +591,6 @@ export async function startSignalSemanticContextProposalRunV1(args: {
         confirmation: args.confirmation, hard_cap_micro_usd: args.hard_cap_micro_usd.toString() }
     });
     if (operation.replay) {
-      await client.query("COMMIT");
       return operation.replay as ReturnType<typeof publicRun>;
     }
     const preflight = await loadSignalSemanticContextProposalPreflightRuntimeV1({
@@ -604,9 +635,9 @@ export async function startSignalSemanticContextProposalRunV1(args: {
         knowledge_digest,locale_context_digest,prompt_digest,context_input_digest,provider,model,
         model_version,pricing_version,max_input_tokens,max_output_tokens,input_usd_per_million_tokens,
         output_usd_per_million_tokens,hard_cap_micro_usd,reservation_micro_usd,
-        provider_lineage_digest,provider_request_identity,created_by_user_id)
+        provider_lineage_digest,provider_request_identity,created_by_user_id,brand_context_preparation_operation_id)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-        $15,$16,$17,$18,$19,$20,$21,$22,$23::uuid) RETURNING *)
+        $15,$16,$17,$18,$19,$20,$21,$22,$23::uuid,$24::uuid) RETURNING *)
       ${runSelect} FROM inserted run`, [
       args.workspace.id, prepared.generation.id, operation.operation_id, runKey, args.preflight_digest,
       prepared.generation.brand_os_digest, prepared.generation.knowledge_digest,
@@ -617,7 +648,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
       providerLineage.pricing.input_usd_per_million_tokens,
       providerLineage.pricing.output_usd_per_million_tokens,
       args.hard_cap_micro_usd.toString(), reservation.toString(), providerLineage.lineage_digest,
-      providerRequestIdentity, args.actor.id
+      providerRequestIdentity, args.actor.id,args.brand_context_preparation_operation_id??null
     ]);
     const run = inserted.rows[0]!;
     const reservationDigest = signalSemanticContextProposalDigestV1({ run_id: run.id,
@@ -635,12 +666,7 @@ export async function startSignalSemanticContextProposalRunV1(args: {
     await insertRunEvent(client, run, "queued", "queued", { provider_calls: 0 });
     const result = publicRun(run);
     await completeOperation(client, args.workspace.id, operation.key, result);
-    await client.query("COMMIT");
     return result;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw error;
-  } finally { client.release(); }
 }
 
 export async function loadSignalSemanticContextProposalRunV1(args: {
@@ -712,17 +738,21 @@ export async function loadLatestSignalSemanticContextProposalRunForGenerationV1(
     paid_response_revalidation: revalidation.rows[0] ? publicRevalidation(revalidation.rows[0]) : null };
 }
 
-export async function retrySignalSemanticContextProposalRunV1(args: {
+export type SignalSemanticContextRetryRunArgsV1 = {
   pool: Pick<Pool, "connect">;
   workspace: SignalSemanticContextProposalWorkspaceV1;
   actor: SignalSemanticContextProposalActorV1;
   idempotency_key: string;
   run_key: string;
-}) {
+};
+export async function retrySignalSemanticContextProposalRunV1(args:SignalSemanticContextRetryRunArgsV1) {
+  const client=await args.pool.connect();
+  try { await client.query("BEGIN"); const result=await retrySignalSemanticContextProposalRunWithClientV1(client,args);
+    await client.query("COMMIT"); return result; }
+  catch(error){ await client.query("ROLLBACK").catch(()=>undefined);throw error; }finally{client.release();}
+}
+export async function retrySignalSemanticContextProposalRunWithClientV1(client:PoolClient,args:SignalSemanticContextRetryRunArgsV1) {
   assertActor(args.actor);
-  const client = await args.pool.connect();
-  try {
-    await client.query("BEGIN");
     const selected = await client.query<RunRow>(`${runSelect} FROM signal_semantic_context_proposal_runs run
       WHERE run.workspace_id=$1::uuid AND run.run_key=$2 FOR UPDATE`, [args.workspace.id, args.run_key]);
     const run = selected.rows[0];
@@ -730,7 +760,7 @@ export async function retrySignalSemanticContextProposalRunV1(args: {
     const operation = await beginOperation(client, { workspace: args.workspace, actor: args.actor,
       action: "retry-semantic-context-proposal-run", idempotency_key: args.idempotency_key,
       input: { run_key: args.run_key } });
-    if (operation.replay) { await client.query("COMMIT"); return operation.replay; }
+    if (operation.replay) return operation.replay;
     if (run.status !== "failed" || run.provider_call_state !== "not_started") {
       throw new SignalSemanticContextProposalExecutionError(
         run.provider_call_state === "outcome_unknown"
@@ -743,9 +773,7 @@ export async function retrySignalSemanticContextProposalRunV1(args: {
     const updated = { ...publicRun(run), status: "queued" as const };
     await insertRunEvent(client, run, `recovery-${operation.operation_id}`, "recovery_queued", {});
     await completeOperation(client, args.workspace.id, operation.key, updated);
-    await client.query("COMMIT"); return updated;
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
-  finally { client.release(); }
+    return updated;
 }
 
 export async function revalidateSignalSemanticContextPaidResponseV1(args: {
@@ -958,6 +986,7 @@ export async function processSignalSemanticContextProposalRunV1(args: {
 
   if (!run.provider_response_private) {
     const startClient = await args.pool.connect();
+    let startFailed=false;let startFailure:unknown;
     try {
       await startClient.query("BEGIN");
       const started = await startClient.query<RunRow>(`${runSelect}
@@ -966,6 +995,11 @@ export async function processSignalSemanticContextProposalRunV1(args: {
         FOR UPDATE`, [run.id, lease.token]);
       run = started.rows[0]!;
       if (!run) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_lease_lost");
+      if(run.brand_context_preparation_operation_id){
+        const admission=(await startClient.query<{valid:boolean}>(`SELECT signal_brand_context_admission_valid_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,'anthropic',$5::bigint) valid`,
+          [run.brand_context_preparation_operation_id,run.workspace_id,run.created_by_user_id,run.generation_id,run.hard_cap_micro_usd])).rows[0];
+        if(!admission?.valid)throw new SignalSemanticContextProviderCallError('brand_context_admission_expired',true);
+      }
       await startClient.query(`UPDATE signal_semantic_context_proposal_runs SET
         provider_call_state='in_flight',provider_call_count=1,attempt_count=attempt_count+1,
         started_at=COALESCE(started_at,clock_timestamp()),updated_at=clock_timestamp()
@@ -973,8 +1007,15 @@ export async function processSignalSemanticContextProposalRunV1(args: {
       await insertRunEvent(startClient, run, `provider-started-${run.attempt_count + 1}`,
         "provider_started", { attempt: run.attempt_count + 1 });
       await startClient.query("COMMIT");
-    } catch (error) { await startClient.query("ROLLBACK").catch(() => undefined); throw error; }
-    finally { startClient.release(); }
+    } catch (error) {
+      await startClient.query("ROLLBACK").catch(() => undefined);startFailed=true;startFailure=error;
+    } finally { startClient.release(); }
+    if(startFailed){
+      const expired=startFailure instanceof SignalSemanticContextProviderCallError&&startFailure.definitelyNotSent
+        || startFailure instanceof Error&&'code' in startFailure&&startFailure.code==='23514'&&startFailure.message==='brand_context_admission_expired';
+      if(expired)await handleProviderFailure(args.pool,run.id,lease.token,new SignalSemanticContextProviderCallError('brand_context_admission_expired',true));
+      throw startFailure;
+    }
 
     let response: Awaited<ReturnType<SignalSemanticContextProposalProviderV1["generate"]>>;
     try {
@@ -1246,11 +1287,13 @@ async function appendSignalSemanticContextProposalsInternalV1(args: {
       confidence_authoritative: false,
       ...(exceptionBasis ? { automatic_policy_basis_digest: exceptionBasisDigest } : {})
     });
+    // Identical evidence-backed elements may recur in a successor generation.
+    // Namespace only the physical artifact; the semantic key and digest stay stable.
     const artifact = await args.queryable.query<{ id: string }>(`INSERT INTO analysis_artifacts(
       workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
       content,confidence,review_status,revision,metadata)
       VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,$5,'needs_review',1,$6::jsonb)
-      RETURNING id::text`, [args.workspace.id, elementDigest, proposal.element_key,
+      RETURNING id::text`, [args.workspace.id, elementDigest, `${generation.id}:element:${proposal.element_key}`,
       JSON.stringify({ element_kind: proposal.element_kind, canonical_key: proposal.canonical_key,
         display_text: proposal.display_text, scope: proposal.scope, locale: proposal.locale,
         relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key }),
@@ -1325,7 +1368,7 @@ async function appendSignalSemanticContextProposalsInternalV1(args: {
         workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
         content,confidence,review_status,revision,metadata)
         VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,$5,'needs_review',2,$6::jsonb)
-        RETURNING id::text`, [args.workspace.id, elementDigest, proposal.element_key,
+        RETURNING id::text`, [args.workspace.id, elementDigest, `${generation.id}:element:${proposal.element_key}`,
         JSON.stringify({ element_kind: proposal.element_kind, canonical_key: proposal.canonical_key,
           display_text: proposal.display_text, scope: proposal.scope, locale: proposal.locale,
           relation_kind: proposal.relation_kind, relation_target_key: proposal.relation_target_key }),
@@ -1401,6 +1444,7 @@ async function claimRunLease(pool: Pick<Pool, "connect">, runId: string, leaseSe
       WHERE run.id=$1::uuid FOR UPDATE`, [runId]);
     const run = selected.rows[0];
     if (!run || ["completed", "stale", "dead_letter"].includes(run.status)
+        || run.brand_context_preparation_operation_id&&run.status==='failed'
         || run.lease_token && new Date(run.lease_expires_at!).getTime() > Date.now()) {
       await client.query("ROLLBACK"); client.release(); return null;
     }
@@ -1948,7 +1992,7 @@ const runSelect = `SELECT run.id::text,run.workspace_id::text,run.generation_id:
   to_jsonb(run)->>'automatic_policy_contract_version' automatic_policy_contract_version,
   NULLIF(to_jsonb(run)->>'automatic_ready_count','')::int automatic_ready_count,
   NULLIF(to_jsonb(run)->>'automatic_exception_count','')::int automatic_exception_count,
-  run.attempt_count,
+  run.attempt_count,to_jsonb(run)->>'brand_context_preparation_operation_id' brand_context_preparation_operation_id,
   run.lease_token::text,run.lease_expires_at,
   run.error_code,run.error_summary,run.created_by_user_id::text,run.queued_at,run.started_at,
   run.validating_at,run.completed_at,run.failed_at,run.stale_at,run.dead_lettered_at`;

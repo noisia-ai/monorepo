@@ -4,6 +4,9 @@ import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { DEFAULT_WORKSPACE_TIMEZONE, isIanaTimezone } from "@/lib/timezone-catalog";
+import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { Icon } from "@/components/ui/Icon";
 import { WorkspaceSelect, WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
 import { COUNTRY_OPTIONS } from "@/lib/country-catalog";
@@ -47,6 +50,7 @@ export function BrandEditForm({
   const t = useTranslations("BrandEdit");
   const brandT = useTranslations("BrandOs.form");
   const router = useRouter();
+  const preparation = useBrandContextPreparation();
   const [organizationOptions, setOrganizationOptions] = useState(organizations);
   const [selectedOrgId, setSelectedOrgId] = useState(brand.organizationId);
   const [showOrgCreate, setShowOrgCreate] = useState(false);
@@ -56,6 +60,7 @@ export function BrandEditForm({
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [orgCreateError, setOrgCreateError] = useState<string | null>(null);
   const [industryValue, setIndustryValue] = useState(brand.industry ?? "");
+  const [timezoneValue, setTimezoneValue] = useState(isIanaTimezone(brand.timezone) ? brand.timezone : DEFAULT_WORKSPACE_TIMEZONE);
   const [statusValue, setStatusValue] = useState(brand.status);
   const [subindustryValues, setSubindustryValues] = useState(splitList(brand.industrySub ?? ""));
   const [countryValues, setCountryValues] = useState(brand.countries ?? ["MX"]);
@@ -138,14 +143,19 @@ export function BrandEditForm({
     };
 
     try {
+      const action = `edit-brand:${brand.id}`;
+      const intent = preparation.forRequest(action, payload);
       const res = await fetch(`/api/brands/${brand.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ ...payload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackSaveError"), brandT("fieldFallback"), brandT("invalidFallback")));
-      router.push(`/studio/brands/${brand.id}`);
+      preparation.accepted(action);
+      router.push(json?.brand_context_preparation?.error_code
+        ? `/studio/brands/${brand.id}/brand-os`
+        : `/studio/brands/${brand.id}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackSaveError"));
@@ -198,11 +208,7 @@ export function BrandEditForm({
             <span>{brandT("displayName")}</span>
             <input className="workspace-control" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
           </label>
-          <label className="workspace-field">
-            <span>{brandT("timezone")}</span>
-            <input className="workspace-control" name="timezone" required maxLength={120} defaultValue={brand.timezone} />
-            <small>{brandT("timezoneHelp")}</small>
-          </label>
+          <WorkspaceTimezoneField value={timezoneValue} onChange={setTimezoneValue} disabled={isSubmitting} />
         </div>
 
         {showOrgCreate ? (
@@ -340,6 +346,7 @@ export function BrandEditForm({
         />
         </div>
 
+        <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
         <footer className="workspace-form__section-footer">
           {error && (
             <p className="workspace-form__error" role="alert">

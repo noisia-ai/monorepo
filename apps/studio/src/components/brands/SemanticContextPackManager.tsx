@@ -1,5 +1,8 @@
 "use client";
 
+import type { SignalBrandContextPreparationV1 } from "@noisia/db";
+import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
+
 import {
   ArrowClockwise,
   Check,
@@ -48,7 +51,7 @@ type Generation = {
 
 type Readiness = {
   lifecycle_state: Lifecycle | "missing";
-  unavailable_reason: "acquisition_brief_required" | null;
+  unavailable_reason: null;
   generation: Generation | null;
   open_draft: { generation_key: string; generation_version: number; counts: Counts } | null;
   counts: Counts;
@@ -152,9 +155,7 @@ export function signalSemanticContextPackEmptyStateV1(args: {
 }) {
   if (args.initialLoading || args.hasGeneration) return null;
   if (args.error) return "error" as const;
-  return args.unavailableReason === "acquisition_brief_required"
-    ? "uninitialized" as const
-    : "ready_to_prepare" as const;
+  return "ready_to_prepare" as const;
 }
 
 const terminalRunStates = new Set<ProposalRun["status"]>(["completed", "failed", "stale", "dead_letter"]);
@@ -185,8 +186,12 @@ export function formatSignalSemanticContextUsdPerMillionTokensV1(value: string, 
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
+  if ([401, 403, 404].includes(response.status)) throw Object.assign(new Error("request_unavailable"), {status: response.status});
   const payload = await response.json().catch(() => null) as ({ error?: string; message?: string } & T) | null;
-  if (!response.ok) throw new Error(payload?.message ?? payload?.error ?? "request_failed");
+  if (!response.ok) throw Object.assign(
+    new Error(payload?.message ?? payload?.error ?? "request_failed"),
+    { status: response.status, code: payload?.error ?? "request_failed" }
+  );
   return payload as T;
 }
 
@@ -194,6 +199,12 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
   const locale = useLocale();
   const base = `/api/data-os/signal/${workspaceId}/semantic-context`;
+  const preparationQuote = useBrandContextPreparation();
+  const [preparation, setPreparation] = useState<SignalBrandContextPreparationV1 | null>(null);
+  const [preparationLoading, setPreparationLoading] = useState(true);
+  const [preparationError, setPreparationError] = useState(false);
+  const preparationLoadSequence = useRef(0);
+  const summaryLoadSequence = useRef(0);
   const runStorageKey = `noisia:semantic-context-run:${workspaceId}`;
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [generation, setGeneration] = useState<Generation | null>(null);
@@ -208,6 +219,7 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   const preflightOpenerRef = useRef<HTMLButtonElement | null>(null);
   const activeGenerationKey = generation?.generation_key ?? null;
   const run = boundRun?.generationKey === activeGenerationKey ? boundRun.value : null;
+  const automaticMode = Boolean(run?.automatic_disposition || preparation?.generation_key === activeGenerationKey);
   const emptyState = signalSemanticContextPackEmptyStateV1({
     initialLoading,
     error,
@@ -216,9 +228,11 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   });
 
   const load = useCallback(async () => {
+    const sequence = ++summaryLoadSequence.current;
     setError(null);
     try {
       const summary = await requestJson<ReviewSummaryResponse>(`${base}/review/summary`);
+      if (sequence !== summaryLoadSequence.current) return;
       const nextReadiness = summary.readiness;
       setReadiness(nextReadiness);
       const key = summary.generation?.generation_key;
@@ -232,13 +246,47 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
         ? { generationKey: key, value: summary.latest_proposal_run }
         : null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : t("errors.load"));
+      if (sequence !== summaryLoadSequence.current) return;
+      if (loadError instanceof Error && "status" in loadError && [401, 403, 404].includes(Number(loadError.status))) {
+        preparationLoadSequence.current += 1;
+        setPreparation(null); setGeneration(null); setReadiness(null); setBoundRun(null); setPreparationError(true); setPreparationLoading(false);
+      }
+      setError(loadError instanceof Error && !("status" in loadError) ? loadError.message : t("errors.load"));
     } finally {
-      setInitialLoading(false);
+      if (sequence === summaryLoadSequence.current) setInitialLoading(false);
     }
   }, [base, t]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadPreparation = useCallback(async () => {
+    const sequence = ++preparationLoadSequence.current;
+    try { const result = await requestJson<{preparation:{current:SignalBrandContextPreparationV1|null}}>(`${base}/reconcile`);
+      if (sequence !== preparationLoadSequence.current) return;
+      setPreparation(result.preparation.current); setPreparationError(false);
+    } catch (statusError) {
+      if (sequence === preparationLoadSequence.current) {
+        setPreparationError(true);
+        if (statusError instanceof Error && "status" in statusError && [401, 403, 404].includes(Number(statusError.status))) {
+          summaryLoadSequence.current += 1;
+          setPreparation(null); setGeneration(null); setReadiness(null); setBoundRun(null); setInitialLoading(false);
+          setError(t("automatic.statusUnavailable"));
+        }
+      }
+    }
+    finally { if (sequence === preparationLoadSequence.current) setPreparationLoading(false); }
+  }, [base, t]);
+  useEffect(() => { void load(); void loadPreparation(); }, [load, loadPreparation]);
+  const preparationPending = Boolean(preparation && ["queued", "generating", "activating", "preparing_prototypes"].includes(preparation.state));
+  useEffect(() => {
+    if (!preparationPending) return;
+    let cancelled = false;
+    let timer: number;
+    async function poll() {
+      if (document.visibilityState === "visible") { await loadPreparation(); await load(); }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 3000);
+    }
+    timer = window.setTimeout(() => void poll(), 3000);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [preparationPending, loadPreparation, load]);
 
   useEffect(() => {
     if (initialLoading) return;
@@ -275,26 +323,17 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
 
   const counts = generation?.counts ?? { pending: 0, approved: 0, rejected: 0, merged: 0 };
   const elementCount = counts.pending + counts.approved + counts.rejected + counts.merged;
-  const canStartProposalGeneration = canStartSignalSemanticContextProposalGenerationV1({
+  const canStartProposalGeneration = !preparationLoading && !preparationError && !preparation && canStartSignalSemanticContextProposalGenerationV1({
     lifecycleState: generation?.lifecycle_state ?? null,
     elementCount,
     hasServerDiscoveredRun: run !== null
   });
-  const canPrepareTerminalSuccessor = canPrepareSignalSemanticContextTerminalSuccessorV1({
+  const canPrepareTerminalSuccessor = !preparationLoading && !preparationError && !preparationPending && canPrepareSignalSemanticContextTerminalSuccessorV1({
     lifecycleState: generation?.lifecycle_state ?? null,
     elementCount,
     runStatus: run?.status ?? null,
     providerCallCount: run?.provider_call_count ?? 0
   });
-
-  async function createDraft() {
-    setBusy("draft"); setError(null);
-    try {
-      await requestJson(base, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey("draft") }, body: JSON.stringify({ action: "create_draft" }) });
-      await load();
-    } catch (draftError) { setError(draftError instanceof Error ? draftError.message : t("errors.draft")); }
-    finally { setBusy(null); }
-  }
 
   async function reconcileContext(reasonOverride?: "terminal_provider_run") {
     const driftReason = readiness?.drift_reasons.find((reason) =>
@@ -303,18 +342,30 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
       ?? (preflight?.blockers.includes("provider_lineage_required") ? "provider_lineage_missing"
         : preflight?.blockers.includes("provider_lineage_drift") ? "provider_lineage_changed"
           : "operator_requested_reconciliation");
+    if (busy || preparationPending || preparationLoading || preparationError) return;
     const busyKey = reasonOverride ? "terminal-successor" : "reconcile";
     setBusy(busyKey); setError(null);
     try {
+      const action = `reconcile:${workspaceId}`;
+      const requestIdentity = {reason, generation_key: activeGenerationKey};
+      const intent = reasonOverride
+        ? preparationQuote.forUnfundedRequest(action, requestIdentity)
+        : preparationQuote.forRequest(action, requestIdentity);
       await requestJson(`${base}/reconcile`, { method: "POST", headers: {
-        "Content-Type": "application/json", "Idempotency-Key": idempotencyKey(
-          reasonOverride ? "terminal-successor" : "reconcile")
-      }, body: JSON.stringify({ reason }) });
+        "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key
+      }, body: JSON.stringify({ reason, preparation: intent,
+        ...(reasonOverride ? { expected_generation_key: activeGenerationKey } : {}) }) });
+      preparationQuote.accepted(action);
       window.sessionStorage.removeItem(runStorageKey);
       setBoundRun(null); setDrawer(null); setPreflight(null); setBudgetConfirmed(false);
-      setTerminalSuccessorOpen(false); await load();
+      setTerminalSuccessorOpen(false); await Promise.all([load(), loadPreparation()]);
     } catch (reconcileError) {
-      setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
+      const code = reconcileError && typeof reconcileError === "object" && "code" in reconcileError
+        ? String(reconcileError.code) : null;
+      if (code === "brand_context_quote_changed") {
+        await preparationQuote.refresh(`reconcile:${workspaceId}`, { renewIntent: true });
+        setError(t("errors.quoteChanged"));
+      } else setError(reconcileError instanceof Error ? reconcileError.message : t("errors.reconcile"));
     } finally { setBusy(null); }
   }
 
@@ -351,34 +402,48 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
   }
 
   const sectionActions = <>
-    <button className="admin-button" disabled={Boolean(busy)} onClick={() => void load()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.refresh")}</button>
+    <button className="admin-button" disabled={Boolean(busy)} onClick={() => { void load(); void loadPreparation(); }} type="button"><ArrowClockwise aria-hidden size={14}/>{t("actions.refresh")}</button>
     {canPrepareTerminalSuccessor ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => setTerminalSuccessorOpen(true)} type="button"><TreeStructure aria-hidden size={15}/>{t("actions.prepareSuccessor")}</button> : null}
     {canStartProposalGeneration ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={(event) => { preflightOpenerRef.current = event.currentTarget; void loadPreflight(); }} type="button"><MagicWand aria-hidden size={15}/>{t("actions.generate")}</button> : null}
   </>;
 
   return <>
-    <AdminResourceSection actions={sectionActions} className="semantic-context-pack" subtitle={t("subtitle")} title={t("title")}>
+    <AdminResourceSection actions={sectionActions} className="semantic-context-pack" subtitle={t(automaticMode ? "automatic.subtitle" : "subtitle")} title={t("title")}>
       {initialLoading ? <ContextSkeleton/> : null}
       {busy === "preflight" ? <div aria-busy="true" aria-live="polite" className="semantic-context-pack__preflight-loading" role="status"><CircleNotch aria-hidden className="icon--spin" size={18}/><span>{t("generation.loadingPreflight")}</span></div> : null}
       {emptyState === "error" ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.retry")}</button>} body={error!} icon={<Warning size={20}/>} title={t("errors.title")} tone="danger"/> : null}
-      {emptyState === "uninitialized" ? <AdminFeedbackState actions={<button className="admin-button" onClick={() => void load()} type="button">{t("actions.refresh")}</button>} body={t("uninitialized.body")} icon={<TreeStructure size={21}/>} title={t("uninitialized.title")}/> : null}
-      {emptyState === "ready_to_prepare" ? <AdminFeedbackState actions={<button className="admin-button admin-button--primary" disabled={busy === "draft"} onClick={() => void createDraft()} type="button">{busy === "draft" ? t("actions.preparing") : t("actions.prepare")}</button>} body={t("empty.body")} icon={<TreeStructure size={21}/>} title={t("empty.title")}/> : null}
+      {emptyState === "ready_to_prepare" ? <AdminFeedbackState actions={<button className="admin-button admin-button--primary" disabled={Boolean(busy) || preparationPending || preparationLoading || preparationError} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.preparing") : t("actions.prepare")}</button>} body={t("empty.body")} icon={<TreeStructure size={21}/>} title={t("empty.title")}/> : null}
+      {preparationError && emptyState !== "error" ? <div className="semantic-context-pack__notice" role="alert"><p>{t("automatic.statusUnavailable")}</p></div> : null}
+      {!preparationLoading && !preparationError ? <div className="semantic-context-pack__automatic-preparation">
+        {preparation ? <div className="semantic-context-pack__notice" role={preparation.state === "failed" ? "alert" : "status"}>
+          <div><strong>{t(`automatic.preparation.${preparation.state}`)}</strong>
+            <p>{t(preparation.state === "ready" ? "automatic.readyBody" : preparation.state === "awaiting_authorization" ? "automatic.awaitingBody" : preparation.state === "failed" ? "automatic.failedBody" : "automatic.preparationBody")}</p></div>
+        </div> : null}
+        {!preparationPending && (preparation?.state === "awaiting_authorization" || !generation) ? <>
+          <BrandContextPreparationNotice quote={preparationQuote.quote} loading={preparationQuote.loading}/>
+          {generation ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.continue")}</button> : null}
+        </> : !preparationPending ? <details className="semantic-context-pack__regenerate"><summary>{t("automatic.regenerate")}</summary>
+          <BrandContextPreparationNotice quote={preparationQuote.quote} loading={preparationQuote.loading}/>
+          <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.regenerate")}</button>
+        </details> : null}
+      </div> : null}
       {!initialLoading && generation ? <>
         <AdminSummaryStrip density="compact" items={[
-          { label: t("summary.state"), value: t(`states.${generation.lifecycle_state}`), hint: t("summary.version", { version: generation.generation_version }) },
-          { label: t("summary.pending"), value: formatAdminNumber(counts.pending, locale), hint: t("summary.pendingHint") },
-          { label: t("summary.approved"), value: formatAdminNumber(counts.approved, locale), hint: t("summary.approvedHint") },
+          { label: t("summary.state"), value: t(automaticMode ? `automatic.${generation.lifecycle_state}` : `states.${generation.lifecycle_state}`), hint: t("summary.version", { version: generation.generation_version }) },
+          { label: t(automaticMode ? "automatic.exceptions" : "summary.pending"), value: formatAdminNumber(counts.pending, locale), hint: t(automaticMode ? "automatic.exceptionsHint" : "summary.pendingHint") },
+          { label: t(automaticMode ? "automatic.ready" : "summary.approved"), value: formatAdminNumber(counts.approved, locale), hint: t(automaticMode ? "automatic.readyHint" : "summary.approvedHint") },
           { label: t("summary.coverage"), value: generation.primary_locale, hint: t("summary.markets", { count: generation.markets.length }) }
         ]}/>
-        {readiness?.drift_state === "stale" ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("drift.title")}</strong><p>{t("drift.body")}</p>{!run ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button">{busy === "reconcile" ? t("actions.reconciling") : t("actions.reconcile")}</button> : null}</div></div> : null}
+        {readiness?.drift_state === "stale" ? <div className="semantic-context-pack__notice" data-tone="warning"><Warning aria-hidden size={18}/><div><strong>{t("drift.title")}</strong><p>{t("drift.body")}</p></div></div> : null}
         {error ? <div className="semantic-context-pack__notice" data-tone="danger" role="alert"><Warning aria-hidden size={18}/><div><strong>{t("errors.title")}</strong><p>{error}</p></div></div> : null}
-        {run ? <RunBanner busy={busy === "retry-run"} onRetry={() => void retryProposalRun()} run={run} t={t}/>:null}
+        {run ? automaticMode && run.status === "completed" ? <details className="semantic-context-pack__run-receipt"><summary>{t("automatic.resultDetails")}</summary><RunBanner busy={busy === "retry-run"} onRetry={() => void retryProposalRun()} run={run} t={t}/></details> : <RunBanner busy={busy === "retry-run"} onRetry={() => void retryProposalRun()} run={run} t={t}/> : null}
         {canStartProposalGeneration ? <div className="semantic-context-pack__empty"><MagicWand aria-hidden size={24}/><div><strong>{t("draftEmpty.title")}</strong><p>{t("draftEmpty.body")}</p></div><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={(event) => { preflightOpenerRef.current = event.currentTarget; void loadPreflight(); }} type="button">{t("actions.calculate")}</button></div> : null}
           {elementCount > 0 ? <div className="semantic-context-pack__workspace">
-            <SemanticContextReviewWorkbench generationKey={generation.generation_key} key={generation.generation_key}
-              onMutation={load} reviewWritable={generation.lifecycle_state === "draft"}
+            <SemanticContextReviewWorkbench automaticMode={automaticMode} generationKey={generation.generation_key} key={generation.generation_key}
+              draftWritable={generation.lifecycle_state === "draft"} onMutation={load}
+              reviewWritable={generation.lifecycle_state === "draft" || automaticMode}
               workspaceId={workspaceId}/>
-          {generation.lifecycle_state === "published" ? <div className="semantic-context-pack__footer"><p>{t("publish.publishedAt", { date: formatAdminDate(generation.published_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><AdminStatus state="good">{t("states.published")}</AdminStatus></div> : null}
+          {generation.lifecycle_state === "published" ? <div className="semantic-context-pack__footer"><p>{t("publish.publishedAt", { date: formatAdminDate(generation.published_at, locale, { dateStyle: "medium", timeStyle: "short" }) })}</p><AdminStatus state="good">{t(automaticMode ? "automatic.published" : "states.published")}</AdminStatus></div> : null}
         </div> : null}
       </> : null}
     </AdminResourceSection>
@@ -402,7 +467,7 @@ function RunBanner({ busy, onRetry, run, t }: { busy: boolean; onRetry: () => vo
     : null;
   const detail = terminalRunStates.has(run.status)
     ? run.status === "completed"
-      ? t("run.completedDetail")
+      ? t(run.automatic_disposition ? "automatic.completedDetail" : "run.completedDetail")
       : run.status === "stale"
         ? t("run.staleDetail")
         : run.status === "dead_letter"

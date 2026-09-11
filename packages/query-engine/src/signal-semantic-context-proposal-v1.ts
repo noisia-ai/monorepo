@@ -77,7 +77,8 @@ const sourceBlockSchema = z.object({
   ]),
   content_kind: keySchema,
   title: z.string().trim().min(1).max(300),
-  text: textSchema
+  // Input fragments preserve source whitespace across deterministic block boundaries.
+  text: z.string().min(1).max(4_000)
 }).strict();
 
 const namedTermSchema = z.object({

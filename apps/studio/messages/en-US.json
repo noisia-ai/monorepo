@@ -92,6 +92,15 @@
       "next": "Next"
     }
   },
+  "BrandContextPreparation": {
+    "loading": "Checking the preparation cap",
+    "pending": "Changes will be saved without starting preparation",
+    "pendingBody": "Your changes are saved even when spending authorization is unavailable. Automatic preparation will wait for authorization.",
+    "cap": "Automatic preparation: up to {amount}",
+    "confirmation": "By confirming this action, you authorize preparation of this brand’s context within the shown cap.",
+    "breakdown": "Claude Sonnet 4.6: up to {claude}. Embeddings: up to {embeddings}.",
+    "expiry": "This authorization expires on {date} UTC."
+  },
   "BrandOs": {
     "new": {
       "crumb": "New brand",
@@ -113,8 +122,10 @@
       "subindustry": "Subindustry",
       "subindustryPlaceholder": "Add one or more: Pet Food, Marketplace, Accessories...",
       "subindustryDisabled": "Select an industry first",
-      "timezone": "Workspace timezone",
-      "timezoneHelp": "Use a valid IANA timezone. Signal periods and strategic reports inherit it.",
+      "timezone": "Brand timezone",
+      "timezoneHelp": "Search for a city or region. Signal and reports use this timezone for their periods.",
+      "timezoneSearch": "Search city or timezone",
+      "timezoneEmpty": "No timezones match your search.",
       "description": "Strategic description",
       "seedsEyebrow": "Additional context",
       "seedsTitle": "Aliases, competitors, and base context",
@@ -126,24 +137,10 @@
       "competitorsHint": "Competitor names only, one per line. Do not paste rankings, links, tables, or ChatGPT bullets here; that belongs in Knowledge Base notes.",
       "notes": "Knowledge Base notes",
       "notesPlaceholder": "What it sells, what it promises, known friction, important channels, recent campaigns, legal or operational constraints...",
-      "aiEyebrow": "AI assistance · Optional",
-      "aiGenerating": "Researching brand...",
-      "aiReady": "Smart drafts ready",
-      "aiStartTitle": "Optional research to help complete your context",
-      "aiStart": "Research brand",
-      "aiRefineTitle": "Refine drafts",
-      "aiRegenerate": "Refine",
-      "aiRefinePlaceholder": "E.g. more premium, more retail, less generic, focus on eCommerce...",
-      "aiAccept": "Accept",
-      "aiDiscard": "Discard",
-      "aiError": "Could not prepare suggestions. Try again.",
-      "aiDescriptionTitle": "Suggested strategic description",
-      "aiAliasesTitle": "Suggested aliases / handles",
-      "aiCompetitorsTitle": "Suggested competitors",
-      "aiKnowledgeTitle": "Suggested additional context",
       "creating": "Creating...",
       "create": "Create brand and continue",
       "fallbackCreateError": "Could not create brand.",
+      "contextPending": "The brand was created, but its semantic context still needs to finish. Save again to recover the same creation.",
       "fieldFallback": "field",
       "invalidFallback": "invalid"
     }
@@ -211,7 +208,8 @@
     "cancel": "Cancel",
     "saving": "Saving...",
     "save": "Save Brand OS",
-    "fallbackSaveError": "Could not save brand."
+    "fallbackSaveError": "Could not save brand.",
+    "contextPending": "The brand was saved, but its semantic context still needs an update. Save again to recover the same operation."
   },
   "CompetitorManager": {
     "eyebrow": "Competitive set",
@@ -228,18 +226,19 @@
     "deleteAria": "Delete {name}",
     "fallbackAddError": "Could not add competitors.",
     "fallbackDeleteError": "Could not delete competitor.",
-    "fallbackClearError": "Could not clear the competitors block."
+    "fallbackClearError": "Could not clear the competitors block.",
+    "contextPending": "The change was saved. Its automatic context update is still pending; you can resume it in Semantic context."
   },
   "KnowledgeBaseManager": {
     "eyebrow": "Knowledge Base",
-    "title": "Editable context blocks",
+    "title": "Knowledge bases",
     "fieldTitle": "Title",
     "fieldTitlePlaceholder": "Always-on brief, Q3 campaign, competitive research...",
     "type": "Type",
     "content": "Content",
     "contentPlaceholder": "Paste research, campaign context, learnings, constraints, hypotheses...",
-    "addNew": "New KB block",
-    "add": "Add block",
+    "addNew": "Add knowledge base",
+    "add": "Save new knowledge base",
     "empty": "There are no Knowledge Base blocks for this brand yet.",
     "emptySource": "No content saved in this block yet.",
     "delete": "Delete",
@@ -247,8 +246,22 @@
     "confirmDelete": "Delete this Knowledge Base block?",
     "fallbackAddError": "Could not create the Knowledge Base block.",
     "fallbackSaveError": "Could not save the block.",
-    "fallbackDeleteError": "Could not delete the block."
+    "fallbackDeleteError": "Could not delete the block.",
+    "contextPending": "The content was saved, but its semantic context still needs an update. Repeat the action to recover the same operation.",
+    "multipleHelp": "Keep the context generated from Brand OS and add more bases for briefs, campaigns or research. Each base is saved separately.",
+    "sourceCount": "{count, plural, =0 {No knowledge bases saved yet.} one {# knowledge base saved. You can add more.} other {# knowledge bases saved. You can add more.}}",
+    "newTitle": "New knowledge base",
+    "types": {
+      "brand_os_context": "Automatic Brand OS context",
+      "brand_brief": "Brand brief",
+      "campaign_brief": "Campaign brief",
+      "market_notes": "Market research",
+      "competitive_notes": "Competitive research",
+      "always_on_context": "Ongoing context",
+      "other": "Additional context"
+    }
   },
+
   "AdminActions": {
     "archiveCorpus": "Archive corpus",
     "archiving": "Archiving…",
@@ -2329,8 +2342,9 @@
           "errors": { "load": "This review page could not be loaded.", "detail": "The element detail could not be loaded.", "reject": "The rationale could not be preserved and rejected.", "correct": "The successor correction could not be created.", "annotate": "The annotation could not be updated.", "merge": "The merge could not be completed.", "preflight": "The publication preflight could not be calculated." }
         },
         "publish": { "explainer": "Publication requires resolving every pending item and retaining at least one approved element.", "publishedAt": "Published {date}", "title": "Publish Semantic Context Pack", "message": "You will publish {approved} approved elements as one auditable generation.", "body": "Discovery may consume this pack as governed context. Publication creates no topics or assignments.", "confirm": "Publish generation" },
-        "errors": { "title": "Semantic context could not be loaded", "load": "The Semantic Context Pack could not be loaded.", "run": "The generation status could not be recovered.", "draft": "The draft could not be prepared.", "reconcile": "The current context could not be reconciled.", "preflight": "The preflight could not be calculated.", "generate": "Generation could not be started.", "decision": "The decision could not be saved.", "edit": "The correction could not be saved.", "publish": "The generation could not be published." },
-        "kinds": { "identity_term": "Identity term", "alias": "Alias", "product": "Product", "feature": "Feature", "surface": "Surface", "category": "Category", "need": "Need", "benefit": "Benefit", "friction": "Friction", "usage_occasion": "Usage occasion", "competitor_term": "Competitor term", "locale_variant": "Locale variant", "exclusion": "Exclusion", "homonym": "Homonym", "ambiguous_term": "Ambiguous term", "abstention_rule": "Abstention rule", "positive_anchor": "Positive anchor", "negative_anchor": "Negative anchor", "boundary_anchor": "Boundary anchor", "typed_relation": "Typed relation", "other": "Other governed type" }
+        "errors": { "title": "Semantic context could not be loaded", "load": "The Semantic Context Pack could not be loaded.", "run": "The generation status could not be recovered.", "draft": "The draft could not be prepared.", "reconcile": "The current context could not be reconciled.", "quoteChanged": "The quote expired or changed. The new one is now shown; review the cap and continue again.", "preflight": "The preflight could not be calculated.", "generate": "Generation could not be started.", "decision": "The decision could not be saved.", "edit": "The correction could not be saved.", "publish": "The generation could not be published." },
+        "kinds": { "identity_term": "Identity term", "alias": "Alias", "product": "Product", "feature": "Feature", "surface": "Surface", "category": "Category", "need": "Need", "benefit": "Benefit", "friction": "Friction", "usage_occasion": "Usage occasion", "competitor_term": "Competitor term", "locale_variant": "Locale variant", "exclusion": "Exclusion", "homonym": "Homonym", "ambiguous_term": "Ambiguous term", "abstention_rule": "Abstention rule", "positive_anchor": "Positive anchor", "negative_anchor": "Negative anchor", "boundary_anchor": "Boundary anchor", "typed_relation": "Typed relation", "other": "Other governed type" },
+        "automatic": {"statusUnavailable":"Preparation status could not be loaded. Refresh its status before continuing.","subtitle":"Context is generated from Brand OS and your knowledge bases. Review exceptions when needed.","draft":"Generated, awaiting activation","published":"Active","exceptions":"Exceptions","exceptionsHint":"You can edit or delete these elements.","ready":"Ready","readyHint":"Valid elements in the generated context.","completedDetail":"Context generated. Valid elements and exceptions are shown separately.","regenerate":"Update context","resultDetails":"Generation details","filters":"More filters","continue":"Continue preparation","readyBody":"Valid context is active and its examples are prepared. Exceptions remain available for editing.","awaitingBody":"Your changes are saved. To prepare context, confirm the action with the shown cap.","failedBody":"Preparation stopped. Previous context is preserved; check its status before trying again.","preparationBody":"Context and its examples are prepared in stages. Previous results are preserved.","preparation":{"awaiting_authorization":"Preparation awaiting authorization","queued":"Preparation queued","generating":"Generating context","activating":"Activating valid context","preparing_prototypes":"Preparing context examples","ready":"Context prepared","failed":"Preparation stopped","stale":"Context has pending changes"}}
       },
       "topicEvaluation": {
         "historical": { "title": "Historical evaluation · prior attempt", "body": "This record belongs to the earlier evaluation, not the imported full-evidence result below. Its counts, cost and outcome are preserved for reference. No new attempt can be launched here.", "checking": "Checking current result provenance. Launch controls remain hidden until this finishes; if it fails, refresh the candidate panel below." },
@@ -2878,6 +2892,8 @@
         "saveFirst": "Save the interest changes to prepare that version.",
         "pending": "The original request is still saved. Check its status before resuming; the same cap and request will be retained.",
         "noInputs": "Calculate preparation of the Brand OS context. You do not need to create an interest to start discovery.",
+      "contextRequired": "The semantic context is not active yet. Complete its preparation in Brand OS before preparing context and interests.",
+      "contextStale": "Brand OS or the knowledge base has changed. Update the semantic context in Brand OS before preparing this version. Earlier receipts are retained.",
         "currentContext": "Brand OS context prepared with the current version.",
         "previousContext": "Latest Brand OS context preparation. The current version still needs to be checked or prepared.",
         "errors": {

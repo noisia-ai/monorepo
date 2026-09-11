@@ -62,3 +62,32 @@ test("duplicate units and unrelated stable-key collisions fail before returning 
   const initial = merge({ ...args, prior: [], interpretations: [{ result, artifact_id }] }).definitions[0]!;
   assert.throws(() => merge({ ...args, prior: [{ ...initial, origin: "manual", source: null }], interpretations: [{ result, artifact_id }] }), /key_conflict/u);
 });
+
+test("Japanese and Brazilian editorial output and insufficient states preserve their own language", () => {
+  const cases = [
+    {locale:"ja-JP",name:"修理の待ち時間",definition:"修理の待ち時間に関する体験",placeholder:/情報がない/u},
+    {locale:"pt-BR",name:"Espera por reparos",definition:"Experiências com espera por reparos",placeholder:/sem interpretação/u}
+  ];
+  for (const item of cases) {
+    const coherent = merge({...args,locale:item.locale,prior:[],interpretations:[{artifact_id,result:{...result,name:item.name,definition:item.definition}}]});
+    assert.equal(coherent.definitions[0]!.label,item.name);assert.equal(coherent.definitions[0]!.definition,item.definition);
+    const insufficient = merge({...args,locale:item.locale,prior:[],interpretations:[{artifact_id,
+      result:{...result,status:"insufficient",name:null,definition:null,inclusion:[],exclusion:[],citations:[]}}]});
+    assert.match(insufficient.definitions[0]!.label,item.placeholder);
+    assert.ok(!insufficient.definitions[0]!.label.includes("Grupo sin"));
+  }
+});
+test("materialization rejects missing locale and keeps neutral insufficient states for every supported BCP47 language", () => {
+  for (const locale of ["", "und", "es_MX", "not a locale"]) {
+    assert.throws(()=>merge({...args,locale,prior:[],interpretations:[{result,artifact_id}]}),/workspace_topic_locale_required/u);
+  }
+  const french = merge({...args,locale:"fr-FR",prior:[],interpretations:[{result:{...result,name:"Livraison",definition:"Expériences de livraison"},artifact_id}]});
+  assert.equal(french.definitions[0]!.label,"Livraison");
+  for (const locale of ["fr-FR","de-DE","it-IT","zh-Hant-TW"]) {
+    const insufficient=merge({...args,locale,prior:[],interpretations:[{artifact_id,
+      result:{...result,status:"insufficient",name:null,definition:null,inclusion:[],exclusion:[],citations:[]}}]});
+    assert.equal(insufficient.mapping[0]!.status,"insufficient");
+    assert.equal(insufficient.definitions[0]!.label,"Group with insufficient interpretation");
+    assert.deepEqual(insufficient.definitions[0]!.inclusion,[]);
+  }
+});

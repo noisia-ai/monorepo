@@ -1,3 +1,4 @@
+import { forkSignalBrandContextForEditingWithQueryableV1, activateSignalBrandContextGenerationWithQueryableV1 } from '@noisia/db';
 import { createHash } from "node:crypto";
 
 import {
@@ -496,15 +497,19 @@ export async function editSignalSemanticContextElementV1(args:{queryable:SignalB
     action:"edit-semantic-context-element-v1",input:operationInput,
     semanticContextDecisionInput:{payload:operationInput,digest:inputDigest}});
   if(operation.replay)return operation.replay;
-  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,args.generationKey);
+  const editableKey=await forkSignalBrandContextForEditingWithQueryableV1({queryable:args.queryable,workspace_id:args.workspace.id,
+    actor_user_id:args.actor.id,generation_key:args.generationKey,edit_operation_id:operation.operationId});
+  const generation=await requireEffectiveDraft(args.queryable,args.workspace.id,editableKey);
   await assertNoActiveRun(args.queryable,generation.id);
   const currentAuthority=await assertGenerationAuthorityCurrent(args.queryable,args.workspace,generation);
   const current=await requireCurrentElement(args.queryable,generation.id,args.elementKey,true);
   if(current.element_version!==args.expectedVersion
       ||signalSemanticContextOrdinaryStateTokenV1(current)!==args.stateToken)
     throw new SignalSemanticContextPackError("semantic_context_ordinary_stale",409);
+  const automaticException=current.disposition==='pending'&&(await args.queryable.query<{valid:boolean}>(
+    `SELECT automatic_policy_outcome='exception' AND signal_semantic_context_automatic_policy_valid_v1(id) valid FROM signal_semantic_context_element_versions WHERE id=$1::uuid`,[current.id])).rows[0]?.valid===true;
   if((args.action==="restore"&&current.lifecycle_state!=="archived")
-      ||(args.action!=="restore"&&(current.lifecycle_state!=="active"||current.disposition!=="approved")))
+      ||(args.action!=="restore"&&(current.lifecycle_state!=="active"||current.disposition!=="approved"&&!automaticException)))
     throw new SignalSemanticContextPackError("semantic_context_ordinary_lifecycle_invalid",409);
   const refs=await loadRefs(args.queryable,current.evidence_group_id);
   if(digestCanonicalJsonV2(refs)!==current.source_refs_digest)
@@ -531,13 +536,15 @@ export async function editSignalSemanticContextElementV1(args:{queryable:SignalB
   }else{lifecycle="active";disposition="approved";}
   await assertOrdinaryRelation(args.queryable,generation.id,current.element_key,proposal.relation_kind,
     proposal.relation_target_key);
-  const changed=args.action!=="save"||!ordinarySemanticEqual(current,proposal,localeFields);
+  const changed=current.disposition!=="approved"||args.action!=="save"||!ordinarySemanticEqual(current,proposal,localeFields);
   if(!changed){const result={generation_key:generation.generation_key,element_key:current.element_key,
     element_version:current.element_version,disposition:"approved" as const,lifecycle_state:"active" as const,
     changed:false,state_token:signalSemanticContextOrdinaryStateTokenV1(current),
     draft_digest_ref:shortDigest(generation.draft_digest)};
     await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
-      key:operation.key,result});return result;}
+      key:operation.key,result});
+  await activateSignalBrandContextGenerationWithQueryableV1({queryable:args.queryable,workspace_id:args.workspace.id,
+    actor_user_id:args.actor.id,generation_key:generation.generation_key});return result;}
   const parent=await args.queryable.query<{value:unknown}>(`SELECT signal_semantic_context_parent_applicability_v1(
     $1::uuid,$2::jsonb) value`,[generation.id,JSON.stringify(currentAuthority.authority)]);
   const parentValue=parent.rows[0]?.value as {valid?:boolean;parent_authority_digest?:string}|undefined;
@@ -563,7 +570,9 @@ export async function editSignalSemanticContextElementV1(args:{queryable:SignalB
   const result={generation_key:generation.generation_key,element_key:current.element_key,element_version:version,
     disposition,lifecycle_state:lifecycle,changed:true,state_token:stateToken,draft_digest_ref:shortDigest(draftDigest)};
   await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
-    key:operation.key,result});return result;
+    key:operation.key,result});
+  await activateSignalBrandContextGenerationWithQueryableV1({queryable:args.queryable,workspace_id:args.workspace.id,
+    actor_user_id:args.actor.id,generation_key:generation.generation_key});return result;
 }
 
 export async function editSignalSemanticContextElementProductV1(args:Omit<

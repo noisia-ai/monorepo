@@ -1,5 +1,14 @@
 import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash } from "node:crypto";
+import {
+  readSignalBrandOsCanonicalSnapshotV1,
+  signalBrandOsCanonicalSnapshotHashV1
+} from "@noisia/db";
+export {
+  buildSignalBrandOsCanonicalSnapshotV1,
+  signalBrandOsCanonicalSnapshotHashV1,
+  type SignalBrandOsCanonicalSnapshotV1
+} from "@noisia/db";
 
 import {
   SIGNAL_DATA_USAGE_PURPOSES,
@@ -28,36 +37,6 @@ import {
 const QUALITY_KEY = "workspace-observed-quality";
 const RETENTION_KEY = "workspace-retention";
 const LICENSING_KEY = "workspace-client-usage";
-
-export type SignalBrandOsCanonicalSnapshotV1 = {
-  name: string;
-  organization_id: string;
-  industry: string | null;
-  industry_sub: string | null;
-  countries: string[];
-  aliases: string[];
-  competitors: Array<{ name: string; seed_id: string }>;
-  knowledge_count: number;
-};
-
-/** The single canonical Brand OS identity projection used by creation, readiness and reconciliation. */
-export function buildSignalBrandOsCanonicalSnapshotV1(
-  value: SignalBrandOsCanonicalSnapshotV1
-): SignalBrandOsCanonicalSnapshotV1 {
-  return {
-    ...value,
-    countries: [...value.countries],
-    aliases: [...value.aliases],
-    competitors: [...value.competitors].sort((left, right) => (
-      left.name.toLocaleLowerCase("und").localeCompare(right.name.toLocaleLowerCase("und"))
-      || left.seed_id.localeCompare(right.seed_id)
-    ))
-  };
-}
-
-export function signalBrandOsCanonicalSnapshotHashV1(value: SignalBrandOsCanonicalSnapshotV1) {
-  return sha256(stableJson(buildSignalBrandOsCanonicalSnapshotV1(value)));
-}
 
 export type SignalGovernancePreparationStateV1 = "ready" | "blocked" | "draft" | "not_available";
 
@@ -632,28 +611,11 @@ export async function reconcileSignalBrandOsProjectionV1(args: {
   actor: SignalWorkspaceUser;
   idempotencyKey: string;
 }) {
-  const snapshot = await args.queryable.query<{
-    name: string;
-    organization_id: string;
-    industry: string | null;
-    industry_sub: string | null;
-    countries: string[];
-    aliases: string[];
-    competitors: Array<{ name: string; seed_id: string }>;
-    knowledge_count: number;
-  }>(`
-    SELECT COALESCE(brand.display_name,brand.name) AS name,brand.organization_id::text,
-      brand.industry,brand.industry_sub,brand.countries,
-      COALESCE(brand.brand_seed_handles,ARRAY[]::text[]) AS aliases,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('name',seed.canonical_name,'seed_id',seed.id::text)
-        ORDER BY lower(seed.canonical_name),seed.id)
-        FROM competitors competitor JOIN brand_seeds seed ON seed.id=competitor.competitor_brand_seed_id
-        WHERE competitor.brand_id=brand.id AND competitor.status='current' AND seed.active),'[]'::jsonb) AS competitors,
-      (SELECT count(*)::int FROM brand_knowledge_sources source
-        WHERE source.brand_id=brand.id AND source.status='active') AS knowledge_count
-    FROM brands brand WHERE brand.id=$1::uuid AND brand.organization_id=$2::uuid
-  `, [args.workspace.subject.id, args.workspace.organizationId]);
-  const state = snapshot.rows[0];
+  const state = await readSignalBrandOsCanonicalSnapshotV1({
+    queryable: args.queryable,
+    brand_id: args.workspace.subject.id,
+    organization_id: args.workspace.organizationId
+  });
   if (!state) throw new Error("Brand OS source identity is unavailable.");
   const snapshotHash = signalBrandOsCanonicalSnapshotHashV1(state);
   const profile = await args.queryable.query<{ id: string; version: number; created: boolean }>(`
@@ -672,8 +634,9 @@ export async function reconcileSignalBrandOsProjectionV1(args: {
       SELECT $2::uuid,$1::uuid,$4||' Brand OS','active',next_version.value,
         jsonb_build_object('source','governance-control-v1','snapshot_hash',$3,
           'reconciled_by_user_id',$5::text,'reconciliation_key_hash',$6::text,
+          'display_name',$4::text,
           'industry',$7::text,'industry_sub',$8::text,'countries',$9::text[],
-          'aliases',$10::text[],'knowledge_source_count',$11::int)
+          'aliases',$10::text[],'knowledge_source_count',$11::int,'description',$12::text)
       FROM next_version
       WHERE NOT EXISTS (SELECT 1 FROM current_profile WHERE metadata->>'snapshot_hash'=$3)
       RETURNING id,version
@@ -683,7 +646,7 @@ export async function reconcileSignalBrandOsProjectionV1(args: {
     SELECT id::text,version,false FROM current_profile WHERE metadata->>'snapshot_hash'=$3
   `, [args.workspace.subject.id, args.workspace.organizationId, snapshotHash, state.name,
     args.actor.id, sha256(args.idempotencyKey), state.industry, state.industry_sub,
-    state.countries, state.aliases, state.knowledge_count]);
+    state.countries, state.aliases, state.knowledge_count, state.description]);
   const resolved = profile.rows[0];
   if (!resolved) throw new Error("Brand OS profile reconciliation failed.");
   if (resolved.created) {

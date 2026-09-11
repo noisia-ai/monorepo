@@ -3231,10 +3231,7 @@ components:
             locale_coverage, drift_state, drift_reasons, ready_for_context_aware_discovery, limitations]
           properties:
             lifecycle_state: { type: string, enum: [missing, draft, published] }
-            unavailable_reason:
-              oneOf:
-                - { const: acquisition_brief_required }
-                - { type: "null" }
+            unavailable_reason: { type: "null" }
             generation: { type: [object, "null"], additionalProperties: true }
             open_draft: { type: [object, "null"], additionalProperties: true }
             counts:

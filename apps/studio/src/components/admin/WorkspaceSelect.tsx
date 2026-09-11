@@ -30,6 +30,7 @@ type WorkspaceSelectProps = {
   onChange: (value: string) => void;
   options: readonly WorkspaceSelectOption[];
   value: string;
+  search?: { placeholder: string; empty: string };
 };
 
 export function WorkspaceSelect({
@@ -39,7 +40,8 @@ export function WorkspaceSelect({
   name,
   onChange,
   options,
-  value
+  value,
+  search
 }: WorkspaceSelectProps) {
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -51,20 +53,26 @@ export function WorkspaceSelect({
     () => Math.max(0, options.findIndex((option) => option.value === value)),
     [options, value]
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const visibleOptions = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/gu, "");
+    return !search || !query ? options : options.filter((option) =>
+      `${option.label} ${option.value} ${option.description ?? ""}`.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/gu, "").includes(query));
+  }, [options, search, searchQuery]);
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const selected = options.find((option) => option.value === value) ?? options[0];
 
   function findEnabledIndex(start: number, direction: 1 | -1) {
-    for (let offset = 1; offset <= options.length; offset += 1) {
-      const index = (start + direction * offset + options.length) % options.length;
-      if (!options[index]?.disabled) return index;
+    for (let offset = 1; offset <= visibleOptions.length; offset += 1) {
+      const index = (start + direction * offset + visibleOptions.length) % visibleOptions.length;
+      if (!visibleOptions[index]?.disabled) return index;
     }
     return start;
   }
 
   useEffect(() => {
     if (!isOpen) return;
-    setActiveIndex(selectedIndex);
+    setActiveIndex(Math.max(0, visibleOptions.findIndex((option) => option.value === value)));
 
     function closeOnOutsidePointer(event: PointerEvent) {
       const target = event.target as Node;
@@ -79,7 +87,7 @@ export function WorkspaceSelect({
       const rect = trigger.getBoundingClientRect();
       const viewportPadding = 8;
       const width = Math.max(rect.width, 180);
-      const estimatedHeight = Math.min(276, options.length * 36 + 12);
+      const estimatedHeight = Math.min(276, visibleOptions.length * 36 + 12) + (search ? 48 : 0);
       const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
       const openAbove = spaceBelow < estimatedHeight && rect.top > spaceBelow;
       const left = Math.min(
@@ -102,9 +110,14 @@ export function WorkspaceSelect({
       window.removeEventListener("resize", updatePopoverPosition);
       window.removeEventListener("scroll", updatePopoverPosition, true);
     };
-  }, [isOpen, options.length, selectedIndex]);
+  }, [isOpen, visibleOptions, value, search]);
+
+  useEffect(() => {
+    if (isOpen && search) document.getElementById(`${listboxId}-${activeIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, isOpen, listboxId, search]);
 
   function openMenu() {
+    setSearchQuery("");
     const trigger = triggerRef.current;
     if (trigger) {
       const rect = trigger.getBoundingClientRect();
@@ -118,7 +131,7 @@ export function WorkspaceSelect({
   }
 
   function choose(index: number) {
-    const option = options[index];
+    const option = visibleOptions[index];
     if (!option || option.disabled) return;
     onChange(option.value);
     setActiveIndex(index);
@@ -126,8 +139,11 @@ export function WorkspaceSelect({
     window.requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
-  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
-    if (disabled || options.length === 0) return;
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (disabled) return;
+    if (event.key === "Tab" && search) { setIsOpen(false); return; }
+    if (event.key === "Escape") { event.preventDefault(); setIsOpen(false); triggerRef.current?.focus(); return; }
+    if (!visibleOptions.length) return;
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -148,7 +164,7 @@ export function WorkspaceSelect({
       return;
     }
 
-    if (event.key === "Enter" || event.key === " ") {
+    if (event.key === "Enter" || event.key === " " && event.currentTarget.tagName === "BUTTON") {
       event.preventDefault();
       if (isOpen) choose(activeIndex);
       else openMenu();
@@ -185,9 +201,14 @@ export function WorkspaceSelect({
       </button>
 
       {isOpen && popoverStyle ? createPortal((
-        <div className="workspace-select__popover" ref={popoverRef} style={popoverStyle}>
+        <div className={`workspace-select__popover${search ? " workspace-select__popover--searchable" : ""}`} ref={popoverRef} style={popoverStyle}>
+          {search ? <input aria-label={search.placeholder} aria-controls={listboxId}
+            aria-activedescendant={visibleOptions[activeIndex] ? `${listboxId}-${activeIndex}` : undefined}
+            autoComplete="off" autoFocus className="workspace-control workspace-select__search" placeholder={search.placeholder}
+            onChange={(event) => { setSearchQuery(event.target.value); setActiveIndex(0); }} onKeyDown={onKeyDown}
+            role="combobox" aria-expanded="true" aria-autocomplete="list" value={searchQuery} /> : null}
           <div aria-label={ariaLabel} className="workspace-select__listbox" id={listboxId} role="listbox">
-            {options.map((option, index) => {
+            {visibleOptions.map((option, index) => {
               const isSelected = option.value === value;
               return (
                 <button
@@ -196,6 +217,7 @@ export function WorkspaceSelect({
                   className="workspace-select__option"
                   disabled={option.disabled}
                   data-highlighted={index === activeIndex ? "true" : undefined}
+                  id={`${listboxId}-${index}`}
                   key={option.value}
                   onClick={() => choose(index)}
                   onMouseEnter={() => {
@@ -216,6 +238,7 @@ export function WorkspaceSelect({
                 </button>
               );
             })}
+            {search && !visibleOptions.length ? <p className="workspace-select__empty" role="status">{search.empty}</p> : null}
           </div>
         </div>
       ), document.body) : null}

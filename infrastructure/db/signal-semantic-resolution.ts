@@ -891,9 +891,10 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
     FROM brand_os_briefs brief
     JOIN brand_os_profiles profile ON profile.id = brief.brand_os_profile_id
     WHERE profile.brand_id = $1::uuid AND profile.status = 'active' AND brief.status = 'active'
-      AND ($2::int IS NOT NULL OR brief.knowledge_source_id IS NULL OR EXISTS(
+      AND (brief.knowledge_source_id IS NULL OR EXISTS(
         SELECT 1 FROM brand_knowledge_sources source JOIN brands brand ON brand.id=profile.brand_id
         WHERE source.id=brief.knowledge_source_id AND source.brand_id=brand.id
+          AND source.study_corpus_id IS NULL
           AND (source.organization_id IS NULL OR source.organization_id=brand.organization_id)
           AND source.status IN('processed','profiled','active')))
     UNION ALL

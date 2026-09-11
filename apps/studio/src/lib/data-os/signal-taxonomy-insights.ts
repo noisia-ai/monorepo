@@ -320,7 +320,7 @@ async function loadContextWatermark(
       WHERE source.status IN ('processed', 'processed_truncated')
         AND (
           source.study_corpus_id = $1::uuid
-          OR ($2 = 'brand' AND source.brand_id = $3::uuid)
+          OR ($2 = 'brand' AND source.brand_id = $3::uuid AND source.study_corpus_id IS NULL)
         )
       UNION ALL
       SELECT 'assertion:' || assertion.id::text || ':' || assertion.updated_at::text
@@ -330,7 +330,7 @@ async function loadContextWatermark(
       WHERE assertion.status IN ('accepted', 'approved', 'active')
         AND (
           source.study_corpus_id = $1::uuid
-          OR ($2 = 'brand' AND source.brand_id = $3::uuid)
+          OR ($2 = 'brand' AND source.brand_id = $3::uuid AND source.study_corpus_id IS NULL)
         )
     )
     SELECT

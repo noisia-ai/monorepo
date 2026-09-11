@@ -114,6 +114,7 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
     schedule(); return () => { stopped = true; clearTimeout(timer); };
   }, [active, read]);
   const calculate = async (replaceClosedRequest = false) => {
+    if (current.current?.availability === "context_required" || current.current?.availability === "context_stale") return;
     const closedRun = current.current?.request_run;
     if (replaceClosedRequest && closedRun && ["stale", "canceled"].includes(closedRun.status)
       && !topicPreparationUnknown(current.current, quoteRef.current)) forget();
@@ -130,13 +131,21 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
         if (!initialized.ok) throw new Error();
         const prepared: unknown = await initialized.json();
         if (controller.signal.aborted || ticket !== epoch.current || expectedVersion !== version.current) return;
-        if (!validTopicPreparationStatus(prepared) || prepared.request_scope !== scope || prepared.availability !== "available") throw new Error();
+        if (!validTopicPreparationStatus(prepared) || prepared.request_scope !== scope) throw new Error();
         if (!accept(prepared)) return;
+        if (prepared.availability !== "available") return;
       }
       const response = await fetch(`${endpoint}/quote`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || ticket !== epoch.current) return;
       if ([401, 403, 404].includes(response.status)) { revoke(); return; }
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        const failure = await response.json().catch(() => null) as { error?: string } | null;
+        if (controller.signal.aborted || ticket !== epoch.current || expectedVersion !== version.current) return;
+        if (failure?.error === "brand_context_source_stale" || failure?.error === "brand_context_semantic_context_required") {
+          setError(failure.error); await read(); return;
+        }
+        throw new Error();
+      }
       const value: unknown = await response.json();
       if (controller.signal.aborted || ticket !== epoch.current || expectedVersion !== version.current) return;
       if (!validTopicPreparationQuote(value) || value.workspace_id !== workspaceId || value.request_scope !== scope) throw new Error();
@@ -195,10 +204,12 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
   const validCap = capValue !== null && BigInt(capValue) <= BigInt(Number.MAX_SAFE_INTEGER);
   const quoteCompleted = Boolean(quote && status?.latest_completed?.plan_digest === quote.plan_digest);
   const closedRequest = pending && status?.request_run && ["stale", "canceled"].includes(status.request_run.status) && !unknown;
+  const contextBlocked = status?.availability === "context_required" || status?.availability === "context_stale";
 
   return <div className="topics-manager__cost-notice" aria-label={t("label")}>
     <p>{t("body")}</p>
     {status?.availability === "no_topics" ? <p role="status">{t("noInputs")}</p> : null}
+    {contextBlocked ? <p role="status">{t(status.availability === "context_required" ? "contextRequired" : "contextStale")}</p> : null}
     {status?.latest_completed ? <p role="status">{t(status.latest_completed.counts.total_topics === 0
       ? status.is_current && verifiedVersion === catalogVersion ? "currentContext" : "previousContext"
       : status.is_current && verifiedVersion === catalogVersion ? "current" : "previous", {
@@ -224,13 +235,15 @@ export function TopicPreparationControls({ workspaceId, catalogVersion, disabled
         </details> : null}
     </> : null}
     {pending && !status?.request_run ? <p role="status">{t("pending")}</p> : null}
-    {error ? <p className="team-msg team-msg--error" role="alert">{t(`errors.${["load", "quote", "storage", "request", "forbidden"].includes(error) ? error : "rejected"}`)}</p> : null}
+    {error ? <p className="team-msg team-msg--error" role="alert">{t(error === "brand_context_source_stale" ? "contextStale"
+      : error === "brand_context_semantic_context_required" ? "contextRequired"
+        : `errors.${["load", "quote", "storage", "request", "forbidden"].includes(error) ? error : "rejected"}`)}</p> : null}
     {disabled ? <p>{t("saveFirst")}</p> : null}
     <div className="admin-form-actions">
-      {closedRequest ? <button className="admin-button" type="button" disabled={disabled || !status?.can_execute || reading || quoting || submitting}
+      {closedRequest ? <button className="admin-button" type="button" disabled={disabled || contextBlocked || !status?.can_execute || reading || quoting || submitting}
         onClick={() => void calculate(true)}>{t("newQuote")}</button> : null}
       {!closedRequest && !status?.is_current ? <button className="admin-button" type="button"
-        disabled={disabled || !status?.can_execute || Boolean(status.active_run) || reading || quoting || submitting}
+        disabled={disabled || contextBlocked || !status?.can_execute || Boolean(status.active_run) || reading || quoting || submitting}
         onClick={() => void calculate()}>{t(quoting ? "quoting" : "quote")}</button> : null}
       {(quote && !quoteCompleted) || pending ? <button className="admin-button admin-button--primary" type="button" disabled={!canStart} onClick={() => void start()}>
         {t(submitting ? "submitting" : pending ? "recover" : "prepare", { amount: money(pending?.body.hard_cap_micro_usd ?? (validCap ? Number(capValue) : 0)) })}</button> : null}

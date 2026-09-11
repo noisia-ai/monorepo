@@ -3,15 +3,15 @@ import type { PoolClient } from "pg";
 import { quoteSignalWorkspaceEmbeddingCostV1, signalWorkspaceEmbeddingDigestV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceTopicPrototypePlanV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
-import { loadSignalWorkspaceTopicPrototypePlanV1 } from "./signal-workspace-topic-prototype-inputs";
-import { ensureSignalTopicCatalogStoreV1 } from "./signal-topic-catalog";
+import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
+import { ensureSignalTopicCatalogStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
 import { SignalWorkspaceTopicComputationError } from "./signal-workspace-topic-computation";
 import { SignalWorkspaceEmbeddingsError, type SignalWorkspaceEmbeddingsDatabaseV1,
   type SignalWorkspaceEmbeddingsQueryableV1 } from "./signal-workspace-embeddings";
 import type { SignalWorkspaceTopicPrototypeCountsV1, SignalWorkspaceTopicPrototypeRunV1,
   SignalWorkspaceTopicPrototypesQuoteV1, SignalWorkspaceTopicPrototypesStatusV1 } from "./signal-workspace-topic-prototypes-types";
 
-type Access = { database: SignalWorkspaceEmbeddingsDatabaseV1; workspace_id: string; actor_user_id: string };
+type Access = { database: SignalWorkspaceEmbeddingsDatabaseV1; workspace_id: string; actor_user_id: string; brand_context_preparation_operation_id?: string };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEmbeddingsError(code, status); };
 const integer = (value: unknown): number => {
   const n = Number(value);
@@ -68,10 +68,21 @@ export function initializeSignalWorkspaceTopicPrototypeCatalogV1(args: Access): 
 export async function loadSignalWorkspaceTopicPrototypesV1(args: Access & { idempotency_key?: string }): Promise<SignalWorkspaceTopicPrototypesStatusV1> {
   return transaction(args, false, async client => {
     let plan: SignalWorkspaceTopicPrototypePlanV1 | null = null;
+    let unavailable: SignalWorkspaceTopicPrototypesStatusV1["availability"] = "no_topics";
     try { plan = await loadSignalWorkspaceTopicPrototypePlanV1({ ...args, queryable: client }); }
     catch (error) {
-      if (!(error instanceof SignalWorkspaceTopicComputationError)
-        || !["workspace_topic_catalog_empty", "workspace_topic_catalog_required"].includes(error.code)) throw error;
+      let cause = error;
+      const noCatalog = error instanceof SignalWorkspaceTopicComputationError
+        && ["workspace_topic_catalog_empty", "workspace_topic_catalog_required"].includes(error.code);
+      if (noCatalog) {
+        // A missing catalog is actionable only after semantic publication. Do
+        // not invite initialization when it would immediately hit that fence.
+        try { await loadSignalWorkspaceAutonomousContextInputsV1({ queryable: client, workspace_id: args.workspace_id }); }
+        catch (contextError) { cause = contextError; }
+      }
+      if (cause instanceof SignalTopicCatalogError && cause.code === "brand_context_source_stale") unavailable = "context_stale";
+      else if (cause instanceof SignalTopicCatalogError && cause.code === "brand_context_semantic_context_required") unavailable = "context_required";
+      else if (!noCatalog || cause !== error) throw cause;
     }
     const row = (await client.query<{
       observed_at: string; active_run: Record<string, unknown> | null; latest_run: Record<string, unknown> | null;
@@ -102,13 +113,37 @@ export async function loadSignalWorkspaceTopicPrototypesV1(args: Access & { idem
     const digest = plan?.plan_digest ?? null;
     const completed = runView(row.latest_completed, digest);
     return { contract_version: "signal-workspace-topic-prototypes-v1", workspace_id: args.workspace_id,
-      observed_at: timestamp(row.observed_at), current_plan_digest: digest, availability: plan ? "available" : "no_topics",
+      observed_at: timestamp(row.observed_at), current_plan_digest: digest, availability: plan ? "available" : unavailable,
       active_run: runView(row.active_run, digest), latest_run: runView(row.latest_run, digest), latest_completed: completed,
       request_run: runView(row.request_run, digest), is_current: digest !== null && completed?.plan_digest === digest,
       blocking_run_kind: row.blocking_run_kind };
   });
 }
 
+/** A new preparation may renew an old Brand Context run, never adopt a legacy
+ * run whose send path has no Brand Context admission fence. Parameters are SQL
+ * placeholders supplied only by this module, not request values. */
+function compatibleBrandContextOriginSql(operationParameter: string) {
+  return `EXISTS(SELECT 1 FROM signal_governance_control_operations origin
+    JOIN signal_governance_control_operations preparation ON preparation.id=${operationParameter}::uuid
+    WHERE origin.id=run.brand_context_preparation_operation_id
+      AND origin.action='prepare-brand-context' AND origin.status='completed'
+      AND preparation.action='prepare-brand-context' AND preparation.status='completed'
+      AND origin.workspace_id=run.workspace_id AND preparation.workspace_id=run.workspace_id
+      AND origin.actor_user_id=run.actor_user_id AND preparation.actor_user_id=run.actor_user_id
+      AND origin.brand_context_preparation->>'generation_id'=preparation.brand_context_preparation->>'generation_id'
+      AND origin.brand_context_preparation->'admission'->>'configuration_digest'=preparation.brand_context_preparation->'admission'->>'configuration_digest'
+      AND origin.brand_context_preparation->'admission'->>'semantic_cap_micro_usd'=preparation.brand_context_preparation->'admission'->>'semantic_cap_micro_usd'
+      AND origin.brand_context_preparation->'admission'->>'prototype_cap_micro_usd'=preparation.brand_context_preparation->'admission'->>'prototype_cap_micro_usd'
+      AND run.hard_cap_micro_usd=(origin.brand_context_preparation->'admission'->>'prototype_cap_micro_usd')::bigint)`;
+}
+async function requireCompatibleBrandContextOrigin(client: PoolClient, args: Access, runId: string) {
+  if (!args.brand_context_preparation_operation_id) return;
+  const row=(await client.query<{compatible:boolean}>(`SELECT ${compatibleBrandContextOriginSql('$3')} compatible
+    FROM signal_workspace_embedding_runs run WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid FOR UPDATE OF run`,
+    [runId,args.workspace_id,args.brand_context_preparation_operation_id])).rows[0];
+  if (!row?.compatible) return fail("workspace_embedding_preparation_origin_mismatch");
+}
 async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, args: Access,
   plan: SignalWorkspaceTopicPrototypePlanV1): Promise<SignalWorkspaceTopicPrototypesQuoteV1> {
   const hashes = Object.keys(plan.texts);
@@ -120,9 +155,10 @@ async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, args: Acce
     observed_at: string; resume_run_id: string | null; required_cap_micro_usd: string | null;
     blocking_run_kind: "corpus" | "topic_prototypes" | null; blocked_status: string | null; recoverable_input_keys: string[];
   }>(`WITH resumable AS MATERIALIZED (
-    SELECT id,hard_cap_micro_usd FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND input_contract='topic_prototypes'
+    SELECT id,hard_cap_micro_usd FROM signal_workspace_embedding_runs run WHERE workspace_id=$1::uuid AND input_contract='topic_prototypes'
       AND config_digest=$2 AND topic_input_digest=$3 AND actor_user_id=$4::uuid AND status='failed'
       AND error_code=ANY($5::text[]) AND unknown_reserved_micro_usd=0 AND observed_exception_micro_usd=0
+      ${args.brand_context_preparation_operation_id ? `AND ${compatibleBrandContextOriginSql('$7')}` : ''}
       ORDER BY created_at DESC,id DESC LIMIT 1
   ) SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at,
     (SELECT id FROM resumable) resume_run_id,(SELECT hard_cap_micro_usd::text FROM resumable) required_cap_micro_usd,
@@ -136,7 +172,8 @@ async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, args: Acce
     ARRAY(SELECT DISTINCT unnest(call.input_keys) FROM signal_workspace_embedding_calls call
       WHERE call.run_id=(SELECT id FROM resumable) AND call.status IN('response_persisted','settled')
         AND call.response_body_private IS NOT NULL) recoverable_input_keys`,
-  [args.workspace_id, plan.embedding_profile.config_digest, plan.plan_digest, args.actor_user_id, [...retryableErrors], missing])).rows[0]!;
+  [args.workspace_id, plan.embedding_profile.config_digest, plan.plan_digest, args.actor_user_id, [...retryableErrors], missing,
+    ...(args.brand_context_preparation_operation_id ? [args.brand_context_preparation_operation_id] : [])])).rows[0]!;
   const blockingError = runtime.blocked_status === null ? null : runtime.blocked_status === "settled"
     ? "workspace_embedding_prior_response_unusable" as const : ["in_flight", "outcome_unknown"].includes(runtime.blocked_status)
       ? "workspace_embedding_outcome_unknown" as const : "workspace_embedding_prior_run_unresolved" as const;
@@ -155,6 +192,9 @@ async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, args: Acce
     blocking_error_code: blockingError };
   return { ...sealed, quote_digest: signalWorkspaceEmbeddingDigestV1(sealed), observed_at: timestamp(runtime.observed_at) };
 }
+export async function quoteSignalWorkspaceTopicPrototypesWithQueryableV1(queryable:SignalWorkspaceEmbeddingsQueryableV1,args:Access){
+  return quote(queryable,args,await loadSignalWorkspaceTopicPrototypePlanV1({...args,queryable}));
+}
 export function quoteSignalWorkspaceTopicPrototypesV1(args: Access): Promise<SignalWorkspaceTopicPrototypesQuoteV1> {
   return transaction(args, false, async client => quote(client, args, await loadSignalWorkspaceTopicPrototypePlanV1({ ...args, queryable: client })));
 }
@@ -169,16 +209,22 @@ async function resume(client: PoolClient, runId: string, requestKeys: Record<str
   if (!result.rows.length) return fail("workspace_embedding_quote_changed");
 }
 /** Creates durable intent in the existing embedding queue; provider availability is server-owned. */
-export function requestSignalWorkspaceTopicPrototypesV1(args: Access & {
+export type SignalWorkspaceTopicPrototypeRequestArgsV1 = Access & {
   idempotency_key: string; plan_digest: string; quote_digest: string; hard_cap_micro_usd: number;
-  provider_available: boolean; max_run_cost_micro_usd: number;
-}): Promise<{ run_id: string; replayed: boolean }> {
+  provider_available: boolean; max_run_cost_micro_usd: number; brand_context_preparation_operation_id?:string;
+};
+export function requestSignalWorkspaceTopicPrototypesV1(args:SignalWorkspaceTopicPrototypeRequestArgsV1):Promise<{run_id:string;replayed:boolean}>{
+  return transaction(args,true,client=>requestSignalWorkspaceTopicPrototypesWithClientV1(client,args));
+}
+export async function requestSignalWorkspaceTopicPrototypesWithClientV1(client:PoolClient,args:SignalWorkspaceTopicPrototypeRequestArgsV1):Promise<{run_id:string;replayed:boolean}>{
   if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)) return fail("workspace_embedding_idempotency_key_required", 400);
   if (!Number.isSafeInteger(args.hard_cap_micro_usd) || args.hard_cap_micro_usd < 0) return fail("workspace_embedding_budget_invalid", 422);
   if (!Number.isSafeInteger(args.max_run_cost_micro_usd) || args.max_run_cost_micro_usd < 0) return fail("workspace_embedding_budget_configuration_invalid", 503);
   const digest = signalWorkspaceEmbeddingDigestV1({ input_contract: "topic_prototypes", plan_digest: args.plan_digest,
-    quote_digest: args.quote_digest, hard_cap_micro_usd: args.hard_cap_micro_usd, profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 });
-  return transaction(args, true, async client => {
+    quote_digest: args.quote_digest, hard_cap_micro_usd: args.hard_cap_micro_usd, profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+    ...(args.brand_context_preparation_operation_id ? {brand_context_preparation_operation_id:args.brand_context_preparation_operation_id} : {}) });
+  const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
+  if(!caps.can_execute_topics)return fail("workspace_embedding_forbidden",403);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`workspace-embedding-request:${args.workspace_id}`]);
     const replay = (await client.query<{ id: string; actor: string; digest: string; status: string; error_code: string | null;
       topic_input_digest: string | null; unknown_reserved_micro_usd: string; observed_exception_micro_usd: string }>(`SELECT id,status,error_code,topic_input_digest,
@@ -186,6 +232,7 @@ export function requestSignalWorkspaceTopicPrototypesV1(args: Access & {
       FROM signal_workspace_embedding_runs WHERE workspace_id=$1::uuid AND request_keys ? $2 LIMIT 1 FOR UPDATE`,
     [args.workspace_id, args.idempotency_key])).rows[0];
     if (replay && (replay.actor !== args.actor_user_id || replay.digest !== digest)) return fail("workspace_embedding_idempotency_conflict");
+    if (replay) await requireCompatibleBrandContextOrigin(client,args,replay.id);
     if (replay && !(replay.status === "failed" && retryableErrors.has(replay.error_code ?? "")
       && integer(replay.unknown_reserved_micro_usd) === 0 && integer(replay.observed_exception_micro_usd) === 0)) {
       return { run_id: replay.id, replayed: true };
@@ -204,6 +251,7 @@ export function requestSignalWorkspaceTopicPrototypesV1(args: Access & {
     const resumeId = replay?.id ?? current.resume_run_id;
     if (resumeId) {
       if (current.resume_run_id !== resumeId || args.hard_cap_micro_usd !== current.required_cap_micro_usd) return fail("workspace_embedding_resume_budget_changed", 422);
+      await requireCompatibleBrandContextOrigin(client,args,resumeId);
       await resume(client, resumeId, { [args.idempotency_key]: { actor_user_id: args.actor_user_id, request_digest: digest } });
       return { run_id: resumeId, replayed: Boolean(replay) };
     }
@@ -215,12 +263,12 @@ export function requestSignalWorkspaceTopicPrototypesV1(args: Access & {
       cache_hits: 0, embedded_unique_inputs: 0 };
     await client.query(`INSERT INTO signal_workspace_embedding_runs(id,workspace_id,actor_user_id,input_contract,
       taxonomy_profile_id,topic_input_snapshot,topic_input_digest,profile,config_digest,quote_digest,request_keys,
-      hard_cap_micro_usd,estimated_upper_micro_usd,counts,worker_job_id)
-      VALUES($1::uuid,$2::uuid,$3::uuid,'topic_prototypes',$4::uuid,$5::jsonb,$6,$7::jsonb,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14)`,
+      hard_cap_micro_usd,estimated_upper_micro_usd,counts,worker_job_id,brand_context_preparation_operation_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,'topic_prototypes',$4::uuid,$5::jsonb,$6,$7::jsonb,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15::uuid)`,
     [runId, args.workspace_id, args.actor_user_id, plan.taxonomy_profile_id, JSON.stringify(plan), plan.plan_digest,
       JSON.stringify(plan.embedding_profile), plan.embedding_profile.config_digest, current.quote_digest,
       JSON.stringify({ [args.idempotency_key]: { actor_user_id: args.actor_user_id, request_digest: digest } }),
-      args.hard_cap_micro_usd, current.estimated_upper_micro_usd, JSON.stringify(counts), `workspace-embeddings-${runId}-1`]);
+      args.hard_cap_micro_usd, current.estimated_upper_micro_usd, JSON.stringify(counts), `workspace-embeddings-${runId}-1`,args.brand_context_preparation_operation_id??null]);
     return { run_id: runId, replayed: false };
-  });
+
 }

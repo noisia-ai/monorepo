@@ -268,7 +268,7 @@ async function loadGovernedContext(
        AND profile.status = 'active'
       WHERE (
           brief.study_corpus_id = $1::uuid
-          OR ($2::uuid IS NOT NULL AND profile.brand_id = $2::uuid)
+          OR ($2::uuid IS NOT NULL AND profile.brand_id = $2::uuid AND brief.study_corpus_id IS NULL)
         )
         AND brief.status = 'active'
       ORDER BY
@@ -306,7 +306,7 @@ async function loadGovernedContext(
       WHERE assertion.status IN ('accepted', 'approved', 'active')
         AND (
           source.study_corpus_id = $1::uuid
-          OR ($2::uuid IS NOT NULL AND source.brand_id = $2::uuid)
+          OR ($2::uuid IS NOT NULL AND source.brand_id = $2::uuid AND source.study_corpus_id IS NULL)
         )
       ORDER BY
         CASE WHEN source.study_corpus_id = $1::uuid THEN 0 ELSE 1 END,
@@ -328,7 +328,7 @@ async function loadGovernedContext(
       WHERE source.status IN ('processed', 'processed_truncated')
         AND (
           source.study_corpus_id = $1::uuid
-          OR ($2::uuid IS NOT NULL AND source.brand_id = $2::uuid)
+          OR ($2::uuid IS NOT NULL AND source.brand_id = $2::uuid AND source.study_corpus_id IS NULL)
         )
       ORDER BY
         CASE WHEN source.study_corpus_id = $1::uuid THEN 0 ELSE 1 END,

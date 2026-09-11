@@ -6,6 +6,7 @@ import {
   loadSignalGovernancePreparationForWorkspaceV1,
   type SignalGovernanceControlCommandV1
 } from "@/lib/data-os/signal-governance-control-plane";
+import { isIanaTimezone } from "@/lib/timezone-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,7 +76,7 @@ const commandSchema = z.discriminatedUnion("action", [
   }).strict(),
   z.object({
     action: z.literal("update-timezone"),
-    timezone: z.string().trim().min(1).max(120)
+    timezone: z.string().trim().min(1).max(120).refine(isIanaTimezone)
   }).strict(),
   z.object({ action: z.literal("reconcile-brand-os") }).strict()
 ]);

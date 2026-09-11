@@ -4,6 +4,8 @@ import { brands, userBrandAccess, users } from "@noisia/db";
 import { db } from "@/lib/db";
 import { brandAccessLevelForRole, isInternalRole, normalizeRole } from "@/lib/auth/roles";
 
+type OrganizationSyncDatabase = Pick<typeof db, "execute" | "insert" | "select">;
+
 export async function syncClientBrandAccessForOrganization(args: {
   userId: string;
   role: string;
@@ -43,8 +45,8 @@ export async function syncClientBrandAccessForOrganization(args: {
 export async function syncClientBrandAccessForMovedBrand(args: {
   brandId: string;
   organizationId: string;
-}) {
-  await db.execute(sql`
+}, database: OrganizationSyncDatabase = db) {
+  await database.execute(sql`
     UPDATE ${userBrandAccess}
     SET revoked_at = now()
     FROM ${users}
@@ -54,7 +56,7 @@ export async function syncClientBrandAccessForMovedBrand(args: {
       AND (${users.organizationId} IS NULL OR ${users.organizationId} <> ${args.organizationId})
   `);
 
-  const clientRows = await db
+  const clientRows = await database
     .select({
       id: users.id,
       primaryRole: users.primaryRole
@@ -64,7 +66,7 @@ export async function syncClientBrandAccessForMovedBrand(args: {
 
   for (const user of clientRows) {
     const accessLevel = brandAccessLevelForRole(user.primaryRole);
-    await db
+    await database
       .insert(userBrandAccess)
       .values({
         userId: user.id,

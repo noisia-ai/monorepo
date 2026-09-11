@@ -4,6 +4,7 @@ import type { Pool, PoolClient } from "pg";
 
 import {
   SIGNAL_TOPIC_CATALOG_CONTRACT_V1,
+  canonicalSignalWorkspaceTopicLocaleV1,
   buildSignalTopicEmbeddingInputsV1,
   chunkForEmbedding,
   estimateSignalTopicEmbeddingCostMicroUsdV1,
@@ -28,6 +29,8 @@ import { insertSignalTaxonomyDraftCoreV1 } from "./signal-taxonomy-profile";
 import { loadSignalSemanticResolutionGovernedContextV1 } from "./signal-semantic-resolution";
 import { loadSignalTopicEvaluationV2CandidateDetail } from "./signal-topic-evaluation-v2";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
+import { resolveSignalBrandContextAuthorityV1 } from "./signal-brand-context-authority";
+import { SignalSemanticContextProposalExecutionError } from "./signal-semantic-context-proposal";
 
 export class SignalTopicCatalogError extends Error {
   constructor(public readonly code: string, public readonly status = 409) {
@@ -123,13 +126,15 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   queryable: {query<Row extends Record<string,unknown>>(sql:string,params?:unknown[]):Promise<{rows:Row[]}>};
   workspace_id: string;
   complete_context?: boolean;
+  require_current_semantic_authority?: boolean;
 }): Promise<SignalTopicInheritedContextStoreV1> {
   const governed = await loadSignalSemanticResolutionGovernedContextV1(args.queryable, args.workspace_id,
     { complete_brand_context: args.complete_context });
   const contextRows = <T>(rows: T[], limit: number) => args.complete_context ? rows : rows.slice(0, limit);
   const contextText = (text: string) => args.complete_context ? text : text.slice(0, 4_000);
-  const acquisition = (await args.queryable.query<{ acquisition_brief: unknown; timezone: string | null }>(`
-    SELECT plan.acquisition_brief,workspace.timezone
+  const acquisition = (await args.queryable.query<{ acquisition_brief: unknown; timezone: string | null;
+    organization_id: string; brand_id: string }>(`
+    SELECT plan.acquisition_brief,workspace.timezone,workspace.organization_id::text,workspace.brand_id::text
     FROM signal_workspaces workspace
     LEFT JOIN LATERAL(
       SELECT acquisition_brief FROM signal_acquisition_plans
@@ -139,12 +144,6 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     ) plan ON true
     WHERE workspace.id=$1::uuid
   `, [args.workspace_id])).rows[0];
-  const brief = objectValue(acquisition?.acquisition_brief);
-  const languages = Array.from(new Set(stringArray(brief.languages))).sort();
-  const markets = Array.from(new Set(stringArray(brief.countries).length
-    ? stringArray(brief.countries) : governed.workspace.countries)).sort();
-  const primaryLocale = typeof brief.primary_locale === "string" && brief.primary_locale.trim()
-    ? brief.primary_locale.trim() : languages[0] ?? null;
   const contextItems = (await args.queryable.query<SignalTopicInheritedContextStoreV1["context_refs"][number] & {
     content: string;
   }>(`
@@ -164,9 +163,10 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
         concat_ws(' — ',brief.title,brief.summary)
       FROM brand_os_briefs brief JOIN active_profile profile ON profile.id=brief.brand_os_profile_id
       WHERE brief.status='active'
-        AND (NOT $2::boolean OR brief.knowledge_source_id IS NULL OR EXISTS(
+        AND (brief.knowledge_source_id IS NULL OR EXISTS(
           SELECT 1 FROM brand_knowledge_sources source JOIN signal_workspaces workspace ON workspace.id=$1::uuid
           WHERE source.id=brief.knowledge_source_id AND source.brand_id=workspace.brand_id
+            AND source.study_corpus_id IS NULL
             AND (source.organization_id IS NULL OR source.organization_id=workspace.organization_id)
             AND source.status IN('processed','profiled','active')))
       UNION ALL
@@ -181,7 +181,7 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
       FROM knowledge_assertions assertion
       JOIN brand_knowledge_sources source ON source.id=assertion.knowledge_source_id
       JOIN signal_workspaces workspace ON workspace.brand_id=source.brand_id
-      WHERE workspace.id=$1::uuid AND assertion.status='active'
+      WHERE workspace.id=$1::uuid AND assertion.status='active' AND source.study_corpus_id IS NULL
         AND (NOT $2::boolean OR ((source.organization_id IS NULL OR source.organization_id=workspace.organization_id)
           AND source.status IN('processed','profiled','active')
           AND (assertion.valid_from IS NULL OR assertion.valid_from<=(statement_timestamp() AT TIME ZONE 'UTC')::date)
@@ -194,7 +194,10 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     version: item.version, content_hash: item.content_hash }));
   const semanticRows = (await args.queryable.query<{
     generation_id: string; generation_key: string; generation_version: number; generation_status: string;
-    pack_digest: string | null; draft_digest: string; element_id: string | null; element_key: string | null;
+    pack_digest: string | null; draft_digest: string; primary_locale: string | null;
+    brand_os_digest: string; knowledge_digest: string; locale_context_digest: string;
+    locale_variants: string[]; markets: string[]; timezone: string | null;
+    element_id: string | null; element_key: string | null;
     element_version: number | null; element_kind: string | null; display_text: string | null;
     scope: string | null;
     canonical_key: string | null; relation_kind: string | null; relation_target_key: string | null;
@@ -202,15 +205,14 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   }>(`
     WITH generation AS(
       SELECT generation.* FROM signal_semantic_context_generations generation
-      WHERE generation.workspace_id=$1::uuid
-        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_generations successor
-          WHERE successor.workspace_id=generation.workspace_id
-            AND successor.supersedes_generation_id=generation.id)
+      WHERE generation.workspace_id=$1::uuid AND generation.status='published'
       ORDER BY generation.generation_version DESC LIMIT 1
     )
     SELECT generation.id::text generation_id,generation.generation_key,
       generation.generation_version,generation.status generation_status,generation.pack_digest,
-      generation.draft_digest,element.id::text element_id,element.element_key,
+      generation.draft_digest,generation.primary_locale,generation.locale_variants,generation.markets,generation.timezone,
+      generation.brand_os_digest,generation.knowledge_digest,generation.locale_context_digest,
+      element.id::text element_id,element.element_key,
       element.element_version,element.element_kind,element.display_text,element.canonical_key,
       element.scope,element.relation_kind,element.relation_target_key,element.element_digest
     FROM generation LEFT JOIN signal_semantic_context_element_versions element
@@ -220,6 +222,49 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
         WHERE successor.supersedes_element_id=element.id)
     ORDER BY element.element_key
   `, [args.workspace_id])).rows;
+  // An explicit acquisition plan remains the override. Otherwise use the same
+  // latest published generation as the approved elements. An unpublished
+  // successor cannot remove that serving authority.
+  const explicitPlan = acquisition?.acquisition_brief != null;
+  const published = semanticRows[0];
+  // Historical serving may retain this published pack while its successor is
+  // unfinished. New embedding work must not mix that pack with changed live KB
+  // or Brand OS. Reuse the same authority resolver as semantic preparation.
+  if (args.require_current_semantic_authority) {
+    if (!published) throw new SignalTopicCatalogError("brand_context_semantic_context_required");
+    if (!acquisition?.organization_id || !acquisition.brand_id || !acquisition.timezone) {
+      throw new SignalTopicCatalogError("brand_context_source_stale");
+    }
+    try {
+      const live = await resolveSignalBrandContextAuthorityV1({
+        queryable: { async query<Row extends Record<string, unknown>>(sql: string, params?: unknown[]) {
+          const result = await args.queryable.query<Row>(sql, params);
+          return { rows: result.rows, rowCount: null };
+        } },
+        workspace: { id: args.workspace_id, organizationId: acquisition.organization_id,
+          subject: { type: "brand", id: acquisition.brand_id }, timezone: acquisition.timezone }
+      });
+      if (published.brand_os_digest !== live.brandOsDigest || published.knowledge_digest !== live.knowledgeDigest
+        || published.locale_context_digest !== live.localeContextDigest) {
+        throw new SignalTopicCatalogError("brand_context_source_stale");
+      }
+    } catch (error) {
+      if (error instanceof SignalSemanticContextProposalExecutionError
+        && ["brand_os_snapshot_required", "brand_os_snapshot_stale", "locale_market_authority_required"].includes(error.code)) {
+        throw new SignalTopicCatalogError("brand_context_source_stale");
+      }
+      throw error;
+    }
+  }
+  const brief = objectValue(acquisition?.acquisition_brief);
+  const languages = Array.from(new Set(stringArray(explicitPlan ? brief.languages : published?.locale_variants)
+    .map(canonicalSignalWorkspaceTopicLocaleV1))).sort();
+  const markets = Array.from(new Set(explicitPlan ? (stringArray(brief.countries).length
+    ? stringArray(brief.countries) : governed.workspace.countries) : published ? stringArray(published.markets) : governed.workspace.countries)).sort();
+  const primary = explicitPlan ? (typeof brief.primary_locale === "string" && brief.primary_locale.trim()
+    ? brief.primary_locale.trim() : languages[0]) : published?.primary_locale;
+  const primaryLocale = primary == null ? null : canonicalSignalWorkspaceTopicLocaleV1(primary);
+  const timezone = explicitPlan ? acquisition?.timezone ?? null : published?.timezone ?? acquisition?.timezone ?? null;
   const semanticGeneration = semanticRows[0] ? {
     id: semanticRows[0].generation_id,
     key: semanticRows[0].generation_key,
@@ -263,7 +308,7 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     context_refs: refs,
     semantic_context: { generation: semanticGeneration, elements: semanticElements },
     locale: { primary_locale: primaryLocale, languages, markets,
-      timezone: acquisition?.timezone ?? null }
+      timezone }
   };
   const commonLines = [
     brand.brand_name,
@@ -314,7 +359,7 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     context_refs: [...refs, ...semanticRefs].sort((left, right) =>
       `${left.source_type}:${left.source_id}:${left.version}`
         .localeCompare(`${right.source_type}:${right.source_id}:${right.version}`)),
-    locale: { primary_locale: primaryLocale, languages, markets, timezone: acquisition?.timezone ?? null }
+    locale: { primary_locale: primaryLocale, languages, markets, timezone }
   };
 }
 
@@ -322,10 +367,12 @@ export async function loadSignalTopicClassificationContextStoreV1(args: {
   queryable: Queryable;
   workspace_id: string;
   taxonomy_profile_id: string;
+  require_current_semantic_authority?: boolean;
 }) {
   const inherited = await loadSignalTopicInheritedContextStoreV1({
     queryable: args.queryable,
-    workspace_id: args.workspace_id
+    workspace_id: args.workspace_id,
+    require_current_semantic_authority: args.require_current_semantic_authority
   });
   const definitions = (await loadProfileTerms(args.queryable, args.taxonomy_profile_id))
     .map(readDefinition);
@@ -343,7 +390,7 @@ export async function loadSignalTopicEmbeddingPreflightStoreV1(args: {
   try {
     const [population, context, terms] = await Promise.all([
       resolveTopicPopulation(args.queryable, args.workspace_id, args.taxonomy_profile_id),
-      loadSignalTopicClassificationContextStoreV1(args),
+      loadSignalTopicClassificationContextStoreV1({ ...args, require_current_semantic_authority: true }),
       loadProfileTerms(args.queryable, args.taxonomy_profile_id)
     ]);
     const topics = terms.map(readDefinition).filter((topic) => topic.lifecycle !== "archived");
@@ -809,7 +856,7 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
     let profile = await loadLatestProfile(client, args.workspace_id);
     if (!profile) throw new SignalTopicCatalogError("topic_catalog_empty", 409);
     let definitionContext = await loadSignalTopicClassificationContextStoreV1({ queryable: client,
-      workspace_id: args.workspace_id, taxonomy_profile_id: profile.id });
+      workspace_id: args.workspace_id, taxonomy_profile_id: profile.id, require_current_semantic_authority: args.intent === "search" });
     let population = await resolveTopicPopulation(client, args.workspace_id, profile.id);
     const priorGeneration = args.intent === "search" && profile.status === "active"
       ? (await client.query<{ study_corpus_id: string }>(`
@@ -835,7 +882,7 @@ export async function createSignalTopicCatalogExecutionStoreV1(args: {
         throw new SignalTopicCatalogError("topic_context_successor_not_created", 500);
       }
       definitionContext = await loadSignalTopicClassificationContextStoreV1({ queryable: client,
-        workspace_id: args.workspace_id, taxonomy_profile_id: profile.id });
+        workspace_id: args.workspace_id, taxonomy_profile_id: profile.id, require_current_semantic_authority: true });
       population = await resolveTopicPopulation(client, args.workspace_id, profile.id);
     }
     if ((args.intent === "publish" || args.publish_when_ready === true)
@@ -1316,7 +1363,7 @@ export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(arg
       const mapping:Array<import("@noisia/query-engine").SignalWorkspaceTopicMaterializationMappingV1>=[];
       for (const [owner,interpretations] of [...byOwner].sort(([a],[b])=>a<b?-1:1)) {
         const merged=mergeSignalWorkspaceTopicMaterializationV1({prior:definitions,interpretations,execution_id:owner,now:new Date().toISOString(),
-          locale:inherited.locale.primary_locale?.startsWith("en")?"en-US":"es-MX"});
+          locale:canonicalSignalWorkspaceTopicLocaleV1(inherited.locale.primary_locale)});
         definitions=merged.definitions;mapping.push(...merged.mapping);
       }
       mapping.sort((a,b)=>a.unit_key<b.unit_key?-1:1);
@@ -1436,7 +1483,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
     const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true });
     const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
-      execution_id: lease.execution_id, now: new Date().toISOString(), locale: inherited.locale.primary_locale?.startsWith("en") ? "en-US" : "es-MX" });
+      execution_id: lease.execution_id, now: new Date().toISOString(), locale: canonicalSignalWorkspaceTopicLocaleV1(inherited.locale.primary_locale) });
     const mappingDigest = sha256(stableJson(merged.mapping));
     const replay = (await client.query<{ id: string; version: number; metadata: { source_mapping_digest: string } }>(`
       SELECT id,version,metadata FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'

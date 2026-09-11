@@ -27,10 +27,12 @@ import {
   formatAdminDate,
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
+import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { canConfirmImportUpload, confirmWorkspaceImportUpload, isImportTerminal, pollWorkspaceImport, refreshAfterImportCompletion, replaceMonitoredImport, reportWorkspaceImportUploadFailure } from "@/lib/data-os/workspace-import-monitor";
 import { acquisitionSlotActions, buildAcquisitionSlotViews, groupAcquisitionBlockers } from "@/lib/data-os/workspace-acquisition-slot-view";
 import { buildAdminWorkspaceConnectorInput } from "@/lib/data-os/admin-workspace-source-contract";
+import { DEFAULT_WORKSPACE_TIMEZONE, isIanaTimezone } from "@/lib/timezone-catalog";
 
 type PlanSummary = {
   version: number;
@@ -1017,6 +1019,8 @@ export function ImportForm({canCancelUpload,onCancelUpload,onRefreshStatus,simpl
 }){
   const [evidenceClass,setEvidenceClass]=useState<"operator_attested"|"unavailable">(
     !simple && queries.length?"operator_attested":"unavailable");
+  const [fileTimezone,setFileTimezone]=useState(
+    isIanaTimezone(timezone) ? timezone : DEFAULT_WORKSPACE_TIMEZONE);
   const selected=queries[0]??null;
   const defaults=selected?.default_period;
   const progressPercent=result?.failure?.code==="content_already_accepted" ? null : result?.progress.percent;
@@ -1034,7 +1038,8 @@ export function ImportForm({canCancelUpload,onCancelUpload,onRefreshStatus,simpl
     {!readyForImport?<div className="admin-acquisition__blockers" role="status"><WarningCircle aria-hidden size={17}/><div><strong>{t("importReadiness.blockedTitle")}</strong><p>{t("importReadiness.blockedBody")}</p></div></div>:null}
     <label className="workspace-field"><span>{t("fields.file")}</span><input accept=".csv,text/csv" className="workspace-control workspace-control--file" disabled={!readyForImport} name="file" required type="file"/><small>{t(simple ? "manualImport.fileHelp" : "fields.fileHelp")}</small></label>
     <div className="admin-acquisition__period-grid"><label className="workspace-field"><span>{t("fields.captureStart")}</span><input className="workspace-control" defaultValue={defaults?.start??""} name="period_start" required type="date"/></label><label className="workspace-field"><span>{t("fields.captureEnd")}</span><input className="workspace-control" defaultValue={defaults?.end??""} name="period_end" required type="date"/></label></div>
-    <label className="workspace-field"><span>{t("fields.fileTimezone")}</span><input className="workspace-control" defaultValue={timezone} disabled={busy} name="timezone" aria-required="true" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}/><small>{t("fields.fileTimezoneHelp")}</small></label>
+    <WorkspaceTimezoneField ariaLabel={t("fields.fileTimezone")} disabled={busy} hint={t("fields.fileTimezoneHelp")}
+      label={t("fields.fileTimezone")} onChange={setFileTimezone} value={fileTimezone} />
     {result?<div className="admin-acquisition-import" aria-live="polite"><div><AdminStatus state={result.failure?.code==="content_already_accepted"?"not_available":result.status==="completed"?"good":result.status==="failed"?"danger":"warning"}>{t(result.failure?.code==="content_already_accepted" ? "history.alreadyImported" : `importStates.${result.status}`)}</AdminStatus><span>{progressPercent==null?t("importProgress.records",{count:formatAdminNumber(result.progress.records_processed,locale)}):t("importProgress.percent",{percent:progressPercent,count:formatAdminNumber(result.progress.records_processed,locale)})}</span></div><ImportFailureNotice item={result} t={t}/>{result.final_counts?<dl><div><dt>{t("importCounts.records")}</dt><dd>{formatAdminNumber(result.final_counts.record_count,locale)}</dd></div><div><dt>{t("importCounts.included")}</dt><dd>{formatAdminNumber(result.final_counts.included_count,locale)}</dd></div><div><dt>{t("importCounts.excluded")}</dt><dd>{formatAdminNumber(result.final_counts.excluded_count,locale)}</dd></div><div><dt>{t("importCounts.duplicates")}</dt><dd>{formatAdminNumber(result.final_counts.duplicate_count,locale)}</dd></div></dl>:null}{result.observed?<small>{observedSummary(result,locale,t)}</small>:null}</div>:null}
     {canCancelUpload ? <button className="admin-button" onClick={onCancelUpload} type="button">{t("actions.cancelUpload")}</button> : result && !isImportTerminal(result) ? <button className="admin-button" disabled={busy} onClick={onRefreshStatus} type="button">{t(canConfirmImportUpload(result) ? "actions.confirmUpload" : "actions.refreshStatus")}</button> : null}
     {error?<p className="workspace-form__error" role="alert">{error}</p>:null}<button className="admin-button admin-button--primary" disabled={busy||!readyForImport} type="submit"><UploadSimple aria-hidden size={15}/>{busy?t("actions.uploading"):t("actions.importCsv")}</button>

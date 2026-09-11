@@ -5,6 +5,7 @@ import { SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1,
   signalSemanticContextProviderFullLineageMatchesV1,
   type SignalSemanticContextProviderLineageV1 } from "@noisia/query-engine";
 import {
+  resolveSignalBrandContextAuthorityV1,
   appendSignalSemanticContextProposalsV1 as appendSignalSemanticContextProposalsDbV1,
   buildSignalSemanticContextProposalRuntimeLineageV1,
   loadLatestSignalSemanticContextProposalRunForGenerationV1,
@@ -88,7 +89,8 @@ type GenerationRow = {
   locale_context_digest:string;primary_locale:string;locale_variants:string[];markets:string[];
   timezone:string;draft_digest:string;pack_digest:string|null;created_at:Date|string;published_at:Date|string|null;
   proposal_model:string|null;proposal_model_version:string|null;proposal_prompt_digest:string|null;
-  proposal_pricing_version:string|null;
+  proposal_pricing_version:string|null;publication_counts:{quarantined_exceptions?:number}|null;
+  automatic_activation:boolean;
   proposal_provider_lineage:SignalSemanticContextProviderLineageV1|null;
   proposal_provider_lineage_digest:string|null;
 };
@@ -111,6 +113,13 @@ export class SignalSemanticContextPackError extends Error {
   constructor(public readonly code:string,public readonly status=409){super(code);}
 }
 
+export function signalSemanticContextPublishedContentReadyV1(args:{
+  approved:number;pending:number;quarantinedExceptions:number;automaticActivation:boolean;
+}){
+  return args.pending===args.quarantinedExceptions
+    &&(args.approved>0||args.automaticActivation);
+}
+
 export async function loadSignalSemanticContextReadinessV1(args:{
   queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
 }){
@@ -128,8 +137,10 @@ export async function loadSignalSemanticContextReadinessV1(args:{
   const selected=published??draft??null;
   const counts=selected?await loadCurrentCounts(args.queryable,selected.id):emptyCounts();
   const drift=selected?compareAuthority(selected,live):[];
-  const ready=Boolean(published&&selected===published&&drift.length===0&&counts.approved>0
-    &&counts.pending===0&&published.pack_digest);
+  const ready=Boolean(published&&selected===published&&drift.length===0&&published.pack_digest
+    &&signalSemanticContextPublishedContentReadyV1({approved:counts.approved,pending:counts.pending,
+      quarantinedExceptions:published.publication_counts?.quarantined_exceptions??0,
+      automaticActivation:published.automatic_activation}));
   return{
     contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
     brand_os_digest:live.brandOsDigest,
@@ -621,54 +632,8 @@ async function buildProductProviderLineageV1(args:{queryable:SignalBrandPolicyQu
 export async function resolveLiveSignalSemanticContextAuthorityV1(args:{queryable:SignalBrandPolicyQueryable;
   workspace:ResolvedSignalWorkspace}):Promise<Authority>{
   if(args.workspace.subject.type!=="brand")throw new SignalSemanticContextPackError("brand_workspace_required",422);
-  const profile=await args.queryable.query<{id:string;version:number;digest:string|null}>(`
-    SELECT profile.id::text,profile.version,(profile.metadata->>'snapshot_hash')::text digest
-    FROM brand_os_profiles profile WHERE profile.brand_id=$1::uuid AND profile.status='active'
-    ORDER BY profile.version DESC LIMIT 1`,[args.workspace.subject.id]);
-  const active=profile.rows[0];if(!active||!digestPattern.test(active.digest??"")){
-    throw new SignalSemanticContextPackError("brand_os_snapshot_required",409);
-  }
-  const plan=await args.queryable.query<{brief:Record<string,unknown>}>(`
-    SELECT acquisition_brief brief FROM signal_acquisition_plans
-    WHERE workspace_id=$1::uuid AND acquisition_brief IS NOT NULL
-      AND status IN ('current','draft')
-    ORDER BY CASE status WHEN 'current' THEN 0 ELSE 1 END,plan_version DESC LIMIT 1`,[args.workspace.id]);
-  const brief=plan.rows[0]?.brief;if(!brief)throw new SignalSemanticContextPackError("acquisition_brief_required",409);
-  const locales=normalizeStrings(brief.languages);const markets=normalizeStrings(brief.countries);
-  const primaryLocale=typeof brief.primary_locale==="string"?brief.primary_locale:
-    locales[0]?.includes("-")?locales[0]:markets[0]&&locales[0]?`${locales[0].slice(0,2).toLowerCase()}-${markets[0]}`:"";
-  const timezone=typeof brief.timezone==="string"?brief.timezone:args.workspace.timezone;
-  if(!localePattern.test(primaryLocale)||locales.length<1||markets.length<1||!timezone){
-    throw new SignalSemanticContextPackError("locale_market_authority_required",409);
-  }
-  const localeVariants=[...new Set([primaryLocale,...locales.filter((value)=>localePattern.test(value))])].sort();
-  const sources=await args.queryable.query<{id:string;source_kind:string;file_hash:string|null;
-    content_digest:string;updated_at:Date|string}>(`
-    SELECT source.id::text,source.source_kind,source.file_hash,
-      'sha256:'||encode(digest(COALESCE(source.raw_text,'')||source.extracted_payload::text,'sha256'),'hex') content_digest,
-      source.updated_at
-    FROM brand_knowledge_sources source
-    WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
-      AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
-    ORDER BY source.id`,[args.workspace.organizationId,args.workspace.subject.id]);
-  const chunks=await args.queryable.query<{id:string;source_id:string;content_digest:string}>(`
-    SELECT chunk.id::text,chunk.knowledge_source_id::text source_id,
-      'sha256:'||encode(digest(chunk.chunk_text,'sha256'),'hex') content_digest
-    FROM knowledge_chunks chunk JOIN brand_knowledge_sources source ON source.id=chunk.knowledge_source_id
-    WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
-      AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
-    ORDER BY chunk.id`,[args.workspace.organizationId,args.workspace.subject.id]);
-  const knowledgeDigest=sha256(stableJson({sources:sources.rows.map((row)=>({id:row.id,kind:row.source_kind,
-      digest:digestPattern.test(row.file_hash??"")?row.file_hash:row.content_digest})),chunks:chunks.rows}));
-  const knowledgeGenerationKey=`knowledge-${knowledgeDigest.slice(7,23)}`;
-  const localeContextDigest=sha256(stableJson({primary_locale:primaryLocale,locale_variants:localeVariants,
-    markets:[...markets].sort(),timezone}));
-  const sourceAuthorityDigest=sha256(stableJson({brand_os_profile_id:active.id,
-    brand_os_profile_version:active.version,brand_os_digest:active.digest,knowledge_generation_key:knowledgeGenerationKey,
-    knowledge_digest:knowledgeDigest,locale_context_digest:localeContextDigest}));
-  return{brandOsProfileId:active.id,brandOsProfileVersion:active.version,brandOsDigest:active.digest!,
-    knowledgeGenerationKey,knowledgeDigest,localeContextDigest,primaryLocale,localeVariants,
-    markets:[...markets].sort(),timezone,sourceAuthorityDigest};
+  return resolveSignalBrandContextAuthorityV1({queryable:args.queryable,workspace:{id:args.workspace.id,
+    organizationId:args.workspace.organizationId,subject:{type:'brand',id:args.workspace.subject.id},timezone:args.workspace.timezone}});
 }
 
 const generationSelect=`SELECT generation.id::text,generation.artifact_id::text,generation.generation_key,
@@ -680,7 +645,8 @@ const generationSelect=`SELECT generation.id::text,generation.artifact_id::text,
   generation.draft_digest,generation.pack_digest,generation.created_at,generation.published_at,
   generation.proposal_model,generation.proposal_model_version,generation.proposal_prompt_digest,
   generation.proposal_pricing_version,generation.proposal_provider_lineage,
-  generation.proposal_provider_lineage_digest
+  generation.proposal_provider_lineage_digest,generation.publication_counts,
+  signal_brand_context_automatic_generation_v1(generation.id) automatic_activation
   FROM signal_semantic_context_generations generation`;
 
 async function loadGeneration(queryable:SignalBrandPolicyQueryable,workspaceId:string,
@@ -856,8 +822,6 @@ function validGenerationProviderLineageV1(value:SignalSemanticContextGenerationP
   return Boolean(value.model.trim()&&value.model_version.trim()&&digestPattern.test(value.prompt_digest)
     &&value.pricing_version.trim());
 }
-function normalizeStrings(value:unknown){return Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>
-  typeof entry==="string"&&entry.trim().length>0).map((entry)=>entry.trim()))].sort():[];}
 function sha256(value:string){return`sha256:${createHash("sha256").update(value,"utf8").digest("hex")}`;}
 function stableJson(value:unknown):string{if(Array.isArray(value))return`[${value.map(stableJson).join(",")}]`;
   if(value&&typeof value==="object")return`{${Object.entries(value as Record<string,unknown>)
@@ -866,4 +830,3 @@ function stableJson(value:unknown):string{if(Array.isArray(value))return`[${valu
 const digestPattern=/^sha256:[0-9a-f]{64}$/u;
 const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const keyPattern=/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;
-const localePattern=/^[a-z]{2,3}(?:-[A-Z]{2})?$/u;

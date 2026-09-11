@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
+import { signalBrandOsCanonicalSnapshotHashV1 } from "@noisia/db";
 
 import type { SignalBrandPolicyQueryable } from "./signal-governed-brand-policy";
 import {
@@ -15,7 +16,8 @@ import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "./signal-work
 const workspace = {
   id: "00000000-0000-4000-8000-000000000001",
   organizationId: "00000000-0000-4000-8000-000000000002",
-  subject: { type: "brand", id: "00000000-0000-4000-8000-000000000003" }
+  subject: { type: "brand", id: "00000000-0000-4000-8000-000000000003" },
+  timezone: "America/Mexico_City"
 } as unknown as ResolvedSignalWorkspace;
 const actor = ({
   id: "00000000-0000-4000-8000-000000000004",
@@ -30,6 +32,10 @@ const generation = {
   locale_variants: ["en-US", "es-MX"],
   markets: ["MX", "US"],
   timezone: "America/Mexico_City"
+};
+const summaryBrandSnapshot = {
+  name: "Client brand", description: null, organization_id: workspace.organizationId,
+  industry: null, industry_sub: null, countries: ["US"], aliases: [], competitors: [], knowledge_count: 0
 };
 
 function element(index: number) {
@@ -70,7 +76,7 @@ test("review filters are closed and reject browser authority fields", () => {
   }
 });
 
-test("review summary represents only a zero-generation missing-brief workspace as uninitialized", async () => {
+test("review summary derives locale authority from Brand OS without an acquisition brief", async () => {
   const summary = await loadSignalSemanticContextReviewSummaryV1({
     queryable: summaryQueryable({ brief: false, generationCount: 0 }), workspace, actor
   });
@@ -78,15 +84,15 @@ test("review summary represents only a zero-generation missing-brief workspace a
   assert.equal(summary.latest_proposal_run, null);
   assert.deepEqual(summary.readiness, {
     lifecycle_state: "missing",
-    unavailable_reason: "acquisition_brief_required",
+    unavailable_reason: null,
     generation: null,
     open_draft: null,
     counts: { pending: 0, approved: 0, rejected: 0, merged: 0 },
-    locale_coverage: { primary_locale: null, locale_variants: [], markets: [] },
+    locale_coverage: { primary_locale: "en-US", locale_variants: ["en-US"], markets: ["US"] },
     drift_state: "missing",
     drift_reasons: [],
     ready_for_context_aware_discovery: false,
-    limitations: ["acquisition_brief_required"]
+    limitations: ["published_context_pack_required"]
   });
 
   const prepared = await loadSignalSemanticContextReviewSummaryV1({
@@ -97,17 +103,14 @@ test("review summary represents only a zero-generation missing-brief workspace a
     "a valid brief with no generation keeps the ordinary prepare-draft state");
 });
 
-test("review summary never reclassifies unknown errors or an existing generation", async () => {
+test("review summary never reclassifies unknown authority errors", async () => {
   await assert.rejects(loadSignalSemanticContextReviewSummaryV1({
     queryable: summaryQueryable({ brief: false, generationCount: 0, unknownError: true }),
     workspace, actor
   }), /unexpected_summary_failure/u);
-  await assert.rejects(loadSignalSemanticContextReviewSummaryV1({
-    queryable: summaryQueryable({ brief: false, generationCount: 1 }), workspace, actor
-  }), (error: unknown) => (error as { code?: string }).code === "acquisition_brief_required");
 });
 
-test("review summary route and OpenAPI expose one closed uninitialized reason", async () => {
+test("review summary route and OpenAPI no longer expose acquisition brief as product authority", async () => {
   const [route, service, openApi] = await Promise.all([
     readFile(resolve(process.cwd(),
       "src/app/api/data-os/signal/[workspaceId]/semantic-context/review/summary/route.ts"), "utf8"),
@@ -117,14 +120,12 @@ test("review summary route and OpenAPI expose one closed uninitialized reason", 
   assert.match(route, /loadSignalWorkspaceContextForSemanticContextManagement/u);
   assert.match(route, /semanticContextError\(error, "semantic_context_review_summary_unavailable"\)/u,
     "unknown and authorization failures retain the existing fail-closed route boundary");
-  assert.match(service, /error\.code !== "acquisition_brief_required"\) throw error/u);
-  assert.match(service, /count\(\*\)::int generation_count[\s\S]+generation_count \?\? -1\) !== 0\) throw error/u,
-    "the exception requires exact zero-generation authority");
+  assert.doesNotMatch(service, /acquisition_brief_required/u);
   const schema = openApi.match(/    SignalSemanticContextReviewSummaryV1:\n([\s\S]*?)\n    SignalSemanticContextReviewElementV1:/u)?.[1];
   assert.ok(schema);
   assert.match(schema, /readiness:\n\s+type: object\n\s+additionalProperties: false/u);
   assert.match(schema, /required: \[lifecycle_state, unavailable_reason/u);
-  assert.match(schema, /const: acquisition_brief_required/u);
+  assert.match(schema, /unavailable_reason: \{ type: "null" \}/u);
 });
 
 test("global locale filter stays closed and aligned across runtime, UI, and OpenAPI", async () => {
@@ -339,7 +340,8 @@ test("review routes and guided UI preserve management AuthZ, privacy, explicit s
   assert.doesNotMatch(routes, /POST|Idempotency-Key|generation_key|source_id|workspace_id|provider_response|prompt/gu);
   assert.match(manager, /\/review\/summary/u);
   assert.match(manager, /SemanticContextReviewWorkbench/u);
-  assert.match(manager, /reviewWritable=\{generation\.lifecycle_state === "draft"\}/u);
+  assert.match(manager, /reviewWritable=\{generation\.lifecycle_state === "draft" \|\| automaticMode\}/u,
+    "automatically activated generations keep only their quarantined exceptions editable");
   assert.doesNotMatch(manager, /requestJson\(`\$\{base\}\/publish`/u,
     "manager no longer exposes the unsealed V1 publish action");
   assert.doesNotMatch(manager, /brand_os_digest|knowledge_digest|locale_context_digest|semantic_context_pack_digest/u);
@@ -420,8 +422,9 @@ function summaryQueryable(args: { brief: boolean; generationCount: number; unkno
       if (sql.includes("FROM brand_os_profiles")) {
         if (args.unknownError) throw new Error("unexpected_summary_failure");
         return { rows: [{ id: "00000000-0000-4000-8000-000000000006", version: 1,
-          digest: `sha256:${"a".repeat(64)}` }], rowCount: 1 };
+          digest: signalBrandOsCanonicalSnapshotHashV1(summaryBrandSnapshot), countries: ["US"] }], rowCount: 1 };
       }
+      if (sql.includes("FROM brands brand")) return { rows: [summaryBrandSnapshot], rowCount: 1 };
       if (sql.includes("count(*)::int generation_count")) {
         return { rows: [{ generation_count: args.generationCount }], rowCount: 1 };
       }
@@ -432,6 +435,7 @@ function summaryQueryable(args: { brief: boolean; generationCount: number; unkno
         return { rows: args.brief ? [{ brief: { languages: ["en-US"], countries: ["US"],
           primary_locale: "en-US", timezone: "UTC" } }] : [], rowCount: args.brief ? 1 : 0 };
       }
+      if (sql.includes("FROM signal_governance_control_operations")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM knowledge_chunks")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM brand_knowledge_sources source")) return { rows: [], rowCount: 0 };
       throw new Error(`Unexpected summary query: ${sql.slice(0, 80)}`);

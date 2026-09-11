@@ -28,7 +28,7 @@ function validRun(value: unknown): value is SignalWorkspaceTopicPrototypeRunV1 |
 }
 export function validTopicPreparationStatus(value: unknown): value is TopicPreparationStatus {
   return object(value) && value.contract_version === "signal-workspace-topic-prototypes-v1" && access(value)
-    && nullableDigest(value.current_plan_digest) && ["available", "no_topics"].includes(String(value.availability))
+    && nullableDigest(value.current_plan_digest) && ["available", "no_topics", "context_required", "context_stale"].includes(String(value.availability))
     && typeof value.is_current === "boolean" && blocker(value.blocking_run_kind)
     && ["active_run", "latest_run", "latest_completed", "request_run"].every((key) => validRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes(String((value.active_run as SignalWorkspaceTopicPrototypeRunV1).status)))

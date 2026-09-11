@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { buildSignalWorkspaceTopicPrototypePlanV1, prepareWorkspaceCorpusTextChunksV1,
-  signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceAutonomousContextInputV1 } from "@noisia/query-engine";
-import { loadSignalTopicInheritedContextStoreV1 } from "./signal-topic-catalog";
+  signalWorkspaceEmbeddingDigestV1, canonicalSignalWorkspaceTopicLocaleV1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceAutonomousContextInputV1 } from "@noisia/query-engine";
+import { loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
 import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1,
   type SignalWorkspaceTopicQueryableV1 } from "./signal-workspace-topic-computation";
 
@@ -12,6 +12,9 @@ export async function loadSignalWorkspaceTopicPrototypePlanV1(args: {
 }) {
   const snapshot = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({ ...args, allow_empty: true, input_interests_only: args.input_interests_only ?? true });
   const autonomous = await loadSignalWorkspaceAutonomousContextInputsV1(args);
+  if (snapshot.input.context_digest !== autonomous.context.context_digest) {
+    throw new SignalTopicCatalogError("brand_context_source_stale");
+  }
   return buildSignalWorkspaceTopicPrototypePlanV1({ taxonomy_profile_id: snapshot.profile_id,
     embedding_profile: snapshot.input.embedding_profile, context_digest: snapshot.input.context_digest,
     topics: snapshot.input.topics, texts: { ...snapshot.input.texts, ...autonomous.texts }, context_inputs: autonomous.context_inputs });
@@ -21,7 +24,10 @@ export async function loadSignalWorkspaceAutonomousContextInputsV1(args: {
   queryable: SignalWorkspaceTopicQueryableV1; workspace_id: string;
 }) {
   const context = await loadSignalTopicInheritedContextStoreV1({ queryable: args.queryable,
-    workspace_id: args.workspace_id, complete_context: true });
+    workspace_id: args.workspace_id, complete_context: true, require_current_semantic_authority: true });
+  // No prototype plan can claim an inferred language when neither a plan nor
+  // the published semantic generation supplies its locale authority.
+  canonicalSignalWorkspaceTopicLocaleV1(context.locale.primary_locale);
   const texts: Record<string,string> = {};
   const context_inputs: SignalWorkspaceAutonomousContextInputV1[] = [];
   for (const scope of ["primary_brand", "competitor", "category"] as const) {

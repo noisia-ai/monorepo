@@ -1,9 +1,11 @@
-import { forbidden, unauthorized } from "@/lib/api/responses";
+import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
-import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
+import { refreshAutomaticBrandContextKnowledgeV1 } from "@/lib/data-os/brand-automatic-knowledge-server";
+import { reconcileAndEnsureBrandContextAfterCommittedMutationV1 } from "@/lib/data-os/signal-brand-context-preparation";
 import { createOrReactivateSignalCompetitorsV1,retireSignalCompetitorsV1 } from "@/lib/data-os/signal-competitor-lifecycle";
+import { brandContextPreparationIntentSchema } from "@/lib/validation/brand";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getAuthenticatedAppUser();
@@ -23,6 +25,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const body = await request.json().catch(() => ({}));
+  const parsedPreparation = brandContextPreparationIntentSchema.optional().safeParse(body?.preparation);
+  if (!parsedPreparation.success) return validationError(parsedPreparation.error);
   const names = uniqueStrings(Array.isArray(body?.competitors) ? body.competitors : []);
 
   if (names.length === 0) {
@@ -34,19 +38,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const idempotencyKey=request.headers.get("Idempotency-Key")?.trim()??"";
   if(idempotencyKey.length<8||idempotencyKey.length>500)return Response.json({error:"idempotency_key_required"},{status:400});
+  if(parsedPreparation.data&&parsedPreparation.data.idempotency_key!==idempotencyKey)
+    return Response.json({error:"idempotency_key_mismatch"},{status:422});
   const result=await createOrReactivateSignalCompetitorsV1({brandId:brand.id,actor:session.appUser,
     idempotencyKey,names,vertical:brand.industry,subVertical:brand.industrySub,
     country:brand.countries?.[0]??"MX"});
 
-  if (session.appUser.userType === "noisia_internal") {
-    await reconcileSignalBrandOsForBrandMutationV1({
-      brandId: brand.id,
-      actor: session.appUser,
-      idempotencyKey: `${idempotencyKey}:brand-os`
-    });
-  }
+  const preparation = await prepareAfterCompetitorMutation({ brandId: brand.id,
+    actor: session.appUser, preparation: parsedPreparation.data, idempotencyKey });
 
-  return Response.json({ data: result }, { status: 201 });
+  return Response.json({ data: result, brand_context_preparation: preparation }, { status: 201 });
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -68,18 +69,35 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
   const idempotencyKey=request.headers.get("Idempotency-Key")?.trim()??"";
   if(idempotencyKey.length<8||idempotencyKey.length>500)return Response.json({error:"idempotency_key_required"},{status:400});
+  const body = await request.json().catch(() => ({}));
+  const parsedPreparation = brandContextPreparationIntentSchema.optional().safeParse(body?.preparation);
+  if (!parsedPreparation.success) return validationError(parsedPreparation.error);
+  if(parsedPreparation.data&&parsedPreparation.data.idempotency_key!==idempotencyKey)
+    return Response.json({error:"idempotency_key_mismatch"},{status:422});
   const retired=await retireSignalCompetitorsV1({brandId:brand.id,actor:session.appUser,
     idempotencyKey,competitorIds:null,evidence:"Brand OS bulk retirement"});
 
-  if (session.appUser.userType === "noisia_internal") {
-    await reconcileSignalBrandOsForBrandMutationV1({
-      brandId: brand.id,
-      actor: session.appUser,
-      idempotencyKey: `${idempotencyKey}:brand-os`
-    });
-  }
+  const preparation = await prepareAfterCompetitorMutation({ brandId: brand.id,
+    actor: session.appUser, preparation: parsedPreparation.data, idempotencyKey });
 
-  return Response.json({ data: retired });
+  return Response.json({ data: retired, brand_context_preparation: preparation });
+}
+
+async function prepareAfterCompetitorMutation(args: {
+  brandId: string; actor: Parameters<typeof reconcileAndEnsureBrandContextAfterCommittedMutationV1>[0]["actor"];
+  preparation: Parameters<typeof reconcileAndEnsureBrandContextAfterCommittedMutationV1>[0]["preparation"];
+  idempotencyKey: string;
+}) {
+  try {
+    await refreshAutomaticBrandContextKnowledgeV1(args.brandId);
+  } catch {
+    return { preparation: null, advancement: [], error_code: "brand_context_knowledge_refresh_unavailable" };
+  }
+  return reconcileAndEnsureBrandContextAfterCommittedMutationV1({
+    brandId: args.brandId, actor: args.actor, preparation: args.preparation,
+    fallbackIdempotencyKey: `${args.idempotencyKey}:prepare`,
+    reconciliationIdempotencyKey: `${args.idempotencyKey}:brand-os`
+  });
 }
 
 function uniqueStrings(values: unknown[]) {

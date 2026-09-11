@@ -5,7 +5,7 @@ import test from "node:test";
 import type {Pool} from "pg";
 import {normalizeSignalTaxonomyProposalV1, signalTaxonomyContextHashV1,
   type SignalTaxonomyContextRefV1} from "@noisia/query-engine";
-import {createSignalTaxonomyDraftStoreV1, insertSignalTaxonomyDraftCoreV1,
+import {createSignalTaxonomyDraftStoreV1, insertSignalTaxonomyDraftCoreV1, loadSignalTaxonomyDiscoveryContextStoreV1,
   type CreateSignalTaxonomyDraftStoreInputV1, type SignalTaxonomyDraftInsertClient} from "./signal-taxonomy-profile";
 
 const workspace = "11111111-1111-4111-8111-111111111111";
@@ -20,6 +20,31 @@ const mention = {source_type: "mention_sample" as const,
 const refs: SignalTaxonomyContextRefV1[] = [governed[0]!, mention].map(({source_type, source_id, version, content}) =>
   ({source_type, source_id, version, content_hash: hash(content)}));
 const contextHash = signalTaxonomyContextHashV1(refs);
+test('taxonomy discovery for corpus A includes A and global Brand KB, never corpus B of the same brand',async()=>{
+  const corpusB='88888888-8888-4888-8888-888888888888';
+  const sourceId=(n:number)=>`aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12,'0')}`;
+  const knowledge=[{id:sourceId(1),brand:workspace,corpus,content:'Evidence A'},
+    {id:sourceId(2),brand:workspace,corpus:corpusB,content:'Evidence B'},
+    {id:sourceId(3),brand:workspace,corpus:null,content:'Global Brand KB'},
+    {id:sourceId(4),brand:otherWorkspace,corpus:null,content:'Other brand KB'}];
+  const pool={async query(sql:string,values:unknown[]=[]){
+    if(sql.includes('SELECT corpus_revision'))return{rows:[{corpus_revision:7}]};
+    if(sql.includes('WITH workspace_scope AS')){
+      assert.deepEqual(values,[workspace,corpus]);
+      assert.match(sql,/source\.study_corpus_id = \$2::uuid\s+OR \(scope\.brand_id IS NOT NULL AND source\.brand_id = scope\.brand_id AND source\.study_corpus_id IS NULL\)/u);
+      return{rows:knowledge.filter(item=>item.corpus===values[1]||item.brand===values[0]&&item.corpus===null)
+        .map(item=>({source_type:'knowledge_assertion',source_id:item.id,version:'v1',content:item.content}))};
+    }
+    assert.match(sql,/WHERE mention\.study_corpus_id = \$1::uuid/u);return{rows:[]};
+  }} as unknown as Pool;
+  const args={pool,workspace_id:workspace,study_corpus_id:corpus,kind:'topic' as const};
+  const first=await loadSignalTaxonomyDiscoveryContextStoreV1(args);
+  assert.deepEqual(first.context_refs.map(ref=>ref.source_id),[sourceId(1),sourceId(3)]);
+  knowledge[1]!.content='Changed B evidence';
+  assert.equal((await loadSignalTaxonomyDiscoveryContextStoreV1(args)).context_hash,first.context_hash);
+  knowledge[2]!.content='Changed global Brand KB';
+  assert.notEqual((await loadSignalTaxonomyDiscoveryContextStoreV1(args)).context_hash,first.context_hash);
+});
 type Query = {sql: string; values: unknown[]; via: "pool" | "client"};
 type Profile = {id: string; workspace_id: string; kind: string; version: number; status: string; context_hash: string};
 type Inserted = {id: string; table: string; values: unknown[]};

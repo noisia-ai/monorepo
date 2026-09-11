@@ -21159,3 +21159,27 @@ body:has(.signal-report)::before { display: none; }
 }
 
 .client-brand-workspace__navigation .workspace-shell__nav-link { display: inline-flex; width: auto; min-height: 32px; height: auto; padding: 4px 10px; white-space: nowrap; }
+
+/* Optional catalog search keeps the shared select bounded on small screens. */
+.workspace-select__popover--searchable .workspace-select__search { width: calc(100% - 16px); margin: 8px; }
+.workspace-select__empty { margin: 10px 12px; color: var(--workspace-muted); font-size: 12px; }
+
+.brand-context-preparation-notice { display: grid; gap: 6px; width: 100%; min-width: 0; padding: 14px 16px; border: 1px solid var(--workspace-border); border-radius: 10px; font-size: 13px; line-height: 1.5; }
+.brand-context-preparation-notice p { margin: 0; }
+.brand-context-preparation-notice small { color: var(--workspace-muted); }
+
+.semantic-context-review__row.semantic-context-review__row--automatic { grid-template-columns: minmax(0, 1fr); }
+
+.semantic-context-pack__automatic-preparation { display: grid; gap: 12px; margin: 16px 0; }
+.semantic-context-pack__automatic-preparation > .admin-button { justify-self: start; }
+
+.semantic-context-pack__automatic-preparation { padding: 0 16px; }
+.semantic-context-pack__regenerate, .semantic-context-pack__run-receipt { display: block; font-size: 13px; }
+.semantic-context-pack__regenerate > summary, .semantic-context-pack__run-receipt > summary, .semantic-context-review__advanced > summary { cursor: pointer; font-weight: 600; padding: 10px 0; }
+.semantic-context-pack__regenerate > .brand-context-preparation-notice { margin-bottom: 10px; }
+.semantic-context-pack__run-receipt { padding: 0 16px 12px; }
+.semantic-context-review__advanced { grid-column: 2 / -1; align-self: center; }
+.semantic-context-review__advanced-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 720px) { .semantic-context-review__advanced { grid-column: 1 / -1; } .semantic-context-review__advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.workspace-select__popover.workspace-select__popover--searchable { min-width: 0; max-width: calc(100vw - 16px); }

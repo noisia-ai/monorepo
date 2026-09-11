@@ -56,7 +56,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
         }))}
       />
 
-      <CompetitorManager brandId={brand.id} competitors={brand.competitors} />
+      <CompetitorManager brandId={brand.id} workspaceId={workspace.summary.workspaceId} competitors={brand.competitors} />
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
         <>

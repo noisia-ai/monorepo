@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
 
 import { Icon } from "@/components/ui/Icon";
+import { BrandContextPreparationNotice, useBrandContextPreparation } from "./BrandContextPreparationNotice";
 
 type Competitor = {
   id: string;
@@ -14,13 +15,32 @@ type Competitor = {
   subVertical: string | null;
 };
 
-export function CompetitorManager({ brandId, competitors }: { brandId: string; competitors: Competitor[] }) {
+export function CompetitorManager({ brandId, workspaceId, competitors }: { brandId: string; workspaceId: string | null; competitors: Competitor[] }) {
   const t = useTranslations("CompetitorManager");
   const router = useRouter();
+  const preparation = useBrandContextPreparation();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isClearing, setIsClearing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function recoverAutomaticKnowledge(action: string, errorCode: unknown) {
+    if (errorCode !== "brand_context_knowledge_refresh_unavailable") return true;
+    if (!workspaceId) return false;
+    const recoveryAction = `recover-competitor-context:${action}`;
+    const requestIdentity = { reason: "operator_requested_reconciliation", source_action: action };
+    const intent = preparation.forRequest(recoveryAction, requestIdentity);
+    try {
+      const response = await fetch(`/api/data-os/signal/${workspaceId}/semantic-context/reconcile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ reason: requestIdentity.reason, preparation: intent })
+      });
+      if (!response.ok) return false;
+      preparation.accepted(recoveryAction);
+      return true;
+    } catch { return false; }
+  }
 
   async function addCompetitors(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -30,17 +50,23 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
 
     const form = new FormData(targetForm);
     const names = splitList(String(form.get("competitors") ?? ""));
+    const action = `add-competitors:${brandId}`;
+    const intent = preparation.forRequest(action, { competitors: names });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID()
+          "Idempotency-Key": intent.idempotency_key
         },
-        body: JSON.stringify({ competitors: names })
+        body: JSON.stringify({ competitors: names, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackAddError"));
+      preparation.accepted(action);
+      if (!await recoverAutomaticKnowledge(action, json?.brand_context_preparation?.error_code)) {
+        setError(t("contextPending"));
+      }
       targetForm.reset();
       router.refresh();
     } catch (err) {
@@ -53,13 +79,20 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
   async function removeOne(competitorId: string) {
     setError(null);
     setPendingId(competitorId);
+    const action = `remove-competitor:${competitorId}`;
+    const intent = preparation.forRequest(action, { competitor_id: competitorId });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors/${competitorId}`, {
         method: "DELETE",
-        headers: { "Idempotency-Key": crypto.randomUUID() }
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackDeleteError"));
+      preparation.accepted(action);
+      if (!await recoverAutomaticKnowledge(action, json?.brand_context_preparation?.error_code)) {
+        setError(t("contextPending"));
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackDeleteError"));
@@ -73,13 +106,20 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
 
     setError(null);
     setIsClearing(true);
+    const action = `clear-competitors:${brandId}`;
+    const intent = preparation.forRequest(action, { competitor_ids: "all-current" });
     try {
       const res = await fetch(`/api/brands/${brandId}/competitors`, {
         method: "DELETE",
-        headers: { "Idempotency-Key": crypto.randomUUID() }
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackClearError"));
+      preparation.accepted(action);
+      if (!await recoverAutomaticKnowledge(action, json?.brand_context_preparation?.error_code)) {
+        setError(t("contextPending"));
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackClearError"));
@@ -123,6 +163,7 @@ export function CompetitorManager({ brandId, competitors }: { brandId: string; c
           <Icon name={isAdding ? "spinner" : "tag"} size={13} /> {t("add")}
         </button>
       </form>
+      <BrandContextPreparationNotice quote={preparation.quote} loading={preparation.loading} />
       {competitors.length === 0 ? (
         <div className="admin-empty workspace-resource-section__empty">
           <Icon name="info" size={18} />

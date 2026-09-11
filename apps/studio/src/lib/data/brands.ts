@@ -201,7 +201,7 @@ export async function getBrandDetailForUser(appUser: AppUser, brandId: string) {
       updatedAt: brandKnowledgeSources.updatedAt
     })
     .from(brandKnowledgeSources)
-    .where(eq(brandKnowledgeSources.brandId, brand.id))
+    .where(and(eq(brandKnowledgeSources.brandId, brand.id), isNull(brandKnowledgeSources.studyCorpusId)))
     .orderBy(desc(brandKnowledgeSources.createdAt));
   const corpora = await listCorporaForBrand(brand.id);
 

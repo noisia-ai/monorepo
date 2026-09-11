@@ -4,6 +4,7 @@ import {
   STUDY_CONTEXT_MAX_CHARS,
   STUDY_SOURCE_SNAPSHOT_MAX_CHARS
 } from "@/lib/study-intake-context";
+import { BRAND_KNOWLEDGE_NOTES_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
 
 const countryCodeSchema = z.string().length(2).transform((value) => value.toUpperCase());
 const optionalText = (max: number, min = 0) =>
@@ -25,6 +26,15 @@ const timezoneSchema = z.string().min(1).max(120).refine((value) => {
   }
 }, "Selecciona una zona horaria IANA válida.");
 
+export const brandContextPreparationIntentSchema = z.object({
+  idempotency_key: z.string().min(8).max(200).regex(/^[A-Za-z0-9._:-]+$/u),
+  quote_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u).optional(),
+  confirmation: z.literal("prepare_brand_context_within_shown_cap").optional()
+}).strict().refine(
+  (value) => Boolean(value.quote_digest) === Boolean(value.confirmation),
+  { message: "La cotización y su confirmación deben enviarse juntas." }
+);
+
 export const createBrandSchema = z.object({
   organization_id: z.string().uuid().optional(),
   organization_name: optionalText(180, 2),
@@ -33,14 +43,15 @@ export const createBrandSchema = z.object({
   display_name: optionalText(160),
   industry: optionalText(80, 2),
   industry_sub: optionalText(500, 2),
-  countries: z.array(countryCodeSchema).min(1).default(["MX"]),
+  countries: z.array(countryCodeSchema).min(1).max(32).default(["MX"]),
   description: optionalText(12000),
-  brand_seed_handles: z.array(shortListItem(240)).default([]),
-  competitors: z.array(shortListItem(240, 2)).default([]),
-  knowledge_notes: optionalText(50000),
+  brand_seed_handles: z.array(shortListItem(240)).max(100).default([]),
+  competitors: z.array(shortListItem(240, 2)).max(100).default([]),
+  knowledge_notes: optionalText(BRAND_KNOWLEDGE_NOTES_MAX_CHARS),
   timezone: timezoneSchema.default("America/Mexico_City"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
-  primary_brand_manager_user_id: z.string().uuid().optional()
+  primary_brand_manager_user_id: z.string().uuid().optional(),
+  preparation: brandContextPreparationIntentSchema.optional()
 }).refine((data) => data.organization_id || data.organization_name, {
   path: ["organization_name"],
   message: "Selecciona una organización o crea una nueva."
@@ -53,11 +64,12 @@ export const updateBrandSchema = z.object({
   display_name: optionalText(160),
   industry: optionalText(80, 2),
   industry_sub: optionalText(500, 2),
-  countries: z.array(countryCodeSchema).min(1).default(["MX"]),
+  countries: z.array(countryCodeSchema).min(1).max(32).default(["MX"]),
   description: optionalText(12000),
-  brand_seed_handles: z.array(shortListItem(240)).default([]),
+  brand_seed_handles: z.array(shortListItem(240)).max(100).default([]),
   timezone: timezoneSchema,
-  status: z.enum(["active", "paused", "archived"]).default("active")
+  status: z.enum(["active", "paused", "archived"]).default("active"),
+  preparation: brandContextPreparationIntentSchema.optional()
 });
 
 export const createThemeSchema = z.object({

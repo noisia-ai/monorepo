@@ -19,12 +19,16 @@ for (const locale of ["es-MX", "en-US"]) {
   }
   const render = (props: ComponentProps<typeof Fixture> = {}) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(Fixture, props)));
-  test(`${locale}: the file zone is editable, named for submission and initialized from its workspace`, () => {
+  test(`${locale}: the file zone uses the searchable IANA catalog and initializes from its workspace`, () => {
     const html = render();
     const input = html.match(/<input[^>]*name="timezone"[^>]*>/u)?.[0];
     assert.ok(input);
+    assert.match(input, /type="hidden"/u);
     assert.match(input, /value="Europe\/Madrid"/u);
     assert.doesNotMatch(input, /disabled|readonly/iu);
+    assert.match(html, /role="combobox"/u);
+    assert.equal((html.match(/name="timezone"/gu) ?? []).length, 1);
+    assert.doesNotMatch(html, /<input(?=[^>]*name="timezone")(?=[^>]*type="text")[^>]*>/u);
     assert.ok(html.includes(messages.AdminWorkspace.data.acquisition.fields.fileTimezone));
     assert.ok(html.includes(messages.AdminWorkspace.data.acquisition.fields.fileTimezoneHelp));
   });

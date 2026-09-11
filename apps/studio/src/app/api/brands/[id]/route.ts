@@ -1,13 +1,20 @@
-import { and, eq, ne, sql } from "drizzle-orm";
-import { brandKnowledgeSources, brands, organizations, signalRefreshPolicies, signalWorkspaces, studyCorpora } from "@noisia/db";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { brandKnowledgeSources, brandSeeds, brands, competitors as competitorRelations, organizations, signalRefreshPolicies, signalWorkspaces, studyCorpora } from "@noisia/db";
 
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { syncClientBrandAccessForMovedBrand } from "@/lib/auth/org-sync";
 import { canCreateBrandOrTheme } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getBrandDetailForUser } from "@/lib/data/brands";
+import { buildAutomaticBrandContextText } from "@/lib/data-os/brand-automatic-knowledge";
+import {
+  beginBrandContextDomainMutationV1,
+  BrandContextDomainMutationError,
+  completeBrandContextDomainMutationV1,
+  requireBrandContextDomainMutationKeyV1
+} from "@/lib/data-os/brand-context-domain-mutation";
 import { resolveBrandDeleteDisposition } from "@/lib/data-os/brand-lifecycle";
-import { reconcileSignalBrandOsForBrandMutationV1 } from "@/lib/data-os/signal-governance-control-plane";
+import { reconcileAndEnsureBrandContextAfterCommittedMutationV1 } from "@/lib/data-os/signal-brand-context-preparation";
 import { db } from "@/lib/db";
 import { updateBrandSchema } from "@/lib/validation/brand";
 
@@ -32,6 +39,26 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (!parsed.success) {
     return validationError(parsed.error);
   }
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = requireBrandContextDomainMutationKeyV1(request, parsed.data.preparation);
+  } catch (error) {
+    return brandContextDomainMutationErrorResponse(error);
+  }
+  const mutationInput = {
+    brand_id: current.id,
+    organization_id: parsed.data.organization_id,
+    slug: parsed.data.slug,
+    name: parsed.data.name,
+    display_name: parsed.data.display_name ?? null,
+    industry: parsed.data.industry ?? null,
+    industry_sub: parsed.data.industry_sub ?? null,
+    countries: parsed.data.countries,
+    description: parsed.data.description ?? null,
+    brand_seed_handles: parsed.data.brand_seed_handles,
+    timezone: parsed.data.timezone,
+    status: parsed.data.status
+  };
 
   const [organization] = await db
     .select({ id: organizations.id })
@@ -44,7 +71,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   try {
-    const updated = await db.transaction(async (tx) => {
+    const mutation = await db.transaction(async (tx) => {
+      const [workspace] = await tx.select({ id: signalWorkspaces.id }).from(signalWorkspaces)
+        .where(eq(signalWorkspaces.brandId, current.id)).limit(1);
+      if (!workspace) throw new Error("Signal workspace not found for brand mutation.");
+      const operation = await beginBrandContextDomainMutationV1<typeof brands.$inferSelect>({
+        tx,
+        workspaceId: workspace.id,
+        actorUserId: session.appUser.id,
+        action: "update-brand-context",
+        idempotencyKey,
+        input: mutationInput
+      });
+      if (operation.replay) return { row: operation.replay, replayed: true };
       const [row] = await tx
         .update(brands)
         .set({
@@ -63,7 +102,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .where(eq(brands.id, current.id))
         .returning();
 
-      if (!row) return null;
+      if (!row) throw new Error("Brand mutation did not update a row.");
 
       if (current.organizationId !== parsed.data.organization_id) {
         await tx
@@ -72,7 +111,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             organizationId: parsed.data.organization_id,
             updatedAt: new Date()
           })
-          .where(eq(brandKnowledgeSources.brandId, current.id));
+          .where(and(eq(brandKnowledgeSources.brandId, current.id), isNull(brandKnowledgeSources.studyCorpusId)));
       }
 
       await tx
@@ -90,26 +129,80 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         .set({ timezone: parsed.data.timezone, updatedAt: new Date() })
         .where(eq(signalRefreshPolicies.workspaceId, sql`(SELECT id FROM signal_workspaces WHERE brand_id=${current.id})`));
 
-      return row;
+      const automaticSources = await tx
+        .select({ id: brandKnowledgeSources.id, extractedPayload: brandKnowledgeSources.extractedPayload })
+        .from(brandKnowledgeSources)
+        .where(and(
+          eq(brandKnowledgeSources.brandId, current.id),
+          isNull(brandKnowledgeSources.studyCorpusId),
+          eq(brandKnowledgeSources.sourceKind, "brand_os_context"),
+          sql`${brandKnowledgeSources.extractedPayload}->>'source'='automatic_brand_os'`
+        ));
+      if (automaticSources.length > 0) {
+        const competitorRows = await tx
+          .select({ name: brandSeeds.canonicalName })
+          .from(competitorRelations)
+          .innerJoin(brandSeeds, eq(brandSeeds.id, competitorRelations.competitorBrandSeedId))
+          .where(and(eq(competitorRelations.brandId, current.id), eq(competitorRelations.status, "current")));
+        for (const source of automaticSources) {
+          const existingPayload = asObject(source.extractedPayload);
+          const confirmedContext = typeof existingPayload.confirmed_additional_context === "string"
+            ? existingPayload.confirmed_additional_context : null;
+          const rawText = buildAutomaticBrandContextText({
+            name: parsed.data.display_name || parsed.data.name,
+            description: parsed.data.description,
+            industry: parsed.data.industry,
+            industrySub: parsed.data.industry_sub,
+            countries: parsed.data.countries,
+            aliases: parsed.data.brand_seed_handles,
+            competitors: competitorRows.map((competitor) => competitor.name),
+            notes: confirmedContext
+          });
+          await tx.update(brandKnowledgeSources).set({
+            organizationId: parsed.data.organization_id,
+            rawText,
+            extractedPayload: {
+              ...existingPayload,
+              summary: rawText.slice(0, 1200),
+              source: "automatic_brand_os",
+              confirmed_additional_context: confirmedContext
+            },
+            status: "processed",
+            errorMessage: null,
+            updatedAt: new Date()
+          }).where(and(eq(brandKnowledgeSources.id, source.id), eq(brandKnowledgeSources.brandId, current.id),
+            isNull(brandKnowledgeSources.studyCorpusId)));
+        }
+      }
+
+      if (current.organizationId !== parsed.data.organization_id) {
+        await syncClientBrandAccessForMovedBrand({
+          brandId: current.id,
+          organizationId: parsed.data.organization_id
+        }, tx);
+      }
+
+      await completeBrandContextDomainMutationV1({
+        tx,
+        workspaceId: workspace.id,
+        operationId: operation.operationId,
+        result: row
+      });
+      return { row, replayed: false };
     });
 
-    if (current.organizationId !== parsed.data.organization_id) {
-      await syncClientBrandAccessForMovedBrand({
-        brandId: current.id,
-        organizationId: parsed.data.organization_id
-      });
-    }
+    const preparation = await reconcileAndEnsureBrandContextAfterCommittedMutationV1({
+      brandId: current.id,
+      actor: session.appUser,
+      preparation: parsed.data.preparation,
+      fallbackIdempotencyKey: `${idempotencyKey}:prepare`,
+      reconciliationIdempotencyKey: `${idempotencyKey}:brand-os`,
+      enabled: mutation.row.status === "active"
+    });
 
-    if (updated && session.appUser.userType === "noisia_internal") {
-      await reconcileSignalBrandOsForBrandMutationV1({
-        brandId: current.id,
-        actor: session.appUser,
-        idempotencyKey: `brand-update:${current.id}:${updated.updatedAt.toISOString()}`
-      });
-    }
-
-    return Response.json({ data: updated });
+    return Response.json({ data: mutation.row, replayed: mutation.replayed, brand_context_preparation: preparation });
   } catch (err) {
+    if (err instanceof BrandContextDomainMutationError) return brandContextDomainMutationErrorResponse(err);
     if (isUniqueViolation(err)) {
       return Response.json(
         {
@@ -121,6 +214,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     throw err;
   }
+}
+
+function brandContextDomainMutationErrorResponse(error: unknown) {
+  const required = error instanceof BrandContextDomainMutationError && error.code === "idempotency_key_required";
+  return Response.json({
+    error: required ? "idempotency_key_required" : "idempotency_conflict",
+    message: required
+      ? "Idempotency-Key is required and must match the preparation."
+      : "Idempotency-Key was reused with incompatible brand input."
+  }, { status: required ? 400 : 409 });
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -249,4 +352,9 @@ async function permanentlyDeleteBrand(brandId: string) {
 
 function isUniqueViolation(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
 }

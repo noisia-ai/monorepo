@@ -20,6 +20,7 @@ import {
   SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,
   SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS,
   SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES,
+  signalSemanticContextPublishedContentReadyV1,
   signalSemanticContextProviderConfigurationFromEnvV1
 } from "@/lib/data-os/signal-semantic-context-pack";
 import {
@@ -49,15 +50,24 @@ test("proposal generation entry is gated by the server-discovered generation run
   }), false, "missing generation state fails closed");
 });
 
-test("Brand OS distinguishes the uninitialized normal state from preparation and errors", () => {
-  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false, error: null,
-    hasGeneration: false, unavailableReason: "acquisition_brief_required" }), "uninitialized");
+test("Brand OS treats a governed brand without a generation as ready to prepare", () => {
   assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false, error: null,
     hasGeneration: false, unavailableReason: null }), "ready_to_prepare");
   assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false,
-    error: "unexpected_summary_failure", hasGeneration: false,
-    unavailableReason: "acquisition_brief_required" }), "error",
+    error: "unexpected_summary_failure", hasGeneration: false, unavailableReason: null }), "error",
   "an actual request failure always wins over an empty-state reason");
+});
+
+test("an explicitly automatic empty publication remains ready while legacy empty packs stay closed", () => {
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:0,
+    quarantinedExceptions:0,automaticActivation:true}),true);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:0,
+    quarantinedExceptions:0,automaticActivation:false}),false);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:1,
+    quarantinedExceptions:0,automaticActivation:true}),false);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:1,
+    quarantinedExceptions:1,automaticActivation:true}),true,
+  "validated automatic exceptions remain quarantined rather than blocking Brand OS base context");
 });
 
 test("terminal successor preparation is non-paid and restricted to consumed empty drafts", () => {
@@ -186,12 +196,13 @@ test("management routes keep authority fields and provider proposal writes off t
 });
 
 test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{
-  const [page,manager,workbench,service,dbWriter,esMx,enUs]=await Promise.all([
+  const [page,manager,workbench,service,dbWriter,reconcileRoute,esMx,enUs]=await Promise.all([
     readFile(resolve(process.cwd(),"src/app/studio/brands/[id]/brand-os/page.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/components/brands/SemanticContextReviewWorkbench.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
     readFile(resolve(process.cwd(),"../../infrastructure/db/signal-semantic-context-proposal.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"src/app/api/data-os/signal/[workspaceId]/semantic-context/reconcile/route.ts"),"utf8"),
     readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
     readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")
   ]);
@@ -204,6 +215,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "the generation result consumes the server-owned automatic disposition summary");
   assert.match(manager,/run\.ready/u);
   assert.match(manager,/run\.exceptions/u);
+  assert.match(manager,/draftWritable=\{generation\.lifecycle_state === "draft"\}/u,
+    "published automatic context keeps carried edits but hides draft-only actions");
   assert.match(workbench,/reviewWorkbench\.readyCount/u);
   assert.match(workbench,/reviewWorkbench\.exceptionCount/u);
   assert.doesNotMatch(manager,/publish_reviewed_semantic_context/u);
@@ -213,6 +226,14 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   assert.match(manager,/terminal_provider_run/u);
   assert.match(manager,/actions\.prepareSuccessor/u);
   assert.match(manager,/terminalSuccessor\.message/u);
+  assert.match(manager,/forUnfundedRequest\(action, requestIdentity\)/u,
+    "terminal recovery cannot silently include a provider quote or confirmation");
+  assert.match(manager,/expected_generation_key: activeGenerationKey/u,
+    "terminal recovery is bound to the generation the operator inspected");
+  assert.match(reconcileRoute,/brand_context_terminal_recovery_admission_forbidden/u,
+    "the server rejects any paid admission attached to terminal recovery");
+  assert.match(reconcileRoute,/reason !== "terminal_provider_run"[\s\S]*reconcileSignalBrandOsForBrandMutationV1[\s\S]*ensureBrandContextPreparationForWorkspaceV1/u,
+    "fresh paid preparation first rebuilds or verifies the canonical Brand OS projection; terminal recovery remains spend-free");
   assert.match(manager,/noisia:semantic-context-run/u,
     "same-tab polling may retain a bounded run hint");
   assert.match(manager,/isSignalSemanticContextRunSessionCurrentV1/u,
@@ -221,8 +242,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     "same-tab polling state retains the generation identity with the run key");
   assert.match(manager,/summary\.latest_proposal_run/u,
     "fresh loads must bind the server-discovered run without sessionStorage authority");
-  assert.match(manager,/const canStartProposalGeneration = canStartSignalSemanticContextProposalGenerationV1\(\{/u,
-    "all proposal entry points share one server-run-aware state guard");
+  assert.match(manager,/const canStartProposalGeneration = !preparationLoading && !preparationError && !preparation && canStartSignalSemanticContextProposalGenerationV1\(\{/u,
+    "all legacy proposal entry points share one preparation and server-run-aware state guard");
   assert.equal(manager.match(/\{canStartProposalGeneration \?/gu)?.length,2,
     "the action bar and empty state must use the same proposal entry guard");
   assert.doesNotMatch(manager,/generation\?\.lifecycle_state === "draft" && elements\.length === 0 \?/u,
@@ -297,16 +318,8 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
   }
   assert.equal(typeof esMessages.title,"string");
   assert.equal(typeof enMessages.title,"string");
-  assert.match(manager,/emptyState === "uninitialized"/u);
-  assert.match(manager,/uninitialized\.body/u);
-  assert.doesNotMatch(manager,/acquisition_brief_required[^\n]+AdminFeedbackState/u,
-    "the component renders the closed server state rather than matching an error string");
-  for (const messages of [esMessages, enMessages]) {
-    assert.equal(typeof messages.uninitialized.title, "string");
-    assert.equal(typeof messages.uninitialized.body, "string");
-    assert.doesNotMatch(`${messages.uninitialized.title} ${messages.uninitialized.body}`,
-      /acquisition_brief_required|Claude|Anthropic|provider/u);
-  }
+  assert.doesNotMatch(manager,/acquisition_brief_required/u,
+    "the ordinary Brand OS path no longer depends on a hidden acquisition brief");
 });
 
 test("Semantic Context flight card exposes server pricing and remains keyboard-safe before consent",async()=>{

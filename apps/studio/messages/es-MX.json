@@ -90,6 +90,15 @@
       "next": "Siguiente"
     }
   },
+  "BrandContextPreparation": {
+    "loading": "Consultando el tope de preparación",
+    "pending": "Se guardará sin iniciar la preparación",
+    "pendingBody": "Tus cambios se guardan aunque no haya permiso de gasto disponible. La preparación automática quedará pendiente de autorización.",
+    "cap": "Preparación automática: hasta {amount}",
+    "confirmation": "Al confirmar esta acción, autorizas preparar el contexto de esta marca dentro del tope mostrado.",
+    "breakdown": "Claude Sonnet 4.6: hasta {claude}. Embeddings: hasta {embeddings}.",
+    "expiry": "Este permiso vence el {date} UTC."
+  },
   "BrandOs": {
     "new": {
       "crumb": "Nueva marca",
@@ -111,8 +120,10 @@
       "subindustry": "Subindustria",
       "subindustryPlaceholder": "Agrega una o más: Pet Food, Marketplace, Accessories...",
       "subindustryDisabled": "Primero selecciona una industria",
-      "timezone": "Zona horaria del workspace",
-      "timezoneHelp": "Usa una zona horaria IANA válida. Los periodos de Signal y reportes estratégicos la heredan.",
+      "timezone": "Zona horaria de la marca",
+      "timezoneHelp": "Busca una ciudad o región. Esta zona se usa para los periodos de Signal y reportes.",
+      "timezoneSearch": "Buscar ciudad o zona horaria",
+      "timezoneEmpty": "No hay zonas que coincidan con la búsqueda.",
       "description": "Descripción estratégica",
       "seedsEyebrow": "Contexto adicional",
       "seedsTitle": "Aliases, competidores y contexto base",
@@ -124,24 +135,10 @@
       "competitorsHint": "Sólo nombres de competidores, uno por línea. No pegues rankings, links, tablas o bullets de ChatGPT aquí; eso va en Notas de Knowledge Base.",
       "notes": "Notas de Knowledge Base",
       "notesPlaceholder": "Qué vende, qué promete, fricciones conocidas, canales importantes, campañas recientes, restricciones legales u operativas...",
-      "aiEyebrow": "Ayuda con IA · Opcional",
-      "aiGenerating": "Investigando marca...",
-      "aiReady": "Borradores inteligentes listos",
-      "aiStartTitle": "Investigación opcional para ayudarte a completar el contexto",
-      "aiStart": "Investigar marca",
-      "aiRefineTitle": "Refinar borradores",
-      "aiRegenerate": "Refinar",
-      "aiRefinePlaceholder": "Ej. más premium, más retail, menos genérico, enfócate en eCommerce...",
-      "aiAccept": "Aceptar",
-      "aiDiscard": "Descartar",
-      "aiError": "No se pudieron preparar sugerencias. Intenta de nuevo.",
-      "aiDescriptionTitle": "Descripción estratégica sugerida",
-      "aiAliasesTitle": "Aliases / handles sugeridos",
-      "aiCompetitorsTitle": "Competidores sugeridos",
-      "aiKnowledgeTitle": "Contexto adicional sugerido",
       "creating": "Creando...",
       "create": "Crear marca y continuar",
       "fallbackCreateError": "No se pudo crear la marca.",
+      "contextPending": "La marca quedó creada, pero falta completar su contexto semántico. Vuelve a guardar para recuperar la misma creación.",
       "fieldFallback": "campo",
       "invalidFallback": "inválido"
     }
@@ -209,7 +206,8 @@
     "cancel": "Cancelar",
     "saving": "Guardando...",
     "save": "Guardar Brand OS",
-    "fallbackSaveError": "No se pudo guardar la marca."
+    "fallbackSaveError": "No se pudo guardar la marca.",
+    "contextPending": "La marca quedó guardada, pero falta actualizar su contexto semántico. Vuelve a guardar para recuperar la misma operación."
   },
   "CompetitorManager": {
     "eyebrow": "Set competitivo",
@@ -226,18 +224,19 @@
     "deleteAria": "Borrar {name}",
     "fallbackAddError": "No se pudieron agregar competidores.",
     "fallbackDeleteError": "No se pudo borrar el competidor.",
-    "fallbackClearError": "No se pudo borrar el bloque de competidores."
+    "fallbackClearError": "No se pudo borrar el bloque de competidores.",
+    "contextPending": "El cambio quedó guardado. La actualización automática del contexto sigue pendiente; puedes reanudarla en Contexto semántico."
   },
   "KnowledgeBaseManager": {
     "eyebrow": "Knowledge Base",
-    "title": "Contexto editable por bloques",
+    "title": "Bases de conocimiento",
     "fieldTitle": "Título",
     "fieldTitlePlaceholder": "Brief always-on, campaña Q3, research competitivo...",
     "type": "Tipo",
     "content": "Contenido",
     "contentPlaceholder": "Pega aquí research, contexto de campaña, aprendizajes, restricciones, hipótesis...",
-    "addNew": "Nuevo bloque KB",
-    "add": "Agregar bloque",
+    "addNew": "Agregar base de conocimiento",
+    "add": "Guardar nueva base",
     "empty": "Todavía no hay bloques de Knowledge Base para esta marca.",
     "emptySource": "Este bloque aún no tiene contenido guardado.",
     "delete": "Borrar",
@@ -245,8 +244,22 @@
     "confirmDelete": "¿Borrar este bloque de Knowledge Base?",
     "fallbackAddError": "No se pudo crear el bloque de Knowledge Base.",
     "fallbackSaveError": "No se pudo guardar el bloque.",
-    "fallbackDeleteError": "No se pudo borrar el bloque."
+    "fallbackDeleteError": "No se pudo borrar el bloque.",
+    "contextPending": "El contenido quedó guardado, pero falta actualizar su contexto semántico. Repite la acción para recuperar la misma operación.",
+    "multipleHelp": "Conserva el contexto generado desde Brand OS y agrega otras bases con briefs, campañas o investigación. Cada base se guarda por separado.",
+    "sourceCount": "{count, plural, =0 {Todavía no hay bases guardadas.} one {# base guardada. Puedes agregar más.} other {# bases guardadas. Puedes agregar más.}}",
+    "newTitle": "Nueva base de conocimiento",
+    "types": {
+      "brand_os_context": "Contexto automático de Brand OS",
+      "brand_brief": "Brief de marca",
+      "campaign_brief": "Brief de campaña",
+      "market_notes": "Investigación de mercado",
+      "competitive_notes": "Investigación de competencia",
+      "always_on_context": "Contexto continuo",
+      "other": "Contexto adicional"
+    }
   },
+
   "AdminActions": {
     "archiveCorpus": "Archivar corpus",
     "archiving": "Archivando…",
@@ -2329,8 +2342,9 @@
           "errors": { "load": "No se pudo cargar esta página de revisión.", "detail": "No se pudo cargar el detalle del elemento.", "reject": "No se pudo conservar el motivo y rechazar.", "correct": "No se pudo crear la corrección sucesora.", "annotate": "No se pudo actualizar la anotación.", "merge": "No se pudo completar la fusión.", "preflight": "No se pudo calcular el preflight de publicación." }
         },
         "publish": { "explainer": "Publicar requiere resolver todos los pendientes y conservar al menos un elemento aprobado.", "publishedAt": "Publicado {date}", "title": "Publicar Semantic Context Pack", "message": "Publicarás {approved} elementos aprobados como una generación auditable.", "body": "Discovery podrá consumir este pack como contexto gobernado. La publicación no crea tópicos ni assignments.", "confirm": "Publicar generación" },
-        "errors": { "title": "No se pudo cargar el contexto semántico", "load": "No se pudo cargar el Semantic Context Pack.", "run": "No se pudo recuperar el estado de la generación.", "draft": "No se pudo preparar el borrador.", "reconcile": "No se pudo reconciliar el contexto vigente.", "preflight": "No se pudo calcular el preflight.", "generate": "No se pudo iniciar la generación.", "decision": "No se pudo guardar la decisión.", "edit": "No se pudo guardar la corrección.", "publish": "No se pudo publicar la generación." },
-        "kinds": { "identity_term": "Término de identidad", "alias": "Alias", "product": "Producto", "feature": "Funcionalidad", "surface": "Superficie", "category": "Categoría", "need": "Necesidad", "benefit": "Beneficio", "friction": "Fricción", "usage_occasion": "Ocasión de uso", "competitor_term": "Término competitivo", "locale_variant": "Variante local", "exclusion": "Exclusión", "homonym": "Homónimo", "ambiguous_term": "Término ambiguo", "abstention_rule": "Regla de abstención", "positive_anchor": "Ancla positiva", "negative_anchor": "Ancla negativa", "boundary_anchor": "Ancla de frontera", "typed_relation": "Relación tipada", "other": "Otro tipo gobernado" }
+        "errors": { "title": "No se pudo cargar el contexto semántico", "load": "No se pudo cargar el Semantic Context Pack.", "run": "No se pudo recuperar el estado de la generación.", "draft": "No se pudo preparar el borrador.", "reconcile": "No se pudo reconciliar el contexto vigente.", "quoteChanged": "La cotización venció o cambió. Ya mostramos la nueva; revisa el tope y vuelve a continuar.", "preflight": "No se pudo calcular el preflight.", "generate": "No se pudo iniciar la generación.", "decision": "No se pudo guardar la decisión.", "edit": "No se pudo guardar la corrección.", "publish": "No se pudo publicar la generación." },
+        "kinds": { "identity_term": "Término de identidad", "alias": "Alias", "product": "Producto", "feature": "Funcionalidad", "surface": "Superficie", "category": "Categoría", "need": "Necesidad", "benefit": "Beneficio", "friction": "Fricción", "usage_occasion": "Ocasión de uso", "competitor_term": "Término competitivo", "locale_variant": "Variante local", "exclusion": "Exclusión", "homonym": "Homónimo", "ambiguous_term": "Término ambiguo", "abstention_rule": "Regla de abstención", "positive_anchor": "Ancla positiva", "negative_anchor": "Ancla negativa", "boundary_anchor": "Ancla de frontera", "typed_relation": "Relación tipada", "other": "Otro tipo gobernado" },
+        "automatic": {"statusUnavailable":"No se pudo consultar la preparación. Actualiza el estado antes de continuar.","subtitle":"El contexto se genera a partir de Brand OS y tus bases de conocimiento. Revisa las excepciones cuando sea necesario.","draft":"Generado, pendiente de activación","published":"Activo","exceptions":"Excepciones","exceptionsHint":"Puedes editar o eliminar estos elementos.","ready":"Listos","readyHint":"Elementos válidos del contexto generado.","completedDetail":"Contexto generado. Los elementos válidos y las excepciones se muestran por separado.","regenerate":"Actualizar contexto","resultDetails":"Detalles de la generación","filters":"Más filtros","continue":"Continuar preparación","readyBody":"El contexto válido está activo y sus ejemplos están preparados. Las excepciones siguen disponibles para editar.","awaitingBody":"Tus cambios están guardados. Para preparar el contexto, confirma la acción con el tope mostrado.","failedBody":"La preparación se detuvo. El contexto anterior se conserva; revisa el estado antes de volver a intentarlo.","preparationBody":"La preparación del contexto y sus ejemplos se realiza por etapas. Los resultados anteriores se conservan.","preparation":{"awaiting_authorization":"Preparación pendiente de autorización","queued":"Preparación en cola","generating":"Generando contexto","activating":"Activando el contexto válido","preparing_prototypes":"Preparando ejemplos del contexto","ready":"Contexto preparado","failed":"Preparación detenida","stale":"El contexto tiene cambios pendientes"}}
       },
       "topicEvaluation": {
         "historical": { "title": "Evaluación histórica · intento anterior", "body": "Este registro pertenece a la evaluación anterior, no al resultado con evidencia completa importado que aparece abajo. Se conservan sus conteos, costo y desenlace como referencia. Aquí no se puede lanzar otro intento.", "checking": "Verificando el origen del resultado actual. Los controles de lanzamiento siguen ocultos; si falla la carga, actualiza el panel de candidatos de abajo." },
@@ -2878,6 +2892,8 @@
         "saveFirst": "Guarda los cambios del interés para preparar esa versión.",
         "pending": "La solicitud original sigue guardada. Comprueba su estado antes de reanudarla; se conservarán el mismo tope y la misma solicitud.",
         "noInputs": "Calcula la preparación del contexto de Brand OS. No necesitas crear un interés para iniciar el descubrimiento.",
+      "contextRequired": "El contexto semántico aún no está activo. Completa su preparación en Brand OS antes de preparar contexto e intereses.",
+      "contextStale": "Brand OS o la base de conocimiento cambió. Actualiza el contexto semántico en Brand OS antes de preparar esta versión. Los recibos anteriores se conservan.",
         "currentContext": "Contexto de Brand OS preparado con la versión vigente.",
         "previousContext": "Última preparación del contexto de Brand OS. La versión vigente aún debe comprobarse o prepararse.",
         "errors": {

@@ -5,7 +5,7 @@ import React, { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { NextIntlClientProvider } from "next-intl";
-import { GovernancePreparationManager } from "../../components/admin/GovernancePreparationManager";
+import { GovernancePreparationManager, TimezoneForm } from "../../components/admin/GovernancePreparationManager";
 import type { SignalGovernancePreparationV1 } from "./signal-governance-control-plane";
 
 Object.assign(globalThis, { React });
@@ -52,5 +52,16 @@ for (const locale of ["es-MX", "en-US"]) {
       if (previousZone === undefined) delete process.env.TZ;
       else process.env.TZ = previousZone;
     }
+  });
+  test(`${locale}: governance timezone mutation uses the searchable IANA catalog`, () => {
+    const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+      { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
+      createElement(TimezoneForm, { busy: false, error: null, initial: "America/Mexico_City",
+        submit: async () => {} })));
+    assert.match(html, /name="timezone" type="hidden" value="America\/Mexico_City"/u);
+    assert.match(html, /role="combobox"/u);
+    assert.equal((html.match(/name="timezone"/gu) ?? []).length, 1);
+    assert.doesNotMatch(html, /<input(?=[^>]*name="timezone")(?=[^>]*type="text")[^>]*>/u);
+    assert.ok(html.includes(messages.AdminWorkspace.data.preparation.fields.timezoneHelp));
   });
 }

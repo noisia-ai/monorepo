@@ -251,11 +251,15 @@ function annotationKey(action: string) {
 }
 
 export function SemanticContextReviewWorkbench({
+  automaticMode = false,
+  draftWritable = true,
   generationKey,
   onMutation,
   reviewWritable,
   workspaceId
 }: {
+  automaticMode?: boolean;
+  draftWritable?: boolean;
   generationKey: string;
   onMutation: () => Promise<void>;
   reviewWritable: boolean;
@@ -677,7 +681,7 @@ export function SemanticContextReviewWorkbench({
           {t("reviewWorkbench.exceptionCount", { count: reviewStateCounts.exception })}</AdminStatus>
         <AdminStatus state="not_available">
           {t("reviewWorkbench.resolvedCount", { count: reviewStateCounts.resolved })}</AdminStatus>
-        {reviewWritable?<button className="admin-button admin-button--primary" disabled={Boolean(busy)}
+        {draftWritable?<button className="admin-button admin-button--primary" disabled={Boolean(busy)}
           onClick={(event)=>openCreation(event.currentTarget)} type="button"><Plus aria-hidden size={14}/>
           {t("reviewWorkbench.creation.action")}</button>:null}</div>
     </div>
@@ -687,6 +691,8 @@ export function SemanticContextReviewWorkbench({
         <span className="sr-only">{t("filters.search")}</span><input className="workspace-control"
           onChange={(event) => setQuery(event.target.value)} placeholder={t("reviewWorkbench.searchPlaceholder")}
           type="search" value={query}/></label>
+      <details className="semantic-context-review__advanced" open={!automaticMode || undefined}>
+        <summary>{t("automatic.filters")}</summary><div className="semantic-context-review__advanced-grid">
       <FilterSelect label={t("filters.status")} onChange={(value) => setFilters((current) => ({ ...current, disposition: value as Filters["disposition"] }))} value={filters.disposition}>
         <option value="all">{t("filters.allStatuses")}</option>{["pending", "approved", "rejected", "merged", "archived"].map((state) => <option key={state} value={state}>{t(`states.${state}`)}</option>)}
       </FilterSelect>
@@ -704,7 +710,7 @@ export function SemanticContextReviewWorkbench({
       </FilterSelect>
       <FilterSelect label={t("reviewWorkbench.filters.duplicates")} onChange={(value) => setFilters((current) => ({ ...current, duplicate: value as Filters["duplicate"] }))} value={filters.duplicate}>
         <option value="all">{t("reviewWorkbench.filters.allDuplicates")}</option><option value="exact">{t("reviewWorkbench.filters.exactDuplicate")}</option><option value="display">{t("reviewWorkbench.filters.displayDuplicate")}</option>
-      </FilterSelect>
+      </FilterSelect>      </div></details>
     </div>
 
     {error ? <Feedback message={error}
@@ -716,11 +722,11 @@ export function SemanticContextReviewWorkbench({
     {!loading && page ? <>
       <div className="semantic-context-review__count-row">
         <span aria-live="polite">{t("reviewWorkbench.resultRange", { start: range.start, end: range.end, total: page.total })}</span>
-        {reviewWritable && page.elements.some((element) => element.disposition === "pending") ? <button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={() => {
+        {!automaticMode && reviewWritable && page.elements.some((element) => element.disposition === "pending") ? <button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={() => {
           const next = new Map<string,ReviewElement>(); page.elements.filter((element) => element.disposition === "pending").forEach((element) => next.set(element.element_key, element)); setSelected(next);
         }} type="button">{t("selection.allVisible")}</button> : null}
       </div>
-      {selected.size ? <div className="semantic-context-review__selection" aria-live="polite">
+      {!automaticMode && selected.size ? <div className="semantic-context-review__selection" aria-live="polite">
         <strong>{t("selection.count", { count: selected.size })}</strong><span>{t("reviewWorkbench.bulk.explicitOnly")}</span>
         <div><button className="admin-button" disabled={Boolean(busy)} onClick={() => setSelected(new Map())} type="button">{t("selection.clear")}</button>
           <button className="admin-button" disabled={selected.size < 2 || Boolean(busy)} onClick={() => setMergeOpen(true)} type="button"><ArrowsMerge aria-hidden size={14}/>{t("reviewWorkbench.merge.action")}</button>
@@ -732,12 +738,12 @@ export function SemanticContextReviewWorkbench({
       {localeAuthorityOpen ? <LocaleAuthorityPanel busy={busy} elements={selectedElements}
         permittedLocales={selectedPermittedLocales} onCancel={() => setLocaleAuthorityOpen(false)}
         onSubmit={(form) => void decideLocaleAuthority(form,[...selected.keys()],selectedPermittedLocales)} t={t}/> : null}
-      {mergeOpen ? <MergePanel busy={busy} elements={selectedElements} onCancel={() => setMergeOpen(false)} onSubmit={(form) => void merge(form)} sameKind={selectedKinds.size === 1} t={t}/> : null}
+      {!automaticMode && mergeOpen ? <MergePanel busy={busy} elements={selectedElements} onCancel={() => setMergeOpen(false)} onSubmit={(form) => void merge(form)} sameKind={selectedKinds.size === 1} t={t}/> : null}
       <div className="semantic-context-review__list">
-        {page.elements.map((element) => <article className="semantic-context-review__row" key={element.element_key}>
-          <label className="semantic-context-review__row-select"><input aria-label={t("selection.one", { name: element.display_text })} checked={selected.has(element.element_key)} disabled={!reviewWritable || element.disposition === "merged" || Boolean(busy)} onChange={(event) => {
+        {page.elements.map((element) => <article className={`semantic-context-review__row${automaticMode ? " semantic-context-review__row--automatic" : ""}`} key={element.element_key}>
+          {!automaticMode ? <label className="semantic-context-review__row-select"><input aria-label={t("selection.one", { name: element.display_text })} checked={selected.has(element.element_key)} disabled={!reviewWritable || element.disposition === "merged" || Boolean(busy)} onChange={(event) => {
             const next = new Map(selected); if (event.target.checked) next.set(element.element_key, element); else next.delete(element.element_key); setSelected(next);
-          }} type="checkbox"/></label>
+          }} type="checkbox"/></label> : null}
           <button className="semantic-context-review__row-button" onClick={(event) => void openDetail(element.element_key, event.currentTarget)} type="button">
             <span className="semantic-context-review__row-main"><strong>{element.display_text}</strong><small>{element.canonical_key}</small></span>
             <span className="semantic-context-review__row-meta"><span>{kindLabel(element.element_kind, t)}</span><span>{element.scope ?? t("values.workspaceScope")}</span><span>{applicabilityLabel(element, t)}</span></span>
@@ -753,7 +759,7 @@ export function SemanticContextReviewWorkbench({
       </nav>
     </> : null}
 
-    <PublicationBoundary loading={preflightLoading} locale={locale} onLoad={() => void loadPublicationPreflight()} preflight={preflight} t={t}/>
+    {!automaticMode ? <PublicationBoundary loading={preflightLoading} locale={locale} onLoad={() => void loadPublicationPreflight()} preflight={preflight} t={t}/> : null}
 
     {creationOpen?<WorkspaceDrawer ariaLabel={t("reviewWorkbench.creation.title")} closeLabel={t("actions.close")}
       eyebrow={t("reviewWorkbench.creation.eyebrow")} onClose={()=>!busy&&closeCreation()}
@@ -776,7 +782,8 @@ export function SemanticContextReviewWorkbench({
         {error ? <div className="semantic-context-review__feedback" role="alert"><Warning aria-hidden size={16}/><span>{error}</span></div> : null}
         {detailError ? <Feedback message={detailError} onRetry={() => void retryDetail()} retryLabel={t("actions.retry")}/>
           : detailLoading || !detail ? <ReviewSkeleton label={t("reviewWorkbench.loadingDetail")}/>
-            : <ElementReviewDetail activeFormRef={activeFormRef} busy={busy} detail={detail} locale={locale} mode={detailMode}
+            : <ElementReviewDetail automaticMode={automaticMode} activeFormRef={activeFormRef} busy={busy} detail={detail}
+              draftWritable={draftWritable} locale={locale} mode={detailMode}
               annotationResolutionDraft={annotationResolutionDraft}
               onAnnotate={(form) => void annotate(form)} onApprove={(form) => void approve(form)}
               onCorrect={(form) => void correct(form)} onOrdinaryAction={(action)=>void ordinaryAction(action)}
@@ -836,14 +843,17 @@ function DispositionStatus({ element, t }: { element: ReviewElement; t: ReturnTy
 }
 
 /** @internal Exported for the browser-representative deliberate-decision interaction contract test. */
-export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, busy, detail, locale, mode,
+export function ElementReviewDetail({ automaticMode = false, activeFormRef, annotationResolutionDraft, busy, detail,
+  draftWritable = true, locale, mode,
   onAnnotate, onApprove, onBeginResolution, onCancelResolution, onCorrect,
   onOrdinaryAction=()=>undefined, onLocaleAuthority, onMode, onReject, onResolve,
   reviewWritable, t }: {
+  automaticMode?: boolean;
   activeFormRef: React.MutableRefObject<HTMLFormElement | null>;
   annotationResolutionDraft: AnnotationResolutionDraft | null;
   busy: string | null;
   detail: ReviewDetail;
+  draftWritable?: boolean;
   locale: string;
   mode: DetailMode;
   onAnnotate: (form: FormData) => void;
@@ -916,10 +926,11 @@ export function ElementReviewDetail({ activeFormRef, annotationResolutionDraft, 
       <h3>{t("reviewWorkbench.automaticReasons.title")}</h3>{element.automatic_policy.reasons.map((reason) =>
         <div key={reason}><Warning aria-hidden size={14}/><span>
           {t(`reviewWorkbench.automaticReasons.${knownAutomaticReason(reason)}`)}</span></div>)}</section> : null}
-    <AnnotationsList busy={busy} items={detail.review_annotations} onBeginResolution={onBeginResolution} t={t}/>
+    <AnnotationsList busy={busy} items={detail.review_annotations} onBeginResolution={onBeginResolution}
+      t={t} writable={draftWritable}/>
     {detail.merge_lineage.length ? <section className="semantic-context-review__lineage"><h3>{t("reviewWorkbench.merge.lineage")}</h3>{detail.merge_lineage.map((entry) => <div key={`${entry.source_element_key}:${entry.target_element_key}`}><ArrowsMerge aria-hidden size={14}/><span>{entry.source_element_key} → {entry.target_element_key}</span><small>{entry.rationale}</small></div>)}</section> : null}
     <section className="semantic-context-review__evidence"><div><h3>{t("reviewWorkbench.evidence.title")}</h3><p>{t("reviewWorkbench.evidence.body")}</p></div>{detail.evidence.map((source, index) => <article className="semantic-context-review__source" key={`${source.source_type}-${source.section_label}-${index}`}><header><div><span>{sourceKindLabel(source.source_type, t)}</span><strong>{source.source_title}</strong><small>{source.section_label}</small></div><AdminStatus state={source.current_state === "current" ? "good" : source.current_state === "inactive" ? "warning" : "not_available"}>{t(`reviewWorkbench.evidence.states.${source.current_state}`)}</AdminStatus></header><div className="semantic-context-review__source-meta"><span>{t("reviewWorkbench.evidence.relation", { relation: t(`evidenceRelations.${source.relation}`) })}</span><span>{t("reviewWorkbench.evidence.generationValidated")}</span></div><div className="semantic-context-review__source-context"><strong>{t(source.source_context.label === "operator_authored_input" ? "reviewWorkbench.evidence.operatorContextLabel" : "reviewWorkbench.evidence.contextLabel")}</strong><p>{source.source_context.preview ?? t("reviewWorkbench.evidence.contextUnavailable")}</p><small>{t(source.source_context.label === "operator_authored_input" ? "reviewWorkbench.evidence.operatorNotCitation" : "reviewWorkbench.evidence.notCitation")}</small></div></article>)}{!detail.evidence.length ? <p>{t("review.noEvidence")}</p> : null}</section>
-    {reviewWritable && element.disposition !== "merged" ? <div className="semantic-context-pack__drawer-actions">{element.disposition === "pending" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("annotate")} type="button"><NotePencil aria-hidden size={14}/>{t("reviewWorkbench.annotations.action")}</button> : null}{element.disposition === "approved" && element.locale === null && element.locale_authority.state === "unresolved" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("locale_authority")} type="button"><ShieldCheck aria-hidden size={14}/>{t("reviewWorkbench.localeAuthority.action")}</button> : null}{element.lifecycle_state==="active"&&element.disposition==="approved"?<><button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("correct")} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.edit")}</button>{element.undo_target_version!==null?<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("undo")} type="button">{t("actions.undo")}</button>:null}<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("archive")} type="button">{t("actions.archive")}</button></>:element.lifecycle_state==="archived"?<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("restore")} type="button">{t("actions.restore")}</button>:null}{element.disposition === "pending" ? <><button className="admin-button admin-button--danger" disabled={Boolean(busy)} onClick={() => onMode("reject")} type="button"><X aria-hidden size={14}/>{t("actions.reject")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => onMode("approve")} type="button"><Check aria-hidden size={14}/>{t("actions.approve")}</button></> : null}</div> : null}
+    {reviewWritable && element.disposition !== "merged" ? <div className="semantic-context-pack__drawer-actions">{draftWritable && element.disposition === "pending" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("annotate")} type="button"><NotePencil aria-hidden size={14}/>{t("reviewWorkbench.annotations.action")}</button> : null}{draftWritable && element.disposition === "approved" && element.locale === null && element.locale_authority.state === "unresolved" ? <button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("locale_authority")} type="button"><ShieldCheck aria-hidden size={14}/>{t("reviewWorkbench.localeAuthority.action")}</button> : null}{element.lifecycle_state==="active"&&(element.disposition==="approved"||(automaticMode&&element.automatic_policy?.outcome==="exception"&&element.disposition==="pending"))?<><button className="admin-button" disabled={Boolean(busy)} onClick={() => onMode("correct")} type="button"><PencilSimple aria-hidden size={14}/>{t("actions.edit")}</button>{element.undo_target_version!==null?<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("undo")} type="button">{t("actions.undo")}</button>:null}<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("archive")} type="button">{t("actions.archive")}</button></>:element.lifecycle_state==="archived"?<button className="admin-button" disabled={Boolean(busy)} onClick={()=>onOrdinaryAction("restore")} type="button">{t("actions.restore")}</button>:null}{!automaticMode && element.disposition === "pending" ? <><button className="admin-button admin-button--danger" disabled={Boolean(busy)} onClick={() => onMode("reject")} type="button"><X aria-hidden size={14}/>{t("actions.reject")}</button><button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => onMode("approve")} type="button"><Check aria-hidden size={14}/>{t("actions.approve")}</button></> : null}</div> : null}
   </div>;
 }
 
@@ -1095,11 +1106,11 @@ function BulkApprovalPanel({ busy, elements, onCancel, onSubmit, t }: { busy: st
 }
 
 /** @internal Exported for the deliberate annotation-resolution interaction contract test. */
-export function AnnotationsList({ busy, items, onBeginResolution, t }: { busy: string | null; items: ReviewAnnotation[];
+export function AnnotationsList({ busy, items, onBeginResolution, t, writable = true }: { busy: string | null; items: ReviewAnnotation[];
   onBeginResolution:(annotation:ReviewAnnotation,resolution:SignalSemanticContextAnnotationResolutionUi,
-    intent:SignalSemanticContextAnnotationResolutionIntentUi)=>void;t:ReturnType<typeof useTranslations> }) {
+    intent:SignalSemanticContextAnnotationResolutionIntentUi)=>void;t:ReturnType<typeof useTranslations>;writable?:boolean }) {
   if (!items.length) return null;
-  return <section className="semantic-context-review__annotations"><h3>{t("reviewWorkbench.annotations.history")}</h3>{items.map((annotation) => <article key={annotation.annotation_key}><div><strong>{t(`reviewWorkbench.annotations.types.${annotation.annotation_type}`)}</strong><AdminStatus state={annotation.state === "resolved" ? "good" : "warning"}>{t(`reviewWorkbench.annotations.states.${annotation.state}`)}</AdminStatus></div><p>{annotation.rationale}</p>{annotation.related_elements.length ? <small>{annotation.related_elements.map((element) => element.display_text).join(", ")}</small> : null}{annotation.state === "open" ? <div>{signalSemanticContextAnnotationResolutionsV1(annotation.annotation_type).map((resolution) => <button className="admin-button admin-button--compact" disabled={Boolean(busy)} key={resolution} onClick={() => onBeginResolution(annotation,resolution,"resolve")} type="button">{t(`reviewWorkbench.annotations.resolutions.${resolution}`)}</button>)}</div> : <><small>{t(`reviewWorkbench.annotations.resolutions.${annotation.resolution}`)}</small>{annotation.resolution_basis.state==="missing_historical"&&annotation.resolution?<div className="semantic-context-review__feedback"><Warning aria-hidden size={14}/><span>{t("reviewWorkbench.annotations.deliberate.basisMissing")}</span><button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>onBeginResolution(annotation,annotation.resolution!,"repair")} type="button">{t("reviewWorkbench.annotations.deliberate.repairAction")}</button></div>:annotation.resolution_basis.state==="complete"?<small>{t("reviewWorkbench.annotations.deliberate.basisComplete")}</small>:null}</>}</article>)}</section>;
+  return <section className="semantic-context-review__annotations"><h3>{t("reviewWorkbench.annotations.history")}</h3>{items.map((annotation) => <article key={annotation.annotation_key}><div><strong>{t(`reviewWorkbench.annotations.types.${annotation.annotation_type}`)}</strong><AdminStatus state={annotation.state === "resolved" ? "good" : "warning"}>{t(`reviewWorkbench.annotations.states.${annotation.state}`)}</AdminStatus></div><p>{annotation.rationale}</p>{annotation.related_elements.length ? <small>{annotation.related_elements.map((element) => element.display_text).join(", ")}</small> : null}{annotation.state === "open" ? writable?<div>{signalSemanticContextAnnotationResolutionsV1(annotation.annotation_type).map((resolution) => <button className="admin-button admin-button--compact" disabled={Boolean(busy)} key={resolution} onClick={() => onBeginResolution(annotation,resolution,"resolve")} type="button">{t(`reviewWorkbench.annotations.resolutions.${resolution}`)}</button>)}</div>:null : <><small>{t(`reviewWorkbench.annotations.resolutions.${annotation.resolution}`)}</small>{writable&&annotation.resolution_basis.state==="missing_historical"&&annotation.resolution?<div className="semantic-context-review__feedback"><Warning aria-hidden size={14}/><span>{t("reviewWorkbench.annotations.deliberate.basisMissing")}</span><button className="admin-button admin-button--compact" disabled={Boolean(busy)} onClick={()=>onBeginResolution(annotation,annotation.resolution!,"repair")} type="button">{t("reviewWorkbench.annotations.deliberate.repairAction")}</button></div>:annotation.resolution_basis.state==="complete"?<small>{t("reviewWorkbench.annotations.deliberate.basisComplete")}</small>:null}</>}</article>)}</section>;
 }
 
 function MergePanel({ busy, elements, onCancel, onSubmit, sameKind, t }: { busy: string | null; elements: ReviewElement[]; onCancel: () => void; onSubmit: (form: FormData) => void; sameKind: boolean; t: ReturnType<typeof useTranslations> }) {

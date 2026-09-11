@@ -5215,6 +5215,7 @@ export const signalGovernanceControlOperations = pgTable(
       'reconcile-acquisition-plan','promote-acquisition-plan','create-acquisition-query',
       'review-acquisition-query','retire-acquisition-slot','decide-acquisition-reference',
       'retire-competitor','reactivate-competitor','create-competitor','seal-acquisition-import',
+      'update-brand-context','update-brand-knowledge','delete-brand-knowledge',
       'seal-acquisition-brief','generate-acquisition-queries','authorize-acquisition-benchmark',
       'register-topic-discovery-review','save-topic-discovery-review-draft',
       'save-topic-discovery-outlier-draft','finalize-topic-discovery-review',
@@ -5226,7 +5227,7 @@ export const signalGovernanceControlOperations = pgTable(
       'correct-semantic-context-element','annotate-semantic-context-element',
       'resolve-semantic-context-annotation','repair-semantic-context-annotation-resolution',
       'decide-semantic-context-locale-authority','edit-semantic-context-element-v1',
-      'create-semantic-context-element-v1'
+      'create-semantic-context-element-v1','prepare-brand-context'
     )`),
     check("signal_governance_control_hashes",sql`${table.requestDigest} ~ '^sha256:[0-9a-f]{64}$' AND ${table.idempotencyKey} ~ '^sha256:[0-9a-f]{64}$'`),
     check("signal_governance_control_status",sql`${table.status} IN ('in_progress','completed')`),

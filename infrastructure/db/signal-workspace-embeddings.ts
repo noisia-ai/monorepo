@@ -60,6 +60,7 @@ import {assertSignalWorkspaceEmbeddingProfileV1,boundSignalWorkspaceEmbeddingInp
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
 import {SignalWorkspaceTopicComputationError} from "./signal-workspace-topic-computation";
 import {loadSignalWorkspaceTopicPrototypePlanV1} from "./signal-workspace-topic-prototype-inputs";
+import {SignalTopicCatalogError} from "./signal-topic-catalog";
 import type {SignalWorkspaceTopicPrototypeCountsV1} from "./signal-workspace-topic-prototypes-types";
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEmbeddingsError(code,status);};
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text,"utf8").digest("hex")}`;
@@ -103,7 +104,8 @@ async function inputsCurrent(client:PoolClient,run:Run):Promise<boolean>{
  if(run.input_contract==="corpus")return run.input_revision===run.current_revision&&run.preparation_complete;
  try{const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id});
   return plan.taxonomy_profile_id===run.taxonomy_profile_id&&plan.plan_digest===run.topic_input_digest;}
- catch(error){if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_empty","workspace_topic_catalog_required"].includes(error.code))return false;throw error;}
+ catch(error){if(error instanceof SignalTopicCatalogError&&["brand_context_source_stale","brand_context_semantic_context_required"].includes(error.code))return false;
+  if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_empty","workspace_topic_catalog_required"].includes(error.code))return false;throw error;}
 }
 async function requireLease(client:PoolClient,lease:SignalWorkspaceEmbeddingLeaseV1):Promise<Run>{
  const run=await lockRun(client,lease.run_id);
@@ -270,7 +272,13 @@ export async function reserveSignalWorkspaceEmbeddingCallV1(args:{database:Signa
 export async function markSignalWorkspaceEmbeddingCallSentV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;lease:SignalWorkspaceEmbeddingLeaseV1;call_id:string;attempt_token:string}){
  return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);const call=await getCall(client,args.call_id,args.attempt_token);
   if(call.run_id!==run.id||call.status!=="reserved")return fail("workspace_embedding_call_conflict");
-  await client.query("UPDATE signal_workspace_embedding_calls SET status='in_flight',sent_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid",[call.id]);
+  try { await client.query("UPDATE signal_workspace_embedding_calls SET status='in_flight',sent_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1::uuid",[call.id]); }
+  catch(error){
+   // This exact trigger denial is before the send CAS. Other DB/commit failures remain uncertain.
+   if(error instanceof Error&&'code' in error&&error.code==='23514'&&error.message==='brand_context_admission_expired')
+    return fail("workspace_embedding_definitely_not_sent");
+   throw error;
+  }
  });
 }
 export async function persistSignalWorkspaceEmbeddingResponseV1(args:{database:SignalWorkspaceEmbeddingsDatabaseV1;call_id:string;attempt_token:string;response:SignalWorkspaceEmbeddingRawResponseV1}){

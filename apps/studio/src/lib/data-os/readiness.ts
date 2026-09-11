@@ -549,7 +549,7 @@ const READINESS_SUMMARY_SQL = `
     FROM brand_knowledge_sources ks
     CROSS JOIN scope s
     WHERE ks.study_corpus_id = s.id
-       OR (s.brand_id IS NOT NULL AND ks.brand_id = s.brand_id)
+       OR (s.brand_id IS NOT NULL AND ks.brand_id = s.brand_id AND ks.study_corpus_id IS NULL)
   ),
   observation_months AS (
     SELECT DISTINCT date_trunc('month', period_start)::date AS month
