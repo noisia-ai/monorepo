@@ -4,15 +4,18 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
-> **Source fencing Brand Context cerrado LOCAL — 2026-09-11.** Checkout
-> `noisia-brand-context-e2e-2026-09-10`, base UAT `76fecc1`. SQL0159 reconcilia cambios de Brand OS,
+> **Source fencing Brand Context entregado UAT — 2026-09-11 23:48 UTC.** Corte de producto
+> `f77a316`; Worker `de80d999-58d0-4a45-b902-9ea464c6070d` y Studio
+> `bf40d8a3-0345-4cae-8a23-17dac3c0e67d` activos; marcador Studio `4f4b62c`. SQL0159 reconcilia cambios de Brand OS,
 > KB y competidores, exige la cotización opaca exacta y vuelve a validar la fuente antes del envío.
 > Stage1 DNC rearma el mismo Claude; Stage2 DNC usa sucesor Voyage y puede completar desde caché.
 > PG28/28, Studio978/7, Worker564/42, DB502/93, focales, TC/lint/build e interfaz cerrados; revisión
-> sin bloqueadores UAT. Leer `DELIVERY_BRAND_CONTEXT_SOURCE_FENCING_UAT_2026-09-11.md`. SQL0159 aún
-> NO está aplicado en UAT en este punto; aplicar una vez DB → Worker → Studio y dejar proveedores
-> inactivos. Gate preproducción: renovación explícita de una admisión Stage1 vencida y recuperación de
-> polling largo. No reaplicar SQL0156–0158 ni repetir gates cerrados. Loop ACTIVE en este chat.
+> sin bloqueadores UAT. SQL0159 SHA `0be97f5b…bfc8e7` aplicado y verificado una sola vez; no
+> reaplicar. QA real conserva National 7,396/16 y Topics 32/357; recibo posterior: cero políticas,
+> admisiones, reconciliaciones, trabajos activos, outbox o llamadas inciertas. Leer
+> `DELIVERY_BRAND_CONTEXT_SOURCE_FENCING_UAT_2026-09-11.md`. Gate preproducción: renovación explícita
+> de una admisión Stage1 vencida y recuperación de polling largo. No repetir SQL0156–0159 ni gates
+> cerrados. Loop ACTIVE en este chat; proveedores inactivos.
 
 > **Cotización Brand Context visible en UAT — 2026-09-11 20:06 UTC.** Studio ejecuta
 > `5b22d606c707998f55b12acdcf6823eef034619b`, deployment

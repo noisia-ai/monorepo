@@ -32,8 +32,27 @@ espera al usuario.
 
 ## Entrega UAT
 
-Pendiente de registrar en este mismo documento después de aplicar SQL0159 una sola vez y desplegar el
-mismo commit en Worker y Studio. No se reaplican SQL0156–0158 y los proveedores permanecen inactivos.
+Entrega cerrada en el orden DB → Worker → Studio:
+
+- Preflight `2026-09-11T23:36:19.668415Z`: SQL0159 ausente; cero políticas activas, admisiones,
+  ejecuciones semánticas o de embeddings, outbox y llamadas inciertas.
+- SQL0159 aplicado una sola vez a las `2026-09-11T23:37:34.014928Z`, con SHA exacto
+  `0be97f5bc9dfe4c0b20e7347a828807bd6fb95a96582f7e97e5b158007bfc8e7`. La tabla y sus funciones
+  quedaron sin lectura o ejecución pública. No se reaplican SQL0156–0158.
+- Worker `de80d999-58d0-4a45-b902-9ea464c6070d` sirve el corte `f77a316`; la réplica anterior fue
+  retirada antes de habilitar Studio.
+- Studio `bf40d8a3-0345-4cae-8a23-17dac3c0e67d` sirve el marcador `4f4b62c`; la versión anterior
+  quedó retirada y el autodeploy restaurado.
+- Recibo posterior `2026-09-11T23:48:01.517536Z`: SQL0159 presente; privilegios públicos de tabla y
+  funciones en cero; cero políticas, acciones, admisiones, reconciliaciones, ejecuciones semánticas o
+  de embeddings activas, llamadas inciertas y outbox activo.
+
+QA real autenticado comprobó Marcas → National → Brand OS → Topics. National conserva 7,396
+menciones únicas, 16 archivos aceptados y 9,131 filas recibidas. Brand OS expone la preparación
+semántica según el permiso efectivo, permite múltiples bases de conocimiento y no muestra la
+referencia opaca de la cotización. Topics conserva 32 tópicos activos de 357 grupos, costos y trabajo
+histórico; comunica que la fuente vigente aún debe prepararse. No se importaron datos, no se creó una
+política y no hubo llamadas a Claude o Voyage durante la entrega.
 
 ## Gate antes de producción
 
