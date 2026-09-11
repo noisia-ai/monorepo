@@ -4,6 +4,19 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Recuperación reusable de Topics activa en UAT — 2026-09-11 11:08 UTC.** Studio y Worker
+> ejecutan `19e2f321286b4bf578f975bb4db54f5a1270a1ea`. National conserva 32 Topics, 32/357
+> grupos y sus recibos; Brand Context faltante/obsoleto ahora aparece como paso reparable y una
+> ejecución histórica ya no activa polling ni bloquea sucesoras. Datos conserva 16 archivos,
+> 9,131 filas, 7,396 menciones únicas y 6,826 preparadas; el monitor reconcilia una importación
+> que terminó antes de su primera lectura sin ciclo de refresh. Checks completos, build y revisión
+> cerrados sin P0/P1/P2. Recibo SQL posterior: 0 preparaciones, 0 corridas semánticas, 0 Voyage
+> y 0 interpretación. Leer
+> `docs/product/PROMPT_LOOPING/DELIVERY_WORKSPACE_RECOVERY_UAT_2026-09-11.md`. SQL0153 ya
+> estaba aplicado: no reaplicar. Siguiente corte local: alta de marca propia y Brand OS para
+> `client_admin`, con organización derivada de sesión, creación atómica y sin Admin global,
+> ejecución Topics ni gasto. No repetir imports, Voyage, fit o gates cerrados.
+
 > **Brand Context → Topics activo en UAT — 2026-09-11 10:31 UTC.** Studio ejecuta
 > `9e88bb5ec37e24cc3a592799839e987c1cb77ca4` (deployment
 > `aa05d21c-439e-434a-b5e3-c8ade8bf1e3b`) y Worker conserva `44eeab5` (deployment
