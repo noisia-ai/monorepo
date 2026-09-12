@@ -37,7 +37,8 @@ async function fixture(phase:'semantic'|'prototype'){
     else if(sql.includes('FROM brand_os_profiles')&&sql.includes(' display_name'))rows=[{id:actor,display_name:'Synthetic',aliases:[],industry:null,industry_sub:null,description:null,metadata:{snapshot_hash:brandContextSnapshotFixtureV1(actor).digest}}];
     else if(sql.includes('FROM brand_os_profiles'))rows=sourceAvailable?[{id:actor,version:1,digest:brandContextSnapshotFixtureV1(actor).digest,countries:['MX']}]:[];
     else if(sql.includes('AS name,brand.description'))rows=[brandContextSnapshotFixtureV1(actor).snapshot];
-    else if(sql.includes('FROM brand_knowledge_sources'))rows=[{id:actor,source_kind:'brand_brief',file_hash:null,content_digest:digest(knowledgeValue)}];
+    else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'))rows=[{knowledge_digest:digest({
+      sources:[{id:actor,kind:'brand_brief',digest:digest(knowledgeValue)}],chunks:[]})}];
     return{rows:rows as Row[],rowCount:rows.length};}};
   const live=await resolveSignalBrandContextAuthorityV1({queryable:source,workspace:{id:workspaceId,organizationId:actor,subject:{type:'brand',id:actor},timezone:'America/Mexico_City'}});
   const generation={id:generationId,generation_key:'semantic-context-v1',generation_version:1,status:phase==='semantic'?'draft':'published',

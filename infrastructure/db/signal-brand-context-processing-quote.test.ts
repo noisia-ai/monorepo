@@ -4,6 +4,7 @@ import { brandContextSnapshotFixtureV1 } from "./signal-brand-context.test-helpe
 import { loadSignalBrandContextProcessingQuoteV1, readSignalBrandContextProcessingQuoteWithQueryableV1 } from "./signal-brand-context-processing-quote";
 import { SignalProcessingPolicyError } from "./signal-processing-policy";
 import { SignalSemanticContextProposalExecutionError } from "./signal-semantic-context-proposal";
+import { signalSemanticContextProposalDigestV1 as digest } from "@noisia/query-engine";
 
 const workspace = "10000000-0000-4000-8000-000000000001";
 const actor = "10000000-0000-4000-8000-000000000002";
@@ -53,12 +54,12 @@ function fixture(options: Options = {}) {
         countries: snapshot.snapshot.countries }];
     } else if (sql.includes("FROM brands brand WHERE")) rows = [snapshot.snapshot];
     else if (sql.includes("FROM signal_acquisition_plans")) rows = options.brief ? [{ brief: options.brief }] : [];
-    else if (sql.includes("FROM brand_knowledge_sources source")) {
+    else if (sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS')) {
       assert.match(sql, /source.study_corpus_id IS NULL/u);
       assert.deepEqual(values, [organization, brand]);
-      rows = [{ id: brand, source_kind: "note", file_hash: null, content_digest: options.knowledge ?? hash("e"), updated_at: "2026-09-11" }];
-    } else if (sql.includes("FROM knowledge_chunks chunk")) {
-      assert.match(sql, /source.study_corpus_id IS NULL/u); rows = [];
+      rows = [{ knowledge_digest: digest({
+        sources: [{ id: brand, kind: "note", digest: options.knowledge ?? hash("e") }], chunks: []
+      }) }];
     } else if (sql.includes("WITH quote_clock")) {
       assert.deepEqual(values, [row?.budget_timezone ?? null, row?.valid_until ?? null]);
       assert.match(sql, /LEAST\(instant\+interval '5 minutes',\$2::timestamptz/u);

@@ -63,24 +63,39 @@ export async function resolveSignalBrandContextAuthorityV1(args:{queryable:Signa
     throw new SignalSemanticContextProposalExecutionError("locale_market_authority_required",409);
   }
   const localeVariants=[...new Set([primaryLocale,...locales.filter((value)=>localePattern.test(value))])].sort();
-  const sources=await args.queryable.query<{id:string;source_kind:string;file_hash:string|null;
-    content_digest:string;updated_at:Date|string}>(`
-    SELECT source.id::text,source.source_kind,source.file_hash,
-      'sha256:'||encode(digest(COALESCE(source.raw_text,'')||source.extracted_payload::text,'sha256'),'hex') content_digest,
-      source.updated_at
-    FROM brand_knowledge_sources source
-    WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
-      AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
-    ORDER BY source.id`,[args.workspace.organizationId,args.workspace.subject.id]);
-  const chunks=await args.queryable.query<{id:string;source_id:string;content_digest:string}>(`
-    SELECT chunk.id::text,chunk.knowledge_source_id::text source_id,
-      'sha256:'||encode(digest(chunk.chunk_text,'sha256'),'hex') content_digest
-    FROM knowledge_chunks chunk JOIN brand_knowledge_sources source ON source.id=chunk.knowledge_source_id
-    WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
-      AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
-    ORDER BY chunk.id`,[args.workspace.organizationId,args.workspace.subject.id]);
-  const knowledgeDigest=canonicalDigest({sources:sources.rows.map((row)=>({id:row.id,kind:row.source_kind,
-      digest:digestPattern.test(row.file_hash??"")?row.file_hash:row.content_digest})),chunks:chunks.rows});
+  // Keep the canonical knowledge digest inside PostgreSQL. Returning every chunk
+  // digest to Node made read-only Brand OS screens scale with the total knowledge
+  // text and added tens of seconds of protocol/serialization work. Canonicalize
+  // each fixed-shape member, preserve the contract's byte order with string_agg,
+  // and hash the final document once; recursively canonicalizing one giant JSONB
+  // array is quadratic in the PL/pgSQL canonicalizer. UUIDs and sha256 digests are
+  // constrained ASCII; source_kind still uses the canonical string escaper.
+  const knowledge=await args.queryable.query<{knowledge_digest:string}>(`
+    WITH sources AS (
+      SELECT COALESCE(string_agg('{"digest":"'||
+        (CASE WHEN source.file_hash ~ '^sha256:[0-9a-f]{64}$' THEN source.file_hash
+          ELSE 'sha256:'||encode(digest(COALESCE(source.raw_text,'')||source.extracted_payload::text,
+            'sha256'),'hex') END)||'","id":"'||source.id::text||'","kind":'||
+        signal_semantic_context_escape_string_v2(source.source_kind)||'}',',' ORDER BY source.id),'') members
+      FROM brand_knowledge_sources source
+      WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
+        AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
+    ), chunks AS (
+      SELECT COALESCE(string_agg('{"content_digest":"sha256:'||
+        encode(digest(chunk.chunk_text,'sha256'),'hex')||'","id":"'||chunk.id::text||
+        '","source_id":"'||chunk.knowledge_source_id::text||'"}',',' ORDER BY chunk.id),'') members
+      FROM knowledge_chunks chunk
+      JOIN brand_knowledge_sources source ON source.id=chunk.knowledge_source_id
+      WHERE source.organization_id=$1::uuid AND source.brand_id=$2::uuid
+        AND source.study_corpus_id IS NULL AND source.status IN ('processed','profiled','active')
+    )
+    SELECT signal_semantic_context_digest_v1(
+      '{"chunks":['||chunks.members||'],"sources":['||sources.members||']}') knowledge_digest
+    FROM sources CROSS JOIN chunks`,[args.workspace.organizationId,args.workspace.subject.id]);
+  const knowledgeDigest=knowledge.rows[0]?.knowledge_digest;
+  if(!knowledgeDigest||!digestPattern.test(knowledgeDigest)){
+    throw new SignalSemanticContextProposalExecutionError('knowledge_authority_digest_invalid',503);
+  }
   const knowledgeGenerationKey=`knowledge-${knowledgeDigest.slice(7,23)}`;
   const localeContextDigest=canonicalDigest({primary_locale:primaryLocale,locale_variants:localeVariants,
     markets:[...markets].sort(),timezone});

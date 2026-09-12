@@ -6,6 +6,7 @@ import { quoteSignalBrandContextPreparationV1, signalBrandContextPreparationRunt
 import { canonicalBrandContextLocaleV1, resolveSignalBrandContextAuthorityV1 } from './signal-brand-context-authority';
 import type { SignalSemanticContextQueryable } from './signal-semantic-context-proposal';
 import { SignalSemanticContextProposalExecutionError } from './signal-semantic-context-proposal';
+import { signalSemanticContextProposalDigestV1 as digest } from '@noisia/query-engine';
 const runtime:SignalBrandContextPreparationRuntimeV1={semantic:{available:true,provider:'anthropic',model:'claude-sonnet-4-6',model_version:'claude-sonnet-4-6',
   pricing_version:'synthetic-v1',max_input_tokens:20000,max_output_tokens:16000,model_max_output_tokens:64000,
   input_usd_per_million_tokens:'3',output_usd_per_million_tokens:'15',platform_hard_cap_micro_usd:500000n},
@@ -42,7 +43,8 @@ function fakeAuthority(countries:string[],contentDigest='sha256:'+'b'.repeat(64)
   if(sql.includes('FROM brand_os_profiles'))rows=[{id:'10000000-0000-4000-8000-000000000002',version:1,digest:brandContextSnapshotFixtureV1(actor,countries).digest,countries}];
   else if(sql.includes('AS name,brand.description'))rows=[brandContextSnapshotFixtureV1(actor,countries).snapshot];
   else if(sql.includes("action='prepare-brand-context'"))rows=retainedLocale?[{locale:retainedLocale}]:[];
-  else if(sql.includes('FROM brand_knowledge_sources'))rows=[{id:'10000000-0000-4000-8000-000000000003',source_kind:'brand_brief',file_hash:null,content_digest:contentDigest}];
+  else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'))rows=[{knowledge_digest:digest({
+    sources:[{id:'10000000-0000-4000-8000-000000000003',kind:'brand_brief',digest:contentDigest}],chunks:[]})}];
   return{rows:rows as T[],rowCount:rows.length};}};
 }
 const ws={id:'10000000-0000-4000-8000-000000000004',organizationId:actor,subject:{type:'brand' as const,id:actor},timezone:'America/Mexico_City'};

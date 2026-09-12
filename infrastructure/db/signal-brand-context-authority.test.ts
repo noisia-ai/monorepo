@@ -24,6 +24,8 @@ function fixture(){
    }else if(sql.includes('AS name,brand.description')){
      assert.deepEqual(values,[id,actor]);assert.match(sql,/brand.organization_id=\$2::uuid/u);
      rows=[current];
+   }else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS')){
+     rows=[{knowledge_digest:digest({sources:[],chunks:[]})}];
    }else if(sql.includes('actor.status actor_status'))rows=[{workspace_status:'active',brand_status:'active',actor_status:'active',user_type:'noisia_internal',primary_role:'noisia_admin'}];
    else if(sql.includes("u.user_type='noisia_internal'"))rows=[{organization_id:actor,brand_id:id,timezone:workspace.timezone,internal:true}];
    else if(sql==='SELECT clock_timestamp() now')rows=[{now:new Date('2026-09-11T01:00:00Z')}];
@@ -50,6 +52,16 @@ test('countries are sealed and must agree with the canonical snapshot even when 
  const f=fixture();f.tamperProfileCountries();await assert.rejects(resolveSignalBrandContextAuthorityV1({queryable:f.queryable,workspace}),
    e=>e instanceof Error&&'code' in e&&e.code==='brand_os_snapshot_stale');
 });
+test('knowledge authority returns one canonical database digest instead of every source and chunk hash',async()=>{
+ const f=fixture();await resolveSignalBrandContextAuthorityV1({queryable:f.queryable,workspace});
+ const statements=f.statements.filter(sql=>sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'));
+ assert.equal(statements.length,1);
+ assert.match(statements[0]!,/string_agg\('\{"digest"/u);
+ assert.match(statements[0]!,/signal_semantic_context_digest_v1\(/u);
+ assert.doesNotMatch(statements[0]!,/jsonb_agg\(/u);
+ assert.doesNotMatch(statements[0]!,/signal_semantic_context_canonical_json_v2\(jsonb_build_object/u);
+ assert.doesNotMatch(statements[0]!,/SELECT chunk\.id::text,chunk\.knowledge_source_id::text/u);
+});
 test('processed automatic KB counts in the canonical create snapshot and stays identical through reconciliation',async()=>{
  const created={...brandContextSnapshotFixtureV1(actor).snapshot,knowledge_count:1};
  const sourceStatuses=['processed'];
@@ -72,11 +84,13 @@ test('corpus-owned sources and chunks neither count in Brand OS nor change its s
    else if(sql.includes('AS name,brand.description')){
      assert.match(sql,/source\.study_corpus_id IS NULL/u);
      rows=[{...snapshot,knowledge_count:sources.filter(source=>source.study_corpus_id===null).length}];
-   }else if(sql.includes('FROM brand_knowledge_sources')||sql.includes('FROM knowledge_chunks')){
+   }else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS')){
      assert.match(sql,/source\.study_corpus_id IS NULL/u);
      const scoped=sources.filter(source=>source.study_corpus_id===null);
-     rows=sql.includes('FROM knowledge_chunks')?scoped.map(source=>({id:source.id,source_id:source.id,content_digest:digest(source.text)})):
-       scoped.map(source=>({id:source.id,source_kind:source.source_kind,file_hash:null,content_digest:digest(source.text)}));
+     rows=[{knowledge_digest:digest({
+       sources:scoped.map(source=>({id:source.id,kind:source.source_kind,digest:digest(source.text)})),
+       chunks:scoped.map(source=>({id:source.id,source_id:source.id,content_digest:digest(source.text)}))
+     })}];
    }
    return{rows:rows as Row[],rowCount:rows.length};}};
  const before=await resolveSignalBrandContextAuthorityV1({queryable,workspace});

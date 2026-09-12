@@ -29,6 +29,8 @@ function context(){
   else if(statement.includes('FROM brand_os_profiles profile'))rows=[{id:id(6),version:1,digest:brandHash,countries:['MX'],
     display_name:snapshot.name,aliases:[],industry:null,industry_sub:null,description:null,metadata:{snapshot_hash:brandHash}}];
   else if(statement.includes("SELECT id,metadata->>'snapshot_hash'"))rows=[{id:id(6),hash:brandHash}];
+  else if(statement.includes('signal_semantic_context_digest_v1(')&&statement.includes('WITH sources AS'))rows=[{
+    knowledge_digest:digest({sources:[],chunks:[]})}];
   return{rows:rows as Row[],rowCount:rows.length};}};
  return{queryable,queries};
 }
@@ -199,8 +201,9 @@ test('after edited KB invalidates its file hash, live authority uses new content
  const ctx=context();const oldFileHash=digest('original upload'),newContentHash=digest('edited KB payload');
  let fileHash:string|null=oldFileHash;
  const queryable:SignalSemanticContextQueryable={async query<Row extends Record<string,unknown>>(statement:string,values:unknown[]=[]){
-   if(statement.includes('source.updated_at'))return{rows:[{id:id(20),source_kind:'brand_brief',
-     file_hash:fileHash,content_digest:newContentHash}] as unknown as Row[],rowCount:1};
+   if(statement.includes('signal_semantic_context_digest_v1(')&&statement.includes('WITH sources AS'))return{rows:[{
+     knowledge_digest:digest({sources:[{id:id(20),kind:'brand_brief',digest:fileHash??newContentHash}],chunks:[]})
+   }] as unknown as Row[],rowCount:1};
    return ctx.queryable.query<Row>(statement,values);
  }};
  const before=await resolveSignalBrandContextAuthorityV1({queryable,workspace});

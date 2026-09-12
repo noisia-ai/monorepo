@@ -51,8 +51,9 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
       assert.deepEqual(params,[workspaceId,workspaceId]);rows=[{id:workspaceId,version:1,digest:profileDigest,countries:live.countries}];
     }else if(sql.includes('AS name,brand.description'))rows=[live];
     else if(sql.includes('SELECT acquisition_brief brief'))rows=currentBrief==null?[]:[{brief:currentBrief}];
-    else if(sql.includes('FROM brand_knowledge_sources source'))rows=sources;
-    else if(sql.includes('FROM knowledge_chunks chunk'))rows=[];
+    else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'))rows=[{
+      knowledge_digest:signalSemanticContextProposalDigestV1({sources:sources.map(item=>({
+        id:item.id,kind:item.source_kind,digest:item.content_digest})),chunks:[]})}];
     else throw new Error('Unexpected context query');
     return{rows:rows as Row[],rowCount:rows.length};}};
   return{queryable,queries,drift(kind:'brand_os'|'knowledge'|'locale'|'unreconciled'){

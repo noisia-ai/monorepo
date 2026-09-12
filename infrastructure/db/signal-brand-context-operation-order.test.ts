@@ -7,6 +7,7 @@ import {ensureSignalBrandContextPreparationV1,loadSignalBrandContextPreparationV
 import {resolveSignalBrandContextAuthorityV1} from './signal-brand-context-authority';
 import {signalSemanticContextProposalRuntimeConfigurationFromEnvV1,
   type SignalSemanticContextQueryable} from './signal-semantic-context-proposal';
+import {signalSemanticContextProposalDigestV1 as digest} from '@noisia/query-engine';
 
 test('latest preparation follows acceptance under the workspace lock when transaction now is shared',async()=>{
   const actor='10000000-0000-4000-8000-000000000001',workspaceId='10000000-0000-4000-8000-000000000002';
@@ -17,7 +18,8 @@ test('latest preparation follows acceptance under the workspace lock when transa
   const authority:SignalSemanticContextQueryable={async query<T>(sql:string){let rows:unknown[]=[];
     if(sql.includes('FROM brand_os_profiles'))rows=[{id:actor,version:1,digest:brandContextSnapshotFixtureV1(actor).digest,countries:['MX']}];
     else if(sql.includes('AS name,brand.description'))rows=[brandContextSnapshotFixtureV1(actor).snapshot];
-    else if(sql.includes('FROM brand_knowledge_sources'))rows=[{id:actor,source_kind:'brand_brief',file_hash:null,content_digest:'sha256:'+'b'.repeat(64)}];
+    else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'))rows=[{knowledge_digest:digest({
+      sources:[{id:actor,kind:'brand_brief',digest:'sha256:'+'b'.repeat(64)}],chunks:[]})}];
     return{rows:rows as T[],rowCount:rows.length};}};
   const live=await resolveSignalBrandContextAuthorityV1({queryable:authority,workspace});
   type Op={id:string;workspace_id:string;actor_user_id:string;idempotency_key:string;request_digest:string;

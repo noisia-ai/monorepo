@@ -28,8 +28,9 @@ async function fixture(options:{run?:Partial<Run>|null;status?:string;outbox?:st
   const authority:SignalSemanticContextQueryable={async query<T>(sql:string){let rows:unknown[]=[];
     if(sql.includes('FROM brand_os_profiles'))rows=sourceAvailable?[{id:actor,version:1,digest:brandContextSnapshotFixtureV1(actor).digest,countries:['MX']}]:[];
     else if(sql.includes('AS name,brand.description'))rows=[brandContextSnapshotFixtureV1(actor).snapshot];
-    else if(sql.includes('FROM brand_knowledge_sources'))rows=[{id:actor,source_kind:'brand_brief',file_hash:null,content_digest:'sha256:'+'b'.repeat(64)}];
-    else if(!sql.includes('FROM signal_acquisition_plans')&&!sql.includes('FROM knowledge_chunks')&&!sql.includes("brand_context_preparation->>'primary_locale'"))
+    else if(sql.includes('signal_semantic_context_digest_v1(')&&sql.includes('WITH sources AS'))rows=[{knowledge_digest:digest({
+      sources:[{id:actor,kind:'brand_brief',digest:'sha256:'+'b'.repeat(64)}],chunks:[]})}];
+    else if(!sql.includes('FROM signal_acquisition_plans')&&!sql.includes("brand_context_preparation->>'primary_locale'"))
       throw new Error('Unexpected authority query');
     return{rows:rows as T[],rowCount:rows.length};}};
   const live=await resolveSignalBrandContextAuthorityV1({queryable:authority,workspace});
