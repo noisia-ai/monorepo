@@ -4,6 +4,16 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **CORRECCIÓN FOCAL UAT — 2026-09-12 06:56 UTC.** El operador detectó que la ayuda
+> «Investigar marca» había desaparecido del alta de marca. La regresión provenía de `44eeab5`,
+> que confundió el borrador previo al guardado con la preparación semántica gobernada posterior.
+> Restaurado en producto `b557bfd8aaed78b91b57b64480d91562a65f3027` y Studio UAT
+> `fb66b96d-3b22-4c90-9be2-d84a96ff9b83`: Claude Sonnet 4.6 fijo, 4,096 tokens y hasta dos
+> búsquedas, propuestas por campo con aceptar/descartar, ES/EN y acceso de admin interno/cliente.
+> UI real verificó que aparece y se habilita con el contexto mínimo; no se pulsó y el corte gastó
+> cero proveedor. Leer `docs/product/PROMPT_LOOPING/DELIVERY_BRAND_INTAKE_CLAUDE_RESTORATION_2026-09-12.md`.
+> El loop general sigue `PAUSED`; no reanudar el desarrollo amplio por esta corrección.
+
 > **PARADA SEGURA EXPRESA — 2026-09-12 05:11 UTC / 11 septiembre México.** El operador
 > pidió detener el desarrollo y el loop `noisia-topics-to-signal-uat-loop` quedó confirmado
 > `PAUSED` en este chat. No reanudar automatización, desarrollo, SQL, imports, fit ni proveedores
