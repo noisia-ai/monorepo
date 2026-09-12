@@ -468,7 +468,11 @@ export async function computeSignalTopicConsolidationCentroidsV1(args: {
   if (new Set(memberships.map(item => item.group_key)).size > 5_000)
     fail("topic_consolidation_exact_knn_capacity_exceeded");
   return transaction(args.database, async client => {
-    await requireConsolidationAuthority(client, workspace, actor, execution, args.control_execution);
+    if (args.control_execution) {
+      await requireConsolidationReadLease(client, workspace, actor, execution, args.control_execution);
+    } else {
+      await requireConsolidationAuthority(client, workspace, actor, execution);
+    }
     await client.query("SET LOCAL statement_timeout='120s'");
     const valid = (await client.query<{ valid: boolean }>(`SELECT EXISTS(
       SELECT 1 FROM signal_topic_catalog_executions execution
@@ -600,6 +604,20 @@ async function requireConsolidationAuthority(client: SignalTopicConsolidationQue
   if (!sourceExecution || control.workspace_id !== workspace_id || control.actor_user_id !== actor_user_id
   ) fail("topic_consolidation_control_invalid");
   await client.query(`SELECT assert_signal_topic_consolidation_worker_scope_v1(
+    $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid
+  )`,[control.execution_id,control.execution_token,workspace_id,actor_user_id,sourceExecution]);
+}
+
+async function requireConsolidationReadLease(client: SignalTopicConsolidationQueryableV1, workspace_id: string, actor_user_id: string,
+  source_execution_id: string, control_execution: SignalTopicConsolidationControlLeaseRefV1) {
+  const control = { execution_id: uuid(control_execution.execution_id,"topic_consolidation_control_invalid"),
+    execution_token: uuid(control_execution.execution_token,"topic_consolidation_control_invalid"),
+    workspace_id: uuid(control_execution.workspace_id,"topic_consolidation_control_invalid"),
+    actor_user_id: uuid(control_execution.actor_user_id,"topic_consolidation_control_invalid") };
+  const sourceExecution = uuid(source_execution_id,"topic_consolidation_control_invalid");
+  if (control.workspace_id !== workspace_id || control.actor_user_id !== actor_user_id)
+    fail("topic_consolidation_control_invalid");
+  await client.query(`SELECT assert_signal_topic_consolidation_worker_lease_v1(
     $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid
   )`,[control.execution_id,control.execution_token,workspace_id,actor_user_id,sourceExecution]);
 }
