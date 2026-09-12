@@ -1247,3 +1247,4 @@ export * from "./signal-workspace-topics-serving-v1";
 export * from "./signal-workspace-engine-incremental-v1";
 export * from "./signal-workspace-incremental-projection-v1";
 export * from "./signal-topic-consolidation-editorial-v1";
+export * from "./signal-topic-consolidation-editorial-runner-v1";
