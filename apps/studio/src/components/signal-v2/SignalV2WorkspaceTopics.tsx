@@ -14,11 +14,12 @@ import { SignalTopicsKpi, SignalTopicsRankingList } from "./SignalTopicsPrimitiv
 const sections = ["topics", "narratives", "noise", "unresolved"] as const;
 type NativeTopicSection = typeof sections[number];
 
-export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, refreshFailed = false }: {
+export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, refreshFailed = false, workspaceTimezone }: {
   data: SignalWorkspaceTopicsOverviewV1; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onRefresh?: () => Promise<boolean>; surface?: "summary" | "topics"; onOpenTopics?: () => void; refreshFailed?: boolean;
   onOpenMention?: (mentionId: string) => void;
+  workspaceTimezone: string;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
@@ -104,7 +105,7 @@ export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApp
         coverage={{ date_from: data.available_dates.date_from, date_through: data.available_dates.date_to }} loading={loading}
         showComparison={false} onApply={selection => onApplyFilter({ ...selection, comparisonMode: "none", dimensions: {}, searchQuery: "" })} /> : null}
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
-        <span>{t("utc")}</span></>} />
+        <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
     <div className="signal-v2-tn__coverage-note" role="status"><div><strong>{t("computed")}</strong><p>{t("quality")}</p>
       {!data.is_current ? <p>{t("staleBody")}</p> : null}
@@ -132,7 +133,7 @@ export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApp
           if (next === null) return;
           event.preventDefault(); selectSection(sections[next]!); tabButtons.current[next]?.focus();
         }}>{t(`sections.${key}`)}<span>{key === "topics" ? number(data.terms.length)
-          : key === "unresolved" ? number(data.coverage.unresolved) : "—"}</span></button>)}
+          : key === "unresolved" ? number(data.coverage.unresolved) : t("sections.unavailable")}</span></button>)}
     </div> : null}
     <div id={`${tabsId}-panel`} role={surface === "topics" ? "tabpanel" : undefined}
       aria-labelledby={surface === "topics" ? `${tabsId}-${section}` : undefined} tabIndex={surface === "topics" ? 0 : undefined}>

@@ -630,7 +630,8 @@
         "topics": "Topics",
         "narratives": "Narrativas",
         "noise": "Noise",
-        "unresolved": "Sin resolver"
+        "unresolved": "Sin resolver",
+        "unavailable": "No disponible"
       },
       "metricHelp": {
         "denominator": "Menciones únicas disponibles para el periodo y tus permisos. No es un conteo de conversaciones o comentarios.",
@@ -663,7 +664,7 @@
       "emptyPreparing": "Preparando el resultado de Topics",
       "emptyPreparingBody": "La clasificación está en curso. El resultado aparecerá aquí cuando termine; tus Topics y su selección se conservan.",
       "title": "Tópicos y narrativas", "scope": "Todas las conversaciones recibidas con derechos de consulta. Sin atribución implícita a la marca.",
-      "current": "Actualizado", "stale": "Resultado anterior", "manage": "Gestionar Topics", "refresh": "Actualizar", "utc": "Fechas en UTC",
+      "current": "Actualizado", "stale": "Resultado anterior", "manage": "Gestionar Topics", "refresh": "Actualizar", "utc": "Fechas en UTC", "workspaceTimezone": "Zona horaria del workspace: {timezone}",
       "computed": "Pertenencia calculada", "quality": "Los grupos se calcularon sobre las menciones. Su precisión semántica todavía no está calibrada.",
       "staleBody": "Se conserva el último resultado completo. La evidencia requiere una generación vigente y permisos actuales.",
       "denominator": "Menciones del periodo", "assigned": "En Topics seleccionados", "abstained": "Sin grupo estable", "pending": "Sin resolver",

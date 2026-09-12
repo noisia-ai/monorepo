@@ -632,7 +632,8 @@
         "topics": "Topics",
         "narratives": "Narratives",
         "noise": "Noise",
-        "unresolved": "Unresolved"
+        "unresolved": "Unresolved",
+        "unavailable": "Unavailable"
       },
       "metricHelp": {
         "denominator": "Unique mentions available for this period and your permissions. This is not a count of conversations or comments.",
@@ -665,7 +666,7 @@
       "emptyPreparing": "Preparing the Topics result",
       "emptyPreparingBody": "Classification is in progress. The result will appear here when it finishes; your Topics and selections are preserved.",
       "title": "Topics & narratives", "scope": "All received conversations with viewing rights. No implied attribution to the brand.",
-      "current": "Up to date", "stale": "Previous result", "manage": "Manage Topics", "refresh": "Refresh", "utc": "Dates in UTC",
+      "current": "Up to date", "stale": "Previous result", "manage": "Manage Topics", "refresh": "Refresh", "utc": "Dates in UTC", "workspaceTimezone": "Workspace timezone: {timezone}",
       "computed": "Computed membership", "quality": "Clusters were computed from the mentions. Their semantic precision has not yet been calibrated.",
       "staleBody": "The last complete result is retained. Evidence requires a current generation and current permissions.",
       "denominator": "Mentions in period", "assigned": "In selected Topics", "abstained": "Without a stable cluster", "pending": "Unresolved",

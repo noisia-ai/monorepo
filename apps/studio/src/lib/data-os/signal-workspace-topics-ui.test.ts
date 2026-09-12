@@ -22,13 +22,13 @@ async function render(locale: string, payload = data, surface: "summary" | "topi
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
-    createElement(SignalV2WorkspaceTopics, { data: payload, loading: false, surface, refreshFailed, onRefresh: async () => true, onOpenTopics: () => undefined, manageTopicsHref: "/studio/brands/brand/topics", onApplyFilter: async () => true })));
+    createElement(SignalV2WorkspaceTopics, { data: payload, loading: false, surface, refreshFailed, onRefresh: async () => true, onOpenTopics: () => undefined, manageTopicsHref: "/studio/brands/brand/topics", onApplyFilter: async () => true, workspaceTimezone: "America/Mexico_City" })));
 }
 test("native Signal renders computed multilabel counts without claiming calibrated quality or a study corpus", async () => {
   const html = await render("es-MX");
   assert.match(html, /Pertenencia calculada/); assert.match(html, /no está calibrada/);
   assert.match(html, /sumar más de 100%/); assert.match(html, /Delivery/); assert.match(html, /Support/);
-  assert.match(html, /En Topics seleccionados/); assert.match(html, /Fechas en UTC/);
+  assert.match(html, /En Topics seleccionados/); assert.match(html, /Zona horaria del workspace: America\/Mexico_City/);
   assert.doesNotMatch(html, /Precisión:|studio\/corpora|Investigar insights/);
 });
 test("empty completed catalogue is actionable without creating synthetic Topics or narratives", async () => {
@@ -86,8 +86,8 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.equal((html.match(/role="tab"/g) ?? []).length, 4);
     assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 1);
     assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1);
-    assert.match(html, /Noise<span>—<\/span>/);
-    assert.match(html, /Narrati(?:vas|ves)<span>—<\/span>/);
+    assert.ok(html.includes(locale === "es-MX" ? "Noise<span>No disponible</span>" : "Noise<span>Unavailable</span>"));
+    assert.ok(html.includes(locale === "es-MX" ? "Narrativas<span>No disponible</span>" : "Narratives<span>Unavailable</span>"));
     assert.match(html, /signal-v2-tn__ranking-metrics--native/);
     assert.match(html, /signal-v2-tn__definition/);
     assert.ok(html.includes(locale === "es-MX" ? "Lectura editorial pendiente" : "Editorial reading pending"));
@@ -115,6 +115,16 @@ test("the shared ranking retains governed comparison and renders true zero volum
   }));
   assert.match(html, /width:0%/); assert.match(html, /<span>Change<\/span>/); assert.match(html, /signal-v2-tn__delta/);
   assert.match(html, /aria-pressed="true"/); assert.doesNotMatch(html, /ranking-metrics--native/);
+});
+
+test("the real native Topics route opens one evidence mention through the enriched Mentions view", async () => {
+  const source = await readFile(
+    new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /<SignalV2WorkspaceTopics[\s\S]*workspaceTimezone=\{data\.workspace\.timezone\}/u);
+  assert.match(source, /onOpenMention=\{mentionId => \{[\s\S]*new URLSearchParams\(\{ view: "all_conversations", mention: mentionId \}\)[\s\S]*navigateToModule\("mentions", "push", params\)/u);
+  assert.match(source, /initialMention=\{mentionsData\.native \? mentionsData\.record \?\? null : initialMention\}/u);
 });
 
 test("native volume chart preserves exact keys and counts, with no fabricated sentiment or proximity", () => {

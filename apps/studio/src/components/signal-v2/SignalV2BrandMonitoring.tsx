@@ -1289,6 +1289,7 @@ export function SignalV2BrandMonitoring({
         ) : currentModule === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
           <SignalV2WorkspaceTopics data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
+            workspaceTimezone={data.workspace.timezone}
             onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
             onOpenMention={mentionId => {
               const params = new URLSearchParams({ view: "all_conversations", mention: mentionId });

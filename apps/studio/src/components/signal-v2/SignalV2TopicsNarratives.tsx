@@ -70,7 +70,8 @@ export function SignalV2TopicsNarratives(props: Omit<Parameters<typeof LegacySig
   data: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1;
 }) {
   if (props.data.contract_version === "signal-workspace-topics-serving-v1") return <SignalV2WorkspaceTopics
-    data={props.data} loading={props.loading} manageTopicsHref={props.manageTopicsHref} onApplyFilter={props.onApplyFilter} />;
+    data={props.data} loading={props.loading} manageTopicsHref={props.manageTopicsHref}
+    onApplyFilter={props.onApplyFilter} workspaceTimezone={props.filter.timezone} />;
   return <LegacySignalV2TopicsNarratives {...props} data={props.data} />;
 }
 
